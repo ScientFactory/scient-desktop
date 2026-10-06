@@ -31,7 +31,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { frozenForkPortableReason } from "./scient-fork/ConversationForkNativeSource.ts";
+// SCIENT-FORK:START — portable history and the frozen conversation-fork start.
+import {
+  makeTurnStartHistory,
+  startFrozenConversationFork,
+} from "./scient-fork/PortableTurnStart.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — a Stop before native acceptance declines and captures the start.
 import {
   pendingStartCancellation,
@@ -683,26 +688,15 @@ export const layer: Layer.Layer<
                   }),
             }),
       );
-      const prepareHistoryBeforeStart = (runIds?: ReadonlyArray<RunId>) =>
-        Effect.gen(function* () {
-          const history = yield* Effect.result(
-            projectionStore.getTurnStartHistory(input.threadId, runIds),
-          );
-          if (history._tag === "Success")
-            return history.success.filter(
-              (item) =>
-                !projection.runs.some(
-                  (source) => source.id === item.runId && source.status === "rolled_back",
-                ),
-            );
-          if (input.willRetry === true) return yield* history.failure;
-          yield* settleStartFailure({
-            signal: "provider-history-preparation-failure",
-            title: "Provider history could not be prepared",
-            error: history.failure,
-          });
-          return undefined;
-        });
+      // SCIENT-FORK:START — portable history is read before the native offer.
+      const prepareHistoryBeforeStart = makeTurnStartHistory({
+        projectionStore,
+        threadId: input.threadId,
+        runs: projection.runs,
+        willRetry: input.willRetry,
+        settleStartFailure,
+      });
+      // SCIENT-FORK:END
       if (sessionResult._tag === "Failure") {
         // A disposed buffered generation cannot be recreated by retrying session startup.
         if (
@@ -740,118 +734,31 @@ export const layer: Layer.Layer<
         // Adoption consumes the existing generation; it cannot reload or replace its native owner.
         if (providerWork !== undefined) return providerThread;
         if (nativeForkTransfer !== undefined) {
+          // SCIENT-FORK:START — a frozen fork starts natively or from its portable prefix.
           if (projection.thread.conversationFork != null) {
-            const frozen = nativeForkTransfer.frozenSource;
-            let portableReason = frozenForkPortableReason({
-              frozenSource: frozen,
-              sourceRunId: nativeForkTransfer.sourcePoint.runId,
-              sourceThreadId: nativeForkTransfer.sourceThreadId,
-              targetInstanceId: run.providerInstanceId,
-              targetDriver: session.driver,
-              capabilities: session.providerSession.capabilities,
-            });
-            if (portableReason === undefined && frozen !== undefined) {
-              const forked = yield* Effect.result(
-                session.forkThread({
-                  sourceProviderThread: frozen.sourceProviderThread,
-                  sourceProviderTurns: frozen.sourceProviderTurns,
-                  providerTurnId: frozen.providerTurnId,
-                  targetThreadId: projection.thread.id,
-                  modelSelection: run.modelSelection,
-                  runtimePolicy: resolvedRuntimePolicy,
-                }),
-              );
-              if (forked._tag === "Success") return forked.success;
-              portableReason = `The native fork failed: ${forked.failure.message}`;
-            }
-            if (!session.providerSession.capabilities.context.canConsumeHandoffSummaries) {
-              return yield* new ProviderTurnStartError({
-                runId,
-                cause:
-                  "The selected provider cannot consume the frozen portable prefix after native fork failure.",
-              });
-            }
-            // Only the destination's immutable prefix remains authoritative after acceptance.
-            // A failed clone never grants resume authority over the source or a guessed native id.
-            const replacement = yield* loadFromProvider(
-              session.ensureThread({
-                threadId: projection.thread.id,
-                modelSelection: run.modelSelection,
-                runtimePolicy: resolvedRuntimePolicy,
-                providerSessionId,
-                existingProviderThread: {
-                  ...providerThread,
-                  nativeThreadRef: null,
-                  nativeConversationHeadRef: null,
-                  nativeMetadata: null,
-                  forkedFrom: null,
-                  handoffIds: [],
-                },
-              }),
-            );
-            if (replacement === undefined) return undefined;
-            const createdAt = yield* DateTime.now;
-            const history = yield* prepareHistoryBeforeStart();
-            if (history === undefined) return undefined;
-            const prefix = history.filter(
-              (item) =>
-                item.runId === null ||
-                projection.runs.some(
-                  (source) => source.id === item.runId && source.ordinal < run.ordinal,
-                ),
-            );
-            const handoff = yield* contextHandoffService.prepareProviderHandoff({
+            const frozenStart = yield* startFrozenConversationFork({
+              nativeForkTransfer,
+              session,
               threadId: projection.thread.id,
-              targetRunId: run.id,
-              transferId: nativeForkTransfer.id,
-              purpose: "scient_fork",
-              fromProviderThreadIds: [],
-              toProviderThreadId: providerThread.id,
-              fromProviderInstanceId:
-                nativeForkTransfer.sourceProviderInstanceId ?? run.providerInstanceId,
-              toProviderInstanceId: run.providerInstanceId,
-              coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
-              strategy: "full_thread_summary",
               runs: projection.runs,
-              items: prefix,
-              createdAt,
+              run,
+              providerThread,
+              providerSessionId,
+              resolvedRuntimePolicy,
+              loadFromProvider,
+              prepareHistoryBeforeStart,
+              startError: (cause) => new ProviderTurnStartError({ runId, cause }),
+              contextHandoffService,
+              eventSink,
+              idAllocator,
             });
-            yield* eventSink.write({
-              events: [
-                {
-                  id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
-                  type: "context-handoff.updated",
-                  threadId: projection.thread.id,
-                  runId: run.id,
-                  providerInstanceId: run.providerInstanceId,
-                  occurredAt: createdAt,
-                  payload: handoff,
-                },
-                {
-                  id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
-                  type: "context-transfer.updated",
-                  threadId: projection.thread.id,
-                  runId: run.id,
-                  providerInstanceId: run.providerInstanceId,
-                  occurredAt: createdAt,
-                  payload: {
-                    ...nativeForkTransfer,
-                    targetProviderInstanceId: run.providerInstanceId,
-                    targetRunId: run.id,
-                    status: "consumed",
-                    resolution: { strategy: "portable_context", contextHandoffId: handoff.id },
-                    portableReason: portableReason ?? "The native source is unavailable.",
-                    error: null,
-                    updatedAt: createdAt,
-                    consumedAt: createdAt,
-                  },
-                },
-              ],
-            });
-            effectiveHandoffs = [handoff, ...effectiveHandoffs];
-            completedNativeFork = undefined;
-            return { ...replacement, forkedFrom: null };
+            if (frozenStart.portableHandoff !== undefined) {
+              effectiveHandoffs = [frozenStart.portableHandoff, ...effectiveHandoffs];
+              completedNativeFork = undefined;
+            }
+            return frozenStart.providerThread;
           }
+          // SCIENT-FORK:END
           const sourceProjection = yield* projectionStore.getThreadRecords(
             nativeForkTransfer.sourceThreadId,
             ["runs", "providerThreads", "attempts", "providerTurns"],
