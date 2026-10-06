@@ -21,6 +21,7 @@
     "apps/server/src/scient/threadQueue/operations.ts",
     "apps/web/src/routes/settings.skills_.external.tsx",
     "apps/web/src/routes/settings.skills.tsx",
+    "apps/web/src/scient/rightPanel/ScientRightPanelContent.tsx",
     "apps/web/src/scient/threadQueue/composerSnapshot.ts",
     "packages/contracts/src/scientSkillSelection.ts",
     "packages/contracts/src/scientSkills.ts",
@@ -175,7 +176,7 @@
     },
     {
       "path": "apps/web/src/components/ChatView.tsx",
-      "anchor": "mergeEffectiveProviderSkills",
+      "anchor": "useEffectiveActiveProviderSkills",
       "purpose": "Present active Scient skills in messages without replacing provider-native inventory."
     },
     {

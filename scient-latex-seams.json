@@ -94,7 +94,7 @@
     },
     {
       "path": "apps/web/src/components/ChatView.tsx",
-      "anchor": "const openFileSourceSurface = useCallback(",
+      "anchor": "useScientRightPanelOpeners",
       "purpose": "Open a diagnostic or inverse-SyncTeX source at its reported line through the inherited right-panel store."
     },
     {

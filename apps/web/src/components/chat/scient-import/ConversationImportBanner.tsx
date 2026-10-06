@@ -5,6 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import { importTimesShiftedNotice } from "@scientfactory/conversation";
 import { ImportIcon } from "lucide-react";
+import { useMemo, useState } from "react";
 
 import type { ComposerBannerStackItem } from "../ComposerBannerStack";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
@@ -132,4 +133,25 @@ export function conversationImportBannerItem(
     dismissLabel: "Dismiss import notice",
     onDismiss,
   };
+}
+
+/** The open thread's import notice, until the reader dismisses it on that thread. */
+export function useConversationImportBanner(
+  thread: {
+    readonly id: string;
+    readonly source: NonNullable<Parameters<typeof conversationImportBannerItem>[0]>;
+  } | null,
+): ComposerBannerStackItem | null {
+  const [dismissedImportNoticeThreadId, setDismissedImportNoticeThreadId] = useState<string | null>(
+    null,
+  );
+  return useMemo(
+    () =>
+      thread == null || dismissedImportNoticeThreadId === thread.id
+        ? null
+        : conversationImportBannerItem(thread.source, () =>
+            setDismissedImportNoticeThreadId(thread.id),
+          ),
+    [thread, dismissedImportNoticeThreadId],
+  );
 }
