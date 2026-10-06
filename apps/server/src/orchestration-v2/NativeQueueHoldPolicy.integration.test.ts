@@ -75,6 +75,8 @@ import {
   makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./testkit/ProviderReplayHarness.ts";
+import { nativeSettlementTrace } from "./testkit/OmpNativeConjunctions.ts";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 import { sourcePlanFingerprint } from "./SourcePlan.ts";
 import { checkpointRefForScopeOrdinal } from "./CheckpointService.ts";
@@ -3277,6 +3279,7 @@ it.live(
     Effect.scoped(
       Effect.gen(function* () {
         const name = "workspace-bound-root-overlap";
+        let reopenPhase = "native-runtime";
         const workspaceA = yield* checkpointWorkspace(`${name}-A`, {
           "evidence.txt": "Initial A\n",
         });
@@ -3341,43 +3344,19 @@ it.live(
               const worker = yield* OrchestrationEffectWorkerV2;
               const store = yield* CheckpointStore;
               const checkpoints = yield* CheckpointServiceV2;
-              const projectId = ProjectId.make(`project:${name}`);
-              const now = yield* DateTime.now;
-              yield* sink.commitProjectCommand({
-                commandId: CommandId.make(`${name}:project-create`),
-                projectId,
-                commandType: "project.created",
-                acceptedAt: now,
-                event: {
-                  eventId: EventId.make(`${name}:project-create`),
-                  aggregateKind: "project",
-                  aggregateId: projectId,
-                  occurredAt: DateTime.formatIso(now),
-                  commandId: null,
-                  causationEventId: null,
-                  correlationId: null,
-                  metadata: {},
-                  type: "project.created",
-                  payload: {
-                    projectId,
-                    title: name,
-                    workspaceRoot: workspaceA,
-                    defaultModelSelection: modelSelection,
-                    scripts: [],
-                    createdAt: DateTime.formatIso(now),
-                    updatedAt: DateTime.formatIso(now),
-                  },
-                },
-              });
-              let relocation = 0;
-              const relocate = (workspaceRoot: string) =>
-                sink.commitProjectCommand({
-                  commandId: CommandId.make(`${name}:relocate:${++relocation}`),
+              const outbox = yield* EffectOutboxV2;
+              const receipts = yield* CommandReceiptStoreV2;
+              const trace = nativeSettlementTrace(threadId, { orchestrator, outbox, receipts });
+              return yield* Effect.gen(function* () {
+                const projectId = ProjectId.make(`project:${name}`);
+                const now = yield* DateTime.now;
+                yield* sink.commitProjectCommand({
+                  commandId: CommandId.make(`${name}:project-create`),
                   projectId,
-                  commandType: "project.meta-updated",
+                  commandType: "project.created",
                   acceptedAt: now,
                   event: {
-                    eventId: EventId.make(`${name}:relocate:${relocation}`),
+                    eventId: EventId.make(`${name}:project-create`),
                     aggregateKind: "project",
                     aggregateId: projectId,
                     occurredAt: DateTime.formatIso(now),
@@ -3385,282 +3364,351 @@ it.live(
                     causationEventId: null,
                     correlationId: null,
                     metadata: {},
-                    type: "project.meta-updated",
-                    payload: { projectId, workspaceRoot, updatedAt: DateTime.formatIso(now) },
+                    type: "project.created",
+                    payload: {
+                      projectId,
+                      title: name,
+                      workspaceRoot: workspaceA,
+                      defaultModelSelection: modelSelection,
+                      scripts: [],
+                      createdAt: DateTime.formatIso(now),
+                      updatedAt: DateTime.formatIso(now),
+                    },
                   },
                 });
-              yield* send(orchestrator, threadId, "write in A");
-              yield* worker.drain(12);
-              const first = yield* takeOffer;
-              assert.equal(first.input.runtimePolicy.cwd, workspaceA);
-              const active = yield* waitFor((p) => p.runs[0]?.status === "running");
-              const scopeA = active.checkpointScopes.find(
-                (scope) =>
-                  scope.id ===
-                  active.nodes.find((node) => node.id === first.input.rootNodeId)
+                let relocation = 0;
+                const relocate = (workspaceRoot: string) =>
+                  sink.commitProjectCommand({
+                    commandId: CommandId.make(`${name}:relocate:${++relocation}`),
+                    projectId,
+                    commandType: "project.meta-updated",
+                    acceptedAt: now,
+                    event: {
+                      eventId: EventId.make(`${name}:relocate:${relocation}`),
+                      aggregateKind: "project",
+                      aggregateId: projectId,
+                      occurredAt: DateTime.formatIso(now),
+                      commandId: null,
+                      causationEventId: null,
+                      correlationId: null,
+                      metadata: {},
+                      type: "project.meta-updated",
+                      payload: { projectId, workspaceRoot, updatedAt: DateTime.formatIso(now) },
+                    },
+                  });
+                trace.admissionCommands.push(CommandId.make(`${threadId}:send:write in A`));
+                yield* send(orchestrator, threadId, "write in A");
+                yield* trace.drain("initial-A-start-drain", 12, worker.drain(12));
+                const first = yield* trace.at("initial-A-offer", takeOffer);
+                assert.equal(first.input.runtimePolicy.cwd, workspaceA);
+                const active = yield* trace.at(
+                  "initial-A-running",
+                  waitFor((p) => p.runs[0]?.status === "running"),
+                );
+                const scopeA = active.checkpointScopes.find(
+                  (scope) =>
+                    scope.id ===
+                    active.nodes.find((node) => node.id === first.input.rootNodeId)
+                      ?.checkpointScopeId,
+                )!;
+                assert.equal(scopeA.cwd, workspaceA);
+                const baselineA = checkpointRefForScopeOrdinal({
+                  scopeId: scopeA.id,
+                  ordinalWithinScope: 0,
+                });
+                assert.isTrue(
+                  yield* store.hasCheckpointRef({ cwd: workspaceA, checkpointRef: baselineA }),
+                );
+                // A remains live and writes to its captured workspace while future admission uses B.
+                yield* first.answer("Exact native A answer");
+                yield* fs.writeFileString(`${workspaceA}/evidence.txt`, "Native A output\n");
+                yield* relocate(workspaceB);
+                trace.admissionCommands.push(CommandId.make(`${threadId}:send:write in B`));
+                yield* send(orchestrator, threadId, "write in B", true);
+                const admitted = yield* orchestrator.getThreadProjection(threadId);
+                const queuedB = admitted.runs.find((run) => run.status === "queued")!;
+                const scopeB = admitted.checkpointScopes.find(
+                  (scope) =>
+                    scope.id ===
+                    admitted.nodes.find((node) => node.id === queuedB.rootNodeId)
+                      ?.checkpointScopeId,
+                )!;
+                assert.notEqual(scopeA.id, scopeB.id);
+                assert.equal(scopeB.cwd, workspaceB);
+                assert.deepEqual(
+                  admitted.checkpointScopes.find((scope) => scope.id === scopeA.id),
+                  scopeA,
+                );
+                assert.equal(
+                  admitted.nodes.find((node) => node.id === first.input.rootNodeId)
                     ?.checkpointScopeId,
-              )!;
-              assert.equal(scopeA.cwd, workspaceA);
-              const baselineA = checkpointRefForScopeOrdinal({
-                scopeId: scopeA.id,
-                ordinalWithinScope: 0,
-              });
-              assert.isTrue(
-                yield* store.hasCheckpointRef({ cwd: workspaceA, checkpointRef: baselineA }),
-              );
-              // A remains live and writes to its captured workspace while future admission uses B.
-              yield* first.answer("Exact native A answer");
-              yield* fs.writeFileString(`${workspaceA}/evidence.txt`, "Native A output\n");
-              yield* relocate(workspaceB);
-              yield* send(orchestrator, threadId, "write in B", true);
-              const admitted = yield* orchestrator.getThreadProjection(threadId);
-              const queuedB = admitted.runs.find((run) => run.status === "queued")!;
-              const scopeB = admitted.checkpointScopes.find(
-                (scope) =>
-                  scope.id ===
-                  admitted.nodes.find((node) => node.id === queuedB.rootNodeId)?.checkpointScopeId,
-              )!;
-              assert.notEqual(scopeA.id, scopeB.id);
-              assert.equal(scopeB.cwd, workspaceB);
-              assert.deepEqual(
-                admitted.checkpointScopes.find((scope) => scope.id === scopeA.id),
-                scopeA,
-              );
-              assert.equal(
-                admitted.nodes.find((node) => node.id === first.input.rootNodeId)
-                  ?.checkpointScopeId,
-                scopeA.id,
-              );
-              assert.equal(admitted.runs[0]?.status, "running");
-              assert.deepEqual(yield* snapshotB, untouchedB);
-              assert.lengthOf(offers, 1);
-              yield* first.settle("completed");
-              yield* waitFor((p) => p.runs[0]?.status === "waiting");
-              const draining = yield* worker.drain(12).pipe(Effect.forkScoped);
-              yield* captureEntered.pipe(Effect.timeout("15 seconds"));
-              const parked = yield* orchestrator.getThreadProjection(threadId);
-              assert.equal(
-                parked.messages.find(
-                  (message) => message.runId === first.input.runId && message.role === "assistant",
-                )?.text,
-                "Exact native A answer",
-              );
-              assert.isNull(parked.runs[0]!.checkpointId);
-              assert.lengthOf(offers, 1);
-              assert.deepEqual(yield* snapshotB, untouchedB);
-              beforeOffer((input) =>
-                Effect.gen(function* () {
-                  if (input.runId !== queuedB.id) return;
-                  const boundary = yield* orchestrator.getThreadProjection(threadId);
-                  const prior = boundary.runs.find((run) => run.id === first.input.runId)!;
-                  const checkpoint = boundary.checkpoints.find(
-                    (row) => row.id === prior.checkpointId,
-                  )!;
-                  assert.equal(prior.status, "completed");
-                  assert.equal(checkpoint.status, "ready");
-                  assert.equal(checkpoint.scopeId, scopeA.id);
-                  assert.equal(
-                    boundary.messages.find(
-                      (message) => message.runId === prior.id && message.role === "assistant",
-                    )?.text,
-                    "Exact native A answer",
-                  );
-                  assert.equal(
-                    yield* git(workspaceA, ["show", `${checkpoint.ref}:evidence.txt`]),
-                    "Native A output\n",
-                  );
-                  assert.isFalse(
-                    yield* store.hasCheckpointRef({
-                      cwd: workspaceB,
-                      checkpointRef: checkpoint.ref,
-                    }),
-                  );
-                }).pipe(Effect.orDie),
-              );
-              yield* releaseCapture;
-              yield* Fiber.join(draining);
-              const second = yield* takeOffer;
-              assert.equal(second.input.runId, queuedB.id);
-              assert.equal(second.input.runtimePolicy.cwd, workspaceB);
-              assert.lengthOf(offers, 2);
-              const startedB = yield* orchestrator.getThreadProjection(threadId);
-              const checkpointA = startedB.checkpoints.find(
-                (row) => row.id === startedB.runs[0]!.checkpointId,
-              )!;
-              assert.include(
-                yield* store.diffCheckpoints({
-                  cwd: workspaceA,
-                  fromCheckpointRef: baselineA,
-                  toCheckpointRef: checkpointA.ref,
-                  fallbackFromToHead: false,
-                  ignoreWhitespace: false,
-                  format: "patch",
-                }),
-                "+Native A output",
-              );
-              const baselineB = checkpointRefForScopeOrdinal({
-                scopeId: scopeB.id,
-                ordinalWithinScope: 1,
-              });
-              assert.equal(
-                yield* git(workspaceB, ["show", `${baselineB}:evidence.txt`]),
-                "Initial B\n",
-              );
-              yield* fs.writeFileString(`${workspaceB}/evidence.txt`, "Native B output\n");
-              yield* second.answer("Exact native B answer");
-              yield* relocate(workspaceA);
-              yield* send(orchestrator, threadId, "return to A", true);
-              const returnQueued = yield* orchestrator.getThreadProjection(threadId);
-              const thirdRun = returnQueued.runs.find((run) => run.ordinal === 3)!;
-              assert.equal(
-                returnQueued.nodes.find((node) => node.id === thirdRun.rootNodeId)
-                  ?.checkpointScopeId,
-                scopeA.id,
-              );
-              const retainedRefsA = yield* git(workspaceA, ["for-each-ref"]);
-              yield* second.settle("completed");
-              yield* waitFor(
-                (p) => p.runs.find((run) => run.id === second.input.runId)?.status === "waiting",
-              );
-              yield* worker.drain(12);
-              const third = yield* takeOffer;
-              assert.equal(third.input.runId, thirdRun.id);
-              assert.equal(third.input.runtimePolicy.cwd, workspaceA);
-              const beforeThird = yield* orchestrator.getThreadProjection(threadId);
-              const checkpointB = beforeThird.checkpoints.find(
-                (row) =>
-                  row.id ===
-                  beforeThird.runs.find((run) => run.id === second.input.runId)!.checkpointId,
-              )!;
-              assert.equal(checkpointB.scopeId, scopeB.id);
-              assert.equal(
-                yield* git(workspaceB, ["show", `${checkpointB.ref}:evidence.txt`]),
-                "Native B output\n",
-              );
-              assert.include(yield* git(workspaceA, ["for-each-ref"]), retainedRefsA.trim());
-              yield* fs.writeFileString(`${workspaceA}/evidence.txt`, "Returned native A output\n");
-              yield* third.answer("Exact returned A answer");
-              yield* third.settle("completed");
-              yield* waitFor(
-                (p) => p.runs.find((run) => run.id === third.input.runId)?.status === "waiting",
-              );
-              yield* worker.drain(12);
-              const completed = yield* waitFor((p) =>
-                p.runs.every((run) => run.status === "completed"),
-              );
-              const checkpointReturnA = completed.checkpoints.find(
-                (row) =>
-                  row.id ===
-                  completed.runs.find((run) => run.id === third.input.runId)!.checkpointId,
-              )!;
-              const returnParent = completed.checkpoints.find(
-                (row) => row.id === checkpointReturnA.parentCheckpointId,
-              )!;
-              assert.equal(checkpointReturnA.scopeId, scopeA.id);
-              assert.equal(returnParent.scopeId, scopeA.id);
-              assert.notEqual(returnParent.id, checkpointB.id);
-              assert.equal(returnParent.status, "ready");
-              assert.deepEqual(
-                completed.runs.map((run) => run.ordinal),
-                [1, 2, 3],
-              );
-              assert.lengthOf(offers, 3);
-              // Future project authority is B, but restoring a captured A boundary must use A.
-              yield* relocate(workspaceB);
-              const capturedB = yield* snapshotB;
-              yield* checkpoints.restore({ scope: scopeA, checkpoint: checkpointA });
-              assert.equal(
-                yield* fs.readFileString(`${workspaceA}/evidence.txt`),
-                "Native A output\n",
-              );
-              assert.deepEqual(yield* snapshotB, capturedB);
-              const sequence = yield* orchestrator.getThreadEventSequence(threadId);
-              const beforeConflict = yield* orchestrator.getThreadProjection(threadId);
-              const refsA = yield* git(workspaceA, ["for-each-ref"]);
-              const rejected = yield* Effect.result(
-                sink.commitCommand({
-                  commandId: CommandId.make(`${name}:corrupt-root`),
+                  scopeA.id,
+                );
+                assert.equal(admitted.runs[0]?.status, "running");
+                assert.deepEqual(yield* snapshotB, untouchedB);
+                assert.lengthOf(offers, 1);
+                yield* first.settle("completed");
+                yield* trace.at(
+                  "initial-A-waiting",
+                  waitFor((p) => p.runs[0]?.status === "waiting"),
+                );
+                yield* trace.capture("A-checkpoint-before-drain", { offers });
+                const draining = yield* trace
+                  .drain("A-checkpoint-drain", 12, worker.drain(12))
+                  .pipe(Effect.forkScoped);
+                yield* trace.at(
+                  "A-checkpoint-capture-entered",
+                  captureEntered.pipe(Effect.timeout("15 seconds")),
+                );
+                const parked = yield* orchestrator.getThreadProjection(threadId);
+                assert.equal(
+                  parked.messages.find(
+                    (message) =>
+                      message.runId === first.input.runId && message.role === "assistant",
+                  )?.text,
+                  "Exact native A answer",
+                );
+                assert.isNull(parked.runs[0]!.checkpointId);
+                assert.lengthOf(offers, 1);
+                assert.deepEqual(yield* snapshotB, untouchedB);
+                beforeOffer((input) =>
+                  Effect.gen(function* () {
+                    if (input.runId !== queuedB.id) return;
+                    const boundary = yield* orchestrator.getThreadProjection(threadId);
+                    const prior = boundary.runs.find((run) => run.id === first.input.runId)!;
+                    const checkpoint = boundary.checkpoints.find(
+                      (row) => row.id === prior.checkpointId,
+                    )!;
+                    assert.equal(prior.status, "completed");
+                    assert.equal(checkpoint.status, "ready");
+                    assert.equal(checkpoint.scopeId, scopeA.id);
+                    assert.equal(
+                      boundary.messages.find(
+                        (message) => message.runId === prior.id && message.role === "assistant",
+                      )?.text,
+                      "Exact native A answer",
+                    );
+                    assert.equal(
+                      yield* git(workspaceA, ["show", `${checkpoint.ref}:evidence.txt`]),
+                      "Native A output\n",
+                    );
+                    assert.isFalse(
+                      yield* store.hasCheckpointRef({
+                        cwd: workspaceB,
+                        checkpointRef: checkpoint.ref,
+                      }),
+                    );
+                  }).pipe(Effect.orDie),
+                );
+                yield* releaseCapture;
+                yield* trace.at("A-checkpoint-drain-join", Fiber.join(draining));
+                yield* trace.capture("A-checkpoint-after-drain", { offers });
+                const second = yield* trace.at("B-offer", takeOffer);
+                assert.equal(second.input.runId, queuedB.id);
+                assert.equal(second.input.runtimePolicy.cwd, workspaceB);
+                assert.lengthOf(offers, 2);
+                const startedB = yield* orchestrator.getThreadProjection(threadId);
+                const checkpointA = startedB.checkpoints.find(
+                  (row) => row.id === startedB.runs[0]!.checkpointId,
+                )!;
+                assert.include(
+                  yield* store.diffCheckpoints({
+                    cwd: workspaceA,
+                    fromCheckpointRef: baselineA,
+                    toCheckpointRef: checkpointA.ref,
+                    fallbackFromToHead: false,
+                    ignoreWhitespace: false,
+                    format: "patch",
+                  }),
+                  "+Native A output",
+                );
+                const baselineB = checkpointRefForScopeOrdinal({
+                  scopeId: scopeB.id,
+                  ordinalWithinScope: 1,
+                });
+                assert.equal(
+                  yield* git(workspaceB, ["show", `${baselineB}:evidence.txt`]),
+                  "Initial B\n",
+                );
+                yield* fs.writeFileString(`${workspaceB}/evidence.txt`, "Native B output\n");
+                yield* second.answer("Exact native B answer");
+                yield* relocate(workspaceA);
+                trace.admissionCommands.push(CommandId.make(`${threadId}:send:return to A`));
+                yield* send(orchestrator, threadId, "return to A", true);
+                const returnQueued = yield* orchestrator.getThreadProjection(threadId);
+                const thirdRun = returnQueued.runs.find((run) => run.ordinal === 3)!;
+                assert.equal(
+                  returnQueued.nodes.find((node) => node.id === thirdRun.rootNodeId)
+                    ?.checkpointScopeId,
+                  scopeA.id,
+                );
+                const retainedRefsA = yield* git(workspaceA, ["for-each-ref"]);
+                yield* second.settle("completed");
+                yield* trace.at(
+                  "B-waiting",
+                  waitFor(
+                    (p) =>
+                      p.runs.find((run) => run.id === second.input.runId)?.status === "waiting",
+                  ),
+                );
+                yield* trace.capture("B-checkpoint-before-drain", { offers });
+                yield* trace.drain("B-checkpoint-drain", 12, worker.drain(12));
+                yield* trace.capture("B-checkpoint-after-drain", { offers });
+                const third = yield* trace.at("return-A-offer", takeOffer);
+                assert.equal(third.input.runId, thirdRun.id);
+                assert.equal(third.input.runtimePolicy.cwd, workspaceA);
+                const beforeThird = yield* orchestrator.getThreadProjection(threadId);
+                const checkpointB = beforeThird.checkpoints.find(
+                  (row) =>
+                    row.id ===
+                    beforeThird.runs.find((run) => run.id === second.input.runId)!.checkpointId,
+                )!;
+                assert.equal(checkpointB.scopeId, scopeB.id);
+                assert.equal(
+                  yield* git(workspaceB, ["show", `${checkpointB.ref}:evidence.txt`]),
+                  "Native B output\n",
+                );
+                assert.include(yield* git(workspaceA, ["for-each-ref"]), retainedRefsA.trim());
+                yield* fs.writeFileString(
+                  `${workspaceA}/evidence.txt`,
+                  "Returned native A output\n",
+                );
+                yield* third.answer("Exact returned A answer");
+                yield* third.settle("completed");
+                yield* trace.at(
+                  "returned-A-waiting",
+                  waitFor(
+                    (p) => p.runs.find((run) => run.id === third.input.runId)?.status === "waiting",
+                  ),
+                );
+                yield* trace.capture("returned-A-checkpoint-before-drain", { offers });
+                yield* trace.drain("returned-A-checkpoint-drain", 12, worker.drain(12));
+                yield* trace.capture("returned-A-checkpoint-after-drain", { offers });
+                const completed = yield* trace.at(
+                  "final-runs-completed",
+                  waitFor((p) => p.runs.every((run) => run.status === "completed")),
+                );
+                const checkpointReturnA = completed.checkpoints.find(
+                  (row) =>
+                    row.id ===
+                    completed.runs.find((run) => run.id === third.input.runId)!.checkpointId,
+                )!;
+                const returnParent = completed.checkpoints.find(
+                  (row) => row.id === checkpointReturnA.parentCheckpointId,
+                )!;
+                assert.equal(checkpointReturnA.scopeId, scopeA.id);
+                assert.equal(returnParent.scopeId, scopeA.id);
+                assert.notEqual(returnParent.id, checkpointB.id);
+                assert.equal(returnParent.status, "ready");
+                assert.deepEqual(
+                  completed.runs.map((run) => run.ordinal),
+                  [1, 2, 3],
+                );
+                assert.lengthOf(offers, 3);
+                // Future project authority is B, but restoring a captured A boundary must use A.
+                yield* relocate(workspaceB);
+                const capturedB = yield* snapshotB;
+                yield* checkpoints.restore({ scope: scopeA, checkpoint: checkpointA });
+                assert.equal(
+                  yield* fs.readFileString(`${workspaceA}/evidence.txt`),
+                  "Native A output\n",
+                );
+                assert.deepEqual(yield* snapshotB, capturedB);
+                const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+                const beforeConflict = yield* orchestrator.getThreadProjection(threadId);
+                const refsA = yield* git(workspaceA, ["for-each-ref"]);
+                const rejected = yield* Effect.result(
+                  sink.commitCommand({
+                    commandId: CommandId.make(`${name}:corrupt-root`),
+                    threadId,
+                    commandType: "checkpoint-scope.created",
+                    acceptedAt: now,
+                    effects: [],
+                    events: [
+                      {
+                        id: EventId.make(`${name}:corrupt-root`),
+                        type: "checkpoint-scope.created",
+                        threadId,
+                        occurredAt: now,
+                        payload: { ...scopeA, cwd: workspaceB },
+                      },
+                    ],
+                  }),
+                );
+                assert.equal(rejected._tag, "Failure");
+                assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
+                assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), beforeConflict);
+                assert.equal(yield* git(workspaceA, ["for-each-ref"]), refsA);
+                assert.deepEqual(yield* snapshotB, capturedB);
+                // Historical reader fixture: produce a real old-format ref without changing any
+                // run's new scope or inventing a run completion/baseline receipt.
+                const legacyId = yield* (yield* IdAllocatorV2).allocate.checkpointScope({
                   threadId,
-                  commandType: "checkpoint-scope.created",
-                  acceptedAt: now,
-                  effects: [],
+                  name: "root",
+                });
+                const legacyScope = { ...scopeA, id: legacyId, runId: null };
+                const legacyCheckpoint = yield* checkpoints.capture({
+                  scope: legacyScope,
+                  runId: null,
+                  nodeId: first.input.rootNodeId,
+                  ordinalWithinScope: 0,
+                  appRunOrdinal: null,
+                  capturedAt: now,
+                });
+                assert.equal(legacyCheckpoint.status, "ready");
+                yield* sink.write({
                   events: [
+                    ...[legacyScope, { ...legacyScope, cwd: workspaceB }, legacyScope].map(
+                      (payload, index) => ({
+                        id: EventId.make(`${name}:legacy-scope:${index}`),
+                        type: "checkpoint-scope.created" as const,
+                        threadId,
+                        occurredAt: now,
+                        payload,
+                      }),
+                    ),
                     {
-                      id: EventId.make(`${name}:corrupt-root`),
-                      type: "checkpoint-scope.created",
+                      id: EventId.make(`${name}:legacy-checkpoint`),
+                      type: "checkpoint.captured",
                       threadId,
                       occurredAt: now,
-                      payload: { ...scopeA, cwd: workspaceB },
+                      payload: legacyCheckpoint,
                     },
                   ],
-                }),
-              );
-              assert.equal(rejected._tag, "Failure");
-              assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
-              assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), beforeConflict);
-              assert.equal(yield* git(workspaceA, ["for-each-ref"]), refsA);
-              assert.deepEqual(yield* snapshotB, capturedB);
-              // Historical reader fixture: produce a real old-format ref without changing any
-              // run's new scope or inventing a run completion/baseline receipt.
-              const legacyId = yield* (yield* IdAllocatorV2).allocate.checkpointScope({
-                threadId,
-                name: "root",
-              });
-              const legacyScope = { ...scopeA, id: legacyId, runId: null };
-              const legacyCheckpoint = yield* checkpoints.capture({
-                scope: legacyScope,
-                runId: null,
-                nodeId: first.input.rootNodeId,
-                ordinalWithinScope: 0,
-                appRunOrdinal: null,
-                capturedAt: now,
-              });
-              assert.equal(legacyCheckpoint.status, "ready");
-              yield* sink.write({
-                events: [
-                  ...[legacyScope, { ...legacyScope, cwd: workspaceB }, legacyScope].map(
-                    (payload, index) => ({
-                      id: EventId.make(`${name}:legacy-scope:${index}`),
-                      type: "checkpoint-scope.created" as const,
-                      threadId,
-                      occurredAt: now,
-                      payload,
-                    }),
+                });
+                assert.deepEqual(yield* snapshotB, capturedB);
+                yield* (yield* ProviderSessionManagerV2).closeInstance(instanceId);
+                yield* trace.at(
+                  "sessions-stopped-before-reopen",
+                  waitFor((projection) =>
+                    projection.providerSessions.every((session) => session.status === "stopped"),
                   ),
-                  {
-                    id: EventId.make(`${name}:legacy-checkpoint`),
-                    type: "checkpoint.captured",
-                    threadId,
-                    occurredAt: now,
-                    payload: legacyCheckpoint,
-                  },
-                ],
-              });
-              assert.deepEqual(yield* snapshotB, capturedB);
-              yield* (yield* ProviderSessionManagerV2).closeInstance(instanceId);
-              yield* waitFor((projection) =>
-                projection.providerSessions.every((session) => session.status === "stopped"),
-              );
-              return {
-                projection: yield* orchestrator.getThreadProjection(threadId),
-                checkpointA,
-                checkpointB,
-                checkpointReturnA,
-                scopeA,
-                scopeB,
-                legacyScope,
-                legacyCheckpoint,
-              };
+                );
+                yield* trace.capture("runtime-settled-before-reopen", { offers });
+                return {
+                  projection: yield* orchestrator.getThreadProjection(threadId),
+                  checkpointA,
+                  checkpointB,
+                  checkpointReturnA,
+                  scopeA,
+                  scopeB,
+                  legacyScope,
+                  legacyCheckpoint,
+                };
+              }).pipe(Effect.onError((cause) => trace.failure(cause, { offers })));
             }).pipe(Effect.ensuring(releaseCapture)),
           options,
         );
         // All worker/manager/database scopes are closed before the file-backed store reopens.
+        reopenPhase = "reopen-projection";
         yield* Effect.scoped(
           Effect.gen(function* () {
             const projections = yield* ProjectionStore.ProjectionStoreV2;
             assert.deepEqual(yield* projections.getThreadProjection(threadId), finished.projection);
             const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+            reopenPhase = "reopen-rebuild";
             assert.isTrue((yield* maintenance.rebuild).valid);
+            reopenPhase = "reopen-Git-and-projection-assertions";
             assert.deepEqual(yield* projections.getThreadProjection(threadId), finished.projection);
             assert.equal(
               yield* git(workspaceA, ["show", `${finished.checkpointA.ref}:evidence.txt`]),
@@ -3690,6 +3738,28 @@ it.live(
               finished.legacyCheckpoint,
             );
           }).pipe(
+            Effect.onError((cause) =>
+              Effect.gen(function* () {
+                const projections = yield* ProjectionStore.ProjectionStoreV2;
+                const sql = yield* SqlClient.SqlClient;
+                yield* Effect.log("NATIVE_SETTLEMENT_REOPEN_FAILURE", {
+                  lastWait: reopenPhase,
+                  cause,
+                  projection: yield* projections.getThreadProjection(threadId),
+                  outbox:
+                    yield* sql`SELECT effect_id, command_id, status, payload_json FROM orchestration_v2_effect_outbox WHERE thread_id = ${threadId} ORDER BY effect_id`,
+                });
+              }).pipe(
+                Effect.timeout("2 seconds"),
+                Effect.catchCause((observerCause) =>
+                  Effect.logWarning("Native reopen observer failed", {
+                    lastWait: reopenPhase,
+                    cause,
+                    observerCause,
+                  }),
+                ),
+              ),
+            ),
             Effect.provide(
               ProjectionMaintenance.layer.pipe(
                 Layer.provideMerge(
