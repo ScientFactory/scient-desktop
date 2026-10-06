@@ -6,6 +6,12 @@ import {
   type FilePostRender,
 } from "~/scient/fileSurfaces/StaticTextFileSurface";
 import {
+  retryScientViewerAsset,
+  scientViewerRevisionSuffix,
+  useScientViewerRefreshKey,
+  useScientViewerResource,
+} from "~/scient/fileSurfaces/scientWorkspaceViewerRefresh";
+import {
   ScientMathSourceToolbar,
   useScientFileEditorBindings,
 } from "~/scient/fileSurfaces/scientFileEditorBindings";
@@ -143,7 +149,6 @@ import {
 import { useMissingFileChoices } from "~/scient/fileSurfaces/useMissingFileChoices";
 
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
-import { fileSurfaceAssetResource } from "./fileSurfaceAssetResource";
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
@@ -268,32 +273,17 @@ function WorkspaceImagePreview(props: {
   readonly alt: string;
   readonly refreshKey: number;
 }) {
-  const resource = useMemo(
-    () =>
-      fileSurfaceAssetResource({
-        absolutePath: props.absolutePath,
-        workspaceRoot: props.workspaceRoot,
-        relativePath: props.relativePath,
-        threadId: props.threadRef.threadId,
-      }),
-    [props.absolutePath, props.relativePath, props.threadRef.threadId, props.workspaceRoot],
-  );
+  // SCIENT-FORK:START — the asset is named by the tab's own path
+  const resource = useScientViewerResource(props);
+  // SCIENT-FORK:END
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
-  const previousRefreshKey = useRef(props.refreshKey);
-
-  useEffect(() => {
-    if (previousRefreshKey.current === props.refreshKey) return;
-    previousRefreshKey.current = props.refreshKey;
-    setFailedUrl(null);
-    assetUrl.refresh();
-  }, [assetUrl.refresh, props.refreshKey]);
-  const revisionSuffix =
-    props.refreshKey === 0
-      ? ""
-      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${props.refreshKey}`;
+  // SCIENT-FORK:START — reload when the file's watcher reports a change
+  useScientViewerRefreshKey(props.refreshKey, assetUrl.refresh, setFailedUrl);
+  const revisionSuffix = scientViewerRevisionSuffix(assetUrl, props.refreshKey);
+  // SCIENT-FORK:END
   const imageUrl = assetUrl._tag === "Success" ? `${assetUrl.url}${revisionSuffix}` : null;
   const actionsSource: MediaActionSource = {
     kind: "image",
@@ -311,17 +301,11 @@ function WorkspaceImagePreview(props: {
           <FileSurfaceFailure
             {...MEDIA_FAILURE_COPY.image}
             retrying={retrying || (assetUrl._tag === "Failure" && assetUrl.waiting === true)}
-            onRetry={() => {
+            onRetry={() =>
               // Keep the failure (busy) until renewed authorization arrives, so
               // the old URL is not shown, and cannot fail, in the meantime.
-              setRetrying(true);
-              void refreshAssetUrl()
-                .catch(() => undefined)
-                .finally(() => {
-                  setRetrying(false);
-                  setFailedUrl(null);
-                });
-            }}
+              retryScientViewerAsset(refreshAssetUrl, setRetrying, () => setFailedUrl(null))
+            }
           />
         </div>
       </MediaActions>
@@ -361,29 +345,14 @@ function WorkspaceBrowserPreview(props: {
   readonly title: string;
   readonly refreshKey: number;
 }) {
-  const resource = useMemo(
-    () =>
-      fileSurfaceAssetResource({
-        absolutePath: props.absolutePath,
-        workspaceRoot: props.workspaceRoot,
-        relativePath: props.relativePath,
-        threadId: props.threadRef.threadId,
-        htmlDocument: !isPdfPreviewFile(props.absolutePath),
-      }),
-    [props.absolutePath, props.relativePath, props.threadRef.threadId, props.workspaceRoot],
-  );
+  // SCIENT-FORK:START — the asset is named by the tab's own path
+  const resource = useScientViewerResource(props, !isPdfPreviewFile(props.absolutePath));
+  // SCIENT-FORK:END
   const assetUrl = useAssetUrlState(props.environmentId, resource);
-  const previousRefreshKey = useRef(props.refreshKey);
-
-  useEffect(() => {
-    if (previousRefreshKey.current === props.refreshKey) return;
-    previousRefreshKey.current = props.refreshKey;
-    assetUrl.refresh();
-  }, [assetUrl.refresh, props.refreshKey]);
-  const revisionSuffix =
-    props.refreshKey === 0
-      ? ""
-      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${props.refreshKey}`;
+  // SCIENT-FORK:START — reload when the file's watcher reports a change
+  useScientViewerRefreshKey(props.refreshKey, assetUrl.refresh);
+  const revisionSuffix = scientViewerRevisionSuffix(assetUrl, props.refreshKey);
+  // SCIENT-FORK:END
 
   if (assetUrl._tag === "Failure") {
     return (
@@ -420,29 +389,15 @@ function WorkspaceVideoPreview(props: {
   readonly refreshKey: number;
 }) {
   const reference = mediaFileReference(props.absolutePath, props.workspaceRoot);
-  const resource = useMemo(
-    () =>
-      fileSurfaceAssetResource({
-        absolutePath: props.absolutePath,
-        workspaceRoot: props.workspaceRoot,
-        relativePath: props.relativePath,
-        threadId: props.threadRef.threadId,
-      }),
-    [props.absolutePath, props.relativePath, props.threadRef.threadId, props.workspaceRoot],
-  );
+  // SCIENT-FORK:START — the asset is named by the tab's own path
+  const resource = useScientViewerResource(props);
+  // SCIENT-FORK:END
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
-  const previousRefreshKey = useRef(props.refreshKey);
-
-  useEffect(() => {
-    if (previousRefreshKey.current === props.refreshKey) return;
-    previousRefreshKey.current = props.refreshKey;
-    void refreshAssetUrl().catch(() => undefined);
-  }, [props.refreshKey, refreshAssetUrl]);
-  const revisionSuffix =
-    props.refreshKey === 0
-      ? ""
-      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${props.refreshKey}`;
+  // SCIENT-FORK:START — reload when the file's watcher reports a change
+  useScientViewerRefreshKey(props.refreshKey, refreshAssetUrl);
+  const revisionSuffix = scientViewerRevisionSuffix(assetUrl, props.refreshKey);
+  // SCIENT-FORK:END
   const latestUrl = assetUrl._tag === "Success" ? `${assetUrl.url}${revisionSuffix}` : null;
 
   return (
@@ -495,13 +450,9 @@ function WorkspaceAudioPreview(props: {
       void refreshAssetUrl().catch(() => undefined);
     },
   });
-  const previousRefreshKey = useRef(props.refreshKey);
-  useEffect(() => {
-    if (previousRefreshKey.current === props.refreshKey) return;
-    previousRefreshKey.current = props.refreshKey;
-    setFailedUrl(null);
-    void refreshAssetUrl().catch(() => undefined);
-  }, [props.refreshKey, refreshAssetUrl]);
+  // SCIENT-FORK:START — reload when the file's watcher reports a change
+  useScientViewerRefreshKey(props.refreshKey, refreshAssetUrl, setFailedUrl);
+  // SCIENT-FORK:END
   const revision =
     props.workspaceMutationId === null && props.refreshKey === 0
       ? null
@@ -518,10 +469,7 @@ function WorkspaceAudioPreview(props: {
         retrying={retrying}
         onRetry={() => {
           setFailedUrl(null);
-          setRetrying(true);
-          void refreshAssetUrl()
-            .catch(() => undefined)
-            .finally(() => setRetrying(false));
+          retryScientViewerAsset(refreshAssetUrl, setRetrying);
         }}
       />
     );
