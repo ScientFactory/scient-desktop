@@ -1,5 +1,9 @@
 import { assert } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
+import {
+  assertPiReplayConfirmedLaunches,
+  piReplayExpectedSessionFile,
+} from "../../../Adapters/PiReplaySessionBinding.testkit.ts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
 import {
@@ -20,8 +24,8 @@ function field(value: unknown, key: string): unknown {
 
 /**
  * Pi's durable native thread id is its session file. After the idle release,
- * the respawned process must `switch_session` to the file the first turn
- * wrote, and the resumed model still sees the first exchange.
+ * the respawned process must launch the same file and confirm its declared
+ * UUID/file through get_state before prompting, and the resumed model still sees the first exchange.
  */
 export function assertPiProviderThreadResumeOutput(
   result: OrchestratorV2ScenarioResult,
@@ -31,16 +35,8 @@ export function assertPiProviderThreadResumeOutput(
     (entry) => entry.type === "expect_outbound" && field(entry.frame, "type") === "process_start",
   );
   assert.lengthOf(processStarts, 2, "the idle release must retire the first Pi process");
-  const switches = transcript.entries.flatMap((entry) =>
-    entry.type === "expect_outbound" && field(entry.frame, "type") === "switch_session"
-      ? [entry]
-      : [],
-  );
-  assert.deepEqual(
-    switches.map((entry) => [entry.label, field(entry.frame, "sessionPath")]),
-    [["switch_session@p2", "/pi-sessions/session-1.jsonl"]],
-    "the respawned process must resume the first session file",
-  );
+  const expectedFile = piReplayExpectedSessionFile(transcript, "/pi-sessions/session-1.jsonl");
+  assertPiReplayConfirmedLaunches(transcript, "/pi-sessions/session-1.jsonl");
 
   assertBaseProjection({
     result,
@@ -55,10 +51,7 @@ export function assertPiProviderThreadResumeOutput(
     PROVIDER_THREAD_RESUME_SECOND_PROMPT,
   ]);
   assert.lengthOf(projection.providerThreads, 1, "resume must keep one provider thread");
-  assert.equal(
-    projection.providerThreads[0]?.nativeThreadRef?.nativeId,
-    "/pi-sessions/session-1.jsonl",
-  );
+  assert.equal(projection.providerThreads[0]?.nativeThreadRef?.nativeId, expectedFile);
   const answers = projection.turnItems.flatMap((item) =>
     item.type === "assistant_message" ? [item.text] : [],
   );

@@ -47,15 +47,14 @@ export * from "./scientConversationOrigin.ts";
 export * from "./scientConversationFork.ts";
 export * from "./scientConversationView.ts";
 export * from "./scientQuestionAnswer.ts";
-// SCIENT-FORK:START — the V1 dispatch failure carries the fork disposition and
-// the V1 thread-search match carries a nullable project id, neither of which
-// the V2 counterparts declare. These explicit exports resolve the ambiguity in
-// favour of the V1 contract, which is the one the V1 server and client speak.
+// SCIENT-FORK:START — explicit exports select Scient's compatibility variants.
+// Dispatch failures retain the fork disposition. Public/MCP search retains
+// nullable project ids; modern RPC uses the non-null threadSearch.ts variant.
 export { OrchestrationDispatchCommandError } from "./orchestration.ts";
 export {
   OrchestrationSearchThreadsResult,
   OrchestrationThreadSearchMatch,
-} from "./orchestration.ts";
+} from "./scientThreadSearch.ts";
 // SCIENT-FORK:END
 // SCIENT-ORCHESTRATION:END
 export * from "./orchestrationDispatch.ts";

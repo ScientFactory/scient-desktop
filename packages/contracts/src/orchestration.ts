@@ -1448,8 +1448,8 @@ export const ProjectionPendingApprovalDecision = Schema.NullOr(ProviderApprovalD
 export type ProjectionPendingApprovalDecision = typeof ProjectionPendingApprovalDecision.Type;
 
 // The thread-search scan input and match source moved to threadSearch.ts
-// upstream; those two declarations were identical. The match itself is not —
-// see the V1 definition below.
+// upstream; those two declarations were identical. Scient's nullable match
+// remains distinct in scientThreadSearch.ts below.
 import {
   OrchestrationSearchThreadsError,
   OrchestrationSearchThreadsInput,
@@ -1461,25 +1461,13 @@ export {
   OrchestrationThreadSearchSource,
 };
 
-// SCIENT-FORK:START — a V1 thread-search match carries a nullable project id.
-// The V1 scan keeps threads whose `project_id` is NULL
-// (ProjectionSnapshotQuery.searchThreads), so a match can report no project.
-// Upstream's V2 scan only covers threads inside a project and declares
-// `projectId` non-null, which would reject a V1 response outright. The two
-// definitions therefore stay distinct, and index.ts re-exports this pair.
-export const OrchestrationThreadSearchMatch = Schema.Struct({
-  threadId: ThreadId,
-  projectId: Schema.NullOr(ProjectId),
-  source: OrchestrationThreadSearchSource,
-  snippet: Schema.String.check(Schema.isMaxLength(240)),
-  messageCreatedAt: Schema.NullOr(IsoDateTime),
-});
-export type OrchestrationThreadSearchMatch = typeof OrchestrationThreadSearchMatch.Type;
-
-export const OrchestrationSearchThreadsResult = Schema.Struct({
-  matches: Schema.Array(OrchestrationThreadSearchMatch),
-});
-export type OrchestrationSearchThreadsResult = typeof OrchestrationSearchThreadsResult.Type;
+// SCIENT-FORK:START — public/MCP search keeps Scient's nullable project ids.
+// Modern RPC uses the distinct non-null result from threadSearch.ts.
+import { OrchestrationSearchThreadsResult } from "./scientThreadSearch.ts";
+export {
+  OrchestrationThreadSearchMatch,
+  OrchestrationSearchThreadsResult,
+} from "./scientThreadSearch.ts";
 // SCIENT-FORK:END
 
 export const OrchestrationGetWorkflowScriptInput = Schema.Struct({

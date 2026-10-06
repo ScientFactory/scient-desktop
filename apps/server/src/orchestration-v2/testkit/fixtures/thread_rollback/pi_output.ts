@@ -1,5 +1,9 @@
 import { assert } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
+import {
+  piReplayExpectedSessionFile,
+  piReplayObservedEntries,
+} from "../../../Adapters/PiReplaySessionBinding.testkit.ts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
 import {
@@ -70,10 +74,18 @@ export function assertPiThreadRollbackOutput(
   // resumes that file, never the pre-rollback one.
   const [providerThread] = projection.providerThreads;
   assert.lengthOf(projection.providerThreads, 1);
-  assert.equal(providerThread?.nativeThreadRef?.nativeId, "/pi-sessions/session-2.jsonl");
+  const expectedFile = piReplayExpectedSessionFile(transcript, "/pi-sessions/session-2.jsonl");
+  assert.notEqual(
+    expectedFile,
+    piReplayExpectedSessionFile(transcript, "/pi-sessions/session-1.jsonl"),
+  );
+  assert.equal(providerThread?.nativeThreadRef?.nativeId, expectedFile);
   assert.deepEqual(
-    outboundOfType(transcript, "switch_session").map((frame) => field(frame, "sessionPath")),
-    ["/pi-sessions/session-2.jsonl"],
+    outboundOfType(
+      { ...transcript, entries: piReplayObservedEntries(transcript) },
+      "switch_session",
+    ).map((frame) => field(frame, "sessionPath")),
+    [expectedFile],
   );
 
   // The model has only the surviving branch: the discarded exchange is gone.
