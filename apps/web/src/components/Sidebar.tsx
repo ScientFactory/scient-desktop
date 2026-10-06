@@ -273,7 +273,10 @@ import {
   SidebarSectionsView,
 } from "../scient/sections/SidebarSectionsView";
 import { useSidebarSections } from "../scient/sections/useSidebarSections";
-import { SidebarNewThreadRow } from "../scient/sidebar/SidebarNewThreadRow";
+import {
+  SidebarNewThreadRow,
+  useSidebarNewThreadRowActions,
+} from "../scient/sidebar/SidebarNewThreadRow";
 import { handleConversationExportMenuAction } from "../scient/conversationExport/menu";
 // SCIENT-FORK:END
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
@@ -4784,41 +4787,18 @@ export default function Sidebar() {
     if (isMobile) setOpenMobile(false);
     openCommandPalette({ open: "new-thread-in" });
   }, [isMobile, newThreadContext, opensNewThreadTargetPicker, setOpenMobile]);
-  // SCIENT-FORK:START — Shift+click starts straight in the current project,
-  // skipping the picker.
-  const handleNewThreadRowClick = useCallback(
-    (event: { readonly shiftKey: boolean }) => {
-      if (!event.shiftKey || projectGroups.length === 0) {
-        handleNewThreadClick();
-        return;
-      }
-      if (isMobile) setOpenMobile(false);
-      void startNewThreadFromContext({
-        activeDraftThread: newThreadContext.activeDraftThread,
-        activeThread: newThreadContext.activeThread ?? undefined,
-        defaultProjectRef: newThreadContext.defaultProjectRef,
-        handleNewThread: newThreadContext.handleNewThread,
-      });
-    },
-    [handleNewThreadClick, isMobile, newThreadContext, projectGroups.length, setOpenMobile],
-  );
+  // SCIENT-FORK:START — the New thread row: Shift+click starts straight in the
+  // current project, and a separate button starts without a project.
+  const { handleNewThreadRowClick, handleNewWithoutProject } = useSidebarNewThreadRowActions({
+    handleNewThreadClick,
+    isMobile,
+    setOpenMobile,
+    newThreadContext,
+    projectGroupCount: projectGroups.length,
+    scratchTargetEnvironmentId,
+    startScratchThread,
+  });
   // SCIENT-FORK:END
-
-  const handleNewWithoutProject = useCallback(async () => {
-    if (scratchTargetEnvironmentId === null) return;
-    if (isMobile) setOpenMobile(false);
-    try {
-      await startScratchThread(scratchTargetEnvironmentId);
-    } catch (error) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not start without a project",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
-    }
-  }, [isMobile, scratchTargetEnvironmentId, setOpenMobile, startScratchThread]);
 
   // chat.newLocal is a valid fallback label only when both commands create
   // directly. When the picker is available, it is advertised separately as
