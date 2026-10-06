@@ -7,6 +7,10 @@
   ],
   "type": "module",
   "exports": {
+    "./legacy/orchestrationEvent": {
+      "types": "./src/legacy/orchestrationEvent.ts",
+      "import": "./src/legacy/orchestrationEvent.ts"
+    },
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"

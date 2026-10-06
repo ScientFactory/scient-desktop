@@ -3,7 +3,7 @@
  * every project row; that is exactly the row set the V1 projector can decode,
  * so the V1 reads filter on it.
  */
-import { OrchestrationEvent } from "@t3tools/contracts";
+import { OrchestrationEvent } from "@t3tools/contracts/legacy/orchestrationEvent";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
