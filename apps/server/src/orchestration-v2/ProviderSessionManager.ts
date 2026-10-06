@@ -11,6 +11,11 @@ import { makeProviderTextSnapshots } from "./scient-provider/ProviderTextSnapsho
 import { makePiSessionFileLeases } from "./scient-provider/PiSessionFileLeases.ts";
 // SCIENT-FORK: execution authority of the exact live native owner.
 import { makeSessionAuthority } from "./scient-provider/SessionAuthority.ts";
+// SCIENT-FORK: a pending canonical start keeps its session out of idle release.
+import {
+  makeStartupSessionReservations,
+  registerStartupSessionReservations,
+} from "./scient-provider/StartupSessionHold.ts";
 import { expandComposerCitationsForProvider } from "@t3tools/shared/composerCitations";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -974,6 +979,13 @@ export const layerWithOptions = (
                 (existing.busyCount > 0 || existing.idleGeneration !== input.onlyIfIdleGeneration)
               )
                 return [false, current] as const;
+              // SCIENT-FORK:START — a pending canonical start declines idle retirement.
+              if (
+                input.onlyIfIdleGeneration !== undefined &&
+                startupReservations.declinesIdleRetirement(input.providerSessionId, existing)
+              )
+                return [false, current] as const;
+              // SCIENT-FORK:END
               captured = existing;
               owner.entry = existing;
               // Queryable ownership is installed in the short generation handoff,
@@ -1176,6 +1188,20 @@ export const layerWithOptions = (
 
       const scheduleIdleRelease = (providerSessionId: ProviderSessionId) =>
         withActivityError(providerSessionId, scheduleIdleReleaseInternal(providerSessionId));
+
+      // SCIENT-FORK:START — a pending canonical start keeps its session out of idle release.
+      const startupReservations = makeStartupSessionReservations({
+        sessions,
+        sessionKey,
+        isReleasing: (runtime) => releasingRuntimes.has(runtime),
+        cancelIdleFiber,
+        forkIdleTimer: (input) =>
+          Effect.sleep(Duration.millis(idleTimeoutMs)).pipe(
+            Effect.andThen(releaseIfStillIdle(input)),
+            Effect.forkIn(layerScope),
+          ),
+      });
+      // SCIENT-FORK:END
 
       const touchActivity = (providerSessionId: ProviderSessionId) =>
         withActivityError(
@@ -1885,7 +1911,7 @@ export const layerWithOptions = (
       });
       // SCIENT-FORK:END
 
-      return ProviderSessionManagerV2.of({
+      const service = ProviderSessionManagerV2.of({
         // SCIENT-FORK:START — running-fork text capture.
         captureRunningForkText: textSnapshotRegistry.capture,
         withCapturedForkText: (capture, commit) =>
@@ -2498,6 +2524,9 @@ export const layerWithOptions = (
             ),
           ),
       } satisfies ProviderSessionManagerV2Shape);
+      // SCIENT-FORK: turn starts reserve sessions through this exact manager.
+      registerStartupSessionReservations(service, startupReservations);
+      return service;
     }),
   );
 
