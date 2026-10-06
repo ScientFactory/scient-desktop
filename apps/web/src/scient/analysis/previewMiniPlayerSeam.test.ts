@@ -18,7 +18,11 @@ describe("analysis preview mini-player seam", () => {
       "../../components/preview/StaticAssetImageSurface.tsx",
     );
     const layoutSource = readSource("../../components/preview/previewMiniPlayerLayout.ts");
-    const storeSource = readSource("../../previewMiniPlayerStore.ts");
+    // The inherited store and the Scient artifact reducers its marked lines call.
+    const storeSource = [
+      readSource("../../previewMiniPlayerStore.ts"),
+      readSource("../../scientPreviewMiniPlayerArtifacts.ts"),
+    ].join("\n");
     const descriptorSource = readSource("../../previewStaticImageSurface.ts");
     const sharedSources = [
       componentSource,

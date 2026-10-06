@@ -2,10 +2,14 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { DevicePlatform, ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 
+import type { PreviewStaticImageSurfaceDescriptor } from "./previewStaticImageSurface";
+// SCIENT-FORK:START — static artifact content for the floating player.
 import {
-  previewStaticImageDescriptorKey,
-  type PreviewStaticImageSurfaceDescriptor,
-} from "./previewStaticImageSurface";
+  openContent,
+  openPreviewArtifact,
+  updatePreviewArtifact,
+} from "./scientPreviewMiniPlayerArtifacts";
+// SCIENT-FORK:END
 
 export interface PreviewMiniPlayerPosition {
   readonly x: number;
@@ -102,30 +106,6 @@ function sourceContent(source: PreviewMiniPlayerSource): PreviewMiniPlayerConten
   return { ...source, id: previewMiniPlayerSourceKey(source) };
 }
 
-function artifactContent(artifact: PreviewStaticImageSurfaceDescriptor): PreviewMiniPlayerContent {
-  return { kind: "static-artifact", id: artifact.surfaceId, artifact };
-}
-
-function artifactEquals(
-  left: PreviewStaticImageSurfaceDescriptor,
-  right: PreviewStaticImageSurfaceDescriptor,
-): boolean {
-  return previewStaticImageDescriptorKey(left) === previewStaticImageDescriptorKey(right);
-}
-
-function openContent(
-  current: PreviewMiniPlayerState | undefined,
-  content: PreviewMiniPlayerContent,
-  position: PreviewMiniPlayerPosition | undefined,
-): PreviewMiniPlayerState {
-  return {
-    content,
-    position: position ?? current?.position ?? null,
-    size: current?.size ?? null,
-    lastInteraction: current?.lastInteraction ?? "drag",
-  };
-}
-
 export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((set) => ({
   byThreadKey: {},
   open: (ref, source, position) =>
@@ -148,44 +128,11 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
         },
       };
     }),
+  // SCIENT-FORK:START — static artifact images in the floating player.
   openArtifact: (ref, artifact, position) =>
-    set((state) => {
-      const threadKey = scopedThreadKey(ref);
-      const current = state.byThreadKey[threadKey];
-      const nextPosition = position ?? current?.position ?? null;
-      if (
-        current?.content.kind === "static-artifact" &&
-        artifactEquals(current.content.artifact, artifact) &&
-        current.position?.x === nextPosition?.x &&
-        current.position?.y === nextPosition?.y
-      ) {
-        return state;
-      }
-      return {
-        byThreadKey: {
-          ...state.byThreadKey,
-          [threadKey]: openContent(current, artifactContent(artifact), position),
-        },
-      };
-    }),
-  updateArtifact: (ref, artifact) =>
-    set((state) => {
-      const threadKey = scopedThreadKey(ref);
-      const current = state.byThreadKey[threadKey];
-      if (
-        current?.content.kind !== "static-artifact" ||
-        current.content.artifact.surfaceId !== artifact.surfaceId ||
-        artifactEquals(current.content.artifact, artifact)
-      ) {
-        return state;
-      }
-      return {
-        byThreadKey: {
-          ...state.byThreadKey,
-          [threadKey]: { ...current, content: artifactContent(artifact) },
-        },
-      };
-    }),
+    set((state) => openPreviewArtifact(state, ref, artifact, position)),
+  updateArtifact: (ref, artifact) => set((state) => updatePreviewArtifact(state, ref, artifact)),
+  // SCIENT-FORK:END
   close: (ref) =>
     set((state) => {
       const threadKey = scopedThreadKey(ref);
