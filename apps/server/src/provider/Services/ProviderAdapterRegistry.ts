@@ -13,7 +13,7 @@ import type * as Effect from "effect/Effect";
 import type * as PubSub from "effect/PubSub";
 import type * as Scope from "effect/Scope";
 
-import type { ProviderAdapterError, ProviderUnsupportedError } from "../Errors.ts";
+import type { ProviderAdapterError, ProviderInstanceNotFoundError } from "../Errors.ts";
 import type { ProviderAdapterShape } from "./ProviderAdapter.ts";
 import type { ProviderContinuationIdentity } from "../ProviderDriver.ts";
 
@@ -32,18 +32,18 @@ export interface ProviderInstanceRoutingInfo {
 export interface ProviderAdapterRegistryShape {
   /**
    * Resolve the adapter for a specific instance id. Returns
-   * `ProviderUnsupportedError` if no such instance is currently registered
+   * `ProviderInstanceNotFoundError` if no such instance is currently registered
    * (which covers "never configured" *and* "configured but the driver is
    * unavailable in this build" — both surface the same failure to callers
    * that expect a working adapter).
    */
   readonly getByInstance: (
     instanceId: ProviderInstanceId,
-  ) => Effect.Effect<ProviderAdapterShape<ProviderAdapterError>, ProviderUnsupportedError>;
+  ) => Effect.Effect<ProviderAdapterShape<ProviderAdapterError>, ProviderInstanceNotFoundError>;
 
   readonly getInstanceInfo: (
     instanceId: ProviderInstanceId,
-  ) => Effect.Effect<ProviderInstanceRoutingInfo, ProviderUnsupportedError>;
+  ) => Effect.Effect<ProviderInstanceRoutingInfo, ProviderInstanceNotFoundError>;
 
   /**
    * List all live instance ids. Excludes unavailable/shadow instances —

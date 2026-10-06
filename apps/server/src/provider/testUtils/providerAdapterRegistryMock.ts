@@ -12,7 +12,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
 
-import { ProviderUnsupportedError, type ProviderAdapterError } from "../Errors.ts";
+import { ProviderInstanceNotFoundError, type ProviderAdapterError } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import type { ProviderAdapterRegistryShape } from "../Services/ProviderAdapterRegistry.ts";
 
@@ -37,11 +37,7 @@ export const makeAdapterRegistryMock = (adapters: KindAdapterMap): ProviderAdapt
     const adapter = byInstanceId.get(instanceId);
     return adapter
       ? Effect.succeed(adapter)
-      : Effect.fail(
-          new ProviderUnsupportedError({
-            provider: ProviderDriverKind.make(instanceId),
-          }),
-        );
+      : Effect.fail(new ProviderInstanceNotFoundError({ instanceId }));
   };
 
   return {
@@ -49,11 +45,7 @@ export const makeAdapterRegistryMock = (adapters: KindAdapterMap): ProviderAdapt
     getInstanceInfo: (instanceId) => {
       const adapter = byInstanceId.get(instanceId);
       if (!adapter) {
-        return Effect.fail(
-          new ProviderUnsupportedError({
-            provider: ProviderDriverKind.make(instanceId),
-          }),
-        );
+        return Effect.fail(new ProviderInstanceNotFoundError({ instanceId }));
       }
       return Effect.succeed({
         instanceId,

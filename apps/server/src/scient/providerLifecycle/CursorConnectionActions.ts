@@ -444,3 +444,10 @@ export const makeCursorConnectionActions = Effect.fn("CursorConnectionActions.ma
     makeCursorConnectionActionsFromRuntime({ startLogin, verifyLoggedIn, logout }),
   );
 });
+
+export function assistedCursorConnectionMethods(
+  environment: NodeJS.ProcessEnv,
+): ReadonlyArray<ProviderConnectionMethod> {
+  // CLI endpoints and tokens do not own the SDK's account.
+  return environment.CURSOR_API_KEY?.trim() ? [] : ["cursor_browser"];
+}

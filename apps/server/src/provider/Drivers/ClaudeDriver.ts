@@ -12,12 +12,7 @@
  *
  * @module provider/Drivers/ClaudeDriver
  */
-import {
-  ClaudeSettings,
-  type ProviderConnectionMethod,
-  ProviderDriverKind,
-  type ServerProvider,
-} from "@t3tools/contracts";
+import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
@@ -30,8 +25,17 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGeneration.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import { ServerConfig } from "../../config.ts";
-import { makeClaudeConnectionActions } from "../../scient/providerLifecycle/ClaudeConnectionActions.ts";
+import * as ServerConfig from "../../config.ts";
+// SCIENT-FORK:START — assisted account flows and their capability-cache invalidation.
+import {
+  assistedClaudeConnectionMethods,
+  makeClaudeInstanceConnectionActions,
+} from "../../scient/providerLifecycle/ClaudeConnectionActions.ts";
+export {
+  assistedClaudeConnectionMethods,
+  invalidateClaudeCapabilitiesAfterAccountChange,
+} from "../../scient/providerLifecycle/ClaudeConnectionActions.ts";
+// SCIENT-FORK:END
 import { makeClaudeManagedRuntimeResolution } from "../../scient/providerLifecycle/ClaudeManagedRuntimeActions.ts";
 import { makeClaudeVoiceTranscriptCorrection } from "../../scient/voice/ClaudeVoiceTranscriptCorrection.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
@@ -54,11 +58,12 @@ import * as ModelManifest from "../ModelManifest.ts";
 import { resolveClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
 import {
   defaultProviderContinuationIdentity,
-  type ProviderConnectionActions,
   type ProviderDriver,
   type ProviderInstance,
 } from "../ProviderDriver.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
+// SCIENT-FORK:START — identity stamp carries assisted connection and runtime state.
+import { withConnectionInstanceIdentity } from "./scientInstanceIdentity.ts";
+// SCIENT-FORK:END
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
@@ -73,7 +78,6 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
-import { hasExternalClaudeAccountConfiguration } from "./ClaudeAuthStatus.ts";
 import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
@@ -84,35 +88,6 @@ const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
-
-/**
- * Account changes invalidate Claude's per-instance initialization cache before
- * the connection manager refreshes the authoritative provider snapshot.
- */
-export function invalidateClaudeCapabilitiesAfterAccountChange(
-  actions: ProviderConnectionActions,
-  invalidate: Effect.Effect<void>,
-): ProviderConnectionActions {
-  return {
-    ...actions,
-    start: (method) =>
-      actions.start(method).pipe(
-        Effect.map((attempt) => ({
-          ...attempt,
-          waitForCompletion: attempt.waitForCompletion.pipe(Effect.tap(() => invalidate)),
-        })),
-      ),
-    disconnect: actions.disconnect.pipe(Effect.tap(() => invalidate)),
-  };
-}
-
-/** Expose the official Claude Code account flows that the configured provider can consume. */
-export function assistedClaudeConnectionMethods(
-  providerEnvironment: NodeJS.ProcessEnv,
-): ReadonlyArray<ProviderConnectionMethod> {
-  if (hasExternalClaudeAccountConfiguration(providerEnvironment)) return [];
-  return ["claude_subscription", "claude_console"];
-}
 
 function isClaudeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
@@ -142,35 +117,8 @@ export type ClaudeDriverEnv =
   | HttpClient.HttpClient
   | ModelManifest.ModelManifest
   | Path.Path
-  | ServerConfig
+  | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService;
-
-const withInstanceIdentity =
-  (input: {
-    readonly instanceId: ProviderInstance["instanceId"];
-    readonly displayName: string | undefined;
-    readonly accentColor: string | undefined;
-    readonly continuationGroupKey: string;
-    readonly runtime: NonNullable<NonNullable<ServerProvider["connection"]>["runtime"]>;
-    readonly connectionMethods: ReadonlyArray<ProviderConnectionMethod>;
-  }) =>
-  (snapshot: ServerProviderDraft): ServerProvider => ({
-    ...snapshot,
-    instanceId: input.instanceId,
-    driver: DRIVER_KIND,
-    ...(input.displayName ? { displayName: input.displayName } : {}),
-    ...(input.accentColor ? { accentColor: input.accentColor } : {}),
-    continuation: { groupKey: input.continuationGroupKey },
-    connection: {
-      methods: snapshot.auth.required === false ? [] : input.connectionMethods,
-      canDisconnect:
-        snapshot.auth.required !== false &&
-        input.connectionMethods.length > 0 &&
-        snapshot.auth.status === "authenticated",
-      operation: null,
-      runtime: input.runtime,
-    },
-  });
 
 export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -185,7 +133,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const serverConfig = yield* ServerConfig;
+      const serverConfig = yield* ServerConfig.ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -240,8 +188,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           ? configDir
           : undefined,
       );
-      const stampIdentity = withInstanceIdentity({
+      const stampIdentity = withConnectionInstanceIdentity({
         instanceId,
+        driverKind: DRIVER_KIND,
         displayName,
         accentColor,
         continuationGroupKey,
@@ -298,19 +247,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         serverConfig.cwd,
         effectiveProcessEnv,
       );
-      const providerConnectionActions =
-        connectionMethods.length > 0
-          ? yield* makeClaudeConnectionActions(effectiveConfig, effectiveProcessEnv, spawner)
-          : undefined;
-      const connectionActions = providerConnectionActions
-        ? {
-            ...invalidateClaudeCapabilitiesAfterAccountChange(
-              providerConnectionActions,
-              Cache.invalidate(capabilitiesProbeCache, capabilitiesCacheKey),
-            ),
-            methods: connectionMethods,
-          }
-        : undefined;
+      const connectionActions = yield* makeClaudeInstanceConnectionActions({
+        connectionMethods,
+        settings: effectiveConfig,
+        environment: effectiveProcessEnv,
+        spawner,
+        invalidateCapabilities: Cache.invalidate(capabilitiesProbeCache, capabilitiesCacheKey),
+      });
 
       // Start the TTL-gated refresh without delaying provider readiness. The
       // next check observes a remote manifest after the background fetch lands.
@@ -376,17 +319,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
             }),
         ),
       );
-      const snapshotForCwd = (cwd: string) =>
-        !effectiveConfig.enabled
-          ? snapshot.getSnapshot
-          : Effect.all([
-              snapshot.getSnapshot,
-              discoverClaudeSkills(effectiveConfig, cwd, processEnv),
-            ]).pipe(
-              Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })),
-              Effect.provideService(FileSystem.FileSystem, fileSystem),
-              Effect.provideService(Path.Path, path),
-            );
       const skillActions = {
         setEnabled: (skill: {
           readonly name: string;
@@ -482,7 +414,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         enabled,
         snapshot,
         invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
-        snapshotForCwd,
+        snapshotForCwd: (cwd: string) =>
+          !effectiveConfig.enabled
+            ? snapshot.getSnapshot
+            : Effect.all([
+                snapshot.getSnapshot,
+                discoverClaudeSkills(effectiveConfig, cwd, processEnv),
+              ]).pipe(
+                Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })),
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+              ),
         skillActions,
         orchestrationAdapter,
         textGeneration,
