@@ -66,6 +66,12 @@ import * as Schema from "effect/Schema";
 import { frozenForkPortableReason } from "./scient-fork/ConversationForkNativeSource.ts";
 // SCIENT-FORK:START — Scient orchestration modules
 import {
+  classifyProviderWorkAdmission,
+  commitProviderWorkAdmission,
+  OrchestratorProviderWorkDeferredError,
+  providerWorkMessageCommand,
+} from "./scient-fork/ProviderWorkAdmission.ts";
+import {
   heldSteerStopCancellation,
   isReplayableBesideAdmittedSteer,
   makeDroidHeldSteer,
@@ -216,15 +222,9 @@ export class OrchestratorCommandPreviouslyRejectedError extends Schema.TaggedErr
   }
 }
 
-/** A still-owned native generation can retry once its predecessor has settled. */
-export class OrchestratorProviderWorkDeferredError extends Schema.TaggedError<OrchestratorProviderWorkDeferredError>()(
-  "OrchestratorProviderWorkDeferredError",
-  { commandId: CommandId, threadId: ThreadId, workId: Schema.String },
-) {
-  override get message(): string {
-    return "Provider-initiated work is waiting for its predecessor to complete.";
-  }
-}
+// SCIENT-FORK:START — provider-initiated work, kept importable from Orchestrator.
+export { OrchestratorProviderWorkDeferredError };
+// SCIENT-FORK:END
 
 export class OrchestratorCommandIdConflictError extends Schema.TaggedError<OrchestratorCommandIdConflictError>()(
   "OrchestratorCommandIdConflictError",
@@ -10055,89 +10055,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchProviderSessionDetach(command, events, effects);
         break;
       case "provider-work.admit": {
+        // SCIENT-FORK:START — provider-initiated work runs only for its idle native owner.
         const projection = yield* readCommandProjection(command.threadId);
-        const nativeThread = projection.providerThreads.find(
-          (row) => row.id === command.providerThreadId,
-        );
         const session = yield* providerSessions
           .get(command.providerSessionId)
           .pipe(mapDispatchError(command));
-        // A checkpoint needs the generation's actual directory, never a newer
-        // project default substituted for unknown native workspace ownership.
-        if (command.runtimePolicy.cwd === null || !path.isAbsolute(command.runtimePolicy.cwd))
+        const admission = classifyProviderWorkAdmission({ command, projection, session, path });
+        if (admission.type === "refused")
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
-            cause: "Provider-initiated work requires a known absolute execution directory.",
+            cause: admission.cause,
           });
-        if (
-          projection.thread.archivedAt !== null ||
-          projection.thread.deletedAt !== null ||
-          projection.thread.activeProviderThreadId !== command.providerThreadId ||
-          projection.thread.providerInstanceId !== command.providerInstanceId ||
-          nativeThread?.appThreadId !== command.threadId ||
-          nativeThread.providerSessionId !== command.providerSessionId ||
-          nativeThread.providerInstanceId !== command.providerInstanceId ||
-          nativeThread.driver !== command.driver ||
-          Option.isNone(session) ||
-          session.value.driver !== command.driver ||
-          session.value.instanceId !== command.providerInstanceId ||
-          command.modelSelection.instanceId !== command.providerInstanceId ||
-          session.value.providerSession.cwd !== command.runtimePolicy.cwd ||
-          !projection.providerSessions.some(
-            (row) =>
-              row.id === command.providerSessionId &&
-              ["ready", "running", "waiting"].includes(row.status),
-          )
-        )
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: "Provider-initiated work no longer owns an idle native thread.",
-          });
-        if (
-          projection.runs.some((run) =>
-            ["queued", "starting", "running", "waiting"].includes(run.status),
-          )
-        )
+        if (admission.type === "deferred")
           return yield* new OrchestratorProviderWorkDeferredError({
             commandId: command.commandId,
             threadId: command.threadId,
             workId: command.workId,
           });
-        providerWorkOwner = session.value;
-        yield* dispatchMessage(
-          {
-            type: "message.dispatch",
-            commandId: command.commandId,
-            threadId: command.threadId,
-            messageId: command.messageId,
-            text: command.detail,
-            modelSelection: command.modelSelection,
-            runtimeMode: command.runtimePolicy.runtimeMode,
-            interactionMode: command.runtimePolicy.interactionMode,
-            attachments: [],
-            createdBy: "agent",
-            creationSource: "provider",
-            dispatchMode: { type: "start_immediately" },
-            notification: {
-              source: {
-                kind: "provider_work",
-                workId: command.workId,
-                providerThreadId: command.providerThreadId,
-                providerSessionId: command.providerSessionId,
-                modelSelection: command.modelSelection,
-                runtimePolicy: command.runtimePolicy,
-              },
-              outcome: "updated",
-              summary: "Provider started work",
-            },
-          },
-          events,
-          effects,
-          command,
-        );
+        providerWorkOwner = admission.owner;
+        yield* dispatchMessage(providerWorkMessageCommand(command), events, effects, command);
         break;
+        // SCIENT-FORK:END
       }
       case "message.dispatch": {
         // The provider owns a native subagent's conversation, so a sent
@@ -10582,30 +10521,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
 
-    // Thread → native generation → SQL. The cached planning owner is rechecked
-    // inside the fence; physical shutdown never runs while that fence is held.
+    // SCIENT-FORK:START — provider-initiated work commits inside its native admission fence.
     const committed = yield* command.type === "provider-work.admit"
-      ? Effect.gen(function* () {
-          if (plan.providerWorkOwner === undefined)
-            return yield* new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause: "Provider-initiated work has no native admission owner.",
-            });
-          const result = yield* providerSessions.withProviderWorkAdmission(
-            command,
-            plan.providerWorkOwner,
-            commit,
-          );
-          if (Option.isNone(result))
-            return yield* new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause: "Provider-initiated work lost its native generation before admission.",
-            });
-          return result.value;
+      ? commitProviderWorkAdmission({
+          DispatchError: OrchestratorDispatchError,
+          providerSessions,
+          command,
+          owner: plan.providerWorkOwner,
+          commit,
         })
       : commit;
+    // SCIENT-FORK:END
 
     if (committed.receipt.status === "rejected") {
       return yield* new OrchestratorCommandPreviouslyRejectedError({
