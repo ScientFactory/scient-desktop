@@ -1,7 +1,6 @@
 // SCIENT-FORK:START
 import {
   FILE_ACTIVE_RANGE_ATTRIBUTE,
-  SCIENT_FILE_UNSAFE_CSS,
   StaticTextFileSurface,
   type FilePostRender,
 } from "~/scient/fileSurfaces/StaticTextFileSurface";
@@ -13,6 +12,8 @@ import {
 } from "~/scient/fileSurfaces/scientWorkspaceViewerRefresh";
 import {
   ScientMathSourceToolbar,
+  scientEditorGutterUtility,
+  scientFileEditorUnsafeCss,
   useScientFileEditorBindings,
 } from "~/scient/fileSurfaces/scientFileEditorBindings";
 import {
@@ -50,16 +51,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import {
-  Code2,
-  Download,
-  Eye,
-  FolderTree,
-  Globe,
-  MessageSquarePlus,
-  Table2,
-  WrapTextIcon,
-} from "lucide-react";
+import { Code2, Download, Eye, FolderTree, Globe, Table2, WrapTextIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
   lazy,
@@ -225,24 +217,6 @@ interface FilePreviewPanelProps {
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
-const FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS = `
-  ${SCIENT_FILE_UNSAFE_CSS}
-
-  [data-gutter-utility-slot] {
-    right: auto;
-    left: 0;
-    justify-content: flex-start;
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  [data-line]:hover [data-gutter-utility-slot],
-  [data-line]:focus-within [data-gutter-utility-slot],
-  [data-gutter-utility-slot]:focus-within {
-    opacity: 1;
-    pointer-events: auto;
-  }
-`;
 const ScientPdfReader = lazy(() =>
   import("~/scient/pdf/ScientPdfReader").then((module) => ({
     default: module.ScientPdfReader,
@@ -1072,10 +1046,7 @@ function EditableFileEditor({
                 theme: resolveDiffThemeName(resolvedTheme),
                 preferredHighlighter: PREFERRED_HIGHLIGHTER,
                 themeType: resolvedTheme,
-                unsafeCSS:
-                  gutterUtilityVisibility === "hover"
-                    ? FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS
-                    : SCIENT_FILE_UNSAFE_CSS,
+                unsafeCSS: scientFileEditorUnsafeCss(gutterUtilityVisibility),
                 onPostRender: handlePostRender,
               }}
               selectedLines={displayedRange}
@@ -1095,35 +1066,13 @@ function EditableFileEditor({
                   ))}
                 </div>
               )}
-              {...(renderEditorGutterAction === undefined
-                ? {}
-                : {
-                    renderGutterUtility: (
-                      getHoveredLine: () => GetHoveredLineResult<"file"> | undefined,
-                    ) => (
-                      <div className="flex items-center gap-px">
-                        {renderEditorGutterAction(getHoveredLine)}
-                        {enableFileComments ? (
-                          <button
-                            type="button"
-                            className="flex size-5 cursor-pointer items-center justify-center rounded-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                            aria-label="Add comment"
-                            onClick={() => {
-                              const hoveredLine = getHoveredLine();
-                              if (hoveredLine !== undefined) {
-                                handleGutterUtilityClick({
-                                  start: hoveredLine.lineNumber,
-                                  end: hoveredLine.lineNumber,
-                                });
-                              }
-                            }}
-                          >
-                            <MessageSquarePlus className="size-3" />
-                          </button>
-                        ) : null}
-                      </div>
-                    ),
-                  })}
+              // SCIENT-FORK:START — editor action beside Add comment in the gutter
+              {...scientEditorGutterUtility(
+                renderEditorGutterAction,
+                enableFileComments,
+                handleGutterUtilityClick,
+              )}
+              // SCIENT-FORK:END
               className="min-h-full"
               contentEditable={!editingBlocked}
             />
