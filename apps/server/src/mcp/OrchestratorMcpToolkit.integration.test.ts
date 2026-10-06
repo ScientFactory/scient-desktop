@@ -57,6 +57,7 @@ import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/Claud
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import {
   CodexOrchestratorReplayHarness,
+  emptyMcpReplayPrompt,
   withIssuedCodexMcpReplayExpectations,
 } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
 import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
@@ -513,6 +514,20 @@ describe("orchestrator MCP toolkit", () => {
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const deliveryTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
+          // These fixture-owned prompts define mock routing and results; provider
+          // guidance remains visible in the captured prepared input.
+          const claudePrompts = new Map<string, string>();
+          const declareClaudePrompt = (text: string) => {
+            claudePrompts.set(
+              emptyMcpReplayPrompt(ProviderDriverKind.make("claudeAgent"), text),
+              text,
+            );
+          };
+          for (const text of [delegatedPrompt, cancellationPrompt, createdThreadPrompt]) {
+            declareClaudePrompt(text);
+          }
+          const claudePrompt = (turn: ProviderAdapterV2TurnInput) =>
+            claudePrompts.get(turn.message.text) ?? turn.message.text;
           const registryLayer = ProviderAdapterRegistry.makeLayer([
             makeDeterministicAdapter({
               instanceId: codexInstanceId,
@@ -540,16 +555,16 @@ describe("orchestrator MCP toolkit", () => {
               driver: ProviderDriverKind.make("claudeAgent"),
               capabilities: ClaudeProviderCapabilitiesV2,
               capturedTurns,
-              shouldComplete: (turn) => turn.message.text !== cancellationPrompt,
+              shouldComplete: (turn) => claudePrompt(turn) !== cancellationPrompt,
               terminalGate: (turn) =>
                 turn.message.text.startsWith("Delegated task") ||
                 turn.message.text.startsWith("Delegated tasks")
                   ? deliveryTerminalGates.get(turn.threadId)
                   : parentTerminalGates.get(turn.threadId),
               response: (turn) =>
-                turn.message.text === delegatedPrompt
+                claudePrompt(turn) === delegatedPrompt
                   ? delegatedResult
-                  : `Claude completed: ${turn.message.text}`,
+                  : `Claude completed: ${claudePrompt(turn)}`,
             }),
           ]);
           // Captures parent-wake offers made when a delegated child
@@ -775,6 +790,7 @@ describe("orchestrator MCP toolkit", () => {
             let parentRootNodeId = parentRun.rootNodeId;
             const queueAutomaticCompletion = (suffix: string, taskText: string) =>
               Effect.gen(function* () {
+                declareClaudePrompt(taskText);
                 const delegated = yield* orchestrator.dispatch({
                   type: "delegated_task.request",
                   createdBy: "agent",
@@ -1016,9 +1032,10 @@ describe("orchestrator MCP toolkit", () => {
             // read acknowledges delivery only after the terminal result is
             // returned untruncated, never from the child prompt or a partial
             // result page.
+            const directReadPrompt = "Complete before a parent reads this child result directly.";
             const directRead = yield* queueAutomaticCompletion(
               "direct-child-read",
-              "Complete before a parent reads this child result directly.",
+              directReadPrompt,
             );
             if (directRead.task.childThreadId === null) {
               return yield* Effect.die(new Error("Direct-read child thread missing."));
@@ -1036,6 +1053,20 @@ describe("orchestrator MCP toolkit", () => {
               status: "completed",
               timedOut: false,
             });
+            expect(
+              (yield* Ref.get(capturedTurns)).filter(
+                (turn) => turn.threadId === directChildThreadId,
+              ),
+            ).toEqual([
+              {
+                instanceId: claudeInstanceId,
+                threadId: directChildThreadId,
+                text: emptyMcpReplayPrompt(
+                  ProviderDriverKind.make("claudeAgent"),
+                  directReadPrompt,
+                ),
+              },
+            ]);
             const pendingAfterWait = yield* orchestrator.getThreadProjection(parentThreadId);
             expect(
               pendingAfterWait.subagents.find((task) => task.id === directRead.task.id)
@@ -1800,7 +1831,7 @@ describe("orchestrator MCP toolkit", () => {
               {
                 instanceId: claudeInstanceId,
                 threadId: delegated.childThreadId,
-                text: delegatedPrompt,
+                text: emptyMcpReplayPrompt(ProviderDriverKind.make("claudeAgent"), delegatedPrompt),
               },
             ]);
             expect(
