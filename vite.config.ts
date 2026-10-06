@@ -378,9 +378,7 @@ export default defineConfig({
       // Lower a ceiling when you migrate a file, and delete its entry at zero.
       ...Object.entries({
         "apps/server/src/orchestration/Layers/ThreadDeletionReactor.test.ts": 2,
-        "apps/server/src/orchestration/commandInvariants.test.ts": 5,
         "apps/server/src/provider/Layers/CursorProvider.test.ts": 1,
-        "apps/server/src/provider/Layers/ProviderService.test.ts": 2,
       }).map(([file, maxOccurrences]) => {
         const rule: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
         return { files: [file], rules: { "t3code/no-manual-effect-runtime-in-tests": rule } };

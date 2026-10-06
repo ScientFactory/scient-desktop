@@ -118,6 +118,13 @@ then commits through [`EventSink.ts`][sink]. The accepted receipt, events, mater
 and requested effects share one SQL transaction. Publication and worker wakeups follow commit.
 A retry returns the durable receipt; a command ID cannot be reused for another thread.
 
+The disconnected V1 provider service, session directory, metrics and queue execution helpers
+are retired. Historical SQL and queue-document readers remain import boundaries; their
+schemas and migrations are not runtime execution authorities. Retained snapshot/view schemas,
+SQL approval scalars and current RPC method names have canonical owners in
+`packages/contracts/src/scientOrchestrationSnapshot.ts`, `scientApprovalProjection.ts` and
+`scientOrchestrationRpcMethods.ts`. Public exports retain the same schema objects.
+
 Clients send commands such as `message.dispatch`, `run.interrupt`, `runtime-request.respond`,
 `queued-run.cancel`, and `checkpoint.rollback`. Provider adapters emit normalized V2 events;
 [`ProviderEventIngestor.ts`][ingest] associates them with the recorded run/attempt/node and

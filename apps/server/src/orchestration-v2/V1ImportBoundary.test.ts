@@ -39,7 +39,6 @@ const legacyReaderFiles: Record<string, string> = {
   "persistence/RetiredThreadAttachmentCleanup.ts": "retired legacy attachment cleanup",
   "scient/answerAttention/completedAnswerSql.ts":
     "retained V1 completed-answer query; native shells produce their own metadata",
-  "scient/threadQueue/Ledger.ts": "legacy admission journal checks its bootstrap handoff message",
 };
 
 function productionTypeScriptFiles(directory: string): ReadonlyArray<string> {
@@ -265,6 +264,7 @@ it("keeps legacy hydration and admission imports at explicit boundaries", () => 
     "project/ProjectService.ts",
     "scient/conversationExport/ConversationSnapshotService.ts",
     "scient/conversationExport/conversationSnapshotProjection.ts",
+    // Reexports the retained queue document reader/error API for compatibility HTTP.
     "scient/threadQueue/Ledger.ts",
     "scient/threadQueue/admission.ts",
     "scient/threadQueue/http.ts",

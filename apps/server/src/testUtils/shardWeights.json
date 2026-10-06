@@ -1,5 +1,4 @@
 {
-  "integration/providerService.integration.test.ts": 0.5,
   "src/bin.test.ts": 0.8,
   "src/checkpointing/CheckpointStore.test.ts": 0.6,
   "src/device/sshDeviceScript.test.ts": 2.9,
@@ -11,7 +10,6 @@
   "src/provider/Drivers/AntigravityDriver.test.ts": 2,
   "src/provider/Layers/CursorProvider.test.ts": 1.4,
   "src/provider/Layers/GrokProvider.test.ts": 0.7,
-  "src/provider/Layers/ProviderService.test.ts": 0.5,
   "src/provider/acp/AcpJsonRpcConnection.test.ts": 6.2,
   "src/provider/acp/XAiAcpExtension.test.ts": 0.6,
   "src/provider/opencodeRuntime.environment.test.ts": 1.1,
