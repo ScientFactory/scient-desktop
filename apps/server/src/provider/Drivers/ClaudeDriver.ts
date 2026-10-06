@@ -16,7 +16,6 @@ import {
   ClaudeSettings,
   type ProviderConnectionMethod,
   ProviderDriverKind,
-  type ServerProvider,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
@@ -58,7 +57,9 @@ import {
   type ProviderDriver,
   type ProviderInstance,
 } from "../ProviderDriver.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
+// SCIENT-FORK:START — identity stamp carries assisted connection and runtime state.
+import { withConnectionInstanceIdentity } from "./scientInstanceIdentity.ts";
+// SCIENT-FORK:END
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
@@ -145,33 +146,6 @@ export type ClaudeDriverEnv =
   | ServerConfig
   | ServerSettings.ServerSettingsService;
 
-const withInstanceIdentity =
-  (input: {
-    readonly instanceId: ProviderInstance["instanceId"];
-    readonly displayName: string | undefined;
-    readonly accentColor: string | undefined;
-    readonly continuationGroupKey: string;
-    readonly runtime: NonNullable<NonNullable<ServerProvider["connection"]>["runtime"]>;
-    readonly connectionMethods: ReadonlyArray<ProviderConnectionMethod>;
-  }) =>
-  (snapshot: ServerProviderDraft): ServerProvider => ({
-    ...snapshot,
-    instanceId: input.instanceId,
-    driver: DRIVER_KIND,
-    ...(input.displayName ? { displayName: input.displayName } : {}),
-    ...(input.accentColor ? { accentColor: input.accentColor } : {}),
-    continuation: { groupKey: input.continuationGroupKey },
-    connection: {
-      methods: snapshot.auth.required === false ? [] : input.connectionMethods,
-      canDisconnect:
-        snapshot.auth.required !== false &&
-        input.connectionMethods.length > 0 &&
-        snapshot.auth.status === "authenticated",
-      operation: null,
-      runtime: input.runtime,
-    },
-  });
-
 export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: {
@@ -240,8 +214,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           ? configDir
           : undefined,
       );
-      const stampIdentity = withInstanceIdentity({
+      const stampIdentity = withConnectionInstanceIdentity({
         instanceId,
+        driverKind: DRIVER_KIND,
         displayName,
         accentColor,
         continuationGroupKey,

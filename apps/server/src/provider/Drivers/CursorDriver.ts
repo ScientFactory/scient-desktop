@@ -14,7 +14,6 @@ import {
   type ProviderConnectionMethod,
   ProviderDriverKind,
   ProviderSetupError,
-  type ServerProvider,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
@@ -48,7 +47,9 @@ import {
   type ProviderDriver,
   type ProviderInstance,
 } from "../ProviderDriver.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
+// SCIENT-FORK:START — identity stamp carries assisted connection and runtime state.
+import { withConnectionInstanceIdentity } from "./scientInstanceIdentity.ts";
+// SCIENT-FORK:END
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   makeCachedProviderMaintenanceResolution,
@@ -112,33 +113,6 @@ export type CursorDriverEnv =
   | ServerSecretStore.ServerSecretStore
   | ServerSettings.ServerSettingsService;
 
-const withInstanceIdentity =
-  (input: {
-    readonly instanceId: ProviderInstance["instanceId"];
-    readonly displayName: string | undefined;
-    readonly accentColor: string | undefined;
-    readonly continuationGroupKey: string;
-    readonly runtime: NonNullable<NonNullable<ServerProvider["connection"]>["runtime"]>;
-    readonly connectionMethods: ReadonlyArray<ProviderConnectionMethod>;
-  }) =>
-  (snapshot: ServerProviderDraft): ServerProvider => ({
-    ...snapshot,
-    instanceId: input.instanceId,
-    driver: DRIVER_KIND,
-    ...(input.displayName ? { displayName: input.displayName } : {}),
-    ...(input.accentColor ? { accentColor: input.accentColor } : {}),
-    continuation: { groupKey: input.continuationGroupKey },
-    connection: {
-      methods: snapshot.auth.required === false ? [] : input.connectionMethods,
-      canDisconnect:
-        snapshot.auth.required !== false &&
-        input.connectionMethods.length > 0 &&
-        snapshot.auth.status === "authenticated",
-      operation: null,
-      runtime: input.runtime,
-    },
-  });
-
 export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: {
@@ -179,8 +153,9 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         managedRuntime.usesManagedPath,
       );
       const connectionMethods = assistedCursorConnectionMethods(processEnv);
-      const stampIdentity = withInstanceIdentity({
+      const stampIdentity = withConnectionInstanceIdentity({
         instanceId,
+        driverKind: DRIVER_KIND,
         displayName: displayName ?? "Cursor",
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
