@@ -21,7 +21,7 @@ describe("analysis run promotion RPC seam", () => {
       "[WS_METHODS.analysisPromoteRun]: AuthOrchestrationOperateScope",
     );
 
-    const websocket = source("../../ws.ts");
+    const websocket = [source("../../ws.ts"), source("./ScientificRpcHandlers.ts")].join("\n");
     expect(websocket).toContain("analysis.promoteRun(input)");
     expect(websocket).toContain("[WS_METHODS.analysisPromoteRun]");
   });

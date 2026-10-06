@@ -39,6 +39,30 @@ import { ChatAttachment } from "./chatAttachment.ts";
 // SCIENT-FORK:START — explicit Scient skill selection travels with the turn.
 import { SelectedScientSkillNames } from "./scientSkillSelection.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient's own V2 wire schemas, re-exported under their names.
+import {
+  OrchestrationV2DroidHeldSteer,
+  OrchestrationV2ProviderRuntimePolicy,
+  OrchestrationV2SubagentPresentation,
+  ScientInternalCommands,
+  ScientNotificationSources,
+  ThreadSectionSetCommand,
+} from "./scient/orchestrationV2Schemas.ts";
+export {
+  OrchestrationV2DroidHeldSteer,
+  OrchestrationV2ProviderRuntimePolicy,
+  OrchestrationV2SubagentPresentation,
+} from "./scient/orchestrationV2Schemas.ts";
+import {
+  makeMessageForkItems,
+  OrchestrationV2ClaudeForkBoundaryEvidence,
+  OrchestrationV2ForkInitialization,
+} from "./scient/orchestrationV2Fork.ts";
+export {
+  OrchestrationV2ClaudeForkBoundaryEvidence,
+  OrchestrationV2ForkInitialization,
+} from "./scient/orchestrationV2Fork.ts";
+// SCIENT-FORK:END
 import {
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
@@ -545,34 +569,6 @@ export const OrchestrationV2RunBackgroundWorkCancelled = Schema.Struct({
 export type OrchestrationV2RunBackgroundWorkCancelled =
   typeof OrchestrationV2RunBackgroundWorkCancelled.Type;
 
-/** The immutable execution settings of an already-started native generation. */
-export const OrchestrationV2ProviderRuntimePolicy = Schema.Struct({
-  runtimeMode: RuntimeMode,
-  interactionMode: ProviderInteractionMode,
-  cwd: Schema.NullOr(Schema.String),
-  approvalPolicy: Schema.optional(Schema.Unknown),
-  sandboxPolicy: Schema.optional(Schema.Unknown),
-  reasoningEffort: Schema.optional(Schema.String),
-});
-export type OrchestrationV2ProviderRuntimePolicy = typeof OrchestrationV2ProviderRuntimePolicy.Type;
-
-// SCIENT-FORK:START — one durable intent; native readiness is deliberately absent.
-export const OrchestrationV2DroidHeldSteer = Schema.Struct({
-  revision: CommandId,
-  messageId: MessageId,
-  sourceAttemptId: RunAttemptId,
-  sourceRootNodeId: NodeId,
-  sourceProviderTurnId: ProviderTurnId,
-  sourceProviderSessionId: ProviderSessionId,
-  modelSelection: ModelSelection,
-  runtimePolicy: OrchestrationV2ProviderRuntimePolicy,
-  phase: Schema.Literals(["held", "pre_admission"]),
-  /** Describes an uncertain claim after crash; cannot recreate a live lease. */
-  admissionLease: Schema.optional(Schema.String),
-});
-export type OrchestrationV2DroidHeldSteer = typeof OrchestrationV2DroidHeldSteer.Type;
-// SCIENT-FORK:END
-
 export const OrchestrationV2Run = Schema.Struct({
   id: RunId,
   threadId: ThreadId,
@@ -697,57 +693,6 @@ export const OrchestrationV2ExecutionNode = Schema.Struct({
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ExecutionNode = typeof OrchestrationV2ExecutionNode.Type;
-
-/** Observed display metadata. These fields never grant execution or continuation authority. */
-export const OrchestrationV2SubagentPresentation = Schema.Struct({
-  kind: Schema.Literals(["subagent", "subagent_batch", "workflow", "workflow_agent"]),
-  role: Schema.optional(Schema.String),
-  effort: Schema.optional(Schema.String),
-  workflowId: Schema.optional(NodeId),
-  workflowName: Schema.optional(Schema.String),
-  agentIndex: Schema.optional(NonNegativeInt),
-  phaseIndex: Schema.optional(NonNegativeInt),
-  phaseTitle: Schema.optional(Schema.String),
-  attempt: Schema.optional(NonNegativeInt),
-  activationCount: Schema.optional(PositiveInt),
-  firstSeenAt: Schema.optional(IsoDateTime),
-  phases: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        index: NonNegativeInt,
-        title: Schema.String,
-      }),
-    ).check(Schema.isMaxLength(64)),
-  ),
-  usage: Schema.optional(
-    Schema.Struct({
-      totalTokens: Schema.optional(NonNegativeInt),
-      inputTokens: Schema.optional(NonNegativeInt),
-      cachedInputTokens: Schema.optional(NonNegativeInt),
-      outputTokens: Schema.optional(NonNegativeInt),
-      reasoningOutputTokens: Schema.optional(NonNegativeInt),
-      toolUses: Schema.optional(NonNegativeInt),
-      durationMs: Schema.optional(NonNegativeInt),
-    }).check(
-      Schema.makeFilter(
-        (usage) =>
-          Object.values(usage).some((count) => count !== undefined) ||
-          "Usage must include an observed count.",
-      ),
-    ),
-  ),
-  lastToolName: Schema.optional(Schema.String),
-  outputFile: Schema.optional(Schema.String),
-  runHandles: Schema.optional(
-    Schema.Struct({
-      runId: Schema.optional(Schema.String),
-      scriptPath: Schema.optional(Schema.String),
-      transcriptDir: Schema.optional(Schema.String),
-      sessionUrl: Schema.optional(Schema.String.check(Schema.isPattern(/^https?:\/\//))),
-    }),
-  ),
-});
-export type OrchestrationV2SubagentPresentation = typeof OrchestrationV2SubagentPresentation.Type;
 
 export const OrchestrationV2Subagent = Schema.Struct({
   presentation: Schema.optional(OrchestrationV2SubagentPresentation),
@@ -1069,21 +1014,6 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
 });
 export type OrchestrationV2ProviderTurn = typeof OrchestrationV2ProviderTurn.Type;
 
-/** Exact native Claude cursors are root assistant UUIDs, rather than native turn IDs. */
-export const OrchestrationV2ClaudeForkBoundaryEvidence = Schema.Struct({
-  kind: Schema.Literal("claude_root_assistant_uuid"),
-  sourceThreadId: ThreadId,
-  runId: RunId,
-  rootNodeId: NodeId,
-  assistantNodeId: NodeId,
-  assistantItemId: TurnItemId,
-  providerThreadId: ProviderThreadId,
-  providerTurnId: ProviderTurnId,
-  nativeMessageId: Schema.String.check(Schema.isUUID()),
-});
-export type OrchestrationV2ClaudeForkBoundaryEvidence =
-  typeof OrchestrationV2ClaudeForkBoundaryEvidence.Type;
-
 export const OrchestrationV2FrozenForkSource = Schema.Struct({
   sourceThreadId: ThreadId,
   driver: ProviderDriverKind,
@@ -1167,19 +1097,8 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
     CommandNotificationSource,
     Schema.Struct({ kind: Schema.Literal("monitor") }),
     Schema.Struct({ kind: Schema.Literal("background_task") }),
-    Schema.Struct({
-      kind: Schema.Literal("provider_work"),
-      workId: TrimmedNonEmptyString,
-      providerThreadId: ProviderThreadId,
-      providerSessionId: ProviderSessionId,
-      modelSelection: ModelSelection,
-      runtimePolicy: OrchestrationV2ProviderRuntimePolicy,
-    }),
-    // SCIENT-FORK: a persisted, successful-but-cut-short provider response.
-    Schema.Struct({
-      kind: Schema.Literal("output_truncated"),
-      stopReason: Schema.String,
-    }),
+    // SCIENT-FORK: provider work and cut-short responses are Scient notification kinds.
+    ...ScientNotificationSources,
   ],
   (kind) => Schema.Struct({ kind }),
   () => ({ kind: "background_task" }),
@@ -1418,15 +1337,6 @@ export const OrchestrationV2UserMessageInputIntent = Schema.Literals([
 export type OrchestrationV2UserMessageInputIntent =
   typeof OrchestrationV2UserMessageInputIntent.Type;
 
-/** Inert presentation provenance; these origin IDs grant no execution ownership. */
-export const OrchestrationV2ForkInitialization = Schema.Struct({
-  transferId: ContextTransferId,
-  contextHandoffId: ContextHandoffId,
-  threadId: ThreadId,
-  runId: RunId,
-});
-export type OrchestrationV2ForkInitialization = typeof OrchestrationV2ForkInitialization.Type;
-
 const OrchestrationV2TurnItemBaseFields = {
   /** Group portable historical records without adopting an executable run. */
   historyTurnId: Schema.optional(TurnId),
@@ -1457,6 +1367,11 @@ const OrchestrationV2TurnItemBaseFields = {
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   updatedAt: Schema.DateTimeUtc,
 } as const;
+// SCIENT-FORK:START — message-boundary fork items and the notice older clients decode.
+export type OrchestrationV2TurnItemBaseFields = typeof OrchestrationV2TurnItemBaseFields;
+const { MessageForkItem, MessageForkNoticeItem, MessageForkItemJson, MessageForkNoticeItemJson } =
+  makeMessageForkItems(OrchestrationV2TurnItemBaseFields);
+// SCIENT-FORK:END
 
 export const OrchestrationV2FileSearchResult = Schema.Struct({
   fileName: TrimmedNonEmptyString,
@@ -1473,83 +1388,8 @@ export const OrchestrationV2WebSearchResult = Schema.Struct({
 });
 export type OrchestrationV2WebSearchResult = typeof OrchestrationV2WebSearchResult.Type;
 
-const MessageForkSource = Schema.Struct({
-  type: Schema.Literal("message"),
-  threadId: ThreadId,
-  messageId: MessageId,
-  position: Schema.Literals(["before", "after"]),
-});
-const MessageForkItemFields = {
-  ...OrchestrationV2TurnItemBaseFields,
-  type: Schema.Literal("fork"),
-  source: MessageForkSource,
-  targetThreadId: ThreadId,
-  providerThreadId: Schema.optional(ProviderThreadId),
-} as const;
-const MessageForkItemShape = Schema.Struct(MessageForkItemFields);
-const messageForkOwnership = Schema.makeFilter(
-  (item: typeof MessageForkItemShape.Type) =>
-    (item.runId === null &&
-      item.nodeId === null &&
-      item.providerThreadId === undefined &&
-      item.providerTurnId === null &&
-      item.nativeItemRef === null) ||
-    "A message fork boundary cannot carry execution authority.",
-);
-const MessageForkItem = MessageForkItemShape.check(messageForkOwnership);
-// Older clients reject an unfamiliar fork source. Send an inert notice they
-// already decode; current clients retain the exact portable message boundary.
-const MessageForkNotice = Schema.Struct({
-  ...OrchestrationV2TurnItemBaseFields,
-  runId: Schema.Null,
-  nodeId: Schema.Null,
-  providerThreadId: Schema.Null,
-  providerTurnId: Schema.Null,
-  nativeItemRef: Schema.Null,
-  type: Schema.Literal("system_notice"),
-  message: Schema.String,
-  forkBoundary: Schema.Struct({ source: MessageForkSource, targetThreadId: ThreadId }),
-});
-const decodeMessageForkNotice = SchemaGetter.transform(
-  ({
-    type: _type,
-    message: _message,
-    forkBoundary,
-    providerThreadId: _providerThreadId,
-    ...fields
-  }: typeof MessageForkNotice.Type): typeof MessageForkItem.Type => ({
-    ...fields,
-    type: "fork",
-    ...forkBoundary,
-  }),
-);
-const encodeMessageForkNotice = SchemaGetter.transform(
-  ({
-    type: _type,
-    source,
-    targetThreadId,
-    providerThreadId: _providerThreadId,
-    ...fields
-  }: typeof MessageForkItem.Type): typeof MessageForkNotice.Type => ({
-    ...fields,
-    type: "system_notice",
-    message: "Conversation forked here",
-    runId: null,
-    nodeId: null,
-    providerThreadId: null,
-    providerTurnId: null,
-    nativeItemRef: null,
-    forkBoundary: { source, targetThreadId },
-  }),
-);
-
 export const OrchestrationV2TurnItem = Schema.Union([
-  MessageForkNotice.pipe(
-    Schema.decodeTo(Schema.toType(MessageForkItem), {
-      decode: decodeMessageForkNotice,
-      encode: encodeMessageForkNotice,
-    }),
-  ),
+  MessageForkNoticeItem,
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("notification"),
@@ -2298,17 +2138,7 @@ const OrchestrationV2TurnItemJsonBaseFields = {
 } as const;
 
 export const OrchestrationV2TurnItemJson = Schema.Union([
-  MessageForkNotice.mapFields((fields) => ({
-    ...fields,
-    startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
-    completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
-    updatedAt: Schema.DateTimeUtcFromString,
-  })).pipe(
-    Schema.decodeTo(Schema.toType(MessageForkItem), {
-      decode: decodeMessageForkNotice,
-      encode: encodeMessageForkNotice,
-    }),
-  ),
+  MessageForkNoticeItemJson,
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("notification"),
@@ -2478,12 +2308,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     targetThreadId: ThreadId,
     providerThreadId: Schema.optional(ProviderThreadId),
   }),
-  MessageForkItem.mapFields((fields) => ({
-    ...fields,
-    startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
-    completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
-    updatedAt: Schema.DateTimeUtcFromString,
-  })).check(messageForkOwnership),
+  MessageForkItemJson,
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("thread_created"),
@@ -2877,12 +2702,7 @@ export const OrchestrationV2Command = Schema.Union([
     orderKey: TrimmedNonEmptyString,
   }),
   // SCIENT-FORK: filing changes presentation without recording new activity.
-  Schema.Struct({
-    type: Schema.Literal("thread.section.set"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    sectionId: Schema.NullOr(ThreadSectionId),
-  }),
+  ThreadSectionSetCommand,
   Schema.Struct({
     type: Schema.Literal("thread.visit"),
     commandId: CommandId,
@@ -3209,63 +3029,8 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
-  // SCIENT: revision checked internal admission, never an RPC command or replay authority.
-  Schema.Struct({
-    type: Schema.Literal("droid-steer.admission"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    runId: RunId,
-    revision: CommandId,
-    operation: Schema.Literals(["claim", "defer", "complete", "drop"]),
-    lease: Schema.optional(Schema.String),
-  }),
-  /** Adopt buffered native work from the exact live session; never send a user prompt. */
-  Schema.Struct({
-    type: Schema.Literal("provider-work.admit"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    messageId: MessageId,
-    providerThreadId: ProviderThreadId,
-    providerSessionId: ProviderSessionId,
-    providerInstanceId: ProviderInstanceId,
-    driver: ProviderDriverKind,
-    workId: TrimmedNonEmptyString,
-    modelSelection: ModelSelection,
-    runtimePolicy: OrchestrationV2ProviderRuntimePolicy,
-    detail: Schema.String,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("legacy-queue.reorder"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    queueItemIds: Schema.Array(TrimmedNonEmptyString),
-  }),
-  /** Migration admission creates held work and never executes a provider. */
-  Schema.Struct({
-    type: Schema.Literal("legacy-queue.import"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    queueItemId: TrimmedNonEmptyString,
-    messageId: MessageId,
-    text: Schema.String,
-    attachments: Schema.Array(ChatAttachment),
-    context: Schema.optional(OrchestrationMessageContext),
-    composerSnapshot: Schema.optional(Schema.String),
-    selectedScientSkillNames: Schema.optional(SelectedScientSkillNames),
-    modelSelection: Schema.optional(ModelSelection),
-    runtimeMode: Schema.optional(RuntimeMode),
-    interactionMode: Schema.optional(ProviderInteractionMode),
-    titleSeed: Schema.optional(TrimmedNonEmptyString),
-    sourceProposedPlan: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
-    createdAt: Schema.DateTimeUtc,
-  }),
-  /** Server-owned receipt after provider rollback and file restoration succeed. */
-  Schema.Struct({
-    type: Schema.Literal("checkpoint.rollback.complete"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    requestId: CommandId,
-  }),
+  // SCIENT-FORK: Scient's server-only admission and receipt commands come first.
+  ...ScientInternalCommands,
   /** Records that the provider rollback `requestId` failed for good. */
   Schema.Struct({
     type: Schema.Literal("checkpoint.rollback.fail"),

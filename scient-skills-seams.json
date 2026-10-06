@@ -28,7 +28,8 @@
     "packages/contracts/src/scientThreadQueue.ts",
     "packages/scient-operations/src/operation.ts",
     "packages/contracts/src/scient/skillRpcs.ts",
-    "apps/server/src/scient/ScientServerLayers.ts"
+    "apps/server/src/scient/ScientServerLayers.ts",
+    "packages/contracts/src/scient/orchestrationV2Schemas.ts"
   ],
   "skillDiffSignals": [
     "@scientfactory/scient-skills",
@@ -171,7 +172,7 @@
     },
     {
       "path": "apps/server/src/ws.ts",
-      "anchor": "WS_METHODS.providerSkillsSetEnabled",
+      "anchor": "makeSkillRpcHandlers",
       "purpose": "Expose authenticated Scient and provider-native skill management RPCs."
     },
     {
