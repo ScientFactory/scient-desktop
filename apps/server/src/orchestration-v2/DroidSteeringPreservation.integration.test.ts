@@ -2057,6 +2057,17 @@ for (const window of ["probe", "pre-admission"] as const)
             yield* trace.drain(`fifo-${index + 1}-drain`, 24, h.worker.drain(24));
             yield* trace.capture(`fifo-${index + 1}-after-drain`, { protocol: h.protocol });
             yield* trace.at(
+              `fifo-${index + 1}-start-committed`,
+              h.waitFor((p) =>
+                p.runs.some(
+                  (candidate) =>
+                    candidate.id === run.id &&
+                    (candidate.status === "starting" || candidate.status === "running"),
+                ),
+              ),
+            );
+            yield* trace.drain(`fifo-${index + 1}-start-drain`, 24, h.worker.drain(24));
+            yield* trace.at(
               `fifo-${index + 1}-native-decode`,
               h.waitDecoded(
                 (event) =>

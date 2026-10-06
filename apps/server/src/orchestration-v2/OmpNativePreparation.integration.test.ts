@@ -163,6 +163,17 @@ for (const superseded of [false, true]) {
               yield* trace.capture("replacement-after-drain", {
                 peers: f.peers.map((p) => p.state),
               });
+              yield* trace.at(
+                "replacement-start-committed",
+                waitForThread(f.threadId, (p) =>
+                  p.runs.some(
+                    (run) =>
+                      run.userMessageId === `${f.threadId}-replacement` &&
+                      (run.status === "starting" || run.status === "running"),
+                  ),
+                ),
+              );
+              yield* trace.drain("replacement-admitted-drain", 8, worker.drain(8));
               const newer = yield* trace.at(
                 "replacement-native-acceptance",
                 waitForThread(
@@ -529,6 +540,16 @@ it.live(
           assert.equal(yield* fs.readFileString(lockPath()), token);
           yield* Deferred.succeed(release, undefined);
           yield* Fiber.join(delivery).pipe(Effect.timeout("10 seconds"));
+          yield* worker.drain(16);
+          // The terminal consumer admits the successor after checkpoint capture.
+          // With the daemon disabled, join that commit before driving its start.
+          yield* waitFor((p) =>
+            p.runs.some(
+              (run) =>
+                run.userMessageId === followupId &&
+                (run.status === "starting" || run.status === "running"),
+            ),
+          );
           yield* worker.drain(16);
           const final = yield* snapshot("sql.delivery-after-release");
           // Outbox completion precedes the adapter's forked native prompt.
