@@ -85,17 +85,8 @@ import {
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
-export const ORCHESTRATION_WS_METHODS = {
-  dispatchCommand: "orchestration.dispatchCommand",
-  getForkOptions: "orchestration.getForkOptions",
-  getWorkflowScript: "orchestration.getWorkflowScript",
-  getTurnDiff: "orchestration.getTurnDiff",
-  getFullThreadDiff: "orchestration.getFullThreadDiff",
-  searchThreads: "orchestration.searchThreads",
-  getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
-  subscribeShell: "orchestration.subscribeShell",
-  subscribeThread: "orchestration.subscribeThread",
-} as const;
+// SCIENT-FORK: current wire names have one dependency-free owner.
+export { ORCHESTRATION_WS_METHODS } from "./scientOrchestrationRpcMethods.ts";
 
 /**
  * `ModelSelection` — selection of a model on a configured provider instance.

@@ -59,6 +59,8 @@ export {
 // SCIENT-FORK:END
 // SCIENT-ORCHESTRATION:END
 export * from "./orchestrationDispatch.ts";
+// SCIENT-FORK: current wire names stay independent of the legacy barrel.
+export { ORCHESTRATION_WS_METHODS } from "./scientOrchestrationRpcMethods.ts";
 export * from "./orchestrationProject.ts";
 export * from "./orchestrationV2.ts";
 export * from "./applicationEvent.ts";
