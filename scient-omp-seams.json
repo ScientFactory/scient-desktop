@@ -31,7 +31,8 @@
     "docs/user/providers-scient-agent.md",
     "packages/scient-provider-runtime/src/managedOmpRuntime.ts",
     "packages/scient-provider-runtime/src/ompManifest.ts",
-    "packages/shared/src/scientModel.ts"
+    "packages/shared/src/scientModel.ts",
+    "apps/server/src/scient/providerLifecycle/CustomModelRpcHandlers.ts"
   ],
   "scientMounts": [
     {
@@ -188,7 +189,7 @@
     },
     {
       "path": "apps/server/src/ws.ts",
-      "anchor": "encodeOmpModelSlug",
+      "anchor": "makeCustomModelRpcHandlers",
       "purpose": "Test custom model connections through Oh My Pi's own model slug."
     },
     {

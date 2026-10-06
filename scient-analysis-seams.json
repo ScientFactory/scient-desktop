@@ -49,7 +49,9 @@
     "apps/server/src/scient/ScientServerLayers.ts",
     "packages/contracts/src/scient/scientificComputingSettings.ts",
     "apps/web/src/components/preview/ScientMiniPlayerParts.tsx",
-    "apps/web/src/scient/rightPanel/scientRightPanelStore.ts"
+    "apps/web/src/scient/rightPanel/scientRightPanelStore.ts",
+    "apps/server/src/scient/ScientAssetUrls.ts",
+    "apps/server/src/scient/ScientWsServices.ts"
   ],
   "analysisDiffSignals": [
     "@scientfactory/(analysis|compute|execution)",
