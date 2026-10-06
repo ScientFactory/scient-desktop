@@ -1,11 +1,4 @@
-import {
-  getAntigravityModelGroups,
-  groupAntigravityModelRows,
-} from "@t3tools/client-runtime/antigravity-model-presentation";
-import {
-  getDroidModelSection,
-  groupDroidModelRows,
-} from "@t3tools/client-runtime/droid-model-presentation";
+import { getDroidModelSection } from "@t3tools/client-runtime/droid-model-presentation";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
@@ -56,20 +49,16 @@ import {
   shortcutLabelForCommand,
 } from "../../keybindings";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
-import { useLocalStorage } from "~/hooks/useLocalStorage";
 import {
-  buildModelSourceSectionRows,
-  COLLAPSED_MODEL_SOURCES_STORAGE_KEY,
-  CollapsedModelSources,
-  groupModelsBySource,
   hasModelSourceSections,
-  modelSourceSection,
   modelSourceSectionKey,
   modelSourceSectionLabel,
-  modelSourceSectionsApply,
-  NO_COLLAPSED_MODEL_SOURCES,
   parseModelSourceSectionKey,
 } from "~/scient/modelPicker/modelSourceSections";
+import {
+  useModelSourceSectionState,
+  useScientModelPickerGroups,
+} from "~/scient/modelPicker/useScientModelPickerGroups";
 import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
@@ -81,7 +70,7 @@ import {
 } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
 
-type ModelPickerItem = {
+export type ModelPickerItem = {
   isDefault?: boolean | undefined;
   slug: string;
   name: string;
@@ -320,20 +309,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           : [],
       ),
   );
-  const [collapsedModelSources, setCollapsedModelSources] = useLocalStorage(
-    COLLAPSED_MODEL_SOURCES_STORAGE_KEY,
-    NO_COLLAPSED_MODEL_SOURCES,
-    CollapsedModelSources,
-  );
-  // The section holding the selected model opens with the picker.
-  const [revealedModelSources, setRevealedModelSources] = useState(
-    () =>
-      new Set<string>(
-        activeModelSlug && hasModelSourceSections(activeEntry?.driverKind)
-          ? [modelSourceSectionKey(props.activeInstanceId, modelSourceSection(activeModelSlug))]
-          : [],
-      ),
-  );
+  // SCIENT-FORK:START — model source sections remember what the user collapsed
+  const sourceSectionState = useModelSourceSectionState({
+    activeInstanceId: props.activeInstanceId,
+    activeModelSlug,
+    activeDriverKind: activeEntry?.driverKind,
+  });
+  // SCIENT-FORK:END
   const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindings = providedKeybindings ?? serverKeybindings;
   const updateSettings = useUpdateClientSettings();
@@ -630,111 +612,19 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     selectedInstanceId,
   ]);
 
-  const filteredModels = useMemo(() => {
-    // Favorites remain exact model/effort shortcuts, including pre-existing bookmarks.
-    if (
-      selectedInstanceId === "favorites" ||
-      !ungroupedFilteredModels.some((model) => model.driverKind === "antigravity")
-    )
-      return ungroupedFilteredModels;
-    const visible = new Map<string, ModelPickerItem>();
-    for (const entry of instanceEntries) {
-      const rows = ungroupedFilteredModels.filter((model) => model.instanceId === entry.instanceId);
-      const groups = getAntigravityModelGroups(entry.driverKind, entry.models);
-      for (const row of groupAntigravityModelRows(
-        rows,
-        groups,
-        entry.instanceId === props.activeInstanceId ? activeModelSlug : null,
-      )) {
-        visible.set(providerModelKey(row.instanceId, row.slug), row);
-      }
-    }
-    return ungroupedFilteredModels.flatMap((row) => {
-      const shown = visible.get(providerModelKey(row.instanceId, row.slug));
-      return shown ? [shown] : [];
+  // SCIENT-FORK:START — Antigravity families, Droid sections and model source sections
+  const { filteredModels, droidGroups, sourceSectionRows, toggleModelSourceSection } =
+    useScientModelPickerGroups({
+      ungroupedFilteredModels,
+      selectedInstanceId,
+      instanceEntries,
+      entryByInstanceId,
+      activeInstanceId: props.activeInstanceId,
+      activeModelSlug,
+      isSearching,
+      sourceSectionState,
     });
-  }, [
-    ungroupedFilteredModels,
-    selectedInstanceId,
-    instanceEntries,
-    props.activeInstanceId,
-    activeModelSlug,
-  ]);
-
-  const selectedEntry =
-    selectedInstanceId === "favorites" ? undefined : entryByInstanceId.get(selectedInstanceId);
-  const providerSetupEntries =
-    !isSearching && props.onOpenProviderSetup
-      ? instanceEntries.filter(
-          (entry) =>
-            matchesLockedProvider(entry) &&
-            shouldOfferModelPickerSetup(
-              entry,
-              modelOptionsByInstance.get(entry.instanceId) ?? [],
-            ) &&
-            (selectedEntry
-              ? entry.instanceId === selectedEntry.instanceId
-              : filteredModels.length === 0),
-        )
-      : [];
-
-  const droidGroups = useMemo(() => {
-    if (
-      isSearching ||
-      selectedInstanceId === "favorites" ||
-      instanceEntries.find((entry) => entry.instanceId === selectedInstanceId)?.driverKind !==
-        "droid"
-    )
-      return null;
-    return groupDroidModelRows(filteredModels);
-  }, [isSearching, selectedInstanceId, instanceEntries, filteredModels]);
-
-  const sourceSectionRows = useMemo(() => {
-    const showsFavorites = selectedInstanceId === "favorites";
-    if (
-      showsFavorites ||
-      !modelSourceSectionsApply({
-        isSearching,
-        showsFavorites,
-        driverKind: entryByInstanceId.get(selectedInstanceId)?.driverKind,
-      })
-    )
-      return null;
-    const groups = groupModelsBySource(filteredModels);
-    return groups
-      ? buildModelSourceSectionRows({
-          instanceId: selectedInstanceId,
-          groups,
-          collapsed: new Set(collapsedModelSources),
-          revealed: revealedModelSources,
-          modelKey: (model) => modelPickerModelKey(model.instanceId, model.slug),
-        })
-      : null;
-  }, [
-    collapsedModelSources,
-    entryByInstanceId,
-    filteredModels,
-    isSearching,
-    revealedModelSources,
-    selectedInstanceId,
-  ]);
-
-  const toggleModelSourceSection = useCallback(
-    (key: string) => {
-      const expanded = sourceSectionRows?.sections.get(key)?.expanded ?? true;
-      setRevealedModelSources((revealed) => {
-        const next = new Set(revealed);
-        next.delete(key);
-        return next;
-      });
-      setCollapsedModelSources((collapsed) =>
-        expanded
-          ? [...collapsed.filter((entry) => entry !== key), key]
-          : collapsed.filter((entry) => entry !== key),
-      );
-    },
-    [setCollapsedModelSources, sourceSectionRows],
-  );
+  // SCIENT-FORK:END
 
   const legacySection = useMemo(() => {
     if (isSearching || selectedInstanceId === "favorites" || sourceSectionRows) {
@@ -772,6 +662,23 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       ...(legacySection.isExpanded ? legacySection.legacyModels : []),
     ];
   }, [droidGroups, filteredModels, legacySection, sourceSectionRows]);
+
+  const selectedEntry =
+    selectedInstanceId === "favorites" ? undefined : entryByInstanceId.get(selectedInstanceId);
+  const providerSetupEntries =
+    !isSearching && props.onOpenProviderSetup
+      ? instanceEntries.filter(
+          (entry) =>
+            matchesLockedProvider(entry) &&
+            shouldOfferModelPickerSetup(
+              entry,
+              modelOptionsByInstance.get(entry.instanceId) ?? [],
+            ) &&
+            (selectedEntry
+              ? entry.instanceId === selectedEntry.instanceId
+              : filteredModels.length === 0),
+        )
+      : [];
 
   const toggleLegacySection = useCallback((instanceId: ProviderInstanceId) => {
     setExpandedLegacyInstances((expanded) => {
