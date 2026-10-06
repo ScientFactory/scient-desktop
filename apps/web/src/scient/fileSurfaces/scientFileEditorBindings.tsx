@@ -1,5 +1,6 @@
-import type { EditorSelection } from "@pierre/diffs";
+import type { EditorSelection, GetHoveredLineResult, SelectedLineRange } from "@pierre/diffs";
 import type { Editor } from "@pierre/diffs/editor";
+import { MessageSquarePlus } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -8,6 +9,7 @@ import {
   useRef,
   type KeyboardEvent,
   type MutableRefObject,
+  type ReactNode,
   type RefObject,
 } from "react";
 
@@ -15,6 +17,8 @@ import { MathInputTools } from "~/scient/math/input/MathInputTools";
 import type { MathInputController } from "~/scient/math/input/controller";
 import { sourceMathController, sourceMathOwnsEvent } from "~/scient/math/input/sourceAdapter";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
+
+import { SCIENT_FILE_UNSAFE_CSS } from "./StaticTextFileSurface";
 
 /**
  * Scient behaviour of the inherited workspace file editor: external document
@@ -149,4 +153,70 @@ export function ScientMathSourceToolbar(props: {
       <MathInputTools controller={props.mathInput} />
     </div>
   ) : null;
+}
+
+const FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS = `
+  ${SCIENT_FILE_UNSAFE_CSS}
+
+  [data-gutter-utility-slot] {
+    right: auto;
+    left: 0;
+    justify-content: flex-start;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  [data-line]:hover [data-gutter-utility-slot],
+  [data-line]:focus-within [data-gutter-utility-slot],
+  [data-gutter-utility-slot]:focus-within {
+    opacity: 1;
+    pointer-events: auto;
+  }
+`;
+
+/** The editor's styles; compute actions stay quiet until their source line is engaged. */
+export function scientFileEditorUnsafeCss(gutterUtilityVisibility: "always" | "hover"): string {
+  return gutterUtilityVisibility === "hover"
+    ? FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS
+    : SCIENT_FILE_UNSAFE_CSS;
+}
+
+/**
+ * The editor's gutter utility when a surface adds its own action (the compute
+ * run-cell button): that action, then Add comment for the hovered line.
+ */
+export function scientEditorGutterUtility(
+  renderEditorGutterAction:
+    | ((getHoveredLine: () => GetHoveredLineResult<"file"> | undefined) => ReactNode)
+    | undefined,
+  enableFileComments: boolean,
+  handleGutterUtilityClick: (range: SelectedLineRange) => void,
+) {
+  return renderEditorGutterAction === undefined
+    ? {}
+    : {
+        renderGutterUtility: (getHoveredLine: () => GetHoveredLineResult<"file"> | undefined) => (
+          <div className="flex items-center gap-px">
+            {renderEditorGutterAction(getHoveredLine)}
+            {enableFileComments ? (
+              <button
+                type="button"
+                className="flex size-5 cursor-pointer items-center justify-center rounded-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                aria-label="Add comment"
+                onClick={() => {
+                  const hoveredLine = getHoveredLine();
+                  if (hoveredLine !== undefined) {
+                    handleGutterUtilityClick({
+                      start: hoveredLine.lineNumber,
+                      end: hoveredLine.lineNumber,
+                    });
+                  }
+                }}
+              >
+                <MessageSquarePlus className="size-3" />
+              </button>
+            ) : null}
+          </div>
+        ),
+      };
 }

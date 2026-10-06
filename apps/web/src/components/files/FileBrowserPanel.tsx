@@ -3,21 +3,14 @@ import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
-import type {
-  EnvironmentId,
-  ProjectDirectoryEntry,
-  ProjectDirectoryView,
-} from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { ChevronsDownUpIcon, ChevronsUpDownIcon, SearchIcon } from "lucide-react";
+import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "~/lib/utils";
 
 import { Button } from "~/components/ui/button";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
-import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
@@ -29,22 +22,23 @@ import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
 import { ScientMarkdownCreateButton } from "~/scient/markdownEditor/ui/ScientMarkdownCreateButton";
-import {
-  LazyWorkspaceTreeController,
-  type LazyWorkspaceTreeSnapshot,
-} from "~/scient/files/LazyWorkspaceTreeController";
 // SCIENT-FORK:START
 import {
   FILE_SEARCH_LIMIT,
+  FileSearchField,
   ScientFileTreeSurface,
   useScientDirectoryView,
   WorkspaceFilesMenu,
 } from "~/scient/files/ScientFileBrowserChrome";
+import {
+  SCIENT_FILE_BROWSER_TREE_UNSAFE_CSS,
+  scientReadOnlyRowDecoration,
+  useScientLazyWorkspaceTree,
+  useScientLazyWorkspaceTreeLoading,
+} from "~/scient/files/useScientLazyWorkspaceTree";
 // SCIENT-FORK:END
-import { projectEnvironment } from "~/state/projects";
 import { useProjectPathSearch } from "~/state/queries";
-import { useAtomCommand } from "~/state/use-atom-command";
-import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
+import { pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
@@ -68,19 +62,6 @@ interface FileBrowserPanelProps {
   workspaceMutationId: string | null;
 }
 
-const FILE_BROWSER_TREE_UNSAFE_CSS = `${PIERRE_TREE_UNSAFE_CSS}
-  :host {
-    --trees-font-size-override: var(--scient-font-size-file-tree, 14px);
-  }
-`;
-
-const INITIAL_TREE_SNAPSHOT: LazyWorkspaceTreeSnapshot = {
-  entries: new Map(),
-  failures: [],
-  isPending: true,
-  rootError: null,
-};
-
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
   return (
     <Tooltip>
@@ -102,79 +83,6 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
   );
 }
 
-function FileSearchField(props: {
-  ariaLabel: string;
-  name: string;
-  onClose: () => void;
-  onValueChange: (value: string) => void;
-  value: string;
-}) {
-  const renderSearchInput = (autoFocus = false) => (
-    <InputGroupInput
-      type="search"
-      name={props.name}
-      size="sm"
-      value={props.value}
-      aria-label={props.ariaLabel}
-      placeholder="Search files"
-      spellCheck={false}
-      autoFocus={autoFocus}
-      onChange={(event) => props.onValueChange(event.target.value)}
-      onKeyDown={(event) => {
-        if (event.key !== "Escape") return;
-        props.onClose();
-        event.currentTarget.blur();
-      }}
-    />
-  );
-
-  return (
-    <>
-      <InputGroup
-        variant="ghost"
-        className="h-7 min-w-0 flex-1 @max-[14rem]/file-browser-header:hidden"
-      >
-        <InputGroupAddon>
-          <SearchIcon aria-hidden className="size-3.5" />
-        </InputGroupAddon>
-        {renderSearchInput()}
-      </InputGroup>
-      <Popover>
-        <PopoverTrigger
-          render={
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              className="hidden shrink-0 @max-[14rem]/file-browser-header:inline-flex"
-              aria-label={props.ariaLabel}
-              title={props.ariaLabel}
-            />
-          }
-        >
-          <SearchIcon aria-hidden className="size-3.5" />
-        </PopoverTrigger>
-        <PopoverPopup
-          side="top"
-          align="end"
-          alignOffset={8}
-          sideOffset={6}
-          padding="none"
-          surface="bare"
-          className="w-48 max-w-[calc(100vw-2rem)]"
-        >
-          <InputGroup variant="ghost" className="h-7 min-w-0">
-            <InputGroupAddon>
-              <SearchIcon aria-hidden className="size-3.5" />
-            </InputGroupAddon>
-            {renderSearchInput(true)}
-          </InputGroup>
-        </PopoverPopup>
-      </Popover>
-    </>
-  );
-}
-
 export default function FileBrowserPanel({
   environmentId,
   cwd,
@@ -188,19 +96,18 @@ export default function FileBrowserPanel({
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
-  const runListDirectory = useAtomCommand(projectEnvironment.listDirectory, {
-    reportDefect: false,
-    reportFailure: false,
-  });
-  const [treeSnapshot, setTreeSnapshot] =
-    useState<LazyWorkspaceTreeSnapshot>(INITIAL_TREE_SNAPSHOT);
-  // SCIENT-FORK:START — file visibility view, remembered per workspace
+  // SCIENT-FORK:START — file visibility view and the lazily loaded tree
   const { directoryView, changeDirectoryView } = useScientDirectoryView(environmentId, cwd);
+  const {
+    treeSnapshot,
+    loadedDirectoryPaths,
+    entryKindsRef,
+    treeEntriesRef,
+    treeControllerRef,
+    ...lazyTree
+  } = useScientLazyWorkspaceTree(directoryView);
   // SCIENT-FORK:END
-  const directoryViewRef = useRef(directoryView);
-  directoryViewRef.current = directoryView;
   const [searchValue, setSearchValue] = useState("");
-  const [primedSearchKey, setPrimedSearchKey] = useState<string | null>(null);
   const normalizedSearchValue = searchValue.trim();
   const isSearching = normalizedSearchValue.length > 0;
   const pathSearch = useProjectPathSearch(
@@ -208,32 +115,7 @@ export default function FileBrowserPanel({
     FILE_SEARCH_LIMIT,
   );
   const hasCurrentSearch = pathSearch.searchedQuery === normalizedSearchValue;
-  const searchResultKey =
-    hasCurrentSearch && !pathSearch.isPending
-      ? JSON.stringify([directoryView, normalizedSearchValue, pathSearch.entries])
-      : null;
   const fileContextMenu = useFileContextMenu(environmentId);
-  const entryKinds = useMemo(
-    () =>
-      new Map(
-        [...treeSnapshot.entries.values()].map(
-          (entry) => [entry.relativePath, entry.kind] as const,
-        ),
-      ),
-    [treeSnapshot.entries],
-  );
-  const loadedDirectoryPaths = useMemo(
-    () =>
-      [...treeSnapshot.entries.values()]
-        .filter((entry) => entry.kind === "directory")
-        .map((entry) => `${entry.relativePath}/`),
-    [treeSnapshot.entries],
-  );
-  const entryKindsRef = useRef<ReadonlyMap<string, ProjectDirectoryEntry["kind"]>>(entryKinds);
-  entryKindsRef.current = entryKinds;
-  const treeEntriesRef = useRef(treeSnapshot.entries);
-  treeEntriesRef.current = treeSnapshot.entries;
-  const treeControllerRef = useRef<LazyWorkspaceTreeController | null>(null);
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
   const searchSelectionPathRef = useRef<string | null>(null);
@@ -381,14 +263,11 @@ export default function FileBrowserPanel({
       }
     },
     paths: [],
-    renderRowDecoration: ({ item }) => {
-      const relativePath = item.path.replace(/\/$/, "");
-      return treeEntriesRef.current.get(relativePath)?.readOnly
-        ? { icon: "file-tree-icon-lock", title: "Read-only in Files" }
-        : null;
-    },
+    // SCIENT-FORK:START — read-only rows carry a lock
+    renderRowDecoration: scientReadOnlyRowDecoration(treeEntriesRef),
+    // SCIENT-FORK:END
     search: false,
-    unsafeCSS: FILE_BROWSER_TREE_UNSAFE_CSS,
+    unsafeCSS: SCIENT_FILE_BROWSER_TREE_UNSAFE_CSS,
   });
   const treeSearch = useFileTreeSearch(model);
   const allLoadedDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
@@ -397,59 +276,19 @@ export default function FileBrowserPanel({
   const toggleLoadedDirectories = () => {
     setAllDirectoriesExpanded(model, loadedDirectoryPaths, !allLoadedDirectoriesExpanded);
   };
-  const loadDirectory = useCallback(
-    async (relativeDirectory: string, view: ProjectDirectoryView) => {
-      const result = await runListDirectory({
-        environmentId,
-        input: { cwd, relativeDirectory, view },
-      });
-      if (result._tag === "Success") return result.value;
-      throw squashAtomCommandFailure(result);
-    },
-    [cwd, environmentId, runListDirectory],
-  );
-
-  useEffect(() => {
-    setTreeSnapshot(INITIAL_TREE_SNAPSHOT);
-    const controller = new LazyWorkspaceTreeController({
-      model,
-      loadDirectory,
-      initialView: directoryViewRef.current,
-      onSnapshot: (snapshot) => {
-        treeEntriesRef.current = snapshot.entries;
-        setTreeSnapshot(snapshot);
-      },
-    });
-    treeControllerRef.current = controller;
-    void controller.start();
-    return () => {
-      controller.destroy();
-      if (treeControllerRef.current === controller) treeControllerRef.current = null;
-    };
-  }, [loadDirectory, model]);
-
-  useEffect(() => {
-    void treeControllerRef.current?.setView(directoryView);
-  }, [directoryView]);
-
-  useEffect(() => {
-    if (!isSearching || searchResultKey === null) return;
-    if (pathSearch.entries.length === 0) {
-      setPrimedSearchKey(searchResultKey);
-      return;
-    }
-
-    const controller = treeControllerRef.current;
-    if (!controller) return;
-    let cancelled = false;
-    void controller.primePaths(pathSearch.entries.map((entry) => entry.path)).finally(() => {
-      if (cancelled || treeControllerRef.current !== controller) return;
-      setPrimedSearchKey(searchResultKey);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [isSearching, pathSearch.entries, searchResultKey]);
+  // SCIENT-FORK:START — load the tree lazily and prime it for search results
+  const { isSearchPending } = useScientLazyWorkspaceTreeLoading({
+    model,
+    environmentId,
+    cwd,
+    directoryView,
+    isSearching,
+    normalizedSearchValue,
+    hasCurrentSearch,
+    pathSearch,
+    tree: { treeControllerRef, treeEntriesRef, ...lazyTree },
+  });
+  // SCIENT-FORK:END
 
   const handleSearchValueChange = (value: string) => {
     if (!isSearching && value.trim().length > 0) {
@@ -560,7 +399,7 @@ export default function FileBrowserPanel({
     return () => {
       cancelled = true;
     };
-  }, [isSearching, model, selectedPath, selectedPathRevealId]);
+  }, [entryKindsRef, isSearching, model, selectedPath, selectedPathRevealId, treeControllerRef]);
 
   // Tag tree drags with the composer mention payload. The row is read from
   // the composed event path (the tree's shadow root is open), so this does
@@ -587,9 +426,6 @@ export default function FileBrowserPanel({
     };
   }, [dragMention]);
 
-  const isSearchPending =
-    isSearching &&
-    (!hasCurrentSearch || pathSearch.isPending || searchResultKey !== primedSearchKey);
   const currentSearchError = hasCurrentSearch ? pathSearch.error : null;
   const hideTreeForSearch = isSearching && treeSearch.matchingPaths.length === 0;
 

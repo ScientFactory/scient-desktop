@@ -23,7 +23,8 @@
     "packages/contracts/src/scientLatex.ts",
     "packages/contracts/src/latexPdfBuild.ts",
     "packages/contracts/src/scient/environmentHttpGroups.ts",
-    "apps/server/src/scient/ScientServerLayers.ts"
+    "apps/server/src/scient/ScientServerLayers.ts",
+    "apps/web/src/scient/fileSurfaces/scientLazyFileSurfaces.tsx"
   ],
   "latexDiffSignals": [
     "ScientLatex",

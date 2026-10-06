@@ -1,9 +1,10 @@
 import type { EnvironmentId, ProjectDirectoryView } from "@t3tools/contracts";
-import { FolderXIcon, MoreHorizontal } from "lucide-react";
+import { FolderXIcon, MoreHorizontal, SearchIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { FileSurfaceFailure } from "~/components/files/fileSurfaceChrome";
 import { Button } from "~/components/ui/button";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import {
   Menu,
   MenuGroup,
@@ -13,6 +14,7 @@ import {
   MenuRadioItem,
   MenuTrigger,
 } from "~/components/ui/menu";
+import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
 import type { LazyWorkspaceTreeSnapshot } from "./LazyWorkspaceTreeController";
@@ -179,6 +181,83 @@ export function ScientFileTreeSurface(props: {
           ) : null}
         </div>
       )}
+    </>
+  );
+}
+
+/**
+ * The file search field. In a narrow header it folds into a search button
+ * that opens the same field in a popover.
+ */
+export function FileSearchField(props: {
+  ariaLabel: string;
+  name: string;
+  onClose: () => void;
+  onValueChange: (value: string) => void;
+  value: string;
+}) {
+  const renderSearchInput = (autoFocus = false) => (
+    <InputGroupInput
+      type="search"
+      name={props.name}
+      size="sm"
+      value={props.value}
+      aria-label={props.ariaLabel}
+      placeholder="Search files"
+      spellCheck={false}
+      autoFocus={autoFocus}
+      onChange={(event) => props.onValueChange(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape") return;
+        props.onClose();
+        event.currentTarget.blur();
+      }}
+    />
+  );
+
+  return (
+    <>
+      <InputGroup
+        variant="ghost"
+        className="h-7 min-w-0 flex-1 @max-[14rem]/file-browser-header:hidden"
+      >
+        <InputGroupAddon>
+          <SearchIcon aria-hidden className="size-3.5" />
+        </InputGroupAddon>
+        {renderSearchInput()}
+      </InputGroup>
+      <Popover>
+        <PopoverTrigger
+          render={
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              className="hidden shrink-0 @max-[14rem]/file-browser-header:inline-flex"
+              aria-label={props.ariaLabel}
+              title={props.ariaLabel}
+            />
+          }
+        >
+          <SearchIcon aria-hidden className="size-3.5" />
+        </PopoverTrigger>
+        <PopoverPopup
+          side="top"
+          align="end"
+          alignOffset={8}
+          sideOffset={6}
+          padding="none"
+          surface="bare"
+          className="w-48 max-w-[calc(100vw-2rem)]"
+        >
+          <InputGroup variant="ghost" className="h-7 min-w-0">
+            <InputGroupAddon>
+              <SearchIcon aria-hidden className="size-3.5" />
+            </InputGroupAddon>
+            {renderSearchInput(true)}
+          </InputGroup>
+        </PopoverPopup>
+      </Popover>
     </>
   );
 }

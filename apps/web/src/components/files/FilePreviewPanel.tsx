@@ -1,12 +1,19 @@
 // SCIENT-FORK:START
 import {
   FILE_ACTIVE_RANGE_ATTRIBUTE,
-  SCIENT_FILE_UNSAFE_CSS,
   StaticTextFileSurface,
   type FilePostRender,
 } from "~/scient/fileSurfaces/StaticTextFileSurface";
 import {
+  retryScientViewerAsset,
+  scientViewerRevisionSuffix,
+  useScientViewerRefreshKey,
+  useScientViewerResource,
+} from "~/scient/fileSurfaces/scientWorkspaceViewerRefresh";
+import {
   ScientMathSourceToolbar,
+  scientEditorGutterUtility,
+  scientFileEditorUnsafeCss,
   useScientFileEditorBindings,
 } from "~/scient/fileSurfaces/scientFileEditorBindings";
 import {
@@ -14,6 +21,13 @@ import {
   ScientDocumentSessionAdmissionFailure,
   scientDocumentSessionFile,
 } from "~/scient/fileSurfaces/scientDocumentSession";
+import {
+  ScientComputeFileSurface,
+  ScientLatexSurface,
+  ScientPdfReader,
+  ScientSurfaceSuspense,
+} from "~/scient/fileSurfaces/scientLazyFileSurfaces";
+import { useScientFileReadRecovery } from "~/scient/fileSurfaces/scientFileReadRecovery";
 // SCIENT-FORK:END
 import { useAtomValue } from "@effect/atom-react";
 import { Spinner } from "~/components/ui/spinner";
@@ -44,27 +58,9 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import {
-  Code2,
-  Download,
-  Eye,
-  FolderTree,
-  Globe,
-  MessageSquarePlus,
-  Table2,
-  WrapTextIcon,
-} from "lucide-react";
+import { Code2, Download, Eye, FolderTree, Globe, Table2, WrapTextIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
-import {
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import type { FileCitation } from "@t3tools/contracts";
@@ -129,21 +125,9 @@ import {
   useWorkspaceFileRefresh,
 } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 import { usePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
-import {
-  isOutsideProjectFailure,
-  MEDIA_FAILURE_COPY,
-  readFailureBlocksPreview,
-  readOnlyNotice,
-} from "~/scient/fileSurfaces/fileFailureCopy";
-import { FileReadFailure } from "~/scient/fileSurfaces/FileReadFailure";
-import {
-  fileCopyNotice,
-  saveEnvironmentFileCopy,
-} from "~/scient/fileOpening/saveEnvironmentFileCopy";
-import { useMissingFileChoices } from "~/scient/fileSurfaces/useMissingFileChoices";
+import { MEDIA_FAILURE_COPY, readOnlyNotice } from "~/scient/fileSurfaces/fileFailureCopy";
 
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
-import { fileSurfaceAssetResource } from "./fileSurfaceAssetResource";
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
@@ -220,45 +204,15 @@ interface FilePreviewPanelProps {
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
-const FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS = `
-  ${SCIENT_FILE_UNSAFE_CSS}
-
-  [data-gutter-utility-slot] {
-    right: auto;
-    left: 0;
-    justify-content: flex-start;
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  [data-line]:hover [data-gutter-utility-slot],
-  [data-line]:focus-within [data-gutter-utility-slot],
-  [data-gutter-utility-slot]:focus-within {
-    opacity: 1;
-    pointer-events: auto;
-  }
-`;
-const ScientPdfReader = lazy(() =>
-  import("~/scient/pdf/ScientPdfReader").then((module) => ({
-    default: module.ScientPdfReader,
-  })),
-);
-const ScientLatexSurface = lazy(() =>
-  import("~/scient/latex/ScientLatexSurface").then((module) => ({
-    default: module.ScientLatexSurface,
-  })),
-);
-const ScientComputeFileSurface = lazy(() =>
-  import("~/scient/compute/ScientComputeFileSurface").then((module) => ({
-    default: module.ScientComputeFileSurface,
-  })),
-);
+const RENDER_TABLE_STORAGE_KEY = "t3code.renderTable";
+// SCIENT-FORK:START — the Markdown surface loads on first use
 const ScientMarkdownFileSurface = lazy(() =>
   import("~/scient/markdownEditor/ScientMarkdownFileSurface").then((module) => ({
     default: module.ScientMarkdownFileSurface,
   })),
 );
-const RENDER_TABLE_STORAGE_KEY = "t3code.renderTable";
+// SCIENT-FORK:END
+
 function WorkspaceImagePreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
@@ -268,32 +222,17 @@ function WorkspaceImagePreview(props: {
   readonly alt: string;
   readonly refreshKey: number;
 }) {
-  const resource = useMemo(
-    () =>
-      fileSurfaceAssetResource({
-        absolutePath: props.absolutePath,
-        workspaceRoot: props.workspaceRoot,
-        relativePath: props.relativePath,
-        threadId: props.threadRef.threadId,
-      }),
-    [props.absolutePath, props.relativePath, props.threadRef.threadId, props.workspaceRoot],
-  );
+  // SCIENT-FORK:START — the asset is named by the tab's own path
+  const resource = useScientViewerResource(props);
+  // SCIENT-FORK:END
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
-  const previousRefreshKey = useRef(props.refreshKey);
-
-  useEffect(() => {
-    if (previousRefreshKey.current === props.refreshKey) return;
-    previousRefreshKey.current = props.refreshKey;
-    setFailedUrl(null);
-    assetUrl.refresh();
-  }, [assetUrl.refresh, props.refreshKey]);
-  const revisionSuffix =
-    props.refreshKey === 0
-      ? ""
-      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${props.refreshKey}`;
+  // SCIENT-FORK:START — reload when the file's watcher reports a change
+  useScientViewerRefreshKey(props.refreshKey, assetUrl.refresh, setFailedUrl);
+  const revisionSuffix = scientViewerRevisionSuffix(assetUrl, props.refreshKey);
+  // SCIENT-FORK:END
   const imageUrl = assetUrl._tag === "Success" ? `${assetUrl.url}${revisionSuffix}` : null;
   const actionsSource: MediaActionSource = {
     kind: "image",
@@ -311,17 +250,11 @@ function WorkspaceImagePreview(props: {
           <FileSurfaceFailure
             {...MEDIA_FAILURE_COPY.image}
             retrying={retrying || (assetUrl._tag === "Failure" && assetUrl.waiting === true)}
-            onRetry={() => {
+            onRetry={() =>
               // Keep the failure (busy) until renewed authorization arrives, so
               // the old URL is not shown, and cannot fail, in the meantime.
-              setRetrying(true);
-              void refreshAssetUrl()
-                .catch(() => undefined)
-                .finally(() => {
-                  setRetrying(false);
-                  setFailedUrl(null);
-                });
-            }}
+              retryScientViewerAsset(refreshAssetUrl, setRetrying, () => setFailedUrl(null))
+            }
           />
         </div>
       </MediaActions>
@@ -361,29 +294,14 @@ function WorkspaceBrowserPreview(props: {
   readonly title: string;
   readonly refreshKey: number;
 }) {
-  const resource = useMemo(
-    () =>
-      fileSurfaceAssetResource({
-        absolutePath: props.absolutePath,
-        workspaceRoot: props.workspaceRoot,
-        relativePath: props.relativePath,
-        threadId: props.threadRef.threadId,
-        htmlDocument: !isPdfPreviewFile(props.absolutePath),
-      }),
-    [props.absolutePath, props.relativePath, props.threadRef.threadId, props.workspaceRoot],
-  );
+  // SCIENT-FORK:START — the asset is named by the tab's own path
+  const resource = useScientViewerResource(props, !isPdfPreviewFile(props.absolutePath));
+  // SCIENT-FORK:END
   const assetUrl = useAssetUrlState(props.environmentId, resource);
-  const previousRefreshKey = useRef(props.refreshKey);
-
-  useEffect(() => {
-    if (previousRefreshKey.current === props.refreshKey) return;
-    previousRefreshKey.current = props.refreshKey;
-    assetUrl.refresh();
-  }, [assetUrl.refresh, props.refreshKey]);
-  const revisionSuffix =
-    props.refreshKey === 0
-      ? ""
-      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${props.refreshKey}`;
+  // SCIENT-FORK:START — reload when the file's watcher reports a change
+  useScientViewerRefreshKey(props.refreshKey, assetUrl.refresh);
+  const revisionSuffix = scientViewerRevisionSuffix(assetUrl, props.refreshKey);
+  // SCIENT-FORK:END
 
   if (assetUrl._tag === "Failure") {
     return (
@@ -420,29 +338,15 @@ function WorkspaceVideoPreview(props: {
   readonly refreshKey: number;
 }) {
   const reference = mediaFileReference(props.absolutePath, props.workspaceRoot);
-  const resource = useMemo(
-    () =>
-      fileSurfaceAssetResource({
-        absolutePath: props.absolutePath,
-        workspaceRoot: props.workspaceRoot,
-        relativePath: props.relativePath,
-        threadId: props.threadRef.threadId,
-      }),
-    [props.absolutePath, props.relativePath, props.threadRef.threadId, props.workspaceRoot],
-  );
+  // SCIENT-FORK:START — the asset is named by the tab's own path
+  const resource = useScientViewerResource(props);
+  // SCIENT-FORK:END
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
-  const previousRefreshKey = useRef(props.refreshKey);
-
-  useEffect(() => {
-    if (previousRefreshKey.current === props.refreshKey) return;
-    previousRefreshKey.current = props.refreshKey;
-    void refreshAssetUrl().catch(() => undefined);
-  }, [props.refreshKey, refreshAssetUrl]);
-  const revisionSuffix =
-    props.refreshKey === 0
-      ? ""
-      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${props.refreshKey}`;
+  // SCIENT-FORK:START — reload when the file's watcher reports a change
+  useScientViewerRefreshKey(props.refreshKey, refreshAssetUrl);
+  const revisionSuffix = scientViewerRevisionSuffix(assetUrl, props.refreshKey);
+  // SCIENT-FORK:END
   const latestUrl = assetUrl._tag === "Success" ? `${assetUrl.url}${revisionSuffix}` : null;
 
   return (
@@ -495,13 +399,9 @@ function WorkspaceAudioPreview(props: {
       void refreshAssetUrl().catch(() => undefined);
     },
   });
-  const previousRefreshKey = useRef(props.refreshKey);
-  useEffect(() => {
-    if (previousRefreshKey.current === props.refreshKey) return;
-    previousRefreshKey.current = props.refreshKey;
-    setFailedUrl(null);
-    void refreshAssetUrl().catch(() => undefined);
-  }, [props.refreshKey, refreshAssetUrl]);
+  // SCIENT-FORK:START — reload when the file's watcher reports a change
+  useScientViewerRefreshKey(props.refreshKey, refreshAssetUrl, setFailedUrl);
+  // SCIENT-FORK:END
   const revision =
     props.workspaceMutationId === null && props.refreshKey === 0
       ? null
@@ -518,10 +418,7 @@ function WorkspaceAudioPreview(props: {
         retrying={retrying}
         onRetry={() => {
           setFailedUrl(null);
-          setRetrying(true);
-          void refreshAssetUrl()
-            .catch(() => undefined)
-            .finally(() => setRetrying(false));
+          retryScientViewerAsset(refreshAssetUrl, setRetrying);
         }}
       />
     );
@@ -1124,10 +1021,7 @@ function EditableFileEditor({
                 theme: resolveDiffThemeName(resolvedTheme),
                 preferredHighlighter: PREFERRED_HIGHLIGHTER,
                 themeType: resolvedTheme,
-                unsafeCSS:
-                  gutterUtilityVisibility === "hover"
-                    ? FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS
-                    : SCIENT_FILE_UNSAFE_CSS,
+                unsafeCSS: scientFileEditorUnsafeCss(gutterUtilityVisibility),
                 onPostRender: handlePostRender,
               }}
               selectedLines={displayedRange}
@@ -1147,35 +1041,13 @@ function EditableFileEditor({
                   ))}
                 </div>
               )}
-              {...(renderEditorGutterAction === undefined
-                ? {}
-                : {
-                    renderGutterUtility: (
-                      getHoveredLine: () => GetHoveredLineResult<"file"> | undefined,
-                    ) => (
-                      <div className="flex items-center gap-px">
-                        {renderEditorGutterAction(getHoveredLine)}
-                        {enableFileComments ? (
-                          <button
-                            type="button"
-                            className="flex size-5 cursor-pointer items-center justify-center rounded-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                            aria-label="Add comment"
-                            onClick={() => {
-                              const hoveredLine = getHoveredLine();
-                              if (hoveredLine !== undefined) {
-                                handleGutterUtilityClick({
-                                  start: hoveredLine.lineNumber,
-                                  end: hoveredLine.lineNumber,
-                                });
-                              }
-                            }}
-                          >
-                            <MessageSquarePlus className="size-3" />
-                          </button>
-                        ) : null}
-                      </div>
-                    ),
-                  })}
+              // SCIENT-FORK:START — editor action beside Add comment in the gutter
+              {...scientEditorGutterUtility(
+                renderEditorGutterAction,
+                enableFileComments,
+                handleGutterUtilityClick,
+              )}
+              // SCIENT-FORK:END
               className="min-h-full"
               contentEditable={!editingBlocked}
             />
@@ -1308,12 +1180,6 @@ export default function FilePreviewPanel({
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
-  });
-  // A copy must be of the file as it is now. An exact capability is pinned to
-  // the revision it was issued for, so a cached one would refuse a changed file.
-  const createCopyUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
-    reportFailure: false,
-    refresh: true,
   });
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
@@ -1575,64 +1441,24 @@ export default function FilePreviewPanel({
     isBrowserPreviewFile(previewPath);
   const absolutePath =
     relativePath && attachment === undefined ? workspaceFileHostPath(relativePath, cwd) : null;
-  const missingFile = useMissingFileChoices({
-    environmentId,
-    cwd,
-    path: attachment === undefined ? relativePath : null,
-    // Asked whenever the path is missing, including under a last good copy of
-    // a file that was renamed or moved while it was open.
-    failureReason: file.failureReason ?? markdownRefreshFailure?.reason ?? null,
-  });
-  const readOnlyHostPath = missingFile.absolutePath;
-  const readFailureShownInstead = readFailureBlocksPreview({
-    hasData: file.data !== null,
-    failure: file.failure,
-    reason: file.failureReason,
-    isHostFile,
-  });
-  // A copy on the device in hand: the one way to take a file Scient cannot
-  // preview to another app when the viewer is not on the machine that holds it.
-  const savingCopyRef = useRef(false);
-  const handleSaveCopy = useCallback(() => {
-    if (!absolutePath || !environmentHttpBaseUrl || savingCopyRef.current) return;
-    savingCopyRef.current = true;
-    void saveEnvironmentFileCopy({
+  // SCIENT-FORK:START — missing-file choices, read failure and save a copy
+  const { missingFile, canSaveCopy, handleSaveCopy, readFailure, blockingReadFailure } =
+    useScientFileReadRecovery({
       environmentId,
-      path: absolutePath,
-      httpBaseUrl: environmentHttpBaseUrl,
-      createAssetUrl: createCopyUrl,
-    })
-      .then(
-        (result) => fileCopyNotice(result),
-        // The desktop shell or browser refused before any result existed.
-        () => fileCopyNotice({ _tag: "failed", reason: "write-failed" }),
-      )
-      .then((notice) => {
-        if (notice) toastManager.add(stackedThreadToast(notice));
-      })
-      .finally(() => {
-        savingCopyRef.current = false;
-      });
-  }, [absolutePath, createCopyUrl, environmentHttpBaseUrl, environmentId]);
-  const canSaveCopy =
-    attachment === undefined && absolutePath !== null && !isDirectory && !!environmentHttpBaseUrl;
-
-  const readFailure = (
-    <FileReadFailure
-      failure={file.failure}
-      reason={file.failureReason}
-      osErrorCode={file.failureOsErrorCode}
-      hostOs={hostOs}
-      message={file.error}
-      retrying={file.isPending}
-      onRetry={requestManualReload}
-      path={missingFile.absolutePath ?? relativePath ?? ""}
-      candidates={missingFile.paths}
-      candidatesIncomplete={missingFile.incomplete}
-      onOpenCandidate={onOpenFile}
-      {...(canSaveCopy ? { onSaveCopy: handleSaveCopy } : {})}
-    />
-  );
+      cwd,
+      relativePath,
+      attachment,
+      isHostFile,
+      isDirectory,
+      absolutePath,
+      environmentHttpBaseUrl,
+      file,
+      markdownRefreshFailure,
+      hostOs,
+      requestManualReload,
+      onOpenFile,
+    });
+  // SCIENT-FORK:END
   const pdfSource = useMemo(
     () =>
       workspacePdfSourceForPreview({
@@ -1912,24 +1738,9 @@ export default function FilePreviewPanel({
               sizeBytes={attachment.sizeBytes}
               asset={{ environmentId, attachmentId: attachment.id }}
             />
-          ) : relativePath && file.data === null && isOutsideProjectFailure(file.failure) ? (
-            // Only an older server refuses a path by location; media and document
-            // previews would fail to authorize it the same way. Its absolute path
-            // still opens read-only.
-            <FileReadFailure
-              failure={file.failure}
-              message={file.error}
-              retrying={false}
-              onRetry={requestManualReload}
-              {...(readOnlyHostPath !== null
-                ? { onOpenReadOnly: () => onOpenFile(readOnlyHostPath) }
-                : {})}
-            />
-          ) : relativePath && readFailureShownInstead ? (
-            // The read already says why nothing can be shown (missing, denied,
-            // or not a regular file); a media or document viewer would only fail
-            // again with less to say.
-            readFailure
+          ) : // SCIENT-FORK:START — the read failure says why nothing can be shown
+          relativePath && blockingReadFailure ? (
+            blockingReadFailure // SCIENT-FORK:END
           ) : relativePath && isVideo && absolutePath ? (
             <WorkspaceVideoPreview
               key={`${environmentId}:${threadRef.threadId}:${absolutePath}`}
@@ -1963,20 +1774,14 @@ export default function FilePreviewPanel({
               refreshKey={viewerRefreshKey}
             />
           ) : relativePath && isPdf && absolutePath && pdfSource ? (
-            <Suspense
-              fallback={
-                <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-                  <Spinner className="size-5" />
-                </div>
-              }
-            >
+            <ScientSurfaceSuspense>
               <ScientPdfReader
                 key={absolutePath}
                 source={pdfSource}
                 readerScope={threadRef.threadId}
                 refreshKey={viewerRefreshKey}
               />
-            </Suspense>
+            </ScientSurfaceSuspense>
           ) : relativePath && renderBrowserFile && absolutePath ? (
             <WorkspaceBrowserPreview
               key={absolutePath}
@@ -2052,13 +1857,7 @@ export default function FilePreviewPanel({
                 // SCIENT-FORK:END
               )
             ) : isLatexPreviewFile(relativePath) ? (
-              <Suspense
-                fallback={
-                  <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-                    <Spinner className="size-5" />
-                  </div>
-                }
-              >
+              <ScientSurfaceSuspense>
                 <ScientLatexSurface
                   key={`${relativePath}:${resolvedTheme}`}
                   environmentId={environmentId}
@@ -2079,15 +1878,9 @@ export default function FilePreviewPanel({
                   onOpenFileSource={onOpenFileSource}
                   onLatexPresentationRequestHandled={onLatexPresentationRequestHandled}
                 />
-              </Suspense>
+              </ScientSurfaceSuspense>
             ) : computeSourceLanguage !== null && !file.data.truncated ? (
-              <Suspense
-                fallback={
-                  <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-                    <Spinner className="size-5" />
-                  </div>
-                }
-              >
+              <ScientSurfaceSuspense>
                 <ScientComputeFileSurface
                   key={`${computeContextId}:${resolvedTheme}`}
                   language={computeSourceLanguage}
@@ -2114,15 +1907,9 @@ export default function FilePreviewPanel({
                   onSaveResolutionApplied={handleSaveResolutionApplied}
                   saveResolution={saveResolution}
                 />
-              </Suspense>
+              </ScientSurfaceSuspense>
             ) : usesScientMarkdownEditor && markdownLease ? (
-              <Suspense
-                fallback={
-                  <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-                    <Spinner className="size-5" />
-                  </div>
-                }
-              >
+              <ScientSurfaceSuspense>
                 <ScientMarkdownFileSurface
                   key={relativePath}
                   environmentId={environmentId}
@@ -2139,7 +1926,7 @@ export default function FilePreviewPanel({
                     runAfterPendingSave([relativePath], () => onOpenFileSource(path, line))
                   }
                 />
-              </Suspense>
+              </ScientSurfaceSuspense>
             ) : markdownLease ? (
               <MarkdownSourceSurface
                 key={relativePath}
