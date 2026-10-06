@@ -6,7 +6,10 @@ import {
 import type { EnvironmentId, FilesystemBrowseResult } from "@t3tools/contracts";
 import { FolderPlusIcon } from "lucide-react";
 import {
+  type ComponentProps,
   type Dispatch,
+  type KeyboardEvent,
+  type RefObject,
   type SetStateAction,
   useCallback,
   useLayoutEffect,
@@ -16,10 +19,14 @@ import {
 } from "react";
 
 import {
+  type BrowseHighlightReason,
   ITEM_ICON_CLASS,
+  isKeyboardBrowseHighlight,
+  resolveBrowseEnterAction,
   type CommandPaletteActionItem,
   type CommandPaletteOpenIntent,
 } from "~/components/CommandPalette.logic";
+import type { CommandPaletteContent } from "~/components/CommandPaletteContent";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useScientProjectInitialization } from "~/hooks/useScientProjectInitialization";
 import { ensureBrowseDirectoryPath, isFilesystemBrowseQuery } from "~/lib/projectPaths";
@@ -306,5 +313,103 @@ export function useScientAddProjectBrowseScope() {
     followAddProjectBrowseQuery,
     beginAddProjectBrowseScope,
     resolveAddProjectBrowseScope,
+  };
+}
+
+/**
+ * Which browse row is highlighted and why. Only a keyboard highlight makes
+ * Enter pick the row; a pointer or automatic highlight, or a new-folder draft,
+ * leaves Enter submitting the typed path.
+ */
+export function useScientBrowseHighlight(
+  highlightedItemValue: string | null,
+  setHighlightedItemValue: Dispatch<SetStateAction<string | null>>,
+) {
+  const highlightedItemValueRef = useRef<string | null>(null);
+  const [highlightedItemReason, setHighlightedItemReason] = useState<BrowseHighlightReason | null>(
+    null,
+  );
+  const highlightedItemReasonRef = useRef<BrowseHighlightReason | null>(null);
+  const [isNewProjectFolderDraft, setIsNewProjectFolderDraft] = useState(false);
+
+  const clearHighlightedItem = useCallback((): void => {
+    highlightedItemValueRef.current = null;
+    highlightedItemReasonRef.current = null;
+    setHighlightedItemValue(null);
+    setHighlightedItemReason(null);
+  }, [setHighlightedItemValue]);
+
+  const handleItemHighlighted: NonNullable<
+    ComponentProps<typeof CommandPaletteContent>["onItemHighlighted"]
+  > = (value, eventDetails) => {
+    const nextValue = typeof value === "string" ? value : null;
+    const nextReason: BrowseHighlightReason | null =
+      nextValue == null
+        ? null
+        : eventDetails.reason === "keyboard" || eventDetails.reason === "pointer"
+          ? eventDetails.reason
+          : "none";
+    highlightedItemValueRef.current = nextValue;
+    highlightedItemReasonRef.current = nextReason;
+    setHighlightedItemValue(nextValue);
+    setHighlightedItemReason(nextReason);
+  };
+
+  const hasKeyboardBrowseHighlight =
+    !isNewProjectFolderDraft &&
+    isKeyboardBrowseHighlight({
+      highlightedItemValue,
+      highlightReason: highlightedItemReason,
+    });
+
+  return {
+    highlightedItemValueRef,
+    highlightedItemReasonRef,
+    isNewProjectFolderDraft,
+    setIsNewProjectFolderDraft,
+    clearHighlightedItem,
+    handleItemHighlighted,
+    hasKeyboardBrowseHighlight,
+  };
+}
+
+/** Captures Enter in the path input when it should submit the typed path. */
+export function scientBrowseKeyDownCapture({
+  projectPathInputRef,
+  canSubmitBrowsePath,
+  isNewProjectFolderDraft,
+  isPrimaryModifierPressed,
+  highlightedItemValueRef,
+  highlightedItemReasonRef,
+  submitCurrentPath,
+}: {
+  readonly projectPathInputRef: RefObject<HTMLInputElement | null>;
+  readonly canSubmitBrowsePath: boolean;
+  readonly isNewProjectFolderDraft: boolean;
+  readonly isPrimaryModifierPressed: (event: KeyboardEvent<HTMLElement>) => boolean;
+  readonly highlightedItemValueRef: RefObject<string | null>;
+  readonly highlightedItemReasonRef: RefObject<BrowseHighlightReason | null>;
+  readonly submitCurrentPath: () => void;
+}) {
+  return (event: KeyboardEvent<HTMLElement>): void => {
+    if (event.target !== projectPathInputRef.current) return;
+    const browseEnterAction = resolveBrowseEnterAction({
+      canSubmitBrowsePath,
+      forceSubmitCurrentPath: isNewProjectFolderDraft,
+      key: event.key,
+      isComposing: event.nativeEvent.isComposing,
+      isPrimaryModifierPressed: isPrimaryModifierPressed(event),
+      highlightedItemValue: highlightedItemValueRef.current,
+      highlightReason: highlightedItemReasonRef.current,
+    });
+    if (browseEnterAction !== "submit-current-path") return;
+
+    // Base UI can retain an internal active row after the visible highlight is
+    // cleared. Intercept current-path submission during capture so that hidden
+    // state cannot activate the previous row (notably `..`) on the way down to
+    // the input's own combobox handler.
+    event.preventDefault();
+    event.stopPropagation();
+    submitCurrentPath();
   };
 }

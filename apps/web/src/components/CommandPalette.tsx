@@ -15,7 +15,9 @@ import {
   notifyScientProjectStillSyncing,
   scientInitializeOpenedProject,
   useScientNewThreadAddProjectItem,
+  scientBrowseKeyDownCapture,
   useScientAddProjectBrowseScope,
+  useScientBrowseHighlight,
 } from "~/scient/commandPalette/scientCommandPalette";
 // SCIENT-FORK:END
 import {
@@ -190,7 +192,6 @@ import {
   buildThreadActionItems,
   buildLinkedThreadActionItems,
   enumerateCommandPaletteItems,
-  type BrowseHighlightReason,
   type CommandPaletteActionItem,
   type CommandPaletteOpenIntent,
   type CommandPaletteSubmenuItem,
@@ -201,9 +202,7 @@ import {
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
-  isKeyboardBrowseHighlight,
   reduceCommandPaletteUiState,
-  resolveBrowseEnterAction,
   shouldOfferProjectPathCreation,
   type SearchOverlayMode,
 } from "./CommandPalette.logic";
@@ -769,12 +768,17 @@ function OpenCommandPaletteDialog(props: {
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
-  const highlightedItemValueRef = useRef<string | null>(null);
-  const [highlightedItemReason, setHighlightedItemReason] = useState<BrowseHighlightReason | null>(
-    null,
-  );
-  const highlightedItemReasonRef = useRef<BrowseHighlightReason | null>(null);
-  const [isNewProjectFolderDraft, setIsNewProjectFolderDraft] = useState(false);
+  // SCIENT-FORK:START — keyboard browse highlight and the new-folder draft
+  const {
+    highlightedItemValueRef,
+    highlightedItemReasonRef,
+    isNewProjectFolderDraft,
+    setIsNewProjectFolderDraft,
+    clearHighlightedItem,
+    handleItemHighlighted,
+    hasKeyboardBrowseHighlight,
+  } = useScientBrowseHighlight(highlightedItemValue, setHighlightedItemValue);
+  // SCIENT-FORK:END
   const clientSettings = useClientSettings();
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
@@ -1560,13 +1564,6 @@ function OpenCommandPaletteDialog(props: {
     ],
   );
   const recentThreadItems = allThreadItems.slice(0, RECENT_THREAD_LIMIT);
-
-  function clearHighlightedItem(): void {
-    highlightedItemValueRef.current = null;
-    highlightedItemReasonRef.current = null;
-    setHighlightedItemValue(null);
-    setHighlightedItemReason(null);
-  }
 
   const pushPaletteView = useCallback(
     (view: CommandPaletteView): void => {
@@ -3217,12 +3214,6 @@ function OpenCommandPaletteDialog(props: {
       : (remoteProjectInputPlaceholder(addProjectCloneFlow) ??
         getCommandPaletteInputPlaceholder(paletteMode));
   const isSubmenu = paletteMode === "submenu" || paletteMode === "submenu-browse";
-  const hasKeyboardBrowseHighlight =
-    !isNewProjectFolderDraft &&
-    isKeyboardBrowseHighlight({
-      highlightedItemValue,
-      highlightReason: highlightedItemReason,
-    });
   const hasHighlightedBrowseItem =
     isBrowsing && highlightedItemValue?.startsWith("browse:") === true;
   const canSubmitBrowsePath =
@@ -3319,31 +3310,23 @@ function OpenCommandPaletteDialog(props: {
     return useMetaForMod ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
   }
 
-  function handleBrowseKeyDownCapture(event: KeyboardEvent<HTMLElement>): void {
-    if (event.target !== projectPathInputRef.current) return;
-    const browseEnterAction = resolveBrowseEnterAction({
-      canSubmitBrowsePath,
-      forceSubmitCurrentPath: isNewProjectFolderDraft,
-      key: event.key,
-      isComposing: event.nativeEvent.isComposing,
-      isPrimaryModifierPressed: isPrimaryModifierPressed(event),
-      highlightedItemValue: highlightedItemValueRef.current,
-      highlightReason: highlightedItemReasonRef.current,
-    });
-    if (browseEnterAction !== "submit-current-path") return;
-
-    // Base UI can retain an internal active row after the visible highlight is
-    // cleared. Intercept current-path submission during capture so that hidden
-    // state cannot activate the previous row (notably `..`) on the way down to
-    // the input's own combobox handler.
-    event.preventDefault();
-    event.stopPropagation();
-    if (isCloneDestinationStep) {
-      void submitAddProjectCloneFlow(resolvedAddProjectPath);
-    } else {
-      void handleAddProject(resolvedAddProjectPath);
-    }
-  }
+  // SCIENT-FORK:START — Enter submits the typed path over a hidden active row
+  const handleBrowseKeyDownCapture = scientBrowseKeyDownCapture({
+    projectPathInputRef,
+    canSubmitBrowsePath,
+    isNewProjectFolderDraft,
+    isPrimaryModifierPressed,
+    highlightedItemValueRef,
+    highlightedItemReasonRef,
+    submitCurrentPath: () => {
+      if (isCloneDestinationStep) {
+        void submitAddProjectCloneFlow(resolvedAddProjectPath);
+      } else {
+        void handleAddProject(resolvedAddProjectPath);
+      }
+    },
+  });
+  // SCIENT-FORK:END
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
     const command = resolveShortcutCommand(event, keybindings, {
@@ -3758,19 +3741,7 @@ function OpenCommandPaletteDialog(props: {
         onKeyDown: handleKeyDown,
       }}
       mode="none"
-      onItemHighlighted={(value, eventDetails) => {
-        const nextValue = typeof value === "string" ? value : null;
-        const nextReason: BrowseHighlightReason | null =
-          nextValue == null
-            ? null
-            : eventDetails.reason === "keyboard" || eventDetails.reason === "pointer"
-              ? eventDetails.reason
-              : "none";
-        highlightedItemValueRef.current = nextValue;
-        highlightedItemReasonRef.current = nextReason;
-        setHighlightedItemValue(nextValue);
-        setHighlightedItemReason(nextReason);
-      }}
+      onItemHighlighted={handleItemHighlighted}
       onValueChange={handleQueryChange}
       panelSize="project-picker"
       showBackHint={isSubmenu && !isBrowsing}
