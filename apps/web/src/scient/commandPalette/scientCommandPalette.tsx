@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { FolderPlusIcon } from "lucide-react";
 import { useCallback, useLayoutEffect, useMemo } from "react";
 
@@ -7,9 +8,11 @@ import {
   type CommandPaletteActionItem,
   type CommandPaletteOpenIntent,
 } from "~/components/CommandPalette.logic";
+import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useScientProjectInitialization } from "~/hooks/useScientProjectInitialization";
 import type { ScientProjectInitializationDecision } from "~/lib/scientProjectInitialization";
-import { useScientAnalyticsView } from "~/scient/analytics/client";
+import { recordScientAnalytics, useScientAnalyticsView } from "~/scient/analytics/client";
+import { readPreparedConnection } from "~/state/session";
 import { allEnvironmentProjectSnapshotsReadyAtom } from "~/state/shell";
 
 /** Records which command palette feature is in view while it is open. */
@@ -87,4 +90,85 @@ export function useScientNewThreadAddProjectItem(openAddProjectFlow: () => void)
     [openAddProjectFlow],
   );
   return { projectSnapshotsReady, newThreadAddProjectItem };
+}
+
+type ScientProjectInitialization = ReturnType<typeof useScientCommandPaletteProjectInitialization>;
+
+/** Starts Scient initialization of an opened project when preparation asked for it. */
+export function scientInitializeOpenedProject(
+  initializeProject: boolean,
+  initializeProjectWithFeedback: ScientProjectInitialization["initializeProjectWithFeedback"],
+  target: { readonly environmentId: EnvironmentId; readonly root: string },
+): void {
+  if (initializeProject) {
+    void initializeProjectWithFeedback(target);
+  }
+}
+
+/** Tells the user a new project is saved but not yet in the sidebar. */
+export function notifyScientProjectStillSyncing(): void {
+  toastManager.add(
+    stackedThreadToast({
+      type: "warning",
+      title: "Project added but still syncing",
+      description: "The project is saved. Select it again after it appears in the sidebar.",
+    }),
+  );
+}
+
+/** Records the stage at which adding a project failed. */
+export function recordScientProjectAddFailed(
+  environmentId: EnvironmentId,
+  stage: "validation" | "registration" | "navigation",
+): void {
+  recordScientAnalytics(readPreparedConnection(environmentId), {
+    name: "project.add.failed",
+    properties: { stage },
+  });
+}
+
+/** Records a new thread started in an opened project. */
+export function recordScientThreadCreated(environmentId: EnvironmentId): void {
+  recordScientAnalytics(readPreparedConnection(environmentId), {
+    name: "thread.created",
+    properties: { creationSource: "new" },
+  });
+}
+
+/** Records opening a project that was already registered. */
+export function recordScientExistingProjectOpened(
+  environmentId: EnvironmentId,
+  initializeProject: boolean,
+): void {
+  recordScientAnalytics(readPreparedConnection(environmentId), {
+    name: "project.opened",
+    properties: {
+      projectState: "existing",
+      initializationState: initializeProject ? "missing" : "unknown",
+    },
+  });
+}
+
+/** Records adding a new project, opening it, and its first thread. */
+export function recordScientProjectAdded(
+  environmentId: EnvironmentId,
+  analyticsMethod: "picker" | "drag-drop" | "recent" | "unknown",
+  initializeProject: boolean,
+): void {
+  const analyticsConnection = readPreparedConnection(environmentId);
+  recordScientAnalytics(analyticsConnection, {
+    name: "project.added",
+    properties: { method: analyticsMethod },
+  });
+  recordScientAnalytics(analyticsConnection, {
+    name: "project.opened",
+    properties: {
+      projectState: "new",
+      initializationState: initializeProject ? "missing" : "unknown",
+    },
+  });
+  recordScientAnalytics(analyticsConnection, {
+    name: "thread.created",
+    properties: { creationSource: "new" },
+  });
 }

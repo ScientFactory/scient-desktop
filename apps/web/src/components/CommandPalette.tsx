@@ -8,6 +8,12 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import {
   useScientCommandPaletteProjectInitialization,
   useScientCommandPaletteView,
+  recordScientExistingProjectOpened,
+  recordScientProjectAddFailed,
+  recordScientProjectAdded,
+  recordScientThreadCreated,
+  notifyScientProjectStillSyncing,
+  scientInitializeOpenedProject,
   useScientNewThreadAddProjectItem,
 } from "~/scient/commandPalette/scientCommandPalette";
 // SCIENT-FORK:END
@@ -110,7 +116,7 @@ import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
-import { readPreparedConnection, usePreparedConnection } from "../state/session";
+import { usePreparedConnection } from "../state/session";
 import { serverEnvironment } from "../state/server";
 import { threadEnvironment } from "../state/threads";
 import { sourceControlEnvironment } from "../state/sourceControl";
@@ -174,7 +180,6 @@ import {
   resolveProjectPickerTarget,
   resolveWslProjectSelection,
 } from "../wslPaths";
-import { recordScientAnalytics } from "../scient/analytics/client";
 import {
   ADDON_ICON_CLASS,
   browseInputEndPaddingClass,
@@ -2573,10 +2578,9 @@ function OpenCommandPaletteDialog(props: {
       const rawCwd = input.rawCwd;
 
       if (isUnsupportedWindowsProjectPath(rawCwd.trim(), input.platform)) {
-        recordScientAnalytics(readPreparedConnection(input.environmentId), {
-          name: "project.add.failed",
-          properties: { stage: "validation" },
-        });
+        // SCIENT-FORK:START
+        recordScientProjectAddFailed(input.environmentId, "validation");
+        // SCIENT-FORK:END
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -2588,10 +2592,9 @@ function OpenCommandPaletteDialog(props: {
       }
 
       if (isExplicitRelativeProjectPath(rawCwd.trim()) && !input.currentProjectCwd) {
-        recordScientAnalytics(readPreparedConnection(input.environmentId), {
-          name: "project.add.failed",
-          properties: { stage: "validation" },
-        });
+        // SCIENT-FORK:START
+        recordScientProjectAddFailed(input.environmentId, "validation");
+        // SCIENT-FORK:END
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -2605,6 +2608,7 @@ function OpenCommandPaletteDialog(props: {
       let cwd = resolveProjectPathForDispatch(rawCwd, input.currentProjectCwd);
       if (cwd.length === 0) return;
 
+      // SCIENT-FORK:START — prepare the folder while the chat code loads
       // Start independent code loading now; keep the current screen and picker
       // available until both preparation and the destination code are ready.
       const chatCode = settlePromise(() => preloadProjectChat(router));
@@ -2624,18 +2628,19 @@ function OpenCommandPaletteDialog(props: {
       // the host project record and the optional Scient initialization.
       cwd = projectPreparation.root;
       const initializeProject = projectPreparation.initialize;
+      // SCIENT-FORK:END
 
       const existing = findProjectByPath(
         readProjects().filter((project) => project.environmentId === input.environmentId),
         cwd,
       );
       if (existing) {
-        if (initializeProject) {
-          void initializeProjectWithFeedback({
-            environmentId: input.environmentId,
-            root: cwd,
-          });
-        }
+        // SCIENT-FORK:START
+        scientInitializeOpenedProject(initializeProject, initializeProjectWithFeedback, {
+          environmentId: input.environmentId,
+          root: cwd,
+        });
+        // SCIENT-FORK:END
         const latestThread = getLatestThreadForProject(
           readThreadShells().filter((thread) => thread.environmentId === existing.environmentId),
           existing.id,
@@ -2661,18 +2666,13 @@ function OpenCommandPaletteDialog(props: {
           if (navigationResult._tag === "Failure") {
             throw squashAtomCommandFailure(navigationResult);
           }
-          recordScientAnalytics(readPreparedConnection(input.environmentId), {
-            name: "thread.created",
-            properties: { creationSource: "new" },
-          });
+          // SCIENT-FORK:START
+          recordScientThreadCreated(input.environmentId);
+          // SCIENT-FORK:END
         }
-        recordScientAnalytics(readPreparedConnection(input.environmentId), {
-          name: "project.opened",
-          properties: {
-            projectState: "existing",
-            initializationState: initializeProject ? "missing" : "unknown",
-          },
-        });
+        // SCIENT-FORK:START
+        recordScientExistingProjectOpened(input.environmentId, initializeProject);
+        // SCIENT-FORK:END
         return;
       }
 
@@ -2689,10 +2689,9 @@ function OpenCommandPaletteDialog(props: {
       });
       if (!canCommitNavigation()) return;
       if (createResult._tag === "Failure") {
-        recordScientAnalytics(readPreparedConnection(input.environmentId), {
-          name: "project.add.failed",
-          properties: { stage: "registration" },
-        });
+        // SCIENT-FORK:START
+        recordScientProjectAddFailed(input.environmentId, "registration");
+        // SCIENT-FORK:END
         if (!isAtomCommandInterrupted(createResult)) {
           const error = squashAtomCommandFailure(createResult);
           toastManager.add(
@@ -2707,54 +2706,36 @@ function OpenCommandPaletteDialog(props: {
       }
 
       const createdProjectRef = scopeProjectRef(input.environmentId, projectId);
+      // SCIENT-FORK:START — continue once the new project reaches the sidebar
       if (!canCommitNavigation()) return;
       const projectProjected = await waitForProjectProjection(createdProjectRef);
       if (!canCommitNavigation()) return;
       if (!projectProjected) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "warning",
-            title: "Project added but still syncing",
-            description: "The project is saved. Select it again after it appears in the sidebar.",
-          }),
-        );
+        notifyScientProjectStillSyncing();
         return;
       }
+      // SCIENT-FORK:END
 
-      if (initializeProject) {
-        void initializeProjectWithFeedback({
-          environmentId: input.environmentId,
-          root: cwd,
-        });
-      }
+      // SCIENT-FORK:START
+      scientInitializeOpenedProject(initializeProject, initializeProjectWithFeedback, {
+        environmentId: input.environmentId,
+        root: cwd,
+      });
+      // SCIENT-FORK:END
 
       const navigationResult = await settlePromise(() =>
         handleNewThread(createdProjectRef, { navigationIntent, onNavigationReady: handoff }),
       );
       if (navigationResult._tag === "Success" && navigationResult.value === null) return;
       if (navigationResult._tag === "Failure") {
-        recordScientAnalytics(readPreparedConnection(input.environmentId), {
-          name: "project.add.failed",
-          properties: { stage: "navigation" },
-        });
+        // SCIENT-FORK:START
+        recordScientProjectAddFailed(input.environmentId, "navigation");
+        // SCIENT-FORK:END
         throw squashAtomCommandFailure(navigationResult);
       }
-      const analyticsConnection = readPreparedConnection(input.environmentId);
-      recordScientAnalytics(analyticsConnection, {
-        name: "project.added",
-        properties: { method: input.analyticsMethod },
-      });
-      recordScientAnalytics(analyticsConnection, {
-        name: "project.opened",
-        properties: {
-          projectState: "new",
-          initializationState: initializeProject ? "missing" : "unknown",
-        },
-      });
-      recordScientAnalytics(analyticsConnection, {
-        name: "thread.created",
-        properties: { creationSource: "new" },
-      });
+      // SCIENT-FORK:START
+      recordScientProjectAdded(input.environmentId, input.analyticsMethod, initializeProject);
+      // SCIENT-FORK:END
     },
     [
       handleNewThread,
