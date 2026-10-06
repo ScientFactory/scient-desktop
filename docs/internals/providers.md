@@ -32,7 +32,8 @@ Live execution uses that instance's `orchestrationAdapter`, implementing
 [`ProviderAdapterV2`][adapter]. Native adapters live in `apps/server/src/orchestration-v2/Adapters/`;
 shared discovery, authentication, process and transport helpers stay under `provider/` and the
 protocol packages. Read the driver and its native adapter together. The V1 `provider/Layers/*Adapter`
-execution facade is superseded even where old helper dependencies remain in an alignment candidate.
+execution facade and its unused service/directory/metrics/queue owners are retired; historical
+readers and migration contracts remain separate compatibility boundaries.
 
 Antigravity separates account profiles per instance while sharing installed executables across the
 environment. It forces file-based credential storage because the native macOS keychain entry would
@@ -133,9 +134,12 @@ Configuration and execution share the canonical instance registry:
 
 `ProviderTurnStartService` projects typed composer context, applies selected Scient skills, resolves
 native or portable context transfers, and calls the session manager and `RunExecutionService`.
-Legacy composer/assistant-citation expansion is absent from this native execution path at this
-revision; preservation of that behavior is a runtime gap. The importer's historical citation repair
-is separate and does not expand citations in new user prompts.
+Native start and steer expand supported composer citations. Current-input validation includes that
+expansion, projected typed context, selected-skill instructions and attachment descriptors/captured
+data; inherited history has a separate receiving budget. See
+[context handoffs](./context-handoffs.md) for the complete-current-input boundary.
+The importer's historical citation repair is a separate reader boundary, not the mechanism for
+expanding citations in new user prompts.
 `ProviderTurnControlService` owns interrupt/restart/steer execution;
 `RuntimeRequestService` sends callback answers to the recorded session.
 `ProviderEventIngestor` persists adapter output with run/attempt/node attribution.
@@ -429,8 +433,9 @@ user-facing setup flow. Implementation notes that go beyond the shared runtime:
   it uses `DROID_DEFAULT_MODEL`, a marker never sent to Droid, so the session keeps the same default.
 - `acp/DroidAcpSupport.ts` owns auth-method selection, model and effort parsing, autonomy mapping,
   and the shared model/effort application used by interactive and headless paths.
-- `orchestration-v2/Adapters/DroidAdapterV2.ts` owns prompt preparation, steering, atomic turn settlement, interruption,
-  ACP elicitation, and the Droid idle watchdog.
+- `orchestration-v2/Adapters/DroidAdapterV2.ts` specializes the shared `AcpAdapterV2` runtime for
+  Droid, including its idle watchdog and failure policy. The shared ACP adapter owns common prompt,
+  steering, event, interruption and elicitation mechanics.
 - `scient/providerLifecycle/DroidConnectionActions.ts` invokes device pairing only when the exact
   initialized peer advertises it. Droid owns its browser flow, and Sign out is exposed only when the
   peer advertises ACP logout.
@@ -483,8 +488,9 @@ the V1 claim that Pi is always Full access or that rollback and thread forks are
 Pi's session manager leases each known native session file before opening a
 replacement process. It resolves symlinks to one server-side path, admits a
 single live writer across provider instances, and retains the lease until the
-owning process scope closes successfully. Failed cleanup retains the lease. A cancelled startup releases both unpublished and
-published ownership; a later start can then acquire the file. Repeated opens of
+owning process scope closes successfully. Failed cleanup retains the lease. A cancelled startup
+releases unpublished or published ownership only after its owned process scope closes successfully;
+a later start can then acquire the file. Repeated opens of
 the same provider session share its runtime and spawn one process.
 
 Passive model/catalog discovery remains `provider/Layers/PiProvider.ts`;
@@ -499,9 +505,21 @@ adapter; real-process tests still do not establish every extension, hosted accou
 
 ### Oh My Pi driver
 
-[`OmpDriver.ts`][omp] is an external provider on the current adapter. `packages/effect-omp-rpc` speaks
-Oh My Pi's newline JSON protocol, including protocol v2 chunk reassembly, and imports no Scient
-orchestration types. The adapter owns the process and the turn mapping.
+[`OmpDriver.ts`][omp] constructs the native
+[`OmpAdapterV2`](../../apps/server/src/orchestration-v2/Adapters/OmpAdapterV2.ts).
+Discovery remains in
+[`provider/Layers/OmpProvider.ts`](../../apps/server/src/provider/Layers/OmpProvider.ts).
+The driver supplies the custom-model-aware factory from
+[`OmpCustomModels.ts`](../../apps/server/src/provider/omp/OmpCustomModels.ts);
+[`OmpRpcProcess.ts`](../../apps/server/src/provider/omp/OmpRpcProcess.ts) owns process launch and the
+RPC transport connection.
+[`provider/omp/OmpSessionRuntime.ts`](../../apps/server/src/provider/omp/OmpSessionRuntime.ts)
+tracks native prompt and background-work settlement; the V2 adapter maps it to orchestration events.
+`packages/effect-omp-rpc` speaks Oh My Pi's newline JSON protocol, including protocol v2 chunk
+reassembly, and imports no Scient orchestration types. The adapter's
+[`OmpProcessOwnership`](../../apps/server/src/orchestration-v2/scient-provider/OmpProcessOwnership.ts)
+retains shutdown confirmation before releasing its session lock. This is distinct from logical
+turn settlement and does not establish universal physical-reader release.
 
 - The executable is `omp` 18.2.8 or newer and below major 19; a newer major is refused until it is
   qualified. Launch arguments are `--mode rpc` and
@@ -873,6 +891,15 @@ server admits an independent run only while that exact provider instance, live s
 thread still own an idle application thread. The request has a stable work ID, a generation guard
 invalidated by Stop, and a callback that disposes a dropped buffer. Duplicate offers replay the
 same command receipt; archived, replaced or busy owners cannot acquire another run.
+
+[`ProviderContinuationService`](../../apps/server/src/orchestration-v2/ProviderContinuationService.ts)
+handles the offer and generation-guarded reoffer; native adoption uses the existing runtime rather
+than sending another prompt. Pi session-file ownership is leased by
+[`PiSessionFileLeases`](../../apps/server/src/orchestration-v2/scient-provider/PiSessionFileLeases.ts)
+through `ProviderSessionManager`. Shared native producer close/interrupt ordering lives in
+[`NativeProducerLifecycle`](../../apps/server/src/orchestration-v2/scient-provider/NativeProducerLifecycle.ts)
+and is used by `NativeSessionAdapterV2`; Pi's own RPC adapter keeps its protocol-specific generation
+and turn ownership.
 
 The adapter captures the applied model, runtime policy and workspace when that native generation
 begins. Admission records this immutable configuration with its exact native owner; adoption does

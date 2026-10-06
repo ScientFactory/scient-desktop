@@ -23,12 +23,30 @@ selected model's context window, native occupancy, current input, attachments an
 The implementation conservatively charges one UTF-8 byte per estimated token rather than using
 a provider tokenizer; the default token allowance can therefore constrain bytes below the ceiling.
 
+The complete current request has its own refusal gate in
+[`AttachmentPrompt`](../../apps/server/src/orchestration-v2/AttachmentPrompt.ts), including expanded
+composer citations, projected typed context, selected-skill instructions (including their trusted
+runtime-instruction suffix where used), attachment descriptors and captured-window data.
+`ProviderTurnStartService` validates that prepared material before allocating inherited history.
+It is not truncated to make inherited history fit; inherited history uses the separate receiving budget.
+
+Native model capacity is distinct from current context occupancy. The
+[`NativeModelContextWindow`](../../apps/server/src/orchestration-v2/scient-fork/NativeModelContextWindow.ts)
+owner scopes capacity to the exact provider instance, complete model selection and runtime/launch
+configuration. Codex launch reports must be positive and finite and belong to the current accepted,
+running root attempt; the sink rechecks its session/thread/turn ownership inside the transaction.
+Stale owners do not commit. When an eligible report is present, its durable capacity write shares
+the transaction with the canonical events and projections; not every transaction has a usage update.
+Handoff budgeting separately subtracts native occupancy, current input and headroom. Missing
+occupancy telemetry uses a conservative history/attachment estimate, not a newly reported capacity.
+
 Historical messages retain item/run/thread/provider attribution. The handoff records omitted item
 IDs and counts and tells the agent that history is context, not a new request or execution authority.
 Its recovery pointer uses `scient_thread_read({threadId, view:"activity", limit:20,
 maxCharsPerItem:4000})`; paginate using `afterPosition=nextPosition`, or fetch an individual `itemId`
 with `textOffset=nextTextOffset`. Native tool/reasoning state and attachment bytes are not replayed
-by this textual history delivery. Submitted callback answers are inert historical facts.
+by this textual history delivery. Submitted callback answers are inert historical facts; copied
+answer-file references do not by themselves reattach the original bytes.
 
 Fork merge-back delivery uses the same whole-item selection and budget. New
 `ContextHandoffServiceV2.prepareForkDelta` records contain intact historical messages as well as a

@@ -591,10 +591,16 @@ Keep main's typed message context and legacy readers; queue support advertises
 Preserve queue snapshot/journal migrations and attachment identity. Oversized
 requests may omit optional Skill index entries, not selected user context.
 
-This foundation does not import the separate Compute toolkit branch or change
-Compute/Analysis runtime, UI or history ownership. Future consumers must
-deliberately reconcile workspace authority and tool ownership against their
-current implementation. No unmerged Orchestration V2 code is imported.
+The current native V2 projection supplies workspace authority and committed
+revisions through `scient/projectScope/WorkspaceAuthorityProjection.ts`; missing
+pre-cutover revision stamps fail closed. MCP projects authenticated context into
+the shared domain admission boundary rather than reviving a V1 execution owner.
+`scient_compute_inventory` is wired to the existing Compute gateway as bounded,
+read-only discovery: it does not install, execute, select or attach a runtime or
+project session, and a listed executable is not authority to launch it.
+This adaptation does not merge the separate experimental Compute toolkit or
+Analysis migration ledger, change scientific runtime/session/UI/history
+ownership, or import unmerged V2 experiments.
 
 Oh My Pi's external provider and Scient Agent share a Scient-owned RPC seam.
 `packages/effect-omp-rpc` owns the wire client without Scient orchestration types.

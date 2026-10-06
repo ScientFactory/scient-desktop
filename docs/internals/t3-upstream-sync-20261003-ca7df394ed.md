@@ -2,34 +2,131 @@
 
 > Maintainer receipt. Product workflows live in [docs/user](../user/).
 
-**Status: integration corrections under final qualification.** The literal upstream
-merge, owned-main catch-up and native execution corrections are committed locally
-through `d7b4042e3d`, with reviewed seam batch `7ef738fb31` composed afterward,
-including qualified stash
-provenance, queue reservation, historical task transport, direct Node/bundle
-compatibility, native retry history, persisted fork boundaries and fork handoff
-presentation, Registry provenance/removal and OMP production-process corrections.
-Scoped proof is recorded below; historical passing gates do not establish readiness
-of the combined candidate. The completed server gate at that checkpoint reports
-11,928 passed, 21 failed and 152 skipped cases across 890 files. Its seven failing
-files are under repair; this is not a passing suite. All 32 package typechecks
-pass at that checkpoint, while final composition and repaired-app gates remain open.
+**Source qualification checkpoint, 2026-10-06: required V1 retirement and
+reviewed repairs are composed, with the finite source gates passing.**
+The new receiving source checkpoint
+`1249a2d1ab29ef75830f0db1a43550bf9f6f0146` has the exact qualified whole
+tree `73b838f17ff6e9d26c2786d99905f442430b6b68`, identical to preserved
+ordinary-hook publication `5a51ef8036e966ab6c7e4d85de3c83830f839d3e`.
+It retains cleaner `3d44a4e667b1d79be68c8d5c8ebb2c06d4000108`, caret
+`99eb14cb828944b461466d3da92769160c07e2e6`, Claude's delivered capacity
+`f835e5adf9b33725f20dcc92bc44c77ed0a8fcdc`, the obsolete provider errors cut
+and reviewed mobile/workspace/Droid/OMP repairs. Its four literal two-parent
+merges are recorded below; original source checkpoints and failures survive.
 
-The clean detached review candidate at `3564658e28` and MAIN reference at
-`33ab8e307a` run in isolated profiles. The owner is now using the review app;
-its state is no longer exclusively synthetic and it remains untouched. A separate
-clean acceptance checkout is prepared for new synthetic verification. Earlier
-candidates are preserved. Native PDF Export/Cancel/Retry/Save and provider-row visibility passed
-at `802e278c28`; picker continuation, attachment transfer and composer approval
-routing have subsequent scoped app evidence. DEV-001/DEV-002, queue editing and
-the six-state visual comparison still require final repaired-app acceptance.
-Collaborative-preview screenshot capture fails and its browser animation frames
-do not arrive in a bounded probe. Raising the owned native window subsequently
-produces a current held-edit screenshot at `3564658e28`; the six final comparison
-states still require capture. DOM and SQL evidence are not visual approval. The separate
-V1-removal lane has delivered its reviewed seam extractions; V1 deletion and its
-other active repairs remain separate. No publication or user acceptance
-is claimed.
+V1 execution service, directory, metrics, queue and snapshot owners, the old
+Query/facade and orphan V1 adapter fixtures/contract are retired. Current native
+V2 adapters, canonical public contracts, historical event codecs, migrations
+and legacy import/recovery readers remain. Transactional event publication
+and import completion share one owned publication boundary; pending-start
+reservations protect session acquisition and generation-fence idle re-arming.
+See [architecture](./overview.md), [provider lifecycle](./provider-lifecycle.md)
+and [migration guidance](./legacy-orchestration-migration.md) for their actual
+owners and limits.
+
+The complete server run on tree
+`2c2f443c698795d87fbc43ae24c62254927faaa4` records **11,146 passed, five failed
+and 182 skipped cases across 963 files**. Its failures are two Droid FIFO
+cases, one queued-workspace case and two OMP preparation cases. Reviewed
+fixtures now join the exact successor's durable admission before manually
+draining a disabled worker; assertions, native payloads and deadlines remain
+intact. Their three complete files pass **74 cases** on composed tree
+`d4ed913c834988507f2d908a45ee1a820afffba7`; the actual canonical mobile attachment
+consumer also passes **34 cases**, with scoped formatting and lint passing.
+All five observed failures are repaired on that candidate. The original
+failed full run is preserved, not relabeled as green; unchanged passing files
+are reused, not rerun to establish a stability claim.
+
+Completed continuation gates record web unit **10,344**, mobile **1,929**,
+desktop **1,606** passing cases and a passing scripts cohort. All 32 package
+typechecks passed on tree `905f217491837f87690cbf7c81cf7b4820570cf6`. Formatting,
+lint, brand and intended-upstream seam checks passed on the preceding frozen
+source. Direct public-codec and real migrated SQLite smokes passed, including
+concurrent publication to both buses, SQL rollback and the next writer.
+The first recursive test invocation aborted on concurrent lazy Electron
+installation; serial completion of the actual dependency installation
+resolved that environment prerequisite. Its failure log remains intact.
+
+The full build and actual macOS arm64 DMG/ZIP packaging passed on tree
+`06b3e055bb6562258dd2fc1698e786675e3f3576`. The DMG checksum is valid; independent
+inspection matches the packaged PDF workers to that build and identifies the
+native Cursor, voice and SyncTeX resources. That artifact has this exact source
+scope, not an implied final-commit or release qualification. The newer complete
+workspace build passes all six tasks without cache hits on current qualified
+tree `73b838f17ff6e9d26c2786d99905f442430b6b68`, at preserved source `5a51`.
+Its bundler warnings remain recorded; a build is not packaged-app execution.
+The earlier artifact is not promoted to this newer source scope.
+
+The first existing
+`knip:check` fails on 26 unused-file findings before its export phase. The finite
+repair is composed on tree `3da0abfcea28c54e6788b3f5f929f3869720b565`:
+22 dependency-cleared receipt/schema/fork/detail/settlement/title and legacy
+projection-facade modules retire; current V2 owners and direct legacy SQL readers,
+tables, migrations and canonical codecs remain. Four real dynamic/documented
+test/tool entries are preserved explicitly, not ignored. The first finite tree's
+files/dependencies phase passes, but its export phase genuinely reports
+**48 unused exports**. Their completed repair, including the newly disconnected
+Cursor helper and inert legacy notification wiring, is published in the current
+`73b838f17ff6e9d26c2786d99905f442430b6b68` tree. Both existing Knip phases,
+all 32 compilers without cache hits, owned formatting/lint, **486 cases across
+38 complete affected server files** and **25 client pending-request cases**
+pass. Direct public-codec and actual migrated-SQL publication/rollback/both-bus
+smokes also pass on that exact tree. Independent completed source review finds
+no actionable blocker. The original unused-file and export failures remain
+intact; no blanket ignore, new baseline or strict-CI activation is introduced.
+
+The four-case `V1ImportBoundary.test.ts` source-file/import/SQL-string inventory
+and its test-only lexer exercise are retired rather than re-pinned to removed
+paths, under the existing source-text/wiring-test rule. This does not remove
+real importer, SQL, native ownership or codec assertions. The original complete
+server report still records the static cases that existed at its exact source.
+
+The existing alignment app is managed-delivered at `f835e5adf9`; the newer
+receiving composition has not yet replaced it. Its profile and unrelated agent
+compiler configuration are protected. Final managed delivery must use an idle,
+verified boundary. The user has authorized the consolidated visual/functional
+run-through after delivery; root owns the nine-surface check on disposable
+fixtures. An unavailable or locked screen is an explicit acceptance gap, not
+proof of a passing surface. No new app or separate smoke-window launch is
+claimed here. Prior UI captures remain dated candidate evidence. Linux
+physical-reader/cgroup, native mobile, remote SSH and unexercised provider
+combinations retain separate limits. No push, PR, release or completed manual
+acceptance is claimed.
+
+### Historical source-separation receipt — 6ced to f835
+
+The released documentation receipt
+`bd3b4865099471e70eafddb4b6c251293a2fdddb` records thirteen reviewed extraction
+merges between `6ced7918d858ba35aec6b4f85d2ba6b2bf15436e` and
+`f835e5adf9b33725f20dcc92bc44c77ed0a8fcdc`, measured against official
+`ca7df394ed8151fa77f856beefa90bc60a785d60`. Its historical host-line measure
+falls from **53,855 to 37,432 lines in 702 upstream files**: the extraction
+merges remove 17,358 lines, while other changes in that range add 935, for a
+net reduction of 16,423. Advisory inventory records marked findings
+231 → 375, new debt 10,542 → 10,046, and unresolved findings 102 → 102.
+These are different source measures, not behavior results, current receiving
+inventory, or permission to enable a strict ratchet or advance the qualified
+upstream cursor. The
+[reproducible measurement and continuation rules](./upstream-alignment-protocol.md#keep-scient-implementation-outside-upstream-hosts)
+preserve their exact inputs; the
+[current extracted-owner map](./scient-fork-divergence.md#extracted-owners-and-host-mounts)
+reflects the receiving source rather than freezing the older mounts.
+
+The receipt's queue-order, timeline-link and general idle-timer observations
+remain historical, owner-scoped findings. Later exact-admission fixture repairs
+and startup-reservation checks have their own evidence above; neither source
+separation nor those bounded checks establishes general timer uniqueness,
+physical reader cleanup, or manual acceptance.
+
+### Historical early integration checkpoint
+
+The following candidate, ancestry and dated execution records preserve the
+earlier integration history. The early `d7b4042e3d` checkpoint plus reviewed
+`7ef738fb31` composition reported 11,928 passed, 21 failed and 152 skipped cases
+across 890 files, with all 32 package typechecks passing. Earlier isolated app
+evidence at `802e278c28`, `3564658e28` and later dated sections below remains
+limited to those exact revisions. The current status above supersedes their
+then-open repair descriptions; it does not rewrite their outcomes.
 
 ## Candidate and ancestry
 
@@ -50,6 +147,56 @@ and `ca7df394ed8151fa77f856beefa90bc60a785d60`. The catch-up has exact parents
 `b8fbae4ffa84414b02461cf42a0afa4b10a03fcc` and the frozen owned-main commit. Neither
 history is squash-replayed. `upstream-state.json` retains the previous qualified
 cursor until final acceptance. No push, PR, release or manual acceptance is claimed.
+
+### Reviewed owned source publications — 2026-10-06
+
+These ordered parents are literal local Git topology, not squash equivalents
+or permission to import arbitrary non-official history:
+
+- Cleaner source checkpoint `3d44a4e667b1d79be68c8d5c8ebb2c06d4000108`,
+  tree `dfa983d68580830242b756090a13f638bf44cb21`, has parents
+  `7238163eabeb697959f87f7d071f19816530f050`,
+  `b16ea34be44f85d4bbe4d5125e1b6aeaea7dc7c5`,
+  `93ac3a1c6e3efffa33a2992ce7a602f0132c1697`,
+  `bc2ca56c3104e8c61958c1b254c5880574b07e38`,
+  `2fca2fd7c7a9e9eab92bda43a0b66c4acedb0413`.
+  Its codec/SQL/source qualification is bounded separately from later native,
+  artifact and app acceptance.
+- Delivered startup repair `f835e5adf9b33725f20dcc92bc44c77ed0a8fcdc`
+  has parents `7238163eabeb697959f87f7d071f19816530f050` and
+  `b5467e986ca6bd7f84eb2fdf75d760d9e0d9c254`. The final donor's complete owner
+  cohort passes 366 cases across 25 files; its completed different review and
+  actual delivered-composition selected server cohort (7,159 passing cases)
+  remain distinct evidence scopes. Only this exact reviewed edge is added to
+  the existing machine-readable owned-merge receipts.
+- Receiving source checkpoint `d74644f50e3142e9a7ea62fa59ca9e78812890b6`,
+  tree `d4ed913c834988507f2d908a45ee1a820afffba7`, has parents
+  `99eb14cb828944b461466d3da92769160c07e2e6`,
+  `f835e5adf9b33725f20dcc92bc44c77ed0a8fcdc`,
+  `5e28723441ac924b39d897585cd2a39b6ba378c4`,
+  `1768be85e3b25f338ac4b9500f11a20a79693846`,
+  `1ac9e21f76d0d02898fbec9df4e1846a4fe1ad1f`.
+  Ordinary hooks preserve the exact qualified source tree. The existing
+  introduced-history verifier passes from exact receiving base99e to this
+  exact head against literal officialca7, with its existing owned-head mode
+  and exact delivered-startup receipt; no checker policy or qualified cursor
+  is changed.
+
+The verifier's successful `99e` → `d746` result applies only to that exact
+introduced range and current-head exemption. It is not a successful check of
+`99e` → any later receiving head. Its owned-merge receipt validator still
+requires exactly two parents; the five-parent source publications above are
+audited literal composition boundaries, not new machine-receipt exceptions.
+Later qualification must record its own actual base, head and mode, alongside
+these preserved source proofs. No checker relaxation, rewritten ancestry or
+advance of the qualified `54084ae1e6c32809db040e4fa571c80fdf2d8ae4` cursor follows
+from scoped source qualification.
+
+The direct no-window startup-policy smoke uses the actual delivered policy
+with seeded runtime identities and real Effect refs, scopes and fibers:
+nested holds preserve generation7, last release re-arms generation8, and a
+replacement runtime retains its own timer. It does not exercise the full
+manager, a vendor process, physical reader release or UI.
 
 ## Architecture and protected decisions
 
@@ -1028,3 +1175,14 @@ merge checks, official ancestry rules and qualified
 `54084ae1e6c32809db040e4fa571c80fdf2d8ae4` cursor remain unchanged. Final
 introduced-history, documentation, artifact, app and consolidated acceptance
 receipts must report their actual later boundaries.
+
+Ordinary metadata publication `d99fca6a70c537c415986912637157caca1e5908`,
+tree `a4567e4dbef951db0363b913afbcc740b0da3c61`, changes only
+`upstream-state.json` and this canonical review appendix from the identical
+source checkpoint. The unchanged verifier now passes the complete introduced
+`99eb14cb828944b461466d3da92769160c07e2e6` →
+`d99fca6a70c537c415986912637157caca1e5908` range against literal official
+`ca7df394ed8151fa77f856beefa90bc60a785d60`, without owned-head or merge-queue
+exemptions. Official ancestry, delivered-app fast-forward ancestry, metadata
+formatting and committed whitespace checks also pass. The original failing
+range remains separately recorded, not relabeled as green.

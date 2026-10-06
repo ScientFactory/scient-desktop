@@ -26,6 +26,15 @@ An exact durable rejection clears the extraction intent and releases its lock;
 it leaves the ordinary draft and server queue unchanged. An arbitrary transport
 or storage error does not prove rejection.
 
+Mobile uses a separate native in-place edit contract: its queue sheet opens a dedicated edit draft
+without cancelling the queued run. Saving uses `queued-run.edit` with retained server attachments
+and newly prepared uploads; context bindings follow the replacement list. Cancel leaves the queued
+message unchanged, and a rejected save keeps the edit in the composer. See
+[mobile composer Help](../user/composer.md#send-while-the-agent-is-working) and
+[`queued-run-edit.ts`](../../apps/mobile/src/state/queued-run-edit.ts).
+The desktop/web cancellation, extracted-packet journal and Web Lock recovery described here are
+not a mobile recovery guarantee.
+
 An unheld native queue advances automatically, one message at a time, after
 the current turn finishes successfully and its finalization settles. Ordinary
 completion never requires Resume. Native Stop, interruption and failed starts
@@ -141,8 +150,12 @@ its stash. Browser Web Locks prevent two windows from recovering the same edit
 journal concurrently. Storage or network failure preserves the draft and recovery
 intent; a lost response reconciles with the same token.
 
-Send uses the ordinary submission path. Its stable identity is retained through
-an uncertain response, and the server reconciles accepted command receipts before
+Send uses the ordinary submission path. An extracted draft freezes its prepared
+submission packet, intent and identities before offering intake through
+[`extractedIntentSend.ts`](../../apps/web/src/scient/threadQueue/extractedIntentSend.ts) and
+[`submission.ts`](../../apps/web/src/scient/threadQueue/submission.ts). An unknown acknowledgment
+retries that same packet; it never substitutes current settings, uploads or a newer draft.
+The server reconciles accepted command receipts before
 repeating upload claims or bootstrap side effects. A queued acknowledgment removes
 the optimistic message and releases local dispatch immediately. Acceptance clears
 only the submitted draft; typing during the request remains in the composer.
@@ -157,16 +170,19 @@ cleanup. Bytes still referenced by a queued item or projected message are retain
 
 ## Implementation owners
 
-| Owner                                                     | Responsibility                                             |
-| --------------------------------------------------------- | ---------------------------------------------------------- |
-| `apps/server/src/orchestration-v2/Orchestrator.ts`        | Admission, command predicates, held state, and advancement |
-| `apps/server/src/orchestration-v2/QueuedRunOrder.ts`      | Native delivery order and automatic-completion separation  |
-| `apps/server/src/orchestration-v2/QueuedMessageBudget.ts` | Serialized-message and owned-byte limits                   |
-| `apps/server/src/orchestration-v2/EffectWorker.ts`        | Durable execution after admission                          |
-| `apps/server/src/orchestration-v2/legacy/`                | Legacy queue cutover and recovery readers                  |
-| `apps/web/src/components/chat/QueuedRunsControl.tsx`      | Native projection and command adapter for the strip        |
-| `apps/web/src/scient/threadQueue/ThreadQueueStrip.tsx`    | Queue presentation                                         |
-| `apps/web/src/scient/threadQueue/editSession.ts`          | Local draft journal and edit recovery                      |
+| Owner                                                                                   | Responsibility                                                             |
+| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `apps/server/src/orchestration-v2/Orchestrator.ts`                                      | Admission, command predicates, held state, and advancement                 |
+| `apps/server/src/scient/orchestration/TerminalQueueHold.ts`                             | Exact terminal boundary and held-queue eligibility                         |
+| `apps/server/src/orchestration-v2/QueuedRunOrder.ts`                                    | Native delivery order and automatic-completion separation                  |
+| `apps/server/src/orchestration-v2/QueuedMessageBudget.ts`                               | Serialized-message and owned-byte limits                                   |
+| `apps/server/src/orchestration-v2/EffectWorker.ts`                                      | Durable execution after admission                                          |
+| `apps/server/src/orchestration-v2/legacy/`                                              | Legacy queue cutover and recovery readers                                  |
+| `apps/web/src/components/chat/QueuedRunsControl.tsx`                                    | Native projection and command adapter for the strip                        |
+| `apps/web/src/scient/threadQueue/ThreadQueueStrip.tsx`                                  | Queue presentation                                                         |
+| `apps/web/src/scient/threadQueue/editSession.ts`                                        | Local draft journal and edit recovery                                      |
+| `apps/web/src/scient/threadQueue/extractedIntentSend.ts`, `submission.ts`               | Frozen offered packet, uncertain-intake retry and later-draft preservation |
+| `apps/web/src/scient/threadQueue/extractedDraftIntent.ts`, `extractedImageSelection.ts` | Extracted intent and image-selection ownership                             |
 
 ## Verification and manual acceptance
 

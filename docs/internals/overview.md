@@ -83,8 +83,11 @@ the accepted command receipt, and outbox effects in one database transaction. Su
 events after that commit, in database sequence order. This keeps command retries idempotent and prevents a persisted projection
 from getting ahead of the event log.
 
-The sink serializes commit and publication across command, provider, and project writes, then wakes
-outbox workers. Its transaction body can be interrupted and rolled back; once commit succeeds,
+The sink's
+[`CommitPublication`](../../apps/server/src/orchestration-v2/scient-fork/CommitPublication.ts)
+serializes commit and publication across command, provider, and project writes. After commit,
+the sink publishes to the all-event and event-type buses, then wakes outbox workers.
+Its transaction body can be interrupted and rolled back; once commit succeeds,
 publication finishes before cancellation releases the writer. Publishing writes own their SQL
 transaction. Import preparation and its final ledger write run inside that transaction, so a failed
 import cannot publish events that rolled back. Callers must not nest a publishing write inside
@@ -126,11 +129,22 @@ and requested effects share one SQL transaction. Publication and worker wakeups 
 A retry returns the durable receipt; a command ID cannot be reused for another thread.
 
 The disconnected V1 provider service, session directory, metrics and queue execution helpers
-are retired. Historical SQL and queue-document readers remain import boundaries; their
-schemas and migrations are not runtime execution authorities. Retained snapshot/view schemas,
+are retired, along with the unused V1 provider-adapter SPI and its orphan integration fixtures.
+The live adapter SPI remains `orchestration-v2/ProviderAdapter.ts`; current read operations use
+`orchestration-v2/ProjectionStore.ts`, not the removed V1 Query tag or contracts facade.
+Unused V1 projection CRUD facades and disconnected fork/handoff/history wrappers are also retired.
+Retained readers such as
+[`LegacyV1ThreadImporter`](../../apps/server/src/orchestration-v2/legacy/LegacyV1ThreadImporter.ts)
+and [`LegacyScientHistory`](../../apps/server/src/orchestration-v2/legacy/LegacyScientHistory.ts)
+read historical SQL directly. Historical SQL and queue-document readers remain import boundaries;
+their schemas and migrations are not runtime execution authorities. Retained snapshot/view schemas,
 SQL approval scalars and current RPC method names have canonical owners in
 `packages/contracts/src/scientOrchestrationSnapshot.ts`, `scientApprovalProjection.ts` and
 `scientOrchestrationRpcMethods.ts`. Public exports retain the same schema objects.
+
+Retired execution does not retire compatibility data: saved V1 contracts, immutable SQL migrations
+and historical readers still support import/recovery. These owner paths describe source structure,
+not proof of packaged-app behavior or release of an external process or physical attachment reader.
 
 Clients send commands such as `message.dispatch`, `run.interrupt`, `runtime-request.respond`,
 `queued-run.cancel`, and `checkpoint.rollback`. Provider adapters emit normalized V2 events;

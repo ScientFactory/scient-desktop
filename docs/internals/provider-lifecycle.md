@@ -53,6 +53,23 @@ host and Scient lifecycle managers. Lifecycle changes must close/reconcile the e
 sessions, not construct a second V1 adapter or call the retired `ProviderService`/session reaper.
 See [production composition](../../apps/server/src/orchestration-v2/runtimeLayer.ts).
 
+Before opening or reusing a session, `ProviderTurnStartService` takes a scoped pending-start
+reservation through
+[`StartupSessionHold`](../../apps/server/src/orchestration-v2/scient-provider/StartupSessionHold.ts).
+The manager checks that separate count inside idle retirement's atomic reservation step; turn
+completion cannot consume it. When the last start releases a declined idle timer, re-arm claims
+and installs only the same runtime and idle generation. Replacement or later activity owns its
+own timer. Explicit Stop, detach, logout and shutdown remain able to release the session.
+This protects startup from idle retirement; it is not provider acceptance or physical-release proof.
+
+Logical retirement is separate from physical release. The manager's
+[`SessionRetirement`](../../apps/server/src/orchestration-v2/scient-provider/SessionRetirement.ts)
+retains the physical-close join even if its observation times out; revoking MCP credentials does
+not prove the process exited. Factory-local
+[`NativeSessionShutdown`](../../apps/server/src/provider/NativeSessionShutdown.ts) caches a failed
+close and keeps new-session admission closed for that lifetime. Retry behavior belongs to each
+close owner; neither path establishes a universal process-tree or attachment-reader release guarantee.
+
 Official Antigravity ACP implements these same optional lifecycle capabilities
 through T3's auth controller and paired-executable installer. It does not also
 run the generic managed-runtime engine: its executable/harness validation and

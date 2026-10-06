@@ -93,6 +93,12 @@ running the send button shows which action it will take. Long-press it to use th
 other action for a single message, or hold `Cmd` while sending from a hardware
 keyboard. The button only offers Steer when the running agent supports it.
 
+On mobile, open the queue sheet and choose **Edit** on a waiting message to load it into the
+composer without removing it from the server queue. Keep or remove its existing attachments and
+add new ones as needed. Sending from this edit mode saves the replacement in place; it does not
+send a new message. **Cancel** leaves the queued message unchanged and returns to your ordinary
+draft. If saving fails, the edit stays in the composer so you can resolve the error or retry.
+
 ## Queue messages offline on mobile
 
 In the retained mobile client (not yet a public Scient release), tap **+** for **Photo Library**

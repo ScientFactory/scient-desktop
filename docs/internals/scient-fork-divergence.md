@@ -108,6 +108,8 @@ the same planner. Native run-fork and Scient's checkpoint/worktree choice are di
 2. The plan allocates destination-owned messages, items, context, and attachment identities.
    Copied facts have causal lineage but no executable source run, live callback, or provider-native
    item authority. System messages and submitted question answers remain inert historical facts.
+   Historical answer-file references do not themselves reattach bytes; retained projected
+   attachments follow the separate verified copy and destination-ownership path.
 3. `EventSink` commits the destination, copied prefix, lineage/context-transfer facts, command
    receipt, and `scient-fork.provision` outbox effect together. `conversationFork` metadata owns
    provisioning status; the old Scient lineage table/reactor is not the live authority.
@@ -225,6 +227,92 @@ Server paths above are relative to `apps/server/src/`. Extend these live service
 `ProviderService`. Files with V2-looking names are not sufficient evidence of production reachability;
 check `runtimeLayer.ts` and callers. Legacy SQL tables and Scient migration IDs remain compatibility
 boundaries; their historical execution machinery is superseded.
+
+### Extracted owners and host mounts
+
+The separation map below describes the adopted source, not a proposed move or a qualification
+receipt. Keep generic host orchestration/rendering in place and compose the named Scient policies
+at narrow mounts. An owner name alone does not prove that its branch is live; follow its callers
+and the deciding ownership conditions. Apply the
+[extraction continuation rules](./upstream-alignment-protocol.md#keep-scient-implementation-outside-upstream-hosts)
+when changing these boundaries.
+
+#### Orchestration policies
+
+These hosts are under `apps/server/src/orchestration-v2/`. The extracted policy owners are in
+[`scient-fork/`](../../apps/server/src/orchestration-v2/scient-fork/), alongside the fork service,
+repositories, independent schema/migrator and context-history helpers.
+
+| Host mount                                                 | Extracted owners                                                                                                                                                  | Boundary to preserve                                                                                             |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `EventSink.ts`                                             | `CommitPublication.ts`, `NativeModelContextWindow.ts`, `PendingStartOwner.ts`, `sourcePlanConsumption.ts`, `committedQuestionAnswers.ts`, `runningForkSource.ts`  | Transactional current-owner checks, canonical append/projection/outbox, masked commit and both publication buses |
+| `Orchestrator.ts`                                          | `RunStartDecisions.ts`, `SettingExecutionOwner.ts`, `ProviderWorkAdmission.ts`, `DroidHeldSteer.ts`, `CheckpointRollbackCompletion.ts`, `ConversationForkPlan.ts` | Thread-lock admission, captured queued modes, busy-owner preservation, held-steer and rollback ordering          |
+| `ProviderTurnStartService.ts`                              | `PortableTurnStart.ts`, `PendingStartOwner.ts`, `NativeModelContextWindow.ts`                                                                                     | Stop-before-offer checks and frozen native-or-portable history delivery                                          |
+| `ProviderTurnControlService.ts`                            | `PendingStartInterrupt.ts`                                                                                                                                        | Pending-start interruption uses observed native receipts, not invented turn identity                             |
+| `RunExecutionService.ts`                                   | `RunExecutionFinalization.ts`, `NativeWorkflowOwnership.ts`, `PendingStartOwner.ts`, `runningForkSource.ts`                                                       | Exact root-attempt finalization, subscription lifetime and transferred workflow ownership                        |
+| `ThreadForkService.ts`                                     | `ConversationForkPlan.ts`, `ConversationForkNativeSource.ts`, `ConversationForkBoundaryItem.ts`                                                                   | Destination-owned prefix and exact native boundary proof                                                         |
+| `ThreadManagementService.ts`                               | `ThreadDispatchCloneGuard.ts`                                                                                                                                     | Reject unavailable clone state before hydration/native dispatch                                                  |
+| `ProjectionStore.ts`, `EffectWorker.ts`                    | `RollbackAttachmentRetention.ts`, `ConversationForkService.ts`                                                                                                    | Retained attachment references and durable provisioning, not a second execution authority                        |
+| `ContextHandoffBudget.ts`, `ScientContextHandoffPolicy.ts` | `context/historicalItems.ts`, `context/handoffBudget.ts`                                                                                                          | Whole-item history selection and Scient preset allowance                                                         |
+
+`scient/orchestration/TerminalQueueHold.ts` remains the server terminal hold policy mounted by the
+orchestrator. `scient/skills/ScientV2SkillTurn.ts` and `ScientSkillSession.ts` own trusted skill
+preparation/session behavior at turn-start and control mounts. The retained `legacy/` readers
+are import/recovery boundaries, not replacements for these execution services.
+
+#### Provider session and adapter policies
+
+Session and adapter policies live in
+[`orchestration-v2/scient-provider/`](../../apps/server/src/orchestration-v2/scient-provider/).
+The adapter still owns its native provider protocol.
+
+| Host mount                                              | Extracted owners                                                                                                             | Boundary to preserve                                                                                  |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `ProviderSessionManager.ts`                             | `StartupSessionHold.ts`, `SessionRetirement.ts`, `SessionAuthority.ts`, `ProviderTextSnapshots.ts`, `PiSessionFileLeases.ts` | Exact runtime/generation admission, physical release/join, text-snapshot consumers and Pi file leases |
+| `Adapters/CodexAdapterV2.ts`                            | `CodexNativeSession.ts`, `CodexPresentation.ts`, `ProviderTextSnapshots.ts`, `NativeTurnReceipts.ts`                         | Launch-scoped capacity/selection, offered-versus-accepted receipt and native presentation             |
+| `Adapters/ClaudeAdapterV2.ts`, `OpenCode2AdapterV2.ts`  | `ClaudeWorkflowMemberPresentation.ts`, `OpenCodeTurnAcceptance.ts`                                                           | Coordinator-owned workflow observations and provider-confirmed prompt boundaries                      |
+| `Adapters/PiAdapterV2.ts`                               | `PiInputCapabilities.ts`, `PiNativeSelection.ts`, `NativeTurnReceipts.ts`                                                    | Native input eligibility and confirmed selection without moving Pi protocol/FS reads                  |
+| `Adapters/NativeSessionAdapterV2.ts`, `OmpAdapterV2.ts` | `NativeProducerLifecycle.ts`, `NativeTurnReceipts.ts`, `OmpProcessOwnership.ts`                                              | Retained native producers and OMP process ownership; Pi remains a separate protocol                   |
+
+Provider-layer mounts also retain their Scient-specific owners:
+[`AcpRegistrySupport.ts`](../../apps/server/src/provider/acp/AcpRegistrySupport.ts) composes
+`ScientAcpRegistryOwnership.ts`; `acp/AcpSessionRuntime.ts` composes
+`ScientAcpConfirmedConfigWrites.ts`. `provider/Errors.ts` exposes the live input-validation error
+from `ScientProviderErrors.ts`. Native shutdown and the OMP driver/runtime remain the physical
+resource owners described in [provider lifecycle](./provider-lifecycle.md) and
+[providers](./providers.md); moving a policy helper does not certify their cleanup.
+
+#### Contracts, transport and composition
+
+| Host mount                                                           | Current Scient-owned modules                                                                                                                                                                                                       |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/contracts/src/orchestrationV2.ts`, `rpc.ts`, `settings.ts` | [`contracts/src/scient/`](../../packages/contracts/src/scient/): V2 fork/schema additions; scientific, skill, provider-connection, custom-model, file-opening and document-PDF RPCs; provider/compute settings and thread sections |
+| `packages/contracts/src/environmentHttp.ts`, `ipc.ts`                | `scient/environmentHttpGroups.ts`, `desktopBridge.ts`, `desktopPreview.ts`, `desktopVoiceBridge.ts`; generic HTTP/IPC schemas stay in their hosts                                                                                  |
+| `apps/server/src/ws.ts`                                              | `orchestration-v2/scient-fork/ConversationForkRpcHandlers.ts`; `scient/` provider-lifecycle, file-opening, document-export, scientific and compute RPC handlers; workspace entry/error and project-folder policies                 |
+| Server layer/WS service composition                                  | [`ScientServerLayers.ts`](../../apps/server/src/scient/ScientServerLayers.ts), `ScientWsServices.ts`, `ScientRpcObservers.ts`, `ScientAssetUrls.ts`; individual capability HTTP modules remain under `scient/`                     |
+
+These are mounts into the existing public contracts and composition graph, not parallel private
+transport schemas. Preserve public encoding, endpoint registration and current error semantics.
+
+#### Web and desktop surfaces
+
+Web capability owners are under [`apps/web/src/scient/`](../../apps/web/src/scient/). Their hooks
+and components compose into the existing host surface; the directories below group related owners,
+not a requirement to relocate the whole host.
+
+| Host surface                           | Current extracted owners                                                                                                                                                                                                                                                     |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ChatView.tsx`                         | `fork/chatViewFork.tsx`, `chat/` request-error/agent-panel/token-limit/revert diagnostics, `rightPanel/`, `skills/useEffectiveActiveProviderSkills.ts`, `compute/useComputeOwnedSurfaces.ts` and `chatComputeFigureFollower.tsx`, `fileSurfaces/useChatSurfaceSaveGuards.ts` |
+| Composer/session queue mounts          | `threadQueue/` submission, extracted-intent send, edit session, native edit item, optimistic presentation and strip; `sessionLogic/providerOptions.ts` and `skills/` policies                                                                                                |
+| Markdown/message rendering             | `images/scientMarkdownImage.tsx`, `markdown/`, `math/`, `bidi/`, `presentation/` and `clipboard/`; generic Markdown image classification/context/direct-media/workspace fallback remains in `ChatMarkdown.tsx`                                                               |
+| File/editor/viewer mounts              | `fileSurfaces/` editor bindings, lazy surfaces, read recovery and viewer refresh; `fileOpening/`, `files/`, `markdownEditor/`, `pdf/` and `latex/`; upstream file/runtime helpers remain with their hosts                                                                    |
+| Command palette/sidebar mounts         | `commandPalette/scientCommandPalette.tsx`, `sidebar/` and `sections/`; retain the complete await → currentness check → side-effect continuation in the owning callback                                                                                                       |
+| Settings mounts                        | `settings/` navigation/visibility and feature-owned settings rows under `skills/`, `providerConnection/`, `analytics/`, `bidi/`, `keyboard/`, `typography/`, `wordExport/` and `onboarding/`                                                                                 |
+| Desktop settings/backend/window mounts | [`settings/scientDesktopSettings.ts`](../../apps/desktop/src/settings/scientDesktopSettings.ts), `backend/scientAnalyticsMetadata.ts`, `backend/scientBackendLaunch.ts`, `window/scientMainWindowSizing.ts`; native launch and window lifecycle stay in their desktop hosts  |
+
+The map is source ownership evidence only. It does not replace public-codec, SQL/rollback, provider
+lifetime, packaging or manual UI acceptance evidence, and it does not turn source-text seam guards
+into behavior tests.
 
 ### Live Scient migration preflight
 
