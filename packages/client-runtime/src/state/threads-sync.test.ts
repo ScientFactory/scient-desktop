@@ -2,6 +2,8 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  RunId,
+  RuntimeRequestId,
   ORCHESTRATION_V2_WS_METHODS,
   ThreadId,
   TurnItemId,
@@ -1396,6 +1398,128 @@ describe("EnvironmentThreads", () => {
       expect(seededProjection.turnItems.map((item) => String(item.id))).toEqual([
         String(recent.id),
       ]);
+    }),
+  );
+
+  it.effect("retains a late answer inside its visible run while history is partial", () =>
+    Effect.gen(function* () {
+      const runId = RunId.make("live-partial-run");
+      const now = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+      const baseItem = {
+        threadId: THREAD_ID,
+        runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        status: "completed" as const,
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      };
+      const user = {
+        ...baseItem,
+        id: TurnItemId.make("live-partial-user"),
+        ordinal: 2_000_001,
+        type: "user_message" as const,
+        messageId: MessageId.make("live-partial-user-message"),
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        inputIntent: "turn_start" as const,
+        text: "Continue after importing history",
+        attachments: [],
+      } satisfies OrchestrationV2TurnItem;
+      const approval = {
+        ...baseItem,
+        id: TurnItemId.make("live-partial-approval"),
+        ordinal: 2_000_003,
+        type: "approval_request" as const,
+        requestId: RuntimeRequestId.make("live-partial-permission"),
+        requestKind: "command" as const,
+      } satisfies OrchestrationV2TurnItem;
+      const answer = {
+        ...baseItem,
+        id: TurnItemId.make("live-partial-answer"),
+        ordinal: 2_000_002,
+        type: "assistant_message" as const,
+        messageId: MessageId.make("live-partial-answer-message"),
+        text: "The completed answer",
+        streaming: false,
+      } satisfies OrchestrationV2TurnItem;
+      const harness = yield* makeHarness({
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: {
+            snapshotSequence: 5,
+            projection: BASE_PROJECTION,
+            latestLocalTurnOrdinal: 1_000_004,
+          },
+          history: {
+            historyCursor: "unloaded-imported-history",
+            hasMoreHistory: true,
+            latestLocalTurnOrdinal: 1_000_004,
+          },
+        },
+      });
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "live" && value.history.hasMoreHistory,
+      );
+      // Presentation ordinals are stable positions, not event arrival order.
+      for (const [index, payload] of [user, approval, answer].entries()) {
+        yield* Queue.offer(harness.inputs, {
+          kind: "event",
+          sequence: 6 + index,
+          event: {
+            id: EventId.make(`live-partial-${index}`),
+            type: "turn-item.updated",
+            threadId: THREAD_ID,
+            occurredAt: now,
+            payload,
+          },
+        });
+      }
+      yield* Queue.offer(harness.inputs, {
+        kind: "event",
+        sequence: 9,
+        event: {
+          id: EventId.make("live-partial-answer-completed"),
+          type: "turn-item.updated",
+          threadId: THREAD_ID,
+          occurredAt: now,
+          payload: { ...answer, text: "The final completed answer" },
+        },
+      });
+      yield* Queue.offer(harness.inputs, titleUpdated("Late answer processed", 10));
+      const processed = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          Option.isSome(value.data) && value.data.value.thread.title === "Late answer processed",
+      );
+      const projection = Option.getOrThrow(processed.data);
+      expect(projection.turnItems.find((item) => item.id === answer.id)).toMatchObject({
+        type: "assistant_message",
+        status: "completed",
+        text: "The final completed answer",
+      });
+      expect(projection.visibleTurnItems.map((row) => row.sourceItemId)).toEqual([
+        user.id,
+        answer.id,
+        approval.id,
+      ]);
+      expect(processed.history).toMatchObject({
+        historyCursor: "unloaded-imported-history",
+        hasMoreHistory: true,
+        latestLocalTurnOrdinal: 2_000_003,
+      });
+      yield* TestClock.adjust("500 millis");
+      yield* Effect.yieldNow;
+      expect((yield* Ref.get(harness.savedThreads)).at(-1)?.projection.turnItems).toContainEqual({
+        ...answer,
+        text: "The final completed answer",
+      });
     }),
   );
 
