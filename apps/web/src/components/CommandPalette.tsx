@@ -15,6 +15,7 @@ import {
   notifyScientProjectStillSyncing,
   scientInitializeOpenedProject,
   useScientNewThreadAddProjectItem,
+  useScientAddProjectBrowseScope,
 } from "~/scient/commandPalette/scientCommandPalette";
 // SCIENT-FORK:END
 import {
@@ -33,7 +34,6 @@ import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-searc
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
 import {
   canPreloadBrowsePath,
-  canonicalizeUneditedBrowseQuery,
   createBrowseNavigationCoordinator,
   filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
@@ -151,7 +151,6 @@ import {
   hasTrailingPathSeparator,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
-  isFilesystemBrowseQuery,
   isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
@@ -254,12 +253,6 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
-
-interface AddProjectBrowseScopeState {
-  readonly baseDirectoryPath: string;
-  readonly initialPath: string;
-  readonly resolvedInitialPath: string | null;
-}
 
 function getEnvironmentBrowsePlatform(os: string | null | undefined): string {
   if (os === "windows") {
@@ -939,13 +932,17 @@ function OpenCommandPaletteDialog(props: {
   const [addProjectEnvironmentId, setAddProjectEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
-  const [addProjectBrowseScope, setAddProjectBrowseScope] =
-    useState<AddProjectBrowseScopeState | null>(null);
-  const addProjectBrowseSession = useRef(0);
-  const resetAddProjectBrowseScope = useCallback((): void => {
-    addProjectBrowseSession.current += 1;
-    setAddProjectBrowseScope(null);
-  }, []);
+  // SCIENT-FORK:START — Add project browsing keeps its starting folder in scope
+  const {
+    addProjectBrowseScope,
+    resetAddProjectBrowseScope,
+    filesystemBrowseScope,
+    updateAddProjectBrowseBase,
+    followAddProjectBrowseQuery,
+    beginAddProjectBrowseScope,
+    resolveAddProjectBrowseScope,
+  } = useScientAddProjectBrowseScope();
+  // SCIENT-FORK:END
   const [isPickingProjectFolder, setIsPickingProjectFolder] = useState(false);
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
   // The name step of New project: while set, the palette input is the name.
@@ -1179,23 +1176,6 @@ function OpenCommandPaletteDialog(props: {
           addProjectCloneFlow.repository?.nameWithOwner ?? addProjectCloneFlow.remoteUrl,
         )
       : "";
-  const filesystemBrowseScope = useMemo(
-    () =>
-      addProjectBrowseScope === null
-        ? null
-        : {
-            baseDirectoryPath: addProjectBrowseScope.baseDirectoryPath,
-            ...(addProjectBrowseScope.resolvedInitialPath
-              ? {
-                  alias: {
-                    path: addProjectBrowseScope.initialPath,
-                    resolvedPath: addProjectBrowseScope.resolvedInitialPath,
-                  },
-                }
-              : {}),
-          },
-    [addProjectBrowseScope],
-  );
   const browsePath = useMemo(
     () =>
       getFilesystemBrowsePath(
@@ -1325,14 +1305,6 @@ function OpenCommandPaletteDialog(props: {
     },
     [browseEnvironmentId, currentProjectCwdForBrowse, environments, loadBrowsePath],
   );
-  const updateAddProjectBrowseBase = useCallback((baseDirectoryPath: string | null): void => {
-    if (baseDirectoryPath === null) return;
-    setAddProjectBrowseScope((current) =>
-      current === null || current.baseDirectoryPath === baseDirectoryPath
-        ? current
-        : { ...current, baseDirectoryPath },
-    );
-  }, []);
 
   useEffect(
     () => () => {
@@ -1642,26 +1614,9 @@ function OpenCommandPaletteDialog(props: {
   function handleQueryChange(nextQuery: string): void {
     browseNavigation.invalidate();
     clearHighlightedItem();
-    if (
-      addProjectBrowseScope !== null &&
-      isFilesystemBrowseQuery(nextQuery, browseEnvironmentPlatform)
-    ) {
-      const nextBrowsePath = getFilesystemBrowsePath(
-        nextQuery,
-        browseEnvironmentPlatform,
-        true,
-        filesystemBrowseScope,
-      );
-      if (
-        nextBrowsePath.directoryPath.length > 0 &&
-        nextBrowsePath.directoryPath !== addProjectBrowseScope.baseDirectoryPath
-      ) {
-        setAddProjectBrowseScope({
-          ...addProjectBrowseScope,
-          baseDirectoryPath: nextBrowsePath.directoryPath,
-        });
-      }
-    }
+    // SCIENT-FORK:START
+    followAddProjectBrowseQuery(nextQuery, browseEnvironmentPlatform);
+    // SCIENT-FORK:END
     setQuery(nextQuery);
     if (nextQuery === "" && currentView?.initialQuery && addProjectBrowseScope === null) {
       popView();
@@ -1676,8 +1631,6 @@ function OpenCommandPaletteDialog(props: {
       const initialQuery = getAddProjectInitialQueryForEnvironment(environmentId);
       const initialBrowsePath = getBrowseDirectoryPath(initialQuery);
       const browseCwd = getBrowseCwdForEnvironment(environmentId);
-      const session = addProjectBrowseSession.current + 1;
-      addProjectBrowseSession.current = session;
       const view: CommandPaletteView = {
         addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
         groups: [],
@@ -1686,38 +1639,23 @@ function OpenCommandPaletteDialog(props: {
 
       setAddProjectEnvironmentId(environmentId);
       setAddProjectCloneFlow(null);
-      setAddProjectBrowseScope({
-        baseDirectoryPath: initialBrowsePath,
-        initialPath: initialQuery,
-        resolvedInitialPath: null,
-      });
+      // SCIENT-FORK:START
+      const session = beginAddProjectBrowseScope(initialQuery, initialBrowsePath);
+      // SCIENT-FORK:END
       pushPaletteView(view);
 
       if (initialBrowsePath.length === 0) return;
-      void prefetchBrowsePath(initialBrowsePath, environmentId, browseCwd).then((result) => {
-        if (result === null || addProjectBrowseSession.current !== session) return;
-        const resolvedInitialPath = ensureBrowseDirectoryPath(result.parentPath);
-        setAddProjectBrowseScope((current) =>
-          current === null
-            ? current
-            : {
-                ...current,
-                resolvedInitialPath,
-              },
-        );
-        // Canonicalize an untouched symbolic default (notably `~/` on
-        // Windows), but never replace text the user entered while the
-        // environment was resolving it in the background.
-        setQuery((current) =>
-          canonicalizeUneditedBrowseQuery(current, initialQuery, resolvedInitialPath),
-        );
-      });
+      void prefetchBrowsePath(initialBrowsePath, environmentId, browseCwd).then((result) =>
+        resolveAddProjectBrowseScope(session, result, initialQuery, setQuery),
+      );
     },
     [
+      beginAddProjectBrowseScope,
       getAddProjectInitialQueryForEnvironment,
       getBrowseCwdForEnvironment,
       prefetchBrowsePath,
       pushPaletteView,
+      resolveAddProjectBrowseScope,
       router,
     ],
   );

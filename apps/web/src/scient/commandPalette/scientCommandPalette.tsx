@@ -1,7 +1,19 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  canonicalizeUneditedBrowseQuery,
+  getFilesystemBrowsePath,
+} from "@t3tools/client-runtime/state/filesystem";
+import type { EnvironmentId, FilesystemBrowseResult } from "@t3tools/contracts";
 import { FolderPlusIcon } from "lucide-react";
-import { useCallback, useLayoutEffect, useMemo } from "react";
+import {
+  type Dispatch,
+  type SetStateAction,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import {
   ITEM_ICON_CLASS,
@@ -10,6 +22,7 @@ import {
 } from "~/components/CommandPalette.logic";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useScientProjectInitialization } from "~/hooks/useScientProjectInitialization";
+import { ensureBrowseDirectoryPath, isFilesystemBrowseQuery } from "~/lib/projectPaths";
 import type { ScientProjectInitializationDecision } from "~/lib/scientProjectInitialization";
 import { recordScientAnalytics, useScientAnalyticsView } from "~/scient/analytics/client";
 import { readPreparedConnection } from "~/state/session";
@@ -171,4 +184,127 @@ export function recordScientProjectAdded(
     name: "thread.created",
     properties: { creationSource: "new" },
   });
+}
+
+interface AddProjectBrowseScopeState {
+  readonly baseDirectoryPath: string;
+  readonly initialPath: string;
+  readonly resolvedInitialPath: string | null;
+}
+
+/**
+ * Add project browsing keeps the folder it started in, and where the
+ * environment resolved it, so typed paths stay relative to that folder and
+ * a symbolic default such as `~/` keeps resolving to the same place.
+ */
+export function useScientAddProjectBrowseScope() {
+  const [addProjectBrowseScope, setAddProjectBrowseScope] =
+    useState<AddProjectBrowseScopeState | null>(null);
+  const addProjectBrowseSession = useRef(0);
+  const resetAddProjectBrowseScope = useCallback((): void => {
+    addProjectBrowseSession.current += 1;
+    setAddProjectBrowseScope(null);
+  }, []);
+  const filesystemBrowseScope = useMemo(
+    () =>
+      addProjectBrowseScope === null
+        ? null
+        : {
+            baseDirectoryPath: addProjectBrowseScope.baseDirectoryPath,
+            ...(addProjectBrowseScope.resolvedInitialPath
+              ? {
+                  alias: {
+                    path: addProjectBrowseScope.initialPath,
+                    resolvedPath: addProjectBrowseScope.resolvedInitialPath,
+                  },
+                }
+              : {}),
+          },
+    [addProjectBrowseScope],
+  );
+  const updateAddProjectBrowseBase = useCallback((baseDirectoryPath: string | null): void => {
+    if (baseDirectoryPath === null) return;
+    setAddProjectBrowseScope((current) =>
+      current === null || current.baseDirectoryPath === baseDirectoryPath
+        ? current
+        : { ...current, baseDirectoryPath },
+    );
+  }, []);
+
+  /** Follows the folder a typed path moves to. */
+  function followAddProjectBrowseQuery(nextQuery: string, browseEnvironmentPlatform: string): void {
+    if (
+      addProjectBrowseScope !== null &&
+      isFilesystemBrowseQuery(nextQuery, browseEnvironmentPlatform)
+    ) {
+      const nextBrowsePath = getFilesystemBrowsePath(
+        nextQuery,
+        browseEnvironmentPlatform,
+        true,
+        filesystemBrowseScope,
+      );
+      if (
+        nextBrowsePath.directoryPath.length > 0 &&
+        nextBrowsePath.directoryPath !== addProjectBrowseScope.baseDirectoryPath
+      ) {
+        setAddProjectBrowseScope({
+          ...addProjectBrowseScope,
+          baseDirectoryPath: nextBrowsePath.directoryPath,
+        });
+      }
+    }
+  }
+
+  /** Starts a browse session at the initial folder; returns its session. */
+  const beginAddProjectBrowseScope = useCallback(
+    (initialQuery: string, initialBrowsePath: string): number => {
+      const session = addProjectBrowseSession.current + 1;
+      addProjectBrowseSession.current = session;
+      setAddProjectBrowseScope({
+        baseDirectoryPath: initialBrowsePath,
+        initialPath: initialQuery,
+        resolvedInitialPath: null,
+      });
+      return session;
+    },
+    [],
+  );
+
+  /** Records where the environment resolved the initial folder, if still browsing it. */
+  const resolveAddProjectBrowseScope = useCallback(
+    (
+      session: number,
+      result: FilesystemBrowseResult | null,
+      initialQuery: string,
+      setQuery: Dispatch<SetStateAction<string>>,
+    ): void => {
+      if (result === null || addProjectBrowseSession.current !== session) return;
+      const resolvedInitialPath = ensureBrowseDirectoryPath(result.parentPath);
+      setAddProjectBrowseScope((current) =>
+        current === null
+          ? current
+          : {
+              ...current,
+              resolvedInitialPath,
+            },
+      );
+      // Canonicalize an untouched symbolic default (notably `~/` on
+      // Windows), but never replace text the user entered while the
+      // environment was resolving it in the background.
+      setQuery((current) =>
+        canonicalizeUneditedBrowseQuery(current, initialQuery, resolvedInitialPath),
+      );
+    },
+    [],
+  );
+
+  return {
+    addProjectBrowseScope,
+    resetAddProjectBrowseScope,
+    filesystemBrowseScope,
+    updateAddProjectBrowseBase,
+    followAddProjectBrowseQuery,
+    beginAddProjectBrowseScope,
+    resolveAddProjectBrowseScope,
+  };
 }
