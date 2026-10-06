@@ -9,6 +9,8 @@ import {
 import { makeProviderTextSnapshots } from "./scient-provider/ProviderTextSnapshots.ts";
 // SCIENT-FORK: single-writer Pi session file leases.
 import { makePiSessionFileLeases } from "./scient-provider/PiSessionFileLeases.ts";
+// SCIENT-FORK: execution authority of the exact live native owner.
+import { makeSessionAuthority } from "./scient-provider/SessionAuthority.ts";
 import { expandComposerCitationsForProvider } from "@t3tools/shared/composerCitations";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -1863,64 +1865,13 @@ export const layerWithOptions = (
       });
       yield* Effect.addFinalizer(() => shutdown);
 
-      return ProviderSessionManagerV2.of({
-        // SCIENT-FORK:START — running-fork text capture.
-        captureRunningForkText: textSnapshotRegistry.capture,
-        withCapturedForkText: (capture, commit) =>
-          textSnapshotRegistry.withCurrent(capture.token, undefined, commit),
-        releaseCapturedForkText: (capture) => textSnapshotRegistry.release(capture.token),
-        // SCIENT-FORK:END
-        shutdown,
-        withProviderWorkAdmission: <A, E, R>(
-          identity: ProviderAdapterV2InitiatedWorkIdentity,
-          expectedRuntime: ProviderAdapterV2SessionRuntime,
-          commit: Effect.Effect<A, E, R>,
-        ) =>
-          Effect.gen(function* () {
-            const key = sessionKey(identity.providerSessionId);
-            const entry = (yield* Ref.get(sessions)).get(key);
-            if (
-              entry === undefined ||
-              entry.exposedRuntime !== expectedRuntime ||
-              !entry.attachedThreadIds.has(identity.threadId) ||
-              entry.runtime.driver !== identity.driver ||
-              entry.runtime.instanceId !== identity.providerInstanceId ||
-              entry.runtime.withInitiatedWorkAdmission === undefined
-            )
-              return Option.none<A>();
-            return yield* entry.runtime
-              .withInitiatedWorkAdmission(
-                identity,
-                Effect.gen(function* () {
-                  const current = (yield* Ref.get(sessions)).get(key);
-                  if (
-                    current?.runtime !== entry.runtime ||
-                    current.scope !== entry.scope ||
-                    current.exposedRuntime !== expectedRuntime ||
-                    !current.attachedThreadIds.has(identity.threadId) ||
-                    releasingRuntimes.has(current.runtime)
-                  )
-                    return Option.none<A>();
-                  return Option.some(yield* commit);
-                }),
-              )
-              .pipe(Effect.map(Option.flatten));
-          }),
-        resolveMcpInvocationPolicy: Effect.fn(
-          "ProviderSessionManagerV2.resolveMcpInvocationPolicy",
-        )(function* (
-          invocation: Parameters<ProviderSessionManagerV2Shape["resolveMcpInvocationPolicy"]>[0],
-        ) {
-          const entries = [...(yield* Ref.get(sessions)).values()].filter(
-            (entry) =>
-              !releasingRuntimes.has(entry.runtime) &&
-              entry.runtime.instanceId === invocation.providerInstanceId &&
-              entry.attachedThreadIds.has(invocation.threadId) &&
-              entry.mcpCredentialIdByThread.get(invocation.threadId) ===
-                invocation.providerSessionId,
-          );
-          if (entries.length === 0) return Option.none();
-          const projection = yield* projectionStore
+      // SCIENT-FORK:START — execution authority of the exact live native owner.
+      const sessionAuthority = makeSessionAuthority({
+        sessions,
+        sessionKey,
+        releasingRuntimes,
+        readThreadRecords: (invocation) =>
+          projectionStore
             .getThreadRecords(invocation.threadId, ["runs", "attempts", "providerThreads"])
             .pipe(
               Effect.mapError(
@@ -1930,55 +1881,22 @@ export const layerWithOptions = (
                     cause,
                   }),
               ),
-            );
-          if (projection.thread.deletedAt !== null || projection.thread.archivedAt !== null)
-            return Option.none();
-          const run = projection.runs
-            .filter((candidate) => ["starting", "running", "waiting"].includes(candidate.status))
-            .toSorted((left, right) => right.ordinal - left.ordinal)[0];
-          if (
-            run === undefined ||
-            !["starting", "running", "waiting"].includes(run.status) ||
-            run.providerInstanceId !== invocation.providerInstanceId ||
-            run.runtimeMode === undefined ||
-            run.interactionMode === undefined
-          )
-            return Option.none();
-          const attempt = projection.attempts.find(
-            (candidate) => candidate.id === run.activeAttemptId,
-          );
-          const nativeThread = projection.providerThreads.find(
-            (candidate) => candidate.id === run.providerThreadId,
-          );
-          if (
-            attempt === undefined ||
-            nativeThread === undefined ||
-            !["pending", "running"].includes(attempt.status) ||
-            attempt.runId !== run.id ||
-            attempt.rootNodeId !== run.rootNodeId ||
-            attempt.providerInstanceId !== invocation.providerInstanceId ||
-            attempt.providerThreadId !== nativeThread?.id ||
-            nativeThread.appThreadId !== invocation.threadId ||
-            nativeThread.providerInstanceId !== invocation.providerInstanceId
-          )
-            return Option.none();
-          const current = yield* Ref.get(sessions);
-          const owner = entries.find(
-            (entry) =>
-              !releasingRuntimes.has(entry.runtime) &&
-              entry.runtime.providerSessionId === nativeThread.providerSessionId &&
-              current.get(sessionKey(entry.runtime.providerSessionId))?.runtime === entry.runtime &&
-              current
-                .get(sessionKey(entry.runtime.providerSessionId))
-                ?.attachedThreadIds.has(invocation.threadId) === true &&
-              current
-                .get(sessionKey(entry.runtime.providerSessionId))
-                ?.mcpCredentialIdByThread.get(invocation.threadId) === invocation.providerSessionId,
-          );
-          return owner === undefined
-            ? Option.none()
-            : Option.some({ runtimeMode: run.runtimeMode, interactionMode: run.interactionMode });
-        }),
+            ),
+      });
+      // SCIENT-FORK:END
+
+      return ProviderSessionManagerV2.of({
+        // SCIENT-FORK:START — running-fork text capture.
+        captureRunningForkText: textSnapshotRegistry.capture,
+        withCapturedForkText: (capture, commit) =>
+          textSnapshotRegistry.withCurrent(capture.token, undefined, commit),
+        releaseCapturedForkText: (capture) => textSnapshotRegistry.release(capture.token),
+        // SCIENT-FORK:END
+        shutdown,
+        // SCIENT-FORK:START — execution authority of the exact live native owner.
+        withProviderWorkAdmission: sessionAuthority.withProviderWorkAdmission,
+        resolveMcpInvocationPolicy: sessionAuthority.resolveMcpInvocationPolicy,
+        // SCIENT-FORK:END
         open: (input) =>
           Effect.suspend(() => {
             let cleanupOpening: Effect.Effect<void> = Effect.void;
