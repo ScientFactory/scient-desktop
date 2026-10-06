@@ -21,6 +21,12 @@ import {
   ScientDocumentSessionAdmissionFailure,
   scientDocumentSessionFile,
 } from "~/scient/fileSurfaces/scientDocumentSession";
+import {
+  ScientComputeFileSurface,
+  ScientLatexSurface,
+  ScientPdfReader,
+  ScientSurfaceSuspense,
+} from "~/scient/fileSurfaces/scientLazyFileSurfaces";
 // SCIENT-FORK:END
 import { useAtomValue } from "@effect/atom-react";
 import { Spinner } from "~/components/ui/spinner";
@@ -53,16 +59,7 @@ import {
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { Code2, Download, Eye, FolderTree, Globe, Table2, WrapTextIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
-import {
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import type { FileCitation } from "@t3tools/contracts";
@@ -217,27 +214,15 @@ interface FilePreviewPanelProps {
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
-const ScientPdfReader = lazy(() =>
-  import("~/scient/pdf/ScientPdfReader").then((module) => ({
-    default: module.ScientPdfReader,
-  })),
-);
-const ScientLatexSurface = lazy(() =>
-  import("~/scient/latex/ScientLatexSurface").then((module) => ({
-    default: module.ScientLatexSurface,
-  })),
-);
-const ScientComputeFileSurface = lazy(() =>
-  import("~/scient/compute/ScientComputeFileSurface").then((module) => ({
-    default: module.ScientComputeFileSurface,
-  })),
-);
+const RENDER_TABLE_STORAGE_KEY = "t3code.renderTable";
+// SCIENT-FORK:START — the Markdown surface loads on first use
 const ScientMarkdownFileSurface = lazy(() =>
   import("~/scient/markdownEditor/ScientMarkdownFileSurface").then((module) => ({
     default: module.ScientMarkdownFileSurface,
   })),
 );
-const RENDER_TABLE_STORAGE_KEY = "t3code.renderTable";
+// SCIENT-FORK:END
+
 function WorkspaceImagePreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
@@ -1860,20 +1845,14 @@ export default function FilePreviewPanel({
               refreshKey={viewerRefreshKey}
             />
           ) : relativePath && isPdf && absolutePath && pdfSource ? (
-            <Suspense
-              fallback={
-                <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-                  <Spinner className="size-5" />
-                </div>
-              }
-            >
+            <ScientSurfaceSuspense>
               <ScientPdfReader
                 key={absolutePath}
                 source={pdfSource}
                 readerScope={threadRef.threadId}
                 refreshKey={viewerRefreshKey}
               />
-            </Suspense>
+            </ScientSurfaceSuspense>
           ) : relativePath && renderBrowserFile && absolutePath ? (
             <WorkspaceBrowserPreview
               key={absolutePath}
@@ -1949,13 +1928,7 @@ export default function FilePreviewPanel({
                 // SCIENT-FORK:END
               )
             ) : isLatexPreviewFile(relativePath) ? (
-              <Suspense
-                fallback={
-                  <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-                    <Spinner className="size-5" />
-                  </div>
-                }
-              >
+              <ScientSurfaceSuspense>
                 <ScientLatexSurface
                   key={`${relativePath}:${resolvedTheme}`}
                   environmentId={environmentId}
@@ -1976,15 +1949,9 @@ export default function FilePreviewPanel({
                   onOpenFileSource={onOpenFileSource}
                   onLatexPresentationRequestHandled={onLatexPresentationRequestHandled}
                 />
-              </Suspense>
+              </ScientSurfaceSuspense>
             ) : computeSourceLanguage !== null && !file.data.truncated ? (
-              <Suspense
-                fallback={
-                  <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-                    <Spinner className="size-5" />
-                  </div>
-                }
-              >
+              <ScientSurfaceSuspense>
                 <ScientComputeFileSurface
                   key={`${computeContextId}:${resolvedTheme}`}
                   language={computeSourceLanguage}
@@ -2011,15 +1978,9 @@ export default function FilePreviewPanel({
                   onSaveResolutionApplied={handleSaveResolutionApplied}
                   saveResolution={saveResolution}
                 />
-              </Suspense>
+              </ScientSurfaceSuspense>
             ) : usesScientMarkdownEditor && markdownLease ? (
-              <Suspense
-                fallback={
-                  <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-                    <Spinner className="size-5" />
-                  </div>
-                }
-              >
+              <ScientSurfaceSuspense>
                 <ScientMarkdownFileSurface
                   key={relativePath}
                   environmentId={environmentId}
@@ -2036,7 +1997,7 @@ export default function FilePreviewPanel({
                     runAfterPendingSave([relativePath], () => onOpenFileSource(path, line))
                   }
                 />
-              </Suspense>
+              </ScientSurfaceSuspense>
             ) : markdownLease ? (
               <MarkdownSourceSurface
                 key={relativePath}
