@@ -53,7 +53,11 @@ export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
     const projection = yield* projectionStore.getThreadRecords(
       threadId,
       ["runs", "messages", "nodes", "attempts", "providerTurns", "turnItems"],
-      { messageRoles: ["user", "system"], turnItemRunIds: [terminal.id] },
+      {
+        messageRoles: ["user", "system"],
+        turnItemRunIds: [terminal.id],
+        turnItemTypes: ["error"],
+      },
     );
     const run = projection.runs.find((candidate) => candidate.id === terminal.id);
     if (
