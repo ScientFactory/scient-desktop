@@ -3544,6 +3544,19 @@ it.live(
                 yield* releaseCapture;
                 yield* trace.at("A-checkpoint-drain-join", Fiber.join(draining));
                 yield* trace.capture("A-checkpoint-after-drain", { offers });
+                // The terminal reactor commits the successor after checkpoint execution.
+                // With the daemon disabled, wait for that admission before claiming its work.
+                yield* trace.at(
+                  "B-start-committed",
+                  waitFor((p) =>
+                    p.runs.some(
+                      (run) =>
+                        run.id === queuedB.id &&
+                        (run.status === "starting" || run.status === "running"),
+                    ),
+                  ),
+                );
+                yield* trace.drain("B-start-drain", 12, worker.drain(12));
                 const second = yield* trace.at("B-offer", takeOffer);
                 assert.equal(second.input.runId, queuedB.id);
                 assert.equal(second.input.runtimePolicy.cwd, workspaceB);
@@ -3595,6 +3608,17 @@ it.live(
                 yield* trace.capture("B-checkpoint-before-drain", { offers });
                 yield* trace.drain("B-checkpoint-drain", 12, worker.drain(12));
                 yield* trace.capture("B-checkpoint-after-drain", { offers });
+                yield* trace.at(
+                  "return-A-start-committed",
+                  waitFor((p) =>
+                    p.runs.some(
+                      (run) =>
+                        run.id === thirdRun.id &&
+                        (run.status === "starting" || run.status === "running"),
+                    ),
+                  ),
+                );
+                yield* trace.drain("return-A-start-drain", 12, worker.drain(12));
                 const third = yield* trace.at("return-A-offer", takeOffer);
                 assert.equal(third.input.runId, thirdRun.id);
                 assert.equal(third.input.runtimePolicy.cwd, workspaceA);
