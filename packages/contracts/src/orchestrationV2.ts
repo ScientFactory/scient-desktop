@@ -53,6 +53,15 @@ export {
   OrchestrationV2ProviderRuntimePolicy,
   OrchestrationV2SubagentPresentation,
 } from "./scient/orchestrationV2Schemas.ts";
+import {
+  makeMessageForkItems,
+  OrchestrationV2ClaudeForkBoundaryEvidence,
+  OrchestrationV2ForkInitialization,
+} from "./scient/orchestrationV2Fork.ts";
+export {
+  OrchestrationV2ClaudeForkBoundaryEvidence,
+  OrchestrationV2ForkInitialization,
+} from "./scient/orchestrationV2Fork.ts";
 // SCIENT-FORK:END
 import {
   OrchestrationGetFullThreadDiffInput,
@@ -1005,21 +1014,6 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
 });
 export type OrchestrationV2ProviderTurn = typeof OrchestrationV2ProviderTurn.Type;
 
-/** Exact native Claude cursors are root assistant UUIDs, rather than native turn IDs. */
-export const OrchestrationV2ClaudeForkBoundaryEvidence = Schema.Struct({
-  kind: Schema.Literal("claude_root_assistant_uuid"),
-  sourceThreadId: ThreadId,
-  runId: RunId,
-  rootNodeId: NodeId,
-  assistantNodeId: NodeId,
-  assistantItemId: TurnItemId,
-  providerThreadId: ProviderThreadId,
-  providerTurnId: ProviderTurnId,
-  nativeMessageId: Schema.String.check(Schema.isUUID()),
-});
-export type OrchestrationV2ClaudeForkBoundaryEvidence =
-  typeof OrchestrationV2ClaudeForkBoundaryEvidence.Type;
-
 export const OrchestrationV2FrozenForkSource = Schema.Struct({
   sourceThreadId: ThreadId,
   driver: ProviderDriverKind,
@@ -1343,15 +1337,6 @@ export const OrchestrationV2UserMessageInputIntent = Schema.Literals([
 export type OrchestrationV2UserMessageInputIntent =
   typeof OrchestrationV2UserMessageInputIntent.Type;
 
-/** Inert presentation provenance; these origin IDs grant no execution ownership. */
-export const OrchestrationV2ForkInitialization = Schema.Struct({
-  transferId: ContextTransferId,
-  contextHandoffId: ContextHandoffId,
-  threadId: ThreadId,
-  runId: RunId,
-});
-export type OrchestrationV2ForkInitialization = typeof OrchestrationV2ForkInitialization.Type;
-
 const OrchestrationV2TurnItemBaseFields = {
   /** Group portable historical records without adopting an executable run. */
   historyTurnId: Schema.optional(TurnId),
@@ -1382,6 +1367,11 @@ const OrchestrationV2TurnItemBaseFields = {
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   updatedAt: Schema.DateTimeUtc,
 } as const;
+// SCIENT-FORK:START — message-boundary fork items and the notice older clients decode.
+export type OrchestrationV2TurnItemBaseFields = typeof OrchestrationV2TurnItemBaseFields;
+const { MessageForkItem, MessageForkNoticeItem, MessageForkItemJson, MessageForkNoticeItemJson } =
+  makeMessageForkItems(OrchestrationV2TurnItemBaseFields);
+// SCIENT-FORK:END
 
 export const OrchestrationV2FileSearchResult = Schema.Struct({
   fileName: TrimmedNonEmptyString,
@@ -1398,83 +1388,8 @@ export const OrchestrationV2WebSearchResult = Schema.Struct({
 });
 export type OrchestrationV2WebSearchResult = typeof OrchestrationV2WebSearchResult.Type;
 
-const MessageForkSource = Schema.Struct({
-  type: Schema.Literal("message"),
-  threadId: ThreadId,
-  messageId: MessageId,
-  position: Schema.Literals(["before", "after"]),
-});
-const MessageForkItemFields = {
-  ...OrchestrationV2TurnItemBaseFields,
-  type: Schema.Literal("fork"),
-  source: MessageForkSource,
-  targetThreadId: ThreadId,
-  providerThreadId: Schema.optional(ProviderThreadId),
-} as const;
-const MessageForkItemShape = Schema.Struct(MessageForkItemFields);
-const messageForkOwnership = Schema.makeFilter(
-  (item: typeof MessageForkItemShape.Type) =>
-    (item.runId === null &&
-      item.nodeId === null &&
-      item.providerThreadId === undefined &&
-      item.providerTurnId === null &&
-      item.nativeItemRef === null) ||
-    "A message fork boundary cannot carry execution authority.",
-);
-const MessageForkItem = MessageForkItemShape.check(messageForkOwnership);
-// Older clients reject an unfamiliar fork source. Send an inert notice they
-// already decode; current clients retain the exact portable message boundary.
-const MessageForkNotice = Schema.Struct({
-  ...OrchestrationV2TurnItemBaseFields,
-  runId: Schema.Null,
-  nodeId: Schema.Null,
-  providerThreadId: Schema.Null,
-  providerTurnId: Schema.Null,
-  nativeItemRef: Schema.Null,
-  type: Schema.Literal("system_notice"),
-  message: Schema.String,
-  forkBoundary: Schema.Struct({ source: MessageForkSource, targetThreadId: ThreadId }),
-});
-const decodeMessageForkNotice = SchemaGetter.transform(
-  ({
-    type: _type,
-    message: _message,
-    forkBoundary,
-    providerThreadId: _providerThreadId,
-    ...fields
-  }: typeof MessageForkNotice.Type): typeof MessageForkItem.Type => ({
-    ...fields,
-    type: "fork",
-    ...forkBoundary,
-  }),
-);
-const encodeMessageForkNotice = SchemaGetter.transform(
-  ({
-    type: _type,
-    source,
-    targetThreadId,
-    providerThreadId: _providerThreadId,
-    ...fields
-  }: typeof MessageForkItem.Type): typeof MessageForkNotice.Type => ({
-    ...fields,
-    type: "system_notice",
-    message: "Conversation forked here",
-    runId: null,
-    nodeId: null,
-    providerThreadId: null,
-    providerTurnId: null,
-    nativeItemRef: null,
-    forkBoundary: { source, targetThreadId },
-  }),
-);
-
 export const OrchestrationV2TurnItem = Schema.Union([
-  MessageForkNotice.pipe(
-    Schema.decodeTo(Schema.toType(MessageForkItem), {
-      decode: decodeMessageForkNotice,
-      encode: encodeMessageForkNotice,
-    }),
-  ),
+  MessageForkNoticeItem,
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("notification"),
@@ -2223,17 +2138,7 @@ const OrchestrationV2TurnItemJsonBaseFields = {
 } as const;
 
 export const OrchestrationV2TurnItemJson = Schema.Union([
-  MessageForkNotice.mapFields((fields) => ({
-    ...fields,
-    startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
-    completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
-    updatedAt: Schema.DateTimeUtcFromString,
-  })).pipe(
-    Schema.decodeTo(Schema.toType(MessageForkItem), {
-      decode: decodeMessageForkNotice,
-      encode: encodeMessageForkNotice,
-    }),
-  ),
+  MessageForkNoticeItemJson,
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("notification"),
@@ -2403,12 +2308,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     targetThreadId: ThreadId,
     providerThreadId: Schema.optional(ProviderThreadId),
   }),
-  MessageForkItem.mapFields((fields) => ({
-    ...fields,
-    startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
-    completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
-    updatedAt: Schema.DateTimeUtcFromString,
-  })).check(messageForkOwnership),
+  MessageForkItemJson,
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("thread_created"),
