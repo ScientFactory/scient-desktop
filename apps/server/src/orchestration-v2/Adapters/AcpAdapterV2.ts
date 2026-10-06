@@ -1,5 +1,14 @@
-import { DroidSteerDeferred, makeDroidSteerSafety } from "./DroidSteerSafety.ts";
+import {
+  DroidSteerDeferred,
+  makeAcpDroidSteerSupervision,
+  makeDroidSteerSafety,
+} from "./DroidSteerSafety.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
+// SCIENT-FORK: shared native start receipts and prompt acceptance.
+import {
+  isPreAcceptanceRejectionCode,
+  nativeTurnAcceptance,
+} from "../scient-provider/NativeTurnReceipts.ts";
 import {
   type ChatAttachment,
   type ModelSelection,
@@ -1681,41 +1690,10 @@ export function makeAcpAdapterV2(
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveAcpTurn | null>(null);
         // SCIENT-FORK:START — scoped observations and leases; no durable readiness or replay authority.
-        let droidOwner: ActiveAcpTurn | undefined;
-        const retiredDroidToolIds = new Set<string>();
-        let droidBatchDepth = 0;
-        let droidNativeGeneration: number | undefined;
-        let droidClosed = false;
-        let droidPendingRequestCount = 0;
-        let droidBatchEpoch = 0;
-        let droidLease: { id: string; epoch: number; context: ActiveAcpTurn } | undefined;
-        let consumedDroidLease: string | undefined;
-        let droidCanonicalOwner:
-          | Parameters<
-              NonNullable<
-                ProviderAdapter.ProviderAdapterV2SessionRuntime["configureDroidSteerOwner"]
-              >
-            >[0]
-          | undefined;
-        const invalidateDroidSteer = () => {
-          droidLease = undefined;
-          droidOwner?.droidSteerSafety?.invalidate();
-        };
-        const validDroidLease = (id: string) =>
-          !droidClosed &&
-          droidBatchDepth === 0 &&
-          droidPendingRequestCount === 0 &&
-          droidLease?.id === id &&
-          droidLease.epoch === droidBatchEpoch &&
-          droidLease.context === droidOwner &&
-          droidOwner?.droidSteerSafety?.validate(id) === true;
-        const consumeDroidLease = (id: string) => {
-          if (!validDroidLease(id)) return false;
-          const consumed = droidOwner!.droidSteerSafety!.consume(id);
-          if (consumed) consumedDroidLease = id;
-          droidLease = undefined;
-          return consumed;
-        };
+        const droidSteer = makeAcpDroidSteerSupervision<ActiveAcpTurn>({
+          enabled: flavor.droidHeldSteering === true,
+          testHooks: options.testHooks,
+        });
         // SCIENT-FORK:END
         const activeSessionId = yield* Ref.make<string | null>(null);
         const contextUsageBySessionId = yield* Ref.make(
@@ -2130,24 +2108,11 @@ export function makeAcpAdapterV2(
           threadId: ThreadId | null,
           resumeSessionId?: string,
           onTermination: AcpAdapterV2RuntimeInput["onTermination"] = () =>
-            Effect.sync(() => {
-              if (
-                flavor.droidHeldSteering === true &&
-                droidNativeGeneration === runtimeGeneration
-              ) {
-                droidClosed = true;
-                invalidateDroidSteer();
-              }
-            }).pipe(Effect.andThen(handleRuntimeTerminationAtGeneration(runtimeGeneration))),
+            Effect.sync(() => droidSteer.terminated(runtimeGeneration)).pipe(
+              Effect.andThen(handleRuntimeTerminationAtGeneration(runtimeGeneration)),
+            ),
         ): AcpAdapterV2RuntimeInput => {
-          if (flavor.droidHeldSteering === true && droidNativeGeneration !== runtimeGeneration) {
-            invalidateDroidSteer();
-            droidOwner = undefined;
-            consumedDroidLease = undefined;
-            retiredDroidToolIds.clear();
-            droidNativeGeneration = runtimeGeneration;
-            droidClosed = false;
-          }
+          droidSteer.beginGeneration(runtimeGeneration);
           const mcpContext = acpMcpContext(threadId, self, input.configureMcp !== false);
           return {
             cwd: input.runtimePolicy.cwd ?? process.cwd(),
@@ -2173,23 +2138,7 @@ export function makeAcpAdapterV2(
             onTermination,
             ...(flavor.droidHeldSteering !== true
               ? {}
-              : {
-                  // All notification handlers are awaited by the protocol route. No permit or reader wait here.
-                  onDecodedBatch: (phase: "begin" | "end" | "failed") =>
-                    Effect.sync(() => {
-                      droidBatchEpoch++;
-                      invalidateDroidSteer();
-                      if (phase === "begin") droidBatchDepth++;
-                      else droidBatchDepth = Math.max(0, droidBatchDepth - 1);
-                      if (phase === "failed") droidOwner?.droidSteerSafety?.batch("failed");
-                    }).pipe(
-                      Effect.andThen(
-                        phase === "begin" && droidOwner !== undefined
-                          ? (options.testHooks?.afterDroidDecodedBatchBegin?.() ?? Effect.void)
-                          : Effect.void,
-                      ),
-                    ),
-                }),
+              : { onDecodedBatch: droidSteer.onDecodedBatch }),
             onOutgoingResponseFailure: (requestId, error) =>
               Ref.modify(nativeResponseAcknowledgements, (current) => {
                 const entry = current.get(requestId);
@@ -4185,20 +4134,9 @@ export function makeAcpAdapterV2(
           const context = yield* Ref.get(activeTurn);
           const update = notification.update;
           // SCIENT: an old tool's update cannot become an open step of its replacement prompt.
-          if (
-            flavor.droidHeldSteering === true &&
-            update.sessionUpdate === "tool_call_update" &&
-            retiredDroidToolIds.has(update.toolCallId) &&
-            !context?.tools.has(update.toolCallId)
-          )
-            return;
+          if (droidSteer.isRetiredToolUpdate(update, context)) return;
           // SCIENT: observe before presentation cleanup, also after the successful root prompt returned.
-          if (droidOwner?.nativeThreadId === notification.sessionId) {
-            for (const event of parseSessionUpdateEvent(notification).events) {
-              if (event._tag === "ToolCallUpdated")
-                droidOwner.droidSteerSafety?.observe(event.toolCall, droidOwner.nativeTurnId);
-            }
-          }
+          droidSteer.observe(notification);
           if (yield* projectAgentTerminalUpdate(notification, context)) return;
           if (
             update.sessionUpdate === "usage_update" ||
@@ -4905,8 +4843,7 @@ export function makeAcpAdapterV2(
               node,
               turnItem,
             });
-            droidPendingRequestCount = updated.size;
-            invalidateDroidSteer();
+            droidSteer.setPendingRequestCount(updated.size);
             return updated;
           });
           yield* emitProviderEvent({
@@ -5032,8 +4969,7 @@ export function makeAcpAdapterV2(
               node,
               turnItem,
             });
-            droidPendingRequestCount = updated.size;
-            invalidateDroidSteer();
+            droidSteer.setPendingRequestCount(updated.size);
             return updated;
           });
           yield* emitProviderEvent({
@@ -5100,8 +5036,7 @@ export function makeAcpAdapterV2(
                       yield* Ref.update(pendingRuntimeRequests, (current) => {
                         const updated = new Map(current);
                         updated.delete(String(requestId));
-                        droidPendingRequestCount = updated.size;
-                        invalidateDroidSteer();
+                        droidSteer.setPendingRequestCount(updated.size);
                         return updated;
                       });
                     }),
@@ -5123,8 +5058,7 @@ export function makeAcpAdapterV2(
             [...current.values()],
             new Map<string, PendingRuntimeRequest>(),
           ]);
-          droidPendingRequestCount = 0;
-          invalidateDroidSteer();
+          droidSteer.setPendingRequestCount(0);
           if (requests.length === 0) return;
 
           const now = yield* DateTime.now;
@@ -5819,8 +5753,7 @@ export function makeAcpAdapterV2(
                       yield* Ref.update(pendingRuntimeRequests, (current) => {
                         const updated = new Map(current);
                         updated.delete(String(requestId));
-                        droidPendingRequestCount = updated.size;
-                        invalidateDroidSteer();
+                        droidSteer.setPendingRequestCount(updated.size);
                         return updated;
                       });
                     }),
@@ -6598,13 +6531,7 @@ export function makeAcpAdapterV2(
           },
           ordinal: context.input.providerTurnOrdinal,
           status,
-          nativeAcceptance:
-            context.acceptedAt !== null
-              ? "accepted"
-              : context.promptOffered
-                ? "unknown"
-                : "pending",
-          ...(context.acceptedAt === null ? {} : { acceptedAt: context.acceptedAt }),
+          ...nativeTurnAcceptance(context),
           startedAt: context.startedAt,
           completedAt,
         });
@@ -7192,15 +7119,7 @@ export function makeAcpAdapterV2(
                 }
               }
             }
-            if (flavor.droidHeldSteering === true) {
-              for (const id of droidOwner?.droidSteerSafety?.toolIds() ?? [])
-                retiredDroidToolIds.add(id);
-              while (retiredDroidToolIds.size > 2_000)
-                retiredDroidToolIds.delete(retiredDroidToolIds.values().next().value!);
-              invalidateDroidSteer();
-              consumedDroidLease = undefined;
-              droidOwner = context;
-            }
+            droidSteer.adopt(context);
             yield* Ref.set(activeTurn, context);
             // Direct Stop closes and recreates the old runtime before reaching
             // this reset. The quarantine remains session-scoped by design.
@@ -7445,9 +7364,7 @@ export function makeAcpAdapterV2(
                       if (
                         context.acceptedAt === null &&
                         isAcpRequestError(promptError) &&
-                        (promptError.code === -32600 ||
-                          promptError.code === -32601 ||
-                          promptError.code === -32602)
+                        isPreAcceptanceRejectionCode(promptError.code)
                       ) {
                         context.promptOffered = false;
                       }
@@ -7505,8 +7422,7 @@ export function makeAcpAdapterV2(
                 yield* Ref.update(continuationGeneration, (value) => value + 1);
               }),
             );
-            droidClosed = true;
-            invalidateDroidSteer();
+            droidSteer.close();
             const requests = [...(yield* Ref.get(pendingRuntimeRequests)).values()];
             yield* Effect.forEach(
               requests,
@@ -7699,76 +7615,7 @@ export function makeAcpAdapterV2(
               ),
           ),
           // SCIENT-FORK:START — canonical callbacks are bound by registration, never inferred from logs.
-          ...(flavor.droidHeldSteering !== true
-            ? {}
-            : {
-                configureDroidSteerOwner: (owner) =>
-                  Effect.sync(() => {
-                    droidCanonicalOwner = owner;
-                  }),
-                droidSteerTerminalHeld: (attemptId, status) =>
-                  Effect.gen(function* () {
-                    const owner = droidCanonicalOwner;
-                    if (owner?.attemptId !== attemptId || !(yield* owner.held)) return false;
-                    if (
-                      status === "failed" ||
-                      (status !== "completed" && droidOwner?.droidSteerSafety?.consumed !== true)
-                    ) {
-                      yield* owner.drop;
-                      return false;
-                    }
-                    return true;
-                  }),
-                invalidateDroidSteer,
-                validateDroidSteer: validDroidLease,
-                droidSteerConsumed: (lease) =>
-                  !droidClosed &&
-                  consumedDroidLease !== undefined &&
-                  (lease === undefined || consumedDroidLease === lease),
-                reserveDroidSteer: (identity) =>
-                  Effect.sync(() => {
-                    if (
-                      droidClosed ||
-                      droidBatchDepth !== 0 ||
-                      droidPendingRequestCount !== 0 ||
-                      droidOwner?.providerTurnId !== identity.providerTurnId ||
-                      droidOwner.input.attemptId !== identity.attemptId ||
-                      droidOwner.interrupted
-                    )
-                      return undefined;
-                    const id = droidOwner.droidSteerSafety?.reserve(identity.revision);
-                    if (id !== undefined)
-                      droidLease = { id, epoch: droidBatchEpoch, context: droidOwner };
-                    return id;
-                  }).pipe(
-                    Effect.tap((id) =>
-                      id === undefined
-                        ? Effect.void
-                        : (options.testHooks?.afterDroidSteerReserved?.(id) ?? Effect.void),
-                    ),
-                  ),
-                consumeDroidSteer: (turnInput) =>
-                  Effect.gen(function* () {
-                    const owner = droidOwner;
-                    if (owner?.providerTurnId !== turnInput.providerTurnId) return false;
-                    if (owner.finalized) {
-                      // Successful prompt completion already closed this exact owner: no cancel is needed.
-                      if (!(yield* Deferred.isDone(owner.promptWireSettled))) return false;
-                      yield* options.testHooks?.beforeDroidSteerConsume?.() ?? Effect.void;
-                      return consumeDroidLease(turnInput.droidSteerLease);
-                    }
-                    return yield* sessionRuntime.interruptTurn(turnInput).pipe(
-                      Effect.map(
-                        () => !droidClosed && consumedDroidLease === turnInput.droidSteerLease,
-                      ),
-                      Effect.catchTag("ProviderAdapterInterruptError", (error) =>
-                        error.cause instanceof DroidSteerDeferred
-                          ? Effect.succeed(false)
-                          : Effect.fail(error),
-                      ),
-                    );
-                  }),
-              }),
+          ...droidSteer.runtimeMethods((turnInput) => sessionRuntime.interruptTurn(turnInput)),
           // SCIENT-FORK:END
           startTurn,
           ...(flavor.supportsCompaction === true
@@ -7988,7 +7835,7 @@ export function makeAcpAdapterV2(
                         yield* options.testHooks?.beforeDroidSteerConsume?.() ?? Effect.void;
                       if (
                         turnInput.droidSteerLease !== undefined &&
-                        !consumeDroidLease(turnInput.droidSteerLease)
+                        !droidSteer.consume(turnInput.droidSteerLease)
                       )
                         return yield* new DroidSteerDeferred();
                       // SCIENT: a consumed, already-returned prompt keeps its truthful native outcome.

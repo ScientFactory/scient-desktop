@@ -5,6 +5,12 @@ import {
   retireUnusableOwner,
   makeSessionRetirement,
 } from "./scient-provider/SessionRetirement.ts";
+// SCIENT-FORK: running-fork text capture owners.
+import { makeProviderTextSnapshots } from "./scient-provider/ProviderTextSnapshots.ts";
+// SCIENT-FORK: single-writer Pi session file leases.
+import { makePiSessionFileLeases } from "./scient-provider/PiSessionFileLeases.ts";
+// SCIENT-FORK: execution authority of the exact live native owner.
+import { makeSessionAuthority } from "./scient-provider/SessionAuthority.ts";
 import { expandComposerCitationsForProvider } from "@t3tools/shared/composerCitations";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -48,13 +54,11 @@ import * as IdAllocator from "./IdAllocator.ts";
 import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import {
-  ProviderTextSnapshotError,
+  type ProviderTextSnapshotError,
   type ProviderTextSnapshotOwner,
-  type ProviderTextSnapshotConsumerOwner,
   type CapturedProviderText,
   type ProviderAdapterV2InternalEvent,
   ProviderAdapterEventStreamError,
-  ProviderAdapterProtocolError,
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Error,
   type ProviderAdapterV2Event,
@@ -440,214 +444,21 @@ export const layerWithOptions = (
       );
       const layerScope = yield* Effect.scope;
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
-      const textSnapshotPermit = yield* Semaphore.make(1);
-      const textSnapshotConsumers = new Map<
-        number,
-        {
-          readonly runtime: ProviderAdapterV2SessionRuntime;
-          readonly owner: ProviderTextSnapshotConsumerOwner;
-          readonly queue: Queue.Queue<ProviderSessionEventSignal, Cause.Done>;
-        }
-      >();
-      const textSnapshots = new Map<
-        symbol,
-        {
-          readonly entry: LiveSessionEntry;
-          readonly owner: ProviderTextSnapshotOwner;
-          readonly consumerId: number;
-          readonly done: Deferred.Deferred<CapturedProviderText, ProviderTextSnapshotError>;
-          retired: boolean;
-        }
-      >();
-      const matchesTextConsumer = (
-        consumer: ProviderTextSnapshotConsumerOwner,
-        owner: ProviderTextSnapshotConsumerOwner,
-      ) =>
-        consumer.threadId === owner.threadId &&
-        consumer.runId === owner.runId &&
-        consumer.activeAttemptId === owner.activeAttemptId &&
-        consumer.rootNodeId === owner.rootNodeId &&
-        consumer.runOrdinal === owner.runOrdinal &&
-        consumer.providerThreadId === owner.providerThreadId &&
-        consumer.providerSessionId === owner.providerSessionId &&
-        consumer.providerInstanceId === owner.providerInstanceId &&
-        consumer.driver === owner.driver;
-      const retireTextSnapshots = (runtime: ProviderAdapterV2SessionRuntime, threadId?: ThreadId) =>
-        Effect.forEach(
-          Array.from(textSnapshots.values()).filter(
-            (pending) =>
-              pending.entry.runtime === runtime &&
-              (threadId === undefined || pending.owner.threadId === threadId),
-          ),
-          (pending) => {
-            pending.retired = true;
-            return Deferred.fail(
-              pending.done,
-              new ProviderTextSnapshotError({ reason: "owner-lost" }),
-            );
-          },
-          { discard: true },
-        );
-      const withTextSnapshotCurrent = <A, E, R>(
-        token: symbol,
-        watermark: number | undefined,
-        commit: Effect.Effect<A, E, R>,
-      ) =>
-        textSnapshotPermit.withPermit(
-          Effect.gen(function* () {
-            const pending = textSnapshots.get(token);
-            if (pending === undefined || pending.retired)
-              return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
-            const current = (yield* Ref.get(sessions)).get(
-              sessionKey(pending.owner.providerSessionId),
-            );
-            if (
-              current?.runtime !== pending.entry.runtime ||
-              current.scope !== pending.entry.scope ||
-              !current.attachedThreadIds.has(pending.owner.threadId) ||
-              releasingRuntimes.has(current.runtime) ||
-              !textSnapshotConsumers.has(pending.consumerId) ||
-              current.runtime.textSnapshots === undefined
-            )
-              return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
-            return yield* current.runtime.textSnapshots.withCurrent(token, watermark, commit);
-          }),
-        );
-      // Retiring a waiter is not native generation retirement. It must not wait
-      // behind its in-flight SQL consumer; genuine committed facts are retained.
-      const releaseTextSnapshot = (token: symbol) =>
-        Effect.uninterruptible(
-          Effect.gen(function* () {
-            const pending = textSnapshots.get(token);
-            if (pending === undefined) return;
-            pending.retired = true;
-            textSnapshots.delete(token);
-            yield* Deferred.fail(
-              pending.done,
-              new ProviderTextSnapshotError({ reason: "consumer-ended" }),
-            );
-            yield* pending.entry.runtime.textSnapshots?.release(token) ?? Effect.void;
-          }),
-        );
-      const captureRunningForkText = Effect.fn("ProviderSessionManager.captureRunningForkText")(
-        function* (owner: ProviderTextSnapshotOwner) {
-          const token = Symbol("native-text-snapshot");
-          return yield* Effect.gen(function* () {
-            const entry = yield* textSnapshotPermit.withPermit(
-              Effect.gen(function* () {
-                const current = (yield* Ref.get(sessions)).get(sessionKey(owner.providerSessionId));
-                if (
-                  current === undefined ||
-                  releasingRuntimes.has(current.runtime) ||
-                  !current.attachedThreadIds.has(owner.threadId) ||
-                  current.runtime.instanceId !== owner.providerInstanceId ||
-                  current.runtime.driver !== owner.driver
-                )
-                  return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
-                if (current.runtime.textSnapshots === undefined)
-                  return yield* new ProviderTextSnapshotError({ reason: "unsupported" });
-                const consumer = Array.from(textSnapshotConsumers).find(
-                  ([, row]) =>
-                    row.runtime === current.runtime && matchesTextConsumer(row.owner, owner),
-                );
-                if (consumer === undefined)
-                  return yield* new ProviderTextSnapshotError({ reason: "consumer-ended" });
-                if (
-                  Array.from(textSnapshots.values()).some(
-                    (row) =>
-                      row.entry.runtime === current.runtime &&
-                      matchesTextConsumer(row.owner, owner),
-                  )
-                )
-                  return yield* new ProviderTextSnapshotError({ reason: "busy" });
-                const done = yield* Deferred.make<
-                  CapturedProviderText,
-                  ProviderTextSnapshotError
-                >();
-                textSnapshots.set(token, {
-                  entry: current,
-                  owner,
-                  consumerId: consumer[0],
-                  done,
-                  retired: false,
-                });
-                return current;
-              }),
-            );
-            yield* entry.runtime.textSnapshots!.request(owner, token);
-            return yield* Effect.raceFirst(
-              Deferred.await(textSnapshots.get(token)!.done),
-              entry.runtime.textSnapshots!.ended,
-            );
-          }).pipe(
-            Effect.onExit((exit) =>
-              Exit.isFailure(exit) ? releaseTextSnapshot(token) : Effect.void,
-            ),
-          );
-        },
-      );
-
       const releasingRuntimes = new WeakSet<ProviderAdapterV2SessionRuntime>();
+      // SCIENT-FORK:START — running-fork text capture owners live in their owned module.
+      const textSnapshotRegistry = yield* makeProviderTextSnapshots({
+        sessions,
+        sessionKey,
+        releasingRuntimes,
+      });
+      // SCIENT-FORK:END
+
       // The same exact owner survives logical removal, timeout and failed scope
       // close. It has no execution rights; retries join its original operation.
       const closingSessions = new Map<string, ClosingSessionEntry>();
-      // Pi session files admit only one native writer, including during startup.
-      // The process scope releases its leases after native teardown completes.
-      const piFileLeases = new Map<string, Scope.Closeable>();
-      const closedLeaseScopes = new WeakSet<Scope.Closeable>();
-      const failedLeaseScopes = new WeakSet<Scope.Closeable>();
-      const closeOwnedScope = (scope: Scope.Closeable) =>
-        Effect.suspend(() => {
-          closedLeaseScopes.add(scope);
-          if (failedLeaseScopes.has(scope))
-            return Effect.die(
-              "The native process scope previously failed to close; its Pi file leases remain held.",
-            );
-          return Scope.close(scope, Exit.void).pipe(
-            Effect.onError(() => Effect.sync(() => failedLeaseScopes.add(scope))),
-            Effect.andThen(
-              Effect.sync(() => {
-                for (const [file, owner] of piFileLeases)
-                  if (owner === scope) piFileLeases.delete(file);
-              }),
-            ),
-          );
-        });
-      const claimPiFile = (
-        scope: Scope.Closeable,
-        driver: ProviderAdapterV2SessionRuntime["driver"],
-        nativeId?: string | null,
-      ) =>
-        driver !== "pi" || nativeId == null
-          ? Effect.void
-          : fileSystem.realPath(nativeId).pipe(
-              Effect.catch((cause) =>
-                cause.reason._tag === "NotFound"
-                  ? Effect.succeed(path.resolve(nativeId))
-                  : Effect.fail(
-                      new ProviderAdapterProtocolError({
-                        driver,
-                        detail: "Cannot resolve the native Pi session file.",
-                        payload: cause,
-                      }),
-                    ),
-              ),
-              Effect.flatMap((file) =>
-                Effect.suspend(() => {
-                  if (
-                    closedLeaseScopes.has(scope) ||
-                    (piFileLeases.has(file) && piFileLeases.get(file) !== scope)
-                  )
-                    return new ProviderAdapterProtocolError({
-                      driver,
-                      detail:
-                        "The native Pi session file already has a live writer, or this writer has closed.",
-                    });
-                  piFileLeases.set(file, scope);
-                  return Effect.void;
-                }),
-              ),
-            );
+      // SCIENT-FORK:START — Pi session files admit one native writer per process scope.
+      const { closeOwnedScope, claimPiFile } = makePiSessionFileLeases({ fileSystem, path });
+      // SCIENT-FORK:END
       const nextSubscriberId = yield* Ref.make(0);
       const sessionOpen = yield* makeKeyedSerialExecutor<ProviderSessionId>();
       // Orders a thread's attach against a detach unloading it on the same session.
@@ -1174,10 +985,10 @@ export const layerWithOptions = (
             const reserve =
               candidate.runtime.textSnapshots === undefined
                 ? reserveMutation
-                : textSnapshotPermit.withPermit(
+                : textSnapshotRegistry.permit.withPermit(
                     reserveMutation.pipe(
                       Effect.tap((reserved) =>
-                        reserved ? retireTextSnapshots(candidate.runtime) : Effect.void,
+                        reserved ? textSnapshotRegistry.retire(candidate.runtime) : Effect.void,
                       ),
                     ),
                   );
@@ -1632,15 +1443,9 @@ export const layerWithOptions = (
           );
           const close = Effect.uninterruptible(
             Effect.gen(function* () {
-              textSnapshotConsumers.delete(subscriberId);
-              for (const pending of textSnapshots.values()) {
-                if (pending.consumerId !== subscriberId) continue;
-                pending.retired = true;
-                yield* Deferred.fail(
-                  pending.done,
-                  new ProviderTextSnapshotError({ reason: "consumer-ended" }),
-                );
-              }
+              // SCIENT-FORK: end this subscriber's running-fork text consumer first.
+              const endingSnapshots = textSnapshotRegistry.endConsumer(subscriberId);
+              if (endingSnapshots !== undefined) yield* endingSnapshots;
               yield* removeSubscription;
             }),
           );
@@ -1659,57 +1464,8 @@ export const layerWithOptions = (
               ),
             ),
             snapshotEvents: events,
-            textSnapshotConsumer: {
-              bind: (owner) =>
-                textSnapshotPermit.withPermit(
-                  Effect.sync(() => {
-                    textSnapshotConsumers.set(subscriberId, { runtime, owner, queue });
-                  }),
-                ),
-              consume: (batch, write) =>
-                Effect.gen(function* () {
-                  const pending = textSnapshots.get(batch.token);
-                  if (pending === undefined) return;
-                  if (
-                    pending.consumerId !== subscriberId ||
-                    pending.owner !== batch.owner ||
-                    !matchesTextConsumer(
-                      textSnapshotConsumers.get(subscriberId)?.owner ?? batch.owner,
-                      pending.owner,
-                    )
-                  ) {
-                    yield* Deferred.fail(
-                      pending.done,
-                      new ProviderTextSnapshotError({ reason: "owner-lost" }),
-                    );
-                    return;
-                  }
-                  const result = yield* withTextSnapshotCurrent(
-                    batch.token,
-                    batch.watermark,
-                    write,
-                  ).pipe(Effect.exit);
-                  if (Exit.isFailure(result)) {
-                    const cause = Cause.squash(result.cause);
-                    yield* Deferred.fail(
-                      pending.done,
-                      Schema.is(ProviderTextSnapshotError)(cause)
-                        ? cause
-                        : new ProviderTextSnapshotError({
-                            reason: "capture-failed",
-                            cause: result.cause,
-                          }),
-                    );
-                  } else {
-                    yield* Deferred.succeed(pending.done, {
-                      ...result.value,
-                      token: batch.token,
-                      owner: batch.owner,
-                      watermark: batch.watermark,
-                    });
-                  }
-                }),
-            },
+            // SCIENT-FORK: running-fork text consumer bound to this exact subscriber.
+            textSnapshotConsumer: textSnapshotRegistry.consumer(subscriberId, runtime, queue),
             close,
           } satisfies ProviderTextSnapshotSubscription;
         });
@@ -1953,26 +1709,9 @@ export const layerWithOptions = (
         let stoppedByProvider = false;
         return (entry.runtime.textSnapshots?.events ?? entry.runtime.events).pipe(
           Stream.runForEach((event) => {
+            // SCIENT-FORK: running-fork text batches go only to their exact consumer.
             if (event.type === "internal.text_snapshot")
-              return Effect.gen(function* () {
-                const pending = textSnapshots.get(event.token);
-                const consumer =
-                  pending === undefined ? undefined : textSnapshotConsumers.get(pending.consumerId);
-                if (pending === undefined) return;
-                if (
-                  pending.retired ||
-                  pending.entry.runtime !== entry.runtime ||
-                  pending.owner !== event.owner ||
-                  consumer?.runtime !== entry.runtime
-                ) {
-                  yield* Deferred.fail(
-                    pending.done,
-                    new ProviderTextSnapshotError({ reason: "owner-lost" }),
-                  );
-                  return;
-                }
-                yield* Queue.offer(consumer.queue, { type: "event", event });
-              });
+              return textSnapshotRegistry.route(entry.runtime, event);
             if (event.type === "authentication.invalidated") {
               // A single pump owns this observation, independently of run
               // subscribers. Never accept instance identity from the provider.
@@ -2046,7 +1785,7 @@ export const layerWithOptions = (
           Effect.exit,
           Effect.flatMap((exit) =>
             Effect.gen(function* () {
-              yield* retireTextSnapshots(entry.runtime);
+              yield* textSnapshotRegistry.retire(entry.runtime);
               entry.eventPump.ended = true;
               const current = (yield* Ref.get(sessions)).get(
                 sessionKey(entry.runtime.providerSessionId),
@@ -2126,62 +1865,13 @@ export const layerWithOptions = (
       });
       yield* Effect.addFinalizer(() => shutdown);
 
-      return ProviderSessionManagerV2.of({
-        captureRunningForkText,
-        withCapturedForkText: (capture, commit) =>
-          withTextSnapshotCurrent(capture.token, undefined, commit),
-        releaseCapturedForkText: (capture) => releaseTextSnapshot(capture.token),
-        shutdown,
-        withProviderWorkAdmission: <A, E, R>(
-          identity: ProviderAdapterV2InitiatedWorkIdentity,
-          expectedRuntime: ProviderAdapterV2SessionRuntime,
-          commit: Effect.Effect<A, E, R>,
-        ) =>
-          Effect.gen(function* () {
-            const key = sessionKey(identity.providerSessionId);
-            const entry = (yield* Ref.get(sessions)).get(key);
-            if (
-              entry === undefined ||
-              entry.exposedRuntime !== expectedRuntime ||
-              !entry.attachedThreadIds.has(identity.threadId) ||
-              entry.runtime.driver !== identity.driver ||
-              entry.runtime.instanceId !== identity.providerInstanceId ||
-              entry.runtime.withInitiatedWorkAdmission === undefined
-            )
-              return Option.none<A>();
-            return yield* entry.runtime
-              .withInitiatedWorkAdmission(
-                identity,
-                Effect.gen(function* () {
-                  const current = (yield* Ref.get(sessions)).get(key);
-                  if (
-                    current?.runtime !== entry.runtime ||
-                    current.scope !== entry.scope ||
-                    current.exposedRuntime !== expectedRuntime ||
-                    !current.attachedThreadIds.has(identity.threadId) ||
-                    releasingRuntimes.has(current.runtime)
-                  )
-                    return Option.none<A>();
-                  return Option.some(yield* commit);
-                }),
-              )
-              .pipe(Effect.map(Option.flatten));
-          }),
-        resolveMcpInvocationPolicy: Effect.fn(
-          "ProviderSessionManagerV2.resolveMcpInvocationPolicy",
-        )(function* (
-          invocation: Parameters<ProviderSessionManagerV2Shape["resolveMcpInvocationPolicy"]>[0],
-        ) {
-          const entries = [...(yield* Ref.get(sessions)).values()].filter(
-            (entry) =>
-              !releasingRuntimes.has(entry.runtime) &&
-              entry.runtime.instanceId === invocation.providerInstanceId &&
-              entry.attachedThreadIds.has(invocation.threadId) &&
-              entry.mcpCredentialIdByThread.get(invocation.threadId) ===
-                invocation.providerSessionId,
-          );
-          if (entries.length === 0) return Option.none();
-          const projection = yield* projectionStore
+      // SCIENT-FORK:START — execution authority of the exact live native owner.
+      const sessionAuthority = makeSessionAuthority({
+        sessions,
+        sessionKey,
+        releasingRuntimes,
+        readThreadRecords: (invocation) =>
+          projectionStore
             .getThreadRecords(invocation.threadId, ["runs", "attempts", "providerThreads"])
             .pipe(
               Effect.mapError(
@@ -2191,55 +1881,22 @@ export const layerWithOptions = (
                     cause,
                   }),
               ),
-            );
-          if (projection.thread.deletedAt !== null || projection.thread.archivedAt !== null)
-            return Option.none();
-          const run = projection.runs
-            .filter((candidate) => ["starting", "running", "waiting"].includes(candidate.status))
-            .toSorted((left, right) => right.ordinal - left.ordinal)[0];
-          if (
-            run === undefined ||
-            !["starting", "running", "waiting"].includes(run.status) ||
-            run.providerInstanceId !== invocation.providerInstanceId ||
-            run.runtimeMode === undefined ||
-            run.interactionMode === undefined
-          )
-            return Option.none();
-          const attempt = projection.attempts.find(
-            (candidate) => candidate.id === run.activeAttemptId,
-          );
-          const nativeThread = projection.providerThreads.find(
-            (candidate) => candidate.id === run.providerThreadId,
-          );
-          if (
-            attempt === undefined ||
-            nativeThread === undefined ||
-            !["pending", "running"].includes(attempt.status) ||
-            attempt.runId !== run.id ||
-            attempt.rootNodeId !== run.rootNodeId ||
-            attempt.providerInstanceId !== invocation.providerInstanceId ||
-            attempt.providerThreadId !== nativeThread?.id ||
-            nativeThread.appThreadId !== invocation.threadId ||
-            nativeThread.providerInstanceId !== invocation.providerInstanceId
-          )
-            return Option.none();
-          const current = yield* Ref.get(sessions);
-          const owner = entries.find(
-            (entry) =>
-              !releasingRuntimes.has(entry.runtime) &&
-              entry.runtime.providerSessionId === nativeThread.providerSessionId &&
-              current.get(sessionKey(entry.runtime.providerSessionId))?.runtime === entry.runtime &&
-              current
-                .get(sessionKey(entry.runtime.providerSessionId))
-                ?.attachedThreadIds.has(invocation.threadId) === true &&
-              current
-                .get(sessionKey(entry.runtime.providerSessionId))
-                ?.mcpCredentialIdByThread.get(invocation.threadId) === invocation.providerSessionId,
-          );
-          return owner === undefined
-            ? Option.none()
-            : Option.some({ runtimeMode: run.runtimeMode, interactionMode: run.interactionMode });
-        }),
+            ),
+      });
+      // SCIENT-FORK:END
+
+      return ProviderSessionManagerV2.of({
+        // SCIENT-FORK:START — running-fork text capture.
+        captureRunningForkText: textSnapshotRegistry.capture,
+        withCapturedForkText: (capture, commit) =>
+          textSnapshotRegistry.withCurrent(capture.token, undefined, commit),
+        releaseCapturedForkText: (capture) => textSnapshotRegistry.release(capture.token),
+        // SCIENT-FORK:END
+        shutdown,
+        // SCIENT-FORK:START — execution authority of the exact live native owner.
+        withProviderWorkAdmission: sessionAuthority.withProviderWorkAdmission,
+        resolveMcpInvocationPolicy: sessionAuthority.resolveMcpInvocationPolicy,
+        // SCIENT-FORK:END
         open: (input) =>
           Effect.suspend(() => {
             let cleanupOpening: Effect.Effect<void> = Effect.void;
@@ -2751,9 +2408,11 @@ export const layerWithOptions = (
             });
             const detached = yield* currentEntry?.runtime.textSnapshots === undefined
               ? detachMutation
-              : textSnapshotPermit.withPermit(
+              : textSnapshotRegistry.permit.withPermit(
                   detachMutation.pipe(
-                    Effect.tap(() => retireTextSnapshots(currentEntry.runtime, input.threadId)),
+                    Effect.tap(() =>
+                      textSnapshotRegistry.retire(currentEntry.runtime, input.threadId),
+                    ),
                   ),
                 );
             // Plain detaches deliberately do not revoke: a detached thread's

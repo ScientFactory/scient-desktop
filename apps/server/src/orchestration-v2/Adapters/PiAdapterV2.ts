@@ -87,13 +87,6 @@ import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanc
 import { piContextErrorMessage } from "../../provider/pi/PiContextError.ts";
 import { encodePiModelSlug } from "../../provider/pi/PiModel.ts";
 import { applyPiModelSelection } from "../../provider/pi/PiModelSelection.ts";
-import { PiRpcProtocolError } from "../../provider/pi/PiRpcClient.ts";
-import {
-  PiRpcModel,
-  PiRpcState,
-  PiRpcThinkingLevels,
-  type PiThinkingLevel,
-} from "../../provider/pi/PiRpcSchema.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
 import {
@@ -121,11 +114,16 @@ import { PI_FILE_CHANGE_TOOLS } from "./piT3McpExtensionSource.ts";
 
 // SCIENT-FORK:START — native input eligibility in its owned pure module.
 import * as PiInput from "../scient-provider/PiInputCapabilities.ts";
+import {
+  decodeSelectionState,
+  makePiSelectionClient,
+  observedNativeEffort,
+  piNativeSelection,
+} from "../scient-provider/PiNativeSelection.ts";
+import { turnStartErrorKeepingReceipt } from "../scient-provider/NativeTurnReceipts.ts";
 // SCIENT-FORK:END
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
-const isNativeStartReceiptError = Schema.is(ProviderAdapter.ProviderAdapterTurnStartError);
-
 const PI_DRIVER_KIND = PI_PROVIDER;
 const DEFAULT_PI_SETTINGS = Schema.decodeSync(PiSettings)({});
 
@@ -286,18 +284,6 @@ function providerRef(
   strength: "strong" | "weak" = "strong",
 ): OrchestrationV2ProviderRef {
   return { driver: PI_PROVIDER, nativeId, strength };
-}
-
-const decodeSelectionModel = Schema.decodeUnknownEffect(PiRpcModel);
-const decodeSelectionState = Schema.decodeUnknownEffect(PiRpcState);
-const decodeSelectionThinkingLevels = Schema.decodeUnknownEffect(PiRpcThinkingLevels);
-function observedNativeEffort(state: PiRpcState): PiThinkingLevel | undefined {
-  const metadata = state.model?.reasoningMetadata;
-  const known =
-    state.model !== undefined &&
-    (metadata === undefined ||
-      (metadata.status === "known" && metadata.supported === true && metadata.levels.length > 0));
-  return known ? state.thinkingLevel : undefined;
 }
 
 // ── per-session state ─────────────────────────────────────────
@@ -636,22 +622,8 @@ export function makePiAdapterV2(
       yield* Scope.addFinalizer(connectionScope, invalidateNativeGeneration(true));
       const capturedRuntimePolicy = { ...input.runtimePolicy, cwd };
       const captureNativeSelection = (data: unknown) => {
-        const model = recordField(data, "model");
-        const provider = recordString(model, "provider");
-        const id = recordString(model, "id");
-        const thinkingLevel = recordString(data, "thinkingLevel");
-        const slug =
-          provider === undefined || id === undefined ? undefined : encodePiModelSlug(provider, id);
-        nativeSelection =
-          slug === undefined
-            ? null
-            : {
-                instanceId: options.instanceId,
-                model: slug,
-                ...(thinkingLevel === undefined
-                  ? {}
-                  : { options: [{ id: "thinkingLevel", value: thinkingLevel }] }),
-              };
+        // SCIENT-FORK: the live native selection, from its owned module.
+        nativeSelection = piNativeSelection(data, options.instanceId);
       };
       let appliedModel: string | null = null;
       let appliedThinking: string | null = null;
@@ -2648,43 +2620,8 @@ export function makePiAdapterV2(
         return providerThread;
       });
 
-      // Use the same confirmed native selection policy as discovery and one-shot generation.
-      const selectionRequest = (record: PiRpcRecord) =>
-        request(record).pipe(
-          Effect.mapError(
-            (cause) =>
-              new PiRpcProtocolError({
-                detail: `Pi ${String(record.type)} failed.`,
-                cause,
-              }),
-          ),
-        );
-      const selectionClient = {
-        setModel: (provider: string, modelId: string) =>
-          selectionRequest({ type: "set_model", provider, modelId }).pipe(
-            Effect.flatMap(decodeSelectionModel),
-            Effect.mapError(
-              (cause) => new PiRpcProtocolError({ detail: "Invalid Pi model response.", cause }),
-            ),
-          ),
-        getState: () =>
-          selectionRequest({ type: "get_state" }).pipe(
-            Effect.flatMap(decodeSelectionState),
-            Effect.mapError(
-              (cause) => new PiRpcProtocolError({ detail: "Invalid Pi state response.", cause }),
-            ),
-          ),
-        getThinkingLevels: () =>
-          selectionRequest({ type: "get_available_thinking_levels" }).pipe(
-            Effect.flatMap(decodeSelectionThinkingLevels),
-            Effect.mapError(
-              (cause) =>
-                new PiRpcProtocolError({ detail: "Invalid Pi thinking-level response.", cause }),
-            ),
-          ),
-        setThinkingLevel: (level: PiThinkingLevel) =>
-          selectionRequest({ type: "set_thinking_level", level }).pipe(Effect.asVoid),
-      };
+      // SCIENT-FORK: the same confirmed native selection policy as discovery and one-shot generation.
+      const selectionClient = makePiSelectionClient((record) => request(record));
       const applySelection = Effect.fnUntraced(function* (modelSelection: ModelSelection) {
         const thinking =
           getModelSelectionStringOptionValue(modelSelection, "thinkingLevel") ??
@@ -2909,15 +2846,9 @@ export function makePiAdapterV2(
                 source.providerSessionId !== input.providerSessionId ||
                 source.providerThreadId !== state.providerThread.id ||
                 !modelSelectionsEqual(adoptedWork.modelSelection, source.modelSelection) ||
-                !Schema.toEquivalence(ProviderAdapter.ProviderAdapterV2RuntimePolicy)(
-                  adoptedWork.runtimePolicy,
-                  source.runtimePolicy,
-                ) ||
+                !runtimePoliciesEqual(adoptedWork.runtimePolicy, source.runtimePolicy) ||
                 !modelSelectionsEqual(adoptedWork.modelSelection, turnInput.modelSelection) ||
-                !Schema.toEquivalence(ProviderAdapter.ProviderAdapterV2RuntimePolicy)(
-                  adoptedWork.runtimePolicy,
-                  turnInput.runtimePolicy,
-                ))
+                !runtimePoliciesEqual(adoptedWork.runtimePolicy, turnInput.runtimePolicy))
             )
               return yield* protocolError("Pi native generation no longer owns this captured run");
             if (adoptedWork === null && bufferedWork !== null)
@@ -3110,19 +3041,7 @@ export function makePiAdapterV2(
             // and extension commands may block on user dialogs indefinitely.
             // Rejections therefore return later as id-less response records
             // handled by the event pump.
-          }).pipe(
-            Effect.mapError((cause) =>
-              isNativeStartReceiptError(cause)
-                ? cause
-                : new ProviderAdapter.ProviderAdapterTurnStartError({
-                    driver: PI_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
-            ),
-          ),
+          }).pipe(Effect.mapError(turnStartErrorKeepingReceipt(PI_PROVIDER, turnInput))),
         steerTurn: (steerInput: ProviderAdapter.ProviderAdapterV2SteerInput) =>
           Effect.suspend(() => {
             const turn = threadState?.activeTurn ?? null;

@@ -72,6 +72,8 @@ import { makeProviderFailure } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
+// SCIENT-FORK: shared native start receipt rule.
+import { turnStartErrorKeepingReceipt } from "../scient-provider/NativeTurnReceipts.ts";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -85,8 +87,6 @@ export { openCodeToolProjectionKind } from "./OpenCodeToolItems.ts";
 export const OPENCODE_PROVIDER = ProviderDriverKind.make("opencode");
 export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_PROVIDER);
 export const OPENCODE_SDK_PROTOCOL = "opencode-sdk.sse" as const;
-const isNativeStartReceiptError = Schema.is(ProviderAdapter.ProviderAdapterTurnStartError);
-
 const DEFAULT_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettingsSchema)({});
 
 let openCodeMessageIdEpochMillis = -1;
@@ -3365,17 +3365,7 @@ export function makeOpenCodeAdapterV2(
               }
             }).pipe(
               turnStartPermit.withPermit,
-              Effect.mapError((cause) =>
-                isNativeStartReceiptError(cause)
-                  ? cause
-                  : new ProviderAdapter.ProviderAdapterTurnStartError({
-                      driver: OPENCODE_PROVIDER,
-                      threadId: turnInput.threadId,
-                      providerThreadId: turnInput.providerThread.id,
-                      runId: turnInput.runId,
-                      cause,
-                    }),
-              ),
+              Effect.mapError(turnStartErrorKeepingReceipt(OPENCODE_PROVIDER, turnInput)),
             ),
           steerTurn: (steerInput) =>
             Effect.gen(function* () {
