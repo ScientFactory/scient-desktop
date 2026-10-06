@@ -63,8 +63,10 @@ import {
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 // SCIENT-FORK:START — owned finalization and private subscription lifetime.
 import {
+  isCommittedRootProviderTurn,
   makeOwnedRunFinalizer,
   makeRunEventSubscriptionLifetime,
+  ownedFailedStartReceipt,
 } from "./scient-fork/RunExecutionFinalization.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — the live root's side of a running fork's text snapshot.
@@ -131,8 +133,6 @@ function isSettledSubagentStatus(status: OrchestrationV2Subagent["status"]): boo
 // commands, monitors/dynamic tools, subagent rows). Ingestion must not stop
 // while one of these is still non-terminal, or the late completion event is
 // dropped and the item spins forever in the projection.
-const isNativeStartReceiptError = Schema.is(ProviderAdapterTurnStartError);
-
 const backgroundCapableTurnItemTypes: ReadonlySet<OrchestrationV2TurnItem["type"]> = new Set([
   "command_execution",
   "dynamic_tool",
@@ -1465,18 +1465,7 @@ export const layer: Layer.Layer<
                   ) {
                     const rootProviderTurnId = (yield* Ref.get(eventRouting)).rootProviderTurnId;
                     for (const { event: storedEvent } of storedEvents) {
-                      if (
-                        storedEvent.type === "provider-turn.updated" &&
-                        storedEvent.driver === input.session.driver &&
-                        storedEvent.threadId === input.run.threadId &&
-                        storedEvent.runId === input.run.id &&
-                        storedEvent.nodeId === input.rootNode.id &&
-                        storedEvent.providerInstanceId === input.run.providerInstanceId &&
-                        storedEvent.payload.id === rootProviderTurnId &&
-                        storedEvent.payload.nodeId === input.rootNode.id &&
-                        storedEvent.payload.runAttemptId === input.attemptId &&
-                        storedEvent.payload.providerThreadId === input.providerThread.id
-                      ) {
+                      if (isCommittedRootProviderTurn(storedEvent, input, rootProviderTurnId)) {
                         yield* Ref.update(
                           committedRootProviderTurn,
                           (current) =>
@@ -1683,18 +1672,9 @@ export const layer: Layer.Layer<
                     Cause.fromReasons<never>(cause.reasons.filter(Cause.isInterruptReason)),
                   );
                 }
-                const error = Cause.squash(cause);
-                const receipt =
-                  isNativeStartReceiptError(error) &&
-                  error.threadId === input.run.threadId &&
-                  error.runId === input.run.id &&
-                  error.providerThreadId === input.providerThread.id &&
-                  error.driver === input.session.driver &&
-                  error.providerTurn?.nodeId === input.rootNode.id &&
-                  error.providerTurn.runAttemptId === input.attemptId &&
-                  error.providerTurn.providerThreadId === input.providerThread.id
-                    ? error.providerTurn
-                    : undefined;
+                // SCIENT-FORK:START — the receipt a failed native start reported for this root.
+                const receipt = ownedFailedStartReceipt(Cause.squash(cause), input);
+                // SCIENT-FORK:END
                 // SCIENT-FORK:START — the wrapper may prepare context after the first
                 // pending-start fence. Stop in that interval still owns the declined native offer.
                 if (
