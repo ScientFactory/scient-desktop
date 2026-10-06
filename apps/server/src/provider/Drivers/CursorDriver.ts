@@ -9,12 +9,7 @@
  *
  * @module provider/Drivers/CursorDriver
  */
-import {
-  CursorSettings,
-  type ProviderConnectionMethod,
-  ProviderDriverKind,
-  ProviderSetupError,
-} from "@t3tools/contracts";
+import { CursorSettings, ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
@@ -27,14 +22,16 @@ import { readCursorUsageLimits } from "../Layers/cursorUsageLimits.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import { makeCursorManagedRuntimeResolution } from "../../scient/providerLifecycle/CursorManagedRuntimeActions.ts";
+// SCIENT-FORK:START — managed runtime and assisted sign-in for this instance.
+import { makeCursorInstanceRuntime } from "../../scient/providerLifecycle/CursorManagedRuntimeActions.ts";
+export { assistedCursorConnectionMethods } from "../../scient/providerLifecycle/CursorConnectionActions.ts";
+// SCIENT-FORK:END
 import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
 import {
   CursorAdapterV2Driver,
   type CursorAdapterV2DriverEnv,
 } from "../../orchestration-v2/Adapters/CursorAdapterV2.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { cursorRuntimeEnvironment } from "../Layers/CursorCli.ts";
 import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
@@ -52,13 +49,6 @@ import { withConnectionInstanceIdentity } from "./scientInstanceIdentity.ts";
 // SCIENT-FORK:END
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
-  makeCachedProviderMaintenanceResolution,
-  makeManualOnlyProviderMaintenanceCapabilities,
-  makeProviderMaintenanceCapabilities,
-  type ProviderMaintenanceCapabilitiesResolver,
-  resolveProviderMaintenanceCapabilitiesEffect,
-} from "../providerMaintenance.ts";
-import {
   haveProviderSnapshotSettingsChanged,
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
@@ -72,34 +62,6 @@ const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 const isSdkRunnerError = Schema.is(CursorAgentSdk.CursorAgentSdkRunnerError);
 
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
-
-export function assistedCursorConnectionMethods(
-  environment: NodeJS.ProcessEnv,
-): ReadonlyArray<ProviderConnectionMethod> {
-  // CLI endpoints and tokens do not own the SDK's account.
-  return environment.CURSOR_API_KEY?.trim() ? [] : ["cursor_browser"];
-}
-
-// cursor-agent updates itself, so the resolved executable is its own updater.
-// No executable means nothing to update, not "whatever is on PATH".
-const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
-  resolve: (context) =>
-    Effect.succeed(
-      context
-        ? makeProviderMaintenanceCapabilities({
-            provider: DRIVER_KIND,
-            packageName: null,
-            updateExecutable: context.resolvedCommandPath,
-            updateArgs: ["update"],
-            updateLockKey: "cursor-agent",
-            platform: context.platform,
-          })
-        : makeManualOnlyProviderMaintenanceCapabilities({
-            provider: DRIVER_KIND,
-            packageName: null,
-          }),
-    ),
-};
 
 export type CursorDriverEnv =
   | CursorAdapterV2DriverEnv
@@ -135,24 +97,24 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         driverKind: DRIVER_KIND,
         instanceId,
       });
-      const managedRuntime = yield* makeCursorManagedRuntimeResolution({
-        settings: config,
+      // SCIENT-FORK:START — managed cursor-agent runtime, assisted sign-in and CLI maintenance.
+      const {
+        managedRuntime,
+        effectiveConfig,
+        effectiveProcessEnv,
+        connectionMethods,
+        resolveMaintenance,
+      } = yield* makeCursorInstanceRuntime({
+        config,
         enabled,
         baseDir: serverConfig.baseDir,
-        environment: processEnv,
-        spawner,
         managedInstallationAllowed: serverConfig.mode === "desktop",
-      });
-      const effectiveConfig = {
-        ...config,
-        enabled,
-        binaryPath: managedRuntime.effectiveBinaryPath,
-      } satisfies CursorSettings;
-      const effectiveProcessEnv = cursorRuntimeEnvironment(
         processEnv,
-        managedRuntime.usesManagedPath,
-      );
-      const connectionMethods = assistedCursorConnectionMethods(processEnv);
+        spawner,
+        fileSystem,
+        path,
+      });
+      // SCIENT-FORK:END
       const stampIdentity = withConnectionInstanceIdentity({
         instanceId,
         driverKind: DRIVER_KIND,
@@ -162,26 +124,6 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         runtime: managedRuntime.summary,
         connectionMethods,
       });
-      // The bundled SDK has no CLI update target. Explicit CLI targets retain
-      // their maintenance controls; managed installs are replaced by Scient.
-      const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-        (!config.binaryPath?.trim() || managedRuntime.usesManagedPath
-          ? Effect.succeed(
-              makeManualOnlyProviderMaintenanceCapabilities({
-                provider: DRIVER_KIND,
-                packageName: null,
-              }),
-            )
-          : resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
-              binaryPath: effectiveConfig.binaryPath,
-              env: effectiveProcessEnv,
-            })
-        ).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-        ),
-      );
       const credentials = yield* CursorCredentialStore.makeCursorCredentialStore(
         instanceId,
         path.join(
