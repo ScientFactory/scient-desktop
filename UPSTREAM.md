@@ -163,7 +163,8 @@ adopted were not working on 58.0.0. Mobile publication stayed held, so no public
 build carried that breakage. The `expo-modules-core` thread-safety regression
 above is untouched by this range and its two harnesses still fail locally.
 
-The local [Orchestration V2 alignment candidate](docs/internals/t3-upstream-sync-20261003-ca7df394ed.md)
+The [Orchestration V2 alignment candidate](docs/internals/t3-upstream-sync-20261003-ca7df394ed.md)
+([Scient PR #465](https://github.com/ScientFactory/scient-desktop/pull/465))
 restores the permissions-registry synchronization at `expo-modules-core@58.0.11`
 and preserves pending notification responses at `expo-notifications@58.0.11`.
 Its updated harness compiles the installed manager and its actual Mutex backport
