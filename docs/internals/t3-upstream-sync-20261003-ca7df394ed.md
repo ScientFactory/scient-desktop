@@ -2,9 +2,14 @@
 
 > Maintainer receipt. Product workflows live in [docs/user](../user/).
 
-**Source qualification checkpoint, 2026-10-06: required V1 retirement and
-reviewed repairs are composed, with the finite source gates passing.**
-The new receiving source checkpoint
+**Final integration closeout, 2026-10-07: required source, documentation,
+strict provenance and local qualification are complete.** Qualified candidate
+`47ff6dc0987e902a9eafaff23a44e2f72ce19fc3` is managed-delivered in the existing
+alignment app and is the exact macOS arm64 artifact source. Available final
+browser functional subcases pass; native/screenshot visual subcases remain
+explicitly unverified. The closing receipt below distinguishes these boundaries.
+
+The earlier source qualification checkpoint
 `1249a2d1ab29ef75830f0db1a43550bf9f6f0146` has the exact qualified whole
 tree `73b838f17ff6e9d26c2786d99905f442430b6b68`, identical to preserved
 ordinary-hook publication `5a51ef8036e966ab6c7e4d85de3c83830f839d3e`.
@@ -1186,3 +1191,89 @@ source checkpoint. The unchanged verifier now passes the complete introduced
 exemptions. Official ancestry, delivered-app fast-forward ancestry, metadata
 formatting and committed whitespace checks also pass. The original failing
 range remains separately recorded, not relabeled as green.
+
+### Final integrated delivery and available acceptance — 2026-10-07
+
+Ordinary documentation publication
+`47ff6dc0987e902a9eafaff23a44e2f72ce19fc3`, tree
+`9903d974de95fd942408ac1e21cac9b23786c136`, receives corrected independent
+documentation commit `1da738624a1c8bede4729b936bcb4316dec69d79` as a
+single-parent commit after `d99f`. All 17 documents equal the completed
+immutable review, with no remaining finding. Its only differences from qualified
+whole source tree `73b838f17ff6e9d26c2786d99905f442430b6b68` are those 17
+documents and the previously accepted four-parent-vector metadata. Runtime code
+is byte-identical, so the exact-source Knip/typecheck/behavioral/public-codec and
+migrated SQLite evidence remains valid at this boundary.
+
+All ten final-head gates complete with exit 0 and verified log hashes:
+the complete introduced `99eb14cb828944b461466d3da92769160c07e2e6` → `47ff`
+range passes the unchanged strict provenance verifier without exemptions;
+literal official and delivered-app ancestry, complete docs/metadata formatting,
+committed whitespace, brand and intended seams pass. The whole six-task build
+has zero cache hits. Actual macOS arm64 DMG/ZIP production and `hdiutil verify`
+pass; existing bundler and upstream native compiler warnings remain recorded.
+The exact final qualification receipt is
+`reviews/v1-removal-20261004/checks/integration-composed-final-head-20261007-results.json`
+in the project evidence workspace.
+
+The final version `0.0.45` archive embeds `t3codeCommitHash: 47ff6dc0987e`.
+ZIP SHA-256 is
+`07ea8acdddf8f46a5e791fc09e9c31ea932835bf18fbc61cb28264954853670a`;
+DMG SHA-256 is
+`0a199ce116c2d872ec5fedd12f50e557270da9d3f71db63e5e0a7da38a0c9285`.
+The three actual ASAR PDF workers match the frozen final build. Independent
+artifact review accepts inspected resource layout, source/build correspondence,
+Cursor SDK `1.0.31` payloads, and voice/SyncTeX native arm64 resource integrity.
+The generated Cursor `rg` shim's staging-metadata caveat remains disclosed;
+its actual relative executable target is present. Resource inspection and DMG
+structural integrity are not packaged runtime or vendor-authenticity proof.
+Old artifacts and their narrower source scopes are preserved separately.
+
+Authorized idle managed stop → exact fast-forward → managed start each pass
+for the existing `scient-t3-sync-ca7df394ed-20261003` alignment app. Actual new
+runner/app/backend PIDs are `52478` / `53254` / `53634`; the backend starts at
+`2026-10-06T21:27:57.838Z`. Web port `5879` and the canonical backend
+`/.well-known/t3/environment` on port `13919` return HTTP 200, and current
+native spans record backend ready and main window created. The existing profile,
+protected untracked compiler configuration and separate installed August
+launcher remain intact. Readiness does not stand in for functional acceptance.
+
+Alignment root completes the user-authorized nine-family run-through using
+ordinary product UI, the real delivered server/storage/ACP transport, a
+disposable project and two explicitly labelled no-op simulated providers.
+Available subcases pass: automatic FIFO; Stop retaining the hold through a
+foreground answer; idle keyboard reorder/head Send/Resume; attachment-exclusive
+queued edit, reload and Cancel-stash recovery; row and shortcut Steer; fresh SCIC
+logical ordering, rendered citations and inert historical approvals; persisted
+access mode and one-shot fresh approvals; ordinary/inherited forks, continuation
+and reload; a later real provider-instance switch producing a distinct handoff;
+all ten configured built-ins in Settings; actual source-editor input/disk/reload;
+and LaTeX EOF autosave/rebuild with the expected immutable PDF text.
+Transport audit verifies all 20 expected admissions exactly once, the original
+queued text absent, only the replacement attachment, and live permission
+responses exactly once. ACP fixture interrupt/restart is not vendor-native
+steering. Browser PDF dialog/cancel passes; it explicitly requires desktop for
+native PDF export.
+
+Final native/screenshot appearance, native PDF Save/Open, pointer drag, physical
+caret and permanent disposable-source deletion are unverified. Screenshot
+capture/native access was unavailable; the browser remained non-visible. Earlier
+exact-candidate visual/native evidence is retained, not promoted to final proof.
+There is no Linux host/cgroup/physical-reader, native mobile, remote SSH, other
+OS/vendor combination, packaged startup, signing/notarization, hosted-CI, main
+merge or release claim. The original five full-server failures retain their
+historical result and actual bounded repairs, not a fabricated full-green rerun.
+The final acceptance report and nine-family checklist are in
+`reviews/orchestration-v2-alignment-20261003/root-final-overnight-20261006/final-acceptance-20261007.md`
+and `reviews/orchestration-v2-alignment-20261003/final-user-run-through-20261006.md`
+in the project evidence workspace.
+
+Root disables both disposable providers through Settings; all 11 fixture PIDs
+have exited and the original ten provider-enable states remain unchanged. It
+releases source/index/ref/lifecycle ownership for this factual documentation-only
+closeout. This later receipt commit changes no runtime source and does not
+promote the artifact's embedded head: the existing app and actual artifacts
+remain literally `47ff`. No receipt-induced rebuild, restart or app-ref update
+is performed. After publication, the eventual closing receipt head must pass
+the unchanged strict verifier over the same complete introduced history;
+its actual result must be recorded separately, not presumed by this receipt.
