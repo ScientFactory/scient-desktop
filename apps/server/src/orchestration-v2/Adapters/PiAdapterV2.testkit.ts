@@ -27,6 +27,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -44,7 +45,8 @@ import { PI_PROVIDER, PiAdapterV2Driver } from "./PiAdapterV2.ts";
 import { piInstanceStateRoot } from "../../provider/pi/PiSessionFile.ts";
 import {
   PiReplaySessionBinding,
-  reconcilePiRecordedSchedules,
+  reconcilePiBoundLaunchProtocol,
+  registerPiReplayFixtureEvidence,
 } from "./PiReplaySessionBinding.testkit.ts";
 
 export const PI_RPC_REPLAY_PROTOCOL = "pi.rpc-jsonl";
@@ -502,35 +504,40 @@ export const PiOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
     decodePiRpcReplayTranscript(transcript).pipe(
       Effect.flatMap((decoded) =>
         Effect.try({
-          try: () => ({
-            ...decoded,
-            entries: reconcilePiRecordedSchedules(decoded),
-            ...(![
-              "multi_turn",
-              "pi_compaction",
-              "provider_thread_resume",
-              "message_steering",
-              "thread_rollback",
-              "thread_rollback_after_stop",
-            ].includes(decoded.scenario)
-              ? {}
-              : {
-                  metadata: {
-                    ...decoded.metadata,
-                    fixtureSchedule:
-                      "Pinned statistics/entries pairs reordered; explicit synthetic read-only replies for concurrent compaction probes and confirming idle states copy recorded same-session snapshots. Steering adds an explicit synthetic streaming identity preflight with recorded identity/selection. No new vendor observation.",
-                  },
-                }),
-            ...(decoded.scenario !== "simple"
-              ? {}
-              : {
-                  metadata: {
-                    ...decoded.metadata,
-                    settleConfirmation:
-                      "Synthetic read-only confirming-state pair copied from pinned recorded idle state; statistics/entries pairs reordered without altering native frames. Not newly recorded vendor evidence.",
-                  },
-                }),
-          }),
+          try: () => {
+            const current = reconcilePiBoundLaunchProtocol(decoded);
+            return {
+              ...decoded,
+              entries: current.entries,
+              metadata: {
+                ...decoded.metadata,
+                currentProtocolAdaptation: {
+                  description:
+                    "Pinned historical reopened switch_session request/reply retained here, not executed. Current --session launch plus correlated get_state confirms the independently declared same session before prompting.",
+                  historicalRPCFrames: current.historicalRPCFrames,
+                },
+                ...(![
+                  "multi_turn",
+                  "pi_compaction",
+                  "provider_thread_resume",
+                  "message_steering",
+                  "thread_rollback",
+                  "thread_rollback_after_stop",
+                ].includes(decoded.scenario)
+                  ? {}
+                  : {
+                      fixtureSchedule:
+                        "Pinned statistics/entries pairs reordered; explicit synthetic read-only replies for concurrent compaction probes and confirming idle states copy recorded same-session snapshots. Steering adds an explicit synthetic streaming identity preflight with recorded identity/selection. No new vendor observation.",
+                    }),
+                ...(decoded.scenario !== "simple"
+                  ? {}
+                  : {
+                      settleConfirmation:
+                        "Synthetic read-only confirming-state pair copied from pinned recorded idle state; statistics/entries pairs reordered without altering native frames. Not newly recorded vendor evidence.",
+                    }),
+              },
+            };
+          },
           catch: (cause) =>
             new PiReplayTranscriptDecodeError({
               driver: transcript.provider,
@@ -551,8 +558,8 @@ export const PiOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
             }),
       ),
     ),
-  makeProviderAdapterRegistryLayer: (transcript) =>
-    makePiProviderAdapterRegistryLayer({
+  makeProviderAdapterRegistryLayer: (transcript) => {
+    const registry = makePiProviderAdapterRegistryLayer({
       scenario: transcript.scenario,
       binaryPath: "pi",
       launchArgs: metadataString(transcript, "launchArgs"),
@@ -567,9 +574,13 @@ export const PiOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
           });
           yield* fs.makeDirectory(declaredRoot, { recursive: true, mode: 0o700 });
           const root = yield* fs.realPath(declaredRoot);
-          const controller = new PiReplayController(transcript, root);
+          const evidence = registerPiReplayFixtureEvidence(transcript, root);
+          const controller = new PiReplayController(
+            { ...transcript, entries: evidence.entries },
+            root,
+          );
           yield* Effect.addFinalizer(() => Effect.sync(() => controller.assertComplete()));
-          return makePiReplaySpawner(controller, fs);
+          return makePiRecordingSpawner(makePiReplaySpawner(controller, fs), evidence.observed);
         }).pipe(
           Effect.mapError(
             (cause) =>
@@ -582,7 +593,36 @@ export const PiOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
           ),
         ),
       ),
-    }),
+    });
+    // Only fresh native file entropy is controlled. The driver still allocates
+    // the file, performs real header validation and consumes strict RPC frames.
+    return Layer.effect(
+      ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+      Effect.map(ProviderAdapterRegistry.ProviderAdapterRegistryV2, (original) => ({
+        ...original,
+        get: (instanceId) =>
+          original.get(instanceId).pipe(
+            Effect.map((adapter) => ({
+              ...adapter,
+              openSession: (input) =>
+                Effect.gen(function* () {
+                  const fallback = yield* Random.Random;
+                  let bytes = 0;
+                  return yield* adapter.openSession(input).pipe(
+                    Effect.provideService(Random.Random, {
+                      nextIntUnsafe: () => fallback.nextIntUnsafe(),
+                      nextDoubleUnsafe: () =>
+                        input.initialNativeThreadId === undefined && bytes++ < 16
+                          ? 0
+                          : fallback.nextDoubleUnsafe(),
+                    }),
+                  );
+                }),
+            })),
+          ),
+      })),
+    ).pipe(Layer.provide(registry));
+  },
 };
 
 // ── recording ─────────────────────────────────────────────────

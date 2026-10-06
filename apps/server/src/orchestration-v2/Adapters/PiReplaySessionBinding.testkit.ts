@@ -2,7 +2,7 @@
 import * as NodePath from "node:path";
 import * as NodeCrypto from "node:crypto";
 import * as Predicate from "effect/Predicate";
-import type { ProviderReplayEntry } from "@t3tools/contracts";
+import type { ProviderReplayTranscript, ProviderReplayEntry } from "@t3tools/contracts";
 
 interface RecordedSession {
   readonly file: string;
@@ -106,6 +106,9 @@ export class PiReplaySessionBinding {
       !actualFile.endsWith(".jsonl")
     )
       throw new Error("Pi replay launch session file is foreign or noncanonical.");
+    const declaredCanonical = NodePath.dirname(initial.file) === this.stateRoot;
+    if (declaredCanonical && actualFile !== initial.file)
+      throw new Error("Pi replay launch differs from its independently declared session file.");
     const previousFile = this.files.get(initial.file);
     if (previousFile !== undefined && previousFile !== actualFile)
       throw new Error("Pi replay reopen changed its recorded session identity.");
@@ -136,7 +139,9 @@ export class PiReplaySessionBinding {
       if (!this.files.has(identity.file))
         this.files.set(
           identity.file,
-          NodePath.join(this.stateRoot, `replay-${encodeURIComponent(identity.id)}.jsonl`),
+          NodePath.dirname(identity.file) === this.stateRoot
+            ? identity.file
+            : NodePath.join(this.stateRoot, `replay-${encodeURIComponent(identity.id)}.jsonl`),
         );
     }
     const entries = this.original.map((entry): ProviderReplayEntry => {
@@ -487,4 +492,255 @@ export function reconcilePiRecordedSchedules(input: {
     }
   }
   return result;
+}
+
+/** Fresh-file entropy is fixed before execution; native allocation and validation still run. */
+export const PI_REPLAY_FRESH_FILE_ID = "00000000-0000-4000-8000-000000000000";
+
+/** Independent declarations and observed stdio are separate proof inputs. */
+export function declarePiReplaySessionFiles(
+  entries: ReadonlyArray<ProviderReplayEntry>,
+  root: string,
+) {
+  if (!NodePath.isAbsolute(root) || NodePath.resolve(root) !== root)
+    throw new Error("Pi replay declaration needs a canonical private directory.");
+  const identities = new Map<string, RecordedSession>();
+  const ids = new Set<string>();
+  for (const entry of entries) {
+    const state = recordedState(entry);
+    if (state === undefined) continue;
+    const previous = identities.get(state.file);
+    if (
+      (previous !== undefined && previous.id !== state.id) ||
+      (previous === undefined && ids.has(state.id))
+    )
+      throw new Error("Pi replay declaration changed a session identity.");
+    identities.set(state.file, state);
+    ids.add(state.id);
+  }
+  if (identities.size === 0) throw new Error("Pi replay declaration has no session identity.");
+  const sessions = [...identities.values()].map((identity, index) => ({
+    ...identity,
+    canonicalFile: NodePath.join(
+      root,
+      `${index === 0 ? PI_REPLAY_FRESH_FILE_ID : `replay-${encodeURIComponent(identity.id)}`}.jsonl`,
+    ),
+  }));
+  const expectedFile = (alias: string) => {
+    const declared = sessions.find((session) => session.file === alias);
+    if (declared === undefined) throw new Error("Pi replay session alias is undeclared.");
+    return declared.canonicalFile;
+  };
+  const rebind = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(rebind);
+    if (!Predicate.isObject(value)) return value;
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [
+        key,
+        (key === "sessionFile" || key === "sessionPath") && typeof child === "string"
+          ? expectedFile(child)
+          : rebind(child),
+      ]),
+    );
+  };
+  const bound = entries.map((entry, index): ProviderReplayEntry => {
+    if (entry.type === "runtime_exit") return entry;
+    const frame = rebind(entry.frame);
+    if (
+      entry.type !== "expect_outbound" ||
+      !Predicate.isObject(frame) ||
+      frame.type !== "process_start"
+    )
+      return { ...entry, frame };
+    const state = entries
+      .slice(index + 1)
+      .find(
+        (candidate) =>
+          processOrdinal(candidate) === processOrdinal(entry) &&
+          recordedState(candidate) !== undefined,
+      );
+    const identity = state === undefined ? undefined : recordedState(state);
+    if (
+      identity === undefined ||
+      !Array.isArray(frame.args) ||
+      !frame.args.every((arg) => typeof arg === "string")
+    )
+      throw new Error("Pi replay declaration has an invalid process start.");
+    const flags = frame.args.flatMap((arg, position) => (arg === "--session" ? [position] : []));
+    if (
+      flags.length > 1 ||
+      (flags.length === 1 &&
+        (flags[0] !== frame.args.length - 2 || frame.args.at(-1) !== identity.file))
+    )
+      throw new Error("Pi replay declaration has an invalid launch identity.");
+    const args = flags.length === 0 ? frame.args : frame.args.slice(0, -2);
+    return {
+      ...entry,
+      frame: { ...frame, args: [...args, "--session", expectedFile(identity.file)] },
+    };
+  });
+  return { sessions, entries: bound, expectedFile };
+}
+
+type PiReplayFixtureEvidence = ReturnType<typeof declarePiReplaySessionFiles> & {
+  readonly observed: Array<ProviderReplayEntry>;
+};
+const fixtureEvidence = new WeakMap<ProviderReplayTranscript, PiReplayFixtureEvidence>();
+
+/** Register declarations before spawning; callers cannot infer expectations from runtime output. */
+export function registerPiReplayFixtureEvidence(
+  transcript: ProviderReplayTranscript,
+  root: string,
+) {
+  if (fixtureEvidence.has(transcript)) throw new Error("Pi replay fixture was already registered.");
+  const observed: Array<ProviderReplayEntry> = [];
+  const evidence = { ...declarePiReplaySessionFiles(transcript.entries, root), observed };
+  fixtureEvidence.set(transcript, evidence);
+  return evidence;
+}
+
+export function piReplayExpectedSessionFile(transcript: ProviderReplayTranscript, alias: string) {
+  const evidence = fixtureEvidence.get(transcript);
+  if (evidence === undefined) throw new Error("Pi replay fixture has no independent binding.");
+  return evidence.expectedFile(alias);
+}
+
+/** Every reopened process must read back its declared UUID/file before its first prompt. */
+export function assertPiReplayConfirmedLaunches(
+  transcript: ProviderReplayTranscript,
+  alias: string,
+) {
+  const evidence = fixtureEvidence.get(transcript);
+  if (evidence === undefined) throw new Error("Pi replay fixture has no launch evidence.");
+  const declared = evidence.sessions.find((session) => session.file === alias);
+  if (declared === undefined) throw new Error("Pi replay fixture has no declared session.");
+  const starts = evidence.observed.filter(
+    (entry) =>
+      entry.type === "expect_outbound" &&
+      Predicate.isObject(entry.frame) &&
+      entry.frame.type === "process_start",
+  );
+  if (starts.length !== 2) throw new Error("Pi replay must witness exactly two native launches.");
+  for (const [index, start] of starts.entries()) {
+    const ordinal = index + 1;
+    if (
+      start.type !== "expect_outbound" ||
+      !Predicate.isObject(start.frame) ||
+      processOrdinal(start) !== ordinal ||
+      !Array.isArray(start.frame.args) ||
+      start.frame.args.filter((arg) => arg === "--session").length !== 1 ||
+      start.frame.args.at(-2) !== "--session" ||
+      start.frame.args.at(-1) !== declared.canonicalFile
+    )
+      throw new Error("Pi replay observed a different launch file or ordinal.");
+    const startIndex = evidence.observed.indexOf(start);
+    const promptIndex = evidence.observed.findIndex(
+      (entry, position) =>
+        position > startIndex &&
+        processOrdinal(entry) === ordinal &&
+        entry.type === "expect_outbound" &&
+        Predicate.isObject(entry.frame) &&
+        entry.frame.type === "prompt",
+    );
+    if (promptIndex < 0) throw new Error("Pi replay launch has no native prompt.");
+    const prefix = evidence.observed.slice(startIndex + 1, promptIndex);
+    const replyIndex = prefix.findIndex(
+      (entry) =>
+        entry.type === "emit_inbound" &&
+        processOrdinal(entry) === ordinal &&
+        Predicate.isObject(entry.frame) &&
+        entry.frame.command === "get_state",
+    );
+    const reply = prefix[replyIndex];
+    const state = reply === undefined ? undefined : recordedState(reply);
+    if (
+      reply?.type !== "emit_inbound" ||
+      !Predicate.isObject(reply.frame) ||
+      reply.frame.type !== "response" ||
+      state?.file !== declared.canonicalFile ||
+      state.id !== declared.id
+    )
+      throw new Error("Pi replay launch lacks its initial same-session get_state confirmation.");
+    const id = reply.frame.id;
+    if (
+      !prefix
+        .slice(0, replyIndex)
+        .some(
+          (request) =>
+            request.type === "expect_outbound" &&
+            processOrdinal(request) === ordinal &&
+            Predicate.isObject(request.frame) &&
+            request.frame.type === "get_state" &&
+            request.frame.id === id,
+        )
+    )
+      throw new Error("Pi replay launch lacks a correlated same-session get_state confirmation.");
+    if (
+      ordinal > 1 &&
+      prefix.some(
+        (entry) =>
+          entry.type === "expect_outbound" &&
+          Predicate.isObject(entry.frame) &&
+          entry.frame.type === "switch_session",
+      )
+    )
+      throw new Error("Pi replay reopened launch redundantly switched its already bound session.");
+  }
+}
+
+/**
+ * Historical reopened RPC pairs remain explicit evidence, outside the current
+ * executable schedule. Current Pi binds --session at launch and confirms it
+ * with the original get_state reply. Never pretend the obsolete RPC was sent.
+ */
+export function reconcilePiBoundLaunchProtocol(input: {
+  readonly scenario: string;
+  readonly entries: ReadonlyArray<ProviderReplayEntry>;
+}) {
+  const prepared = reconcilePiRecordedSchedules(input);
+  const start =
+    input.scenario === "provider_thread_resume"
+      ? 64
+      : input.scenario === "thread_rollback_after_stop"
+        ? 160
+        : undefined;
+  const historicalRPCFrames: Array<ProviderReplayEntry> = [];
+  if (start === undefined) return { entries: prepared, historicalRPCFrames };
+  // reconcilePiRecordedSchedules pins the complete original recording first.
+  const request = input.entries[start + 1]!;
+  const reply = input.entries[start + 7]!;
+  const confirmation = input.entries[start + 9]!;
+  const initial = input.entries.find((entry) => recordedState(entry) !== undefined);
+  const initialIdentity = initial === undefined ? undefined : recordedState(initial);
+  const reopened = recordedState(confirmation);
+  if (
+    request.type !== "expect_outbound" ||
+    !Predicate.isObject(request.frame) ||
+    request.label !== "switch_session@p2" ||
+    request.frame.type !== "switch_session" ||
+    reply.type !== "emit_inbound" ||
+    !Predicate.isObject(reply.frame) ||
+    reply.label !== "response:switch_session@p2" ||
+    reply.frame.command !== "switch_session" ||
+    reply.frame.success !== true ||
+    reply.frame.id !== request.frame.id ||
+    reopened === undefined ||
+    initialIdentity === undefined ||
+    processOrdinal(confirmation) !== 2 ||
+    request.frame.sessionPath !== initialIdentity.file ||
+    reopened.file !== initialIdentity.file ||
+    reopened.id !== initialIdentity.id
+  )
+    throw new Error("Pi reopened launch adaptation changed its pinned identity or confirmation.");
+  historicalRPCFrames.push(request, reply);
+  return {
+    entries: prepared.filter((entry) => entry !== request && entry !== reply),
+    historicalRPCFrames,
+  };
+}
+
+export function piReplayObservedEntries(transcript: ProviderReplayTranscript) {
+  const evidence = fixtureEvidence.get(transcript);
+  if (evidence === undefined) throw new Error("Pi replay fixture has no observed native frames.");
+  return evidence.observed;
 }

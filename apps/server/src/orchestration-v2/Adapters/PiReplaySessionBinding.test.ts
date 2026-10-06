@@ -12,6 +12,11 @@ import {
   PiReplaySessionBinding,
   reconcilePiSimpleSettleTail,
   reconcilePiRecordedSchedules,
+  reconcilePiBoundLaunchProtocol,
+  declarePiReplaySessionFiles,
+  registerPiReplayFixtureEvidence,
+  piReplayExpectedSessionFile,
+  assertPiReplayConfirmedLaunches,
 } from "./PiReplaySessionBinding.testkit.ts";
 
 const root = "/owned/pi/sessions";
@@ -598,4 +603,184 @@ describe("Pi pinned native read schedules", () => {
         }),
     );
   }
+});
+
+describe("Pi current bound-launch fixture proof", () => {
+  for (const scenario of ["provider_thread_resume", "thread_rollback_after_stop"]) {
+    it.effect(
+      `retains ${scenario} historical RPC bytes while requiring current same-session confirmation`,
+      () =>
+        Effect.gen(function* () {
+          const raw = NodeFS.readFileSync(
+            new URL(`../testkit/fixtures/${scenario}/pi_transcript.ndjson`, import.meta.url),
+            "utf8",
+          );
+          const original = yield* decodeProviderReplayNdjson(raw);
+          const before = structuredClone(original);
+          const adapted = reconcilePiBoundLaunchProtocol(original);
+          assert.lengthOf(adapted.historicalRPCFrames, 2);
+          const scheduled = reconcilePiRecordedSchedules(original);
+          for (const entry of original.entries)
+            assert.equal(
+              [...adapted.entries, ...adapted.historicalRPCFrames].filter(
+                (candidate) => candidate === entry,
+              ).length,
+              1,
+            );
+          assert.deepEqual(
+            adapted.entries,
+            scheduled.filter((entry) => !adapted.historicalRPCFrames.includes(entry)),
+          );
+          assert.deepEqual(
+            adapted.historicalRPCFrames.map((entry) =>
+              entry.type === "runtime_exit" ? null : entry.label,
+            ),
+            ["switch_session@p2", "response:switch_session@p2"],
+          );
+          const declared = declarePiReplaySessionFiles(adapted.entries, root);
+          const first = declared.expectedFile(recordedFile);
+          const binding = new PiReplaySessionBinding(declared.entries, root);
+          const starts = declared.entries.filter(
+            (entry) =>
+              entry.type === "expect_outbound" &&
+              Predicate.isObject(entry.frame) &&
+              entry.frame.type === "process_start",
+          );
+          assert.lengthOf(starts, 2);
+          for (const [index, start] of starts.entries()) {
+            if (
+              start.type !== "expect_outbound" ||
+              !Predicate.isObject(start.frame) ||
+              !Array.isArray(start.frame.args) ||
+              !start.frame.args.every((arg) => typeof arg === "string")
+            )
+              throw new Error("Missing declared launch");
+            const launchArgs = start.frame.args.map((arg) =>
+              arg === "<any>" ? "/actual-extension" : arg,
+            );
+            assert.equal(launchArgs.at(-1), first);
+            binding.bind({ ordinal: index + 1, cwd: "/workspace", args: launchArgs });
+          }
+          const wrong = structuredClone(original.entries);
+          const confirmation = wrong.find(
+            (entry) => entry.type === "emit_inbound" && entry.label === "response:get_state@p2",
+          );
+          if (
+            confirmation?.type !== "emit_inbound" ||
+            !Predicate.isObject(confirmation.frame) ||
+            !Predicate.isObject(confirmation.frame.data)
+          )
+            throw new Error("Missing recorded confirmation");
+          confirmation.frame.data.sessionId = "foreign";
+          assert.throws(
+            () => reconcilePiBoundLaunchProtocol({ ...original, entries: wrong }),
+            /pinned recording/,
+          );
+          assert.throws(
+            () => reconcilePiBoundLaunchProtocol({ ...original, entries: adapted.entries }),
+            /pinned recording/,
+          );
+          assert.deepEqual(original, before);
+        }),
+    );
+  }
+  it.each([
+    "valid",
+    "wrong-file",
+    "wrong-uuid",
+    "wrong-process",
+    "uncorrelated",
+    "after-prompt",
+    "missing",
+    "redundant-switch",
+    "failed-response",
+    "wrong-response-type",
+    "first-wrong-then-right",
+    "duplicate-ordinal",
+  ])(
+    "requires independent same-file launch and correlated pre-prompt identity: %s",
+    (condition) => {
+      const original = decodeTranscript({
+        provider: "pi",
+        protocol: "pi.rpc-jsonl",
+        version: "1",
+        scenario: "proof",
+        entries: transcript(),
+      });
+      const evidence = registerPiReplayFixtureEvidence(original, root);
+      const expected = piReplayExpectedSessionFile(original, recordedFile);
+      assert.equal(expected, `${root}/00000000-0000-4000-8000-000000000000.jsonl`);
+      for (const ordinal of [1, 2]) {
+        const suffix = ordinal === 1 || condition === "duplicate-ordinal" ? "" : "@p2";
+        evidence.observed.push({
+          type: "expect_outbound",
+          label: `process_start${suffix}`,
+          frame: {
+            type: "process_start",
+            args: [
+              ...args,
+              "--session",
+              ordinal === 2 && condition === "wrong-file" ? `${root}/foreign.jsonl` : expected,
+            ],
+          },
+        });
+        evidence.observed.push({
+          type: "expect_outbound",
+          label: `get_state${suffix}`,
+          frame: { type: "get_state", id: "t3-0" },
+        });
+        const reply: ProviderReplayEntry = {
+          type: "emit_inbound",
+          label:
+            ordinal === 2 && condition === "wrong-process"
+              ? "response:get_state"
+              : `response:get_state${suffix}`,
+          frame: {
+            type: ordinal === 2 && condition === "wrong-response-type" ? "notice" : "response",
+            command: "get_state",
+            success: !(ordinal === 2 && condition === "failed-response"),
+            id: ordinal === 2 && condition === "uncorrelated" ? "t3-1" : "t3-0",
+            data: {
+              sessionFile: expected,
+              sessionId:
+                ordinal === 2 && ["wrong-uuid", "first-wrong-then-right"].includes(condition)
+                  ? "foreign"
+                  : "recorded-id",
+            },
+          },
+        };
+        if (!(ordinal === 2 && ["missing", "after-prompt"].includes(condition)))
+          evidence.observed.push(reply);
+        if (
+          ordinal === 2 &&
+          condition === "first-wrong-then-right" &&
+          reply.type === "emit_inbound" &&
+          Predicate.isObject(reply.frame)
+        )
+          evidence.observed.push({
+            ...reply,
+            frame: { ...reply.frame, data: { sessionFile: expected, sessionId: "recorded-id" } },
+          });
+        if (ordinal === 2 && condition === "redundant-switch")
+          evidence.observed.push({
+            type: "expect_outbound",
+            label: "switch_session@p2",
+            frame: { type: "switch_session", sessionPath: expected, id: "t3-2" },
+          });
+        evidence.observed.push({
+          type: "expect_outbound",
+          label: `prompt${suffix}`,
+          frame: { type: "prompt", message: "original prompt" },
+        });
+        if (ordinal === 2 && condition === "after-prompt") evidence.observed.push(reply);
+      }
+      if (condition === "valid")
+        assert.doesNotThrow(() => assertPiReplayConfirmedLaunches(original, recordedFile));
+      else
+        assert.throws(() => assertPiReplayConfirmedLaunches(original, recordedFile), /Pi replay/);
+      assert.throws(() => piReplayExpectedSessionFile(original, "/foreign.jsonl"), /undeclared/);
+      const independent = new PiReplaySessionBinding(evidence.entries, root);
+      assert.throws(() => independent.bind(launch(1, actualFile)), /independently declared/);
+    },
+  );
 });
