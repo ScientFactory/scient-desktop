@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -10,6 +11,7 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  ProviderDriverKind,
   ProviderSessionId,
   RunAttemptId,
   NodeId,
@@ -19,7 +21,11 @@ import {
 } from "@t3tools/contracts";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as CodexClient from "effect-codex-app-server/client";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Exit from "effect/Exit";
+import * as Logger from "effect/Logger";
+import * as Predicate from "effect/Predicate";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -40,6 +46,7 @@ import { makeCodexAdapterV2 } from "../Adapters/CodexAdapterV2.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
+import { ProviderAdapterEventStreamError } from "../ProviderAdapter.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import { EventStoreV2 } from "../EventStore.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
@@ -127,8 +134,202 @@ const waitFor = Effect.fnUntraced(function* (
 let nextNativeThreadId = 0;
 let nextNativeTurnId = 0;
 
+// Select scalar Cause facts only at failure publication; raw references never reach JSON.
+const startupCauseFacts = (original: unknown) => {
+  const pending = [{ value: original, path: "cause", depth: 0 }];
+  const seen = new WeakSet<object>();
+  const facts: Array<Readonly<Record<string, unknown>>> = [];
+  const truncated: string[] = [];
+  const releaseReasons: string[] = [];
+  let visited = 0;
+  while (pending.length > 0 && visited++ < 128) {
+    const entry = pending.shift()!;
+    if (entry.depth > 64) {
+      truncated.push(`${entry.path}: depth limit`);
+      continue;
+    }
+    const { value, path } = entry;
+    if (typeof value === "string") {
+      const release = /^Provider session released: ([a-z_]{1,80})\.$/.exec(value);
+      if (release !== null) {
+        releaseReasons.push(release[1]!);
+        facts.push({ path, releaseReason: release[1] });
+      } else facts.push({ path, unavailable: "non-release text omitted" });
+      continue;
+    }
+    if (!Predicate.isObject(value)) continue;
+    if (seen.has(value)) {
+      truncated.push(`${path}: repeated reference`);
+      continue;
+    }
+    seen.add(value);
+    if (Array.isArray(value)) {
+      if (value.length > 16) truncated.push(`${path}: array limit`);
+      for (let i = 0; i < Math.min(value.length, 16); i++)
+        pending.push({ value: value[i], path: `${path}[${i}]`, depth: entry.depth + 1 });
+      continue;
+    }
+    const selected: Record<string, unknown> = { path };
+    for (const key of ["_tag", "name", "code", "providerSessionId"]) {
+      const scalar = Reflect.get(value, key);
+      if (typeof scalar === "number" && Number.isFinite(scalar)) selected[key] = scalar;
+      else if (typeof scalar === "string") {
+        // Tags/codes/synthetic IDs only: no arbitrary error message, frame or payload.
+        selected[key] = /^[a-zA-Z0-9_:./-]{1,200}$/.test(scalar)
+          ? scalar
+          : { unavailable: "non-identifier scalar omitted" };
+      }
+    }
+    if (Object.keys(selected).length > 1) facts.push(selected);
+    for (const key of ["reasons", "error", "cause", "defect", "message"]) {
+      if (key in value)
+        pending.push({
+          value: Reflect.get(value, key),
+          path: `${path}.${key}`,
+          depth: entry.depth + 1,
+        });
+    }
+  }
+  if (pending.length > 0) truncated.push("node limit: remaining Cause branches unavailable");
+  return {
+    facts,
+    truncated,
+    releaseReasons:
+      releaseReasons.length > 0
+        ? releaseReasons
+        : { unavailable: "no release reason witnessed in selected Cause branches" },
+  };
+};
+
+/** One bounded accumulator for the existing peer and warning; it never publishes on success. */
+class CapacityStartupObservation {
+  private readonly expectedRuns = new Set<string>();
+  private readonly ingestion: Array<{ readonly runId: string; readonly originalCause: unknown }> =
+    [];
+  private readonly peers: Array<{
+    readonly threadId: ThreadId;
+    readonly providerSessionId: ProviderSessionId;
+    readonly phases: Array<{
+      readonly sequence: number;
+      readonly phase: string;
+      readonly method?: string;
+    }>;
+    processExits: number;
+    lastProcessExit?: Exit.Exit<unknown, unknown>;
+    failedProcessExit?: Exit.Exit<unknown, unknown>;
+    resourceExit?: Exit.Exit<unknown, unknown>;
+  }> = [];
+  private sequence = 0;
+  private dropped = 0;
+
+  safely(observe: () => void) {
+    try {
+      observe();
+    } catch {
+      this.dropped++;
+    }
+  }
+
+  expectRun(runId: string) {
+    this.safely(() => {
+      if (this.expectedRuns.size < 32) this.expectedRuns.add(runId);
+      else this.dropped++;
+    });
+  }
+
+  readonly logger = Logger.make<unknown, void>(({ message }) => {
+    this.safely(() => {
+      if (
+        !Array.isArray(message) ||
+        message[0] !== "orchestration V2 provider event ingestion failed"
+      )
+        return;
+      const detail: unknown = message[1];
+      if (!Predicate.isObject(detail)) return;
+      const runId = Reflect.get(detail, "runId");
+      if (typeof runId !== "string" || !this.expectedRuns.has(runId)) return;
+      if (this.ingestion.length === 16) {
+        this.dropped++;
+        return;
+      }
+      this.ingestion.push({ runId, originalCause: Reflect.get(detail, "cause") });
+    });
+  });
+
+  open(threadId: ThreadId, providerSessionId: ProviderSessionId) {
+    const peer = {
+      threadId,
+      providerSessionId,
+      phases: [],
+      processExits: 0,
+    } as CapacityStartupObservation["peers"][number];
+    this.safely(() => {
+      if (this.peers.length < 32) this.peers.push(peer);
+      else this.dropped++;
+    });
+    return peer;
+  }
+
+  mark(peer: CapacityStartupObservation["peers"][number], phase: string, method?: string) {
+    this.safely(() => {
+      if (peer.phases.length === 32) {
+        peer.phases.shift();
+        this.dropped++;
+      }
+      peer.phases.push({
+        sequence: ++this.sequence,
+        phase,
+        ...(method === undefined ? {} : { method }),
+      });
+    });
+  }
+
+  snapshot() {
+    try {
+      const exitFacts = (exit: Exit.Exit<unknown, unknown> | undefined) =>
+        exit === undefined
+          ? { unavailable: "Exit not witnessed before snapshot" }
+          : {
+              tag: exit._tag,
+              ...(Exit.isFailure(exit) ? { cause: startupCauseFacts(exit.cause) } : {}),
+            };
+      return {
+        ingestion:
+          this.ingestion.length === 0
+            ? { unavailable: "no matching structured ingestion warning captured" }
+            : this.ingestion.map((entry) => ({
+                runId: entry.runId,
+                cause: startupCauseFacts(entry.originalCause),
+              })),
+        peers: this.peers.map((peer) => ({
+          threadId: peer.threadId,
+          providerSessionId: peer.providerSessionId,
+          phases: peer.phases,
+          processExits: peer.processExits,
+          lastProcessExit: exitFacts(peer.lastProcessExit),
+          failedProcessExit: exitFacts(peer.failedProcessExit),
+          resourceExit: exitFacts(peer.resourceExit),
+        })),
+        dropped: this.dropped,
+        releaseInitiator: { unavailable: "private caller/fiber/generation not witnessed" },
+      };
+    } catch {
+      return { unavailable: "startup observation failed; original test Cause is unchanged" };
+    }
+  }
+
+  publish(snapshot: unknown) {
+    // Preserve the existing single failure-only callback/output semantics.
+    const selected = this.snapshot();
+    const text = encodeJson({ ...Object(snapshot), startup: selected }) + "\n";
+    const destination = process.env.T3_CAPACITY_DIAGNOSTIC_OUTPUT;
+    if (destination === undefined) NodeFS.writeSync(2, text);
+    else NodeFS.writeFileSync(destination, text, { flag: "wx" });
+  }
+}
+
 /** Only external JSONL is controlled: decoding, native adapter, manager and worker are production. */
-const makePeer = (autoComplete: boolean) =>
+const makePeer = (autoComplete: boolean, startup: CapacityStartupObservation) =>
   Effect.sync(() => {
     const opened: Array<{
       readonly started: Deferred.Deferred<void>;
@@ -216,16 +417,39 @@ const makePeer = (autoComplete: boolean) =>
               }),
           };
           opened.push(peer);
-          yield* Effect.addFinalizer(() => Deferred.succeed(closed, undefined));
+          const witness = startup.open(input.threadId, input.providerSessionId);
+          yield* Effect.addFinalizer((exit) => {
+            startup.safely(() => {
+              witness.resourceExit = exit;
+              startup.mark(witness, "resource.finalizer");
+            });
+            return Deferred.succeed(closed, undefined);
+          });
           let buffer = "";
           const process = (chunk: string | Uint8Array) =>
             Effect.gen(function* () {
+              startup.mark(witness, "process.entry");
               buffer += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
               while (buffer.includes("\n")) {
                 const newline = buffer.indexOf("\n");
+                startup.mark(witness, "envelope.decode.entry");
                 const frame = decodeFrame(buffer.slice(0, newline));
+                startup.mark(witness, "envelope.decoded");
                 buffer = buffer.slice(newline + 1);
                 if (frame.id === undefined || frame.method === undefined) continue;
+                startup.mark(
+                  witness,
+                  "request.recognized",
+                  [
+                    "initialize",
+                    "thread/start",
+                    "thread/resume",
+                    "thread/inject_items",
+                    "turn/start",
+                  ].includes(frame.method)
+                    ? frame.method
+                    : "unrecognized",
+                );
                 let result: unknown;
                 switch (frame.method) {
                   case "initialize":
@@ -266,8 +490,10 @@ const makePeer = (autoComplete: boolean) =>
                     result = {};
                     break;
                   case "turn/start": {
+                    startup.mark(witness, "turn.input.decode.entry", "turn/start");
                     const params = yield* decodeTurnInput(frame.params).pipe(Effect.orDie);
                     assert.equal(params.threadId, nativeId);
+                    startup.mark(witness, "turn.input.decoded-and-thread-asserted", "turn/start");
                     turnId = `capacity-turn:${++nextNativeTurnId}`;
                     peer.offered.push(
                       params.input
@@ -288,7 +514,18 @@ const makePeer = (autoComplete: boolean) =>
                 }
                 yield* emit({ id: frame.id, result });
               }
-            });
+            }).pipe(
+              Effect.onExit((exit) =>
+                Effect.sync(() =>
+                  startup.safely(() => {
+                    witness.processExits++;
+                    startup.mark(witness, "process.exit");
+                    witness.lastProcessExit = exit;
+                    if (Exit.isFailure(exit)) witness.failedProcessExit = exit;
+                  }),
+                ),
+              ),
+            );
           return yield* CodexClient.make(
             Stdio.make({
               args: Effect.succeed([]),
@@ -328,7 +565,11 @@ it.live(
         const fs = yield* FileSystem.FileSystem;
         const cwd = yield* checkpointWorkspace("first-codex-capacity");
         const databaseFile = NodePath.join(config.stateDir, "capacity.sqlite");
-        const observation = new ScientCapacityFailureObservation(databaseFile);
+        const startup = new CapacityStartupObservation();
+        const allocator = yield* IdAllocatorV2;
+        const observation = new ScientCapacityFailureObservation(databaseFile, (snapshot) =>
+          startup.publish(snapshot),
+        );
         const configLayer = Layer.succeed(ServerConfig, config);
         const projectId = ProjectId.make("capacity-project");
         let profile = "A";
@@ -341,7 +582,7 @@ it.live(
           idleTimeoutMs?: number,
         ) =>
           Effect.gen(function* () {
-            const peer = yield* makePeer(autoComplete);
+            const peer = yield* makePeer(autoComplete, startup);
             const allocator = yield* IdAllocatorV2;
             const registry = makeLayer(
               [instanceId, ProviderInstanceId.make("other-codex")].map((id) =>
@@ -447,7 +688,11 @@ it.live(
                 Effect.provideService(Peer, peer),
                 Effect.provide(layer.pipe(Layer.provideMerge(database))),
               );
-          }).pipe(Effect.scoped);
+          }).pipe(
+            Effect.scoped,
+            // Surround provisioning so the Manager and ingestion children inherit this additive logger.
+            Effect.provide(Logger.layer([startup.logger], { mergeWithExisting: true })),
+          );
         const yieldPath = yield* Path.Path;
         const original = yield* serve(
           Effect.gen(function* () {
@@ -489,6 +734,7 @@ it.live(
               createdBy: "user",
               creationSource: "web",
             });
+            startup.expectRun(allocator.derive.run({ threadId: source, ordinal: 1 }));
             yield* dispatch(source);
             const running = yield* waitFor(source, (p) =>
               p.providerTurns.some((t) => t.nativeAcceptance === "accepted"),
@@ -786,6 +1032,7 @@ it.live(
         VALUES (${`${id}:history`}, ${id}, 'assistant', ${text}, 0, ${now}, ${now})`;
               yield* importer.reconcileShells;
               yield* importer.ensureTranscript(id);
+              startup.expectRun(allocator.derive.run({ threadId: id, ordinal: 1 }));
               yield* dispatch(id, test.selection);
               const settled = yield* waitFor(
                 id,
@@ -846,6 +1093,7 @@ it.live(
                 creationSource: "web",
               });
               observation.at("race.dispatch", id);
+              startup.expectRun(allocator.derive.run({ threadId: id, ordinal: 1 }));
               yield* dispatch(id, modelSelection);
               observation.at("race.accepted", id);
               const projection = yield* waitFor(id, (p) =>
@@ -1082,6 +1330,65 @@ it.live(
         Effect.timeout("120 seconds"),
       ),
     ),
+);
+
+it.effect(
+  "keeps the original failure and one snapshot while selecting a deep release Cause without payloads",
+  () =>
+    Effect.gen(function* () {
+      const startup = new CapacityStartupObservation();
+      const runId = "synthetic-observation-run";
+      const privatePayload = "private-observation-canary";
+      startup.expectRun(runId);
+      let nested: unknown = "Provider session released: idle_timeout.";
+      for (let i = 0; i < 20; i++) nested = { cause: nested, payload: privatePayload };
+      const ingestionCause = Cause.fail(
+        new ProviderAdapterEventStreamError({
+          driver: ProviderDriverKind.make("codex"),
+          providerSessionId: ProviderSessionId.make("synthetic-observation-session"),
+          cause: nested,
+        }),
+      );
+      const published: unknown[] = [];
+      const observer = new ScientCapacityFailureObservation(
+        "/synthetic/unavailable-capacity.sqlite",
+        (snapshot) => {
+          published.push({ ...Object(snapshot), startup: startup.snapshot() });
+        },
+      );
+      yield* observer.beforeCleanup(Effect.void, Effect.succeed([]));
+      assert.deepEqual(published, []);
+      yield* Effect.gen(function* () {
+        yield* Effect.logWarning("orchestration V2 provider event ingestion failed", {
+          runId: "unrelated-run",
+          cause: Cause.fail(privatePayload),
+        });
+        yield* Effect.logWarning("orchestration V2 provider event ingestion failed", {
+          runId,
+          cause: ingestionCause,
+        });
+      }).pipe(Effect.provide(Logger.layer([startup.logger], { mergeWithExisting: true })));
+      // Even an observer defect cannot replace the original assertion failure.
+      startup.safely(() => {
+        throw new Error(privatePayload);
+      });
+      const original = new Error("synthetic original assertion failure");
+      const failed = yield* observer
+        .beforeCleanup(Effect.fail(original), Effect.succeed([]))
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(failed));
+      if (Exit.isFailure(failed))
+        assert.equal(Cause.findErrorOption(failed.cause).pipe(Option.getOrThrow), original);
+      yield* observer.beforeCleanup(Effect.fail(original), Effect.succeed([])).pipe(Effect.exit);
+      assert.equal(published.length, 1);
+      const selected = encodeJson(published);
+      assert.include(selected, "synthetic original assertion failure");
+      assert.include(selected, "ProviderAdapterEventStreamError");
+      assert.include(selected, "idle_timeout");
+      assert.notInclude(selected, privatePayload);
+      assert.notInclude(selected, "unrelated-run");
+      assert.include(selected, "private caller/fiber/generation not witnessed");
+    }),
 );
 
 class Peer extends Context.Service<Peer, Effect.Success<ReturnType<typeof makePeer>>>()(
