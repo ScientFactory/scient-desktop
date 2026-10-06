@@ -468,7 +468,6 @@ import {
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
-import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import { vcsEnvironment } from "../state/vcs";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useProjectClone } from "../state/projectClones";
@@ -682,9 +681,9 @@ import {
   supportsServerUpdateThreadContinuation,
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
-import { mergeEffectiveProviderSkills } from "../scient/skills/effectiveSkills";
-import { resolveScientSkillListInput } from "../scient/skills/scientSkillListInput";
-import { scientSkillsInventory } from "../scient/skills/scientSkillsState";
+// SCIENT-FORK:START — effective skill inventory.
+import { useEffectiveActiveProviderSkills } from "../scient/skills/useEffectiveActiveProviderSkills";
+// SCIENT-FORK:END
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   recallableComposerPrompt,
@@ -4347,28 +4346,17 @@ function ChatViewContent(props: ChatViewProps) {
     resumeCompactionPermanentlyDismissed,
     setResumeCompactionPermanentlyDismissed,
   ]);
-  const scientSkills = useEnvironmentQuery(
-    scientSkillsInventory({
-      environmentId,
-      input: resolveScientSkillListInput({
-        routeKind,
-        threadId: activeThreadId,
-        projectId: activeProject?.id ?? null,
-      }),
-    }),
-  ).data;
-  const effectiveActiveProviderSkills = useMemo(
-    () =>
-      mergeEffectiveProviderSkills({
-        provider: selectedProvider,
-        providerSkills: activeProviderStatus
-          ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
-          : EMPTY_PROVIDER_SKILLS,
-        inventory: scientSkills,
-        includeContextualProviderSkills: true,
-      }),
-    [activeProviderStatus, gitCwd, scientSkills, selectedProvider],
-  );
+  // SCIENT-FORK:START — messages present active Scient skills beside provider-native ones.
+  const effectiveActiveProviderSkills = useEffectiveActiveProviderSkills({
+    environmentId,
+    routeKind,
+    activeThreadId,
+    activeProjectId: activeProject?.id ?? null,
+    selectedProvider,
+    activeProviderStatus,
+    gitCwd,
+  });
+  // SCIENT-FORK:END
   const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
   const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
     string | null

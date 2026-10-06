@@ -176,7 +176,7 @@
     },
     {
       "path": "apps/web/src/components/ChatView.tsx",
-      "anchor": "mergeEffectiveProviderSkills",
+      "anchor": "useEffectiveActiveProviderSkills",
       "purpose": "Present active Scient skills in messages without replacing provider-native inventory."
     },
     {
