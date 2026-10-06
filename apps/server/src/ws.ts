@@ -589,7 +589,6 @@ function projectDirectoryFailureContext(
       return unexpectedCompatibilityError(error);
   }
 }
-const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   OrchestrationEvent,
@@ -3100,62 +3099,76 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
-        [WS_METHODS.serverSaveCustomModel]: (input) => serverSettings.saveCustomModel(input),
-        [WS_METHODS.serverRemoveCustomModel]: (input) => serverSettings.removeCustomModel(input),
+        [WS_METHODS.serverSaveCustomModel]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverSaveCustomModel,
+            serverSettings.saveCustomModel(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverRemoveCustomModel]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverRemoveCustomModel,
+            serverSettings.removeCustomModel(input),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverTestCustomModel]: (input) =>
-          Effect.gen(function* () {
-            const settings = yield* serverSettings.getSettings;
-            if (settings.customModels.revision !== input.revision)
-              return yield* new CustomModelError({
-                message: "Custom models changed. Test the updated configuration.",
-              });
-            const connection = settings.customModels.connections.find(
-              (c) => c.id === input.connectionId,
-            );
-            const model = connection?.models.find((m) => m.id === input.modelId);
-            const instance = yield* providerInstances.getInstance(input.instanceId);
-            if (
-              !connection ||
-              !model ||
-              !model.instanceIds.includes(input.instanceId) ||
-              !instance?.enabled ||
-              !supportsModelConnections(instance.driverKind, connection.protocol)
-            )
-              return yield* new CustomModelError({
-                message:
-                  "Connect this model to an enabled Pi, Droid, Oh My Pi, or Scient agent first.",
-              });
-            const resolved = yield* serverSettings.resolveCustomModels(input.instanceId);
-            const credentialError = resolved.find((c) => c.id === connection.id)?.credentialError;
-            if (credentialError !== undefined)
-              return yield* new CustomModelError({ message: credentialError });
-            const slug =
-              instance.driverKind === "droid"
-                ? droidCustomModelId(connection.id, model.id)
-                : instance.driverKind === "omp" || instance.driverKind === "scient"
-                  ? encodeOmpModelSlug(customModelProviderId(connection.id), model.modelId)
-                  : encodePiModelSlug(customModelProviderId(connection.id), model.modelId);
-            if (!slug) return yield* new CustomModelError({ message: "Invalid model ID." });
-            yield* instance.textGeneration
-              .generateThreadTitle({
-                cwd: config.cwd,
-                message: "Connection test",
-                modelSelection: createModelSelection(input.instanceId, slug),
-              })
-              .pipe(
-                Effect.timeout(Duration.seconds(CUSTOM_MODEL_TEST_TIMEOUT_SECONDS)),
-                Effect.mapError((cause) => customModelTestFailure(instance, cause)),
+          observeRpcEffect(
+            WS_METHODS.serverTestCustomModel,
+            Effect.gen(function* () {
+              const settings = yield* serverSettings.getSettings;
+              if (settings.customModels.revision !== input.revision)
+                return yield* new CustomModelError({
+                  message: "Custom models changed. Test the updated configuration.",
+                });
+              const connection = settings.customModels.connections.find(
+                (c) => c.id === input.connectionId,
               );
-            const latest = yield* serverSettings.getSettings;
-            if (latest.customModels.revision !== input.revision)
-              return yield* new CustomModelError({
-                message: "Custom models changed during the test. Test again.",
-              });
-            return { revision: input.revision };
-          }).pipe(
-            Effect.catchTag("ServerSettingsError", () =>
-              Effect.fail(new CustomModelError({ message: "Could not read custom models." })),
+              const model = connection?.models.find((m) => m.id === input.modelId);
+              const instance = yield* providerInstances.getInstance(input.instanceId);
+              if (
+                !connection ||
+                !model ||
+                !model.instanceIds.includes(input.instanceId) ||
+                !instance?.enabled ||
+                !supportsModelConnections(instance.driverKind, connection.protocol)
+              )
+                return yield* new CustomModelError({
+                  message:
+                    "Connect this model to an enabled Pi, Droid, Oh My Pi, or Scient agent first.",
+                });
+              const resolved = yield* serverSettings.resolveCustomModels(input.instanceId);
+              const credentialError = resolved.find((c) => c.id === connection.id)?.credentialError;
+              if (credentialError !== undefined)
+                return yield* new CustomModelError({ message: credentialError });
+              const slug =
+                instance.driverKind === "droid"
+                  ? droidCustomModelId(connection.id, model.id)
+                  : instance.driverKind === "omp" || instance.driverKind === "scient"
+                    ? encodeOmpModelSlug(customModelProviderId(connection.id), model.modelId)
+                    : encodePiModelSlug(customModelProviderId(connection.id), model.modelId);
+              if (!slug) return yield* new CustomModelError({ message: "Invalid model ID." });
+              yield* instance.textGeneration
+                .generateThreadTitle({
+                  cwd: config.cwd,
+                  message: "Connection test",
+                  modelSelection: createModelSelection(input.instanceId, slug),
+                })
+                .pipe(
+                  Effect.timeout(Duration.seconds(CUSTOM_MODEL_TEST_TIMEOUT_SECONDS)),
+                  Effect.mapError((cause) => customModelTestFailure(instance, cause)),
+                );
+              const latest = yield* serverSettings.getSettings;
+              if (latest.customModels.revision !== input.revision)
+                return yield* new CustomModelError({
+                  message: "Custom models changed during the test. Test again.",
+                });
+              return { revision: input.revision };
+            }).pipe(
+              Effect.catchTag("ServerSettingsError", () =>
+                Effect.fail(new CustomModelError({ message: "Could not read custom models." })),
+              ),
             ),
+            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverUpdateSettings]: ({ patch, providerInstanceMutation }) =>
           observeRpcEffect(
@@ -4597,7 +4610,7 @@ const makeWsRpcLayer = (
                 // still pairs up and reaches the client.
                 Stream.concat(
                   Stream.fromEffect(providerRegistry.getProviders),
-                  providerRegistry.streamChanges,
+                  coalesceProviderStatusUpdates(providerRegistry.streamChanges),
                 ),
                 usageLimitSources.streamChanges.pipe(
                   // Quota updates already have their own stream. Republish the model
@@ -4627,7 +4640,6 @@ const makeWsRpcLayer = (
                   type: "providerStatuses" as const,
                   payload: { providers },
                 })),
-                Stream.debounce(Duration.millis(PROVIDER_STATUS_DEBOUNCE_MS)),
               );
               // The only source of published themes: the stream emits the
               // current set before any change, so the snapshot carrying it too

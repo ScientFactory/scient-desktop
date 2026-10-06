@@ -6171,6 +6171,167 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("requires operate scope for every custom model mutation and connection test", () =>
+    Effect.gen(function* () {
+      const id = ProviderInstanceId.make("droid");
+      const catalog: CustomModelsSettings = {
+        revision: 1,
+        connections: [
+          {
+            id: "wire-connection",
+            name: "Wire test",
+            baseUrl: "https://example.test/v1",
+            protocol: "openai-completions",
+            credentialId: "opaque-ref",
+            models: [
+              {
+                id: "one",
+                modelId: "one",
+                name: "One",
+                configurationMode: "automatic",
+                contextWindow: 32000,
+                maxOutputTokens: 128,
+                images: false,
+                reasoning: false,
+                instanceIds: [id],
+              },
+            ],
+          },
+        ],
+      };
+      const calls = { reads: 0, saves: 0, removes: 0, resolves: 0, generations: 0 };
+      const instance: ProviderInstance = {
+        instanceId: id,
+        driverKind: ProviderDriverKind.make("droid"),
+        enabled: true,
+        displayName: "Droid",
+        continuationIdentity: { driverKind: ProviderDriverKind.make("droid"), continuationKey: id },
+        get orchestrationAdapter(): never {
+          throw new Error("Must not start a chat session");
+        },
+        get snapshot(): never {
+          throw new Error("Must not probe a provider");
+        },
+        textGeneration: {
+          generateThreadTitle: () =>
+            Effect.sync(() => {
+              calls.generations += 1;
+              return { title: "Synthetic connection test" };
+            }),
+          generateBranchName: (): never => {
+            throw new Error("Unexpected generation");
+          },
+          generateCommitMessage: (): never => {
+            throw new Error("Unexpected generation");
+          },
+          generatePrContent: (): never => {
+            throw new Error("Unexpected generation");
+          },
+        },
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          serverSettings: {
+            getSettings: Effect.sync(() => {
+              calls.reads += 1;
+              return { ...DEFAULT_SERVER_SETTINGS, customModels: catalog };
+            }),
+            saveCustomModel: () =>
+              Effect.sync(() => {
+                calls.saves += 1;
+                return catalog;
+              }),
+            removeCustomModel: () =>
+              Effect.sync(() => {
+                calls.removes += 1;
+                return catalog;
+              }),
+            resolveCustomModels: () =>
+              Effect.sync(() => {
+                calls.resolves += 1;
+                return [{ ...catalog.connections[0]!, apiKey: Redacted.make("synthetic-key") }];
+              }),
+          },
+          providerInstanceRegistry: { getInstance: () => Effect.succeed(instance) },
+        },
+      });
+      const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "orchestration:read",
+      });
+      assert.equal(token.response.status, 200);
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${token.body.access_token ?? ""}` },
+      });
+      assert.equal(ticketResponse.status, 200);
+      const { ticket } = yield* responseJsonEffect<{ readonly ticket: string }>(ticketResponse);
+      const readerUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}&wsTicket=${encodeURIComponent(ticket)}`;
+      const save = {
+        revision: 1,
+        connection: catalog.connections[0]!,
+        apiKey: Redacted.make("synthetic-key"),
+      };
+      const remove = { revision: 1, connectionId: "wire-connection" };
+      const test = { revision: 1, connectionId: "wire-connection", modelId: "one", instanceId: id };
+      yield* Effect.scoped(
+        withWsRpcClient(readerUrl, (client) =>
+          Effect.gen(function* () {
+            const readable = yield* client[WS_METHODS.serverGetSettings]({});
+            assert.equal(readable.customModels.revision, 1);
+            const before = { ...calls };
+            const results = [
+              yield* client[WS_METHODS.serverSaveCustomModel](save).pipe(Effect.result),
+              yield* client[WS_METHODS.serverRemoveCustomModel](remove).pipe(Effect.result),
+              yield* client[WS_METHODS.serverTestCustomModel](test).pipe(Effect.result),
+              // A stale revision must still be denied before configuration reads.
+              yield* client[WS_METHODS.serverTestCustomModel]({ ...test, revision: 2 }).pipe(
+                Effect.result,
+              ),
+            ];
+            // The first three inputs are valid and attached: a setup error cannot conceal a missing guard.
+            assert.deepEqual(calls, before);
+            for (const result of results) {
+              if (
+                result._tag !== "Failure" ||
+                result.failure._tag !== "EnvironmentAuthorizationError"
+              )
+                assert.fail("Expected an operate-scope denial before any custom model effect");
+              assert.equal(result.failure.requiredScope, "orchestration:operate");
+            }
+            assert.equal(
+              (yield* client[WS_METHODS.serverGetSettings]({})).customModels.revision,
+              1,
+            );
+          }),
+        ),
+      );
+      const operatorUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(operatorUrl, (client) =>
+          Effect.gen(function* () {
+            assert.deepEqual(yield* client[WS_METHODS.serverSaveCustomModel](save), catalog);
+            assert.deepEqual(yield* client[WS_METHODS.serverRemoveCustomModel](remove), catalog);
+            assert.deepEqual(yield* client[WS_METHODS.serverTestCustomModel](test), {
+              revision: 1,
+            });
+            assert.equal(
+              (yield* client[WS_METHODS.serverGetSettings]({})).customModels.revision,
+              1,
+            );
+          }),
+        ),
+      );
+      assert.deepEqual(
+        {
+          saves: calls.saves,
+          removes: calls.removes,
+          resolves: calls.resolves,
+          generations: calls.generations,
+        },
+        { saves: 1, removes: 1, resolves: 1, generations: 1 },
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("rejects stale or unattached custom model tests through websocket rpc", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -8319,6 +8480,78 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           },
         });
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("delivers provider statuses over websocket while registry updates continue", () =>
+    Effect.gen(function* () {
+      const updates = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
+      const subscribed = yield* Deferred.make<void>();
+      const provider = {
+        instanceId: ProviderInstanceId.make("cursor"),
+        driver: ProviderDriverKind.make("cursor"),
+        enabled: true,
+        installed: true,
+        version: "1.0.0",
+        status: "ready" as const,
+        auth: { status: "authenticated" as const },
+        checkedAt: "2026-08-23T00:00:00.000Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+      } satisfies ServerProvider;
+      yield* buildAppUnderTest({
+        layers: {
+          keybindings: {
+            loadConfigState: Effect.succeed({ keybindings: [], issues: [] }),
+            streamChanges: Stream.empty,
+          },
+          providerRegistry: {
+            getProviders: Effect.succeed([]),
+            streamChanges: Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+              Stream.flatMap(() => Stream.fromQueue(updates)),
+            ),
+          },
+        },
+      });
+      const url = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(url, (client) =>
+          Effect.gen(function* () {
+            const snapshot = yield* Deferred.make<void>();
+            const delivered = yield* Deferred.make<ReadonlyArray<ServerProvider>>();
+            const consumer = yield* client[WS_METHODS.subscribeServerConfig]({}).pipe(
+              Stream.runForEach((event) =>
+                event.type === "snapshot"
+                  ? Deferred.succeed(snapshot, undefined).pipe(Effect.asVoid)
+                  : event.type === "providerStatuses"
+                    ? Deferred.succeed(delivered, event.payload.providers).pipe(Effect.asVoid)
+                    : Effect.void,
+              ),
+              Effect.forkChild,
+            );
+            yield* Deferred.await(snapshot);
+            yield* Deferred.await(subscribed);
+            let revision = 0;
+            // Keep the change source open and busy until reception; debounce cannot
+            // satisfy this witness by flushing only when a finite source ends.
+            const producer = yield* Effect.gen(function* () {
+              while (true) {
+                revision += 1;
+                yield* Queue.offer(updates, [{ ...provider, version: `1.0.${revision}` }]);
+                yield* Effect.sleep("50 millis");
+              }
+            }).pipe(Effect.forkChild);
+            const received = yield* Deferred.await(delivered).pipe(Effect.timeout("3 seconds"));
+            assert.equal(received.length, 1);
+            assert.equal(received[0]?.instanceId, provider.instanceId);
+            assert.equal(received[0]?.status, "ready");
+            assert.notEqual(received[0]?.version, "1.0.0");
+            yield* Fiber.interrupt(producer);
+            yield* Fiber.interrupt(consumer);
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
   it.effect("coalesces sustained provider updates without starving the latest state", () =>
