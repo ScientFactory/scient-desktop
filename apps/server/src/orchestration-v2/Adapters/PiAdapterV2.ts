@@ -2846,15 +2846,9 @@ export function makePiAdapterV2(
                 source.providerSessionId !== input.providerSessionId ||
                 source.providerThreadId !== state.providerThread.id ||
                 !modelSelectionsEqual(adoptedWork.modelSelection, source.modelSelection) ||
-                !Schema.toEquivalence(ProviderAdapter.ProviderAdapterV2RuntimePolicy)(
-                  adoptedWork.runtimePolicy,
-                  source.runtimePolicy,
-                ) ||
+                !runtimePoliciesEqual(adoptedWork.runtimePolicy, source.runtimePolicy) ||
                 !modelSelectionsEqual(adoptedWork.modelSelection, turnInput.modelSelection) ||
-                !Schema.toEquivalence(ProviderAdapter.ProviderAdapterV2RuntimePolicy)(
-                  adoptedWork.runtimePolicy,
-                  turnInput.runtimePolicy,
-                ))
+                !runtimePoliciesEqual(adoptedWork.runtimePolicy, turnInput.runtimePolicy))
             )
               return yield* protocolError("Pi native generation no longer owns this captured run");
             if (adoptedWork === null && bufferedWork !== null)
