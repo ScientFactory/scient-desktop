@@ -5,7 +5,6 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
-  RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -18,6 +17,10 @@ import { prepareScientV2SkillScope } from "../scient/skills/ScientV2SkillTurn.ts
 import { ScientSkillSessionPlanner } from "../scient/skills/ScientSkillSession.ts";
 import { ServerConfig } from "../config.ts";
 import { validateProviderCurrentInput } from "./AttachmentPrompt.ts";
+import {
+  makeInterruptPendingStart,
+  type InterruptPendingStart,
+} from "./scient-fork/PendingStartInterrupt.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
@@ -45,27 +48,14 @@ export class ProviderTurnControlError extends Schema.TaggedError<ProviderTurnCon
 
 const isProviderTurnControlError = Schema.is(ProviderTurnControlError);
 
-/** Private pending-start control: native turn identity is not invented before its receipt. */
-export class ProviderRunInterruptError extends Schema.TaggedError<ProviderRunInterruptError>()(
-  "ProviderRunInterruptError",
-  {
-    threadId: ThreadId,
-    runId: RunId,
-    reason: Schema.Literals(["receipt_pending", "lookup_failed", "native_interrupt_failed"]),
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
-
-const isProviderRunInterruptError = Schema.is(ProviderRunInterruptError);
+// SCIENT-FORK:START — pending-start interrupt lives in scient-fork.
+export { ProviderRunInterruptError } from "./scient-fork/PendingStartInterrupt.ts";
+// SCIENT-FORK:END
 
 export interface ProviderTurnControlServiceV2Shape {
-  readonly interruptPendingStart: (input: {
-    readonly threadId: ThreadId;
-    readonly runId: RunId;
-    readonly expectedAttemptId: RunAttemptId;
-    readonly providerSessionId: ProviderSessionId;
-    readonly providerThreadId: ProviderThreadId;
-  }) => Effect.Effect<Option.Option<ProviderTurnId>, ProviderRunInterruptError>;
+  // SCIENT-FORK:START — interrupt a run whose native start receipt is pending.
+  readonly interruptPendingStart: InterruptPendingStart;
+  // SCIENT-FORK:END
   readonly interrupt: (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
@@ -226,95 +216,9 @@ export const layer: Layer.Layer<
 
     return ProviderTurnControlServiceV2.of({
       interrupt,
-      interruptPendingStart: (input) =>
-        Effect.gen(function* () {
-          const projection = yield* projections.getThreadRecords(input.threadId, [
-            "runs",
-            "attempts",
-            "nodes",
-            "providerThreads",
-            "providerTurns",
-          ]);
-          if (projection.thread.deletedAt !== null || projection.thread.archivedAt !== null)
-            return Option.none();
-          const run = projection.runs.find((candidate) => candidate.id === input.runId);
-          if (
-            run === undefined ||
-            run.status !== "running" ||
-            run.activeAttemptId !== input.expectedAttemptId ||
-            run.providerThreadId !== input.providerThreadId ||
-            projection.thread.activeProviderThreadId !== input.providerThreadId
-          )
-            return Option.none();
-          const attempt = projection.attempts.find(
-            (candidate) => candidate.id === input.expectedAttemptId,
-          );
-          const root = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
-          const thread = projection.providerThreads.find(
-            (candidate) => candidate.id === input.providerThreadId,
-          );
-          if (
-            attempt === undefined ||
-            root === undefined ||
-            thread === undefined ||
-            attempt.runId !== run.id ||
-            attempt.status !== "running" ||
-            attempt.rootNodeId !== root.id ||
-            attempt.providerThreadId !== thread.id ||
-            attempt.providerInstanceId !== run.providerInstanceId ||
-            root.runId !== run.id ||
-            root.threadId !== input.threadId ||
-            root.rootNodeId !== root.id ||
-            root.providerThreadId !== thread.id ||
-            root.status !== "running" ||
-            thread.appThreadId !== input.threadId ||
-            thread.providerInstanceId !== run.providerInstanceId ||
-            thread.providerSessionId !== input.providerSessionId
-          )
-            return Option.none();
-          const turn = projection.providerTurns.findLast(
-            (candidate) =>
-              candidate.runAttemptId === attempt.id &&
-              candidate.nodeId === root.id &&
-              candidate.providerThreadId === thread.id &&
-              (attempt.providerTurnId === null || candidate.id === attempt.providerTurnId),
-          );
-          if (turn === undefined)
-            return yield* new ProviderRunInterruptError({
-              threadId: input.threadId,
-              runId: input.runId,
-              reason: "receipt_pending",
-            });
-          if (turn.status !== "running") return Option.none();
-          yield* interrupt({
-            threadId: input.threadId,
-            providerSessionId: input.providerSessionId,
-            providerThreadId: thread.id,
-            providerTurnId: turn.id,
-          }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderRunInterruptError({
-                  threadId: input.threadId,
-                  runId: input.runId,
-                  reason: "native_interrupt_failed",
-                  cause,
-                }),
-            ),
-          );
-          return Option.some(turn.id);
-        }).pipe(
-          Effect.mapError((cause) =>
-            isProviderRunInterruptError(cause)
-              ? cause
-              : new ProviderRunInterruptError({
-                  threadId: input.threadId,
-                  runId: input.runId,
-                  reason: "lookup_failed",
-                  cause,
-                }),
-          ),
-        ),
+      // SCIENT-FORK:START — interrupt a run whose native start receipt is pending.
+      interruptPendingStart: makeInterruptPendingStart({ projections, interrupt }),
+      // SCIENT-FORK:END
       interruptAndAwaitTerminal: (input) =>
         Effect.gen(function* () {
           const loaded = yield* load({ ...input, operation: "restart" });
