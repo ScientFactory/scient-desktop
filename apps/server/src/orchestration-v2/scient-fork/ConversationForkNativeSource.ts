@@ -2,6 +2,7 @@ import {
   OrchestrationV2ProviderThreadJson,
   OrchestrationV2ProviderTurnJson,
   OrchestrationV2RunJson,
+  type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2ClaudeForkBoundaryEvidence,
   type OrchestrationV2ThreadProjection,
@@ -325,4 +326,44 @@ export function freezeConversationForkNativeSource(input: {
       ...(claudeBoundaryEvidence.length === 0 ? {} : { claudeBoundaryEvidence }),
     },
   };
+}
+
+/** A completed clone owns the inherited prefix even if its first local
+ * turn failed. Reusing that exact native owner must recover only the
+ * rejected local turn, without injecting the cloned source a second time. */
+export function inheritedForkPrefixIsNative(input: {
+  readonly projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "runs" | "contextTransfers"
+  >;
+  readonly activeProviderThread: OrchestrationV2ProviderThread | undefined;
+  readonly targetInstanceId: ProviderInstanceId;
+}): boolean {
+  const { projection, activeProviderThread } = input;
+  return (
+    projection.thread.conversationFork != null &&
+    activeProviderThread?.nativeThreadRef?.strength === "strong" &&
+    !!activeProviderThread.nativeThreadRef.nativeId?.trim() &&
+    activeProviderThread.providerInstanceId === input.targetInstanceId &&
+    projection.contextTransfers.some((transfer) => {
+      const frozen = transfer.frozenSource;
+      const resolution = transfer.resolution;
+      const targetRun = projection.runs.find((source) => source.id === transfer.targetRunId);
+      return (
+        transfer.type === "fork" &&
+        transfer.status === "consumed" &&
+        transfer.targetThreadId === projection.thread.id &&
+        transfer.targetProviderInstanceId === activeProviderThread.providerInstanceId &&
+        targetRun?.providerThreadId === activeProviderThread.id &&
+        targetRun.providerInstanceId === activeProviderThread.providerInstanceId &&
+        resolution?.strategy === "native_fork" &&
+        resolution.providerThreadRef.strength === "strong" &&
+        resolution.providerThreadRef.driver === activeProviderThread.nativeThreadRef?.driver &&
+        resolution.providerThreadRef.nativeId === activeProviderThread.nativeThreadRef?.nativeId &&
+        frozen !== undefined &&
+        activeProviderThread.forkedFrom?.providerThreadId === frozen.sourceProviderThread.id &&
+        activeProviderThread.forkedFrom.providerTurnId === frozen.providerTurnId
+      );
+    })
+  );
 }

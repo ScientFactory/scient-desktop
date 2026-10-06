@@ -63,8 +63,15 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import { frozenForkPortableReason } from "./scient-fork/ConversationForkNativeSource.ts";
+import {
+  frozenForkPortableReason,
+  inheritedForkPrefixIsNative,
+} from "./scient-fork/ConversationForkNativeSource.ts";
 // SCIENT-FORK:START — Scient orchestration modules
+import {
+  conversationForkHistoryEvents,
+  conversationForkProvisionEffect,
+} from "./scient-fork/ConversationForkPlan.ts";
 import {
   classifyProviderWorkAdmission,
   commitProviderWorkAdmission,
@@ -3624,50 +3631,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: transfer,
     });
-    for (const payload of history.messages)
-      yield* emitEvent({
-        type: "message.updated",
-        threadId: targetThread.id,
-        occurredAt: now,
-        payload,
-      });
-    for (const payload of history.items)
-      yield* emitEvent({
-        type: "turn-item.updated",
-        threadId: targetThread.id,
-        occurredAt: now,
-        payload,
-      });
-    yield* emitEvent({
-      type: "turn-item.updated",
-      threadId: targetThread.id,
+    // SCIENT-FORK:START — the fork carries its frozen history and provisions its workspace.
+    for (const event of conversationForkHistoryEvents({
+      targetThreadId: targetThread.id,
+      history,
+      boundaryItem,
       occurredAt: now,
-      payload: boundaryItem,
-    });
-    for (const payload of history.nodes)
-      yield* emitEvent({
-        type: "node.updated",
-        threadId: targetThread.id,
-        occurredAt: now,
-        payload,
-      });
-    for (const payload of history.plans)
-      yield* emitEvent({
-        type: "plan.updated",
-        threadId: targetThread.id,
-        occurredAt: now,
-        payload,
-      });
-    if (targetThread.conversationFork?.status === "pending")
-      yield* Ref.update(effects, (existing) => [
-        ...existing,
-        {
-          id: `effect:${command.commandId}:scient-fork.provision`,
-          commandId: command.commandId,
-          threadId: targetThread.id,
-          request: { type: "scient-fork.provision" },
-        } satisfies PendingOrchestrationEffectV2,
-      ]);
+    }))
+      yield* emitEvent(event);
+    const provision = conversationForkProvisionEffect(command.commandId, targetThread);
+    if (provision !== undefined) yield* Ref.update(effects, (existing) => [...existing, provision]);
+    // SCIENT-FORK:END
   });
 
   const dispatchThreadMergeBack = Effect.fn("orchestrationV2.dispatch.threadMergeBack")(function* (
@@ -5506,37 +5480,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             driver: adapter.driver,
             nativeThreadId: `pending:${runId}`,
           });
-        // A completed clone owns the inherited prefix even if its first local
-        // turn failed. Reusing that exact native owner must recover only the
-        // rejected local turn, without injecting the cloned source a second time.
-        const inheritedPrefixAlreadyNative =
-          projection.thread.conversationFork != null &&
-          activeProviderThread?.nativeThreadRef?.strength === "strong" &&
-          !!activeProviderThread.nativeThreadRef.nativeId?.trim() &&
-          activeProviderThread.providerInstanceId === modelSelection.instanceId &&
-          projection.contextTransfers.some((transfer) => {
-            const frozen = transfer.frozenSource;
-            const resolution = transfer.resolution;
-            const targetRun = projection.runs.find((source) => source.id === transfer.targetRunId);
-            return (
-              transfer.type === "fork" &&
-              transfer.status === "consumed" &&
-              transfer.targetThreadId === projection.thread.id &&
-              transfer.targetProviderInstanceId === activeProviderThread.providerInstanceId &&
-              targetRun?.providerThreadId === activeProviderThread.id &&
-              targetRun.providerInstanceId === activeProviderThread.providerInstanceId &&
-              resolution?.strategy === "native_fork" &&
-              resolution.providerThreadRef.strength === "strong" &&
-              resolution.providerThreadRef.driver ===
-                activeProviderThread.nativeThreadRef?.driver &&
-              resolution.providerThreadRef.nativeId ===
-                activeProviderThread.nativeThreadRef?.nativeId &&
-              frozen !== undefined &&
-              activeProviderThread.forkedFrom?.providerThreadId ===
-                frozen.sourceProviderThread.id &&
-              activeProviderThread.forkedFrom.providerTurnId === frozen.providerTurnId
-            );
-          });
+        // SCIENT-FORK:START — a completed clone already owns its inherited prefix natively.
+        const inheritedPrefixAlreadyNative = inheritedForkPrefixIsNative({
+          projection,
+          activeProviderThread,
+          targetInstanceId: modelSelection.instanceId,
+        });
+        // SCIENT-FORK:END
         const legacyImportHandoff =
           !inheritedPrefixAlreadyNative &&
           shouldPrepareLegacyImportHandoff({
