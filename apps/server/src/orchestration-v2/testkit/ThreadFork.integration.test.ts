@@ -971,7 +971,15 @@ describe("orchestration V2 thread fork", () => {
             { type: "dispatch", command: materialized.commands[3]!, await: true },
             { type: "dispatch", command: materialized.commands[4]!, await: true },
             { type: "await_thread_idle", threadId: materialized.targetThreadId },
-            { type: "dispatch", command: materialized.commands[5]!, await: true },
+            {
+              type: "rollback_root_checkpoint",
+              command: materialized.commands[5]! as Extract<
+                OrchestrationV2Command,
+                { type: "checkpoint.rollback" }
+              >,
+              ordinal: 1,
+              cwd,
+            },
             {
               type: "await_run_status",
               threadId: materialized.sourceThreadId,
@@ -1188,7 +1196,15 @@ describe("orchestration V2 thread fork", () => {
             { type: "await_thread_idle", threadId: materialized.targetThreadId },
             { type: "dispatch", command: materialized.commands[4]!, await: true },
             { type: "await_thread_idle", threadId: materialized.targetThreadId },
-            { type: "dispatch", command: materialized.commands[5]!, await: true },
+            {
+              type: "rollback_root_checkpoint",
+              command: materialized.commands[5]! as Extract<
+                OrchestrationV2Command,
+                { type: "checkpoint.rollback" }
+              >,
+              ordinal: 1,
+              cwd,
+            },
             {
               type: "await_run_status",
               threadId: materialized.targetThreadId,
