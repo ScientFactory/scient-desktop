@@ -60,8 +60,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
   ProviderAdapterRequestError,
-  ProviderAdapterSessionNotFoundError,
-  ProviderUnsupportedError,
+  ProviderInstanceNotFoundError,
   ProviderValidationError,
   ProviderWorkspaceMissingError,
   type ProviderAdapterError,
@@ -186,9 +185,10 @@ function makeFakeCodexAdapter(
     ): Effect.Effect<ProviderTurnStartResult, ProviderAdapterError> => {
       if (!sessions.has(input.threadId)) {
         return Effect.fail(
-          new ProviderAdapterSessionNotFoundError({
+          new ProviderAdapterRequestError({
             provider,
-            threadId: input.threadId,
+            method: "sendTurn",
+            detail: `Unknown ${provider} adapter thread: ${input.threadId}`,
           }),
         );
       }
@@ -387,9 +387,7 @@ function makeStaticInstanceRegistry(
 ): ProviderAdapterRegistry.ProviderAdapterRegistry["Service"] {
   const adapters = new Map(entries);
   const unsupported = (instanceId: ProviderInstanceId) =>
-    new ProviderUnsupportedError({
-      provider: ProviderDriverKind.make(instanceId),
-    });
+    new ProviderInstanceNotFoundError({ instanceId });
 
   return {
     getByInstance: (instanceId) => {
@@ -980,15 +978,13 @@ it.effect(
       const instanceId = ProviderInstanceId.make("codex_personal");
       const driverKind = CODEX_DRIVER;
       const codex = makeFakeCodexAdapter();
-      const unsupported = () =>
-        new ProviderUnsupportedError({
-          provider: driverKind,
-        });
+      const unsupported = (requestedInstanceId: ProviderInstanceId) =>
+        new ProviderInstanceNotFoundError({ instanceId: requestedInstanceId });
       const registry: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"] = {
         getByInstance: (requestedInstanceId) =>
           requestedInstanceId === instanceId
             ? Effect.succeed(codex.adapter)
-            : Effect.fail(unsupported()),
+            : Effect.fail(unsupported(requestedInstanceId)),
         getInstanceInfo: (requestedInstanceId) =>
           requestedInstanceId === instanceId
             ? Effect.succeed({
@@ -1001,7 +997,7 @@ it.effect(
                   continuationKey: "codex:/Users/example/.codex",
                 },
               })
-            : Effect.fail(unsupported()),
+            : Effect.fail(unsupported(requestedInstanceId)),
         listInstances: () => Effect.succeed([instanceId]),
         subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
           PubSub.subscribe(pubsub),
@@ -1059,15 +1055,13 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
     const instanceId = ProviderInstanceId.make("codex_personal");
     const driverKind = ProviderDriverKind.make("codex");
     const codex = makeFakeCodexAdapter();
-    const unsupported = () =>
-      new ProviderUnsupportedError({
-        provider: ProviderDriverKind.make("codex"),
-      });
+    const unsupported = (requestedInstanceId: ProviderInstanceId) =>
+      new ProviderInstanceNotFoundError({ instanceId: requestedInstanceId });
     const registry: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"] = {
       getByInstance: (requestedInstanceId) =>
         requestedInstanceId === instanceId
           ? Effect.succeed(codex.adapter)
-          : Effect.fail(unsupported()),
+          : Effect.fail(unsupported(requestedInstanceId)),
       getInstanceInfo: (requestedInstanceId) =>
         requestedInstanceId === instanceId
           ? Effect.succeed({
@@ -1080,7 +1074,7 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
                 continuationKey: "codex:/Users/example/.codex",
               },
             })
-          : Effect.fail(unsupported()),
+          : Effect.fail(unsupported(requestedInstanceId)),
       listInstances: () => Effect.succeed([instanceId]),
       subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
         PubSub.subscribe(pubsub),
@@ -1311,7 +1305,7 @@ antigravityInstanceRouting.layer("ProviderServiceLive instance-owned conversatio
 
             assert.equal(
               error._tag,
-              originalAvailable ? "ProviderValidationError" : "ProviderUnsupportedError",
+              originalAvailable ? "ProviderValidationError" : "ProviderInstanceNotFoundError",
             );
             assert.equal(replacementAntigravity.startSession.mock.calls.length, 0);
             assert.deepEqual(yield* directory.getBinding(threadId), originalBinding);
@@ -6383,7 +6377,13 @@ chatGptTelemetry.layer("ChatGPT connector turn analytics", (it) => {
         runtimeMode: "full-access",
       });
       chatGptAdapter.sendTurn.mockImplementationOnce(() =>
-        Effect.fail(new ProviderAdapterSessionNotFoundError({ provider: CODEX_DRIVER, threadId })),
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: CODEX_DRIVER,
+            method: "sendTurn",
+            detail: `Unknown ${CODEX_DRIVER} adapter thread: ${threadId}`,
+          }),
+        ),
       );
       const result = yield* provider
         .sendTurn({ threadId, input: "private rejected prompt" })
@@ -6396,7 +6396,7 @@ chatGptTelemetry.layer("ChatGPT connector turn analytics", (it) => {
       assert.deepStrictEqual(rejected[0]?.properties, {
         provider: CODEX_DRIVER,
         subscriptionSharing: true,
-        errorType: "ProviderAdapterSessionNotFoundError",
+        errorType: "ProviderAdapterRequestError",
       });
     }),
   );

@@ -14,11 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
-import {
-  ProviderAdapterSessionNotFoundError,
-  ProviderAdapterValidationError,
-  type ProviderAdapterError,
-} from "../src/provider/Errors.ts";
+import { ProviderAdapterRequestError, type ProviderAdapterError } from "../src/provider/Errors.ts";
 import type {
   ProviderAdapterShape,
   ProviderThreadSnapshot,
@@ -183,7 +179,7 @@ export interface TestProviderAdapterHarness {
   readonly queueTurnResponse: (
     threadId: ThreadId,
     response: TestTurnResponse,
-  ) => Effect.Effect<void, ProviderAdapterSessionNotFoundError>;
+  ) => Effect.Effect<void, ProviderAdapterRequestError>;
   readonly queueTurnResponseForNextSession: (
     response: TestTurnResponse,
   ) => Effect.Effect<void, never>;
@@ -210,10 +206,11 @@ function nowIso(): string {
 function sessionNotFound(
   provider: ProviderDriverKind,
   threadId: ThreadId,
-): ProviderAdapterSessionNotFoundError {
-  return new ProviderAdapterSessionNotFoundError({
+): ProviderAdapterRequestError {
+  return new ProviderAdapterRequestError({
     provider,
-    threadId: String(threadId),
+    method: "session",
+    detail: `Unknown ${provider} adapter thread: ${String(threadId)}`,
   });
 }
 
@@ -251,10 +248,10 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
     const startSession: ProviderAdapterShape<ProviderAdapterError>["startSession"] = (input) =>
       Effect.gen(function* () {
         if (input.provider !== undefined && input.provider !== provider) {
-          return yield* new ProviderAdapterValidationError({
+          return yield* new ProviderAdapterRequestError({
             provider,
-            operation: "startSession",
-            issue: `Expected provider '${provider}' but received '${input.provider}'.`,
+            method: "startSession",
+            detail: `Expected provider '${provider}' but received '${input.provider}'.`,
           });
         }
 
@@ -303,10 +300,10 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
 
         const response = state.queuedResponses.shift();
         if (!response) {
-          return yield* new ProviderAdapterValidationError({
+          return yield* new ProviderAdapterRequestError({
             provider,
-            operation: "sendTurn",
-            issue: `No queued turn response for thread ${input.threadId}.`,
+            method: "sendTurn",
+            detail: `No queued turn response for thread ${input.threadId}.`,
           });
         }
 
@@ -459,10 +456,10 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       }
       if (!Number.isInteger(numTurns) || numTurns < 0 || numTurns > state.snapshot.turns.length) {
         return Effect.fail(
-          new ProviderAdapterValidationError({
+          new ProviderAdapterRequestError({
             provider,
-            operation: "rollbackThread",
-            issue: "numTurns must be an integer between 0 and current turn count.",
+            method: "rollbackThread",
+            detail: "numTurns must be an integer between 0 and current turn count.",
           }),
         );
       }
@@ -505,7 +502,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
     const queueTurnResponse = (
       threadId: ThreadId,
       response: TestTurnResponse,
-    ): Effect.Effect<void, ProviderAdapterSessionNotFoundError> =>
+    ): Effect.Effect<void, ProviderAdapterRequestError> =>
       Effect.sync(() => sessions.get(threadId)).pipe(
         Effect.flatMap((state) =>
           state
