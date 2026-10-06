@@ -380,7 +380,12 @@ import {
   useEnvironmentSettings,
 } from "../hooks/useSettings";
 import { ContentDirectionScope } from "../scient/bidi/ContentDirectionScope";
-// SCIENT-FORK:START — token-limit stop notice.
+// SCIENT-FORK:START — revert dialog diagnostics.
+import {
+  ScientRevertDialogDiagnostics,
+  useFileHistoryIssue,
+} from "../scient/chat/ScientRevertDialogDiagnostics";
+// token-limit stop notice.
 import { tokenLimitBannerItems, useTokenLimitNotice } from "../scient/chat/tokenLimitNotice";
 // SCIENT-FORK:END
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -3394,10 +3399,7 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:START — a checkpoint the server could not capture leaves a
   // diagnostics affordance in the revert dialog so a missing diff is
   // explainable rather than silent.
-  const fileHistoryIssue = useMemo(
-    () => turnDiffSummaries.findLast((checkpoint) => checkpoint.status === "error") ?? null,
-    [turnDiffSummaries],
-  );
+  const fileHistoryIssue = useFileHistoryIssue(turnDiffSummaries);
   // SCIENT-FORK:END
   const pendingRequestModel = useMemo(
     () =>
@@ -12115,39 +12117,12 @@ function ChatViewContent(props: ChatViewProps) {
               composer.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {fileHistoryIssue ? (
-            <details className="text-sm text-muted-foreground">
-              <summary>File history diagnostics</summary>
-              <p>
-                Some file history or change comparisons were unavailable in this conversation. This
-                does not affect the agent’s answers.
-              </p>
-              <pre className="whitespace-pre-wrap break-words">
-                {JSON.stringify(
-                  {
-                    runId: fileHistoryIssue.runId,
-                    scopeId: fileHistoryIssue.scopeId,
-                    checkpointId: fileHistoryIssue.checkpointId,
-                    status: fileHistoryIssue.status,
-                  },
-                  null,
-                  2,
-                )}
-              </pre>
-            </details>
-          ) : null}
-          {pendingRevert?.error ? (
-            <div role="alert" className="space-y-2 text-sm">
-              <p>
-                Could not rewind this conversation. Your current conversation and files may need
-                review before retrying.
-              </p>
-              <details>
-                <summary>Details</summary>
-                <pre className="whitespace-pre-wrap break-words">{pendingRevert.error}</pre>
-              </details>
-            </div>
-          ) : null}
+          {/* SCIENT-FORK:START — file history diagnostics and the last rewind failure. */}
+          <ScientRevertDialogDiagnostics
+            fileHistoryIssue={fileHistoryIssue}
+            error={pendingRevert?.error}
+          />
+          {/* SCIENT-FORK:END */}
           <AlertDialogFooter>
             <AlertDialogClose
               render={<Button variant="outline" disabled={isRevertingCheckpoint} />}
