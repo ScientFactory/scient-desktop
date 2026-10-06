@@ -1,4 +1,3 @@
-import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   MessageId,
   ProviderSessionId,
@@ -13,10 +12,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { prepareScientV2SkillScope } from "../scient/skills/ScientV2SkillTurn.ts";
+import {
+  prepareScientV2SkillScopeForSteer,
+  validateScientV2SteerInput,
+} from "../scient/skills/ScientV2SkillTurn.ts";
 import { ScientSkillSessionPlanner } from "../scient/skills/ScientSkillSession.ts";
 import { ServerConfig } from "../config.ts";
-import { validateProviderCurrentInput } from "./AttachmentPrompt.ts";
 import {
   makeInterruptPendingStart,
   type InterruptPendingStart,
@@ -315,34 +316,23 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
-          const prepared = yield* prepareScientV2SkillScope({
+          // SCIENT-FORK:START — skill scope and current-input check before the recheck.
+          const prepared = yield* prepareScientV2SkillScopeForSteer({
             threadId: input.threadId,
-            driver: loaded.session.value.driver,
-            mcpSessionInjection: loaded.session.value.mcpSessionInjection === true,
-            projectRoot: loaded.session.value.providerSession.cwd ?? undefined,
-            text: projectComposerContextForProvider({
-              text: message.text,
-              records: message.context?.records ?? [],
-            }),
-            selectedScientSkillNames: message.selectedScientSkillNames ?? [],
-          }).pipe(Effect.provideService(ScientSkillSessionPlanner, skillPlanner));
-          const validateCurrent = (text: string) =>
-            Effect.fromResult(
-              validateProviderCurrentInput({
-                text,
-                attachments: message.attachments,
-                attachmentsDir: serverConfig.attachmentsDir,
-              }),
-            );
+            session: loaded.session.value,
+            message,
+            skillPlanner,
+          });
           let text = prepared.text;
-          yield* validateCurrent(text).pipe(
-            Effect.catchTag("ProviderCurrentInputError", (cause) => {
-              const fallback = prepared.textWithoutCatalogMarker;
-              if (fallback === undefined) return Effect.fail(cause);
+          yield* validateScientV2SteerInput({
+            prepared,
+            attachments: message.attachments,
+            attachmentsDir: serverConfig.attachmentsDir,
+            useFallback: (fallback) => {
               text = fallback;
-              return validateCurrent(fallback);
-            }),
-          );
+            },
+          });
+          // SCIENT-FORK:END
           const current = yield* load({ ...input, operation: "steer" });
           if (
             Option.isNone(current.session) ||
