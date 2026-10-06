@@ -4,21 +4,15 @@ import {
   ProjectionPendingApprovalStatus as publicStatus,
   ProjectionPendingApprovalDecision as publicDecision,
 } from "./index.ts";
-import {
-  ProjectionPendingApprovalStatus as legacyStatus,
-  ProjectionPendingApprovalDecision as legacyDecision,
-} from "./orchestration.ts";
 import { ProviderApprovalDecision } from "./providerPolicy.ts";
 import {
   ProjectionPendingApprovalStatus,
   ProjectionPendingApprovalDecision,
 } from "./scientApprovalProjection.ts";
 
-it("keeps single SQL approval-history schemas across leaf, public and legacy owners", () => {
+it("keeps single SQL approval-history schemas across leaf and public owners", () => {
   expect(publicStatus).toBe(ProjectionPendingApprovalStatus);
-  expect(legacyStatus).toBe(ProjectionPendingApprovalStatus);
   expect(publicDecision).toBe(ProjectionPendingApprovalDecision);
-  expect(legacyDecision).toBe(ProjectionPendingApprovalDecision);
   expect(ProjectionPendingApprovalStatus.literals).toEqual(["pending", "resolved"]);
   expect(ProjectionPendingApprovalDecision.members[0]).toBe(ProviderApprovalDecision);
   expect(ProjectionPendingApprovalDecision.members[1]).toBe(Schema.Null);

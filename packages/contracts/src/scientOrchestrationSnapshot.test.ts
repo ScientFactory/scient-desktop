@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import * as Public from "./index.ts";
-import * as Historical from "./orchestration.ts";
 import * as Snapshot from "./scientOrchestrationSnapshot.ts";
 
 const bindings = {
@@ -22,13 +21,12 @@ const bindings = {
   OrchestrationThreadDetailSnapshot: Snapshot.OrchestrationThreadDetailSnapshot,
   OrchestrationThreadStreamItem: Snapshot.OrchestrationThreadStreamItem,
 } satisfies {
-  [Name in keyof typeof Snapshot]: (typeof Historical)[Name] & (typeof Public)[Name];
+  [Name in keyof typeof Snapshot]: (typeof Public)[Name];
 };
 
 describe("Scient orchestration snapshot owner", () => {
-  it("keeps every historical and public snapshot binding identical to its owner", () => {
+  it("keeps every public snapshot binding identical to its owner", () => {
     for (const name of Object.keys(bindings) as Array<keyof typeof bindings>) {
-      expect(Historical[name]).toBe(bindings[name]);
       expect(Public[name]).toBe(bindings[name]);
     }
   });

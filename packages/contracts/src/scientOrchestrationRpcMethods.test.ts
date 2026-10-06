@@ -1,11 +1,9 @@
 import { expect, it } from "@effect/vitest";
 import { ORCHESTRATION_WS_METHODS as publicMethods } from "./index.ts";
-import { ORCHESTRATION_WS_METHODS as legacyMethods } from "./orchestration.ts";
 import { ORCHESTRATION_WS_METHODS } from "./scientOrchestrationRpcMethods.ts";
 
-it("keeps one ordered current wire-name object across leaf, public and legacy exports", () => {
+it("keeps one ordered current wire-name object across leaf and public exports", () => {
   expect(publicMethods).toBe(ORCHESTRATION_WS_METHODS);
-  expect(legacyMethods).toBe(ORCHESTRATION_WS_METHODS);
   expect(Object.entries(ORCHESTRATION_WS_METHODS)).toEqual([
     ["dispatchCommand", "orchestration.dispatchCommand"],
     ["getForkOptions", "orchestration.getForkOptions"],

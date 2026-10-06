@@ -3,7 +3,6 @@ import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
 import * as PublicContracts from "./index.ts";
-import * as OldOrchestration from "./orchestration.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WsRpcGroup } from "./rpc.ts";
 import {
@@ -30,17 +29,10 @@ const legacyMatch = {
 };
 
 describe("Scient nullable thread search contracts", () => {
-  it("selects the same nullable schema objects through old and public exports", () => {
-    expect(OldOrchestration.OrchestrationThreadSearchMatch).toBe(OrchestrationThreadSearchMatch);
+  it("selects the same nullable schema objects through public exports", () => {
     expect(PublicContracts.OrchestrationThreadSearchMatch).toBe(OrchestrationThreadSearchMatch);
-    expect(OldOrchestration.OrchestrationSearchThreadsResult).toBe(
-      OrchestrationSearchThreadsResult,
-    );
     expect(PublicContracts.OrchestrationSearchThreadsResult).toBe(OrchestrationSearchThreadsResult);
     expect(OrchestrationThreadSearchMatch.fields.source).toBe(OrchestrationThreadSearchSource);
-    expect(OldOrchestration.OrchestrationRpcSchemas.searchThreads.output).toBe(
-      OrchestrationSearchThreadsResult,
-    );
   });
 
   it("round-trips nullable history and project-scoped matches without changing their wire fields", () => {

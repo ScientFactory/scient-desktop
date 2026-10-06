@@ -39,10 +39,10 @@ export * from "./vcs.ts";
 export * from "./sourceControl.ts";
 export * from "./projectClone.ts";
 export * from "./pullRequest.ts";
-// SCIENT-ORCHESTRATION:START — the V1 orchestration contract stays exported
-// until the engine port removes its consumers. Its attachment and screenshot
-// schemas now come from chatAttachment.ts, which is exported below.
-export * from "./orchestration.ts";
+// SCIENT-ORCHESTRATION:START — historical data keeps its canonical codecs
+// after the V1 execution facade retires.
+export * from "./legacy/orchestrationEvent.ts";
+export { ScientConversationDispatchResult as DispatchResult } from "./scientConversationFork.ts";
 export * from "./scientConversationOrigin.ts";
 export * from "./scientConversationFork.ts";
 export * from "./scientConversationView.ts";
@@ -52,7 +52,6 @@ export * from "./scientQuestionAnswer.ts";
 // SCIENT-FORK:START — explicit exports select Scient's compatibility variants.
 // Dispatch failures retain the fork disposition. Public/MCP search retains
 // nullable project ids; modern RPC uses the non-null threadSearch.ts variant.
-export { OrchestrationDispatchCommandError } from "./orchestration.ts";
 export {
   OrchestrationSearchThreadsResult,
   OrchestrationThreadSearchMatch,
