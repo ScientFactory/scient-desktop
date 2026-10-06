@@ -63,7 +63,37 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import { frozenForkPortableReason } from "./scient-fork/ConversationForkNativeSource.ts";
+import {
+  frozenForkPortableReason,
+  inheritedForkPrefixIsNative,
+} from "./scient-fork/ConversationForkNativeSource.ts";
+// SCIENT-FORK:START — Scient orchestration modules
+import { dispatchCheckpointRollbackComplete } from "./scient-fork/CheckpointRollbackCompletion.ts";
+import {
+  ownerPreservingSwitchPlan,
+  settingExecutionOwnerOf,
+} from "./scient-fork/SettingExecutionOwner.ts";
+import {
+  queuedRunExecutionThread,
+  queuedRunStartAttempt,
+  steerExecutionThread,
+} from "./scient-fork/RunStartDecisions.ts";
+import {
+  conversationForkHistoryEvents,
+  conversationForkProvisionEffect,
+} from "./scient-fork/ConversationForkPlan.ts";
+import {
+  classifyProviderWorkAdmission,
+  commitProviderWorkAdmission,
+  OrchestratorProviderWorkDeferredError,
+  providerWorkMessageCommand,
+} from "./scient-fork/ProviderWorkAdmission.ts";
+import {
+  heldSteerStopCancellation,
+  isReplayableBesideAdmittedSteer,
+  makeDroidHeldSteer,
+} from "./scient-fork/DroidHeldSteer.ts";
+// SCIENT-FORK:END
 import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "./ProjectStore.ts";
@@ -82,8 +112,14 @@ import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { threadShellFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
 import { EventSinkV2 } from "./EventSink.ts";
 import { EventStoreV2 } from "./EventStore.ts";
-import { sourcePlanFingerprint } from "./SourcePlan.ts";
-import { planHeldQueueAdmission } from "./legacy/HeldQueueAdmission.ts";
+import { queuedSourcePlanIsUsable, sourcePlanFingerprint } from "./SourcePlan.ts";
+import {
+  heldQueueAdmissionEvents,
+  heldQueueProviderThread,
+  legacyQueueImportRefusal,
+  planHeldQueueAdmission,
+  planLegacyQueueReorder,
+} from "./legacy/HeldQueueAdmission.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import {
@@ -209,15 +245,9 @@ export class OrchestratorCommandPreviouslyRejectedError extends Schema.TaggedErr
   }
 }
 
-/** A still-owned native generation can retry once its predecessor has settled. */
-export class OrchestratorProviderWorkDeferredError extends Schema.TaggedError<OrchestratorProviderWorkDeferredError>()(
-  "OrchestratorProviderWorkDeferredError",
-  { commandId: CommandId, threadId: ThreadId, workId: Schema.String },
-) {
-  override get message(): string {
-    return "Provider-initiated work is waiting for its predecessor to complete.";
-  }
-}
+// SCIENT-FORK:START — provider-initiated work, kept importable from Orchestrator.
+export { OrchestratorProviderWorkDeferredError };
+// SCIENT-FORK:END
 
 export class OrchestratorCommandIdConflictError extends Schema.TaggedError<OrchestratorCommandIdConflictError>()(
   "OrchestratorCommandIdConflictError",
@@ -1255,23 +1285,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         );
         const now = yield* DateTime.now;
-        const providerThread: OrchestrationV2ProviderThread = {
-          id: providerThreadId,
+        const providerThread = heldQueueProviderThread({
+          providerThreadId,
           driver: adapter.driver,
           providerInstanceId: queuedRun.providerInstanceId,
-          providerSessionId: null,
-          appThreadId: threadId,
-          ownerNodeId: null,
-          nativeThreadRef: null,
-          nativeConversationHeadRef: null,
-          status: "not_loaded",
-          firstRunOrdinal: null,
-          lastRunOrdinal: null,
-          handoffIds: [],
-          forkedFrom: null,
-          createdAt: now,
-          updatedAt: now,
-        };
+          threadId,
+          now,
+        });
         yield* writeSystemEvents([
           {
             type: "provider-thread.updated",
@@ -1317,27 +1337,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       const now = yield* DateTime.now;
-      const attemptOrdinal =
-        previousAttempt.status === "failed"
-          ? Math.max(
-              ...projection.attempts
-                .filter((candidate) => candidate.runId === queuedRun.id)
-                .map((candidate) => candidate.attemptOrdinal),
-            ) + 1
-          : previousAttempt.attemptOrdinal;
-      const attempt: OrchestrationV2RunAttempt =
-        previousAttempt.status === "failed"
-          ? {
-              ...previousAttempt,
-              id: idAllocator.derive.runAttempt({ runId: queuedRun.id, attemptOrdinal }),
-              attemptOrdinal,
-              providerTurnId: null,
-              reason: "retry",
-              status: "pending",
-              startedAt: null,
-              completedAt: null,
-            }
-          : previousAttempt;
+      // SCIENT-FORK:START — a failed attempt is retried as a fresh attempt.
+      const attempt = queuedRunStartAttempt({
+        queuedRun,
+        previousAttempt,
+        attempts: projection.attempts,
+        ids: idAllocator.derive,
+      });
+      // SCIENT-FORK:END
       const commandId = CommandId.make(`command:system:start-queued:${queuedRun.id}:${attempt.id}`);
       const sourcePlanRef = queuedRun.sourcePlanRef ?? queuedRun.legacyQueue?.sourceProposedPlan;
       const sourcePlan =
@@ -1347,21 +1354,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (sourcePlanRef !== undefined) {
         const sourceThread = yield* projectionStore.getThreadShell(sourcePlanRef.threadId);
         if (
-          sourcePlan?.kind !== "proposed_plan" ||
-          sourcePlan.id !== sourcePlanRef.planId ||
-          sourcePlan.threadId !== sourcePlanRef.threadId ||
-          (sourcePlan.status !== "active" &&
-            !(
-              sourcePlan.status === "completed" &&
-              sourcePlan.consumedBy?.threadId === threadId &&
-              sourcePlan.consumedBy.runId === queuedRun.id
-            )) ||
-          (queuedRun.sourcePlanFingerprint !== undefined &&
-            queuedRun.sourcePlanFingerprint !== sourcePlanFingerprint(sourcePlan)) ||
-          sourceThread === null ||
-          sourceThread.deletedAt !== null ||
-          sourceThread.archivedAt !== null ||
-          sourceThread.projectId !== projection.thread.projectId
+          !queuedSourcePlanIsUsable({
+            plan: sourcePlan,
+            ref: sourcePlanRef,
+            sourceThread,
+            threadId,
+            queuedRun,
+            projectId: projection.thread.projectId,
+          })
         ) {
           return yield* new OrchestratorDispatchError({
             commandId,
@@ -1370,40 +1370,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         }
       }
-      const queuedMessageIds = new Set(
-        projection.runs.filter((run) => run.status === "queued").map((run) => run.userMessageId),
-      );
-      const initialTitleSeed = queuedRun.legacyQueue?.titleSeed;
-      const generateInitialTitle =
-        initialTitleSeed !== undefined &&
-        queuedRun.legacyQueue?.titleAtAdmission === projection.thread.title &&
-        !isNativeMaintenanceCommand(queuedMessage) &&
-        !projection.messages.some(
-          (message) =>
-            message.role === "user" &&
-            !queuedMessageIds.has(message.id) &&
-            !isNativeMaintenanceCommand(message),
-        );
-      const capturedThread = {
-        ...projection.thread,
-        ...(generateInitialTitle
-          ? {
-              title: initialTitleSeed ?? projection.thread.title,
-              titleRegeneration: { requestId: commandId, startedAt: now },
-            }
-          : {}),
-        runtimeMode:
-          queuedRun.runtimeMode ??
-          queuedRun.legacyQueue?.runtimeMode ??
-          projection.thread.runtimeMode,
-        interactionMode:
-          queuedRun.interactionMode ??
-          queuedRun.legacyQueue?.interactionMode ??
-          projection.thread.interactionMode,
-      };
-      const modesChanged =
-        capturedThread.runtimeMode !== projection.thread.runtimeMode ||
-        capturedThread.interactionMode !== projection.thread.interactionMode;
+      // SCIENT-FORK:START — the run executes under its captured modes and seeded title.
+      const { capturedThread, generateInitialTitle, modesChanged } = queuedRunExecutionThread({
+        projection,
+        queuedRun,
+        queuedMessage,
+        commandId,
+        now,
+        isNativeMaintenanceCommand,
+      });
+      // SCIENT-FORK:END
       const selectionChanged = !modelSelectionsEqual(
         projection.thread.modelSelection,
         queuedRun.modelSelection,
@@ -2708,6 +2684,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           )
           .pipe(mapDispatchError(command))
       : null;
+    // SCIENT-FORK:START — defaults cannot replace a provider-initiated or held Droid owner.
     const settingExecutionOwner =
       command.type === "thread.model-selection.set" ||
       command.type === "provider.switch" ||
@@ -2715,27 +2692,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? yield* loadProjectionForCommand(command, ["runs", "messages"], {
             messageRoles: ["system"],
             turnItemTypes: [],
-          }).pipe(
-            Effect.map((projection) => {
-              const run = projection.runs.find((run) =>
-                ["starting", "running", "waiting"].includes(run.status),
-              );
-              const source = projection.messages.find(
-                (message) => message.id === run?.userMessageId,
-              )?.notification?.source;
-              return {
-                native:
-                  source?.kind === "provider_work" &&
-                  source.providerThreadId === thread.activeProviderThreadId
-                    ? source
-                    : undefined,
-                // SCIENT: next-turn defaults cannot detach a source that still owns held Droid input.
-                droid: run?.status === "running" ? run.heldDroidSteer : undefined,
-                providerThreadId: run?.providerThreadId,
-              };
-            }),
-          )
+          }).pipe(Effect.map((projection) => settingExecutionOwnerOf(projection, thread)))
         : undefined;
+    // SCIENT-FORK:END
     const settingNativeOwner = settingExecutionOwner?.native;
     const settingDroidOwner = settingExecutionOwner?.droid;
     const providerSwitchPlan =
@@ -2751,28 +2710,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   }),
               ),
             );
-            // SCIENT: preserve this exact held source; admission still uses its captured target.
-            if (settingDroidOwner !== undefined)
-              return {
-                instanceChanged: command.modelSelection.instanceId !== thread.providerInstanceId,
-                modelChanged: !modelSelectionsEqual(thread.modelSelection, command.modelSelection),
-                targetProviderThreadId: settingExecutionOwner!.providerThreadId!,
-                releaseProviderSessionIds: [],
-                transition: { type: "reuse" as const },
-              };
-            // Defaults describe the next user turn. Do not replace the owner of
-            // a generation already admitted under its captured workspace.
-            if (
-              settingNativeOwner !== undefined &&
-              command.modelSelection.instanceId === thread.providerInstanceId
-            )
-              return {
-                instanceChanged: false,
-                modelChanged: !modelSelectionsEqual(thread.modelSelection, command.modelSelection),
-                targetProviderThreadId: settingNativeOwner.providerThreadId,
-                releaseProviderSessionIds: [],
-                transition: { type: "reuse" as const },
-              };
+            // SCIENT-FORK:START — keep the live owner; its admission uses the captured target.
+            const preserved = ownerPreservingSwitchPlan({
+              owner: settingExecutionOwner,
+              thread,
+              modelSelection: command.modelSelection,
+            });
+            if (preserved !== undefined) return preserved;
+            // SCIENT-FORK:END
             return yield* providerSwitchService
               .plan({
                 projection: providerContext!,
@@ -3612,50 +3557,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: transfer,
     });
-    for (const payload of history.messages)
-      yield* emitEvent({
-        type: "message.updated",
-        threadId: targetThread.id,
-        occurredAt: now,
-        payload,
-      });
-    for (const payload of history.items)
-      yield* emitEvent({
-        type: "turn-item.updated",
-        threadId: targetThread.id,
-        occurredAt: now,
-        payload,
-      });
-    yield* emitEvent({
-      type: "turn-item.updated",
-      threadId: targetThread.id,
+    // SCIENT-FORK:START — the fork carries its frozen history and provisions its workspace.
+    for (const event of conversationForkHistoryEvents({
+      targetThreadId: targetThread.id,
+      history,
+      boundaryItem,
       occurredAt: now,
-      payload: boundaryItem,
-    });
-    for (const payload of history.nodes)
-      yield* emitEvent({
-        type: "node.updated",
-        threadId: targetThread.id,
-        occurredAt: now,
-        payload,
-      });
-    for (const payload of history.plans)
-      yield* emitEvent({
-        type: "plan.updated",
-        threadId: targetThread.id,
-        occurredAt: now,
-        payload,
-      });
-    if (targetThread.conversationFork?.status === "pending")
-      yield* Ref.update(effects, (existing) => [
-        ...existing,
-        {
-          id: `effect:${command.commandId}:scient-fork.provision`,
-          commandId: command.commandId,
-          threadId: targetThread.id,
-          request: { type: "scient-fork.provision" },
-        } satisfies PendingOrchestrationEffectV2,
-      ]);
+    }))
+      yield* emitEvent(event);
+    const provision = conversationForkProvisionEffect(command.commandId, targetThread);
+    if (provision !== undefined) yield* Ref.update(effects, (existing) => [...existing, provision]);
+    // SCIENT-FORK:END
   });
 
   const dispatchThreadMergeBack = Effect.fn("orchestrationV2.dispatch.threadMergeBack")(function* (
@@ -3960,34 +3872,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const session = sessionOption.value;
       const now = yield* DateTime.now;
       const emitEvent = emit(input.events, input.command);
-      const executionThread = {
-        ...input.projection.thread,
-        runtimeMode:
-          input.runtimeMode ??
-          (input.delegatedCompletion === undefined ? undefined : targetRun.runtimeMode) ??
-          input.projection.thread.runtimeMode,
-        interactionMode:
-          input.interactionMode ??
-          (input.delegatedCompletion === undefined ? undefined : targetRun.interactionMode) ??
-          input.projection.thread.interactionMode,
-      };
-      const executionModesChanged =
-        // An older active run has no captured policy to prove that a steer can
-        // honor explicitly submitted modes. Restart rather than inherit it.
-        (input.runtimeMode !== undefined &&
-          targetRun.runtimeMode === undefined &&
-          targetRun.legacyQueue?.runtimeMode === undefined) ||
-        (input.interactionMode !== undefined &&
-          targetRun.interactionMode === undefined &&
-          targetRun.legacyQueue?.interactionMode === undefined) ||
-        executionThread.runtimeMode !==
-          (targetRun.runtimeMode ??
-            targetRun.legacyQueue?.runtimeMode ??
-            input.projection.thread.runtimeMode) ||
-        executionThread.interactionMode !==
-          (targetRun.interactionMode ??
-            targetRun.legacyQueue?.interactionMode ??
-            input.projection.thread.interactionMode);
+      // SCIENT-FORK:START — a steer executes under its submitted or captured modes.
+      const { executionThread, executionModesChanged } = steerExecutionThread({
+        thread: input.projection.thread,
+        targetRun,
+        runtimeMode: input.runtimeMode,
+        interactionMode: input.interactionMode,
+        delegatedCompletion: input.delegatedCompletion,
+      });
+      // SCIENT-FORK:END
       const selectionChanged = !modelSelectionsEqual(
         targetRun.modelSelection,
         input.modelSelection,
@@ -4140,137 +4033,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         input.delegatedCompletion === undefined &&
         input.admittedDroidSteer === undefined
       ) {
-        if (targetRun.activeAttemptId === null || session.reserveDroidSteer === undefined)
-          return yield* new OrchestratorDispatchError({
-            commandId: input.command.commandId,
-            commandType: input.command.type,
-            cause: "Droid has no live held-Steer owner.",
-          });
-        if (session.droidSteerConsumed?.() === true)
-          return yield* new OrchestratorDispatchError({
-            commandId: input.command.commandId,
-            commandType: input.command.type,
-            cause: "The prior Droid Steer has already entered native admission.",
-          });
-        session.invalidateDroidSteer?.();
-        const policy = yield* runtimePolicy
-          .resolve({ thread: executionThread, modelSelection: input.modelSelection })
-          .pipe(mapDispatchError(input.command));
-        const held: NonNullable<OrchestrationV2Run["heldDroidSteer"]> = {
-          revision: input.command.commandId,
-          messageId: input.messageId,
-          sourceAttemptId: targetRun.activeAttemptId,
-          sourceRootNodeId: rootNodeId,
-          sourceProviderTurnId: providerTurn.id,
-          sourceProviderSessionId: providerSessionId,
-          modelSelection: input.modelSelection,
-          runtimePolicy: {
-            ...policy,
-            cwd: policy.cwd ?? executionThread.worktreePath ?? session.providerSession.cwd,
-          },
-          phase: "held",
-        };
-        const readHeld = projectionStore.getThreadRecords(input.command.threadId, ["runs"]).pipe(
-          Effect.map(
-            (p) =>
-              p.runs.find(
-                (run) => run.id === targetRun.id && run.activeAttemptId === held.sourceAttemptId,
-              )?.heldDroidSteer,
-          ),
-          Effect.orDie,
-        );
-        yield* (
-          session.configureDroidSteerOwner?.({
-            attemptId: held.sourceAttemptId,
-            held: readHeld.pipe(Effect.map((intent) => intent !== undefined)),
-            drop: readHeld.pipe(
-              Effect.flatMap((intent) =>
-                intent === undefined
-                  ? Effect.void
-                  : dispatchWithReceipt({
-                      type: "droid-steer.admission",
-                      commandId: CommandId.make(`droid-drop:${intent.revision}`),
-                      threadId: input.command.threadId,
-                      runId: targetRun.id,
-                      revision: intent.revision,
-                      operation: "drop",
-                    }).pipe(Effect.asVoid, Effect.orDie),
-              ),
-            ),
-          }) ?? Effect.void
-        );
-        if (
-          !input.projection.turnItems.some(
-            (item) =>
-              item.runId === targetRun.id &&
-              item.type === "system_notice" &&
-              item.message === "Follow-up held until Droid reaches a safe boundary.",
-          )
-        ) {
-          yield* emitEvent({
-            type: "turn-item.updated",
-            threadId: input.command.threadId,
-            runId: targetRun.id,
-            nodeId: rootNodeId,
-            providerInstanceId: targetRun.providerInstanceId,
-            occurredAt: now,
-            payload: {
-              id: idAllocator.derive.turnItemFromProviderItem({
-                driver: session.driver,
-                nativeItemId: `held-steer:${targetRun.id}`,
-              }),
-              threadId: input.command.threadId,
-              runId: targetRun.id,
-              nodeId: rootNodeId,
-              providerThreadId: providerThread.id,
-              providerTurnId: providerTurn.id,
-              nativeItemRef: null,
-              parentItemId: null,
-              ordinal: (yield* nextTurnItemOrdinal(input.projection)) + 1,
-              status: "completed",
-              title: null,
-              startedAt: now,
-              completedAt: now,
-              updatedAt: now,
-              type: "system_notice",
-              message: "Follow-up held until Droid reaches a safe boundary.",
-              createdBy: "system",
-              creationSource: "server",
-            },
-          });
-        }
-        yield* appendSteeringMessage({
-          runId: targetRun.id,
-          nodeId: rootNodeId,
-          providerTurnId: providerTurn.id,
-          providerThreadId: providerThread.id,
-          providerInstanceId: targetRun.providerInstanceId,
+        yield* holdDroidSteer(input, {
+          targetRun,
+          rootNodeId,
+          providerThread,
+          providerSessionId,
+          providerTurn,
+          session,
+          executionThread,
+          now,
+          emitEvent,
+          appendSteeringMessage,
         });
-        yield* emitEvent({
-          type: "run.updated",
-          threadId: input.command.threadId,
-          runId: targetRun.id,
-          nodeId: rootNodeId,
-          providerInstanceId: targetRun.providerInstanceId,
-          occurredAt: now,
-          payload: { ...targetRun, heldDroidSteer: held },
-        });
-        yield* Ref.update(input.effects, (existing) => [
-          ...existing,
-          {
-            id: `effect:${input.command.commandId}:droid-held-steer:${providerTurn.id}`,
-            commandId: input.command.commandId,
-            threadId: input.command.threadId,
-            request: {
-              type: "provider-turn.restart",
-              providerSessionId,
-              providerThreadId: providerThread.id,
-              providerTurnId: providerTurn.id,
-              interruptedAttemptId: held.sourceAttemptId,
-              runId: targetRun.id,
-            },
-          } satisfies PendingOrchestrationEffectV2,
-        ]);
         return;
       }
       // SCIENT-FORK:END
@@ -4482,17 +4256,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             toProviderInstanceId: input.modelSelection.instanceId,
             coveredRunOrdinals: { from: 1, to: targetRun.ordinal },
             strategy: "full_thread_summary",
-            // SCIENT: held user rows are accepted intents, not previously delivered native history.
-            // Keep the source's actual input, but do not replay older or current held intents.
-            items: (yield* readHandoffItems(input.command.threadId)).filter(
-              (item) =>
-                input.admittedDroidSteer === undefined ||
-                item.type !== "user_message" ||
-                item.runId !== targetRun.id ||
-                item.nodeId !== rootNodeId ||
-                (item.inputIntent !== "steer" && item.inputIntent !== "promoted_queued_to_steer") ||
-                item.messageId === targetRun.userMessageId,
+            // SCIENT-FORK:START — held Droid intents are not delivered native history.
+            items: (yield* readHandoffItems(input.command.threadId)).filter((item) =>
+              isReplayableBesideAdmittedSteer(
+                item,
+                input.admittedDroidSteer,
+                targetRun,
+                rootNodeId,
+              ),
             ),
+            // SCIENT-FORK:END
             runs: input.projection.runs,
             createdAt: now,
           })
@@ -4780,180 +4553,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         } satisfies PendingOrchestrationEffectV2,
       ]);
     });
-
-  // SCIENT-FORK:START — terminal drop is visible without fabricating a provider failure or ACK.
-  const emitDroidSteerDropped = (
-    command: OrchestrationV2ServerCommand,
-    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-    run: OrchestrationV2Run,
-    held: NonNullable<OrchestrationV2Run["heldDroidSteer"]>,
-    projection: Pick<OrchestrationV2ThreadProjection, "thread" | "turnItems">,
-  ) =>
-    Effect.gen(function* () {
-      const now = yield* DateTime.now;
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "turn-item.updated",
-        threadId: run.threadId,
-        runId: run.id,
-        nodeId: held.sourceRootNodeId,
-        providerInstanceId: run.providerInstanceId,
-        occurredAt: now,
-        payload: {
-          id: idAllocator.derive.userTurnItem({
-            messageId: MessageId.make(`droid-not-delivered:${held.revision}`),
-          }),
-          threadId: run.threadId,
-          runId: run.id,
-          nodeId: held.sourceRootNodeId,
-          providerThreadId: run.providerThreadId,
-          providerTurnId: held.sourceProviderTurnId,
-          nativeItemRef: null,
-          parentItemId: null,
-          ordinal: yield* nextTurnItemOrdinal(projection),
-          status: "completed",
-          title: null,
-          startedAt: now,
-          completedAt: now,
-          updatedAt: now,
-          type: "system_notice",
-          message: "Your waiting message was not delivered. Send it again to continue.",
-          createdBy: "system",
-          creationSource: "server",
-        },
-      });
-    });
-  // SCIENT-FORK:END
-
-  // SCIENT-FORK:START — thread lock + canonical revision precede all external interruption.
-  const dispatchDroidSteerAdmission = (
-    command: Extract<OrchestrationV2ServerCommand, { readonly type: "droid-steer.admission" }>,
-    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
-  ) =>
-    Effect.gen(function* () {
-      const projection = yield* loadProjectionForCommand(command, [
-        "runs",
-        "messages",
-        "providerSessions",
-        "providerThreads",
-        "providerTurns",
-        "subagents",
-        "attempts",
-        "nodes",
-        "turnItems",
-      ]);
-      const run = projection.runs.find((run) => run.id === command.runId);
-      const held = run?.heldDroidSteer;
-      if (
-        run === undefined ||
-        held?.revision !== command.revision ||
-        run.activeAttemptId !== held.sourceAttemptId ||
-        run.rootNodeId !== held.sourceRootNodeId ||
-        run.status !== "running"
-      )
-        return;
-      const sessionOption = yield* providerSessions
-        .get(held.sourceProviderSessionId)
-        .pipe(mapDispatchError(command));
-      const session = Option.getOrUndefined(sessionOption);
-      if (command.operation === "complete") {
-        if (
-          held.phase !== "pre_admission" ||
-          command.lease === undefined ||
-          held.admissionLease !== command.lease ||
-          session?.droidSteerConsumed?.(command.lease) !== true
-        )
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: "Droid completion has no consumed live reservation.",
-          });
-        const message = projection.messages.find((message) => message.id === held.messageId);
-        if (message === undefined)
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: "Held Droid input is missing.",
-          });
-        yield* dispatchSteerIntoRun({
-          command: {
-            type: "message.dispatch",
-            commandId: command.commandId,
-            threadId: command.threadId,
-            messageId: message.id,
-            text: message.text,
-            attachments: message.attachments,
-            dispatchMode: { type: "steer_active", targetRunId: run.id },
-            modelSelection: held.modelSelection,
-            runtimeMode: held.runtimePolicy.runtimeMode,
-            interactionMode: held.runtimePolicy.interactionMode,
-            createdBy: message.createdBy,
-            creationSource: message.creationSource,
-          },
-          events,
-          effects,
-          projection,
-          modelSelection: held.modelSelection,
-          targetRunId: run.id,
-          messageId: message.id,
-          text: message.text,
-          attachments: message.attachments,
-          context: message.context,
-          selectedScientSkillNames: message.selectedScientSkillNames,
-          createdBy: message.createdBy,
-          creationSource: message.creationSource,
-          scheduledTaskId: message.scheduledTaskId,
-          senderThreadId: message.senderThreadId,
-          forceRestart: true,
-          runtimeMode: held.runtimePolicy.runtimeMode,
-          interactionMode: held.runtimePolicy.interactionMode,
-          admittedDroidSteer: held,
-        });
-        return;
-      }
-      if (
-        command.operation === "claim" &&
-        (held.phase !== "held" ||
-          command.lease === undefined ||
-          session?.validateDroidSteer?.(command.lease) !== true)
-      )
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: "Droid admission lost its live reservation.",
-        });
-      if (command.operation === "drop") {
-        session?.invalidateDroidSteer?.();
-        yield* emitDroidSteerDropped(command, events, run, held, projection);
-      }
-      const now = yield* DateTime.now;
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "run.updated",
-        threadId: command.threadId,
-        runId: run.id,
-        nodeId: run.rootNodeId,
-        providerInstanceId: run.providerInstanceId,
-        occurredAt: now,
-        payload: {
-          ...run,
-          heldDroidSteer:
-            command.operation === "drop"
-              ? undefined
-              : {
-                  ...held,
-                  phase: command.operation === "claim" ? "pre_admission" : "held",
-                  admissionLease: command.operation === "claim" ? command.lease : undefined,
-                },
-        },
-      });
-    });
-  // SCIENT-FORK:END
 
   const dispatchMessage = (
     command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
@@ -5788,37 +5387,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             driver: adapter.driver,
             nativeThreadId: `pending:${runId}`,
           });
-        // A completed clone owns the inherited prefix even if its first local
-        // turn failed. Reusing that exact native owner must recover only the
-        // rejected local turn, without injecting the cloned source a second time.
-        const inheritedPrefixAlreadyNative =
-          projection.thread.conversationFork != null &&
-          activeProviderThread?.nativeThreadRef?.strength === "strong" &&
-          !!activeProviderThread.nativeThreadRef.nativeId?.trim() &&
-          activeProviderThread.providerInstanceId === modelSelection.instanceId &&
-          projection.contextTransfers.some((transfer) => {
-            const frozen = transfer.frozenSource;
-            const resolution = transfer.resolution;
-            const targetRun = projection.runs.find((source) => source.id === transfer.targetRunId);
-            return (
-              transfer.type === "fork" &&
-              transfer.status === "consumed" &&
-              transfer.targetThreadId === projection.thread.id &&
-              transfer.targetProviderInstanceId === activeProviderThread.providerInstanceId &&
-              targetRun?.providerThreadId === activeProviderThread.id &&
-              targetRun.providerInstanceId === activeProviderThread.providerInstanceId &&
-              resolution?.strategy === "native_fork" &&
-              resolution.providerThreadRef.strength === "strong" &&
-              resolution.providerThreadRef.driver ===
-                activeProviderThread.nativeThreadRef?.driver &&
-              resolution.providerThreadRef.nativeId ===
-                activeProviderThread.nativeThreadRef?.nativeId &&
-              frozen !== undefined &&
-              activeProviderThread.forkedFrom?.providerThreadId ===
-                frozen.sourceProviderThread.id &&
-              activeProviderThread.forkedFrom.providerTurnId === frozen.providerTurnId
-            );
-          });
+        // SCIENT-FORK:START — a completed clone already owns its inherited prefix natively.
+        const inheritedPrefixAlreadyNative = inheritedForkPrefixIsNative({
+          projection,
+          activeProviderThread,
+          targetInstanceId: modelSelection.instanceId,
+        });
+        // SCIENT-FORK:END
         const legacyImportHandoff =
           !inheritedPrefixAlreadyNative &&
           shouldPrepareLegacyImportHandoff({
@@ -8824,14 +8399,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       let run = projection.runs.find((candidate) => candidate.id === command.runId);
       const heldBeforeStop = run?.heldDroidSteer;
       const cancelledHeldSteer =
-        heldBeforeStop === undefined
-          ? undefined
-          : {
-              effectTypes: ["provider-turn.restart"] as ReadonlyArray<
-                OrchestrationEffectRequestV2["type"]
-              >,
-              reason: "Stop invalidated the held Droid admission.",
-            };
+        heldBeforeStop === undefined ? undefined : heldSteerStopCancellation;
       const rootNode =
         run?.rootNodeId === null
           ? undefined
@@ -8862,27 +8430,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       const now = yield* DateTime.now;
-      // SCIENT: Stop invalidates the private lease before canonical cancellation can race native consumption.
-      if (run.heldDroidSteer !== undefined) {
-        const owner = yield* providerSessions
-          .get(run.heldDroidSteer.sourceProviderSessionId)
-          .pipe(mapDispatchError(command));
-        if (Option.isSome(owner)) owner.value.invalidateDroidSteer?.();
-        yield* emitDroidSteerDropped(command, events, run, run.heldDroidSteer, projection);
-        run = { ...run, heldDroidSteer: undefined };
-        yield* emit(
-          events,
+      // SCIENT-FORK:START — Stop drops held Droid input before cancellation can race admission.
+      if (run.heldDroidSteer !== undefined)
+        run = yield* dropHeldSteerOnStop(
           command,
-        )({
-          type: "run.updated",
-          threadId: command.threadId,
-          runId: run.id,
-          nodeId: rootNode.id,
-          providerInstanceId: run.providerInstanceId,
-          occurredAt: now,
-          payload: run,
-        });
-      }
+          events,
+          run,
+          run.heldDroidSteer,
+          rootNode.id,
+          projection,
+          now,
+        );
+      // SCIENT-FORK:END
       const completionMessage = projection.messages.find(
         (candidate) => candidate.id === run.userMessageId,
       );
@@ -9406,42 +8965,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
         } satisfies PendingOrchestrationEffectV2,
       ]);
-    });
-
-  const dispatchCheckpointRollbackComplete = (
-    command: Extract<
-      OrchestrationV2InternalCommand,
-      { readonly type: "checkpoint.rollback.complete" }
-    >,
-    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-  ) =>
-    Effect.gen(function* () {
-      const thread = yield* projectionStore
-        .getThread(command.threadId)
-        .pipe(mapDispatchError(command));
-      // Superseded work may finish late; it cannot settle the newer request.
-      if (
-        thread.deletedAt !== null ||
-        thread.rollbackRequestId !== command.requestId ||
-        thread.rollbackCompletedRequestId === command.requestId
-      )
-        return;
-      const now = yield* DateTime.now;
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "thread.metadata-updated",
-        threadId: command.threadId,
-        providerInstanceId: thread.providerInstanceId,
-        occurredAt: now,
-        payload: {
-          ...thread,
-          rollbackCompletedRequestId: command.requestId,
-          rollbackFailure: null,
-          updatedAt: now,
-        },
-      });
     });
 
   /**
@@ -10358,89 +9881,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchProviderSessionDetach(command, events, effects);
         break;
       case "provider-work.admit": {
+        // SCIENT-FORK:START — provider-initiated work runs only for its idle native owner.
         const projection = yield* readCommandProjection(command.threadId);
-        const nativeThread = projection.providerThreads.find(
-          (row) => row.id === command.providerThreadId,
-        );
         const session = yield* providerSessions
           .get(command.providerSessionId)
           .pipe(mapDispatchError(command));
-        // A checkpoint needs the generation's actual directory, never a newer
-        // project default substituted for unknown native workspace ownership.
-        if (command.runtimePolicy.cwd === null || !path.isAbsolute(command.runtimePolicy.cwd))
+        const admission = classifyProviderWorkAdmission({ command, projection, session, path });
+        if (admission.type === "refused")
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
-            cause: "Provider-initiated work requires a known absolute execution directory.",
+            cause: admission.cause,
           });
-        if (
-          projection.thread.archivedAt !== null ||
-          projection.thread.deletedAt !== null ||
-          projection.thread.activeProviderThreadId !== command.providerThreadId ||
-          projection.thread.providerInstanceId !== command.providerInstanceId ||
-          nativeThread?.appThreadId !== command.threadId ||
-          nativeThread.providerSessionId !== command.providerSessionId ||
-          nativeThread.providerInstanceId !== command.providerInstanceId ||
-          nativeThread.driver !== command.driver ||
-          Option.isNone(session) ||
-          session.value.driver !== command.driver ||
-          session.value.instanceId !== command.providerInstanceId ||
-          command.modelSelection.instanceId !== command.providerInstanceId ||
-          session.value.providerSession.cwd !== command.runtimePolicy.cwd ||
-          !projection.providerSessions.some(
-            (row) =>
-              row.id === command.providerSessionId &&
-              ["ready", "running", "waiting"].includes(row.status),
-          )
-        )
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: "Provider-initiated work no longer owns an idle native thread.",
-          });
-        if (
-          projection.runs.some((run) =>
-            ["queued", "starting", "running", "waiting"].includes(run.status),
-          )
-        )
+        if (admission.type === "deferred")
           return yield* new OrchestratorProviderWorkDeferredError({
             commandId: command.commandId,
             threadId: command.threadId,
             workId: command.workId,
           });
-        providerWorkOwner = session.value;
-        yield* dispatchMessage(
-          {
-            type: "message.dispatch",
-            commandId: command.commandId,
-            threadId: command.threadId,
-            messageId: command.messageId,
-            text: command.detail,
-            modelSelection: command.modelSelection,
-            runtimeMode: command.runtimePolicy.runtimeMode,
-            interactionMode: command.runtimePolicy.interactionMode,
-            attachments: [],
-            createdBy: "agent",
-            creationSource: "provider",
-            dispatchMode: { type: "start_immediately" },
-            notification: {
-              source: {
-                kind: "provider_work",
-                workId: command.workId,
-                providerThreadId: command.providerThreadId,
-                providerSessionId: command.providerSessionId,
-                modelSelection: command.modelSelection,
-                runtimePolicy: command.runtimePolicy,
-              },
-              outcome: "updated",
-              summary: "Provider started work",
-            },
-          },
-          events,
-          effects,
-          command,
-        );
+        providerWorkOwner = admission.owner;
+        yield* dispatchMessage(providerWorkMessageCommand(command), events, effects, command);
         break;
+        // SCIENT-FORK:END
       }
       case "message.dispatch": {
         // The provider owns a native subagent's conversation, so a sent
@@ -10469,48 +9931,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       }
       case "legacy-queue.import": {
+        // SCIENT-FORK:START — migration admits a held legacy entry; its source stays intact.
         const projection = yield* loadProjectionForCommand(command, [
           "runs",
           "messages",
           "providerTurns",
         ]);
-        if (
-          projection.thread.deletedAt !== null ||
-          isProviderNativeSubagentThread(projection.thread)
-        ) {
+        const refusal = legacyQueueImportRefusal({ command, projection });
+        if (refusal !== undefined) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
-            cause: "This thread cannot admit queued work. Its source remains intact.",
+            cause: refusal,
           });
         }
-        if (
-          projection.runs.some((run) => run.userMessageId === command.messageId) ||
-          projection.messages.some((message) => message.id === command.messageId)
-        ) {
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause:
-              "The legacy queue message already belongs to V2 work. Its source remains intact.",
-          });
-        }
-        const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
         const plan = planHeldQueueAdmission({ command, projection, ids: idAllocator.derive });
         yield* validateQueueBudget(command, projection, plan.message);
         const event = emit(events, command);
-        const common = {
-          threadId: command.threadId,
-          runId: plan.run.id,
-          nodeId: plan.node.id,
-          providerInstanceId: modelSelection.instanceId,
-          occurredAt: command.createdAt,
-        };
-        yield* event({ ...common, type: "run.created", payload: plan.run });
-        yield* event({ ...common, type: "run-attempt.created", payload: plan.attempt });
-        yield* event({ ...common, type: "node.updated", payload: plan.node });
-        yield* event({ ...common, type: "message.updated", payload: plan.message });
+        for (const admitted of heldQueueAdmissionEvents({ command, projection, plan }))
+          yield* event(admitted);
         break;
+        // SCIENT-FORK:END
       }
       case "notification.delivery.accept":
         yield* dispatchNotificationAccepted(command, events);
@@ -10613,33 +10054,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchQueuedRunReorder(command, events);
         break;
       case "legacy-queue.reorder": {
+        // SCIENT-FORK:START — the compatibility request reorders only legacy entries.
         const projection = yield* loadProjectionForCommand(command, ["runs", "messages"]);
-        const queued = queuedRunsInDeliveryOrder(projection);
-        const owned = queued.filter((run) => run.legacyQueue !== undefined);
-        const requested = new Set(command.queueItemIds);
-        if (
-          projection.thread.deletedAt !== null ||
-          projection.thread.archivedAt !== null ||
-          requested.size !== owned.length ||
-          requested.size !== command.queueItemIds.length ||
-          owned.some((run) => !requested.has(run.legacyQueue!.queueItemId))
-        )
+        const moved = planLegacyQueueReorder({ command, projection });
+        if (moved === undefined)
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
             cause: "The queue changed. Refresh before reordering it.",
           });
-        const ordered = command.queueItemIds.map((id) =>
-          owned.find((run) => run.legacyQueue!.queueItemId === id)!,
-        );
-        let next = 0;
-        let changed = false;
         const now = yield* DateTime.now;
-        for (const [index, original] of queued.entries()) {
-          // Other native work keeps its position; the compatibility request owns only legacy entries.
-          const run = original.legacyQueue === undefined ? original : ordered[next++]!;
-          if (run.queuePosition === index + 1) continue;
-          changed = true;
+        for (const run of moved)
           yield* emit(
             events,
             command,
@@ -10649,10 +10074,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             runId: run.id,
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: { ...run, queuePosition: index + 1 },
+            payload: run,
           });
-        }
-        if (!changed)
+        if (moved.length === 0)
           yield* emit(
             events,
             command,
@@ -10663,6 +10087,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             payload: projection.thread,
           });
         break;
+        // SCIENT-FORK:END
       }
       case "queued-run.cancel":
         yield* dispatchQueuedRunCancel(command, events);
@@ -10674,7 +10099,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchCheckpointRollback(command, events, effects);
         break;
       case "checkpoint.rollback.complete":
-        yield* dispatchCheckpointRollbackComplete(command, events);
+        // SCIENT-FORK:START — a finished rollback records its completed request.
+        yield* dispatchCheckpointRollbackComplete(
+          { projectionStore, mapDispatchError, emit },
+          command,
+          events,
+        );
+        // SCIENT-FORK:END
         break;
       case "checkpoint.rollback.fail":
         yield* dispatchCheckpointRollbackFail(command, events);
@@ -10885,30 +10316,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
 
-    // Thread → native generation → SQL. The cached planning owner is rechecked
-    // inside the fence; physical shutdown never runs while that fence is held.
+    // SCIENT-FORK:START — provider-initiated work commits inside its native admission fence.
     const committed = yield* command.type === "provider-work.admit"
-      ? Effect.gen(function* () {
-          if (plan.providerWorkOwner === undefined)
-            return yield* new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause: "Provider-initiated work has no native admission owner.",
-            });
-          const result = yield* providerSessions.withProviderWorkAdmission(
-            command,
-            plan.providerWorkOwner,
-            commit,
-          );
-          if (Option.isNone(result))
-            return yield* new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause: "Provider-initiated work lost its native generation before admission.",
-            });
-          return result.value;
+      ? commitProviderWorkAdmission({
+          DispatchError: OrchestratorDispatchError,
+          providerSessions,
+          command,
+          owner: plan.providerWorkOwner,
+          commit,
         })
       : commit;
+    // SCIENT-FORK:END
 
     if (committed.receipt.status === "rejected") {
       return yield* new OrchestratorCommandPreviouslyRejectedError({
@@ -10944,6 +10362,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       dispatchWithReceiptEffect(command),
     );
   };
+
+  // SCIENT-FORK:START — held Droid Steer handlers, bound once like the queue hold below.
+  const {
+    emitDroidSteerDropped,
+    dispatchDroidSteerAdmission,
+    holdDroidSteer,
+    dropHeldSteerOnStop,
+  } = makeDroidHeldSteer({
+    DispatchError: OrchestratorDispatchError,
+    idAllocator,
+    projectionStore,
+    providerSessions,
+    runtimePolicy,
+    emit,
+    mapDispatchError,
+    nextTurnItemOrdinal,
+    loadProjectionForCommand,
+    dispatchSteerIntoRun,
+    dispatchWithReceipt,
+  });
+  // SCIENT-FORK:END
 
   // SCIENT-FORK:START terminal-queue-hold
   const { holdQueueAfterTerminal, holdLatestTerminalBeforePromotion } = makeScientTerminalQueueHold(

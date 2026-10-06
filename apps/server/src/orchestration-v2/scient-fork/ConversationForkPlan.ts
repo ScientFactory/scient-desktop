@@ -8,7 +8,10 @@ import {
   OrchestrationV2ConversationMessageJson,
   OrchestrationV2TurnItemJson,
   ChatAttachment,
+  type CommandId,
+  type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ExecutionNode,
@@ -18,10 +21,12 @@ import {
 } from "@t3tools/contracts";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { resolveForkInitialization } from "@t3tools/shared/orchestrationV2ForkInitialization";
+import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { attachmentFileExtension, createDeterministicAttachmentId } from "../../attachmentStore.ts";
+import type { PendingOrchestrationEffectV2 } from "../EffectOutbox.ts";
 import {
   readHistoricalSystemMessage,
   HistoricalSystemMessage,
@@ -479,3 +484,59 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
     boundaryRunId,
   };
 });
+
+/** The inherited history a fork commits after its thread and transfer, in commit order:
+ * messages, items, the fork boundary, nodes, then plans. */
+export function conversationForkHistoryEvents(input: {
+  readonly targetThreadId: ThreadId;
+  readonly history: Pick<
+    Effect.Success<ReturnType<typeof planConversationFork>>,
+    "messages" | "items" | "nodes" | "plans"
+  >;
+  readonly boundaryItem: OrchestrationV2TurnItem;
+  readonly occurredAt: DateTime.Utc;
+}): ReadonlyArray<Omit<OrchestrationV2DomainEvent, "id">> {
+  const { targetThreadId: threadId, history, boundaryItem, occurredAt } = input;
+  return [
+    ...history.messages.map((payload) => ({
+      type: "message.updated" as const,
+      threadId,
+      occurredAt,
+      payload,
+    })),
+    ...history.items.map((payload) => ({
+      type: "turn-item.updated" as const,
+      threadId,
+      occurredAt,
+      payload,
+    })),
+    { type: "turn-item.updated" as const, threadId, occurredAt, payload: boundaryItem },
+    ...history.nodes.map((payload) => ({
+      type: "node.updated" as const,
+      threadId,
+      occurredAt,
+      payload,
+    })),
+    ...history.plans.map((payload) => ({
+      type: "plan.updated" as const,
+      threadId,
+      occurredAt,
+      payload,
+    })),
+  ];
+}
+
+/** A fork whose workspace is still pending asks the effect worker to provision it. */
+export function conversationForkProvisionEffect(
+  commandId: CommandId,
+  targetThread: OrchestrationV2AppThread,
+): PendingOrchestrationEffectV2 | undefined {
+  return targetThread.conversationFork?.status === "pending"
+    ? {
+        id: `effect:${commandId}:scient-fork.provision`,
+        commandId,
+        threadId: targetThread.id,
+        request: { type: "scient-fork.provision" },
+      }
+    : undefined;
+}
