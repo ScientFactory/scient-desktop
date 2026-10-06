@@ -3,12 +3,11 @@ import type { RuntimeCitationSource } from "@t3tools/contracts";
 import { extractCodexCitationSources } from "../../provider/codexCitations.ts";
 // SCIENT-FORK: running-fork text capture producer.
 import { makeCodexTextSnapshots } from "../scient-provider/ProviderTextSnapshots.ts";
-// SCIENT-FORK: pure Codex presentation and diagnostics stay in the owned module.
+// SCIENT-FORK: Codex presentation and generated-image import stay in the owned module.
 import {
   codexCitationPresentation,
-  generatedImageImportFailureReason,
+  emitCodexGeneratedImage,
 } from "../scient-provider/CodexPresentation.ts";
-import { materializeGeneratedImageAttachment } from "../../generatedImageAttachments.ts";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
@@ -4300,112 +4299,20 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             const { context, settled } = resolved;
 
             if (payload.item.type === "imageGeneration") {
-              const image = payload.item;
-              const layout = yield* resolveCodexHomeLayout(
-                resolvedRuntime?.config ?? adapterOptions.settings,
-              ).pipe(Effect.provideService(Path.Path, path));
-              const homes = Array.from(
-                new Set(
-                  [layout.effectiveHomePath, layout.sharedHomePath].filter(
-                    (home): home is string => home !== undefined,
-                  ),
-                ),
-              );
-              const nativeThreadId = context.providerThread.nativeThreadRef?.nativeId;
-              const importFailures: Array<{ readonly candidate: number; readonly reason: string }> =
-                [];
-              let importFailureReason = "candidate_import_failed";
-              const imported = yield* Effect.gen(function* () {
-                if (image.failure != null || image.status === "failed") {
-                  importFailureReason = "provider_generation_failed";
-                  return yield* toProtocolError("Codex image generation failed.");
-                }
-                if (
-                  !nativeThreadId ||
-                  /[\\/]/u.test(nativeThreadId) ||
-                  path.basename(nativeThreadId) !== nativeThreadId ||
-                  nativeThreadId === "." ||
-                  nativeThreadId === ".."
-                ) {
-                  importFailureReason = "invalid_native_thread_identity";
-                  return yield* toProtocolError(
-                    "Generated image has no valid provider-thread identity.",
-                  );
-                }
-                const roots = homes.map((home) =>
-                  path.join(home, "generated_images", nativeThreadId),
-                );
-                const candidates = image.savedPath
-                  ? [image.savedPath]
-                  : roots.map((root) => path.join(root, `${image.id}.png`));
-                if (candidates.length === 0) importFailureReason = "no_authorized_image_candidate";
-                return yield* Effect.tryPromise({
-                  try: async () => {
-                    for (const [candidate, sourcePath] of candidates.entries()) {
-                      try {
-                        return await materializeGeneratedImageAttachment({
-                          threadId: context.projectionThreadId,
-                          sourcePath,
-                          provenanceKey: `${adapterOptions.instanceId}\0${nativeThreadId}\0${image.id}`,
-                          allowedSourceRoots: roots,
-                          attachmentsDir: serverConfig.attachmentsDir,
-                          allowDurableFallbackWhenSourceUnavailable: true,
-                        });
-                      } catch (cause) {
-                        importFailures.push({
-                          candidate,
-                          reason: generatedImageImportFailureReason(cause),
-                        });
-                        // Another authorized home may hold the image.
-                      }
-                    }
-                    throw new Error("Generated image could not be imported.");
-                  },
-                  catch: () =>
-                    toProtocolError("Generated image could not be imported.", {
-                      failures: importFailures,
-                    }),
-                });
-              }).pipe(Effect.result);
-              if (imported._tag === "Failure") {
-                yield* Effect.logWarning("orchestration-v2.codex.generated-image-import-failed", {
-                  instanceId: adapterOptions.instanceId,
-                  threadId: context.projectionThreadId,
-                  reason: importFailureReason,
-                  failures: importFailures,
-                });
-              }
-              const text =
-                imported._tag === "Success"
-                  ? ""
-                  : "Codex generated an image, but Scient could not attach it. The image may still be available in Codex's generated images.";
-              const artifacts = yield* buildAgentMessageArtifacts(
+              // SCIENT-FORK: generated images are imported from their authorized Codex homes.
+              yield* emitCodexGeneratedImage({
+                driver: CODEX_PROVIDER,
+                instanceId: adapterOptions.instanceId,
+                attachmentsDir: serverConfig.attachmentsDir,
+                path,
+                image: payload.item,
                 context,
-                { id: image.id, text },
-                true,
-              );
-              yield* emitProviderEvent({
-                type: "node.updated",
-                driver: CODEX_PROVIDER,
-                node: artifacts.node,
-              });
-              yield* emitProviderEvent({
-                type: "message.updated",
-                driver: CODEX_PROVIDER,
-                message: {
-                  ...artifacts.message,
-                  attachments: imported._tag === "Success" ? [imported.success] : [],
-                },
-              });
-              yield* emitProviderEvent({
-                type: "turn_item.updated",
-                driver: CODEX_PROVIDER,
-                turnItem: {
-                  ...artifacts.turnItem,
-                  ...(artifacts.turnItem.type === "assistant_message"
-                    ? { attachments: imported._tag === "Success" ? [imported.success] : [] }
-                    : {}),
-                },
+                resolveLayout: resolveCodexHomeLayout(
+                  resolvedRuntime?.config ?? adapterOptions.settings,
+                ).pipe(Effect.provideService(Path.Path, path)),
+                toProtocolError,
+                buildAgentMessageArtifacts,
+                emitProviderEvent,
               });
               return;
             }
