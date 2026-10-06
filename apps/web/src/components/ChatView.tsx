@@ -222,12 +222,16 @@ import {
   timelineContentOverflowsViewport,
   type TimelineScrollMode,
 } from "./chat/timelineScrollAnchoring";
-import { useScientThreadFork, type ForkSource } from "./scient-fork/useScientThreadFork";
+// SCIENT-FORK:START — fork command, baseline and dialog wiring.
 import {
-  ScientForkDialog,
-  type ForkWorktreeAvailability,
-  type ScientForkSource,
-} from "./chat/scient-fork/ScientForkWorkspaceModeDialog";
+  ScientChatForkDialog,
+  useChatViewForkCommand,
+  useClearForkCommandOnThreadChange,
+  useForkConversationCommand,
+  useForkMessageCommands,
+  useForkTimelineBaseline,
+} from "~/scient/fork/chatViewFork";
+// SCIENT-FORK:END
 import {
   buildPendingUserInputAnswers,
   carryDisplacedCustomAnswerIntoPrompt,
@@ -513,11 +517,7 @@ import {
   resolveBackgroundDraftWorkspaceOptions,
   resolveWorktreeSetupProgress,
 } from "./ChatView.logic";
-import {
-  findLatestCompletedAssistantMessageId,
-  findPrecedingCompletedAssistantMessageId,
-  worktreeSetupAgentStarted,
-} from "./chat/MessagesTimeline.logic";
+import { worktreeSetupAgentStarted } from "./chat/MessagesTimeline.logic";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -618,7 +618,6 @@ import {
   resolveComposerProviderSelection,
   getAntigravitySendBlockReason,
   resolveDraftHeroState,
-  resolveForkTargetAfterAttempt,
   resolveProjectThreadTerminalTarget,
   resolveVisibleWorktreeSetup,
   isPaintOnlyThreadTimeline,
@@ -2272,83 +2271,10 @@ function ChatViewContent(props: ChatViewProps) {
     [parentSubagentThread?.title, parentSubagentThreadRef],
   );
   const hasProjectWorkspace = activeThread?.projectId != null;
-  const forkRecoverySupported =
-    activeThread != null &&
-    serverConfigs.get(activeThread.environmentId)?.environment.capabilities.threadForkRecovery ===
-      true;
-  const {
-    errorUpdate: forkErrorUpdate,
-    isForking: isForkingThread,
-    forkFromMessage,
-    prepareFork,
-    preview: forkPreview,
-  } = useScientThreadFork({
-    origin: activeThread ?? null,
-    navigate,
-    supportsRecovery: forkRecoverySupported,
-  });
-  const [forkCommandTarget, setForkCommandTarget] = useState<
-    | {
-        readonly threadId: ThreadId;
-        readonly environmentId: EnvironmentId;
-        readonly kind: "assistant-response";
-        readonly messageId: MessageId | null;
-        readonly source: ScientForkSource;
-      }
-    | {
-        readonly threadId: ThreadId;
-        readonly environmentId: EnvironmentId;
-        readonly kind: "user-message";
-        readonly messageId: MessageId;
-        readonly message: ChatMessage;
-        readonly source: ScientForkSource;
-      }
-    // SCIENT-FORK: the running turn with the work it has done so far.
-    | {
-        readonly threadId: ThreadId;
-        readonly environmentId: EnvironmentId;
-        readonly kind: "running-turn";
-        readonly runId: RunId;
-        readonly source: ScientForkSource;
-      }
-    | null
-  >(null);
-  const forkDialogOpen =
-    forkCommandTarget !== null &&
-    activeThread !== null &&
-    activeThread !== undefined &&
-    forkCommandTarget.threadId === activeThread.id &&
-    forkCommandTarget.environmentId === activeThread.environmentId;
-  const forkSource = useMemo(
-    (): ForkSource | null =>
-      forkCommandTarget === null
-        ? null
-        : forkCommandTarget.kind === "running-turn"
-          ? { kind: "running-turn", runId: forkCommandTarget.runId }
-          : forkCommandTarget.kind === "assistant-response"
-            ? {
-                kind: forkCommandTarget.kind,
-                messageId: forkCommandTarget.messageId,
-                latest:
-                  forkCommandTarget.source === "latest-response" ||
-                  forkCommandTarget.source === "new-chat",
-              }
-            : {
-                kind: forkCommandTarget.kind,
-                messageId: forkCommandTarget.messageId,
-                prompt: forkCommandTarget.message.text,
-                attachments: forkCommandTarget.message.attachments ?? [],
-              },
-    [forkCommandTarget],
-  );
-  useEffect(() => {
-    if (forkDialogOpen && forkSource) void prepareFork(forkSource);
-  }, [forkDialogOpen, forkSource, prepareFork]);
-  const forkTitleOverrideSupported =
-    activeThread !== null &&
-    activeThread !== undefined &&
-    serverConfigs.get(activeThread.environmentId)?.environment.capabilities
-      .threadForkTitleOverride === true;
+  // SCIENT-FORK:START — fork dialog target, preview and command state.
+  const forkCommand = useChatViewForkCommand({ activeThread, navigate, serverConfigs });
+  const { isForkingThread, setForkCommandTarget } = forkCommand;
+  // SCIENT-FORK:END
   const threadError = isServerThread
     ? (localServerError ?? serverRuntime?.lastError ?? null)
     : localDraftError;
@@ -2419,14 +2345,13 @@ function ChatViewContent(props: ChatViewProps) {
     [isServerThread, serverProjection, serverVisibleTurnItems],
   );
   const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
-  useEffect(() => {
-    setForkCommandTarget((current) =>
-      current &&
-      (current.threadId !== activeThreadId || current.environmentId !== activeThreadEnvironmentId)
-        ? null
-        : current,
-    );
-  }, [activeThreadId, activeThreadEnvironmentId]);
+  // SCIENT-FORK:START — a fork target belongs to the thread it was opened on.
+  useClearForkCommandOnThreadChange(
+    setForkCommandTarget,
+    activeThreadId,
+    activeThreadEnvironmentId,
+  );
+  // SCIENT-FORK:END
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: activeThread?.environmentId ?? null,
     threadId: activeThreadId,
@@ -4333,44 +4258,16 @@ function ChatViewContent(props: ChatViewProps) {
     panelAnimationDurationMs,
   );
   const captureDraftHeroComposerRect = draftHeroTransition.captureComposerRect;
-  const latestCompletedAssistantMessageId = useMemo(
-    () =>
-      findLatestCompletedAssistantMessageId({
-        timelineEntries,
-        latestRun: activeLatestRun,
-        runningRunId: activeRunningTurnId,
-      }),
-    [activeLatestRun, activeRunningTurnId, timelineEntries],
-  );
-  const onForkConversation = useCallback(
-    (options?: { readonly preserveComposerDraft?: boolean }) => {
-      if (!activeThreadId || !activeThreadEnvironmentId) return;
-      // While the agent works, a fork carries its work in progress.
-      if (activeRunningTurnId !== null && !options?.preserveComposerDraft) {
-        setForkCommandTarget({
-          threadId: activeThreadId,
-          environmentId: activeThreadEnvironmentId,
-          kind: "running-turn",
-          runId: activeRunningTurnId,
-          source: "running-turn",
-        });
-        return;
-      }
-      setForkCommandTarget({
-        threadId: activeThreadId,
-        environmentId: activeThreadEnvironmentId,
-        kind: "assistant-response",
-        messageId: latestCompletedAssistantMessageId,
-        source: options?.preserveComposerDraft ? "new-chat" : "latest-response",
-      });
-    },
-    [
-      activeThreadId,
-      activeThreadEnvironmentId,
-      activeRunningTurnId,
-      latestCompletedAssistantMessageId,
-    ],
-  );
+  // SCIENT-FORK:START — the composer's fork command.
+  const onForkConversation = useForkConversationCommand({
+    timelineEntries,
+    activeLatestRun,
+    activeRunningTurnId,
+    activeThreadId,
+    activeThreadEnvironmentId,
+    setForkCommandTarget,
+  });
+  // SCIENT-FORK:END
 
   const gitCwd = activeProject
     ? projectScriptCwd({
@@ -4569,58 +4466,22 @@ function ChatViewContent(props: ChatViewProps) {
     ? false
     : (liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true);
   const diffAvailable = hasProjectWorkspace && isServerThread && isGitRepo;
-  const forkCheckpointByAssistantMessageId = useMemo(
-    () =>
-      new Map(
-        turnDiffSummaries.flatMap((checkpoint) =>
-          checkpoint.assistantMessageId
-            ? [[checkpoint.assistantMessageId, checkpoint] as const]
-            : [],
-        ),
-      ),
-    [turnDiffSummaries],
-  );
-  const hasForkBaseline = activeThread?.lineage.relationshipToParent === "fork";
-  const forkOriginThreadId =
-    activeThread?.source.forkLineage?.originThreadId ??
-    (hasForkBaseline ? (activeThread?.lineage.parentThreadId ?? undefined) : undefined);
-  const forkBaselineAssistantMessageId = useMemo(() => {
-    const recorded = activeThread?.source.forkLineage?.baselineAssistantMessageId;
-    if (recorded != null) return recorded;
-    const inherited = serverVisibleTurnItems.findLast(
-      (row) => row.visibility === "inherited" && row.item.type === "assistant_message",
-    )?.item;
-    return inherited?.type === "assistant_message" ? inherited.messageId : null;
-  }, [activeThread?.source.forkLineage, serverVisibleTurnItems]);
-  const forkWorktreeAvailability: ForkWorktreeAvailability = useMemo(() => {
-    if (!isGitRepo) {
-      return { available: false, reason: "no-git-repository" };
-    }
-
-    const target = forkDialogOpen ? forkCommandTarget : null;
-    const checkpointAssistantMessageId =
-      target?.kind === "assistant-response"
-        ? target.messageId
-        : target?.kind === "user-message"
-          ? findPrecedingCompletedAssistantMessageId({
-              timelineEntries,
-              sourceUserMessageId: target.messageId,
-            })
-          : null;
-    const checkpoint = checkpointAssistantMessageId
-      ? forkCheckpointByAssistantMessageId.get(checkpointAssistantMessageId)
-      : null;
-    if (checkpoint?.status === "ready" && checkpoint.checkpointRef !== null) {
-      return { available: true };
-    }
-    return { available: false, reason: "no-checkpoint" };
-  }, [
-    forkDialogOpen,
-    forkCommandTarget,
+  // SCIENT-FORK:START — fork baseline and new-worktree availability.
+  const {
+    hasForkBaseline,
+    forkOriginThreadId,
+    forkBaselineAssistantMessageId,
+    forkWorktreeAvailability,
+  } = useForkTimelineBaseline({
+    turnDiffSummaries,
+    activeThread,
+    serverVisibleTurnItems,
     isGitRepo,
+    forkDialogOpen: forkCommand.forkDialogOpen,
+    forkCommandTarget: forkCommand.forkCommandTarget,
     timelineEntries,
-    forkCheckpointByAssistantMessageId,
-  ]);
+  });
+  // SCIENT-FORK:END
   // Keep a hidden, off-flow strip mounted for existing threads so the composer
   // can measure whether its relocated controls fit. The visible chrome remains
   // content-driven: Git/environment context or controls that actually fit.
@@ -11208,33 +11069,13 @@ function ChatViewContent(props: ChatViewProps) {
   const onRevertTimelineTurn = useCallback((targetTurnCount: number, messageId: MessageId) => {
     void onRevertToTurnCountRef.current(targetTurnCount, messageId);
   }, []);
-  const onForkAssistantMessage = useCallback(
-    (sourceAssistantMessageId: MessageId) => {
-      if (!activeThreadId || !activeThreadEnvironmentId) return;
-      setForkCommandTarget({
-        threadId: activeThreadId,
-        environmentId: activeThreadEnvironmentId,
-        kind: "assistant-response",
-        messageId: sourceAssistantMessageId,
-        source: "this-response",
-      });
-    },
-    [activeThreadId, activeThreadEnvironmentId],
-  );
-  const onForkUserMessage = useCallback(
-    (message: ChatMessage) => {
-      if (!activeThreadId || !activeThreadEnvironmentId) return;
-      setForkCommandTarget({
-        threadId: activeThreadId,
-        environmentId: activeThreadEnvironmentId,
-        kind: "user-message",
-        messageId: message.id,
-        message,
-        source: "this-message",
-      });
-    },
-    [activeThreadId, activeThreadEnvironmentId],
-  );
+  // SCIENT-FORK:START — timeline row fork actions.
+  const { onForkAssistantMessage, onForkUserMessage } = useForkMessageCommands({
+    activeThreadId,
+    activeThreadEnvironmentId,
+    setForkCommandTarget,
+  });
+  // SCIENT-FORK:END
   const pendingSidebarFileDrops = useSidebarPendingFileDropStore((state) => state.pending);
   const consumePendingFileDrop = useSidebarPendingFileDropStore(
     (state) => state.consumePendingFileDrop,
@@ -12565,72 +12406,17 @@ function ChatViewContent(props: ChatViewProps) {
           onClose={closeExpandedImage}
         />
       )}
-      <ScientForkDialog
-        open={forkDialogOpen}
-        origin={activeThread ?? null}
-        disabled={isForkingThread}
-        source={forkCommandTarget?.source ?? "latest-response"}
-        titleOverrideSupported={forkTitleOverrideSupported}
-        worktreeAvailability={
-          forkPreview?.options && (forkRecoverySupported || forkPreview.locked)
-            ? forkPreview.options.newWorktree
-              ? { available: true }
-              : {
-                  available: false,
-                  // A running-turn fork snapshots files, so only a missing
-                  // Git repository can rule a new worktree out.
-                  reason:
-                    forkCommandTarget?.kind === "running-turn"
-                      ? "no-git-repository"
-                      : "no-checkpoint",
-                }
-            : forkWorktreeAvailability
-        }
-        checking={forkPreview?.checking ?? true}
-        locked={forkPreview?.locked ?? false}
-        retryTitle={forkPreview?.retryTitle}
-        retryWorkspaceMode={forkPreview?.retryWorkspaceMode}
-        error={
-          forkErrorUpdate?.environmentId === activeThread?.environmentId &&
-          forkErrorUpdate?.threadId === activeThread?.id &&
-          forkErrorUpdate?.key === forkPreview?.key
-            ? forkErrorUpdate?.message
-            : forkPreview?.options?.reason
-        }
-        onOpenChange={(open) => {
-          // Closing while the fork is being made dismisses the dialog only.
-          if (!open) setForkCommandTarget(null);
-        }}
-        onConfirm={(confirmation, beforeNavigate, confirmSkippedImages) => {
-          const target = forkCommandTarget;
-          if (
-            !target ||
-            !forkSource ||
-            target.threadId !== activeThreadId ||
-            target.environmentId !== activeThreadEnvironmentId
-          )
-            return;
-          return forkFromMessage(
-            forkSource,
-            {
-              ...confirmation,
-              beforeNavigate,
-              confirmSkippedImages,
-              ...(target.kind === "assistant-response" &&
-              target.source === "new-chat" &&
-              activeThreadRef
-                ? { composerDraftSource: activeThreadRef }
-                : {}),
-            },
-            activeWorkspaceRoot,
-          ).then((outcome) => {
-            setForkCommandTarget((current) =>
-              resolveForkTargetAfterAttempt(current, target, outcome),
-            );
-            return outcome;
-          });
-        }}
+      {/* SCIENT-FORK:START — the fork dialog. */}
+      <ScientChatForkDialog
+        fork={forkCommand}
+        activeThread={activeThread}
+        activeThreadId={activeThreadId}
+        activeThreadEnvironmentId={activeThreadEnvironmentId}
+        activeThreadRef={activeThreadRef}
+        activeWorkspaceRoot={activeWorkspaceRoot}
+        forkWorktreeAvailability={forkWorktreeAvailability}
       />
+      {/* SCIENT-FORK:END */}
     </div>
   );
 }
