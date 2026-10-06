@@ -30,7 +30,8 @@
     "docs/user/providers-omp.md",
     "docs/user/providers-scient-agent.md",
     "packages/scient-provider-runtime/src/managedOmpRuntime.ts",
-    "packages/scient-provider-runtime/src/ompManifest.ts"
+    "packages/scient-provider-runtime/src/ompManifest.ts",
+    "packages/shared/src/scientModel.ts"
   ],
   "scientMounts": [
     {
@@ -142,7 +143,7 @@
     },
     {
       "path": "packages/shared/src/model.ts",
-      "anchor": "export function getDefaultHiddenAgentModels(",
+      "anchor": "getDefaultHiddenAgentModels,",
       "purpose": "Share Pi and Oh My Pi native model curation defaults while preserving user visibility overrides and custom models."
     },
     {
