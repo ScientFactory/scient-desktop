@@ -480,18 +480,27 @@ it.live(
           yield* Fiber.join(delivery).pipe(Effect.timeout("10 seconds"));
           yield* worker.drain(16);
           const final = yield* snapshot("sql.delivery-after-release");
-          // Decide the native endpoint before waiting for a consequence that a
-          // successful idle Steer need not produce on a scripted peer.
+          // Outbox completion precedes the adapter's forked native prompt.
+          // Join its correlated acceptance before counting delivered frames.
+          const accepted = yield* waitFor(
+            (p) =>
+              p.providerTurns.length === 2 &&
+              p.providerTurns.every((t) => t.acceptedAt !== undefined),
+          ).pipe(
+            Effect.onError(() =>
+              snapshot("sql.native-acceptance-failed").pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("C398 native acceptance observer failed", { cause }),
+                ),
+              ),
+            ),
+          );
+          yield* snapshot("sql.native-acceptance-before-frame-assertions");
           assert.deepEqual(
             peer.state.prompts.map((p) => p.frame.type),
             ["prompt", "prompt"],
           );
           assert.equal(peer.state.frames.filter((f) => f.type === "steer").length, 0);
-          const accepted = yield* waitFor(
-            (p) =>
-              p.providerTurns.length === 2 &&
-              p.providerTurns.every((t) => t.acceptedAt !== undefined),
-          );
           const message = accepted.messages.find((m) => m.id === followupId)!;
           const followup = accepted.runs.find((r) => r.id === message.runId)!;
           assert.equal(accepted.messages.filter((m) => m.id === followupId).length, 1);

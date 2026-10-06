@@ -103,8 +103,28 @@ it.live("supplies native Droid preparation with an authoritative guard invalidat
         yield* h.releasePreparation;
         yield* h.worker.drain(12);
         const stopped = yield* h.waitFor((p) => p.runs[0]?.status === "interrupted");
-        yield* Effect.sleep("300 millis");
-        yield* h.worker.drain(12);
+        yield* h.observe("C050-interrupted-before-checkpoint-receipt");
+        yield* h
+          .waitFor((p) =>
+            p.runs.some(
+              (run) =>
+                run.id === stopped.runs[0]!.id &&
+                run.activeAttemptId === stopped.runs[0]!.activeAttemptId &&
+                run.status === "interrupted" &&
+                run.checkpointId !== null,
+            ),
+          )
+          .pipe(
+            Effect.onError(() =>
+              h
+                .observe("C050-checkpoint-receipt-failed")
+                .pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("C050 checkpoint receipt observer failed", { cause }),
+                  ),
+                ),
+            ),
+          );
         const final = yield* h.observe("C050-post-release-before-cleanup");
         assert.equal(final.projection.runs[0]!.activeAttemptId, stopped.runs[0]!.activeAttemptId);
         assert.equal(

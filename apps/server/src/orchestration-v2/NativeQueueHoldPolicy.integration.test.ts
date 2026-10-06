@@ -2519,7 +2519,14 @@ it.live(
           yield* foreground.settle("failed");
           const before = yield* waitFor(
             (projection) =>
-              projection.runs.find((run) => run.id === foreground.input.runId)?.status === "failed",
+              projection.runs.find((run) => run.id === foreground.input.runId)?.status ===
+                "failed" &&
+              projection.runs.some(
+                (run) =>
+                  run.userMessageId === MessageId.make(`${threadId}:message:waiting`) &&
+                  run.status === "queued" &&
+                  run.queueHeld === true,
+              ),
           );
           const queued = before.runs.find((run) => run.status === "queued")!;
           assert.equal(
