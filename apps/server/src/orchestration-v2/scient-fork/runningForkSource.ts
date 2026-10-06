@@ -5,13 +5,21 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import * as Ref from "effect/Ref";
+
+import type { EventSinkV2Shape } from "../EventSink.ts";
 import {
   ProviderTextSnapshotError,
+  type ProviderAdapterV2Event,
+  type ProviderTextSnapshotBatch,
+  type ProviderTextSnapshotConsumerOwner,
   type ProviderTextSnapshotOwner,
   type ProviderTextSnapshotProjection,
 } from "../ProviderAdapter.ts";
+import type { ProviderEventIngestorV2Shape } from "../ProviderEventIngestor.ts";
 import type * as ProjectionStore from "../ProjectionStore.ts";
 import type * as ProjectStore from "../ProjectStore.ts";
+import type { ProviderEventRoutingState } from "../RunExecutionService.ts";
 
 /** Read the thread and fail with owner-lost unless the captured owner still runs it. */
 export const readCurrentRunningForkOwner = Effect.fnUntraced(function* (
@@ -117,4 +125,75 @@ export const runningForkAuthorityChanged = (
     Option.isNone(project) ||
     project.value.workspaceRoot !== capture.workspaceRoot
   );
+};
+
+/** The live root run's side of a running fork's text snapshot. A captured frame sets
+ * its message's text floor; a later live frame that would rewind below it is dropped. */
+export const makeRunningForkTextSnapshots = (input: {
+  readonly owner: ProviderTextSnapshotConsumerOwner;
+  readonly eventRouting: Ref.Ref<ProviderEventRoutingState>;
+  readonly eventSink: Pick<EventSinkV2Shape, "captureRunningForkText">;
+  readonly providerEventIngestor: Pick<ProviderEventIngestorV2Shape, "normalize">;
+}) => {
+  const { owner: current, eventRouting, eventSink, providerEventIngestor } = input;
+  const snapshotTextFloors = new Map<string, string>();
+  return {
+    capture: (event: ProviderTextSnapshotBatch) =>
+      Effect.gen(function* () {
+        const owner = event.owner;
+        const routing = yield* Ref.get(eventRouting);
+        if (
+          owner.threadId !== current.threadId ||
+          owner.runId !== current.runId ||
+          owner.activeAttemptId !== current.activeAttemptId ||
+          owner.rootNodeId !== current.rootNodeId ||
+          owner.runOrdinal !== current.runOrdinal ||
+          owner.providerThreadId !== current.providerThreadId ||
+          owner.providerSessionId !== current.providerSessionId ||
+          owner.providerInstanceId !== current.providerInstanceId ||
+          owner.driver !== current.driver ||
+          routing.rootTurnEnded ||
+          routing.rootProviderTurnId !== owner.providerTurnId ||
+          eventSink.captureRunningForkText === undefined
+        )
+          return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
+        const normalized = yield* Effect.forEach(event.events, (frame) =>
+          providerEventIngestor.normalize({
+            providerSessionId: current.providerSessionId,
+            providerInstanceId: current.providerInstanceId,
+            threadId: current.threadId,
+            runId: current.runId,
+            nodeId: current.rootNodeId,
+            event: frame,
+          }),
+        );
+        const capture = yield* eventSink.captureRunningForkText({
+          owner,
+          events: normalized.flat(),
+        });
+        for (const frame of event.events) {
+          if (frame.type === "message.updated")
+            snapshotTextFloors.set(`message.updated:${frame.message.id}`, frame.message.text);
+          if (frame.type === "turn_item.updated" && frame.turnItem.type === "assistant_message")
+            snapshotTextFloors.set(`turn_item.updated:${frame.turnItem.id}`, frame.turnItem.text);
+        }
+        return capture;
+      }),
+    floor: (deliveredEvent: ProviderAdapterV2Event): ProviderAdapterV2Event | null => {
+      const text =
+        deliveredEvent.type === "message.updated"
+          ? deliveredEvent.message
+          : deliveredEvent.type === "turn_item.updated" &&
+              deliveredEvent.turnItem.type === "assistant_message"
+            ? deliveredEvent.turnItem
+            : null;
+      if (text !== null) {
+        const key = `${deliveredEvent.type}:${text.id}`;
+        const floor = snapshotTextFloors.get(key);
+        if (!text.streaming) snapshotTextFloors.delete(key);
+        else if (floor !== undefined && !text.text.startsWith(floor)) return null;
+      }
+      return deliveredEvent;
+    },
+  };
 };

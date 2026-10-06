@@ -47,8 +47,9 @@ import type {
   ProviderAdapterV2RuntimePolicy,
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2TurnMessage,
+  ProviderTextSnapshotConsumerOwner,
 } from "./ProviderAdapter.ts";
-import { ProviderTextSnapshotError, ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
+import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import { upsertProviderTurn } from "./ProjectionStore.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
@@ -62,6 +63,9 @@ import {
   makeOwnedRunFinalizer,
   makeRunEventSubscriptionLifetime,
 } from "./scient-fork/RunExecutionFinalization.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — the live root's side of a running fork's text snapshot.
+import { makeRunningForkTextSnapshots } from "./scient-fork/runningForkSource.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — native workflow coordinators own their runless members.
 import {
@@ -1071,19 +1075,20 @@ export const layer: Layer.Layer<
           const subscriptionLifetime = yield* makeRunEventSubscriptionLifetime(
             eventSubscription.close,
           );
+          const textSnapshotOwner: ProviderTextSnapshotConsumerOwner = {
+            threadId: input.run.threadId,
+            runId: input.run.id,
+            activeAttemptId: input.attempt.id,
+            rootNodeId: input.rootNode.id,
+            runOrdinal: input.run.ordinal,
+            providerThreadId: input.providerThread.id,
+            providerSessionId: input.providerSessionId,
+            providerInstanceId: input.run.providerInstanceId,
+            driver: input.session.driver,
+          };
           yield* subscriptionLifetime.startup(
             () =>
-              snapshotSubscription?.textSnapshotConsumer?.bind({
-                threadId: input.run.threadId,
-                runId: input.run.id,
-                activeAttemptId: input.attempt.id,
-                rootNodeId: input.rootNode.id,
-                runOrdinal: input.run.ordinal,
-                providerThreadId: input.providerThread.id,
-                providerSessionId: input.providerSessionId,
-                providerInstanceId: input.run.providerInstanceId,
-                driver: input.session.driver,
-              }) ?? Effect.void,
+              snapshotSubscription?.textSnapshotConsumer?.bind(textSnapshotOwner) ?? Effect.void,
           );
           // SCIENT-FORK:END
           const inheritedBackgroundTurnItems = yield* (
@@ -1363,68 +1368,26 @@ export const layer: Layer.Layer<
             return true;
           });
           const filterAssistantEvent = makeAssistantStreamingFilter(responseStreamingMode);
-          const snapshotTextFloors = new Map<string, string>();
+          // SCIENT-FORK:START — a running fork reads this live root's streamed text.
+          const runningForkText = makeRunningForkTextSnapshots({
+            owner: textSnapshotOwner,
+            eventRouting,
+            eventSink,
+            providerEventIngestor,
+          });
+          // SCIENT-FORK:END
           const providerEventFiber = yield* (
             snapshotSubscription?.snapshotEvents ?? eventSubscription.events
           ).pipe(
             Stream.mapEffect((event) =>
               Effect.gen(function* () {
                 if (event.type === "internal.text_snapshot") {
+                  // SCIENT-FORK:START — a running fork captures this live root's streamed text.
                   const consumer = snapshotSubscription?.textSnapshotConsumer;
                   if (consumer === undefined) return;
-                  yield* consumer.consume(
-                    event,
-                    Effect.gen(function* () {
-                      const owner = event.owner;
-                      const routing = yield* Ref.get(eventRouting);
-                      if (
-                        owner.threadId !== input.run.threadId ||
-                        owner.runId !== input.run.id ||
-                        owner.activeAttemptId !== input.attempt.id ||
-                        owner.rootNodeId !== input.rootNode.id ||
-                        owner.runOrdinal !== input.run.ordinal ||
-                        owner.providerThreadId !== input.providerThread.id ||
-                        owner.providerSessionId !== input.providerSessionId ||
-                        owner.providerInstanceId !== input.run.providerInstanceId ||
-                        owner.driver !== input.session.driver ||
-                        routing.rootTurnEnded ||
-                        routing.rootProviderTurnId !== owner.providerTurnId ||
-                        eventSink.captureRunningForkText === undefined
-                      )
-                        return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
-                      const normalized = yield* Effect.forEach(event.events, (frame) =>
-                        providerEventIngestor.normalize({
-                          providerSessionId: input.providerSessionId,
-                          providerInstanceId: input.run.providerInstanceId,
-                          threadId: input.run.threadId,
-                          runId: input.run.id,
-                          nodeId: input.rootNode.id,
-                          event: frame,
-                        }),
-                      );
-                      const capture = yield* eventSink.captureRunningForkText({
-                        owner,
-                        events: normalized.flat(),
-                      });
-                      for (const frame of event.events) {
-                        if (frame.type === "message.updated")
-                          snapshotTextFloors.set(
-                            `message.updated:${frame.message.id}`,
-                            frame.message.text,
-                          );
-                        if (
-                          frame.type === "turn_item.updated" &&
-                          frame.turnItem.type === "assistant_message"
-                        )
-                          snapshotTextFloors.set(
-                            `turn_item.updated:${frame.turnItem.id}`,
-                            frame.turnItem.text,
-                          );
-                      }
-                      return capture;
-                    }),
-                  );
+                  yield* consumer.consume(event, runningForkText.capture(event));
                   return;
+                  // SCIENT-FORK:END
                 }
                 const [accepted, revoked] = yield* Ref.modify(eventRouting, (state) => {
                   const [accepted, next] = routeProviderEvent(event, routeIdentity, state);
@@ -1451,22 +1414,9 @@ export const layer: Layer.Layer<
                   event,
                   DateTime.toEpochMillis(yield* DateTime.now),
                 );
-                if (deliveredEvent) {
-                  const text =
-                    deliveredEvent.type === "message.updated"
-                      ? deliveredEvent.message
-                      : deliveredEvent.type === "turn_item.updated" &&
-                          deliveredEvent.turnItem.type === "assistant_message"
-                        ? deliveredEvent.turnItem
-                        : null;
-                  if (text !== null) {
-                    const key = `${deliveredEvent.type}:${text.id}`;
-                    const floor = snapshotTextFloors.get(key);
-                    if (!text.streaming) snapshotTextFloors.delete(key);
-                    else if (floor !== undefined && !text.text.startsWith(floor))
-                      deliveredEvent = null;
-                  }
-                }
+                // SCIENT-FORK:START — live text never rewinds below a running fork's snapshot.
+                if (deliveredEvent) deliveredEvent = runningForkText.floor(deliveredEvent);
+                // SCIENT-FORK:END
                 if (deliveredEvent) {
                   // Root provider_thread.updated always uses an ownership gate:
                   // pre-terminal writeIfRunCurrent (attempt still running), or
