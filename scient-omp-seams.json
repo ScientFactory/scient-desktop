@@ -32,7 +32,8 @@
     "packages/scient-provider-runtime/src/managedOmpRuntime.ts",
     "packages/scient-provider-runtime/src/ompManifest.ts",
     "packages/shared/src/scientModel.ts",
-    "apps/server/src/scient/providerLifecycle/CustomModelRpcHandlers.ts"
+    "apps/server/src/scient/providerLifecycle/CustomModelRpcHandlers.ts",
+    "apps/web/src/components/ScientProviderIcons.tsx"
   ],
   "scientMounts": [
     {
@@ -195,7 +196,7 @@
     {
       "path": "apps/web/src/components/Icons.tsx",
       "anchor": "OhMyPiIcon",
-      "purpose": "Define the Oh My Pi mark."
+      "purpose": "Re-export the Oh My Pi mark, which ScientProviderIcons.tsx defines."
     },
     {
       "path": "apps/web/src/components/chat/MessagesTimeline.tsx",
