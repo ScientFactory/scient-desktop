@@ -68,7 +68,14 @@ Size bounds (`boundText`, `boundItems`) keep the head and tail and write an
 ## Document bundle
 
 `buildConversationDocument` turns a snapshot into a `DocumentBundle`, the input every readable
-writer shares. It follows chat's rendering decisions per message:
+writer shares. Assistant bodies with Codex citation provenance use the shared
+`@scientfactory/conversation/provider-citation-markdown` rules: citation markers in prose become
+numbered HTTP(S) source links, and missing or unsafe sources become `[citation unavailable]`.
+Code, authored link destinations, and messages without that provenance retain their text.
+This affects readable Markdown, Word, PDF input, and the readable copy inside SCIC; canonical
+snapshot text, SCIC JSON and citation metadata, and `importedMessageMarkdown` stay unchanged.
+
+It follows chat's rendering decisions per message:
 
 | Content           | Line breaks                                                            | Raw HTML                                                                                             |
 | ----------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |

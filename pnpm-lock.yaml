@@ -1325,6 +1325,9 @@ importers:
 
   packages/scient-conversation:
     dependencies:
+      '@scientfactory/scient-markdown':
+        specifier: workspace:*
+        version: link:../scient-markdown
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts

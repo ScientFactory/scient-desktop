@@ -20,7 +20,8 @@ import {
   type DocumentBundle,
   type ScientConversationExportRequest,
 } from "@t3tools/contracts";
-import { parseConversationMarkdown } from "@scientfactory/conversation";
+import { importedMessageMarkdown, parseConversationMarkdown } from "@scientfactory/conversation";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -982,15 +983,17 @@ describe("conversation export delivery", () => {
   }
 });
 
-const PdfTestLayer = Layer.mergeAll(
-  WorkspacePaths.layer,
-  ProjectFaviconResolver.layer.pipe(
-    Layer.provide(WorkspacePaths.layer),
-    Layer.provide(T3ProjectFileLoader.layer),
-  ),
-  NativeAppIconResolver.layer,
-  ServerSecretStore.layer,
-).pipe(Layer.provideMerge(TestLayer));
+const pdfTestLayer = (exports: ReturnType<typeof exportLayer>) =>
+  Layer.mergeAll(
+    WorkspacePaths.layer,
+    ProjectFaviconResolver.layer.pipe(
+      Layer.provide(WorkspacePaths.layer),
+      Layer.provide(T3ProjectFileLoader.layer),
+    ),
+    NativeAppIconResolver.layer,
+    ServerSecretStore.layer,
+  ).pipe(Layer.provideMerge(exports));
+const PdfTestLayer = pdfTestLayer(TestLayer);
 
 const decodePageInput = Schema.decodeUnknownEffect(Schema.fromJsonString(ScientDocumentPageInput));
 
@@ -1003,6 +1006,135 @@ const readCapturedPageInput = (inputRelativeUrl: string) =>
   });
 
 describe("conversation PDF preparation", () => {
+  it.effect(
+    "presents canonical citation text in every human export while SCIC retains raw provenance",
+    () => {
+      const wordBundles: DocumentBundle[] = [];
+      return Effect.gen(function* () {
+        yield* seedThread({ pairs: 1 });
+        const raw =
+          "Evidence לפני 😀 \uE200cite\uE202turn3view1\uE201 after. Missing source \uE200cite\uE202turn9view0\uE201.";
+        const presentation = {
+          format: "codex-private-v1" as const,
+          sources: [{ id: "turn3view1", url: "https://example.org/guideline", title: "Guideline" }],
+        };
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const before = yield* projections.getThreadProjection(THREAD);
+        const occurredAt = DateTime.makeUnsafe("2026-09-28T00:00:00.000Z");
+        yield* (yield* EventSink.EventSinkV2).write({
+          events: [
+            ...before.messages
+              .filter((entry) => entry.role === "assistant")
+              .map((entry) => ({
+                id: EventId.make(`human-citation-message:${entry.id}`),
+                type: "message.updated" as const,
+                threadId: THREAD,
+                occurredAt,
+                payload: { ...entry, text: raw, citationPresentation: presentation },
+              })),
+            ...before.turnItems
+              .filter((entry) => entry.type === "assistant_message")
+              .map((entry) => ({
+                id: EventId.make(`human-citation-item:${entry.id}`),
+                type: "turn-item.updated" as const,
+                threadId: THREAD,
+                occurredAt,
+                payload: { ...entry, text: raw, citationPresentation: presentation },
+              })),
+          ],
+        });
+        const snapshots = yield* ConversationSnapshotService.ConversationSnapshotService;
+        const capture = yield* snapshots.capture({
+          threadId: THREAD,
+          selection: {
+            workLog: false,
+            reasoning: false,
+            throughMessageId: null,
+          },
+        });
+        assert.equal(
+          capture.snapshot.messages.find((entry) => entry.role === "assistant")?.text,
+          raw,
+        );
+        assert.deepEqual(
+          capture.snapshot.messages.find((entry) => entry.role === "assistant")
+            ?.citationPresentation,
+          presentation,
+        );
+        const expectedLink = '[1](<https://example.org/guideline> "Guideline")';
+        const assertHuman = (text: string) => {
+          assert.include(
+            text,
+            `Evidence לפני 😀 ${expectedLink} after. Missing source [citation unavailable].`,
+          );
+          assert.notInclude(text, "\uE200cite\uE202");
+        };
+        const service = yield* ConversationExportService.ConversationExportService;
+        assertHuman((yield* service.document(request({ format: "pdf" }))).bundle.markdown);
+        assertHuman((yield* produceText(request())).text);
+        assertHuman((yield* produceText(request({ delivery: "clipboard" }))).text);
+        assertHuman((yield* produceText(request({ format: "docx" }))).text);
+        assert.equal(wordBundles.length, 1);
+        assertHuman(wordBundles[0]!.markdown);
+        const pdf = yield* prepareConversationPdf(request({ format: "pdf" }));
+        assertHuman((yield* readCapturedPageInput(pdf.inputRelativeUrl)).markdown);
+        const archive = yield* service.produce(request({ format: "scic" }));
+        if (archive.output._tag !== "file") return assert.fail("Expected SCIC file");
+        const archivePath = archive.output.path;
+        const entries = yield* Effect.promise(() => readZip(archivePath));
+        assertHuman(entries.get("conversation.md")!.toString());
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const stage = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "scient-citation-reimport-",
+        });
+        const attachmentsDirectory = path.join(stage, "attachments");
+        yield* fileSystem.makeDirectory(attachmentsDirectory);
+        const bytes = yield* fileSystem.readFile(archivePath);
+        const imported = yield* readScicPackage({
+          importId: yield* decodeImportId("cimp_0f8e7d6c-5b4a-4938-8271-605f4e3d2c1b"),
+          packagePath: archivePath,
+          packageBytes: bytes.byteLength,
+          packageSha256: yield* decodePackageDigest(
+            `sha256:${NodeCrypto.createHash("sha256").update(bytes).digest("hex")}`,
+          ),
+          attachmentsDirectory,
+        });
+        assert.equal(
+          imported.snapshot.messages.find((entry) => entry.role === "assistant")?.text,
+          raw,
+        );
+        assert.deepEqual(
+          imported.snapshot.messages.find((entry) => entry.role === "assistant")
+            ?.citationPresentation,
+          presentation,
+        );
+        assert.equal(
+          importedMessageMarkdown(
+            imported.snapshot.messages.find((entry) => entry.role === "assistant")!,
+          ),
+          raw,
+        );
+        const after = yield* snapshots.capture({
+          threadId: THREAD,
+          selection: {
+            workLog: false,
+            reasoning: false,
+            throughMessageId: null,
+          },
+        });
+        assert.equal(after.snapshot.contentDigest, capture.snapshot.contentDigest);
+        assert.deepEqual(after.snapshot.messages, capture.snapshot.messages);
+      }).pipe(
+        Effect.provide(
+          pdfTestLayer(
+            exportLayer("scient-citation-human-export-", { _tag: "converts", seen: wordBundles }),
+          ),
+        ),
+      );
+    },
+  );
+
   it.effect("captures a 2,100-message conversation with the dialog's options for PDF", () =>
     Effect.gen(function* () {
       yield* seedThread({ pairs: 1_050, activitiesPerTurn: 1 });
