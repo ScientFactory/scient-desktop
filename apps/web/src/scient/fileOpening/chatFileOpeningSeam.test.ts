@@ -8,10 +8,14 @@ const chatMarkdownSource = [
   NodeFS.readFileSync(new URL("../../components/ChatMarkdown.tsx", import.meta.url), "utf8"),
   NodeFS.readFileSync(new URL("./useChatFileLinkOpening.ts", import.meta.url), "utf8"),
 ].join("\n");
-const chatViewSource = NodeFS.readFileSync(
-  new URL("../../components/ChatView.tsx", import.meta.url),
-  "utf8",
-);
+// ChatView mounts the Scient right-panel surfaces from their owned module.
+const chatViewSource = [
+  NodeFS.readFileSync(new URL("../../components/ChatView.tsx", import.meta.url), "utf8"),
+  NodeFS.readFileSync(
+    new URL("../rightPanel/ScientRightPanelContent.tsx", import.meta.url),
+    "utf8",
+  ),
+].join("\n");
 const environmentPreviewSource = NodeFS.readFileSync(
   new URL("./EnvironmentFilePreview.tsx", import.meta.url),
   "utf8",
@@ -76,9 +80,7 @@ describe("universal chat-file opening seam", () => {
   });
 
   it("keeps the explicit Scient environment-file surface read-only", () => {
-    expect(chatViewSource).toContain(
-      '() => import("../scient/fileOpening/EnvironmentFilePreview")',
-    );
+    expect(chatViewSource).toContain('() => import("../fileOpening/EnvironmentFilePreview")');
     expect(chatViewSource.match(/<EnvironmentFilePreview/gu)).toHaveLength(1);
     expect(environmentPreviewSource).toContain("useEnvironmentFileRefresh({");
     expect(environmentPreviewSource).toContain("fileLinkWorkspaceRoot={null}");

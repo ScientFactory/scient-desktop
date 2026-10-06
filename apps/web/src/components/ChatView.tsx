@@ -348,6 +348,9 @@ import {
   scientSourcePdfSurface,
   scientSourcesSurface,
 } from "~/scient/rightPanel/surfaces";
+// SCIENT-FORK:START — Scient-owned right-panel surface content.
+import { ScientRightPanelContent } from "~/scient/rightPanel/ScientRightPanelContent";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — thread queue seam. To retire, delete this block, the
 // marked blocks below, and `~/scient/threadQueue`.
 import { ThreadQueueStrip } from "~/scient/threadQueue/ThreadQueueStrip";
@@ -798,37 +801,6 @@ const DevicePanel = lazy(() =>
   import("./device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
-const ScientSourcesPanel = lazy(() =>
-  import("../scient/sources/ScientSourcesPanel").then((module) => ({
-    default: module.ScientSourcesPanel,
-  })),
-);
-const SourcePdfPreview = lazy(() =>
-  import("../scient/sources/SourcePdfPreview").then((module) => ({
-    default: module.SourcePdfPreview,
-  })),
-);
-const ScientArtifactPreview = lazy(() =>
-  import("../scient/artifacts/ScientArtifactPreview").then((module) => ({
-    default: module.ScientArtifactPreview,
-  })),
-);
-const GeneratedPdfPreview = lazy(() =>
-  import("../scient/pdf/GeneratedPdfPreview").then((module) => ({
-    default: module.GeneratedPdfPreview,
-  })),
-);
-const EnvironmentFilePreview = lazy(() => import("../scient/fileOpening/EnvironmentFilePreview"));
-const ScientSkillDocumentPreview = lazy(() =>
-  import("../scient/skills/ScientSkillDocumentPreview").then((module) => ({
-    default: module.ScientSkillDocumentPreview,
-  })),
-);
-const ComputePanel = lazy(() =>
-  import("../scient/compute/ComputePanel").then((module) => ({
-    default: module.ComputePanel,
-  })),
-);
 const ComputeFigureFollower = lazy(() =>
   import("../scient/compute/ComputeFigureFollower").then((module) => ({
     default: module.ComputeFigureFollower,
@@ -11402,92 +11374,22 @@ function ChatViewContent(props: ChatViewProps) {
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
-    ) : renderedRightPanelSurface?.kind === "scient" &&
-      renderedRightPanelSurface.module === "compute" &&
-      activeThreadRef ? (
-      <Suspense fallback={null}>
-        <ComputePanel
-          key={`${activeThreadRef.environmentId}:${activeThreadRef.threadId}:${renderedRightPanelSurface.id}`}
-          environmentId={activeThreadRef.environmentId}
-          cwd={renderedRightPanelSurface.cwd}
-          threadRef={activeThreadRef}
-          {...(renderedRightPanelSurface.contextId === undefined
-            ? {}
-            : {
-                contextId: renderedRightPanelSurface.contextId,
-                onRetryClose: () => closeRightPanelSurface(renderedRightPanelSurface),
-              })}
-        />
-      </Suspense>
-    ) : renderedRightPanelSurface?.kind === "scient" &&
-      renderedRightPanelSurface.module === "file" &&
-      activeThreadRef ? (
-      <Suspense fallback={null}>
-        <EnvironmentFilePreview
-          availableEditors={availableEditors}
-          environmentId={activeThreadRef.environmentId}
-          keybindings={keybindings}
+    ) : renderedRightPanelSurface?.kind === "scient" ? (
+      <>
+        {/* SCIENT-FORK:START — Scient-owned right-panel surfaces render from their module. */}
+        <ScientRightPanelContent
           surface={renderedRightPanelSurface}
-          threadRef={activeThreadRef}
+          activeThreadRef={activeThreadRef}
+          activeThread={activeThread}
+          activeProject={activeProject}
+          activeWorkspaceRoot={activeWorkspaceRoot}
+          availableEditors={availableEditors}
+          keybindings={keybindings}
+          closeRightPanelSurface={closeRightPanelSurface}
+          openScientSourcePdf={openScientSourcePdf}
         />
-      </Suspense>
-    ) : renderedRightPanelSurface?.kind === "scient" &&
-      renderedRightPanelSurface.module === "skill" &&
-      activeThreadRef ? (
-      <Suspense fallback={null}>
-        <ScientSkillDocumentPreview
-          environmentId={activeThreadRef.environmentId}
-          releaseKey={renderedRightPanelSurface.releaseKey}
-          threadRef={activeThreadRef}
-        />
-      </Suspense>
-    ) : renderedRightPanelSurface?.kind === "scient" &&
-      renderedRightPanelSurface.module === "artifact" ? (
-      <Suspense fallback={null}>
-        <ScientArtifactPreview
-          environmentId={activeThreadRef.environmentId}
-          threadRef={activeThreadRef}
-          artifact={renderedRightPanelSurface.artifact}
-        />
-      </Suspense>
-    ) : renderedRightPanelSurface?.kind === "scient" &&
-      renderedRightPanelSurface.module === "generated-pdf" &&
-      activeThreadRef ? (
-      <Suspense fallback={null}>
-        <GeneratedPdfPreview
-          source={renderedRightPanelSurface.source}
-          threadRef={activeThreadRef}
-        />
-      </Suspense>
-    ) : renderedRightPanelSurface?.kind === "scient" &&
-      renderedRightPanelSurface.module === "source-pdf" &&
-      activeThread &&
-      activeThreadRef &&
-      activeWorkspaceRoot ? (
-      <Suspense fallback={null}>
-        <SourcePdfPreview
-          readerScope={activeThreadRef.threadId}
-          attachmentId={renderedRightPanelSurface.attachmentId}
-          environmentId={activeThread.environmentId}
-          fileName={renderedRightPanelSurface.fileName}
-          root={activeWorkspaceRoot}
-          sourceId={renderedRightPanelSurface.sourceId}
-        />
-      </Suspense>
-    ) : renderedRightPanelSurface?.kind === "scient" &&
-      renderedRightPanelSurface.module === "sources" &&
-      activeThread &&
-      activeThreadRef &&
-      activeProject &&
-      activeWorkspaceRoot ? (
-      <Suspense fallback={null}>
-        <ScientSourcesPanel
-          environmentId={activeThread.environmentId}
-          root={activeWorkspaceRoot}
-          projectTitle={activeProject.title}
-          onOpenPdf={openScientSourcePdf}
-        />
-      </Suspense>
+        {/* SCIENT-FORK:END */}
+      </>
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <Suspense fallback={null}>
         <DevicePanel

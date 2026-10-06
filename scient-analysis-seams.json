@@ -37,6 +37,7 @@
     "apps/web/src/scient/pdf/ScientPdfReader.tsx",
     "apps/web/src/scient/rightPanel/ScientRightPanelSurfaceIcon.tsx",
     "apps/web/src/scient/rightPanel/surfaces.ts",
+    "apps/web/src/scient/rightPanel/ScientRightPanelContent.tsx",
     "apps/web/src/state/analysis.ts",
     "apps/web/src/state/compute.ts",
     "apps/web/src/routes/settings.scientific-computing.tsx",
@@ -136,7 +137,7 @@
     },
     {
       "path": "apps/web/src/components/ChatView.tsx",
-      "anchor": "ComputePanel",
+      "anchor": "ScientRightPanelContent",
       "purpose": "Mount Scient artifact and compute content in the inherited right-panel layout."
     },
     {
