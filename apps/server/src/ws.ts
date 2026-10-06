@@ -100,7 +100,6 @@ import {
   TextGenerationError,
   supportsModelConnections,
   AuthOrchestrationOperateScope,
-  type OrchestrationEvent,
   OrchestrationGetSnapshotError,
   ORCHESTRATION_WS_METHODS,
   PROVIDER_DISPLAY_NAMES,
@@ -590,28 +589,6 @@ function projectDirectoryFailureContext(
   }
 }
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
-
-export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
-  OrchestrationEvent,
-  {
-    type:
-      | "thread.message-sent"
-      | "thread.proposed-plan-upserted"
-      | "thread.activity-appended"
-      | "thread.turn-diff-completed"
-      | "thread.reverted"
-      | "thread.session-set";
-  }
-> {
-  return (
-    event.type === "thread.message-sent" ||
-    event.type === "thread.proposed-plan-upserted" ||
-    event.type === "thread.activity-appended" ||
-    event.type === "thread.turn-diff-completed" ||
-    event.type === "thread.reverted" ||
-    event.type === "thread.session-set"
-  );
-}
 
 const PROVIDER_STATUS_COALESCE_MAX_CHUNK = 256;
 const PROVIDER_STATUS_COALESCE_WINDOW = Duration.millis(200);
