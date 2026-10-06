@@ -3,10 +3,11 @@ import * as NodeFS from "node:fs";
 
 import { describe, expect, it } from "vite-plus/test";
 
-const chatMarkdownSource = NodeFS.readFileSync(
-  new URL("../../components/ChatMarkdown.tsx", import.meta.url),
-  "utf8",
-);
+// ChatMarkdown mounts the link-opening hooks; the hooks hold the click flow.
+const chatMarkdownSource = [
+  NodeFS.readFileSync(new URL("../../components/ChatMarkdown.tsx", import.meta.url), "utf8"),
+  NodeFS.readFileSync(new URL("./useChatFileLinkOpening.ts", import.meta.url), "utf8"),
+].join("\n");
 const chatViewSource = NodeFS.readFileSync(
   new URL("../../components/ChatView.tsx", import.meta.url),
   "utf8",
