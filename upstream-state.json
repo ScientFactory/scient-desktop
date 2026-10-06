@@ -136,6 +136,42 @@
         "b5467e986ca6bd7f84eb2fdf75d760d9e0d9c254"
       ],
       "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
+    },
+    {
+      "id": "scient-final-startup-capacity-20261006",
+      "merge": "8d3d0743105556397c77d6c8fecadd1a148d744e",
+      "parents": [
+        "99eb14cb828944b461466d3da92769160c07e2e6",
+        "f835e5adf9b33725f20dcc92bc44c77ed0a8fcdc"
+      ],
+      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
+    },
+    {
+      "id": "scient-final-obsolete-errors-20261006",
+      "merge": "0ef256e3dbdd04f04fdc11b56d183765db3bf143",
+      "parents": [
+        "8d3d0743105556397c77d6c8fecadd1a148d744e",
+        "5e28723441ac924b39d897585cd2a39b6ba378c4"
+      ],
+      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
+    },
+    {
+      "id": "scient-final-native-fixtures-20261006",
+      "merge": "32cdcc102fea25cfda3584c40c18880cc9a5a384",
+      "parents": [
+        "0ef256e3dbdd04f04fdc11b56d183765db3bf143",
+        "1768be85e3b25f338ac4b9500f11a20a79693846"
+      ],
+      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
+    },
+    {
+      "id": "scient-final-omp-ownership-20261006",
+      "merge": "36a69606455b2b52a7bf28835e3de260d2bccf19",
+      "parents": [
+        "32cdcc102fea25cfda3584c40c18880cc9a5a384",
+        "1ac9e21f76d0d02898fbec9df4e1846a4fe1ad1f"
+      ],
+      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
     }
   ]
 }

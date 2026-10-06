@@ -992,3 +992,39 @@ admission and source-to-build-output attestation before fresh final execution.
 See `scientific-ui-acceptance-matrix-prepared-6d62.md` and
 `final-runner-readiness-audit-c602.md`. No full alignment or manual-review readiness
 is claimed by these scoped results.
+
+### Final receiving topology and exact source equivalence — 2026-10-06
+
+The original receiving ref preserves source checkpoints
+`d74644f50e3142e9a7ea62fa59ca9e78812890b6` and
+`5a51ef8036e966ab6c7e4d85de3c83830f839d3e`. The first scoped `99e` → `d746`
+provenance check passed with the current-head exemption. The later full
+`99e` → `5a51` check genuinely failed: the four non-first parents of the
+five-parent `d746` checkpoint were rejected below HEAD. That failure is
+preserved; the range and checker are not narrowed or relaxed.
+
+The new owned `codex/v1-final-two-parent-20261006` ref starts at
+`99eb14cb828944b461466d3da92769160c07e2e6` and composes the same reviewed
+donors through these literal ordinary merges, in order:
+
+| Merge                                      | Ordered first parent                       | Ordered second parent / reviewed donor     |
+| ------------------------------------------ | ------------------------------------------ | ------------------------------------------ |
+| `8d3d0743105556397c77d6c8fecadd1a148d744e` | `99eb14cb828944b461466d3da92769160c07e2e6` | `f835e5adf9b33725f20dcc92bc44c77ed0a8fcdc` |
+| `0ef256e3dbdd04f04fdc11b56d183765db3bf143` | `8d3d0743105556397c77d6c8fecadd1a148d744e` | `5e28723441ac924b39d897585cd2a39b6ba378c4` |
+| `32cdcc102fea25cfda3584c40c18880cc9a5a384` | `0ef256e3dbdd04f04fdc11b56d183765db3bf143` | `1768be85e3b25f338ac4b9500f11a20a79693846` |
+| `36a69606455b2b52a7bf28835e3de260d2bccf19` | `32cdcc102fea25cfda3584c40c18880cc9a5a384` | `1ac9e21f76d0d02898fbec9df4e1846a4fe1ad1f` |
+
+Every merge uses ordinary hooks. The already-qualified receiving delta then
+publishes as `1249a2d1ab29ef75830f0db1a43550bf9f6f0146`, with the exact whole
+tree `73b838f17ff6e9d26c2786d99905f442430b6b68` before topology metadata or
+final documentation is added. This is byte-identical to qualified `5a51`;
+its existing source/check/build evidence is reused at that exact tree, not
+promoted across a product-code change. The original refs and failures survive,
+and the delivered `f835` head remains an ancestor for guarded fast-forward.
+
+Only the four exact ordered merge receipts and this review record are added
+after that equality proof. The existing two-parent receipt validation, nested
+merge checks, official ancestry rules and qualified
+`54084ae1e6c32809db040e4fa571c80fdf2d8ae4` cursor remain unchanged. Final
+introduced-history, documentation, artifact, app and consolidated acceptance
+receipts must report their actual later boundaries.
