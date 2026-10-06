@@ -1,4 +1,7 @@
-import type { NativeModelCapacityOwner } from "./scient-fork/NativeModelContextWindow.ts";
+import {
+  nativeModelCapacityWrite,
+  type NativeModelCapacityOwner,
+} from "./scient-fork/NativeModelContextWindow.ts";
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -47,8 +50,9 @@ import type {
   ProviderAdapterV2RuntimePolicy,
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2TurnMessage,
+  ProviderTextSnapshotConsumerOwner,
 } from "./ProviderAdapter.ts";
-import { ProviderTextSnapshotError, ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
+import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import { upsertProviderTurn } from "./ProjectionStore.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
@@ -59,9 +63,28 @@ import {
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 // SCIENT-FORK:START — owned finalization and private subscription lifetime.
 import {
+  isCommittedRootProviderTurn,
   makeOwnedRunFinalizer,
   makeRunEventSubscriptionLifetime,
+  ownedFailedStartReceipt,
 } from "./scient-fork/RunExecutionFinalization.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — the live root's side of a running fork's text snapshot.
+import { makeRunningForkTextSnapshots } from "./scient-fork/runningForkSource.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — a Stop before native acceptance settles the declined start.
+import {
+  cancelDeclinedPendingStart,
+  settleCancelledStart,
+} from "./scient-fork/PendingStartOwner.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — native workflow coordinators own their runless members.
+import {
+  isWorkflowMemberNode,
+  releaseRevokedWorkflowTracking,
+  revokedWorkflowOwnership,
+  routeWorkflowSubagentEvent,
+} from "./scient-fork/NativeWorkflowOwnership.ts";
 // SCIENT-FORK:END
 
 export interface ProviderEventRoutingState {
@@ -110,8 +133,6 @@ function isSettledSubagentStatus(status: OrchestrationV2Subagent["status"]): boo
 // commands, monitors/dynamic tools, subagent rows). Ingestion must not stop
 // while one of these is still non-terminal, or the late completion event is
 // dropped and the item spins forever in the projection.
-const isNativeStartReceiptError = Schema.is(ProviderAdapterTurnStartError);
-
 const backgroundCapableTurnItemTypes: ReadonlySet<OrchestrationV2TurnItem["type"]> = new Set([
   "command_execution",
   "dynamic_tool",
@@ -437,107 +458,24 @@ export function routeProviderEvent(
       return belongs ? [true, addProviderTurn(event.providerTurn.id, isRoot)] : [false, state];
     }
     case "node.updated": {
-      const member = state.workflowMembers.get(event.node.id);
-      const workflowMemberNode =
-        member !== undefined &&
-        event.driver === member.driver &&
-        event.node.threadId === member.threadId &&
-        event.node.runId === null &&
-        event.node.parentNodeId === member.parentNodeId &&
-        event.node.rootNodeId === member.parentNodeId &&
-        event.node.status === member.status &&
-        event.node.kind === "subagent" &&
-        !event.node.countsForRun &&
-        event.node.providerThreadId === null &&
-        event.node.providerTurnId === null &&
-        event.node.nativeItemRef === null &&
-        event.node.runtimeRequestId === null &&
-        event.node.checkpointScopeId === null;
       const belongs =
-        ownsRun(event.node.runId) || ownsChildThread(event.node.threadId) || workflowMemberNode;
+        ownsRun(event.node.runId) ||
+        ownsChildThread(event.node.threadId) ||
+        // SCIENT-FORK:START — an accepted runless native workflow member's node.
+        isWorkflowMemberNode(event, state.workflowMembers.get(event.node.id));
+      // SCIENT-FORK:END
       if (!belongs || event.node.providerThreadId === null) {
         return [belongs, state];
       }
       return [true, addProviderThread(event.node.providerThreadId)];
     }
-    case "subagent.updated": {
-      const task = event.subagent;
-      const belongs = ownsRun(task.runId) || ownsChildThread(task.threadId);
-      const nativeWorkflow =
-        task.presentation?.kind === "workflow" &&
-        task.origin === "provider_native" &&
-        task.nativeTaskRef?.strength === "strong" &&
-        task.nativeTaskRef.driver === task.driver &&
-        event.driver === task.driver &&
-        task.driver === input.driver &&
-        task.providerInstanceId === input.providerInstanceId;
-      if (nativeWorkflow && task.threadId === input.threadId) {
-        const coordinators = new Map(state.workflowCoordinators);
-        const members = new Map(state.workflowMembers);
-        const previous = coordinators.get(task.id);
-        const ownedThreadIds = new Set(state.ownedThreadIds);
-        const ownedProviderThreadIds = new Set(state.ownedProviderThreadIds);
-        if (
-          ownsRun(task.runId) &&
-          (previous === undefined ||
-            (previous.nativeTaskRef?.nativeId === task.nativeTaskRef?.nativeId &&
-              previous.providerInstanceId === task.providerInstanceId &&
-              previous.driver === task.driver))
-        ) {
-          coordinators.set(task.id, task);
-        } else if (
-          previous?.nativeTaskRef?.nativeId === task.nativeTaskRef?.nativeId &&
-          previous?.providerInstanceId === task.providerInstanceId &&
-          previous?.driver === task.driver
-        ) {
-          // An authoritative resume may transfer this task to a later run.
-          coordinators.delete(task.id);
-          if (previous.childThreadId !== null && previous.childThreadId !== input.threadId) {
-            ownedThreadIds.delete(previous.childThreadId);
-          }
-          if (
-            previous.providerThreadId !== null &&
-            previous.providerThreadId !== input.providerThreadId
-          ) {
-            ownedProviderThreadIds.delete(previous.providerThreadId);
-          }
-          for (const [id, member] of members) {
-            if (member.parentNodeId === task.id) members.delete(id);
-          }
-        }
-        return [
-          belongs,
-          {
-            ...state,
-            ownedThreadIds,
-            ownedProviderThreadIds,
-            workflowCoordinators: coordinators,
-            workflowMembers: members,
-          },
-        ];
-      }
-      if (belongs) return [true, state];
-      const coordinator =
-        task.parentNodeId === null ? undefined : state.workflowCoordinators.get(task.parentNodeId);
-      const memberOwned =
-        coordinator !== undefined &&
-        task.id !== coordinator.id &&
-        task.presentation?.kind === "workflow_agent" &&
-        task.presentation.workflowId === coordinator.id &&
-        task.threadId === coordinator.threadId &&
-        task.runId === null &&
-        task.origin === "provider_native" &&
-        task.driver === coordinator.driver &&
-        event.driver === coordinator.driver &&
-        task.providerInstanceId === coordinator.providerInstanceId &&
-        task.childThreadId === null &&
-        task.providerThreadId === null &&
-        task.nativeTaskRef === null &&
-        (!isSettledSubagentStatus(coordinator.status) || isSettledSubagentStatus(task.status));
-      return memberOwned
-        ? [true, { ...state, workflowMembers: new Map(state.workflowMembers).set(task.id, task) }]
-        : [false, state];
-    }
+    case "subagent.updated":
+      // SCIENT-FORK:START — native workflow coordinators and their runless members.
+      return routeWorkflowSubagentEvent(event, input, state, {
+        ownsRun: ownsRun(event.subagent.runId),
+        ownsChildThread: ownsChildThread(event.subagent.threadId),
+      });
+    // SCIENT-FORK:END
     case "message.updated":
       return [ownsRun(event.message.runId) || ownsChildThread(event.message.threadId), state];
     case "turn_item.updated": {
@@ -981,42 +919,23 @@ export const layer: Layer.Layer<
             writeFinalRunEvents,
           );
           // SCIENT-FORK:END
+          // SCIENT-FORK:START — a Stop before native acceptance settles the declined start.
           const cancelledStartOwner = yield* Ref.make<EventSink.PendingStartOwner | undefined>(
             undefined,
           );
-          const cancelDeclinedStart = Effect.gen(function* () {
-            const stoppedThread = yield* input.cancelBeforeProviderTurn?.() ?? Effect.void;
-            if (stoppedThread === undefined) return false;
-            const committed = yield* writeOwnedFinalRunEvents({
-              run: input.run,
-              rootNode: input.rootNode,
-              checkpointScope: input.checkpointScope,
-              providerThread: input.providerThread,
-              preserveProviderThread: true,
-              pendingStartOwner: stoppedThread,
-              attempt: input.attempt,
-              terminal: {
-                driver: input.session.driver,
-                status: "interrupted",
-                failure: null,
-                threadDisposition: "reusable",
-              },
-              failureItemPersisted: false,
-              refreshAfterTurn,
-              writeIfRunCurrent: { activeAttemptId: input.attemptId, expectedStatus: "running" },
-            });
-            if (committed) yield* Ref.set(cancelledStartOwner, stoppedThread);
-            return committed;
-          }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new RunExecutionStartError({
-                  commandId: input.commandId,
-                  runId: input.run.id,
-                  cause,
-                }),
-            ),
-          );
+          const cancelDeclinedStart = cancelDeclinedPendingStart({
+            input,
+            cancelledStartOwner,
+            refreshAfterTurn,
+            writeOwnedFinalRunEvents,
+            startError: (cause) =>
+              new RunExecutionStartError({
+                commandId: input.commandId,
+                runId: input.run.id,
+                cause,
+              }),
+          });
+          // SCIENT-FORK:END
           const makeFailedTerminalEvent = (
             failure: OrchestrationV2ProviderFailure,
             failureItemOrdinal: number,
@@ -1146,19 +1065,20 @@ export const layer: Layer.Layer<
           const subscriptionLifetime = yield* makeRunEventSubscriptionLifetime(
             eventSubscription.close,
           );
+          const textSnapshotOwner: ProviderTextSnapshotConsumerOwner = {
+            threadId: input.run.threadId,
+            runId: input.run.id,
+            activeAttemptId: input.attempt.id,
+            rootNodeId: input.rootNode.id,
+            runOrdinal: input.run.ordinal,
+            providerThreadId: input.providerThread.id,
+            providerSessionId: input.providerSessionId,
+            providerInstanceId: input.run.providerInstanceId,
+            driver: input.session.driver,
+          };
           yield* subscriptionLifetime.startup(
             () =>
-              snapshotSubscription?.textSnapshotConsumer?.bind({
-                threadId: input.run.threadId,
-                runId: input.run.id,
-                activeAttemptId: input.attempt.id,
-                rootNodeId: input.rootNode.id,
-                runOrdinal: input.run.ordinal,
-                providerThreadId: input.providerThread.id,
-                providerSessionId: input.providerSessionId,
-                providerInstanceId: input.run.providerInstanceId,
-                driver: input.session.driver,
-              }) ?? Effect.void,
+              snapshotSubscription?.textSnapshotConsumer?.bind(textSnapshotOwner) ?? Effect.void,
           );
           // SCIENT-FORK:END
           const inheritedBackgroundTurnItems = yield* (
@@ -1438,148 +1358,43 @@ export const layer: Layer.Layer<
             return true;
           });
           const filterAssistantEvent = makeAssistantStreamingFilter(responseStreamingMode);
-          const snapshotTextFloors = new Map<string, string>();
+          // SCIENT-FORK:START — a running fork reads this live root's streamed text.
+          const runningForkText = makeRunningForkTextSnapshots({
+            owner: textSnapshotOwner,
+            eventRouting,
+            eventSink,
+            providerEventIngestor,
+          });
+          // SCIENT-FORK:END
           const providerEventFiber = yield* (
             snapshotSubscription?.snapshotEvents ?? eventSubscription.events
           ).pipe(
             Stream.mapEffect((event) =>
               Effect.gen(function* () {
                 if (event.type === "internal.text_snapshot") {
+                  // SCIENT-FORK:START — a running fork captures this live root's streamed text.
                   const consumer = snapshotSubscription?.textSnapshotConsumer;
                   if (consumer === undefined) return;
-                  yield* consumer.consume(
-                    event,
-                    Effect.gen(function* () {
-                      const owner = event.owner;
-                      const routing = yield* Ref.get(eventRouting);
-                      if (
-                        owner.threadId !== input.run.threadId ||
-                        owner.runId !== input.run.id ||
-                        owner.activeAttemptId !== input.attempt.id ||
-                        owner.rootNodeId !== input.rootNode.id ||
-                        owner.runOrdinal !== input.run.ordinal ||
-                        owner.providerThreadId !== input.providerThread.id ||
-                        owner.providerSessionId !== input.providerSessionId ||
-                        owner.providerInstanceId !== input.run.providerInstanceId ||
-                        owner.driver !== input.session.driver ||
-                        routing.rootTurnEnded ||
-                        routing.rootProviderTurnId !== owner.providerTurnId ||
-                        eventSink.captureRunningForkText === undefined
-                      )
-                        return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
-                      const normalized = yield* Effect.forEach(event.events, (frame) =>
-                        providerEventIngestor.normalize({
-                          providerSessionId: input.providerSessionId,
-                          providerInstanceId: input.run.providerInstanceId,
-                          threadId: input.run.threadId,
-                          runId: input.run.id,
-                          nodeId: input.rootNode.id,
-                          event: frame,
-                        }),
-                      );
-                      const capture = yield* eventSink.captureRunningForkText({
-                        owner,
-                        events: normalized.flat(),
-                      });
-                      for (const frame of event.events) {
-                        if (frame.type === "message.updated")
-                          snapshotTextFloors.set(
-                            `message.updated:${frame.message.id}`,
-                            frame.message.text,
-                          );
-                        if (
-                          frame.type === "turn_item.updated" &&
-                          frame.turnItem.type === "assistant_message"
-                        )
-                          snapshotTextFloors.set(
-                            `turn_item.updated:${frame.turnItem.id}`,
-                            frame.turnItem.text,
-                          );
-                      }
-                      return capture;
-                    }),
-                  );
+                  yield* consumer.consume(event, runningForkText.capture(event));
                   return;
+                  // SCIENT-FORK:END
                 }
-                const [accepted, revokedIds, revokedThreadIds] = yield* Ref.modify(
-                  eventRouting,
-                  (state) => {
-                    const [accepted, next] = routeProviderEvent(event, routeIdentity, state);
-                    const revokedIds = new Set<NodeId>([
-                      ...Array.from(state.workflowCoordinators.keys()).filter(
-                        (id) => !next.workflowCoordinators.has(id),
-                      ),
-                      ...Array.from(state.workflowMembers.keys()).filter(
-                        (id) => !next.workflowMembers.has(id),
-                      ),
-                    ]);
-                    const revokedThreadIds = new Set(
-                      Array.from(state.ownedThreadIds).filter((id) => !next.ownedThreadIds.has(id)),
-                    );
-                    return [[accepted, revokedIds, revokedThreadIds] as const, next];
-                  },
-                );
-                if (revokedIds.size > 0) {
-                  const open = yield* Ref.get(openRunOwnedSubagents);
-                  const revokedItemIds = new Set([
-                    ...Array.from(open.turnItems.values())
-                      .filter((item) => revokedIds.has(item.subagentId))
-                      .map((item) => item.id),
-                    ...Array.from(open.childTurnItems.values())
-                      .filter((item) => revokedThreadIds.has(item.threadId))
-                      .map((item) => item.id),
-                  ]);
-                  yield* Ref.update(
+                const [accepted, revoked] = yield* Ref.modify(eventRouting, (state) => {
+                  const [accepted, next] = routeProviderEvent(event, routeIdentity, state);
+                  // SCIENT-FORK:START — a workflow ownership transfer revokes rows this run tracked.
+                  return [[accepted, revokedWorkflowOwnership(state, next)] as const, next];
+                  // SCIENT-FORK:END
+                });
+                // SCIENT-FORK:START — stop tracking rows a transferred workflow took with it.
+                if (revoked.ids.size > 0) {
+                  yield* releaseRevokedWorkflowTracking(revoked, {
+                    openRunOwnedSubagents,
                     activeBackgroundTurnItems,
-                    (current) =>
-                      new Set(Array.from(current).filter((id) => !revokedItemIds.has(id))),
-                  );
-                  const revokedTurnIds = new Set(
-                    Array.from(open.nodes.values()).flatMap((node) =>
-                      revokedThreadIds.has(node.threadId) && node.providerTurnId !== null
-                        ? [node.providerTurnId]
-                        : [],
-                    ),
-                  );
-                  yield* Ref.update(
                     activeChildProviderTurns,
-                    (current) =>
-                      new Set(Array.from(current).filter((id) => !revokedTurnIds.has(id))),
-                  );
-                  yield* Ref.update(
                     activeChildSubagents,
-                    (current) => new Set(Array.from(current).filter((id) => !revokedIds.has(id))),
-                  );
-                  yield* Ref.update(openRunOwnedSubagents, (current) => ({
-                    ...current,
-                    subagents: new Map(
-                      Array.from(current.subagents).filter(([id]) => !revokedIds.has(id)),
-                    ),
-                    nodes: new Map(
-                      Array.from(current.nodes).filter(
-                        ([id, node]) => !revokedIds.has(id) && !revokedThreadIds.has(node.threadId),
-                      ),
-                    ),
-                    turnItems: new Map(
-                      Array.from(current.turnItems).filter(([id]) => !revokedIds.has(id)),
-                    ),
-                    childTurnItems: new Map(
-                      Array.from(current.childTurnItems).filter(
-                        ([, item]) => !revokedThreadIds.has(item.threadId),
-                      ),
-                    ),
-                    linkedChildThreadIds: new Set(
-                      Array.from(current.linkedChildThreadIds).filter(
-                        (id) => !revokedThreadIds.has(id),
-                      ),
-                    ),
-                    linkedWorkflowMemberIds: new Set(
-                      Array.from(current.linkedWorkflowMemberIds).filter(
-                        (id) => !revokedIds.has(id),
-                      ),
-                    ),
-                  }));
+                  });
                 }
+                // SCIENT-FORK:END
                 // Route, persist, and track each frame in one sequential step.
                 // Separate filter/tap operators can process a whole chunk's
                 // ownership transfers before tracking its earlier accepted rows.
@@ -1589,22 +1404,9 @@ export const layer: Layer.Layer<
                   event,
                   DateTime.toEpochMillis(yield* DateTime.now),
                 );
-                if (deliveredEvent) {
-                  const text =
-                    deliveredEvent.type === "message.updated"
-                      ? deliveredEvent.message
-                      : deliveredEvent.type === "turn_item.updated" &&
-                          deliveredEvent.turnItem.type === "assistant_message"
-                        ? deliveredEvent.turnItem
-                        : null;
-                  if (text !== null) {
-                    const key = `${deliveredEvent.type}:${text.id}`;
-                    const floor = snapshotTextFloors.get(key);
-                    if (!text.streaming) snapshotTextFloors.delete(key);
-                    else if (floor !== undefined && !text.text.startsWith(floor))
-                      deliveredEvent = null;
-                  }
-                }
+                // SCIENT-FORK:START — live text never rewinds below a running fork's snapshot.
+                if (deliveredEvent) deliveredEvent = runningForkText.floor(deliveredEvent);
+                // SCIENT-FORK:END
                 if (deliveredEvent) {
                   // Root provider_thread.updated always uses an ownership gate:
                   // pre-terminal writeIfRunCurrent (attempt still running), or
@@ -1627,24 +1429,16 @@ export const layer: Layer.Layer<
                     runId: input.run.id,
                     nodeId: input.rootNode.id,
                     event: deliveredEvent,
-                    ...(input.nativeModelCapacityOwner === undefined ||
-                    rootTerminalAlreadySeen ||
-                    deliveredEvent.type !== "provider_turn.updated" ||
-                    deliveredEvent.driver !== "codex" ||
-                    deliveredEvent.providerTurn.nodeId !== input.rootNode.id ||
-                    deliveredEvent.providerTurn.runAttemptId !== input.attempt.id ||
-                    deliveredEvent.providerTurn.tokenUsage?.maxTokens == null ||
-                    !Number.isFinite(deliveredEvent.providerTurn.tokenUsage.maxTokens) ||
-                    deliveredEvent.providerTurn.tokenUsage.maxTokens <= 0
-                      ? {}
-                      : {
-                          nativeModelCapacityOwner: input.nativeModelCapacityOwner,
-                          writeIfRunCurrent: {
-                            runId: input.run.id,
-                            activeAttemptId: input.attempt.id,
-                            expectedStatus: "running" as const,
-                          },
-                        }),
+                    // SCIENT-FORK:START — record a reported Codex window for its launch owner.
+                    ...nativeModelCapacityWrite({
+                      owner: input.nativeModelCapacityOwner,
+                      rootTerminalAlreadySeen,
+                      event: deliveredEvent,
+                      runId: input.run.id,
+                      attemptId: input.attempt.id,
+                      rootNodeId: input.rootNode.id,
+                    }),
+                    // SCIENT-FORK:END
                     ...(isRootProviderThreadUpdate
                       ? rootTerminalAlreadySeen
                         ? {
@@ -1671,18 +1465,7 @@ export const layer: Layer.Layer<
                   ) {
                     const rootProviderTurnId = (yield* Ref.get(eventRouting)).rootProviderTurnId;
                     for (const { event: storedEvent } of storedEvents) {
-                      if (
-                        storedEvent.type === "provider-turn.updated" &&
-                        storedEvent.driver === input.session.driver &&
-                        storedEvent.threadId === input.run.threadId &&
-                        storedEvent.runId === input.run.id &&
-                        storedEvent.nodeId === input.rootNode.id &&
-                        storedEvent.providerInstanceId === input.run.providerInstanceId &&
-                        storedEvent.payload.id === rootProviderTurnId &&
-                        storedEvent.payload.nodeId === input.rootNode.id &&
-                        storedEvent.payload.runAttemptId === input.attemptId &&
-                        storedEvent.payload.providerThreadId === input.providerThread.id
-                      ) {
+                      if (isCommittedRootProviderTurn(storedEvent, input, rootProviderTurnId)) {
                         yield* Ref.update(
                           committedRootProviderTurn,
                           (current) =>
@@ -1820,26 +1603,23 @@ export const layer: Layer.Layer<
           );
           // SCIENT-FORK:START — retire an interrupted subscription even before child startup.
           const interruptProviderEvents = subscriptionLifetime.interrupt(providerEventFiber);
+          const settleDeclinedStart = settleCancelledStart({
+            rootTerminalSeen,
+            rootRunFinalized,
+            cancelledStartOwner,
+            providerThread: input.providerThread,
+            interruptProviderEvents,
+          });
           // SCIENT-FORK:END
 
           if (
             input.shouldStartProviderTurn !== undefined &&
             !(yield* input.shouldStartProviderTurn())
           ) {
-            if (yield* cancelDeclinedStart) {
-              yield* Ref.set(rootTerminalSeen, true);
-              yield* Ref.set(rootRunFinalized, true);
-              // No native root was started. Without retained background work
-              // there is no terminal frame to end this private subscription.
-              if (
-                (yield* Ref.get(cancelledStartOwner))?.retainedTurn === undefined ||
-                (input.providerThread.pendingBackgroundTasks?.length ?? 0) === 0
-              ) {
-                yield* interruptProviderEvents;
-              }
-            } else {
-              yield* interruptProviderEvents;
-            }
+            // SCIENT-FORK:START — a committed declined start is already final.
+            if (yield* cancelDeclinedStart) yield* settleDeclinedStart;
+            else yield* interruptProviderEvents;
+            // SCIENT-FORK:END
             return;
           }
 
@@ -1892,36 +1672,21 @@ export const layer: Layer.Layer<
                     Cause.fromReasons<never>(cause.reasons.filter(Cause.isInterruptReason)),
                   );
                 }
-                const error = Cause.squash(cause);
-                const receipt =
-                  isNativeStartReceiptError(error) &&
-                  error.threadId === input.run.threadId &&
-                  error.runId === input.run.id &&
-                  error.providerThreadId === input.providerThread.id &&
-                  error.driver === input.session.driver &&
-                  error.providerTurn?.nodeId === input.rootNode.id &&
-                  error.providerTurn.runAttemptId === input.attemptId &&
-                  error.providerTurn.providerThreadId === input.providerThread.id
-                    ? error.providerTurn
-                    : undefined;
-                // The wrapper may prepare context after the first pending-start
-                // fence. Stop in that interval still owns the declined native offer.
+                // SCIENT-FORK:START — the receipt a failed native start reported for this root.
+                const receipt = ownedFailedStartReceipt(Cause.squash(cause), input);
+                // SCIENT-FORK:END
+                // SCIENT-FORK:START — the wrapper may prepare context after the first
+                // pending-start fence. Stop in that interval still owns the declined native offer.
                 if (
                   receipt === undefined &&
                   input.shouldStartProviderTurn !== undefined &&
                   !(yield* input.shouldStartProviderTurn()) &&
                   (yield* cancelDeclinedStart)
                 ) {
-                  yield* Ref.set(rootTerminalSeen, true);
-                  yield* Ref.set(rootRunFinalized, true);
-                  if (
-                    (yield* Ref.get(cancelledStartOwner))?.retainedTurn === undefined ||
-                    (input.providerThread.pendingBackgroundTasks?.length ?? 0) === 0
-                  ) {
-                    yield* interruptProviderEvents;
-                  }
+                  yield* settleDeclinedStart;
                   return;
                 }
+                // SCIENT-FORK:END
                 return yield* Effect.logError("orchestration V2 provider turn start failed", {
                   runId: input.run.id,
                   cause,

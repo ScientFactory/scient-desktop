@@ -2,7 +2,9 @@
 import {
   ModelSelection,
   ServerSettings,
+  type NodeId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderThread,
   type ProviderSessionId,
   type ProviderThreadId,
   type RunAttemptId,
@@ -16,6 +18,10 @@ import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import { customModelProviderId } from "../../customModels.ts";
 import { droidCustomModelId } from "../../provider/droid/DroidCustomModels.ts";
+import type {
+  ProviderAdapterV2Event,
+  ProviderAdapterV2SessionRuntime,
+} from "../ProviderAdapter.ts";
 import { decodeRunRow } from "./projectionRowJson.ts";
 
 const RuntimeConfiguration = Schema.Struct({
@@ -51,6 +57,63 @@ export interface NativeModelCapacityOwner {
   readonly providerThreadId: ProviderThreadId;
   readonly nativeThreadId: string;
 }
+
+/** The launch owner a Codex root run captures, when its native thread is known. */
+export const nativeModelCapacityOwnerFor = (input: {
+  readonly session: Pick<
+    ProviderAdapterV2SessionRuntime,
+    "driver" | "modelContextWindowLaunchFingerprint"
+  >;
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly modelSelection: ModelSelection;
+  readonly providerSessionId: ProviderSessionId;
+}): { readonly nativeModelCapacityOwner?: NativeModelCapacityOwner } => {
+  const { session, providerThread: runningProviderThread, providerSessionId } = input;
+  return session.driver !== "codex" ||
+    session.modelContextWindowLaunchFingerprint === undefined ||
+    runningProviderThread.nativeThreadRef?.driver !== "codex" ||
+    runningProviderThread.nativeThreadRef.nativeId === null
+    ? {}
+    : {
+        nativeModelCapacityOwner: {
+          modelSelection: input.modelSelection,
+          launchFingerprint: session.modelContextWindowLaunchFingerprint,
+          providerSessionId,
+          providerThreadId: runningProviderThread.id,
+          nativeThreadId: runningProviderThread.nativeThreadRef.nativeId,
+        },
+      };
+};
+
+/** Ingest options that record a live root's reported Codex window for its launch owner. */
+export const nativeModelCapacityWrite = (input: {
+  readonly owner: NativeModelCapacityOwner | undefined;
+  readonly rootTerminalAlreadySeen: boolean;
+  readonly event: ProviderAdapterV2Event;
+  readonly runId: RunId;
+  readonly attemptId: RunAttemptId;
+  readonly rootNodeId: NodeId;
+}) => {
+  const deliveredEvent = input.event;
+  return input.owner === undefined ||
+    input.rootTerminalAlreadySeen ||
+    deliveredEvent.type !== "provider_turn.updated" ||
+    deliveredEvent.driver !== "codex" ||
+    deliveredEvent.providerTurn.nodeId !== input.rootNodeId ||
+    deliveredEvent.providerTurn.runAttemptId !== input.attemptId ||
+    deliveredEvent.providerTurn.tokenUsage?.maxTokens == null ||
+    !Number.isFinite(deliveredEvent.providerTurn.tokenUsage.maxTokens) ||
+    deliveredEvent.providerTurn.tokenUsage.maxTokens <= 0
+    ? {}
+    : {
+        nativeModelCapacityOwner: input.owner,
+        writeIfRunCurrent: {
+          runId: input.runId,
+          activeAttemptId: input.attemptId,
+          expectedStatus: "running" as const,
+        },
+      };
+};
 
 export const nativeModelWindowKey = (selection: ModelSelection, launchFingerprint: string) =>
   encodeModelWindowKey({ selection, configurationHash: launchFingerprint });

@@ -1,11 +1,21 @@
 /** Scient-owned terminal admission and per-subscription cleanup for native execution. */
-import type { RunAttemptId, ThreadId } from "@t3tools/contracts";
+import type {
+  OrchestrationV2DomainEvent,
+  ProviderTurnId,
+  RunAttemptId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 
 import type { KeyedSerialExecutor } from "../KeyedSerialExecutor.ts";
-import type { ProviderAdapterV2SessionRuntime } from "../ProviderAdapter.ts";
+import {
+  ProviderAdapterTurnStartError,
+  type ProviderAdapterV2SessionRuntime,
+} from "../ProviderAdapter.ts";
+import type { RunExecutionServiceV2StartRootRunInput } from "../RunExecutionService.ts";
 
 interface FinalRunWrite {
   readonly terminal: { readonly status: string };
@@ -113,3 +123,40 @@ export const makeRunEventSubscriptionLifetime = Effect.fnUntraced(function* (
       Fiber.interrupt(fiber).pipe(Effect.ensuring(close)),
   };
 });
+
+type RootReceiptOwner = Pick<
+  RunExecutionServiceV2StartRootRunInput,
+  "run" | "rootNode" | "providerThread" | "session" | "attemptId"
+>;
+
+const isNativeStartReceiptError = Schema.is(ProviderAdapterTurnStartError);
+
+/** The provider turn a failed native start reported for exactly this root attempt. */
+export const ownedFailedStartReceipt = (error: unknown, input: RootReceiptOwner) =>
+  isNativeStartReceiptError(error) &&
+  error.threadId === input.run.threadId &&
+  error.runId === input.run.id &&
+  error.providerThreadId === input.providerThread.id &&
+  error.driver === input.session.driver &&
+  error.providerTurn?.nodeId === input.rootNode.id &&
+  error.providerTurn.runAttemptId === input.attemptId &&
+  error.providerTurn.providerThreadId === input.providerThread.id
+    ? error.providerTurn
+    : undefined;
+
+/** A stored provider-turn row that is this root attempt's own committed receipt. */
+export const isCommittedRootProviderTurn = (
+  storedEvent: OrchestrationV2DomainEvent,
+  input: RootReceiptOwner,
+  rootProviderTurnId: ProviderTurnId | null,
+): storedEvent is Extract<OrchestrationV2DomainEvent, { readonly type: "provider-turn.updated" }> =>
+  storedEvent.type === "provider-turn.updated" &&
+  storedEvent.driver === input.session.driver &&
+  storedEvent.threadId === input.run.threadId &&
+  storedEvent.runId === input.run.id &&
+  storedEvent.nodeId === input.rootNode.id &&
+  storedEvent.providerInstanceId === input.run.providerInstanceId &&
+  storedEvent.payload.id === rootProviderTurnId &&
+  storedEvent.payload.nodeId === input.rootNode.id &&
+  storedEvent.payload.runAttemptId === input.attemptId &&
+  storedEvent.payload.providerThreadId === input.providerThread.id;

@@ -1,18 +1,20 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { resolveNativeModelContextWindow } from "./scient-fork/NativeModelContextWindow.ts";
+import {
+  nativeModelCapacityOwnerFor,
+  resolveNativeModelContextWindow,
+} from "./scient-fork/NativeModelContextWindow.ts";
 import {
   ContextHandoffPolicyOverride,
   genericContextHandoffPolicy,
   makeScientContextHandoffPolicy,
+  scientHandoffDeliveryProvenance,
+  usesScientHandoffBudget,
 } from "./ScientContextHandoffPolicy.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
-  NodeId,
-  CheckpointScopeId,
-  ProviderSessionId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
@@ -31,7 +33,18 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { frozenForkPortableReason } from "./scient-fork/ConversationForkNativeSource.ts";
+// SCIENT-FORK:START — portable history and the frozen conversation-fork start.
+import {
+  makeTurnStartHistory,
+  startFrozenConversationFork,
+} from "./scient-fork/PortableTurnStart.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — a Stop before native acceptance declines and captures the start.
+import {
+  pendingStartCancellation,
+  startUnlessStopRequested,
+} from "./scient-fork/PendingStartOwner.ts";
+// SCIENT-FORK:END
 
 import { ServerConfig } from "../config.ts";
 import { validateProviderCurrentInput } from "./AttachmentPrompt.ts";
@@ -175,29 +188,15 @@ export const layer: Layer.Layer<
             ),
             Effect.catchCause(() => Effect.succeed(input.inheritedBackgroundTurnItems)),
           ),
+        // SCIENT-FORK:START — a Stop requested before the native offer declines it.
         shouldStartProviderTurn: () =>
-          isCurrentAttemptInStatus("running").pipe(
-            Effect.flatMap((current) =>
-              current
-                ? projectionStore
-                    .hasUnpairedRunInterruptRequest(
-                      input.threadId,
-                      idAllocator.derive.runSignalTurnItem({
-                        runId: input.runId,
-                        signal: "interrupt-request",
-                      }),
-                      idAllocator.derive.runSignalTurnItem({
-                        runId: input.runId,
-                        signal: "interrupt-result",
-                      }),
-                    )
-                    .pipe(
-                      Effect.map((requested) => !requested),
-                      Effect.catchCause(() => Effect.succeed(false)),
-                    )
-                : Effect.succeed(false),
-            ),
-          ),
+          startUnlessStopRequested(isCurrentAttemptInStatus("running"), {
+            projectionStore,
+            idAllocator,
+            threadId: input.threadId,
+            runId: input.runId,
+          }),
+        // SCIENT-FORK:END
         shouldFinalizeRun: () =>
           projectionStore.getRuntimeRecoveryProjection(input.threadId).pipe(
             Effect.map((current) => {
@@ -226,80 +225,13 @@ export const layer: Layer.Layer<
       };
     };
 
-    // A long-lived run must retain only its captured owner, never startup history.
-    const makePendingStartCancellation =
-      (input: {
-        readonly threadId: ThreadId;
-        readonly runId: RunId;
-        readonly activeAttemptId: RunAttemptId;
-        readonly rootNodeId: NodeId;
-        readonly checkpointScopeId: CheckpointScopeId;
-        readonly runOrdinal: number;
-        readonly providerSessionId: ProviderSessionId;
-        readonly providerThread: OrchestrationV2ProviderThread;
-        readonly session: ProviderAdapterV2SessionRuntime;
-        readonly hasUnpairedRunInterruptRequest: () => Effect.Effect<boolean>;
-      }) =>
-      () =>
-        Effect.gen(function* () {
-          if (!(yield* input.hasUnpairedRunInterruptRequest())) return undefined;
-          const current = yield* projectionStore.getThreadRecords(input.threadId, [
-            "runs",
-            "attempts",
-            "nodes",
-            "providerThreads",
-            "providerTurns",
-          ]);
-          const previous = current.providerTurns.findLast(
-            (turn) => turn.providerThreadId === input.providerThread.id,
-          );
-          const previousAttempt = current.attempts.find(
-            (candidate) => candidate.id === previous?.runAttemptId,
-          );
-          const previousRun = current.runs.find(
-            (candidate) => candidate.id === previousAttempt?.runId,
-          );
-          const owner: EventSink.PendingStartOwner = {
-            threadId: input.threadId,
-            runId: input.runId,
-            activeAttemptId: input.activeAttemptId,
-            rootNodeId: input.rootNodeId,
-            checkpointScopeId: input.checkpointScopeId,
-            runOrdinal: input.runOrdinal,
-            providerThread: input.providerThread,
-            interruptRequestId: idAllocator.derive.runSignalTurnItem({
-              runId: input.runId,
-              signal: "interrupt-request",
-            }),
-            interruptResultId: idAllocator.derive.runSignalTurnItem({
-              runId: input.runId,
-              signal: "interrupt-result",
-            }),
-            ...(previous === undefined || previousAttempt === undefined || previousRun === undefined
-              ? {}
-              : {
-                  retainedTurn: {
-                    id: previous.id,
-                    attemptId: previousAttempt.id,
-                    runId: previousRun.id,
-                    runOrdinal: previousRun.ordinal,
-                  },
-                }),
-          };
-          if (!EventSink.matchesPendingStartOwner(current, owner)) return undefined;
-          const live = yield* providerSessions.get(input.providerSessionId);
-          if (Option.isNone(live) || live.value !== input.session) return undefined;
-          if (owner.retainedTurn !== undefined) {
-            // The new turn was never offered. Stop retained work through its real
-            // previous native turn, preserving shared-session and receipt identity.
-            yield* input.session.interruptTurn({
-              providerThread: input.providerThread,
-              providerTurnId: owner.retainedTurn.id,
-              requestRuntimeRestart: true,
-            });
-          }
-          return owner;
-        });
+    // SCIENT-FORK:START — a long-lived run must retain only its captured owner, never startup history.
+    const makePendingStartCancellation = pendingStartCancellation({
+      projectionStore,
+      idAllocator,
+      providerSessions,
+    });
+    // SCIENT-FORK:END
 
     const makeDeliverySession = (
       session: ProviderAdapterV2SessionRuntime,
@@ -758,26 +690,15 @@ export const layer: Layer.Layer<
                   }),
             }),
       );
-      const prepareHistoryBeforeStart = (runIds?: ReadonlyArray<RunId>) =>
-        Effect.gen(function* () {
-          const history = yield* Effect.result(
-            projectionStore.getTurnStartHistory(input.threadId, runIds),
-          );
-          if (history._tag === "Success")
-            return history.success.filter(
-              (item) =>
-                !projection.runs.some(
-                  (source) => source.id === item.runId && source.status === "rolled_back",
-                ),
-            );
-          if (input.willRetry === true) return yield* history.failure;
-          yield* settleStartFailure({
-            signal: "provider-history-preparation-failure",
-            title: "Provider history could not be prepared",
-            error: history.failure,
-          });
-          return undefined;
-        });
+      // SCIENT-FORK:START — portable history is read before the native offer.
+      const prepareHistoryBeforeStart = makeTurnStartHistory({
+        projectionStore,
+        threadId: input.threadId,
+        runs: projection.runs,
+        willRetry: input.willRetry,
+        settleStartFailure,
+      });
+      // SCIENT-FORK:END
       if (sessionResult._tag === "Failure") {
         // A disposed buffered generation cannot be recreated by retrying session startup.
         if (
@@ -815,118 +736,31 @@ export const layer: Layer.Layer<
         // Adoption consumes the existing generation; it cannot reload or replace its native owner.
         if (providerWork !== undefined) return providerThread;
         if (nativeForkTransfer !== undefined) {
+          // SCIENT-FORK:START — a frozen fork starts natively or from its portable prefix.
           if (projection.thread.conversationFork != null) {
-            const frozen = nativeForkTransfer.frozenSource;
-            let portableReason = frozenForkPortableReason({
-              frozenSource: frozen,
-              sourceRunId: nativeForkTransfer.sourcePoint.runId,
-              sourceThreadId: nativeForkTransfer.sourceThreadId,
-              targetInstanceId: run.providerInstanceId,
-              targetDriver: session.driver,
-              capabilities: session.providerSession.capabilities,
-            });
-            if (portableReason === undefined && frozen !== undefined) {
-              const forked = yield* Effect.result(
-                session.forkThread({
-                  sourceProviderThread: frozen.sourceProviderThread,
-                  sourceProviderTurns: frozen.sourceProviderTurns,
-                  providerTurnId: frozen.providerTurnId,
-                  targetThreadId: projection.thread.id,
-                  modelSelection: run.modelSelection,
-                  runtimePolicy: resolvedRuntimePolicy,
-                }),
-              );
-              if (forked._tag === "Success") return forked.success;
-              portableReason = `The native fork failed: ${forked.failure.message}`;
-            }
-            if (!session.providerSession.capabilities.context.canConsumeHandoffSummaries) {
-              return yield* new ProviderTurnStartError({
-                runId,
-                cause:
-                  "The selected provider cannot consume the frozen portable prefix after native fork failure.",
-              });
-            }
-            // Only the destination's immutable prefix remains authoritative after acceptance.
-            // A failed clone never grants resume authority over the source or a guessed native id.
-            const replacement = yield* loadFromProvider(
-              session.ensureThread({
-                threadId: projection.thread.id,
-                modelSelection: run.modelSelection,
-                runtimePolicy: resolvedRuntimePolicy,
-                providerSessionId,
-                existingProviderThread: {
-                  ...providerThread,
-                  nativeThreadRef: null,
-                  nativeConversationHeadRef: null,
-                  nativeMetadata: null,
-                  forkedFrom: null,
-                  handoffIds: [],
-                },
-              }),
-            );
-            if (replacement === undefined) return undefined;
-            const createdAt = yield* DateTime.now;
-            const history = yield* prepareHistoryBeforeStart();
-            if (history === undefined) return undefined;
-            const prefix = history.filter(
-              (item) =>
-                item.runId === null ||
-                projection.runs.some(
-                  (source) => source.id === item.runId && source.ordinal < run.ordinal,
-                ),
-            );
-            const handoff = yield* contextHandoffService.prepareProviderHandoff({
+            const frozenStart = yield* startFrozenConversationFork({
+              nativeForkTransfer,
+              session,
               threadId: projection.thread.id,
-              targetRunId: run.id,
-              transferId: nativeForkTransfer.id,
-              purpose: "scient_fork",
-              fromProviderThreadIds: [],
-              toProviderThreadId: providerThread.id,
-              fromProviderInstanceId:
-                nativeForkTransfer.sourceProviderInstanceId ?? run.providerInstanceId,
-              toProviderInstanceId: run.providerInstanceId,
-              coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
-              strategy: "full_thread_summary",
               runs: projection.runs,
-              items: prefix,
-              createdAt,
+              run,
+              providerThread,
+              providerSessionId,
+              resolvedRuntimePolicy,
+              loadFromProvider,
+              prepareHistoryBeforeStart,
+              startError: (cause) => new ProviderTurnStartError({ runId, cause }),
+              contextHandoffService,
+              eventSink,
+              idAllocator,
             });
-            yield* eventSink.write({
-              events: [
-                {
-                  id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
-                  type: "context-handoff.updated",
-                  threadId: projection.thread.id,
-                  runId: run.id,
-                  providerInstanceId: run.providerInstanceId,
-                  occurredAt: createdAt,
-                  payload: handoff,
-                },
-                {
-                  id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
-                  type: "context-transfer.updated",
-                  threadId: projection.thread.id,
-                  runId: run.id,
-                  providerInstanceId: run.providerInstanceId,
-                  occurredAt: createdAt,
-                  payload: {
-                    ...nativeForkTransfer,
-                    targetProviderInstanceId: run.providerInstanceId,
-                    targetRunId: run.id,
-                    status: "consumed",
-                    resolution: { strategy: "portable_context", contextHandoffId: handoff.id },
-                    portableReason: portableReason ?? "The native source is unavailable.",
-                    error: null,
-                    updatedAt: createdAt,
-                    consumedAt: createdAt,
-                  },
-                },
-              ],
-            });
-            effectiveHandoffs = [handoff, ...effectiveHandoffs];
-            completedNativeFork = undefined;
-            return { ...replacement, forkedFrom: null };
+            if (frozenStart.portableHandoff !== undefined) {
+              effectiveHandoffs = [frozenStart.portableHandoff, ...effectiveHandoffs];
+              completedNativeFork = undefined;
+            }
+            return frozenStart.providerThread;
           }
+          // SCIENT-FORK:END
           const sourceProjection = yield* projectionStore.getThreadRecords(
             nativeForkTransfer.sourceThreadId,
             ["runs", "providerThreads", "attempts", "providerTurns"],
@@ -1376,20 +1210,14 @@ export const layer: Layer.Layer<
         restartCancelledWork.length === 0
           ? ""
           : restartCancelledBackgroundWorkNote(restartCancelledWork);
-      const usesScientBudget =
-        !forceBytePolicy &&
-        (hasScientContextHistory(projection) ||
-          effectiveHandoffs.some(
-            (handoff) =>
-              handoff.budgetPolicy === "scient" ||
-              projection.contextTransfers.some(
-                (transfer) =>
-                  transfer.id === handoff.transferId &&
-                  (transfer.type === "fork" || transfer.type === "merge_back") &&
-                  transfer.targetThreadId === projection.thread.id &&
-                  transfer.targetProviderInstanceId === run.providerInstanceId,
-              ),
-          ));
+      // SCIENT-FORK:START — Scient provenance spends the Scient handoff budget.
+      const usesScientBudget = usesScientHandoffBudget({
+        forceBytePolicy,
+        projection,
+        handoffs: effectiveHandoffs,
+        providerInstanceId: run.providerInstanceId,
+      });
+      // SCIENT-FORK:END
       const settledHandoffs = projection.contextHandoffs.filter(
         (handoff) =>
           handoff.toProviderThreadId === providerThread.id &&
@@ -1567,24 +1395,9 @@ export const layer: Layer.Layer<
                 });
               }),
               alreadyDeliveredItemIds: deliveredItemIds,
-              sharedForkWorkspace: projection.thread.conversationFork?.workspaceMode === "local",
-              sourceOmissions:
-                (
-                  projection.thread.conversationImport ??
-                  projection.thread.forkLineage?.sourceImport
-                )?.omissions ?? [],
-              ...((projection.thread.conversationImport ??
-                projection.thread.forkLineage?.sourceImport) == null
-                ? {}
-                : {
-                    importedMaterial:
-                      (
-                        projection.thread.conversationImport ??
-                        projection.thread.forkLineage?.sourceImport
-                      )?.sourceFormat === "scient-markdown-document"
-                        ? ("document" as const)
-                        : ("conversation" as const),
-                  }),
+              // SCIENT-FORK:START — fork workspace and import provenance.
+              ...scientHandoffDeliveryProvenance(projection.thread),
+              // SCIENT-FORK:END
               ...(session.injectHistory === undefined
                 ? {}
                 : {
@@ -1685,20 +1498,14 @@ export const layer: Layer.Layer<
       yield* runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
-        ...(session.driver !== "codex" ||
-        session.modelContextWindowLaunchFingerprint === undefined ||
-        runningProviderThread.nativeThreadRef?.driver !== "codex" ||
-        runningProviderThread.nativeThreadRef.nativeId === null
-          ? {}
-          : {
-              nativeModelCapacityOwner: {
-                modelSelection: run.modelSelection,
-                launchFingerprint: session.modelContextWindowLaunchFingerprint,
-                providerSessionId,
-                providerThreadId: runningProviderThread.id,
-                nativeThreadId: runningProviderThread.nativeThreadRef.nativeId,
-              },
-            }),
+        // SCIENT-FORK:START — a Codex root run captures its launch owner.
+        ...nativeModelCapacityOwnerFor({
+          session,
+          providerThread: runningProviderThread,
+          modelSelection: run.modelSelection,
+          providerSessionId,
+        }),
+        // SCIENT-FORK:END
         providerSessionId,
         session: deliverySession,
         run: runningRun,
