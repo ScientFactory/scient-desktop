@@ -56,8 +56,9 @@ import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import { hasCommittedConversationMessages } from "./chat/composerModelPickerFork";
-// SCIENT-FORK: imported-conversation notice.
-import { conversationImportBannerItem } from "./chat/scient-import/ConversationImportBanner";
+// SCIENT-FORK:START — imported-conversation notice.
+import { useConversationImportBanner } from "./chat/scient-import/ConversationImportBanner";
+// SCIENT-FORK:END
 import { useApprovalResponse } from "./chat/useApprovalResponse";
 import { handleQueuedRunShortcut } from "./chat/queuedRunShortcuts";
 import { threadShellFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
@@ -326,7 +327,6 @@ import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   AlarmClockIcon,
   CheckCircle2Icon,
-  InfoIcon,
   ChevronDownIcon,
   DownloadIcon,
   GitBranchIcon,
@@ -380,6 +380,9 @@ import {
   useEnvironmentSettings,
 } from "../hooks/useSettings";
 import { ContentDirectionScope } from "../scient/bidi/ContentDirectionScope";
+// SCIENT-FORK:START — token-limit stop notice.
+import { tokenLimitBannerItems, useTokenLimitNotice } from "../scient/chat/tokenLimitNotice";
+// SCIENT-FORK:END
 import { useNowMinute } from "../hooks/useNowMinute";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
@@ -531,8 +534,6 @@ import {
 import {
   dismissThreadErrorBannerForSession,
   getThreadErrorBannerKey,
-  isTokenLimitError as isTokenLimitThreadError,
-  getTruncationNoticeKey,
   isThreadErrorBannerDismissedForSession,
   shouldShowThreadErrorBanner,
   ThreadErrorBanner,
@@ -685,9 +686,6 @@ import {
   useOpenStaticArtifacts,
 } from "~/scient/compute/chatComputeFigureFollower";
 // SCIENT-FORK:END
-import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
-
-const EMPTY_TURN_ITEMS: ReadonlyArray<OrchestrationV2TurnItem> = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
@@ -2265,24 +2263,16 @@ function ChatViewContent(props: ChatViewProps) {
   )
     ? threadError
     : null;
-  const isTokenLimitError = isTokenLimitThreadError(visibleThreadError);
-  const truncationNoticeKey = useMemo(
-    () =>
-      getTruncationNoticeKey(
-        routeThreadKey,
-        serverProjection?.turnItems ?? EMPTY_TURN_ITEMS,
-        activeLatestRun?.runId,
-        activeRuntime?.status,
-      ),
-    [routeThreadKey, serverProjection?.turnItems, activeLatestRun?.runId, activeRuntime?.status],
-  );
-  const tokenLimitNoticeKey =
-    truncationNoticeKey ?? (isTokenLimitError ? threadErrorBannerKey : null);
-  const hasTokenLimitNotice =
-    tokenLimitNoticeKey !== null &&
-    !isThreadErrorBannerDismissedForSession(tokenLimitNoticeKey) &&
-    activeRuntime?.status !== "running" &&
-    activeRuntime?.status !== "starting";
+  // SCIENT-FORK:START — a token-limit stop shows a composer notice, not the error banner.
+  const { isTokenLimitError, tokenLimitNoticeKey, hasTokenLimitNotice } = useTokenLimitNotice({
+    routeThreadKey,
+    visibleThreadError,
+    threadErrorBannerKey,
+    turnItems: serverProjection?.turnItems,
+    latestRunId: activeLatestRun?.runId,
+    runtimeStatus: activeRuntime?.status,
+  });
+  // SCIENT-FORK:END
   // Dismissing only mutates the session-scoped mask set, which does not
   // trigger a render on its own; setThreadError(null) can also bail when the
   // local shadow is already empty and the banner is driven purely by
@@ -7530,38 +7520,18 @@ function ChatViewContent(props: ChatViewProps) {
       : null;
   // SCIENT-FORK:START — an imported thread says where it came from until its
   // first provider session starts.
-  const [dismissedImportNoticeThreadId, setDismissedImportNoticeThreadId] = useState<string | null>(
-    null,
-  );
-  const conversationImportBanner = useMemo(
-    () =>
-      activeServerThread == null || dismissedImportNoticeThreadId === activeServerThread.id
-        ? null
-        : conversationImportBannerItem(activeServerThread.source, () =>
-            setDismissedImportNoticeThreadId(activeServerThread.id),
-          ),
-    [activeServerThread, dismissedImportNoticeThreadId],
-  );
+  const conversationImportBanner = useConversationImportBanner(activeServerThread);
   // SCIENT-FORK:END
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const conversationImportItems =
       conversationImportBanner === null ? [] : [conversationImportBanner];
-    const tokenLimitItems: ComposerBannerStackItem[] = hasTokenLimitNotice
-      ? [
-          {
-            id: `token-limit:${tokenLimitNoticeKey}`,
-            variant: "info",
-            priority: "urgent",
-            icon: <InfoIcon />,
-            title: "Response stopped at a token limit.",
-            dismissLabel: "Dismiss token limit notice",
-            onDismiss: () => {
-              dismissThreadErrorBannerForSession(tokenLimitNoticeKey);
-              setThreadErrorBannerDismissTick((tick) => tick + 1);
-            },
-          },
-        ]
-      : [];
+    // SCIENT-FORK:START — the token-limit notice.
+    const tokenLimitItems = tokenLimitBannerItems({
+      hasTokenLimitNotice,
+      tokenLimitNoticeKey,
+      onDismissed: () => setThreadErrorBannerDismissTick((tick) => tick + 1),
+    });
+    // SCIENT-FORK:END
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
     const backgroundWorkItems = backgroundWorkBannerItem === null ? [] : [backgroundWorkBannerItem];
     const resumeCompactionItems =
