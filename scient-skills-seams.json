@@ -300,9 +300,9 @@
       "purpose": "Build mobile outbox commands with captured skill selections, dispatch and first-message title (thread-outbox-start-turn.test.ts)."
     },
     {
-      "path": "packages/contracts/src/orchestration.ts",
-      "anchor": "SelectedScientSkillNames",
-      "purpose": "Preserve bounded skill selections in the retained V1 compatibility and migration contracts."
+      "path": "packages/contracts/src/legacy/orchestrationEvent.ts",
+      "anchor": "selectedScientSkillNames: Schema.optional(SelectedScientSkillNames)",
+      "purpose": "Preserve bounded selected skill names when decoding inert historical orchestration events for legacy import and recovery."
     },
     {
       "path": "apps/server/src/orchestration-v2/legacy/HeldQueueAdmission.ts",
