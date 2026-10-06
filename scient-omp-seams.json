@@ -25,6 +25,7 @@
     "apps/web/src/scient/modelPicker/modelSourceSections.browser.test.tsx",
     "apps/web/src/scient/modelPicker/modelSourceSections.test.ts",
     "apps/web/src/scient/modelPicker/modelSourceSections.ts",
+    "apps/web/src/scient/modelPicker/useScientModelPickerGroups.ts",
     "apps/web/src/scient/providerConnection/OmpInlineSetup.tsx",
     "apps/web/src/scient/releaseNotes/catalog.ts",
     "docs/user/providers-omp.md",
