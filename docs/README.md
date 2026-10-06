@@ -74,6 +74,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 
 - [Architecture overview](./internals/overview.md)
 - [Unread answers and Dock badge](./internals/answer-attention.md)
+- [Chat scrolling and motion](./internals/chat-scrolling-and-motion.md)
 - [Workspace layout](../AGENTS.md#where-code-lives)
 - [Glossary](./internals/glossary.md)
 - [Scripts](./internals/scripts.md)
