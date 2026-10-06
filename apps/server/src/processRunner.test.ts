@@ -319,6 +319,38 @@ describe("runProcess", () => {
     }),
   );
 
+  it.effect("writes binary stdin bytes unchanged", () =>
+    Effect.gen(function* () {
+      // Invalid UTF-8 would not survive a round trip through text encoding.
+      const payload = new Uint8Array([0x50, 0x41, 0x43, 0x4b, 0x00, 0xff, 0xfe, 0x80]);
+      const received: Array<number> = [];
+      const stdinWritten = yield* Deferred.make<void>();
+      const spawner = makeSpawner(() =>
+        Effect.succeed(
+          makeHandle({
+            stdout: "",
+            stdin: Sink.forEach((chunk: Uint8Array) => {
+              received.push(...chunk);
+              return received.length >= payload.length
+                ? Deferred.succeed(stdinWritten, undefined)
+                : Effect.void;
+            }),
+            exitCode: Deferred.await(stdinWritten).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+          }),
+        ),
+      );
+
+      const result = yield* runWith(spawner)({
+        command: "fake",
+        args: ["binary-stdin"],
+        stdinBytes: payload,
+      });
+
+      expect(received).toEqual([...payload]);
+      expect(result.code).toBe(0);
+    }),
+  );
+
   it.effect("returns output for non-zero exit codes", () =>
     Effect.gen(function* () {
       const spawner = makeSpawner(() => Effect.succeed(makeHandle({ stderr: "boom", code: 2 })));

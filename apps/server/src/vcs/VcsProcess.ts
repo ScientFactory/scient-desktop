@@ -27,6 +27,7 @@ export interface VcsProcessInput {
   readonly cwd: string;
   readonly spawnCwd?: string;
   readonly stdin?: string;
+  readonly stdinBytes?: Uint8Array;
   readonly onStdoutChunk?: (chunk: Uint8Array) => void;
   readonly env?: NodeJS.ProcessEnv;
   readonly allowNonZeroExit?: boolean;
@@ -133,6 +134,7 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+        ...(input.stdinBytes !== undefined ? { stdinBytes: input.stdinBytes } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
         ...(input.env !== undefined ? { env: input.env } : {}),
         timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,

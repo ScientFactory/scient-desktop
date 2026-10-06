@@ -10,6 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -401,6 +402,10 @@ const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
 const CHECKPOINT_CAPTURE_TIMEOUT_MS = 90_000;
 const CHECKPOINT_CAPTURE_MAX_FILE_BYTES = 512n * 1024n * 1024n;
 const CHECKPOINT_CAPTURE_MAX_CHANGED_BYTES = 1024n * 1024n * 1024n;
+// Small checkpoint packs are unpacked through stdin, so bound what is held in memory.
+const CHECKPOINT_LOOSE_TRANSFER_MAX_BYTES = 16 * 1024 * 1024;
+// Git's default for fetch.unpackLimit and transfer.unpackLimit.
+const GIT_DEFAULT_UNPACK_LIMIT = 100;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
@@ -786,6 +791,27 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const gitCommonDir = result.stdout.trim();
       return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
     });
+
+  // Same precedence as fetch: fetch.unpackLimit, then transfer.unpackLimit, then 100.
+  const resolveUnpackLimit = (cwd: string, env: NodeJS.ProcessEnv) =>
+    execute({
+      operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+      cwd,
+      args: ["config", "--type=int", "--get-regexp", "^(fetch|transfer)\\.unpacklimit$"],
+      env,
+      allowNonZeroExit: true,
+    }).pipe(
+      Effect.map((result) => {
+        const limit = (section: string) => {
+          const values = [
+            ...result.stdout.matchAll(new RegExp(`^${section}\\.unpacklimit (-?\\d+)$`, "gm")),
+          ];
+          const value = Number(values.at(-1)?.[1] ?? -1);
+          return value >= 0 ? value : undefined;
+        };
+        return limit("fetch") ?? limit("transfer") ?? GIT_DEFAULT_UNPACK_LIMIT;
+      }),
+    );
 
   const checkpointFileError = (
     cwd: string,
@@ -1203,34 +1229,138 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
-        yield* execute({
+        // A fetch from the staging repository would re-send every unchanged file:
+        // the checkpoint commit has no parent, so upload-pack cannot exclude what the
+        // workspace repository already has. Pack only the staging repository's own
+        // objects (--local skips those borrowed through the alternate), as one pack
+        // whatever size limit the user's Git configuration sets.
+        const packBase = path.join(stagingRepo, "checkpoint");
+        const packResult = yield* execute({
           operation,
           cwd: input.cwd,
           args: [
             "--git-dir",
             stagingRepo,
-            ...durableWrite,
-            "update-ref",
-            "refs/t3/staging",
-            commitOid,
+            "-c",
+            "pack.packSizeLimit=0",
+            "pack-objects",
+            "--revs",
+            "--local",
+            "-q",
+            packBase,
           ],
+          stdin: `${commitOid}\n`,
           env: stagedEnv,
         });
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: [
-            ...durableWrite,
-            "fetch",
-            "--quiet",
-            "--no-write-fetch-head",
-            "--no-tags",
-            "--no-recurse-submodules",
-            stagingRepo,
-            `+refs/t3/staging:${input.checkpointRef}`,
-          ],
-          env: cleanGitEnv,
-        });
+        const packHash = packResult.stdout.trim();
+        if (!/^[0-9a-f]+$/.test(packHash)) {
+          return yield* new VcsProcessExitError({
+            operation,
+            command: "git pack-objects",
+            cwd: input.cwd,
+            exitCode: 0,
+            detail: "git pack-objects returned an invalid pack name.",
+          });
+        }
+        const packPath = `${packBase}-${packHash}.pack`;
+        const packInfo = yield* fileSystem
+          .stat(packPath)
+          .pipe(
+            Effect.mapError((error) =>
+              checkpointFileError(input.cwd, "read checkpoint pack", error),
+            ),
+          );
+        const smallPack =
+          Number(packInfo.size) <= CHECKPOINT_LOOSE_TRANSFER_MAX_BYTES
+            ? yield* fileSystem
+                .readFile(packPath)
+                .pipe(
+                  Effect.mapError((error) =>
+                    checkpointFileError(input.cwd, "read checkpoint pack", error),
+                  ),
+                )
+            : undefined;
+        const unpackLimit = yield* resolveUnpackLimit(input.cwd, cleanGitEnv);
+        // Pack header: "PACK", version, then the big-endian object count.
+        const packObjectCount =
+          smallPack === undefined || smallPack.byteLength < 12
+            ? Number.POSITIVE_INFINITY
+            : new DataView(smallPack.buffer, smallPack.byteOffset, 12).getUint32(8);
+
+        if (smallPack !== undefined && packObjectCount < unpackLimit) {
+          // Like a small fetch, store few objects loose instead of adding a pack per turn.
+          yield* vcsProcess.run({
+            operation,
+            command: "git",
+            cwd: input.cwd,
+            args: [...durableWrite, "unpack-objects", "-q"],
+            stdinBytes: smallPack,
+            env: cleanGitEnv,
+          });
+          // Never publish an incomplete checkpoint. This is the check fetch runs; doing
+          // it first keeps a failure from falling back to a full upload-pack transfer.
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: [
+              "rev-list",
+              "--objects",
+              "--quiet",
+              commitOid,
+              "--not",
+              "--all",
+              "--alternate-refs",
+            ],
+            env: cleanGitEnv,
+          });
+          // Every object is local now, so fetch only checks connectivity, updates
+          // the ref and runs automatic maintenance, as any fetch would.
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: [
+              ...durableWrite,
+              "fetch",
+              "--quiet",
+              "--no-write-fetch-head",
+              "--no-tags",
+              "--no-recurse-submodules",
+              gitCommonDir,
+              `+${commitOid}:${input.checkpointRef}`,
+            ],
+            env: cleanGitEnv,
+          });
+        } else {
+          // Large transfers arrive as a bundle; fetch checks connectivity and keeps the pack.
+          const bundlePath = path.join(stagingRepo, "checkpoint.bundle");
+          const bundleHeader =
+            objectFormat.stdout.trim() === "sha256"
+              ? `# v3 git bundle\n@object-format=sha256\n${commitOid} refs/t3/staging\n\n`
+              : `# v2 git bundle\n${commitOid} refs/t3/staging\n\n`;
+          yield* fileSystem.writeFileString(bundlePath, bundleHeader, { flag: "wx" }).pipe(
+            Effect.andThen(
+              Stream.run(fileSystem.stream(packPath), fileSystem.sink(bundlePath, { flag: "a" })),
+            ),
+            Effect.mapError((error) =>
+              checkpointFileError(input.cwd, "write checkpoint bundle", error),
+            ),
+          );
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: [
+              ...durableWrite,
+              "fetch",
+              "--quiet",
+              "--no-write-fetch-head",
+              "--no-tags",
+              "--no-recurse-submodules",
+              bundlePath,
+              `+refs/t3/staging:${input.checkpointRef}`,
+            ],
+            env: cleanGitEnv,
+          });
+        }
       }).pipe(
         Effect.ensuring(cleanupTempIndex),
         Effect.scoped,
