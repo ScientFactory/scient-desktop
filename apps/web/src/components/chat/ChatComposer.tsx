@@ -4,7 +4,6 @@ import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtime
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { scientSkillSurface } from "~/scient/rightPanel/surfaces";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
@@ -76,9 +75,7 @@ import {
 import { createPortal, flushSync } from "react-dom";
 import { ScientVoiceComposerControl } from "../../scient/voice/ScientVoiceComposerControl.tsx";
 import { mergeEffectiveProviderSkills } from "../../scient/skills/effectiveSkills.ts";
-import { resolveScientSkillListInput } from "../../scient/skills/scientSkillListInput.ts";
-import { scientSkillsInventory } from "../../scient/skills/scientSkillsState.ts";
-import { useEnvironmentQuery } from "../../state/query.ts";
+import { openComposerSkill, useScientComposerSkills } from "../../scient/skills/composerSkills.ts";
 import { applyVoiceTranscript } from "../../scient/voice/voiceComposerInsert.ts";
 import {
   ProviderLifecycleSetupSurface,
@@ -285,6 +282,7 @@ import {
   usePullRequestList,
   type EnvironmentQueryTarget,
 } from "~/state/pullRequests";
+import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { useComposerModelPickerFork } from "./composerModelPickerFork";
@@ -1157,7 +1155,6 @@ import {
   getProviderSkillsForSlashMenu,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
-  scientManagedSkillReleaseKey,
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useDelayedStatus } from "../../hooks/useDelayedStatus";
@@ -1920,16 +1917,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const openPrLink = useOpenPrLink(routeThreadRef);
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const previewFile = composerFiles.find((file) => file.id === previewFileId);
-  const scientSkills = useEnvironmentQuery(
-    scientSkillsInventory({
-      environmentId,
-      input: resolveScientSkillListInput({
-        routeKind,
-        threadId: activeThreadId,
-        projectId: activeProjectId,
-      }),
-    }),
-  ).data;
+  // SCIENT-FORK:START — Scient skill inventory for the composer
+  const scientSkills = useScientComposerSkills({
+    environmentId,
+    routeKind,
+    threadId: activeThreadId,
+    projectId: activeProjectId,
+  });
+  // SCIENT-FORK:END
   const composerContextActions = useMemo(
     () => ({
       environmentId,
@@ -1939,27 +1934,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       openFile: setPreviewFileId,
       openMention: (path: string) => useRightPanelStore.getState().openFile(routeThreadRef, path),
-      openSkill: (skill: ServerProviderSkill) => {
-        const releaseKey = scientManagedSkillReleaseKey(skill);
-        if (releaseKey === null) {
-          useRightPanelStore.getState().openFile(routeThreadRef, skill.path);
-          return;
-        }
-        const managedSkill = scientSkills?.skills.find(
-          (candidate) => candidate.releaseKey === releaseKey,
-        );
-        if (managedSkill?.path) {
-          useRightPanelStore.getState().openFile(routeThreadRef, managedSkill.path);
-          return;
-        }
-        useRightPanelStore.getState().openScient(
-          routeThreadRef,
-          scientSkillSurface({
-            releaseKey,
-            title: formatProviderSkillDisplayName(skill),
-          }),
-        );
-      },
+      // SCIENT-FORK:START — open a skill chip's file or Scient skill surface
+      openSkill: (skill: ServerProviderSkill) =>
+        openComposerSkill(skill, { routeThreadRef, scientSkills }),
+      // SCIENT-FORK:END
       expandVideo: (fileId: string) => {
         const file = composerFiles.find((candidate) => candidate.id === fileId);
         if (!file || !isVideoAttachment(file)) return;
