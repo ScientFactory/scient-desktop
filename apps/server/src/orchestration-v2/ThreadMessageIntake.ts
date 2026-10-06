@@ -32,27 +32,9 @@ function dispatchWasNotAccepted(
 }
 const isOrchestratorError = Schema.is(Orchestrator.OrchestratorV2Error);
 
-/** Admission is the committed command's decision, including when its receipt is replayed. */
-export function dispatchCommandReceipt(
-  command: OrchestrationV2Command,
-  result: Orchestrator.OrchestratorV2DispatchResult,
-) {
-  if (command.type !== "message.dispatch") return { sequence: result.sequence };
-  const queued = result.storedEvents.some(
-    ({ event }) =>
-      event.type === "run.created" &&
-      event.payload.userMessageId === command.messageId &&
-      event.payload.status === "queued",
-  );
-  return {
-    sequence: result.sequence,
-    queued,
-    submission: {
-      submissionId: command.messageId,
-      outcome: queued ? ("queued" as const) : ("sent" as const),
-    },
-  };
-}
+// SCIENT-FORK:START — the queued/sent admission receipt lives in scient-fork.
+export { dispatchCommandReceipt } from "./scient-fork/MessageAdmissionReceipt.ts";
+// SCIENT-FORK:END
 
 const releaseUnusedClaims = Effect.fn("ThreadMessageIntake.releaseUnusedClaims")(function* (
   claimedPaths: ReadonlyArray<string>,
