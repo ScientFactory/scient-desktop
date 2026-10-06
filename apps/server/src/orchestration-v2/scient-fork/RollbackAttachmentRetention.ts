@@ -1,6 +1,40 @@
-/** Which rollback-candidate attachments are still referenced by a record the
- * rollback does not release, so attachment pruning keeps them. */
-import type { OrchestrationV2ThreadProjection, RunId, ThreadId } from "@t3tools/contracts";
+/** Rollback attachment pruning: which candidate attachments are still referenced
+ * by a record the rollback does not release, so pruning keeps them. */
+import { type OrchestrationV2ThreadProjection, type RunId, ThreadId } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import type * as SqlClient from "effect/unstable/sql/SqlClient";
+
+type RollbackAttachmentOwner = Pick<
+  OrchestrationV2ThreadProjection,
+  "thread" | "runs" | "messages" | "turnItems" | "runtimeRequests"
+>;
+
+/** Finds every thread whose stored records mention a candidate attachment and
+ * applies the retention policy to their projections, in one transaction. */
+export const readRollbackAttachmentOwners = <E>(
+  sql: SqlClient.SqlClient,
+  input: {
+    readonly threadId: ThreadId;
+    readonly revertedRunIds: ReadonlyArray<RunId>;
+    readonly attachmentIds: ReadonlyArray<string>;
+  },
+  readOwner: (threadId: ThreadId) => Effect.Effect<RollbackAttachmentOwner, E>,
+) =>
+  sql.withTransaction(
+    Effect.gen(function* () {
+      const threadIds = new Set<ThreadId>([input.threadId]);
+      for (const id of input.attachmentIds) {
+        const rows = yield* sql<{ readonly thread_id: string }>`
+            SELECT thread_id FROM orchestration_v2_projection_messages WHERE instr(lower(payload_json), ${id.toLowerCase()}) > 0
+            UNION SELECT thread_id FROM orchestration_v2_projection_turn_items WHERE instr(lower(payload_json), ${id.toLowerCase()}) > 0
+            UNION SELECT thread_id FROM orchestration_v2_projection_threads WHERE instr(lower(payload_json), ${id.toLowerCase()}) > 0
+          `;
+        rows.forEach((row) => threadIds.add(ThreadId.make(row.thread_id)));
+      }
+      const owners = yield* Effect.forEach(threadIds, (threadId) => readOwner(threadId));
+      return retainedRollbackAttachmentIds(input, owners);
+    }),
+  );
 
 export const retainedRollbackAttachmentIds = (
   input: {

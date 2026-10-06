@@ -78,7 +78,10 @@ import {
   THREAD_HISTORY_MAX_RAW_TURNS,
 } from "./threadHistoryPaging.ts";
 import { isWorkspaceBoundRootScopeId, rootScopeWorkspaceMatches } from "./CheckpointService.ts";
-import { retainedRollbackAttachmentIds } from "./scient-fork/RollbackAttachmentRetention.ts";
+import {
+  readRollbackAttachmentOwners,
+  retainedRollbackAttachmentIds,
+} from "./scient-fork/RollbackAttachmentRetention.ts";
 
 export class ProjectionStoreApplyEventError extends Schema.TaggedError<ProjectionStoreApplyEventError>()(
   "ProjectionStoreApplyEventError",
@@ -4363,37 +4366,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(controlReadError(threadId)),
       );
 
+    // SCIENT-FORK:START — rollback attachment owners, read in one transaction.
     const getRollbackAttachmentOwners: ProjectionStoreV2Shape["getRollbackAttachmentOwners"] = (
       input,
     ) =>
-      sql
-        .withTransaction(
-          Effect.gen(function* () {
-            const threadIds = new Set<ThreadId>([input.threadId]);
-            for (const id of input.attachmentIds) {
-              const rows = yield* sql<{ readonly thread_id: string }>`
-            SELECT thread_id FROM orchestration_v2_projection_messages WHERE instr(lower(payload_json), ${id.toLowerCase()}) > 0
-            UNION SELECT thread_id FROM orchestration_v2_projection_turn_items WHERE instr(lower(payload_json), ${id.toLowerCase()}) > 0
-            UNION SELECT thread_id FROM orchestration_v2_projection_threads WHERE instr(lower(payload_json), ${id.toLowerCase()}) > 0
-          `;
-              rows.forEach((row) => threadIds.add(ThreadId.make(row.thread_id)));
-            }
-            const owners = yield* Effect.forEach(threadIds, (threadId) =>
-              readCanonicalProjection(threadId, undefined, [
-                "runs",
-                "messages",
-                "turnItems",
-                "runtimeRequests",
-              ]),
-            );
-            return retainedRollbackAttachmentIds(input, owners);
-          }),
-        )
-        .pipe(
-          Effect.mapError(
-            (cause) => new ProjectionStoreReadError({ threadId: input.threadId, cause }),
-          ),
-        );
+      readRollbackAttachmentOwners(sql, input, (threadId) =>
+        readCanonicalProjection(threadId, undefined, [
+          "runs",
+          "messages",
+          "turnItems",
+          "runtimeRequests",
+        ]),
+      ).pipe(
+        Effect.mapError(
+          (cause) => new ProjectionStoreReadError({ threadId: input.threadId, cause }),
+        ),
+      );
+    // SCIENT-FORK:END
 
     const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = (threadId) =>
       sql<{ id: string }>`
