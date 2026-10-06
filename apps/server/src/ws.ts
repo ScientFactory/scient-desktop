@@ -70,7 +70,6 @@ import {
   type RelayClientInstallProgressEvent,
   type ServerSelfUpdateError,
   type ServerSelfUpdateProgressEvent,
-  type ProviderConnectionOperation,
   type ServerLifecycleStreamEvent,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
@@ -99,7 +98,6 @@ import {
   CustomModelError,
   TextGenerationError,
   supportsModelConnections,
-  AuthOrchestrationOperateScope,
   OrchestrationGetSnapshotError,
   ORCHESTRATION_WS_METHODS,
   PROVIDER_DISPLAY_NAMES,
@@ -109,7 +107,6 @@ import {
   type ProjectFileErrorReason,
   ProjectListDirectoryError,
   ProjectRenameFileError,
-  type ServerProvider,
   ScientSkillManagementError,
   AssetGeneratedDocumentAuthorityMismatchError,
   AssetGeneratedDocumentNotFoundError,
@@ -273,7 +270,11 @@ import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderC
 import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
 import * as ManagedRuntimeCatalog from "./scient/providerLifecycle/ManagedRuntimeCatalog.ts";
-import { reconcileManagedRuntimeProviders } from "./scient/providerLifecycle/ManagedRuntimeCatalogReconciler.ts";
+import {
+  makeProviderConnectionRpcHandlers,
+  providerProjectionForSession,
+  refreshManagedRuntimes,
+} from "./scient/providerLifecycle/ProviderConnectionRpcHandlers.ts";
 import { workspaceEntryDisposition } from "./scient/workspace/WorkspaceEntryPolicy.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import { publishBrowserPdfExport } from "./scient/documentArtifacts/BrowserPdfExportPublication.ts";
@@ -358,48 +359,6 @@ export const resolveAvailableEditorsForConfig = <A, E, R>(
 export const resolveFileManagerRevealKindForConfig = <E, R>(
   discovery: Effect.Effect<FileManagerRevealKind | undefined, E, R>,
 ) => resolveDiscoveryForConfig(discovery, () => undefined);
-
-const hasAuthorizationMaterial = (
-  operation: ProviderConnectionOperation | null | undefined,
-): operation is ProviderConnectionOperation =>
-  operation !== null &&
-  operation !== undefined &&
-  (operation.authorizationUrl !== undefined ||
-    operation.userCode !== undefined ||
-    operation.instructions !== undefined);
-
-const withoutAuthorizationMaterial = (
-  operation: ProviderConnectionOperation,
-): ProviderConnectionOperation => {
-  const redactedOperation = { ...operation };
-  delete redactedOperation.authorizationUrl;
-  delete redactedOperation.authorizationUrlKind;
-  delete redactedOperation.userCode;
-  // The provider's own wording can repeat the device code.
-  delete redactedOperation.instructions;
-  return redactedOperation;
-};
-
-const redactProviderAuthorizationForReadOnlyClient = (provider: ServerProvider): ServerProvider => {
-  const connection = provider.connection;
-  if (connection === undefined) return provider;
-  const { operation, accountOperation } = connection;
-  if (!hasAuthorizationMaterial(operation) && !hasAuthorizationMaterial(accountOperation)) {
-    return provider;
-  }
-  return {
-    ...provider,
-    connection: {
-      ...connection,
-      ...(hasAuthorizationMaterial(operation)
-        ? { operation: withoutAuthorizationMaterial(operation) }
-        : {}),
-      ...(hasAuthorizationMaterial(accountOperation)
-        ? { accountOperation: withoutAuthorizationMaterial(accountOperation) }
-        : {}),
-    },
-  };
-};
 
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
@@ -1477,12 +1436,9 @@ const makeWsRpcLayer = (
         currentSession.scopes.includes(requiredScope)
           ? stream
           : Stream.fail(authorizationError(requiredScope));
-      const projectProvidersForCurrentSession = currentSession.scopes.includes(
-        AuthOrchestrationOperateScope,
-      )
-        ? (providers: ReadonlyArray<ServerProvider>) => providers
-        : (providers: ReadonlyArray<ServerProvider>) =>
-            providers.map(redactProviderAuthorizationForReadOnlyClient);
+      // SCIENT-FORK:START — read-only clients never see provider authorization material.
+      const projectProvidersForCurrentSession = providerProjectionForSession(currentSession);
+      // SCIENT-FORK:END
 
       const acpRegistryProject = Effect.fn("ws.acpRegistry.project")(function* (
         projectId: ProjectId,
@@ -2709,32 +2665,15 @@ const makeWsRpcLayer = (
                   { concurrency: "unbounded", discard: true },
                 );
               }
+              // SCIENT-FORK:START — an explicit runtime refresh re-checks managed runtimes.
               if (input.refreshManagedRuntimeCatalog === true) {
-                // An explicit runtime refresh re-checks a runtime that fell back
-                // after a failed check; switching back waits for running work.
-                const reselectInstances = yield* providerInstances.listInstances;
-                yield* Effect.forEach(
-                  reselectInstances.filter(
-                    (instance) =>
-                      input.instanceId === undefined || input.instanceId === instance.instanceId,
-                  ),
-                  (instance) =>
-                    providerRuntimeManager.reselect(instance.instanceId).pipe(Effect.forkDetach),
-                  { discard: true },
-                );
-                const before = yield* managedRuntimeCatalog.current;
-                const after = yield* managedRuntimeCatalog.refreshNow;
-                const changedProviders = ManagedRuntimeCatalog.changedManagedRuntimeProviders(
-                  before,
-                  after,
-                );
-                if (changedProviders.length > 0) {
-                  // Refresh publishes an async event for the process
-                  // reconciler. Reconcile here too so this explicit RPC
-                  // returns new actions without a UI race.
-                  yield* reconcileManagedRuntimeProviders(changedProviders);
-                }
+                yield* refreshManagedRuntimes(input, {
+                  providerInstances,
+                  providerRuntimeManager,
+                  managedRuntimeCatalog,
+                });
               }
+              // SCIENT-FORK:END
               // An untargeted refresh is "re-read everything's status", which
               // includes quota from configured usage-limit sources. Awaited,
               // not forked: the RPC scope closes on return and would
@@ -2854,48 +2793,6 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
-          ),
-        [WS_METHODS.serverStartProviderConnection]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverStartProviderConnection,
-            providerConnectionManager.start(input),
-            { "rpc.aggregate": "server" },
-          ),
-        [WS_METHODS.serverCancelProviderConnection]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverCancelProviderConnection,
-            providerConnectionManager.cancel(input),
-            { "rpc.aggregate": "server" },
-          ),
-        [WS_METHODS.serverSubmitProviderAuthorizationCode]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverSubmitProviderAuthorizationCode,
-            providerConnectionManager.submitAuthorizationCode(input),
-            { "rpc.aggregate": "server" },
-          ),
-        [WS_METHODS.serverDisconnectProvider]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverDisconnectProvider,
-            providerConnectionManager.disconnect(input),
-            { "rpc.aggregate": "server" },
-          ),
-        [WS_METHODS.serverPlanProviderRuntime]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverPlanProviderRuntime,
-            providerRuntimeManager.plan(input),
-            { "rpc.aggregate": "server" },
-          ),
-        [WS_METHODS.serverStartProviderRuntime]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverStartProviderRuntime,
-            providerRuntimeManager.start(input),
-            { "rpc.aggregate": "server" },
-          ),
-        [WS_METHODS.serverCancelProviderRuntime]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverCancelProviderRuntime,
-            providerRuntimeManager.cancel(input),
-            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.providerConsumeResetCredit]: (input) =>
           observeRpcEffect(
@@ -3306,6 +3203,13 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "cloud" },
           ),
+        // SCIENT-FORK:START — Scient provider connection and runtime handlers.
+        ...makeProviderConnectionRpcHandlers({
+          observeRpcEffect,
+          providerConnectionManager,
+          providerRuntimeManager,
+        }),
+        // SCIENT-FORK:END
       });
 
       const handlers2 = WsRepositoryRpcGroup.of({
