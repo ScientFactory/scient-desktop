@@ -321,6 +321,11 @@
       "purpose": "Reconstruct retained queue payload from durable native messages for compatibility views and edits; qualify via LegacyQueueCompatibility.clone.test.ts."
     },
     {
+      "path": "apps/server/src/orchestration-v2/scient-fork/DroidHeldSteer.ts",
+      "anchor": "selectedScientSkillNames: message.selectedScientSkillNames",
+      "purpose": "Admit a held Droid Steer through the native steer path with the selection captured on its message; qualify via DroidSteeringPreservation.integration.test.ts."
+    },
+    {
       "path": "apps/server/src/orchestration-v2/legacy/LegacyQueueCutover.ts",
       "anchor": "selectedScientSkillNames: item.selectedScientSkillNames",
       "purpose": "Carry preserved queued selections through resumable native admission rather than retaining stale V1 delivery authority; qualify via LegacyQueueAdmission.test.ts."
