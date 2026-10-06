@@ -2219,13 +2219,19 @@ it.live(
   () =>
     withNativeQueue(
       "queue-native-repeated-stop",
-      ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
-        Effect.gen(function* () {
+      ({ orchestrator, threadId, takeOffer, offers, waitFor, nativeInterruptions }) => {
+        let phase = "foreground-dispatch";
+        return Effect.gen(function* () {
           yield* send(orchestrator, threadId, "foreground");
+          phase = "foreground-offer";
           const foreground = yield* takeOffer;
+          phase = "queue-first";
           yield* send(orchestrator, threadId, "first", true);
+          phase = "queue-second";
           yield* send(orchestrator, threadId, "second", true);
+          phase = "foreground-failure";
           yield* foreground.settle("failed");
+          phase = "failed-run-and-held-queue";
           const held = yield* waitFor(
             (projection) =>
               projection.runs.find((run) => run.id === foreground.input.runId)?.status ===
@@ -2241,6 +2247,7 @@ it.live(
             (run) => run.userMessageId === MessageId.make(`${threadId}:message:second`),
           );
           assert.ok(first && second);
+          phase = "reject-non-head-resume";
           assert.equal(
             (yield* Effect.result(
               orchestrator.dispatch({
@@ -2252,14 +2259,17 @@ it.live(
             ))._tag,
             "Failure",
           );
+          phase = "resume-head";
           yield* orchestrator.dispatch({
             type: "queue.resume",
             threadId,
             runId: first.id,
             commandId: CommandId.make(`${threadId}:head`),
           });
+          phase = "recovery-offer";
           const recovery = yield* takeOffer;
           assert.equal(recovery.input.runId, first.id);
+          phase = "recovery-provider-running";
           yield* waitFor((projection) =>
             projection.providerTurns.some(
               (turn) => turn.runAttemptId === recovery.input.attemptId && turn.status === "running",
@@ -2272,16 +2282,22 @@ it.live(
             holdQueue: true,
             commandId: CommandId.make(`${threadId}:stop-recovery`),
           };
+          phase = "repeated-stop-dispatch";
           yield* Effect.all([orchestrator.dispatch(stop), orchestrator.dispatch(stop)], {
             concurrency: 2,
           });
+          phase = "recovery-interrupted";
           yield* waitFor(
             (projection) =>
               projection.runs.find((run) => run.id === first.id)?.status === "interrupted",
           );
+          phase = "later-recovery-dispatch";
           yield* send(orchestrator, threadId, "later-recovery");
+          phase = "later-recovery-offer";
           const later = yield* takeOffer;
+          phase = "later-recovery-terminal";
           yield* later.settle("completed");
+          phase = "later-recovery-completed";
           const after = yield* waitFor(
             (projection) =>
               projection.runs.find((run) => run.id === later.input.runId)?.status === "completed",
@@ -2293,7 +2309,32 @@ it.live(
             "second",
           );
           assert.deepEqual(offers, ["foreground", "first", "later-recovery"]);
-        }),
+        }).pipe(
+          Effect.onError((cause) =>
+            Effect.gen(function* () {
+              const outbox = yield* EffectOutboxV2;
+              const receipts = yield* CommandReceiptStoreV2;
+              const trace = nativeSettlementTrace(threadId, { orchestrator, outbox, receipts });
+              trace.admissionCommands.push(
+                ...[
+                  "send:foreground",
+                  "send:first",
+                  "send:second",
+                  "non-head",
+                  "head",
+                  "stop-recovery",
+                  "send:later-recovery",
+                ].map((suffix) => CommandId.make(`${threadId}:${suffix}`)),
+              );
+              yield* trace.failure(cause, {
+                phase,
+                offers,
+                nativeInterruptions: nativeInterruptions(),
+              });
+            }),
+          ),
+        );
+      },
     ),
 );
 
