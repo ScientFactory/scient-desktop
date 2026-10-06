@@ -46,7 +46,11 @@ writes the scroll position (a write cancels the browser's smooth scroll in motio
 from rest 250ms after their input stops. `onIsAtEndChange` reacts to
 transitions only. The existing Scroll to end button is a one-shot action with an
 unread badge counting responses, not a follow toggle. Do not add a second navigation button.
-Reading positions resolve by message/turn identity, load up to two pages of missing
+A reader who leaves while following a working thread (at the end, or the follow still running;
+saved as `following`) comes back to where the follow would be now (`chat/liveFollowOffset.ts`):
+the end if everything since their prompt fits, else the prompt at the top margin, or the latest
+message's start there if it would be below the screen; the follow then carries on while the
+thread works. Reading positions resolve by message/turn identity, load up to two pages of missing
 history before falling back to a neighbor or the end, and
 survive same-window reloads; never restore an unrelated absolute pixel offset.
 Capture native scroll positions synchronously before Legend's deferred callbacks;

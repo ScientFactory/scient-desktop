@@ -2,6 +2,7 @@ import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-pres
 import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
 import { useEntranceMotion } from "./timelineEntranceMotion";
 import { useStreamingTextAppearing } from "./useStreamingBlockEntrance";
+import { liveFollowOffset } from "./liveFollowOffset";
 import {
   findWorkingRow,
   nextWorkingRowExit,
@@ -896,16 +897,30 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const onRevealFinished = useCallback((promptId: string) => {
     setFinishedRevealPromptId(promptId);
   }, []);
-  const revealActive =
-    readingFollowPromptId !== null && finishedRevealPromptId !== readingFollowPromptId;
+  // A reader who left while following a working thread is brought back to
+  // where the follow would be now, and the follow carries on from there.
+  const [resumedFollow, setResumedFollow] = useState<{
+    threadKey: string;
+    promptId: string;
+  } | null>(null);
+  const resumedFollowPromptId =
+    resumedFollow?.threadKey === listIdentityKey ? resumedFollow.promptId : null;
+  const isWorkingRef = useRef(isWorking);
+  useLayoutEffect(() => {
+    isWorkingRef.current = isWorking;
+  });
+  const followPromptId = readingFollowPromptId ?? resumedFollowPromptId;
+  const followsResponse =
+    readingFollowPromptId !== null ? readingFollowsResponse : resumedFollowPromptId !== null;
+  const revealActive = followPromptId !== null && finishedRevealPromptId !== followPromptId;
   useBoundedAnswerFollow({
     listRef,
     rows,
-    promptMessageId: readingFollowPromptId,
+    promptMessageId: followPromptId,
     responseRunning: isWorking,
     suspended: timelinePositioningPending || restoringThreadPosition || positionHistoryLoading,
     composerInset: contentInsetEndAdjustment,
-    followResponse: readingFollowsResponse,
+    followResponse: followsResponse,
     onFinished: onRevealFinished,
   });
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
@@ -1011,6 +1026,44 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       viewport?.ownerDocument.removeEventListener("keydown", onScrollKey);
     };
     if (positionHistoryLoading || waitingForReadingHistory) return cleanup;
+    // Left while following a working thread: come back to where the follow
+    // would be now (it kept going in the reader's absence), not the old spot.
+    if (position?.following) {
+      void Promise.resolve(list.scrollToEnd({ animated: false })).then(() => {
+        if (cancelled) return;
+        let stableFrames = 0;
+        let remainingFrames = 60;
+        const settleLive = () => {
+          if (cancelled) return;
+          const offset = liveFollowOffset(list, rows, contentInsetEndAdjustment);
+          const element = list.getScrollableNode();
+          if (offset === null || !element || --remainingFrames <= 0) {
+            setPositionedThreadKey(listIdentityKey);
+            return;
+          }
+          if (Math.abs(element.scrollTop - offset) > 1) {
+            stableFrames = 0;
+            void list.scrollToOffset({ offset, animated: false }).then(() => {
+              if (!cancelled) settleFrame = requestAnimationFrame(settleLive);
+            });
+            return;
+          }
+          if (++stableFrames < 2) {
+            settleFrame = requestAnimationFrame(settleLive);
+            return;
+          }
+          setPositionedThreadKey(listIdentityKey);
+          // Still working: the follow carries on from here.
+          const prompt = rows.findLast(
+            (row) => row.kind === "message" && row.message.role === "user",
+          );
+          if (isWorkingRef.current && prompt?.kind === "message")
+            setResumedFollow({ threadKey: listIdentityKey, promptId: prompt.message.id });
+        };
+        settleFrame = requestAnimationFrame(settleLive);
+      });
+      return cleanup;
+    }
     const scrolling =
       position && index >= 0
         ? list.scrollToIndex({
@@ -1106,6 +1159,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     waitingForReadingHistory,
     positionHistoryLoading,
     readingListLoaded,
+    contentInsetEndAdjustment,
   ]);
 
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
@@ -1189,8 +1243,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     onManualNavigation,
   });
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
-  const followPromptIndex = readingFollowPromptId
-    ? rows.findIndex((row) => row.kind === "message" && row.message.id === readingFollowPromptId)
+  const followPromptIndex = followPromptId
+    ? rows.findIndex((row) => row.kind === "message" && row.message.id === followPromptId)
     : -1;
   const followAlwaysRender = useMemo(
     () => (followPromptIndex >= 0 ? { indices: [followPromptIndex] } : undefined),
@@ -1278,13 +1332,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const identity = readingIdentity(rows, index, runningTurnId);
     const row = state.elementAtIndex(index);
     if (!identity || !row || !element) return;
+    const atEnd = readerAtReadingEnd(state, contentInsetEndAdjustment, turnUnfinished) ?? false;
     rememberTimelinePosition(listIdentityKey, {
       ...position,
       ...identity,
       offsetWithinRow: identity.rowId
         ? element.getBoundingClientRect().top - row.getBoundingClientRect().top
         : 0,
-      atEnd: readerAtReadingEnd(state, contentInsetEndAdjustment, turnUnfinished) ?? false,
+      atEnd,
+      // Following a working thread: at the end, or the follow still running.
+      ...(isWorking && (atEnd || revealActive) ? { following: true } : {}),
       ...(anchorMessageId ? { anchorMessageId } : {}),
       disclosures: {
         turns: paintedExpandedTurnIds,
@@ -1303,6 +1360,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     timelinePositioningPending,
     runningTurnId,
     turnUnfinished,
+    isWorking,
+    revealActive,
     rows,
     listIdentityKey,
     anchorMessageId,

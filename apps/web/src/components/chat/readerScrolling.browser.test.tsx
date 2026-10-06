@@ -582,6 +582,79 @@ it("yields to the reader scrolling down mid-follow, then finishes at the end", a
   await expect.poll(toEnd, { timeout: 6000 }).toBeLessThanOrEqual(1);
 });
 
+it("brings a reader who left while following back to where the follow would be now", async () => {
+  const key = "geometry:follow-away";
+  const { node, extra, toEnd, rows } = await sendLaterPrompt(key, true);
+  render(key, rows(1), extra);
+  await expect.poll(toEnd).toBeLessThanOrEqual(1);
+  await expect.poll(() => readTimelinePosition(key)?.following).toBe(true);
+  // The reader opens another thread; meanwhile the agent works and answers at length.
+  render(
+    "geometry:elsewhere",
+    Array.from({ length: 4 }, (_, i) => entry(i + 200)),
+  );
+  await frames(6);
+  const answer = {
+    ...entry(40),
+    message: {
+      ...entry(40).message,
+      role: "assistant" as const,
+      text: Array.from({ length: 8 }, () => "A long answer paragraph. ".repeat(10)).join("\n\n"),
+    },
+  };
+  const away = { ...extra, readingFollowPromptId: null };
+  render(key, [...rows(14), answer], away);
+  // Back: the latest answer's start rests at the top of the reading area.
+  const answerTop = () => {
+    const element = host!.querySelector('[data-message-id="message-40"]');
+    return element
+      ? element.getBoundingClientRect().top - node.getBoundingClientRect().top
+      : Number.NaN;
+  };
+  await expect
+    .poll(answerTop, { timeout: 4000 })
+    .toBeLessThanOrEqual(CHAT_TIMELINE_ANCHOR_OFFSET + 2);
+  expect(answerTop()).toBeGreaterThanOrEqual(CHAT_TIMELINE_ANCHOR_OFFSET - 2);
+  expect(toEnd()).toBeGreaterThan(100);
+});
+
+it("brings a reader who left while following back to the end when it all fits", async () => {
+  const key = "geometry:follow-away-short";
+  const { extra, toEnd, rows } = await sendLaterPrompt(key, true);
+  render(key, rows(0), extra);
+  await expect.poll(toEnd).toBeLessThanOrEqual(1);
+  await expect.poll(() => readTimelinePosition(key)?.following).toBe(true);
+  render(
+    "geometry:elsewhere-short",
+    Array.from({ length: 4 }, (_, i) => entry(i + 300)),
+  );
+  await frames(6);
+  render(key, rows(2), { ...extra, readingFollowPromptId: null });
+  await expect.poll(toEnd, { timeout: 4000 }).toBeLessThanOrEqual(1);
+});
+
+it("returns a reader who scrolled up before leaving a working thread to that spot", async () => {
+  const key = "geometry:follow-left-up";
+  const { node, extra, toEnd, rows } = await sendLaterPrompt(key, true);
+  render(key, rows(0), extra);
+  await expect.poll(toEnd).toBeLessThanOrEqual(1);
+  node.dispatchEvent(new WheelEvent("wheel", { deltaY: -200, bubbles: true }));
+  node.scrollTop -= 400;
+  node.dispatchEvent(new Event("scroll"));
+  await frames(6);
+  await expect.poll(() => readTimelinePosition(key)?.following).toBeUndefined();
+  const saved = readTimelinePosition(key)!;
+  render(
+    "geometry:elsewhere-up",
+    Array.from({ length: 4 }, (_, i) => entry(i + 400)),
+  );
+  await frames(6);
+  render(key, rows(6), { ...extra, readingFollowPromptId: null });
+  await expect.poll(() => readTimelinePosition(key)?.messageId).toBe(saved.messageId);
+  await frames(8);
+  expect(toEnd()).toBeGreaterThan(200);
+});
+
 it("keeps the reveal of a first prompt as it was: traces do not move it", async () => {
   const key = "geometry:follow-first";
   const { extra, toEnd, rows } = await sendLaterPrompt(key, false);

@@ -73,6 +73,12 @@ export interface RememberedTimelinePosition {
   readonly offsetWithinRow: number;
   readonly scrollOffset: number;
   readonly atEnd: boolean;
+  /**
+   * The reader left while following a working thread (at the end, or with the
+   * follow still running). They come back to where the follow would be now,
+   * not to the spot they left.
+   */
+  readonly following?: boolean;
   readonly disclosures?: {
     readonly turns: ReadonlySet<TurnId>;
     readonly workGroups: ReadonlySet<string>;
@@ -146,6 +152,7 @@ function loadPositions() {
         offsetWithinRow: p.offsetWithinRow,
         scrollOffset: 0,
         atEnd: p.atEnd,
+        ...(p.following === true ? { following: true } : {}),
         ...(typeof p.messageId === "string" ? { messageId: p.messageId } : {}),
         ...(typeof p.turnId === "string" ? { turnId: p.turnId } : {}),
         ...(typeof p.createdAt === "string" ? { createdAt: p.createdAt } : {}),
