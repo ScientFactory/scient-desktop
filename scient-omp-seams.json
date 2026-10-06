@@ -11,6 +11,7 @@
     "packages/contracts/src/scient/providerSettings.ts",
     "apps/server/src/provider/testUtils/controlledOmpPeer.mjs",
     "apps/server/src/orchestration-v2/Adapters/OmpAdapterV2.ts",
+    "apps/server/src/orchestration-v2/testkit/OmpNativeConjunctions.ts",
     "apps/server/scripts/qualify-omp-rpc.ts",
     "apps/server/scripts/qualifyScientAgentManagedRuntime.ts",
     "apps/server/src/provider/Drivers/OmpDriver.ts",

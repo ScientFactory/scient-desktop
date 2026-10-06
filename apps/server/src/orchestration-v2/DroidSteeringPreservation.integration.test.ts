@@ -67,6 +67,8 @@ import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 
 const decodeDroidSettings = Schema.decodeEffect(DroidSettings);
 const decodeMessageContext = Schema.decodeUnknownSync(OrchestrationMessageContext);
+import { nativeSettlementTrace } from "./testkit/OmpNativeConjunctions.ts";
+
 const decodeRunJson = Schema.decodeSync(Schema.fromJsonString(OrchestrationV2RunJson));
 const decodeCheckpointScopeJson = Schema.decodeSync(
   Schema.fromJsonString(OrchestrationV2CheckpointScopeJson),
@@ -697,6 +699,7 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
     orchestrator,
     worker,
     outbox,
+    receipts,
     sql,
     manager,
     hooks,
@@ -1983,29 +1986,35 @@ for (const window of ["probe", "pre-admission"] as const)
   it.live(
     `invalidates an older native reservation at ${window} while retaining and then executing both FIFO payloads`,
     () =>
-      nativeCase(`newest-${window}`, "normal", (h) =>
-        Effect.gen(function* () {
-          const initial = yield* h.start();
-          yield* h.send("fifo-1", undefined, true);
-          yield* h.send("fifo-2", undefined, true);
+      nativeCase(`newest-${window}`, "normal", (h) => {
+        const trace = nativeSettlementTrace(h.threadId, h);
+        return Effect.gen(function* () {
+          const initial = yield* trace.at("initial-native-owner", h.start());
+          trace.admissionCommands.push(yield* h.send("fifo-1", undefined, true));
+          trace.admissionCommands.push(yield* h.send("fifo-2", undefined, true));
           const before = yield* h.orchestrator.getThreadProjection(h.threadId);
           const fifo = before.runs.filter((run) => run.status === "queued");
           const fifoMessages = before.messages.filter((message) =>
             fifo.some((run) => run.userMessageId === message.id),
           );
           const older = yield* h.send("older", initial.runs[0]!.id);
+          trace.admissionCommands.push(older);
           yield* h.release("finish-run");
-          yield* h.waitFor((p) =>
-            p.turnItems.some(
-              (item) => item.nativeItemRef?.nativeId === "run" && item.status === "completed",
+          yield* trace.at(
+            "original-run-item-completed",
+            h.waitFor((p) =>
+              p.turnItems.some(
+                (item) => item.nativeItemRef?.nativeId === "run" && item.status === "completed",
+              ),
             ),
           );
           const gate = yield* barrier();
           if (window === "probe") h.hooks.afterReserve = gate.park;
           else h.hooks.beforeConsume = gate.park;
           const execution = yield* h.worker.runOnce.pipe(Effect.forkScoped);
-          yield* gate.entered;
+          yield* trace.at("older-reservation-entered", gate.entered);
           const newer = yield* h.send("newer", initial.runs[0]!.id);
+          trace.admissionCommands.push(newer);
           const registered = yield* h.observe("newest-revision-invalidated-old-reservation", newer);
           heldOwner(registered.projection, initial);
           assert.equal(registered.projection.runs[0]!.heldDroidSteer!.revision, newer);
@@ -2022,11 +2031,11 @@ for (const window of ["probe", "pre-admission"] as const)
           h.hooks.afterReserve = undefined;
           h.hooks.beforeConsume = undefined;
           yield* gate.release;
-          yield* Fiber.join(execution);
-          yield* advance(h, initial, newer);
+          yield* trace.at("older-reservation-returned", Fiber.join(execution));
+          yield* trace.at("newer-native-adoption", advance(h, initial, newer));
           assert.deepEqual(yield* h.wire, ["first", "cancel", "newer"]);
           assert.isFalse((yield* h.wire).includes("older"));
-          yield* h.worker.drain(24);
+          yield* trace.drain("obsolete-effects-drain", 24, h.worker.drain(24));
           assert.isTrue(
             (yield* h.outbox.listByCommandId(older)).every(
               (effect) => effect.status === "succeeded",
@@ -2034,19 +2043,27 @@ for (const window of ["probe", "pre-admission"] as const)
           );
           for (const [index, run] of fifo.entries()) {
             yield* h.release("finish-prompt");
-            yield* h.waitFor(
-              (p) =>
-                p.runs.find(
-                  (candidate) =>
-                    candidate.id === (index === 0 ? initial.runs[0]!.id : fifo[index - 1]!.id),
-                )?.status === "waiting",
+            yield* trace.at(
+              `fifo-${index + 1}-predecessor-waiting`,
+              h.waitFor(
+                (p) =>
+                  p.runs.find(
+                    (candidate) =>
+                      candidate.id === (index === 0 ? initial.runs[0]!.id : fifo[index - 1]!.id),
+                  )?.status === "waiting",
+              ),
             );
-            yield* h.worker.drain(24);
-            yield* h.waitDecoded(
-              (event) =>
-                event.direction === "incoming" &&
-                event.stage === "decoded" &&
-                JSON.stringify(event.payload).includes(`native prompt: fifo-${index + 1}`),
+            yield* trace.capture(`fifo-${index + 1}-before-drain`, { protocol: h.protocol });
+            yield* trace.drain(`fifo-${index + 1}-drain`, 24, h.worker.drain(24));
+            yield* trace.capture(`fifo-${index + 1}-after-drain`, { protocol: h.protocol });
+            yield* trace.at(
+              `fifo-${index + 1}-native-decode`,
+              h.waitDecoded(
+                (event) =>
+                  event.direction === "incoming" &&
+                  event.stage === "decoded" &&
+                  JSON.stringify(event.payload).includes(`native prompt: fifo-${index + 1}`),
+              ),
             );
             const current = yield* h.orchestrator.getThreadProjection(h.threadId);
             const promoted = current.runs.find((candidate) => candidate.id === run.id)!;
@@ -2059,14 +2076,18 @@ for (const window of ["probe", "pre-admission"] as const)
           }
           assert.deepEqual(yield* h.wire, ["first", "cancel", "newer", "fifo-1", "fifo-2"]);
           yield* h.release("finish-prompt");
-          yield* h.waitFor(
-            (p) => p.runs.find((run) => run.id === fifo[1]!.id)?.status === "waiting",
+          yield* trace.at(
+            "last-fifo-waiting",
+            h.waitFor((p) => p.runs.find((run) => run.id === fifo[1]!.id)?.status === "waiting"),
           );
-          yield* h.worker.drain(24);
-          yield* h.waitFor((p) => p.runs.every((run) => run.status === "completed"));
+          yield* trace.drain("last-fifo-drain", 24, h.worker.drain(24));
+          yield* trace.at(
+            "all-fifo-runs-completed",
+            h.waitFor((p) => p.runs.every((run) => run.status === "completed")),
+          );
           yield* h.observe("newest-only-and-actual-FIFO-order", newer);
-        }),
-      ),
+        }).pipe(Effect.onError((cause) => trace.failure(cause, { protocol: h.protocol })));
+      }),
   );
 
 for (const window of ["cancel-write", "cancel-settled"] as const)

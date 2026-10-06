@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
+import * as NodeUtil from "node:util";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -31,6 +32,7 @@ import { ompTarget } from "../../provider/omp/OmpTarget.ts";
 import { scriptedOmpRpc } from "../../provider/testUtils/scriptedOmpRpc.ts";
 import { makeOmpAdapterV2 } from "../Adapters/OmpAdapterV2.ts";
 import { EffectOutboxV2, type OrchestrationEffectV2 } from "../EffectOutbox.ts";
+import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { makeLayer } from "../ProviderAdapterRegistry.ts";
@@ -78,6 +80,110 @@ const writeObservation = (phase: string, value: unknown) => {
 
 const observe = (phase: string, value: unknown) =>
   Effect.sync(() => writeObservation(phase, value));
+
+// This observer neither drives the worker nor adds a settlement deadline.
+const nativeSettlementTrace = (
+  threadId: ThreadId,
+  services: {
+    orchestrator: OrchestratorV2["Service"];
+    outbox: EffectOutboxV2["Service"];
+    receipts: CommandReceiptStoreV2["Service"];
+  },
+) => {
+  let lastWait = "setup";
+  const drains: Array<{ phase: string; maxEffects: number; count: number | null }> = [];
+  const admissionCommands: CommandId[] = [];
+  const at = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>) =>
+    Effect.suspend(() => {
+      lastWait = phase;
+      return effect;
+    });
+  const drain = <E, R>(phase: string, maxEffects: number, effect: Effect.Effect<number, E, R>) =>
+    Effect.suspend(() => {
+      const result = { phase, maxEffects, count: null as number | null };
+      drains.push(result);
+      return effect.pipe(
+        Effect.tap((count) =>
+          Effect.sync(() => {
+            result.count = count;
+          }),
+        ),
+      );
+    });
+  const read = Effect.fnUntraced(function* (phase: string, native: unknown) {
+    const { orchestrator, outbox, receipts } = services;
+    const projection = yield* orchestrator.getThreadProjection(threadId);
+    const admissions = yield* Effect.forEach(admissionCommands, (commandId) =>
+      Effect.gen(function* () {
+        return {
+          commandId,
+          receipt: Option.getOrNull(yield* receipts.getByCommandId(commandId)),
+          effects: yield* outbox.listByCommandId(commandId),
+        };
+      }),
+    );
+    const canonicalEffects = yield* Effect.forEach(projection.runs, (run) =>
+      Effect.gen(function* () {
+        return {
+          runId: run.id,
+          checkpointCommandId: `command:effect:checkpoint.capture:${run.id}`,
+          checkpointEffectId: `effect:checkpoint.capture:${run.id}`,
+          checkpoint: Option.getOrNull(yield* outbox.get(`effect:checkpoint.capture:${run.id}`)),
+          // System promotion has an outbox command ID, but no command receipt.
+          queuedStarts: yield* Effect.forEach(
+            projection.attempts.filter((attempt) => attempt.runId === run.id),
+            (attempt) => {
+              const commandId = `command:system:start-queued:${run.id}:${attempt.id}`;
+              const effectId = `effect:${commandId}:provider-turn.start:${run.id}`;
+              return outbox.get(effectId).pipe(
+                Effect.map((row) => ({
+                  attemptId: attempt.id,
+                  commandId,
+                  effectId,
+                  row: Option.getOrNull(row),
+                })),
+              );
+            },
+          ),
+        };
+      }),
+    );
+    const witness = {
+      threadId,
+      phase,
+      lastWait,
+      drains,
+      admissions,
+      canonicalEffects,
+      projection,
+      native,
+    };
+    yield* Effect.log("NATIVE_SETTLEMENT_WITNESS", witness);
+    yield* observe(`${threadId}.${phase}`, witness);
+  });
+  const capture = (phase: string, native: unknown) =>
+    read(phase, native).pipe(
+      Effect.timeout("2 seconds"),
+      Effect.catchCause((observerCause) =>
+        Effect.logWarning("Native settlement observer failed", {
+          threadId,
+          phase,
+          lastWait,
+          drains,
+          native,
+          observerCause,
+        }),
+      ),
+      Effect.withLogger(
+        Logger.withConsoleLog(
+          Logger.make(({ message }) => NodeUtil.inspect(message, { depth: 12 })),
+        ),
+      ),
+    );
+  const failure = (cause: unknown, native: unknown) =>
+    capture("failure-before-cleanup", { cause, native });
+  return { at, drain, capture, failure, admissionCommands };
+};
 
 // Preserve non-enumerable Error causes without changing the actual logged Cause.
 const causeEvidence = (value: unknown, depth = 0, seen = new Set<object>()): unknown => {
@@ -506,6 +612,7 @@ export {
   decodeJournalFrames,
   digest,
   observe,
+  nativeSettlementTrace,
   waitForThread,
   waitForEffects,
   withNative,

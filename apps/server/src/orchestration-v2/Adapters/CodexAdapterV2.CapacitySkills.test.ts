@@ -22,7 +22,7 @@ import {
   DEFAULT_CODEX_SETTINGS,
   CODEX_TEST_MODEL_SELECTION,
   CODEX_TEST_RUNTIME_POLICY,
-} from "./CodexAdapterV2.fixture.ts";
+} from "./CodexAdapterV2.replay.testkit.ts";
 import { describe } from "@effect/vitest";
 
 describe("CodexAdapterV2 post-settle continuation", () => {

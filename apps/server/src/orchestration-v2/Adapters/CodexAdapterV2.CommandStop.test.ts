@@ -21,7 +21,7 @@ import {
   makeCodexTestTurnInput,
   awaitUntil,
   INTERRUPT_COMMAND,
-} from "./CodexAdapterV2.fixture.ts";
+} from "./CodexAdapterV2.replay.testkit.ts";
 import { describe } from "@effect/vitest";
 
 describe("CodexAdapterV2 post-settle continuation", () => {

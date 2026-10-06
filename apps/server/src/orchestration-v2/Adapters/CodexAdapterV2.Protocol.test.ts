@@ -16,7 +16,7 @@ import * as Effect from "effect/Effect";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import { ProviderAdapterForkThreadError } from "../ProviderAdapter.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
-import { encodeUnknownJson } from "./CodexAdapterV2.fixture.ts";
+import { encodeUnknownJson } from "./CodexAdapterV2.replay.testkit.ts";
 
 describe("CodexAdapterV2 dynamic tool projection", () => {
   it("uses the CUA call title while leaving other MCP titles as tool arguments", () => {

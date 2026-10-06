@@ -55,6 +55,7 @@ export {
 } from "./scient/orchestrationV2Schemas.ts";
 import {
   makeMessageForkItems,
+  makeTurnItemBaseFields,
   OrchestrationV2ClaudeForkBoundaryEvidence,
   OrchestrationV2ForkInitialization,
 } from "./scient/orchestrationV2Fork.ts";
@@ -1337,38 +1338,11 @@ export const OrchestrationV2UserMessageInputIntent = Schema.Literals([
 export type OrchestrationV2UserMessageInputIntent =
   typeof OrchestrationV2UserMessageInputIntent.Type;
 
-const OrchestrationV2TurnItemBaseFields = {
-  /** Group portable historical records without adopting an executable run. */
-  historyTurnId: Schema.optional(TurnId),
-  /** Frozen history carries provenance, never an executable source run or request. */
-  inheritedFrom: Schema.optional(
-    Schema.Struct({
-      threadId: ThreadId,
-      itemId: TurnItemId,
-      runId: Schema.NullOr(RunId),
-      status: OrchestrationV2TurnItemStatus,
-    }),
-  ),
-  toolSurface: Schema.optional(ToolActivitySurface),
-  toolIcon: Schema.optional(ToolActivityIcon),
-  toolSource: Schema.optional(ToolActivitySource),
-  id: TurnItemId,
-  threadId: ThreadId,
-  runId: Schema.NullOr(RunId),
-  nodeId: Schema.NullOr(NodeId),
-  providerThreadId: Schema.NullOr(ProviderThreadId),
-  providerTurnId: Schema.NullOr(ProviderTurnId),
-  nativeItemRef: Schema.NullOr(OrchestrationV2ProviderRef),
-  parentItemId: Schema.NullOr(TurnItemId),
-  ordinal: NonNegativeInt,
-  status: OrchestrationV2TurnItemStatus,
-  title: Schema.NullOr(Schema.String),
-  startedAt: Schema.NullOr(Schema.DateTimeUtc),
-  completedAt: Schema.NullOr(Schema.DateTimeUtc),
-  updatedAt: Schema.DateTimeUtc,
-} as const;
 // SCIENT-FORK:START — message-boundary fork items and the notice older clients decode.
-export type OrchestrationV2TurnItemBaseFields = typeof OrchestrationV2TurnItemBaseFields;
+const OrchestrationV2TurnItemBaseFields = makeTurnItemBaseFields(
+  OrchestrationV2TurnItemStatus,
+  OrchestrationV2ProviderRef,
+);
 const { MessageForkItem, MessageForkNoticeItem, MessageForkItemJson, MessageForkNoticeItemJson } =
   makeMessageForkItems(OrchestrationV2TurnItemBaseFields);
 // SCIENT-FORK:END

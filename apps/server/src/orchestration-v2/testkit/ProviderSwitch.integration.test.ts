@@ -48,6 +48,7 @@ import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as EffectOutbox from "../EffectOutbox.ts";
+import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import {
@@ -67,6 +68,7 @@ import {
 } from "./fixtures/shared.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+import { nativeSettlementTrace } from "./OmpNativeConjunctions.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -400,6 +402,55 @@ const waitForHeldQueue = Effect.fn("ProviderSwitchTest.waitForHeldQueue")(functi
   return held.value;
 });
 
+const observeReplaySettlement = Effect.fnUntraced(function* (input: {
+  phase: string;
+  commandIds: ReadonlyArray<CommandId>;
+  native: unknown;
+  settle: boolean;
+}) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const outbox = yield* EffectOutbox.EffectOutboxV2;
+  const receipts = yield* CommandReceiptStoreV2;
+  const trace = nativeSettlementTrace(threadId, { orchestrator, outbox, receipts });
+  trace.admissionCommands.push(...input.commandIds);
+  if (!input.settle) return yield* trace.capture(input.phase, input.native);
+
+  // A manual drain does not join a checkpoint already claimed by the daemon.
+  const projection = yield* orchestrator.getThreadProjection(threadId);
+  const run = projection.runs.at(-1)!;
+  const commandId = input.commandIds.at(-1)!;
+  const completions = yield* outbox.subscribeCompletions;
+  const pull = yield* Stream.toPull(completions);
+  const read = Effect.fnUntraced(function* () {
+    return {
+      checkpoint: yield* outbox.get(`effect:checkpoint.capture:${run.id}`),
+      starts: (yield* outbox.listByCommandId(commandId)).filter(
+        (effect) =>
+          effect.request.type === "provider-turn.start" && effect.request.runId === run.id,
+      ),
+    };
+  });
+  yield* trace.capture("final-run-before-outbox-settlement", input.native);
+  const settled = yield* trace.at(
+    "final-run-checkpoint-and-start-effects",
+    Stream.concat(
+      Stream.fromEffect(read()),
+      Stream.fromPull(Effect.succeed(pull)).pipe(Stream.mapEffect(read)),
+    ).pipe(
+      Stream.filter(
+        ({ checkpoint, starts }) =>
+          Option.isSome(checkpoint) &&
+          checkpoint.value.status === "succeeded" &&
+          starts.length > 0 &&
+          starts.every((effect) => effect.status === "succeeded"),
+      ),
+      Stream.runHead,
+    ),
+  );
+  assert.ok(Option.isSome(settled));
+  yield* trace.capture("final-run-outbox-settled-before-scope-exit", input.native);
+});
+
 describe("orchestration v2 provider switching", () => {
   for (const scenario of [
     "compact-native",
@@ -442,6 +493,14 @@ describe("orchestration v2 provider switching", () => {
           const cwd = yield* checkpointWorkspace(`handoff-${scenario}`);
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+          const witnessSettlement = scenario === "screenshot-option-change-native";
+          let lastWait = "replay-body";
+          const commandIds: CommandId[] = [];
+          const drains: Array<{ ordinal: number; count: number }> = [];
+          const native = Effect.all({
+            capturedTurns: Ref.get(capturedTurns),
+            injectedHistory: Ref.get(injectedHistory),
+          }).pipe(Effect.map((state) => ({ scenario, cwd, lastWait, drains, ...state })));
           const reasoningScenario = scenario.includes("reasoning-change");
           const turnUsageScenario = reasoningScenario || scenario.includes("turn-usage");
           const modelScenario =
@@ -543,41 +602,64 @@ describe("orchestration v2 provider switching", () => {
             );
             const targetOrdinal = returning ? 4 : 2;
             const dispatch = (ordinal: number, text: string, selection: ModelSelection) =>
-              orchestrator.dispatch({
-                type: "message.dispatch",
-                commandId: CommandId.make(`regression:${ordinal}`),
-                threadId,
-                messageId: MessageId.make(`regression:${ordinal}`),
-                createdBy: "user",
-                creationSource: "web",
-                text,
-                attachments:
-                  turnUsageScenario && ordinal === 2
-                    ? Array.from({ length: 8 }, (_, index) => ({
-                        ...screenshot,
-                        id: `prior-${index}`,
-                      }))
-                    : turnUsageScenario && ordinal >= targetOrdinal
-                      ? [screenshot, { ...screenshot, id: "current-2" }]
-                      : scenario.startsWith("screenshot") && ordinal >= targetOrdinal
-                        ? screenshots
-                        : priorImages && ordinal === (scenario.startsWith("imported") ? 1 : 2)
-                          ? [screenshot]
-                          : [],
-                modelSelection: selection,
-                dispatchMode: { type: "start_immediately" },
-              });
+              orchestrator
+                .dispatch({
+                  type: "message.dispatch",
+                  commandId: CommandId.make(`regression:${ordinal}`),
+                  threadId,
+                  messageId: MessageId.make(`regression:${ordinal}`),
+                  createdBy: "user",
+                  creationSource: "web",
+                  text,
+                  attachments:
+                    turnUsageScenario && ordinal === 2
+                      ? Array.from({ length: 8 }, (_, index) => ({
+                          ...screenshot,
+                          id: `prior-${index}`,
+                        }))
+                      : turnUsageScenario && ordinal >= targetOrdinal
+                        ? [screenshot, { ...screenshot, id: "current-2" }]
+                        : scenario.startsWith("screenshot") && ordinal >= targetOrdinal
+                          ? screenshots
+                          : priorImages && ordinal === (scenario.startsWith("imported") ? 1 : 2)
+                            ? [screenshot]
+                            : [],
+                  modelSelection: selection,
+                  dispatchMode: { type: "start_immediately" },
+                })
+                .pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      if (witnessSettlement)
+                        commandIds.push(CommandId.make(`regression:${ordinal}`));
+                    }),
+                  ),
+                );
             const wait = (ordinal: number) =>
-              orchestrator.streamStoredEvents.pipe(
-                Stream.filter(
-                  ({ event }) =>
-                    event.type === "run.updated" &&
-                    event.payload.ordinal === ordinal &&
-                    (event.payload.status === "completed" || event.payload.status === "failed"),
-                ),
-                Stream.runHead,
-                Effect.andThen(worker.drain()),
-              );
+              Effect.suspend(() => {
+                lastWait = `run-${ordinal}-terminal`;
+                return orchestrator.streamStoredEvents.pipe(
+                  Stream.filter(
+                    ({ event }) =>
+                      event.type === "run.updated" &&
+                      event.payload.ordinal === ordinal &&
+                      (event.payload.status === "completed" || event.payload.status === "failed"),
+                  ),
+                  Stream.runHead,
+                  Effect.andThen(
+                    Effect.suspend(() => {
+                      lastWait = `run-${ordinal}-manual-drain`;
+                      return worker.drain().pipe(
+                        Effect.tap((count) =>
+                          Effect.sync(() => {
+                            if (witnessSettlement) drains.push({ ordinal, count });
+                          }),
+                        ),
+                      );
+                    }),
+                  ),
+                );
+              });
             yield* orchestrator.dispatch({
               type: "thread.create",
               commandId: CommandId.make("regression:create"),
@@ -903,6 +985,43 @@ describe("orchestration v2 provider switching", () => {
               );
             }
           }).pipe(
+            Effect.tap(() =>
+              witnessSettlement
+                ? Effect.gen(function* () {
+                    lastWait = "final-run-checkpoint-and-start-effects";
+                    yield* observeReplaySettlement({
+                      phase: lastWait,
+                      commandIds,
+                      native: yield* native,
+                      settle: true,
+                    });
+                  })
+                : Effect.void,
+            ),
+            Effect.onError((cause) =>
+              witnessSettlement
+                ? Effect.gen(function* () {
+                    yield* observeReplaySettlement({
+                      phase: "replay-failure-before-scope-exit",
+                      commandIds,
+                      native: { cause, ...(yield* native) },
+                      settle: false,
+                    });
+                  }).pipe(
+                    Effect.timeout("2 seconds"),
+                    Effect.catchCause((observerCause) =>
+                      Effect.logWarning("Provider switch failure observer failed", {
+                        cause,
+                        observerCause,
+                        scenario,
+                        cwd,
+                        lastWait,
+                        drains,
+                      }),
+                    ),
+                  )
+                : Effect.void,
+            ),
             Effect.provide(
               makeOrchestratorV2ReplayLayerWithRegistry(
                 {

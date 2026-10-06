@@ -1171,6 +1171,10 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
           yield* h.send(2, "full-access");
           const exited = yield* h.terminal;
           assert.equal(exited.status, "failed");
+          if (exited.status === "failed") {
+            assert.include(exited.failure.message, "[redacted]");
+            assert.include(exited.failure.message, "fatal: could not refresh");
+          }
           const serialized = encodeJson({ events: h.recorded, auth: h.rejectedAuthentication });
           assert.notInclude(serialized, key);
           assert.notInclude(serialized, token);

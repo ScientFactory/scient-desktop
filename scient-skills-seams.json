@@ -18,7 +18,6 @@
     "apps/server/src/scient/operations/AgentInvocationContext.ts",
     "apps/server/src/scient/operations/AgentOperationDispatcher.ts",
     "apps/server/src/scient/threadQueue/Ledger.ts",
-    "apps/server/src/scient/threadQueue/operations.ts",
     "apps/web/src/routes/settings.skills_.external.tsx",
     "apps/web/src/routes/settings.skills.tsx",
     "apps/web/src/scient/rightPanel/ScientRightPanelContent.tsx",
@@ -303,14 +302,9 @@
       "purpose": "Build mobile outbox commands with captured skill selections, dispatch and first-message title (thread-outbox-start-turn.test.ts)."
     },
     {
-      "path": "packages/contracts/src/orchestration.ts",
-      "anchor": "SelectedScientSkillNames",
-      "purpose": "Preserve bounded skill selections in the retained V1 compatibility and migration contracts."
-    },
-    {
-      "path": "apps/server/src/provider/Layers/ProviderService.ts",
-      "anchor": "ScientSkillSession",
-      "purpose": "Retain the legacy library skill-scope planner; native V2 turn services install execution scope."
+      "path": "packages/contracts/src/legacy/orchestrationEvent.ts",
+      "anchor": "selectedScientSkillNames: Schema.optional(SelectedScientSkillNames)",
+      "purpose": "Preserve bounded selected skill names when decoding inert historical orchestration events for legacy import and recovery."
     },
     {
       "path": "apps/server/src/orchestration-v2/legacy/HeldQueueAdmission.ts",

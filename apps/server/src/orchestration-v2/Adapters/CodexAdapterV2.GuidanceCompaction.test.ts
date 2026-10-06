@@ -29,7 +29,7 @@ import {
   makeCodexTestTurnInput,
   CODEX_TEST_RUNTIME_POLICY,
   CODEX_TEST_MODEL_SELECTION,
-} from "./CodexAdapterV2.fixture.ts";
+} from "./CodexAdapterV2.replay.testkit.ts";
 import { describe } from "@effect/vitest";
 
 describe("CodexAdapterV2 post-settle continuation", () => {

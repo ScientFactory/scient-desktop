@@ -80,8 +80,15 @@ The event log is the source of truth for orchestration state. The
 plans durable events and effects; provider execution belongs to the effect services.
 [EventSink](../../apps/server/src/orchestration-v2/EventSink.ts) commits events, persisted projections,
 the accepted command receipt, and outbox effects in one database transaction. Subscribers receive
-events after that commit. This keeps command retries idempotent and prevents a persisted projection
+events after that commit, in database sequence order. This keeps command retries idempotent and prevents a persisted projection
 from getting ahead of the event log.
+
+The sink serializes commit and publication across command, provider, and project writes, then wakes
+outbox workers. Its transaction body can be interrupted and rolled back; once commit succeeds,
+publication finishes before cancellation releases the writer. Publishing writes own their SQL
+transaction. Import preparation and its final ledger write run inside that transaction, so a failed
+import cannot publish events that rolled back. Callers must not nest a publishing write inside
+another SQL transaction.
 
 The [effect worker](../../apps/server/src/orchestration-v2/EffectWorker.ts) performs side effects
 after intent has been recorded, then feeds results back into orchestration. A command acknowledgement
@@ -117,6 +124,13 @@ There is no global V1 command worker or authoritative in-memory V1 read model. D
 then commits through [`EventSink.ts`][sink]. The accepted receipt, events, materialized projection,
 and requested effects share one SQL transaction. Publication and worker wakeups follow commit.
 A retry returns the durable receipt; a command ID cannot be reused for another thread.
+
+The disconnected V1 provider service, session directory, metrics and queue execution helpers
+are retired. Historical SQL and queue-document readers remain import boundaries; their
+schemas and migrations are not runtime execution authorities. Retained snapshot/view schemas,
+SQL approval scalars and current RPC method names have canonical owners in
+`packages/contracts/src/scientOrchestrationSnapshot.ts`, `scientApprovalProjection.ts` and
+`scientOrchestrationRpcMethods.ts`. Public exports retain the same schema objects.
 
 Clients send commands such as `message.dispatch`, `run.interrupt`, `runtime-request.respond`,
 `queued-run.cancel`, and `checkpoint.rollback`. Provider adapters emit normalized V2 events;

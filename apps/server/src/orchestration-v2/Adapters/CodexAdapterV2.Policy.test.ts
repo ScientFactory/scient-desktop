@@ -19,7 +19,7 @@ import {
   DEFAULT_CODEX_SETTINGS,
   CODEX_TEST_MODEL_SELECTION,
   CODEX_TEST_RUNTIME_POLICY,
-} from "./CodexAdapterV2.fixture.ts";
+} from "./CodexAdapterV2.replay.testkit.ts";
 
 describe("CodexAdapterV2 file change approvals", () => {
   it("uses nonblank reasons before sorted file operations and renamed paths", () => {
