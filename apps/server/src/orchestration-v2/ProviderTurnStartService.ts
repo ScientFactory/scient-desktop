@@ -1,6 +1,9 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { resolveNativeModelContextWindow } from "./scient-fork/NativeModelContextWindow.ts";
+import {
+  nativeModelCapacityOwnerFor,
+  resolveNativeModelContextWindow,
+} from "./scient-fork/NativeModelContextWindow.ts";
 import {
   ContextHandoffPolicyOverride,
   genericContextHandoffPolicy,
@@ -1685,20 +1688,14 @@ export const layer: Layer.Layer<
       yield* runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
-        ...(session.driver !== "codex" ||
-        session.modelContextWindowLaunchFingerprint === undefined ||
-        runningProviderThread.nativeThreadRef?.driver !== "codex" ||
-        runningProviderThread.nativeThreadRef.nativeId === null
-          ? {}
-          : {
-              nativeModelCapacityOwner: {
-                modelSelection: run.modelSelection,
-                launchFingerprint: session.modelContextWindowLaunchFingerprint,
-                providerSessionId,
-                providerThreadId: runningProviderThread.id,
-                nativeThreadId: runningProviderThread.nativeThreadRef.nativeId,
-              },
-            }),
+        // SCIENT-FORK:START — a Codex root run captures its launch owner.
+        ...nativeModelCapacityOwnerFor({
+          session,
+          providerThread: runningProviderThread,
+          modelSelection: run.modelSelection,
+          providerSessionId,
+        }),
+        // SCIENT-FORK:END
         providerSessionId,
         session: deliverySession,
         run: runningRun,

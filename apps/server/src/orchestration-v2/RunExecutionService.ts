@@ -1,4 +1,7 @@
-import type { NativeModelCapacityOwner } from "./scient-fork/NativeModelContextWindow.ts";
+import {
+  nativeModelCapacityWrite,
+  type NativeModelCapacityOwner,
+} from "./scient-fork/NativeModelContextWindow.ts";
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -1439,24 +1442,16 @@ export const layer: Layer.Layer<
                     runId: input.run.id,
                     nodeId: input.rootNode.id,
                     event: deliveredEvent,
-                    ...(input.nativeModelCapacityOwner === undefined ||
-                    rootTerminalAlreadySeen ||
-                    deliveredEvent.type !== "provider_turn.updated" ||
-                    deliveredEvent.driver !== "codex" ||
-                    deliveredEvent.providerTurn.nodeId !== input.rootNode.id ||
-                    deliveredEvent.providerTurn.runAttemptId !== input.attempt.id ||
-                    deliveredEvent.providerTurn.tokenUsage?.maxTokens == null ||
-                    !Number.isFinite(deliveredEvent.providerTurn.tokenUsage.maxTokens) ||
-                    deliveredEvent.providerTurn.tokenUsage.maxTokens <= 0
-                      ? {}
-                      : {
-                          nativeModelCapacityOwner: input.nativeModelCapacityOwner,
-                          writeIfRunCurrent: {
-                            runId: input.run.id,
-                            activeAttemptId: input.attempt.id,
-                            expectedStatus: "running" as const,
-                          },
-                        }),
+                    // SCIENT-FORK:START — record a reported Codex window for its launch owner.
+                    ...nativeModelCapacityWrite({
+                      owner: input.nativeModelCapacityOwner,
+                      rootTerminalAlreadySeen,
+                      event: deliveredEvent,
+                      runId: input.run.id,
+                      attemptId: input.attempt.id,
+                      rootNodeId: input.rootNode.id,
+                    }),
+                    // SCIENT-FORK:END
                     ...(isRootProviderThreadUpdate
                       ? rootTerminalAlreadySeen
                         ? {
