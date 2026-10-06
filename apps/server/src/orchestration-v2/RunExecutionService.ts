@@ -63,6 +63,14 @@ import {
   makeRunEventSubscriptionLifetime,
 } from "./scient-fork/RunExecutionFinalization.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — native workflow coordinators own their runless members.
+import {
+  isWorkflowMemberNode,
+  releaseRevokedWorkflowTracking,
+  revokedWorkflowOwnership,
+  routeWorkflowSubagentEvent,
+} from "./scient-fork/NativeWorkflowOwnership.ts";
+// SCIENT-FORK:END
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -437,107 +445,24 @@ export function routeProviderEvent(
       return belongs ? [true, addProviderTurn(event.providerTurn.id, isRoot)] : [false, state];
     }
     case "node.updated": {
-      const member = state.workflowMembers.get(event.node.id);
-      const workflowMemberNode =
-        member !== undefined &&
-        event.driver === member.driver &&
-        event.node.threadId === member.threadId &&
-        event.node.runId === null &&
-        event.node.parentNodeId === member.parentNodeId &&
-        event.node.rootNodeId === member.parentNodeId &&
-        event.node.status === member.status &&
-        event.node.kind === "subagent" &&
-        !event.node.countsForRun &&
-        event.node.providerThreadId === null &&
-        event.node.providerTurnId === null &&
-        event.node.nativeItemRef === null &&
-        event.node.runtimeRequestId === null &&
-        event.node.checkpointScopeId === null;
       const belongs =
-        ownsRun(event.node.runId) || ownsChildThread(event.node.threadId) || workflowMemberNode;
+        ownsRun(event.node.runId) ||
+        ownsChildThread(event.node.threadId) ||
+        // SCIENT-FORK:START — an accepted runless native workflow member's node.
+        isWorkflowMemberNode(event, state.workflowMembers.get(event.node.id));
+      // SCIENT-FORK:END
       if (!belongs || event.node.providerThreadId === null) {
         return [belongs, state];
       }
       return [true, addProviderThread(event.node.providerThreadId)];
     }
-    case "subagent.updated": {
-      const task = event.subagent;
-      const belongs = ownsRun(task.runId) || ownsChildThread(task.threadId);
-      const nativeWorkflow =
-        task.presentation?.kind === "workflow" &&
-        task.origin === "provider_native" &&
-        task.nativeTaskRef?.strength === "strong" &&
-        task.nativeTaskRef.driver === task.driver &&
-        event.driver === task.driver &&
-        task.driver === input.driver &&
-        task.providerInstanceId === input.providerInstanceId;
-      if (nativeWorkflow && task.threadId === input.threadId) {
-        const coordinators = new Map(state.workflowCoordinators);
-        const members = new Map(state.workflowMembers);
-        const previous = coordinators.get(task.id);
-        const ownedThreadIds = new Set(state.ownedThreadIds);
-        const ownedProviderThreadIds = new Set(state.ownedProviderThreadIds);
-        if (
-          ownsRun(task.runId) &&
-          (previous === undefined ||
-            (previous.nativeTaskRef?.nativeId === task.nativeTaskRef?.nativeId &&
-              previous.providerInstanceId === task.providerInstanceId &&
-              previous.driver === task.driver))
-        ) {
-          coordinators.set(task.id, task);
-        } else if (
-          previous?.nativeTaskRef?.nativeId === task.nativeTaskRef?.nativeId &&
-          previous?.providerInstanceId === task.providerInstanceId &&
-          previous?.driver === task.driver
-        ) {
-          // An authoritative resume may transfer this task to a later run.
-          coordinators.delete(task.id);
-          if (previous.childThreadId !== null && previous.childThreadId !== input.threadId) {
-            ownedThreadIds.delete(previous.childThreadId);
-          }
-          if (
-            previous.providerThreadId !== null &&
-            previous.providerThreadId !== input.providerThreadId
-          ) {
-            ownedProviderThreadIds.delete(previous.providerThreadId);
-          }
-          for (const [id, member] of members) {
-            if (member.parentNodeId === task.id) members.delete(id);
-          }
-        }
-        return [
-          belongs,
-          {
-            ...state,
-            ownedThreadIds,
-            ownedProviderThreadIds,
-            workflowCoordinators: coordinators,
-            workflowMembers: members,
-          },
-        ];
-      }
-      if (belongs) return [true, state];
-      const coordinator =
-        task.parentNodeId === null ? undefined : state.workflowCoordinators.get(task.parentNodeId);
-      const memberOwned =
-        coordinator !== undefined &&
-        task.id !== coordinator.id &&
-        task.presentation?.kind === "workflow_agent" &&
-        task.presentation.workflowId === coordinator.id &&
-        task.threadId === coordinator.threadId &&
-        task.runId === null &&
-        task.origin === "provider_native" &&
-        task.driver === coordinator.driver &&
-        event.driver === coordinator.driver &&
-        task.providerInstanceId === coordinator.providerInstanceId &&
-        task.childThreadId === null &&
-        task.providerThreadId === null &&
-        task.nativeTaskRef === null &&
-        (!isSettledSubagentStatus(coordinator.status) || isSettledSubagentStatus(task.status));
-      return memberOwned
-        ? [true, { ...state, workflowMembers: new Map(state.workflowMembers).set(task.id, task) }]
-        : [false, state];
-    }
+    case "subagent.updated":
+      // SCIENT-FORK:START — native workflow coordinators and their runless members.
+      return routeWorkflowSubagentEvent(event, input, state, {
+        ownsRun: ownsRun(event.subagent.runId),
+        ownsChildThread: ownsChildThread(event.subagent.threadId),
+      });
+    // SCIENT-FORK:END
     case "message.updated":
       return [ownsRun(event.message.runId) || ownsChildThread(event.message.threadId), state];
     case "turn_item.updated": {
@@ -1501,85 +1426,22 @@ export const layer: Layer.Layer<
                   );
                   return;
                 }
-                const [accepted, revokedIds, revokedThreadIds] = yield* Ref.modify(
-                  eventRouting,
-                  (state) => {
-                    const [accepted, next] = routeProviderEvent(event, routeIdentity, state);
-                    const revokedIds = new Set<NodeId>([
-                      ...Array.from(state.workflowCoordinators.keys()).filter(
-                        (id) => !next.workflowCoordinators.has(id),
-                      ),
-                      ...Array.from(state.workflowMembers.keys()).filter(
-                        (id) => !next.workflowMembers.has(id),
-                      ),
-                    ]);
-                    const revokedThreadIds = new Set(
-                      Array.from(state.ownedThreadIds).filter((id) => !next.ownedThreadIds.has(id)),
-                    );
-                    return [[accepted, revokedIds, revokedThreadIds] as const, next];
-                  },
-                );
-                if (revokedIds.size > 0) {
-                  const open = yield* Ref.get(openRunOwnedSubagents);
-                  const revokedItemIds = new Set([
-                    ...Array.from(open.turnItems.values())
-                      .filter((item) => revokedIds.has(item.subagentId))
-                      .map((item) => item.id),
-                    ...Array.from(open.childTurnItems.values())
-                      .filter((item) => revokedThreadIds.has(item.threadId))
-                      .map((item) => item.id),
-                  ]);
-                  yield* Ref.update(
+                const [accepted, revoked] = yield* Ref.modify(eventRouting, (state) => {
+                  const [accepted, next] = routeProviderEvent(event, routeIdentity, state);
+                  // SCIENT-FORK:START — a workflow ownership transfer revokes rows this run tracked.
+                  return [[accepted, revokedWorkflowOwnership(state, next)] as const, next];
+                  // SCIENT-FORK:END
+                });
+                // SCIENT-FORK:START — stop tracking rows a transferred workflow took with it.
+                if (revoked.ids.size > 0) {
+                  yield* releaseRevokedWorkflowTracking(revoked, {
+                    openRunOwnedSubagents,
                     activeBackgroundTurnItems,
-                    (current) =>
-                      new Set(Array.from(current).filter((id) => !revokedItemIds.has(id))),
-                  );
-                  const revokedTurnIds = new Set(
-                    Array.from(open.nodes.values()).flatMap((node) =>
-                      revokedThreadIds.has(node.threadId) && node.providerTurnId !== null
-                        ? [node.providerTurnId]
-                        : [],
-                    ),
-                  );
-                  yield* Ref.update(
                     activeChildProviderTurns,
-                    (current) =>
-                      new Set(Array.from(current).filter((id) => !revokedTurnIds.has(id))),
-                  );
-                  yield* Ref.update(
                     activeChildSubagents,
-                    (current) => new Set(Array.from(current).filter((id) => !revokedIds.has(id))),
-                  );
-                  yield* Ref.update(openRunOwnedSubagents, (current) => ({
-                    ...current,
-                    subagents: new Map(
-                      Array.from(current.subagents).filter(([id]) => !revokedIds.has(id)),
-                    ),
-                    nodes: new Map(
-                      Array.from(current.nodes).filter(
-                        ([id, node]) => !revokedIds.has(id) && !revokedThreadIds.has(node.threadId),
-                      ),
-                    ),
-                    turnItems: new Map(
-                      Array.from(current.turnItems).filter(([id]) => !revokedIds.has(id)),
-                    ),
-                    childTurnItems: new Map(
-                      Array.from(current.childTurnItems).filter(
-                        ([, item]) => !revokedThreadIds.has(item.threadId),
-                      ),
-                    ),
-                    linkedChildThreadIds: new Set(
-                      Array.from(current.linkedChildThreadIds).filter(
-                        (id) => !revokedThreadIds.has(id),
-                      ),
-                    ),
-                    linkedWorkflowMemberIds: new Set(
-                      Array.from(current.linkedWorkflowMemberIds).filter(
-                        (id) => !revokedIds.has(id),
-                      ),
-                    ),
-                  }));
+                  });
                 }
+                // SCIENT-FORK:END
                 // Route, persist, and track each frame in one sequential step.
                 // Separate filter/tap operators can process a whole chunk's
                 // ownership transfers before tracking its earlier accepted rows.
