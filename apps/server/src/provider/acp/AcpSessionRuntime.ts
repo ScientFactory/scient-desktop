@@ -91,6 +91,7 @@ export interface AcpSpawnInput {
 }
 
 export interface AcpSessionRuntimeOptions {
+  readonly onDecodedBatch?: EffectAcpProtocol.AcpPatchedProtocolOptions["onDecodedBatch"];
   /** Provider-specific correction of incomplete advertised controls, also used for validation. */
   readonly resolveConfigOptions?: (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
@@ -1908,6 +1909,7 @@ export const make = (
           ? { onOutgoingResponseFailure: options.onOutgoingResponseFailure }
           : {}),
         ...(options.onOutgoingResponse ? { onOutgoingResponse: options.onOutgoingResponse } : {}),
+        ...(options.onDecodedBatch ? { onDecodedBatch: options.onDecodedBatch } : {}),
         // SCIENT-FORK:START — runs in the reader, in arrival order with the
         // session-update handler below and before the answer reaches the
         // caller, so a response to another request (a running prompt's) is not

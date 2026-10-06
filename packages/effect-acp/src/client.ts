@@ -35,6 +35,7 @@ export interface AcpClientOptions {
   readonly logOutgoing?: boolean;
   readonly logger?: (event: AcpProtocol.AcpProtocolLogEvent) => Effect.Effect<void, never>;
   readonly onIncomingRequest?: AcpProtocol.AcpPatchedProtocolOptions["onIncomingRequest"];
+  readonly onDecodedBatch?: AcpProtocol.AcpPatchedProtocolOptions["onDecodedBatch"];
   readonly onTermination?: AcpProtocol.AcpPatchedProtocolOptions["onTermination"];
   readonly onOutgoingResponseFailure?: AcpProtocol.AcpPatchedProtocolOptions["onOutgoingResponseFailure"];
   readonly onOutgoingResponse?: AcpProtocol.AcpPatchedProtocolOptions["onOutgoingResponse"];
@@ -972,6 +973,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
       : {}),
     ...(options.onRequest ? { onRequest: options.onRequest } : {}),
     ...(options.onResponse ? { onResponse: options.onResponse } : {}),
+    ...(options.onDecodedBatch ? { onDecodedBatch: options.onDecodedBatch } : {}),
 
     ...(options.onOutgoingResponse ? { onOutgoingResponse: options.onOutgoingResponse } : {}),
     transformSessionUpdate: (notification) => {

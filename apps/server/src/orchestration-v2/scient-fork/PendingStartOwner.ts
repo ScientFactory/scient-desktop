@@ -75,6 +75,31 @@ export function matchesPendingStartOwner(
     priorRun.providerThreadId === owner.providerThread.id &&
     priorRun.providerInstanceId === owner.providerThread.providerInstanceId &&
     retained.runOrdinal < owner.runOrdinal;
+  const priorRoot = current.nodes.find((row) => row.id === priorAttempt?.rootNodeId);
+  const sameRunSupersededOwnerMatches =
+    retained !== undefined &&
+    retained.runId === owner.runId &&
+    retained.runOrdinal === owner.runOrdinal &&
+    priorRun?.id === owner.runId &&
+    priorRun.ordinal === retained.runOrdinal &&
+    priorRun.threadId === owner.threadId &&
+    priorTurn?.runAttemptId === retained.attemptId &&
+    priorTurn.providerThreadId === owner.providerThread.id &&
+    priorTurn.nodeId === priorAttempt?.rootNodeId &&
+    priorAttempt?.runId === owner.runId &&
+    priorAttempt.id !== owner.activeAttemptId &&
+    attempt !== undefined &&
+    priorAttempt.attemptOrdinal < attempt.attemptOrdinal &&
+    priorAttempt.status === "superseded" &&
+    priorAttempt.providerInstanceId === owner.providerThread.providerInstanceId &&
+    priorAttempt.providerThreadId === owner.providerThread.id &&
+    priorRoot?.id !== owner.rootNodeId &&
+    priorRoot?.rootNodeId === priorAttempt.rootNodeId &&
+    priorRoot.kind === "root_turn" &&
+    priorRoot.parentNodeId === null &&
+    priorRoot.threadId === owner.threadId &&
+    priorRoot.runId === owner.runId &&
+    priorRoot.providerThreadId === owner.providerThread.id;
   return (
     current.thread.id === owner.threadId &&
     current.thread.archivedAt === null &&
@@ -115,7 +140,7 @@ export function matchesPendingStartOwner(
         ref?.ordinal === capturedRef.ordinal) &&
     (thread.lastRunOrdinal === owner.runOrdinal ||
       (priorOwnerMatches && thread.lastRunOrdinal === retained?.runOrdinal)) &&
-    (retained === undefined || priorOwnerMatches) &&
+    (retained === undefined || priorOwnerMatches || sameRunSupersededOwnerMatches) &&
     !current.providerTurns.some(
       (turn) => turn.runAttemptId === owner.activeAttemptId || turn.nodeId === owner.rootNodeId,
     )

@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -46,6 +47,7 @@ const harness = Effect.fnUntraced(function* (
   nativeThreadKnown = true,
   failFirstResponse = false,
   canReadThreadSnapshot = false,
+  interruptOptions: { readonly breaksSession?: boolean; readonly fail?: boolean } = {},
 ) {
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   let publish: (update: NativeSessionUpdate) => Effect.Effect<void> = () =>
@@ -53,6 +55,7 @@ const harness = Effect.fnUntraced(function* (
   let replies = 0;
   let wakes = 0;
   let steers = 0;
+  let interrupts = 0;
   const adapter = makeNativeSessionAdapterV2({
     instanceId,
     driver: ProviderDriverKind.make("omp"),
@@ -83,8 +86,12 @@ const harness = Effect.fnUntraced(function* (
               ? Effect.fail(new NativeSessionOperationError({ detail: "Transport write failed" }))
               : Effect.void,
           resume: () => Effect.void,
-          interrupt: Effect.void,
-          interruptBreaksSession: true,
+          interrupt: Effect.gen(function* () {
+            interrupts += 1;
+            if (interruptOptions.fail)
+              return yield* new NativeSessionOperationError({ detail: "Close unconfirmed" });
+          }),
+          interruptBreaksSession: interruptOptions.breaksSession ?? true,
           respond: (id: string) =>
             Effect.gen(function* () {
               replies += 1;
@@ -105,7 +112,7 @@ const harness = Effect.fnUntraced(function* (
     runtimePolicy,
   });
   const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-  yield* runtime.events.pipe(
+  const eventPump = yield* runtime.events.pipe(
     Stream.runForEach((event) => Queue.offer(events, event)),
     Effect.forkScoped,
   );
@@ -174,6 +181,9 @@ const harness = Effect.fnUntraced(function* (
   });
   return {
     runtime,
+    eventPump,
+    eventQueue: events,
+    interrupts: () => interrupts,
     turnInput,
     providerThread,
     start,
@@ -202,6 +212,135 @@ const harness = Effect.fnUntraced(function* (
 });
 
 it.layer(TestLayer)("NativeSessionAdapterV2", (it) => {
+  it.effect("seals a confirmed breaking interrupt after the complete receipt prefix", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness();
+        yield* h.start;
+        yield* h.question;
+        yield* h.publish({ type: "text", id: "answer", delta: "Retained partial answer" });
+        yield* h.publish({ type: "tool", id: "tool-before-stop", name: "read", status: "running" });
+        const started = yield* h.takeUntil(
+          (e) => e.type === "provider_turn.updated" && e.providerTurn.status === "running",
+        );
+        assert.equal(started.type, "provider_turn.updated");
+        if (started.type !== "provider_turn.updated") return;
+        yield* h.runtime.interruptTurn({
+          providerThread: h.providerThread,
+          providerTurnId: started.providerTurn.id,
+        });
+        yield* Fiber.join(h.eventPump);
+        const prefix = [...h.recorded, ...(yield* Queue.takeAll(h.eventQueue))];
+        assert.isTrue(prefix.every(isProviderEvent));
+        const terminals = prefix.filter((e) => e.type === "turn.terminal");
+        assert.equal(terminals.length, 1);
+        assert.deepInclude(terminals[0], {
+          providerTurnId: started.providerTurn.id,
+          status: "interrupted",
+          threadDisposition: "broken",
+        });
+        const terminalIndex = prefix.indexOf(terminals[0]!);
+        assert.isTrue(
+          prefix.some(
+            (e, i) =>
+              i < terminalIndex &&
+              e.type === "runtime_request.updated" &&
+              e.runtimeRequest.status === "cancelled",
+          ),
+        );
+        assert.isTrue(
+          prefix.some(
+            (e, i) =>
+              i < terminalIndex &&
+              e.type === "message.updated" &&
+              e.message.text === "Retained partial answer" &&
+              !e.message.streaming,
+          ),
+        );
+        assert.isTrue(
+          prefix.some(
+            (e, i) =>
+              i < terminalIndex &&
+              e.type === "turn_item.updated" &&
+              e.turnItem.type === "dynamic_tool" &&
+              e.turnItem.status === "interrupted",
+          ),
+        );
+        assert.isTrue(
+          prefix.some(
+            (e, i) =>
+              i > terminalIndex &&
+              e.type === "provider_session.updated" &&
+              e.providerSession.status === "stopped",
+          ),
+        );
+        assert.equal(h.runtime.providerSession.status, "stopped");
+        assert.equal(h.interrupts(), 1);
+        yield* h.publish({ type: "text", id: "late", delta: "Late callback" });
+        assert.equal(yield* Queue.size(h.eventQueue), 0);
+        assert.equal((yield* Effect.result(h.startWake))._tag, "Failure");
+      }),
+    ),
+  );
+  it.effect("keeps a reusable interrupt producer open for the next turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, true, false, false, { breaksSession: false });
+        yield* h.start;
+        const started = yield* h.takeUntil(
+          (e) => e.type === "provider_turn.updated" && e.providerTurn.status === "running",
+        );
+        if (started.type !== "provider_turn.updated") return;
+        yield* h.runtime.interruptTurn({
+          providerThread: h.providerThread,
+          providerTurnId: started.providerTurn.id,
+        });
+        const terminal = yield* h.takeUntil((e) => e.type === "turn.terminal");
+        assert.deepInclude(terminal, { status: "interrupted", threadDisposition: "reusable" });
+        assert.isUndefined(h.eventPump.pollUnsafe());
+        assert.equal(h.runtime.providerSession.status, "ready");
+        yield* h.startWake;
+        yield* h.publish({ type: "text", id: "next", delta: "Next answer" });
+        yield* h.publish({ type: "terminal", status: "completed" });
+        const next = yield* h.takeUntil((e) => e.type === "turn.terminal");
+        assert.deepInclude(next, { status: "completed" });
+        assert.isUndefined(h.eventPump.pollUnsafe());
+      }),
+    ),
+  );
+  it.effect("does not seal or invent a terminal after an unconfirmed breaking interrupt", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, true, false, false, { fail: true });
+        yield* h.start;
+        const started = yield* h.takeUntil(
+          (e) => e.type === "provider_turn.updated" && e.providerTurn.status === "running",
+        );
+        if (started.type !== "provider_turn.updated") return;
+        assert.equal(
+          (yield* Effect.result(
+            h.runtime.interruptTurn({
+              providerThread: h.providerThread,
+              providerTurnId: started.providerTurn.id,
+            }),
+          ))._tag,
+          "Failure",
+        );
+        assert.equal(h.interrupts(), 1);
+        assert.isUndefined(h.eventPump.pollUnsafe());
+        assert.equal(h.runtime.providerSession.status, "running");
+        yield* h.publish({ type: "text", id: "live", delta: "Peer still live" });
+        yield* h.takeUntil((e) => e.type === "message.updated");
+        assert.isFalse(
+          h.recorded.some(
+            (e) =>
+              e.type === "turn.terminal" ||
+              (e.type === "provider_session.updated" && e.providerSession.status === "stopped"),
+          ),
+        );
+      }),
+    ),
+  );
   it.effect("rejects a provider thread owned by another instance before resume", () =>
     Effect.scoped(
       Effect.gen(function* () {

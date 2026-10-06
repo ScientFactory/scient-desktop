@@ -271,6 +271,80 @@ async function transfer(session: EditSession): Promise<EditSession> {
     transferring.delete(session.key);
   }
 }
+// The async journal can lag behind the composer snapshot flushed on unload.
+// Keep same-intent edits and use the journal only for missing captured bytes.
+function transferredDraftAfterReload(saved: EditSession): ComposerThreadDraftState {
+  const current = useComposerDraftStore.getState().getComposerDraft(saved.originalTarget);
+  const marker = current?.extractedIntent;
+  if (
+    !current ||
+    !marker ||
+    !("intentId" in marker) ||
+    marker.intentId !== saved.intentId ||
+    marker.journalKey !== saved.journalKey
+  )
+    return revive(saved.edited);
+  const matches = (
+    left: ComposerThreadDraftState["images"][number],
+    right: {
+      id: string;
+      name: string;
+      mimeType: string;
+      sizeBytes: number;
+    },
+  ) =>
+    left.id === right.id &&
+    left.name === right.name &&
+    left.mimeType === right.mimeType &&
+    left.sizeBytes === right.sizeBytes;
+  if (
+    current.pendingImageSelection === null &&
+    saved.edited.images.some(
+      (image) => !current.images.some((candidate) => matches(candidate, image)),
+    )
+  )
+    throw new Error(
+      "This older extracted draft has ambiguous image selection. Its image bytes remain in the recovery journal; restore the draft before sending.",
+    );
+  const selection =
+    current.pendingImageSelection == null
+      ? current.images
+      : [
+          ...current.pendingImageSelection,
+          ...current.images.filter(
+            (image) => !current.pendingImageSelection?.some((selected) => selected.id === image.id),
+          ),
+        ];
+  const images = selection.map((selection) => {
+    const live = current.images.find((image) => matches(image, selection));
+    if (live) return live;
+    const captured = saved.edited.images.find((image) => matches(image, selection));
+    if (!captured)
+      throw new Error(
+        `Image ${selection.name} could not be recovered. The draft and recovery journal have been kept.`,
+      );
+    return { ...captured, previewUrl: URL.createObjectURL(captured.file) };
+  });
+  return {
+    ...current,
+    images,
+    pendingImageSelection: undefined,
+    persistedAttachments: current.persistedAttachments.filter((attachment) =>
+      images.some((image) => matches(image, attachment)),
+    ),
+    files: current.files.map((file) => {
+      if (file.file) return file;
+      const captured = saved.edited.files.find(
+        (candidate) =>
+          candidate.id === file.id &&
+          candidate.name === file.name &&
+          candidate.mimeType === file.mimeType &&
+          candidate.sizeBytes === file.sizeBytes,
+      );
+      return captured?.file ? { ...file, file: captured.file } : file;
+    }),
+  };
+}
 let loading: Promise<void> | undefined;
 export function loadQueueEdits() {
   return (loading ??= (async () => {
@@ -286,11 +360,23 @@ export function loadQueueEdits() {
           if (saved.intentId && !alreadyOwnedIntent) releaseEditLease(`intent:${saved.intentId}`);
           continue;
         }
-        const session = {
-          ...saved,
-          ordinary: revive(saved.ordinary),
-          edited: revive(saved.edited),
-        };
+        let session: EditSession;
+        try {
+          session = {
+            ...saved,
+            ordinary: revive(saved.ordinary),
+            edited: saved.transferred ? transferredDraftAfterReload(saved) : revive(saved.edited),
+          };
+        } catch (cause) {
+          // Do not register an incomplete draft: later typing must not overwrite its journal bytes.
+          releaseEditLease(saved.key);
+          if (saved.intentId && !alreadyOwnedIntent) releaseEditLease(`intent:${saved.intentId}`);
+          stashRecovery(saved, "edited");
+          useQueueEditSessions.setState({
+            error: { message: String(cause), targetKey: saved.key },
+          });
+          continue;
+        }
         register(session);
         try {
           if (session.transferred) {
@@ -668,6 +754,10 @@ export async function resolveExtractedDraftIntent(
   if (record.phase === "consumed")
     throw new Error(
       "This extracted intent was already submitted. Clear it before authoring a new ordinary draft.",
+    );
+  if (draft?.pendingImageSelection === null || (draft?.pendingImageSelection?.length ?? 0) > 0)
+    throw new Error(
+      "The extracted images have not been recovered. The draft and journal have been kept.",
     );
   if (!(await acquireEditLease(`intent:${marker.intentId}`)))
     throw new Error("This extracted intent is open in another window.");

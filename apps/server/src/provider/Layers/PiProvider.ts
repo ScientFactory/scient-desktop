@@ -5,8 +5,9 @@
  * the user's commands (extension slash commands, prompt templates, skills)
  * are discovered through a short-lived ephemeral RPC session
  * (`pi --mode rpc --no-session`), so everything the user configured in
- * `~/.pi/agent` — custom providers, models.json entries, extensions, skills —
- * shows up in T3 without any hardcoded catalog.
+ * `~/.pi/agent` — models.json entries, prompt templates and skills —
+ * shows up in T3 without any hardcoded catalog. Unattended discovery never
+ * executes user extensions; native interactive sessions retain them.
  */
 import {
   type CustomModelSetting,
@@ -50,6 +51,7 @@ import {
 } from "../providerMaintenance.ts";
 import type { PiRpcClient, PiRpcError, PiRpcSpawnOptions } from "../pi/PiRpcClient.ts";
 import { encodePiModelSlug } from "../pi/PiModel.ts";
+import { PI_DISCOVERY_LAUNCH_POLICY } from "../pi/PiDiscoveryPolicy.ts";
 import {
   EMPTY_PI_MODEL_CAPABILITIES,
   thinkingCapabilitiesForPiModel,
@@ -150,7 +152,9 @@ const discoverPiViaRpc = (
       environment,
       mcpSession: undefined,
       extensionPath: undefined,
-      ephemeral: true,
+      // SCIENT-FORK:START — inventory must not execute workspace or profile extensions.
+      ...PI_DISCOVERY_LAUNCH_POLICY,
+      // SCIENT-FORK:END
     });
     if (makeDiscoveryClient !== undefined) {
       const client = yield* makeDiscoveryClient({

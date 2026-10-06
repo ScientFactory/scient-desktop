@@ -52,24 +52,7 @@ export const PRODUCTION_ENTRIES = [
 
 // Explicit support attribution is limited to reviewed suites. Other imports
 // remain possible subjects even when one happens to match the test basename.
-export const REVIEWED_TEST_SUPPORT = {
-  "apps/server/src/orchestration/Layers/OrchestrationEngine.test.ts": {
-    reason:
-      "Identifiers, persistence and workspace setup supply engine fixtures and observations; the assertions exercise the old engine and its reactors.",
-    modules: [
-      "apps/server/src/config.ts",
-      "apps/server/src/persistence/Errors.ts",
-      "apps/server/src/persistence/Layers/OrchestrationCommandReceipts.ts",
-      "apps/server/src/persistence/Layers/OrchestrationEventStore.ts",
-      "apps/server/src/persistence/Layers/Sqlite.ts",
-      "apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts",
-      "apps/server/src/persistence/Services/OrchestrationEventStore.ts",
-      "apps/server/src/project/RepositoryIdentityResolver.ts",
-      "apps/server/src/scient/threadQueue/Ledger.ts",
-      "packages/contracts/src/index.ts",
-    ],
-  },
-};
+export const REVIEWED_TEST_SUPPORT = {};
 
 // Published packages' runtime exports are added from package.json below. At the
 // initial revision every packages/* workspace is private: its exports resolve

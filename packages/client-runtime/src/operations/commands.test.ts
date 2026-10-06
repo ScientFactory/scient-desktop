@@ -377,6 +377,11 @@ describe("V2 environment commands", () => {
         runtimeMode: "full-access",
         interactionMode: "default",
         titleSeed: "Continue here",
+        selectedScientSkillNames: ["pdf-authoring"],
+        sourceProposedPlan: {
+          threadId: ThreadId.make("thread-plan"),
+          planId: PlanId.make("plan-1"),
+        },
         bootstrap: {
           createThread: {
             projectId: ProjectId.make("project-1"),
@@ -395,6 +400,10 @@ describe("V2 environment commands", () => {
         threadId: v2ThreadId,
         title: "Continue here",
         generateTitle: true,
+        initialMessage: {
+          selectedScientSkillNames: ["pdf-authoring"],
+          sourcePlanRef: { threadId: "thread-plan", planId: "plan-1" },
+        },
         workspaceStrategy: {
           type: "existing_worktree",
           worktreePath: "/workspace/project-worktrees/feature",

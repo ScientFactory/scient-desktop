@@ -1,12 +1,18 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useComposerDraftStore, type DraftId } from "../../composerDraftStore";
+import {
+  useComposerDraftStore,
+  type DraftId,
+  type ComposerThreadDraftState,
+} from "../../composerDraftStore";
 import type { ExtractedIntentRecord, QueueEditSession } from "./editJournal";
 import {
   finishQueueEdit,
   prepareExtractedDraftIntent,
   retireConsumedDraftIntent,
+  resolveExtractedDraftIntent,
 } from "./editSession";
 import {
+  bindExtractedSubmission,
   composerSubmissionMatchesDraft,
   consumeExtractedSubmission,
   extractedDraftFingerprint,
@@ -66,4 +72,62 @@ export async function retryExtractedSubmission<
       : intent.boundJournalKey;
   await retireConsumedDraftIntent(target, intent.intentId, laterAuthoredJournal);
   return result;
+}
+
+export const extractedIntentActionErrors = {
+  separate: "Send this extracted intent as its own message before starting another action.",
+  multipleModels: "Send this extracted intent to one model before starting multiple models.",
+  fork: "Keep this extracted intent in its recovery draft before opening a fork.",
+  feedback: "Keep this extracted intent before submitting separate feedback.",
+} as const;
+
+/** Resolve recovery before reading current action policy or offering a retry. */
+export async function beginExtractedSubmission<
+  Result extends { readonly _tag: "Success" | "Failure" },
+>({
+  hasSeparateAction,
+  ...retry
+}: Omit<Parameters<typeof retryExtractedSubmission<Result>>[0], "intent"> & {
+  hasSeparateAction: () => boolean;
+}) {
+  const intent = await resolveExtractedDraftIntent(
+    useComposerDraftStore.getState().getComposerDraft(retry.target),
+  );
+  if (intent && hasSeparateAction()) throw new Error(extractedIntentActionErrors.separate);
+  const retryResult = await retryExtractedSubmission({ ...retry, intent });
+  return { intent, retryResult };
+}
+
+/** Bind the offered snapshot after uploads, without substituting a newer draft. */
+export async function prepareAndBindExtractedSubmission(
+  intent: ExtractedIntentRecord,
+  packet: ExtractedSubmissionPacket,
+  snapshot: ComposerThreadDraftState | null | undefined,
+) {
+  await prepareExtractedDraftIntent(intent.intentId);
+  if (!snapshot) throw new Error("The extracted draft snapshot is unavailable.");
+  const marker = snapshot.extractedIntent;
+  if (!marker || !("intentId" in marker) || marker.intentId !== intent.intentId)
+    throw new Error("The extracted draft changed ownership before preparation completed.");
+  return bindExtractedSubmission(
+    intent,
+    packet,
+    await extractedDraftFingerprint(snapshot),
+    marker.journalKey,
+  );
+}
+
+/** A first intake acknowledgement may detach only the later authored draft. */
+export async function retireAcknowledgedExtractedDraft(
+  target: ScopedThreadRef | DraftId,
+  intent: ExtractedIntentRecord,
+  snapshot: ComposerThreadDraftState | null | undefined,
+) {
+  const afterAck = useComposerDraftStore.getState().getComposerDraft(target);
+  const mayDetachLaterDraft = !composerSubmissionMatchesDraft(snapshot, afterAck);
+  await retireConsumedDraftIntent(
+    target,
+    intent.intentId,
+    mayDetachLaterDraft ? intent.boundJournalKey : undefined,
+  );
 }

@@ -31,7 +31,6 @@ import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -53,7 +52,17 @@ import { ProviderTextSnapshotError, ProviderAdapterTurnStartError } from "./Prov
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import { upsertProviderTurn } from "./ProjectionStore.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
+import {
+  ThreadCommandExecutor,
+  layer as threadCommandExecutorLayer,
+} from "./ThreadCommandExecutor.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+// SCIENT-FORK:START — owned finalization and private subscription lifetime.
+import {
+  makeOwnedRunFinalizer,
+  makeRunEventSubscriptionLifetime,
+} from "./scient-fork/RunExecutionFinalization.ts";
+// SCIENT-FORK:END
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -677,6 +686,7 @@ export const layer: Layer.Layer<
     const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
+    const threadDispatch = yield* ThreadCommandExecutor;
 
     const writeFinalRunEvents = (input: {
       readonly run: OrchestrationV2Run;
@@ -964,13 +974,20 @@ export const layer: Layer.Layer<
               ),
             ),
           );
+          // SCIENT-FORK:START — finalize against held registration without locking native callbacks.
+          const writeOwnedFinalRunEvents = yield* makeOwnedRunFinalizer(
+            input,
+            threadDispatch,
+            writeFinalRunEvents,
+          );
+          // SCIENT-FORK:END
           const cancelledStartOwner = yield* Ref.make<EventSink.PendingStartOwner | undefined>(
             undefined,
           );
           const cancelDeclinedStart = Effect.gen(function* () {
             const stoppedThread = yield* input.cancelBeforeProviderTurn?.() ?? Effect.void;
             if (stoppedThread === undefined) return false;
-            const committed = yield* writeFinalRunEvents({
+            const committed = yield* writeOwnedFinalRunEvents({
               run: input.run,
               rootNode: input.rootNode,
               checkpointScope: input.checkpointScope,
@@ -1063,7 +1080,7 @@ export const layer: Layer.Layer<
                   runId: input.run.id,
                   cause,
                 });
-                yield* writeFinalRunEvents({
+                yield* writeOwnedFinalRunEvents({
                   run: input.run,
                   rootNode: input.rootNode,
                   checkpointScope: input.checkpointScope,
@@ -1125,23 +1142,29 @@ export const layer: Layer.Layer<
             (input.session.subscribeEvents === undefined
               ? { events: input.session.events, close: Effect.void }
               : yield* input.session.subscribeEvents);
-          yield* (
-            snapshotSubscription?.textSnapshotConsumer?.bind({
-              threadId: input.run.threadId,
-              runId: input.run.id,
-              activeAttemptId: input.attempt.id,
-              rootNodeId: input.rootNode.id,
-              runOrdinal: input.run.ordinal,
-              providerThreadId: input.providerThread.id,
-              providerSessionId: input.providerSessionId,
-              providerInstanceId: input.run.providerInstanceId,
-              driver: input.session.driver,
-            }) ?? Effect.void
+          // SCIENT-FORK:START — one captured subscription owns snapshot binding and ingestion cleanup.
+          const subscriptionLifetime = yield* makeRunEventSubscriptionLifetime(
+            eventSubscription.close,
           );
+          yield* subscriptionLifetime.startup(
+            () =>
+              snapshotSubscription?.textSnapshotConsumer?.bind({
+                threadId: input.run.threadId,
+                runId: input.run.id,
+                activeAttemptId: input.attempt.id,
+                rootNodeId: input.rootNode.id,
+                runOrdinal: input.run.ordinal,
+                providerThreadId: input.providerThread.id,
+                providerSessionId: input.providerSessionId,
+                providerInstanceId: input.run.providerInstanceId,
+                driver: input.session.driver,
+              }) ?? Effect.void,
+          );
+          // SCIENT-FORK:END
           const inheritedBackgroundTurnItems = yield* (
             input.loadInheritedBackgroundTurnItems?.() ?? Effect.succeed([])
           ).pipe(
-            Effect.onError(() => eventSubscription.close),
+            Effect.onError(() => subscriptionLifetime.close),
             Effect.mapError(
               (cause) =>
                 new RunExecutionStartError({
@@ -1181,9 +1204,17 @@ export const layer: Layer.Layer<
               if (yield* Ref.get(rootRunFinalized)) {
                 return;
               }
+              // SCIENT: held/pre-admission retains this owner until canonical consume/drop resolves.
+              if (
+                yield* (
+                  input.session.droidSteerTerminalHeld?.(input.attempt.id, terminal.status) ??
+                    Effect.succeed(false)
+                )
+              )
+                return;
               const providerThread = yield* Ref.get(latestProviderThread);
               const openSubagents = yield* Ref.get(openRunOwnedSubagents);
-              yield* writeFinalRunEvents({
+              const committed = yield* writeOwnedFinalRunEvents({
                 run: input.run,
                 rootNode: input.rootNode,
                 checkpointScope: input.checkpointScope,
@@ -1206,6 +1237,7 @@ export const layer: Layer.Layer<
                   (cause) => new RunExecutionIngestError({ runId: input.run.id, cause }),
                 ),
               );
+              if (!committed) return;
               if (isRunOwnedSubagentTerminalStatus(terminal.status)) {
                 yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
               }
@@ -1346,6 +1378,14 @@ export const layer: Layer.Layer<
               return false;
             }
             const terminal = yield* Ref.get(terminalEvent);
+            if (
+              terminal !== null &&
+              (yield* (
+                input.session.droidSteerTerminalHeld?.(input.attempt.id, terminal.status) ??
+                  Effect.succeed(false)
+              ))
+            )
+              return false;
             // Non-completed terminals drop background tracking immediately.
             if (terminal !== null && terminal.status !== "completed") {
               return true;
@@ -1720,7 +1760,7 @@ export const layer: Layer.Layer<
                                     Effect.flatMap((openSubagents) =>
                                       Ref.get(committedRootProviderTurn).pipe(
                                         Effect.flatMap((receipt) =>
-                                          writeFinalRunEvents({
+                                          writeOwnedFinalRunEvents({
                                             run: input.run,
                                             rootNode: input.rootNode,
                                             checkpointScope: input.checkpointScope,
@@ -1775,9 +1815,12 @@ export const layer: Layer.Layer<
                 ),
               );
             }),
-            Effect.ensuring(eventSubscription.close),
+            Effect.ensuring(subscriptionLifetime.close),
             Effect.forkDetach,
           );
+          // SCIENT-FORK:START — retire an interrupted subscription even before child startup.
+          const interruptProviderEvents = subscriptionLifetime.interrupt(providerEventFiber);
+          // SCIENT-FORK:END
 
           if (
             input.shouldStartProviderTurn !== undefined &&
@@ -1792,10 +1835,10 @@ export const layer: Layer.Layer<
                 (yield* Ref.get(cancelledStartOwner))?.retainedTurn === undefined ||
                 (input.providerThread.pendingBackgroundTasks?.length ?? 0) === 0
               ) {
-                yield* Fiber.interrupt(providerEventFiber);
+                yield* interruptProviderEvents;
               }
             } else {
-              yield* Fiber.interrupt(providerEventFiber);
+              yield* interruptProviderEvents;
             }
             return;
           }
@@ -1844,7 +1887,7 @@ export const layer: Layer.Layer<
             Effect.catchCause((cause) =>
               Effect.gen(function* () {
                 if (Cause.hasInterruptsOnly(cause)) {
-                  yield* Fiber.interrupt(providerEventFiber);
+                  yield* interruptProviderEvents;
                   return yield* Effect.failCause(
                     Cause.fromReasons<never>(cause.reasons.filter(Cause.isInterruptReason)),
                   );
@@ -1875,7 +1918,7 @@ export const layer: Layer.Layer<
                     (yield* Ref.get(cancelledStartOwner))?.retainedTurn === undefined ||
                     (input.providerThread.pendingBackgroundTasks?.length ?? 0) === 0
                   ) {
-                    yield* Fiber.interrupt(providerEventFiber);
+                    yield* interruptProviderEvents;
                   }
                   return;
                 }
@@ -1883,14 +1926,14 @@ export const layer: Layer.Layer<
                   runId: input.run.id,
                   cause,
                 }).pipe(
-                  Effect.andThen(Fiber.interrupt(providerEventFiber)),
+                  Effect.andThen(interruptProviderEvents),
                   Effect.andThen(Ref.get(latestProviderThread)),
                   Effect.flatMap((providerThread) =>
                     Ref.get(latestTurnItemOrdinal).pipe(
                       Effect.flatMap((latestItemOrdinal) =>
                         Ref.get(openRunOwnedSubagents).pipe(
                           Effect.flatMap((openSubagents) =>
-                            writeFinalRunEvents({
+                            writeOwnedFinalRunEvents({
                               run: input.run,
                               rootNode: input.rootNode,
                               checkpointScope: input.checkpointScope,
@@ -1941,7 +1984,7 @@ export const layer: Layer.Layer<
         }),
     } satisfies RunExecutionServiceV2Shape);
   }),
-);
+).pipe(Layer.provide(threadCommandExecutorLayer));
 
 function makeInterruptResultTurnItem(input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2Shape;

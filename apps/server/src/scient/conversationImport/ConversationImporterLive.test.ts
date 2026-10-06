@@ -1533,7 +1533,28 @@ describe("ConversationImporter", () => {
           const prepared = yield* prepareHistory(result.threadId);
           assert.isNotEmpty(prepared.context);
 
-          inOrder(prepared.context, [...messageTexts, ...stepTitles]);
+          // SCIC v1 side facts stay within their historical turn; each kind's
+          // source order and the original timestamps remain independent.
+          inOrder(prepared.context, [
+            "Question 1",
+            "Answer 1",
+            "Step 1",
+            "Step 2",
+            "Question 2",
+            "Answer 2",
+            "Step 3",
+            "Step 4",
+            "Question 3",
+            "Answer 3",
+            "Step 5",
+            "Step 6",
+            "Question 4",
+            "Answer 4",
+            "Step 7",
+            "Step 8",
+          ]);
+          inOrder(prepared.context, messageTexts);
+          inOrder(prepared.context, stepTitles);
           inOrder(prepared.context, ["Plan 1", "Plan 2", "Plan 3", "Plan 4"]);
 
           yield* finishHistory(result.threadId, "2026-09-28T11:00:02.000Z");

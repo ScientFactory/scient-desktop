@@ -11,13 +11,17 @@ import {
   queueSubmissionId,
   acknowledgeQueueSubmission,
   composerSubmissionMatchesDraft,
-  bindExtractedSubmission,
   consumeExtractedSubmission,
-  extractedDraftFingerprint,
   type ExtractedSubmissionPacket,
 } from "../scient/threadQueue/submission";
 // SCIENT-FORK: extracted-intent retry and recovery stay in their owned module.
-import { retryExtractedSubmission } from "../scient/threadQueue/extractedIntentSend";
+import {
+  beginExtractedSubmission,
+  extractedIntentActionErrors,
+  prepareAndBindExtractedSubmission,
+  retireAcknowledgedExtractedDraft,
+} from "../scient/threadQueue/extractedIntentSend";
+import type { ExtractedIntentRecord } from "../scient/threadQueue/editJournal";
 import {
   beginQueueEdit,
   stashRecoveredDraft,
@@ -25,9 +29,7 @@ import {
   flushQueueEdit,
   loadQueueEdits,
   useQueueEditSessions,
-  resolveExtractedDraftIntent,
   prepareExtractedDraftIntent,
-  retireConsumedDraftIntent,
   stashProvenanceDraft,
 } from "../scient/threadQueue/editSession";
 import { nativeQueueEditItem } from "../scient/threadQueue/nativeQueueEditItem";
@@ -8931,27 +8933,21 @@ function ChatViewContent(props: ChatViewProps) {
       notifyDirectAnnotationAttached();
       return;
     }
-    let extractedIntent: Awaited<ReturnType<typeof resolveExtractedDraftIntent>>;
+    let extractedIntent: ExtractedIntentRecord | undefined;
     sendInFlightRef.current = true;
     try {
-      extractedIntent = await resolveExtractedDraftIntent(
-        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
-      );
-      if (extractedIntent && (options?.steer || directAnnotation || directPrompt))
-        throw new Error(
-          "Send this extracted intent as its own message before starting another action.",
-        );
-      // SCIENT-FORK: exact retry intake; the owned helper reconciles recovery.
-      const retryResult = await retryExtractedSubmission({
-        intent: extractedIntent,
+      const intake = await beginExtractedSubmission({
         target: composerDraftTarget,
         queueEdit,
+        hasSeparateAction: () => Boolean(options?.steer || directAnnotation || directPrompt),
         dispatch: startThreadTurn,
         onDraftCleared: () => {
           promptRef.current = "";
           composerRef.current?.resetCursorState();
         },
       });
+      extractedIntent = intake.intent;
+      const retryResult = intake.retryResult;
       if (retryResult) {
         const result = retryResult;
         if (result._tag === "Failure") {
@@ -9021,10 +9017,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     const multipleModelSelections = directPrompt === null ? sendCtx.multipleModelSelections : null;
     if (extractedIntent && multipleModelSelections !== null) {
-      setThreadError(
-        activeThread.id,
-        "Send this extracted intent to one model before starting multiple models.",
-      );
+      setThreadError(activeThread.id, extractedIntentActionErrors.multipleModels);
       return;
     }
     if (
@@ -9137,10 +9130,7 @@ function ChatViewContent(props: ChatViewProps) {
       effectiveReviewComments.length === 0 &&
       isStandaloneForkSlashCommand(trimmed);
     if (standaloneForkCommand && extractedIntent) {
-      setThreadError(
-        activeThread.id,
-        "Keep this extracted intent in its recovery draft before opening a fork.",
-      );
+      setThreadError(activeThread.id, extractedIntentActionErrors.fork);
       return;
     }
     if (standaloneForkCommand) {
@@ -9161,10 +9151,7 @@ function ChatViewContent(props: ChatViewProps) {
         ? parseCodexFeedbackCommand(trimmed)
         : null;
     if (feedbackCommand && extractedIntent) {
-      setThreadError(
-        activeThread.id,
-        "Keep this extracted intent before submitting separate feedback.",
-      );
+      setThreadError(activeThread.id, extractedIntentActionErrors.feedback);
       return;
     }
     if (feedbackCommand && multipleModelSelections === null) {
@@ -10122,17 +10109,10 @@ function ChatViewContent(props: ChatViewProps) {
           },
         };
         if (extractedIntent) {
-          await prepareExtractedDraftIntent(extractedIntent.intentId);
-          if (!draftSnapshotForSend)
-            throw new Error("The extracted draft snapshot is unavailable.");
-          const marker = draftSnapshotForSend.extractedIntent;
-          if (!marker || !("intentId" in marker) || marker.intentId !== extractedIntent.intentId)
-            throw new Error("The extracted draft changed ownership before preparation completed.");
-          extractedIntent = await bindExtractedSubmission(
+          extractedIntent = await prepareAndBindExtractedSubmission(
             extractedIntent,
             preparedPacket,
-            await extractedDraftFingerprint(draftSnapshotForSend),
-            marker.journalKey,
+            draftSnapshotForSend,
           );
         }
         const startPromise = startThreadTurn(preparedPacket);
@@ -10193,15 +10173,10 @@ function ChatViewContent(props: ChatViewProps) {
             }
           }
           if (extractedIntent) {
-            const afterAck = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
-            const mayDetachLaterDraft = !composerSubmissionMatchesDraft(
-              draftSnapshotForSend,
-              afterAck,
-            );
-            await retireConsumedDraftIntent(
+            await retireAcknowledgedExtractedDraft(
               composerDraftTarget,
-              extractedIntent.intentId,
-              mayDetachLaterDraft ? extractedIntent.boundJournalKey : undefined,
+              extractedIntent,
+              draftSnapshotForSend,
             );
           }
           if (submissionId && canAcknowledge) {

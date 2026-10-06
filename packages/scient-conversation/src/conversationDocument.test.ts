@@ -3,6 +3,7 @@ import { beforeEach } from "vite-plus/test";
 import { ScientConversationExportResult, TurnId, type ChatAttachment } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { importedMessageMarkdown } from "./conversationDocument.ts";
 import { parseConversationMarkdown } from "./conversationMarkdown.ts";
 import { parseMarkdown, visitNodes } from "./markdownAst.ts";
 import { packagedAssets } from "./markdownExport.ts";
@@ -53,6 +54,58 @@ function bodies(markdown: string) {
 }
 
 describe("conversation document", () => {
+  it("presents assistant citation prose without rewriting raw imports, user text or code", () => {
+    const marker = "\uE200cite\uE202turn3view1\uE201";
+    const unsafe = "\uE200cite\uE202unsafe\uE201";
+    const missing = "\uE200cite\uE202missing\uE201";
+    const raw = `Evidence ${marker} and ${unsafe} and ${missing}.\n\nInline \`${marker}\`.\n\n\`\`\`text\n${marker}\n\`\`\``;
+    const original = snapshotOf(
+      thread({
+        messages: [
+          message({ id: "user-citation", role: "user", text: marker }),
+          message({ id: "assistant-citation", role: "assistant", text: raw, turnId: "t1" }),
+          message({ id: "ordinary-assistant", role: "assistant", text: marker, turnId: "t2" }),
+        ],
+      }),
+    );
+    const snapshot = {
+      ...original,
+      messages: original.messages.map((entry) =>
+        entry.id === "assistant-citation"
+          ? {
+              ...entry,
+              citationPresentation: {
+                format: "codex-private-v1" as const,
+                sources: [
+                  { id: "turn3view1", url: "https://example.org/evidence", title: "Evidence" },
+                  { id: "unsafe", url: "file:///private/local-evidence" },
+                ],
+              },
+            }
+          : entry,
+      ),
+    };
+    const { markdown } = exportMarkdown(snapshot);
+    const [user, assistant, ordinary] = bodies(markdown);
+    expect(user).toBe(marker);
+    expect(ordinary).toBe(marker);
+    expect(assistant).toContain(
+      'Evidence [1](<https://example.org/evidence> "Evidence") and [citation unavailable] and [citation unavailable].',
+    );
+    expect(assistant).toContain(`Inline \`${marker}\``);
+    expect(assistant).toContain(`\`\`\`text\n${marker}\n\`\`\``);
+    expect(assistant).not.toContain("file:///private/local-evidence");
+    expect(snapshot.messages[1]?.text).toBe(raw);
+    expect(importedMessageMarkdown(snapshot.messages[1]!)).toBe(raw);
+    // The importer still resolves its own typed context without presenting provider syntax.
+    expect(
+      importedMessageMarkdown({
+        ...snapshot.messages[1]!,
+        text: `${raw}\n[context](scient-ref:missing)`,
+      }).startsWith(`${raw}\n`),
+    ).toBe(true);
+  });
+
   it("writes chat's line breaks explicitly, per role", () => {
     const { markdown } = exportMarkdown(
       snapshotOf(

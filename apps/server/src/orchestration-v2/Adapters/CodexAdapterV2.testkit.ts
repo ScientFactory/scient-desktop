@@ -3,6 +3,7 @@ import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   type ProviderReplayTranscript,
+  type ProviderDriverKind,
   type ProviderInstanceId,
   type ThreadId,
   type ModelSelection,
@@ -21,6 +22,8 @@ import * as Schema from "effect/Schema";
 import * as ServerConfig from "../../config.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
+import { scientToolProjectionForProvider } from "../../provider/ScientToolProjection.ts";
+import { prepareScientSkillTurn } from "../../scient/skills/ScientSkillInvocation.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
@@ -364,6 +367,27 @@ const decodeReplayCodexInput = Schema.decodeUnknownEffect(
   Schema.Array(CodexSchema.V2TurnStartParams__UserInput),
 );
 
+/** Project a fixture-declared complete empty skill scope, independently of outbound frames. */
+export function emptyMcpReplayPrompt(driver: ProviderDriverKind, text: string): string {
+  const tools = scientToolProjectionForProvider(driver);
+  return (
+    prepareScientSkillTurn(
+      text,
+      [],
+      new Map(),
+      {
+        includeCatalogMarker: true,
+        skillListToolName: tools.name("scient_skills_list"),
+        skillLoadToolName: tools.name("scient_skill_load"),
+        providerNativeSkillTool: tools.providerNativeSkillTool,
+        deferred: tools.deferred,
+      },
+      [],
+      "complete",
+    ).input ?? text
+  );
+}
+
 /** Resolve only fixture-mapped issued scopes; never derive expectations from outbound requests. */
 export function withIssuedCodexMcpReplayExpectations(
   scopeForLabel: (label: string) => IssuedCodexReplayScope | undefined,
@@ -420,7 +444,15 @@ export function withIssuedCodexMcpReplayExpectations(
             }
             if (typeof params.threadId !== "string")
               return yield* Effect.die("Native MCP replay turn has no recorded native thread id.");
-            const codexInput = yield* decodeReplayCodexInput(params.input).pipe(Effect.orDie);
+            const recordedInput = yield* decodeReplayCodexInput(params.input).pipe(Effect.orDie);
+            const codexInput = recordedInput.map((item) =>
+              item.type === "text" && issued.capabilities.has("skills:read")
+                ? {
+                    ...item,
+                    text: emptyMcpReplayPrompt(CodexAdapterV2.CODEX_DRIVER_KIND, item.text),
+                  }
+                : item,
+            );
             const native = yield* CodexAdapterV2.buildCodexTurnStartParams({
               nativeThreadId: params.threadId,
               codexInput,
@@ -434,6 +466,7 @@ export function withIssuedCodexMcpReplayExpectations(
               params: {
                 ...native,
                 ...params,
+                input: codexInput,
                 additionalContext: native.additionalContext,
                 collaborationMode: native.collaborationMode,
               },

@@ -15,7 +15,6 @@
     "apps/server/scripts/qualifyScientAgentManagedRuntime.ts",
     "apps/server/src/provider/Drivers/OmpDriver.ts",
     "apps/server/src/provider/Drivers/ScientAgentDriver.ts",
-    "apps/server/src/provider/Layers/OmpAdapter.ts",
     "apps/server/src/provider/Layers/OmpProvider.ts",
     "apps/server/src/scient/providerLifecycle/OmpManagedRuntimeActions.ts",
     "apps/server/src/scient/providerLifecycle/QualifiedRpcManagedRuntime.ts",

@@ -258,6 +258,17 @@ for (const change of [
   "retained-exact-ordinal",
   "retained-foreign-ordinal",
   "retained-running-owner",
+  "retained-same-run-exact",
+  "retained-same-run-unsuperseded",
+  "retained-same-run-same-attempt-ordinal",
+  "retained-same-run-later-attempt-ordinal",
+  "retained-same-run-foreign-attempt",
+  "retained-same-run-foreign-root",
+  "retained-same-run-foreign-thread",
+  "retained-same-run-foreign-instance",
+  "retained-same-run-current-pending",
+  "retained-same-run-current-accepted",
+  "retained-same-run-current-unknown",
   "native-receipt-pending",
   "native-receipt-accepted",
   "native-receipt-unknown",
@@ -392,6 +403,112 @@ for (const change of [
             runOrdinal: run.ordinal,
           },
         };
+      } else if (change.startsWith("retained-same-run-")) {
+        f.attempt = { ...f.attempt, attemptOrdinal: 2 };
+        const root = {
+          ...f.root,
+          id: NodeId.make("superseded-same-run-root"),
+          rootNodeId: NodeId.make("superseded-same-run-root"),
+          runId: change === "retained-same-run-foreign-root" ? RunId.make("foreign-run") : f.run.id,
+          status: "interrupted" as const,
+          completedAt: f.now,
+        };
+        const attempt = {
+          ...f.attempt,
+          id: RunAttemptId.make("superseded-same-run-attempt"),
+          rootNodeId: root.id,
+          attemptOrdinal: change === "retained-same-run-later-attempt-ordinal" ? 3 : 1,
+          providerInstanceId:
+            change === "retained-same-run-foreign-instance"
+              ? ProviderInstanceId.make("foreign-instance")
+              : instanceId,
+          status:
+            change === "retained-same-run-unsuperseded"
+              ? ("running" as const)
+              : ("superseded" as const),
+          completedAt: f.now,
+        };
+        const turn = {
+          ...f.receipt.payload,
+          id: ProviderTurnId.make("superseded-same-run-turn"),
+          runAttemptId: attempt.id,
+          nodeId: root.id,
+          providerThreadId:
+            change === "retained-same-run-foreign-thread"
+              ? ProviderThreadId.make("foreign-thread")
+              : f.providerThread.id,
+          status: "interrupted" as const,
+          completedAt: f.now,
+        };
+        yield* f.sink.write({
+          events: [
+            {
+              id: EventId.make("same-run-current-attempt"),
+              type: "run-attempt.updated",
+              threadId: f.thread.id,
+              runId: f.run.id,
+              occurredAt: f.now,
+              payload: f.attempt,
+            },
+            {
+              id: EventId.make("same-run-prior-attempt"),
+              type: "run-attempt.created",
+              threadId: f.thread.id,
+              runId: f.run.id,
+              occurredAt: f.now,
+              payload: attempt,
+            },
+            {
+              id: EventId.make("same-run-prior-root"),
+              type: "node.updated",
+              threadId: f.thread.id,
+              runId: f.run.id,
+              nodeId: root.id,
+              occurredAt: f.now,
+              payload: root,
+            },
+            {
+              id: EventId.make("same-run-prior-turn"),
+              type: "provider-turn.updated",
+              threadId: f.thread.id,
+              runId: f.run.id,
+              nodeId: root.id,
+              occurredAt: f.now,
+              payload: turn,
+            },
+          ],
+        });
+        f.owner = {
+          ...f.owner,
+          retainedTurn: {
+            id: turn.id,
+            attemptId:
+              change === "retained-same-run-foreign-attempt"
+                ? RunAttemptId.make("foreign-attempt")
+                : attempt.id,
+            runId: f.run.id,
+            runOrdinal: f.run.ordinal,
+          },
+        };
+        if (change.startsWith("retained-same-run-current-")) {
+          yield* f.sink.write({
+            events: [
+              {
+                ...f.receipt,
+                payload: {
+                  ...f.receipt.payload,
+                  ordinal: 2,
+                  nativeAcceptance:
+                    change === "retained-same-run-current-pending"
+                      ? "pending"
+                      : change === "retained-same-run-current-unknown"
+                        ? "unknown"
+                        : "accepted",
+                },
+              },
+            ],
+          });
+        }
       } else if (change.startsWith("native-receipt")) {
         yield* f.sink.write({
           events: [
@@ -531,6 +648,35 @@ for (const change of [
         });
       }
       const before = yield* projection.getThreadProjection(f.thread.id);
+      if (change === "retained-same-run-same-attempt-ordinal") {
+        // SQL forbids duplicate attempt ordinals. Check the decoded-owner fence
+        // against a SQL snapshot without manufacturing an invalid persisted row.
+        const current = yield* projection.getThreadRecords(f.thread.id, [
+          "runs",
+          "attempts",
+          "nodes",
+          "providerThreads",
+          "providerTurns",
+        ]);
+        assert.isFalse(
+          EventSink.matchesPendingStartOwner(
+            {
+              ...current,
+              attempts: current.attempts.map((attempt) =>
+                attempt.id === f.owner.retainedTurn!.attemptId
+                  ? { ...attempt, attemptOrdinal: f.attempt.attemptOrdinal }
+                  : attempt,
+              ),
+            },
+            f.owner,
+          ),
+        );
+        assert.deepEqual(yield* projection.getThreadProjection(f.thread.id), before);
+        assert.isEmpty(
+          yield* outbox.listByCommandId(CommandId.make("cancelled-before-native:checkpoint")),
+        );
+        return;
+      }
       const commandId = CommandId.make("cancelled-before-native:checkpoint");
       const effect = {
         id: "effect:cancelled-before-native:checkpoint",
@@ -565,6 +711,7 @@ for (const change of [
         "captured-weak",
         "captured-null",
         "retained-exact-ordinal",
+        "retained-same-run-exact",
       ].includes(change);
       assert.equal(result.committed, shouldCommit);
       const after = yield* projection.getThreadProjection(f.thread.id);

@@ -260,6 +260,8 @@ it("keeps legacy hydration and admission imports at explicit boundaries", () => 
     "orchestration-v2/scient-fork/importRepository.ts",
     // Supplies the real historical importer to the composed replay fixture.
     "orchestration-v2/testkit/ProviderReplayHarness.ts",
+    // Shared test support extracted from ProviderSessionManager.test.ts.
+    "orchestration-v2/testkit/ProviderSessionManagerTestHarness.ts",
     "project/ProjectService.ts",
     "scient/conversationExport/ConversationSnapshotService.ts",
     "scient/conversationExport/conversationSnapshotProjection.ts",
@@ -269,6 +271,18 @@ it("keeps legacy hydration and admission imports at explicit boundaries", () => 
     "scient/threadQueue/migration.ts",
     "serverRuntimeStartup.ts",
   ]);
+  const testSupportImporter = "orchestration-v2/testkit/ProviderSessionManagerTestHarness.ts";
+  assert.deepEqual(
+    relativeSources
+      .filter((file) =>
+        file.imports.some(
+          ({ specifier }) => resolveLocalImport(file.path, specifier) === testSupportImporter,
+        ),
+      )
+      .map((file) => file.path),
+    [],
+    "Provider-session-manager test support must not be imported by production modules.",
+  );
 });
 
 it("distinguishes executable legacy access from comments and type contracts", () => {

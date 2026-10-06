@@ -1,3 +1,8 @@
+// SCIENT-FORK: native workflow display projection lives in its owned leaf.
+import {
+  claudeWorkflowMemberObservation,
+  claudeWorkflowMemberPresentation,
+} from "../scient-provider/ClaudeWorkflowMemberPresentation.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { CLAUDE_SCIENT_TOOL_PROJECTION } from "../../provider/ScientToolProjection.ts";
 import { mergeSubagentPresentation } from "./SubagentPresentation.ts";
@@ -5,7 +10,6 @@ import {
   claudeTaskPresentation,
   claudeWorkflowRunHandles,
   parseWorkflowProgress,
-  workflowAgentStatus,
 } from "./ClaudeSubagentPresentation.ts";
 import * as NodeCrypto from "node:crypto";
 
@@ -4526,94 +4530,28 @@ export function makeClaudeAdapterV2(
           for (const entry of progress.agents) {
             const id = claudeSubagentIds(context, `${taskId}:wf:${entry.index}`).nodeId;
             const previous = workflowMembers.get(id);
-            const observedStatus = workflowAgentStatus(entry);
-            const activation = coordinator.task.presentation?.activationCount ?? 1;
-            const newActivation =
-              previous !== undefined && workflowMemberActivations.get(id) !== activation;
-            const status =
-              previous !== undefined &&
-              !newActivation &&
-              ["completed", "failed", "cancelled", "interrupted"].includes(previous.status) &&
-              (entry.attempt ?? 0) <= (previous.presentation?.attempt ?? 0)
-                ? previous.status
-                : observedStatus;
-            const fingerprint = [
-              activation,
-              status,
-              entry.label,
-              entry.model,
-              entry.lastToolName,
-              entry.error,
-              entry.tokens,
-              entry.toolCalls,
-              entry.phaseIndex,
-              entry.phaseTitle,
-              entry.attempt,
-              entry.startedAt,
-            ].join("\u001f");
+            // SCIENT-FORK: pure workflow presentation; registry ownership stays here.
+            const { activation, newActivation, status, fingerprint } =
+              claudeWorkflowMemberObservation({
+                entry,
+                previous,
+                coordinator,
+                id,
+                workflowMemberActivations,
+              });
             if (workflowMemberFingerprints.get(id) === fingerprint) continue;
             workflowMemberFingerprints.set(id, fingerprint);
             workflowMemberActivations.set(id, activation);
-            const reopened =
-              previous !== undefined &&
-              (newActivation ||
-                (status === "running" &&
-                  previous.status !== "running" &&
-                  (entry.attempt ?? 0) > (previous.presentation?.attempt ?? 0)));
-            const startedAt =
-              entry.startedAt === undefined
-                ? (previous?.startedAt ?? null)
-                : DateTime.make(entry.startedAt).pipe(
-                    Option.map(DateTime.toUtc),
-                    Option.getOrElse(() => previous?.startedAt ?? null),
-                  );
-            const member: OrchestrationV2Subagent = {
+            const member = claudeWorkflowMemberPresentation({
+              entry,
+              previous,
+              coordinator,
               id,
-              threadId: coordinator.task.threadId,
-              runId: null,
-              parentNodeId: coordinator.task.id,
-              origin: "provider_native",
-              createdBy: "agent",
-              driver: CLAUDE_PROVIDER,
-              providerInstanceId: coordinator.task.providerInstanceId,
-              providerThreadId: null,
-              childThreadId: null,
-              nativeTaskRef: null,
-              prompt: "",
-              title: entry.label ?? previous?.title ?? `Agent ${entry.index + 1}`,
-              model: entry.model ?? previous?.model ?? null,
+              newActivation,
               status,
-              result: entry.error ?? (reopened ? null : (previous?.result ?? null)),
-              startedAt,
-              completedAt: ["completed", "failed", "cancelled", "interrupted"].includes(status)
-                ? reopened
-                  ? now
-                  : (previous?.completedAt ?? now)
-                : null,
-              updatedAt: now,
-              presentation: mergeSubagentPresentation(
-                previous?.presentation,
-                {
-                  kind: "workflow_agent",
-                  workflowId: coordinator.task.id,
-                  agentIndex: entry.index,
-                  ...(entry.phaseIndex === undefined ? {} : { phaseIndex: entry.phaseIndex }),
-                  ...(entry.phaseTitle === undefined ? {} : { phaseTitle: entry.phaseTitle }),
-                  ...(entry.attempt === undefined ? {} : { attempt: entry.attempt }),
-                  ...(entry.lastToolName === undefined ? {} : { lastToolName: entry.lastToolName }),
-                  ...(entry.tokens === undefined && entry.toolCalls === undefined
-                    ? {}
-                    : {
-                        usage: {
-                          ...(entry.tokens === undefined ? {} : { totalTokens: entry.tokens }),
-                          ...(entry.toolCalls === undefined ? {} : { toolUses: entry.toolCalls }),
-                        },
-                      }),
-                },
-                DateTime.formatIso(now),
-                reopened,
-              ),
-            };
+              now,
+              CLAUDE_PROVIDER,
+            });
             yield* emitWorkflowMember(member);
           }
         });
