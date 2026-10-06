@@ -8,6 +8,8 @@ import {
   ContextHandoffPolicyOverride,
   genericContextHandoffPolicy,
   makeScientContextHandoffPolicy,
+  scientHandoffDeliveryProvenance,
+  usesScientHandoffBudget,
 } from "./ScientContextHandoffPolicy.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
@@ -1208,20 +1210,14 @@ export const layer: Layer.Layer<
         restartCancelledWork.length === 0
           ? ""
           : restartCancelledBackgroundWorkNote(restartCancelledWork);
-      const usesScientBudget =
-        !forceBytePolicy &&
-        (hasScientContextHistory(projection) ||
-          effectiveHandoffs.some(
-            (handoff) =>
-              handoff.budgetPolicy === "scient" ||
-              projection.contextTransfers.some(
-                (transfer) =>
-                  transfer.id === handoff.transferId &&
-                  (transfer.type === "fork" || transfer.type === "merge_back") &&
-                  transfer.targetThreadId === projection.thread.id &&
-                  transfer.targetProviderInstanceId === run.providerInstanceId,
-              ),
-          ));
+      // SCIENT-FORK:START — Scient provenance spends the Scient handoff budget.
+      const usesScientBudget = usesScientHandoffBudget({
+        forceBytePolicy,
+        projection,
+        handoffs: effectiveHandoffs,
+        providerInstanceId: run.providerInstanceId,
+      });
+      // SCIENT-FORK:END
       const settledHandoffs = projection.contextHandoffs.filter(
         (handoff) =>
           handoff.toProviderThreadId === providerThread.id &&
@@ -1399,24 +1395,9 @@ export const layer: Layer.Layer<
                 });
               }),
               alreadyDeliveredItemIds: deliveredItemIds,
-              sharedForkWorkspace: projection.thread.conversationFork?.workspaceMode === "local",
-              sourceOmissions:
-                (
-                  projection.thread.conversationImport ??
-                  projection.thread.forkLineage?.sourceImport
-                )?.omissions ?? [],
-              ...((projection.thread.conversationImport ??
-                projection.thread.forkLineage?.sourceImport) == null
-                ? {}
-                : {
-                    importedMaterial:
-                      (
-                        projection.thread.conversationImport ??
-                        projection.thread.forkLineage?.sourceImport
-                      )?.sourceFormat === "scient-markdown-document"
-                        ? ("document" as const)
-                        : ("conversation" as const),
-                  }),
+              // SCIENT-FORK:START — fork workspace and import provenance.
+              ...scientHandoffDeliveryProvenance(projection.thread),
+              // SCIENT-FORK:END
               ...(session.injectHistory === undefined
                 ? {}
                 : {
