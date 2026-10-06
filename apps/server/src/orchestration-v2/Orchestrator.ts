@@ -69,6 +69,10 @@ import {
 } from "./scient-fork/ConversationForkNativeSource.ts";
 // SCIENT-FORK:START — Scient orchestration modules
 import {
+  ownerPreservingSwitchPlan,
+  settingExecutionOwnerOf,
+} from "./scient-fork/SettingExecutionOwner.ts";
+import {
   queuedRunExecutionThread,
   queuedRunStartAttempt,
   steerExecutionThread,
@@ -2679,6 +2683,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           )
           .pipe(mapDispatchError(command))
       : null;
+    // SCIENT-FORK:START — defaults cannot replace a provider-initiated or held Droid owner.
     const settingExecutionOwner =
       command.type === "thread.model-selection.set" ||
       command.type === "provider.switch" ||
@@ -2686,27 +2691,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? yield* loadProjectionForCommand(command, ["runs", "messages"], {
             messageRoles: ["system"],
             turnItemTypes: [],
-          }).pipe(
-            Effect.map((projection) => {
-              const run = projection.runs.find((run) =>
-                ["starting", "running", "waiting"].includes(run.status),
-              );
-              const source = projection.messages.find(
-                (message) => message.id === run?.userMessageId,
-              )?.notification?.source;
-              return {
-                native:
-                  source?.kind === "provider_work" &&
-                  source.providerThreadId === thread.activeProviderThreadId
-                    ? source
-                    : undefined,
-                // SCIENT: next-turn defaults cannot detach a source that still owns held Droid input.
-                droid: run?.status === "running" ? run.heldDroidSteer : undefined,
-                providerThreadId: run?.providerThreadId,
-              };
-            }),
-          )
+          }).pipe(Effect.map((projection) => settingExecutionOwnerOf(projection, thread)))
         : undefined;
+    // SCIENT-FORK:END
     const settingNativeOwner = settingExecutionOwner?.native;
     const settingDroidOwner = settingExecutionOwner?.droid;
     const providerSwitchPlan =
@@ -2722,28 +2709,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   }),
               ),
             );
-            // SCIENT: preserve this exact held source; admission still uses its captured target.
-            if (settingDroidOwner !== undefined)
-              return {
-                instanceChanged: command.modelSelection.instanceId !== thread.providerInstanceId,
-                modelChanged: !modelSelectionsEqual(thread.modelSelection, command.modelSelection),
-                targetProviderThreadId: settingExecutionOwner!.providerThreadId!,
-                releaseProviderSessionIds: [],
-                transition: { type: "reuse" as const },
-              };
-            // Defaults describe the next user turn. Do not replace the owner of
-            // a generation already admitted under its captured workspace.
-            if (
-              settingNativeOwner !== undefined &&
-              command.modelSelection.instanceId === thread.providerInstanceId
-            )
-              return {
-                instanceChanged: false,
-                modelChanged: !modelSelectionsEqual(thread.modelSelection, command.modelSelection),
-                targetProviderThreadId: settingNativeOwner.providerThreadId,
-                releaseProviderSessionIds: [],
-                transition: { type: "reuse" as const },
-              };
+            // SCIENT-FORK:START — keep the live owner; its admission uses the captured target.
+            const preserved = ownerPreservingSwitchPlan({
+              owner: settingExecutionOwner,
+              thread,
+              modelSelection: command.modelSelection,
+            });
+            if (preserved !== undefined) return preserved;
+            // SCIENT-FORK:END
             return yield* providerSwitchService
               .plan({
                 projection: providerContext!,
