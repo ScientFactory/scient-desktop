@@ -103,7 +103,6 @@ import {
   type ProjectFileErrorReason,
   ProjectListDirectoryError,
   ProjectRenameFileError,
-  ScientSkillManagementError,
   AssetGeneratedDocumentAuthorityMismatchError,
   AssetGeneratedDocumentNotFoundError,
   AssetGeneratedDocumentResolutionError,
@@ -282,7 +281,7 @@ import { WorkspaceBindingResolver } from "./scient/projectScope/WorkspaceBinding
 import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntimePreferences.ts";
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
-import * as ProviderSkillManagement from "./scient/skills/ProviderSkillManagement.ts";
+import { makeSkillRpcHandlers } from "./scient/skills/SkillRpcHandlers.ts";
 import { makeVoiceTranscriptCorrection } from "./scient/voice/VoiceTranscriptCorrection.ts";
 import {
   prepareEnvironmentFileOpen,
@@ -1266,60 +1265,6 @@ const makeWsRpcLayer = (
         workspaceFileSystem,
       });
       const scientSkillManagement = yield* ScientSkillManagement.ScientSkillManagement;
-      const skillContextError = (operation: string, message: string) =>
-        new ScientSkillManagementError({ operation, message });
-      const resolveScientSkillProjectRoot = Effect.fn("ws.resolveScientSkillProjectRoot")(
-        function* (input: {
-          readonly projectId?: ProjectId | undefined;
-          readonly threadId?: ThreadId | undefined;
-        }) {
-          if (input.threadId) {
-            const thread = yield* threadManagement.getThreadShell(input.threadId).pipe(
-              Effect.map((thread) => (thread === null ? Option.none() : Option.some(thread))),
-              Effect.mapError(() =>
-                skillContextError("list", "The thread workspace could not be resolved."),
-              ),
-            );
-            if (Option.isNone(thread)) {
-              return yield* skillContextError("list", "That thread is not available.");
-            }
-            if (input.projectId && thread.value.projectId !== input.projectId) {
-              return yield* skillContextError(
-                "list",
-                "The requested thread does not belong to that project.",
-              );
-            }
-            if (thread.value.worktreePath) return thread.value.worktreePath;
-            if (thread.value.projectId) {
-              const project = yield* projectService
-                .getShell(thread.value.projectId)
-                .pipe(
-                  Effect.mapError(() =>
-                    skillContextError("list", "The project workspace could not be resolved."),
-                  ),
-                );
-              if (Option.isSome(project)) return project.value.workspaceRoot;
-            }
-            return yield* skillContextError("list", "That thread has no project workspace.");
-          }
-          if (input.projectId) {
-            const project = yield* projectService
-              .getShell(input.projectId)
-              .pipe(
-                Effect.mapError(() =>
-                  skillContextError("list", "The project workspace could not be resolved."),
-                ),
-              );
-            if (Option.isNone(project)) {
-              return yield* skillContextError("list", "That project is not available.");
-            }
-            return project.value.workspaceRoot;
-          }
-          return undefined;
-        },
-      );
-      const providerSkillManagement =
-        ProviderSkillManagement.makeProviderSkillManagement(providerRegistry);
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
       const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
@@ -2674,12 +2619,6 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "server" },
           ),
-        [WS_METHODS.providerSkillsSetEnabled]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.providerSkillsSetEnabled,
-            providerSkillManagement.setEnabled(input),
-            { "rpc.aggregate": "skills" },
-          ),
         [WS_METHODS.voiceCorrectTranscript]: (input) =>
           observeRpcEffect(
             WS_METHODS.voiceCorrectTranscript,
@@ -2936,49 +2875,6 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
-        [WS_METHODS.skillsList]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.skillsList,
-            Effect.gen(function* () {
-              const projectRoot = yield* resolveScientSkillProjectRoot(input);
-              return yield* scientSkillManagement.list(projectRoot);
-            }),
-            { "rpc.aggregate": "skills" },
-          ),
-        [WS_METHODS.skillsReadDocument]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.skillsReadDocument,
-            scientSkillManagement.readDocument(input.releaseKey),
-            { "rpc.aggregate": "skills" },
-          ),
-        [WS_METHODS.skillsSetProjectPreference]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.skillsSetProjectPreference,
-            Effect.gen(function* () {
-              const projectRoot = yield* resolveScientSkillProjectRoot({
-                projectId: input.projectId,
-              });
-              if (!projectRoot) {
-                return yield* skillContextError(
-                  "setProjectPreference",
-                  "That project has no workspace.",
-                );
-              }
-              return yield* scientSkillManagement.setProjectPreference({
-                projectRoot,
-                name: input.name,
-                active: input.active,
-                invocationPolicy: input.invocationPolicy,
-              });
-            }),
-            { "rpc.aggregate": "skills" },
-          ),
-        [WS_METHODS.skillsSetUserActivation]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.skillsSetUserActivation,
-            scientSkillManagement.setUserActivation(input),
-            { "rpc.aggregate": "skills" },
-          ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverDiscoverSourceControl,
@@ -3099,13 +2995,20 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "cloud" },
           ),
-        // SCIENT-FORK:START — Scient provider connection, runtime and custom model handlers.
+        // SCIENT-FORK:START — Scient provider connection, runtime, custom model and skill handlers.
         ...makeProviderConnectionRpcHandlers({
           observeRpcEffect,
           providerConnectionManager,
           providerRuntimeManager,
         }),
         ...makeCustomModelRpcHandlers({ serverSettings, providerInstances, config }),
+        ...makeSkillRpcHandlers({
+          observeRpcEffect,
+          threadManagement,
+          projectService,
+          scientSkillManagement,
+          providerRegistry,
+        }),
         // SCIENT-FORK:END
       });
 
