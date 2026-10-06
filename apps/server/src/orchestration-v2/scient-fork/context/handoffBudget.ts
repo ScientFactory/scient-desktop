@@ -22,6 +22,7 @@
  */
 import type { ChatAttachment, ForkContextHandoffSize } from "@t3tools/contracts";
 import { FORK_CONTEXT_HANDOFF_TOKEN_CAPS } from "@t3tools/contracts";
+import * as Config from "effect/Config";
 import * as NodeBuffer from "node:buffer";
 
 /** V2: an unknown model window is assumed to be 128k tokens. */
@@ -48,6 +49,13 @@ export function attachmentTokenAllowance(attachments: ReadonlyArray<ChatAttachme
     0,
   );
 }
+
+// Scient presets are estimated tokens; generic provider switches retain their
+// byte allowance. Resolve the final serialized allowance only after the
+// receiving model and native occupancy are known.
+export const scientHandoffTokenCapOverride = Config.Int("T3CODE_CONTEXT_HANDOFF_TOKEN_CAP").pipe(
+  Config.option,
+);
 
 export function handoffTokenCap(
   size: ForkContextHandoffSize,

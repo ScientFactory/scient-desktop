@@ -1,6 +1,5 @@
 import type {
   ChatAttachment,
-  ForkContextHandoffSize,
   ModelSelection,
   OrchestrationV2ThreadProjection,
   ThreadTokenUsageSnapshot,
@@ -12,7 +11,6 @@ import type {
 
 import * as Config from "effect/Config";
 import * as Schema from "effect/Schema";
-import { estimateTokens, handoffTokenCap } from "./scient-fork/context/handoffBudget.ts";
 
 const isImportedActivity = Schema.is(
   Schema.Struct({
@@ -29,32 +27,6 @@ export const handoffTokenCapConfig = Config.Int("T3CODE_CONTEXT_HANDOFF_TOKEN_CA
   Config.withDefault(DEFAULT_HANDOFF_TOKEN_CAP),
   Config.map((value) => Math.max(1_024, Math.min(HANDOFF_BYTE_CAP, value))),
 );
-
-// Scient presets are estimated tokens; generic provider switches retain their
-// byte allowance above. Resolve the final serialized allowance only after the
-// receiving model and native occupancy are known.
-export const scientHandoffTokenCapOverride = Config.Int("T3CODE_CONTEXT_HANDOFF_TOKEN_CAP").pipe(
-  Config.option,
-);
-
-export function scientHandoffByteBudget(input: {
-  readonly size: ForkContextHandoffSize;
-  readonly environmentOverride: number | undefined;
-  readonly userText: string;
-  readonly attachments: ReadonlyArray<ChatAttachment>;
-  readonly providerThread: OrchestrationV2ProviderThread;
-  readonly nativeContextEstimate: number;
-  readonly modelContextWindow?: number | undefined;
-}): number {
-  return handoffBudget({
-    ...input,
-    tokenCap: handoffTokenCap(input.size, input.environmentOverride),
-    bytesPerToken: 3,
-    byteCap: Infinity,
-  });
-}
-
-export { estimateTokens as estimateScientHandoffTokens };
 
 /** Only canonical imported/forked history inherits Scient's retained-context policy. */
 export function hasScientContextHistory(
@@ -75,6 +47,10 @@ export function hasScientContextHistory(
     )
   );
 }
+
+// SCIENT-FORK:START — the Scient preset token-cap override lives in scient-fork/context.
+export { scientHandoffTokenCapOverride } from "./scient-fork/context/handoffBudget.ts";
+// SCIENT-FORK:END
 
 // Live reports belong to provider turns. Use only accepted root attempts whose
 // durable native identity matches this thread; row reuse must not revive old usage.
