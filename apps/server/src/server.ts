@@ -1,8 +1,4 @@
-import {
-  EnvironmentHttpApi,
-  ServerSelfUpdateError,
-  type RepositoryIdentity,
-} from "@t3tools/contracts";
+import { EnvironmentHttpApi, type RepositoryIdentity } from "@t3tools/contracts";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Clock from "effect/Clock";
 import * as Random from "effect/Random";
@@ -68,12 +64,7 @@ import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
-import * as WorkspaceAuthorityProjection from "./scient/projectScope/WorkspaceAuthorityProjection.ts";
-import * as WorkspaceBindingEvidence from "./scient/projectScope/WorkspaceBindingEvidence.ts";
-import * as WorkspaceBindingResolver from "./scient/projectScope/WorkspaceBindingResolver.ts";
-import * as WorkspaceBindingStore from "./scient/projectScope/WorkspaceBindingStore.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
-import { ComputeMcpGatewayLive } from "./mcp/toolkits/compute/ComputeMcpGateway.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { deviceHubProxyRouteLayer } from "./device/DeviceHubProxy.ts";
@@ -147,8 +138,6 @@ import {
 } from "./cloud/managedTunnelStartup.ts";
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as CloudCliState from "./cloud/CliState.ts";
-import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
-import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as DesktopAppUpdate from "./desktopUpdate/DesktopAppUpdate.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
@@ -188,50 +177,17 @@ import * as ServerActivation from "./serverActivation.ts";
 
 // Scient-owned server extensions stay grouped at the downstream boundary so
 // upstream route and service imports can continue to follow their native layout.
-import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderConnectionManager.ts";
 import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
-import * as ProviderActivity from "./scient/providerLifecycle/ProviderActivity.ts";
-import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
-import * as ManagedRuntimeCatalogReconciler from "./scient/providerLifecycle/ManagedRuntimeCatalogReconciler.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
-import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
-import * as LocalAnalysisStore from "./scient/analysis/LocalAnalysisStore.ts";
-import * as AnalysisRunIndex from "./scient/analysis/AnalysisRunIndex.ts";
-import * as LocalDuplexProcess from "./scient/execution/LocalDuplexProcess.ts";
-import * as LocalExecutionProcess from "./scient/execution/LocalExecutionProcess.ts";
 import * as OwnedLocalEndpoints from "./localEndpoints/OwnedLocalEndpointRegistry.ts";
-import * as LocalComputeStore from "./scient/compute/LocalComputeStore.ts";
-import * as ComputeRuntimeRegistry from "./scient/compute/ComputeRuntimeRegistry.ts";
-import * as ScientificRuntimePreferences from "./scient/compute/ScientificRuntimePreferences.ts";
-import * as LatexBuildService from "./scient/latex/LatexBuildService.ts";
-import * as LatexManagedToolchain from "./scient/latex/LatexManagedToolchain.ts";
-import * as LatexPackageInstaller from "./scient/latex/LatexPackageInstaller.ts";
-import * as LatexToolchain from "./scient/latex/LatexToolchain.ts";
-import * as LatexSyncTex from "./scient/latex/LatexSyncTex.ts";
-import { scientProjectHttpApiLayer } from "./scientProject/http.ts";
-import { scientSourcesHttpApiLayer } from "./scient/sources/http.ts";
-import { scientLatexHttpApiLayer } from "./scient/latex/http.ts";
-import { scientMarkdownHttpApiLayer } from "./scient/markdown/http.ts";
-import { scientThreadQueueHttpApiLayer } from "./scient/threadQueue/http.ts";
-import { scientConversationExportHttpApiLayer } from "./scient/conversationExport/http.ts";
-import * as ConversationExportFiles from "./scient/conversationExport/ConversationExportFiles.ts";
-import * as ConversationExportService from "./scient/conversationExport/ConversationExportService.ts";
-import * as ConversationSnapshotService from "./scient/conversationExport/ConversationSnapshotService.ts";
 import { documentCaptureStartupSweepLayer } from "./scient/documentExport/DocumentCapture.ts";
+import { conversationImportUploadRouteLayer } from "./scient/conversationImport/http.ts";
 import {
-  conversationImportUploadRouteLayer,
-  scientConversationImportHttpApiLayer,
-} from "./scient/conversationImport/http.ts";
-import * as ConversationImportStaging from "./scient/conversationImport/ConversationImportStaging.ts";
-import * as ConversationImporterLive from "./scient/conversationImport/ConversationImporterLive.ts";
-import * as ConversationImportCommit from "./scient/conversationImport/ConversationImportCommit.ts";
-import * as ScientSkillSession from "./scient/skills/ScientSkillSession.ts";
-import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
-import { scientWordExportHttpApiLayer } from "./scient/pandoc/http.ts";
-import * as PandocManagedTool from "./scient/pandoc/PandocManagedTool.ts";
-import * as PandocWordConverter from "./scient/pandoc/PandocWordConverter.ts";
-import * as WordFileExport from "./scient/pandoc/WordFileExport.ts";
-import { scientAnalyticsHttpApiLayer } from "./telemetry/http.ts";
+  makeScientRouteServices,
+  ScientProviderLifecycleLive,
+  ScientSkillsLayerLive,
+  WorkspaceBindingResolverLayerLive,
+} from "./scient/ScientServerLayers.ts";
 
 // MCP handoff thread IDs include escaped provenance and can exceed find-my-way's
 // 100-character default for one path segment.
@@ -617,11 +573,6 @@ const ProviderInstallationRefreshLive = Layer.effectDiscard(
   }),
 );
 
-// Skill discovery and selected-turn delivery share one live policy/catalog.
-const ScientSkillsLayerLive = ScientSkillManagement.layer.pipe(
-  Layer.provideMerge(ScientSkillSession.live),
-);
-
 const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
   ProviderLifecycleCoordinator.layer,
   AgentAwarenessRelay.layer,
@@ -645,41 +596,38 @@ const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
   ProviderUsageLimitsIngestionLive,
   ProviderInstallationRefreshLive,
   ReplayMarkers.layer,
-)
-  .pipe(
-    // Core Services
-    Layer.provideMerge(OrchestrationApplicationLayerLive),
-    Layer.provideMerge(ScientSkillsLayerLive),
-    Layer.provideMerge(OrchestrationEventInfrastructureLayerLive),
-    Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
-    Layer.provideMerge(ServerSettingsLayerLive),
-    // The asset route uses the registry's GitHub credential for private PR media.
-    Layer.provideMerge(Layer.mergeAll(SourceControlProviderRegistryLayerLive, GitHubCli.layer)),
-    Layer.provideMerge(GitLayerLive),
-    Layer.provideMerge(VcsLayerLive),
-    Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive, DeviceLayerLive)),
-    Layer.provideMerge(PersistenceLayerLive),
-    // Both read a user-owned file out of the state directory and stream changes
-    // to clients; neither depends on the other.
-    Layer.provideMerge(
-      Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
+).pipe(
+  // Core Services
+  Layer.provideMerge(OrchestrationApplicationLayerLive),
+  Layer.provideMerge(ScientSkillsLayerLive),
+  Layer.provideMerge(OrchestrationEventInfrastructureLayerLive),
+  Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
+  Layer.provideMerge(ServerSettingsLayerLive),
+  // The asset route uses the registry's GitHub credential for private PR media.
+  Layer.provideMerge(Layer.mergeAll(SourceControlProviderRegistryLayerLive, GitHubCli.layer)),
+  Layer.provideMerge(GitLayerLive),
+  Layer.provideMerge(VcsLayerLive),
+  Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive, DeviceLayerLive)),
+  Layer.provideMerge(PersistenceLayerLive),
+  // Both read a user-owned file out of the state directory and stream changes
+  // to clients; neither depends on the other.
+  Layer.provideMerge(
+    Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
+  ),
+  Layer.provideMerge(ProviderRegistryLive),
+  // The instance registry is the new routing keystone — text generation,
+  // adapter lookup, and runtime ingestion all resolve `ProviderInstanceId`
+  // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
+  // `providerInstances` hydration merges `settings.providers.<kind>`
+  // with explicit `providerInstances` entries on boot.
+  Layer.provideMerge(ProviderInstanceRegistryHydrationLive.pipe(Layer.provide(PtyAdapterLive))),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      AntigravityInstallation.AntigravityInstallation.layer,
+      CodexInstallation.CodexInstallation.layer,
     ),
-    Layer.provideMerge(ProviderRegistryLive),
-    // The instance registry is the new routing keystone — text generation,
-    // adapter lookup, and runtime ingestion all resolve `ProviderInstanceId`
-    // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
-    // `providerInstances` hydration merges `settings.providers.<kind>`
-    // with explicit `providerInstances` entries on boot.
-    Layer.provideMerge(ProviderInstanceRegistryHydrationLive.pipe(Layer.provide(PtyAdapterLive))),
-  )
-  .pipe(
-    Layer.provideMerge(
-      Layer.mergeAll(
-        AntigravityInstallation.AntigravityInstallation.layer,
-        CodexInstallation.CodexInstallation.layer,
-      ),
-    ),
-  );
+  ),
+);
 
 const RuntimeCoreDependenciesLive = RuntimeCoreDependenciesBaseLive.pipe(
   Layer.provideMerge(PtyAdapterLive),
@@ -750,12 +698,6 @@ const RuntimeBaseDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provide(NetService.layer),
 );
 
-const WorkspaceBindingResolverLayerLive = WorkspaceBindingResolver.layer.pipe(
-  Layer.provide(WorkspaceAuthorityProjection.layer),
-  Layer.provide(WorkspaceBindingEvidence.layer),
-  Layer.provide(WorkspaceBindingStore.layer),
-);
-
 const RuntimeDependenciesLive = Layer.mergeAll(
   RuntimeBaseDependenciesLive,
   WorkspaceBindingResolverLayerLive.pipe(Layer.provide(RuntimeBaseDependenciesLive)),
@@ -772,59 +714,14 @@ const commandReadinessLayer = HttpRouter.middleware(
   { global: true },
 );
 
-const AnalysisRunIndexLive = AnalysisRunIndex.layer.pipe(Layer.provide(PersistenceLayerLive));
-// Word export runs the managed Pandoc. One tool serves the converter, the
-// install endpoint, and both exports, so an install is single-flight.
-const PandocWordConverterLive = PandocWordConverter.layer.pipe(
-  Layer.provideMerge(PandocManagedTool.layer),
-);
-// Conversation export reads one transactional snapshot and writes temporary files.
-const ConversationExportServiceLive = ConversationExportService.layer.pipe(
-  Layer.provide(ConversationSnapshotService.layer.pipe(Layer.provide(PersistenceLayerLive))),
-  Layer.provide(ConversationExportFiles.layer),
-  Layer.provide(PandocWordConverterLive),
-);
-const WordFileExportLive = WordFileExport.layer.pipe(
-  Layer.provide(ConversationExportFiles.layer),
-  Layer.provideMerge(PandocWordConverterLive),
-);
-// Import staging: uploads, validation, preview, and durable import commit.
-const ConversationImportStagingLive = ConversationImportStaging.layer().pipe(
-  Layer.provide(ConversationImporterLive.layer.pipe(Layer.provide(ConversationImportCommit.layer))),
-);
-const ScientificRuntimePreferencesLive = ScientificRuntimePreferences.layer.pipe(
-  Layer.provide(ServerSettingsLayerLive),
-  Layer.provide(LocalAnalysisStore.layer),
-);
-
-const AnalysisServiceLive = AnalysisService.layer.pipe(
-  Layer.provide(LocalAnalysisStore.layer),
-  Layer.provide(AnalysisRunIndexLive),
-  Layer.provide(LocalExecutionProcess.layer),
-);
-
-// The compute session service owns both process ports: one-shot for the
-// interpreter probe, duplex for the bridge it talks to. The store is mounted
-// here rather than inside the service so the disk that holds a session's
-// history has one owner for the life of the server.
-const ComputeSessionServiceLive = ComputeRuntimeRegistry.layer.pipe(
-  Layer.provide(LocalComputeStore.layer),
-  Layer.provide(LocalExecutionProcess.layer),
-  Layer.provide(LocalDuplexProcess.layer),
-  Layer.provide(OwnedLocalEndpointRegistryLive),
-);
-
-// The build coordinator owns its execution port the way the analysis runtime
-// does; the toolchain probe is merged out because the HTTP group reads it too,
-// and the managed installer sits on top of the probe so a finished install can
-// drop its cache. The package installer is mounted once for both, because
-// `tlmgr` serializes against a single distribution tree.
-const ScientLatexServicesLive = LatexBuildService.layer.pipe(
-  Layer.provide(LocalExecutionProcess.layer),
-  Layer.provideMerge(LatexSyncTex.layer),
-  Layer.provideMerge(LatexManagedToolchain.layer.pipe(Layer.provideMerge(LatexToolchain.layer))),
-  Layer.provideMerge(LatexPackageInstaller.layer),
-);
+// SCIENT-FORK:START — Scient route services over the shared layers
+const ScientRouteServices = makeScientRouteServices({
+  PersistenceLayerLive,
+  ServerSettingsLayerLive,
+  OwnedLocalEndpointRegistryLive,
+  DesktopAppUpdateLayerLive,
+});
+// SCIENT-FORK:END
 export const makeRoutesLayer = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
@@ -832,16 +729,9 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(connectHttpApiLayer),
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(pullRequestHttpApiLayer),
-      Layer.provide(scientProjectHttpApiLayer),
-      Layer.provide(scientSourcesHttpApiLayer),
-      Layer.provide(scientAnalyticsHttpApiLayer),
-      Layer.provide(scientLatexHttpApiLayer),
-      Layer.provide(scientMarkdownHttpApiLayer),
-      Layer.provide(scientThreadQueueHttpApiLayer.pipe(Layer.provide(PersistenceLayerLive))),
-      Layer.provide(scientConversationExportHttpApiLayer),
-      Layer.provide(scientConversationImportHttpApiLayer),
-      Layer.provide(scientWordExportHttpApiLayer),
-
+      // SCIENT-FORK:START — Scient HTTP API groups
+      ScientRouteServices.provideScientHttpApiGroups,
+      // SCIENT-FORK:END
       Layer.provide(projectHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
@@ -867,51 +757,19 @@ export const makeRoutesLayer = Layer.mergeAll(
   // Last, so no route layer can replace the server's one TracerDisabledWhen.
   untracedRequestsLayer,
 ).pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      ProviderConnectionManager.layer,
-      ProviderRuntimeManager.layer,
-      ManagedRuntimeCatalogReconciler.layer,
-    ).pipe(
-      Layer.provideMerge(ProviderLifecycleCoordinator.layer),
-      Layer.provideMerge(ProviderActivity.layer),
-    ),
-  ),
+  // SCIENT-FORK:START — provider lifecycle managers
+  Layer.provide(ScientProviderLifecycleLive),
+  // SCIENT-FORK:END
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(PullRequestServiceLive),
-  Layer.provide(AnalysisServiceLive),
-  Layer.provide(ConversationExportServiceLive),
-  Layer.provide(ConversationImportStagingLive),
-  Layer.provide(WordFileExportLive),
-  Layer.provide(ComputeMcpGatewayLive),
-  Layer.provide(ComputeSessionServiceLive),
-  Layer.provide(ScientificRuntimePreferencesLive),
-  Layer.provide(ScientLatexServicesLive),
+  // SCIENT-FORK:START — Scient route services
+  ScientRouteServices.provideScientRouteServices,
+  // SCIENT-FORK:END
   Layer.provide(PreviewAutomationBroker.layer),
-  Layer.provide(
-    Layer.effect(
-      ServerSelfUpdate.ServerSelfUpdate,
-      Effect.gen(function* () {
-        const config = yield* ServerConfig.ServerConfig;
-        const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
-        return yield* ServerSelfUpdate.withRunningThreadContinuation({
-          mode: config.mode,
-          selfUpdate: yield* ServerSelfUpdate.make(),
-          prepare: recovery.prepareForUpdate.pipe(
-            Effect.mapError(
-              (cause) =>
-                new ServerSelfUpdateError({
-                  reason: "Could not prepare running thread continuation.",
-                  cause,
-                }),
-            ),
-          ),
-          clear: recovery.clearUpdateContinuation,
-        });
-      }),
-    ).pipe(Layer.provide(DesktopAppUpdateLayerLive), Layer.provide(ProcessRunner.layer)),
-  ),
+  // SCIENT-FORK:START — self-update hands running threads to the next server
+  Layer.provide(ScientRouteServices.ScientServerSelfUpdateLive),
+  // SCIENT-FORK:END
   Layer.provide(commandReadinessLayer),
   Layer.provide(browserApiCorsLayer),
   Layer.provide(httpCompressionLayer),
