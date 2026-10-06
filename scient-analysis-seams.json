@@ -45,7 +45,8 @@
     "packages/contracts/src/scientAnalysis.ts",
     "packages/contracts/src/scientCompute.ts",
     "renovate.json5",
-    "packages/contracts/src/scient/scientificRpcs.ts"
+    "packages/contracts/src/scient/scientificRpcs.ts",
+    "apps/web/src/components/preview/ScientMiniPlayerParts.tsx"
   ],
   "analysisDiffSignals": [
     "@scientfactory/(analysis|compute|execution)",
