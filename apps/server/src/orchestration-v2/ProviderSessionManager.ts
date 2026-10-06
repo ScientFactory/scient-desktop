@@ -7,6 +7,8 @@ import {
 } from "./scient-provider/SessionRetirement.ts";
 // SCIENT-FORK: running-fork text capture owners.
 import { makeProviderTextSnapshots } from "./scient-provider/ProviderTextSnapshots.ts";
+// SCIENT-FORK: single-writer Pi session file leases.
+import { makePiSessionFileLeases } from "./scient-provider/PiSessionFileLeases.ts";
 import { expandComposerCitationsForProvider } from "@t3tools/shared/composerCitations";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -55,7 +57,6 @@ import {
   type CapturedProviderText,
   type ProviderAdapterV2InternalEvent,
   ProviderAdapterEventStreamError,
-  ProviderAdapterProtocolError,
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Error,
   type ProviderAdapterV2Event,
@@ -453,63 +454,9 @@ export const layerWithOptions = (
       // The same exact owner survives logical removal, timeout and failed scope
       // close. It has no execution rights; retries join its original operation.
       const closingSessions = new Map<string, ClosingSessionEntry>();
-      // Pi session files admit only one native writer, including during startup.
-      // The process scope releases its leases after native teardown completes.
-      const piFileLeases = new Map<string, Scope.Closeable>();
-      const closedLeaseScopes = new WeakSet<Scope.Closeable>();
-      const failedLeaseScopes = new WeakSet<Scope.Closeable>();
-      const closeOwnedScope = (scope: Scope.Closeable) =>
-        Effect.suspend(() => {
-          closedLeaseScopes.add(scope);
-          if (failedLeaseScopes.has(scope))
-            return Effect.die(
-              "The native process scope previously failed to close; its Pi file leases remain held.",
-            );
-          return Scope.close(scope, Exit.void).pipe(
-            Effect.onError(() => Effect.sync(() => failedLeaseScopes.add(scope))),
-            Effect.andThen(
-              Effect.sync(() => {
-                for (const [file, owner] of piFileLeases)
-                  if (owner === scope) piFileLeases.delete(file);
-              }),
-            ),
-          );
-        });
-      const claimPiFile = (
-        scope: Scope.Closeable,
-        driver: ProviderAdapterV2SessionRuntime["driver"],
-        nativeId?: string | null,
-      ) =>
-        driver !== "pi" || nativeId == null
-          ? Effect.void
-          : fileSystem.realPath(nativeId).pipe(
-              Effect.catch((cause) =>
-                cause.reason._tag === "NotFound"
-                  ? Effect.succeed(path.resolve(nativeId))
-                  : Effect.fail(
-                      new ProviderAdapterProtocolError({
-                        driver,
-                        detail: "Cannot resolve the native Pi session file.",
-                        payload: cause,
-                      }),
-                    ),
-              ),
-              Effect.flatMap((file) =>
-                Effect.suspend(() => {
-                  if (
-                    closedLeaseScopes.has(scope) ||
-                    (piFileLeases.has(file) && piFileLeases.get(file) !== scope)
-                  )
-                    return new ProviderAdapterProtocolError({
-                      driver,
-                      detail:
-                        "The native Pi session file already has a live writer, or this writer has closed.",
-                    });
-                  piFileLeases.set(file, scope);
-                  return Effect.void;
-                }),
-              ),
-            );
+      // SCIENT-FORK:START — Pi session files admit one native writer per process scope.
+      const { closeOwnedScope, claimPiFile } = makePiSessionFileLeases({ fileSystem, path });
+      // SCIENT-FORK:END
       const nextSubscriberId = yield* Ref.make(0);
       const sessionOpen = yield* makeKeyedSerialExecutor<ProviderSessionId>();
       // Orders a thread's attach against a detach unloading it on the same session.
