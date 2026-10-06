@@ -39,6 +39,7 @@ import { makeNativeEventQueue, type NativeEventQueueStorage } from "./NativeEven
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
+import { turnStartErrorKeepingReceipt } from "../scient-provider/NativeTurnReceipts.ts";
 import type { IdAllocatorV2 } from "../IdAllocator.ts";
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
@@ -114,8 +115,6 @@ export class NativeSessionOperationError extends Schema.TaggedError<NativeSessio
     return this.detail;
   }
 }
-
-const isNativeStartReceiptError = Schema.is(ProviderAdapter.ProviderAdapterTurnStartError);
 
 const isNativeSessionOperationError = Schema.is(NativeSessionOperationError);
 export const nativeSessionFailure = (cause: unknown): NativeSessionOperationError =>
@@ -1322,19 +1321,7 @@ export function makeNativeSessionAdapterV2(
                   }),
                 );
               }
-            }).pipe(
-              Effect.mapError((cause) =>
-                isNativeStartReceiptError(cause)
-                  ? cause
-                  : new ProviderAdapter.ProviderAdapterTurnStartError({
-                      driver,
-                      threadId: request.threadId,
-                      providerThreadId: request.providerThread.id,
-                      runId: request.runId,
-                      cause,
-                    }),
-              ),
-            ),
+            }).pipe(Effect.mapError(turnStartErrorKeepingReceipt(driver, request))),
           steerTurn: (request) =>
             steer
               ? Effect.gen(function* () {

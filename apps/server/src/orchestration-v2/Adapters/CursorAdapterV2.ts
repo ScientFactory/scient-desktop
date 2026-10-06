@@ -62,6 +62,8 @@ import {
   providerMessageTextWithAttachmentPaths,
 } from "../AttachmentPrompt.ts";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
+// SCIENT-FORK: shared native start receipt rule.
+import { turnStartErrorKeepingReceipt } from "../scient-provider/NativeTurnReceipts.ts";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -77,8 +79,6 @@ export { cursorSdkModelSelection } from "../../provider/cursorSdkModel.ts";
 
 export const CURSOR_DRIVER_KIND = CursorAgentSdk.CURSOR_PROVIDER;
 export const CURSOR_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CURSOR_DRIVER_KIND);
-const isNativeStartReceiptError = Schema.is(ProviderAdapter.ProviderAdapterTurnStartError);
-
 const DEFAULT_CURSOR_SETTINGS = Schema.decodeSync(CursorSettings)({});
 
 export const CursorProviderCapabilitiesV2 = {
@@ -2357,16 +2357,8 @@ export function makeCursorAdapterV2(
           },
           (effect, turnInput) =>
             effect.pipe(
-              Effect.mapError((cause) =>
-                isNativeStartReceiptError(cause)
-                  ? cause
-                  : new ProviderAdapter.ProviderAdapterTurnStartError({
-                      driver: CursorAgentSdk.CURSOR_PROVIDER,
-                      threadId: turnInput.threadId,
-                      providerThreadId: turnInput.providerThread.id,
-                      runId: turnInput.runId,
-                      cause,
-                    }),
+              Effect.mapError(
+                turnStartErrorKeepingReceipt(CursorAgentSdk.CURSOR_PROVIDER, turnInput),
               ),
             ),
         );
