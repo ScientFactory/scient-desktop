@@ -248,7 +248,6 @@ import {
   makeConversationForkRpcHandlers,
 } from "./orchestration-v2/scient-fork/ConversationForkRpcHandlers.ts";
 import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderConnectionManager.ts";
-import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
 import * as ManagedRuntimeCatalog from "./scient/providerLifecycle/ManagedRuntimeCatalog.ts";
 import {
@@ -270,6 +269,7 @@ import {
 } from "./scient/analysis/ScientificRpcHandlers.ts";
 import { WorkspaceBindingResolver } from "./scient/projectScope/WorkspaceBindingResolver.ts";
 import { makeScientProjectFolders } from "./scient/projectScope/ScientProjectFolders.ts";
+import { captureScientWsServices } from "./scient/ScientWsServices.ts";
 import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntimePreferences.ts";
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
@@ -4032,15 +4032,10 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
-    const analysis = yield* AnalysisService.AnalysisService;
-    const compute = yield* ComputeSessionService.ComputeSessionService;
-    const runtimePreferences = yield* ScientificRuntimePreferences;
-    const conversationExports = yield* ConversationExportService;
+    // SCIENT-FORK:START — server-lifetime Scient services each connection's handlers use.
+    const scientWsServices = yield* captureScientWsServices;
+    // SCIENT-FORK:END
     const sql = yield* SqlClient.SqlClient;
-    const providerConnectionManager = yield* ProviderConnectionManager.ProviderConnectionManager;
-    const providerLifecycleCoordinator =
-      yield* ProviderLifecycleCoordinator.ProviderLifecycleCoordinator;
-    const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -4092,38 +4087,16 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               previewAutomationBroker,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
-              Layer.provide(
-                ProviderMaintenanceRunner.layer.pipe(
-                  Layer.provide(
-                    Layer.succeed(
-                      ProviderLifecycleCoordinator.ProviderLifecycleCoordinator,
-                      providerLifecycleCoordinator,
-                    ),
-                  ),
-                ),
-              ),
-              Layer.provide(
-                Layer.mergeAll(
-                  Layer.succeed(
-                    ProviderConnectionManager.ProviderConnectionManager,
-                    providerConnectionManager,
-                  ),
-                  Layer.succeed(
-                    ProviderRuntimeManager.ProviderRuntimeManager,
-                    providerRuntimeManager,
-                  ),
-                ),
-              ),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
               Layer.provide(AgentSessionScanner.layer),
+              Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
-              Layer.provide(Layer.succeed(AnalysisService.AnalysisService, analysis)),
-              Layer.provide(Layer.succeed(ComputeSessionService.ComputeSessionService, compute)),
-              Layer.provide(Layer.succeed(ScientificRuntimePreferences, runtimePreferences)),
-              Layer.provide(Layer.succeed(ConversationExportService, conversationExports)),
+              // SCIENT-FORK:START — also serves the provider maintenance runner above.
+              Layer.provide(scientWsServices),
+              // SCIENT-FORK:END
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(
