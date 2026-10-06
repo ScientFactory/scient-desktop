@@ -96,6 +96,9 @@ import * as ProviderAdapter from "../ProviderAdapter.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "./OpenCodeAdapterV2.ts";
 import { openCodeToolTurnItem } from "./OpenCodeToolItems.ts";
+// SCIENT-FORK:START — native acceptance and confirmed prompt boundaries.
+import { makeOpenCodeTurnAcceptance } from "../scient-provider/OpenCodeTurnAcceptance.ts";
+// SCIENT-FORK:END
 
 const OpenCode2ProviderCapabilities = {
   sessions: {
@@ -1231,54 +1234,18 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       });
     };
 
-    const markTurnAccepted = Effect.fnUntraced(function* (state: ThreadState, turn: ActiveTurn) {
-      if (state.active !== turn || turn.unsent || turn.providerTurn.acceptedAt !== undefined)
-        return;
-      turn.providerTurn = {
-        ...turn.providerTurn,
-        nativeAcceptance: "accepted",
-        acceptedAt: yield* DateTime.now,
-      };
-      yield* emitProviderTurn(state, turn, turn.providerTurn);
-    });
-
-    const confirmPromptBoundary = (
-      state: ThreadState,
-      turn: ActiveTurn,
-      response: { readonly id: string; readonly sessionID: string },
-      offeredId: string,
-      turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
-    ) =>
-      lock.withPermit(
-        Effect.gen(function* () {
-          if (
-            response.id !== offeredId ||
-            response.sessionID !== state.sessionId ||
-            threads.get(state.sessionId) !== state ||
-            state.providerThread.id !== turnInput.providerThread.id ||
-            (state.active !== undefined && state.active !== turn)
-          )
-            return;
-          // Only the native response can confirm a client-chosen message boundary.
-          // The ordered event feed may already have settled this exact turn.
-          const latest = state.providerTurns.get(String(turn.providerTurn.id)) ?? turn.providerTurn;
-          if (
-            latest.runAttemptId !== turnInput.attemptId ||
-            latest.nodeId !== turnInput.rootNodeId ||
-            latest.providerThreadId !== turnInput.providerThread.id ||
-            latest.nativeTurnRef?.nativeId !== offeredId ||
-            latest.nativeTurnRef.driver !== driver
-          )
-            return;
-          turn.providerTurn = {
-            ...latest,
-            nativeTurnRef: ref(response.id),
-            nativeAcceptance: "accepted",
-            acceptedAt: latest.acceptedAt ?? (yield* DateTime.now),
-          };
-          yield* emitProviderTurn(state, turn, turn.providerTurn);
-        }),
-      );
+    // SCIENT-FORK:START — native acceptance and confirmed prompt boundaries.
+    const { markTurnAccepted, confirmPromptBoundary, forkBoundaryAfter } =
+      makeOpenCodeTurnAcceptance<ActiveTurn, ThreadState, never, never>({
+        driver,
+        lock,
+        threads,
+        emitProviderTurn,
+        ref,
+        promptOf,
+        getClient: () => client,
+      });
+    // SCIENT-FORK:END
 
     const makeTurn = (
       owner: TurnOwner,
@@ -3152,43 +3119,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
             ),
         ),
       );
-
-    // OpenCode's cut is exclusive; frozen evidence ends at the included turn.
-    // Resolve the next native prompt from complete history, never from later app turns.
-    const forkBoundaryAfter = Effect.fnUntraced(function* (
-      sessionId: string,
-      providerThreadId: OrchestrationV2ProviderThread["id"],
-      selected: OrchestrationV2ProviderTurn,
-    ) {
-      const messageId = promptOf(selected);
-      if (
-        selected.providerThreadId !== providerThreadId ||
-        selected.nativeTurnRef?.driver !== driver ||
-        selected.nativeTurnRef.strength !== "strong" ||
-        messageId === undefined ||
-        selected.status !== "completed"
-      ) {
-        return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-          driver,
-          detail: "This OpenCode fork has no confirmed completed native prompt boundary.",
-        });
-      }
-      const history = yield* paginate(
-        { sessionID: Session.ID.make(sessionId), order: "desc" as const, limit: 100 },
-        client.message.list,
-      ).pipe(Stream.runCollect);
-      const prompts = history.flatMap((message) =>
-        message.type === "user" || message.type === "synthetic" ? [String(message.id)] : [],
-      );
-      const index = prompts.indexOf(messageId);
-      if (index < 0 || new Set(prompts).size !== prompts.length) {
-        return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-          driver,
-          detail: "The confirmed OpenCode fork boundary is absent or ambiguous in native history.",
-        });
-      }
-      return index === 0 ? null : prompts[index - 1]!;
-    });
 
     /** The session's history as V2 messages, read after any change T3 made to it. */
     const snapshotOf = Effect.fnUntraced(function* (
