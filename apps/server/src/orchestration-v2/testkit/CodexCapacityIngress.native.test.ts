@@ -157,7 +157,7 @@ const startupCauseFacts = (original: unknown) => {
       } else facts.push({ path, unavailable: "non-release text omitted" });
       continue;
     }
-    if (!Predicate.isObject(value)) continue;
+    if (!Predicate.isObjectOrArray(value)) continue;
     if (seen.has(value)) {
       truncated.push(`${path}: repeated reference`);
       continue;
