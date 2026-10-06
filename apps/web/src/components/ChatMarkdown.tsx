@@ -207,18 +207,12 @@ import {
   resolveScientRichFenceKind,
   ScientRichFence,
 } from "../scient/presentation/ScientRichFence";
-import {
-  ScientInlineWorkspaceImage,
-  ScientPendingWorkspaceImage,
-} from "../scient/images/ScientInlineWorkspaceImage";
 import { ScientDirectImageFigure } from "../scient/images/ScientDirectImageFigure";
-// SCIENT-FORK:START — web images render as a referenced link until the user loads one
-import { hasRemoteSrcSet, remoteImageAddress } from "../scient/presentation/remoteImageAddress";
 import {
-  ScientRemoteImageLoadedContext,
-  ScientRemoteImageReference,
-} from "../scient/presentation/ScientRemoteImageReference";
-// SCIENT-FORK:END
+  ScientMarkdownSource,
+  scientWorkspaceImageCard,
+  useScientRemoteImageReference,
+} from "../scient/images/scientMarkdownImage";
 import {
   inlineWorkspaceImageMarkdownSource,
   inlineWorkspaceImageResource,
@@ -2761,48 +2755,31 @@ const CHAT_MARKDOWN_COMPONENTS = {
         : null;
     const useScientImageCard = Boolean(node?.properties?.dataScientImageCard);
     // SCIENT-FORK:START — web images render as a referenced link until the user loads one.
-    // Inside a link the card is the link's content and the link keeps working.
-    const remoteImage =
-      directUri === null || use(ScientRemoteImageLoadedContext)
-        ? null
-        : remoteImageAddress(resolveProtocolRelativeMediaUrl(directUri));
-    const remoteImageReference =
-      remoteImage === null ? null : (
-        <ScientRemoteImageReference
-          address={remoteImage}
-          alt={altText}
-          kind={kind}
-          copyMarkdown={markdownSource}
-          id={props.id}
-          insideLink={use(MarkdownLinkContext)}
-        >
-          <MarkdownImg node={node} alt={alt} src={src} title={title} {...props} />
-        </ScientRemoteImageReference>
-      );
+    const remoteImageReference = useScientRemoteImageReference({
+      directUri,
+      altText,
+      kind,
+      markdownSource,
+      id: props.id,
+      MarkdownLinkContext,
+      renderImage: () => <MarkdownImg node={node} alt={alt} src={src} title={title} {...props} />,
+    });
     // SCIENT-FORK:END
-    if (useScientImageCard && image && markdownSource && threadRef && !isStreaming) {
-      return (
-        <ScientInlineWorkspaceImage
-          image={image}
-          markdownSource={markdownSource}
-          threadRef={threadRef}
-          srcFragment={srcFragment}
-          filePresentation={imageCaptions}
-          caption={imageCaptions ? authoredTitle : undefined}
-          authoredAlt={altText}
-          authoredSource={srcString}
-        />
-      );
-    }
-    if (useScientImageCard && image && markdownSource) {
-      return (
-        <ScientPendingWorkspaceImage
-          image={image}
-          markdownSource={markdownSource}
-          reason={isStreaming ? "streaming" : "unavailable"}
-        />
-      );
-    }
+    // SCIENT-FORK:START — standalone workspace images render as Scient image cards
+    const workspaceImageCard = scientWorkspaceImageCard({
+      useScientImageCard,
+      image,
+      markdownSource,
+      threadRef,
+      isStreaming,
+      srcFragment,
+      imageCaptions,
+      authoredTitle,
+      altText,
+      srcString,
+    });
+    if (workspaceImageCard !== null) return workspaceImageCard;
+    // SCIENT-FORK:END
     if (
       githubMedia &&
       cwd !== undefined &&
@@ -2914,12 +2891,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <ChatMarkdownImageFallback alt={altText} copyMarkdown={markdownSource} kind={kind} />;
   },
   // SCIENT-FORK:START — a <picture> source never fetches a web address; its <img> is gated
-  source: function MarkdownSource({ node: _node, ...props }) {
-    const remote =
-      hasRemoteSrcSet(props.srcSet) ||
-      (typeof props.src === "string" && remoteImageAddress(props.src) !== null);
-    return remote ? null : <source {...props} />;
-  },
+  source: ScientMarkdownSource,
   // SCIENT-FORK:END
   div: function MarkdownDiv({ node, children, ...props }) {
     const { onUseArtifactTemplate } = use(ChatMarkdownRendererContext);
