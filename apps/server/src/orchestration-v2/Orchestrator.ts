@@ -69,6 +69,11 @@ import {
 } from "./scient-fork/ConversationForkNativeSource.ts";
 // SCIENT-FORK:START — Scient orchestration modules
 import {
+  queuedRunExecutionThread,
+  queuedRunStartAttempt,
+  steerExecutionThread,
+} from "./scient-fork/RunStartDecisions.ts";
+import {
   conversationForkHistoryEvents,
   conversationForkProvisionEffect,
 } from "./scient-fork/ConversationForkPlan.ts";
@@ -102,9 +107,10 @@ import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { threadShellFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
 import { EventSinkV2 } from "./EventSink.ts";
 import { EventStoreV2 } from "./EventStore.ts";
-import { sourcePlanFingerprint } from "./SourcePlan.ts";
+import { queuedSourcePlanIsUsable, sourcePlanFingerprint } from "./SourcePlan.ts";
 import {
   heldQueueAdmissionEvents,
+  heldQueueProviderThread,
   legacyQueueImportRefusal,
   planHeldQueueAdmission,
   planLegacyQueueReorder,
@@ -1274,23 +1280,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         );
         const now = yield* DateTime.now;
-        const providerThread: OrchestrationV2ProviderThread = {
-          id: providerThreadId,
+        const providerThread = heldQueueProviderThread({
+          providerThreadId,
           driver: adapter.driver,
           providerInstanceId: queuedRun.providerInstanceId,
-          providerSessionId: null,
-          appThreadId: threadId,
-          ownerNodeId: null,
-          nativeThreadRef: null,
-          nativeConversationHeadRef: null,
-          status: "not_loaded",
-          firstRunOrdinal: null,
-          lastRunOrdinal: null,
-          handoffIds: [],
-          forkedFrom: null,
-          createdAt: now,
-          updatedAt: now,
-        };
+          threadId,
+          now,
+        });
         yield* writeSystemEvents([
           {
             type: "provider-thread.updated",
@@ -1336,27 +1332,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       const now = yield* DateTime.now;
-      const attemptOrdinal =
-        previousAttempt.status === "failed"
-          ? Math.max(
-              ...projection.attempts
-                .filter((candidate) => candidate.runId === queuedRun.id)
-                .map((candidate) => candidate.attemptOrdinal),
-            ) + 1
-          : previousAttempt.attemptOrdinal;
-      const attempt: OrchestrationV2RunAttempt =
-        previousAttempt.status === "failed"
-          ? {
-              ...previousAttempt,
-              id: idAllocator.derive.runAttempt({ runId: queuedRun.id, attemptOrdinal }),
-              attemptOrdinal,
-              providerTurnId: null,
-              reason: "retry",
-              status: "pending",
-              startedAt: null,
-              completedAt: null,
-            }
-          : previousAttempt;
+      // SCIENT-FORK:START — a failed attempt is retried as a fresh attempt.
+      const attempt = queuedRunStartAttempt({
+        queuedRun,
+        previousAttempt,
+        attempts: projection.attempts,
+        ids: idAllocator.derive,
+      });
+      // SCIENT-FORK:END
       const commandId = CommandId.make(`command:system:start-queued:${queuedRun.id}:${attempt.id}`);
       const sourcePlanRef = queuedRun.sourcePlanRef ?? queuedRun.legacyQueue?.sourceProposedPlan;
       const sourcePlan =
@@ -1366,21 +1349,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (sourcePlanRef !== undefined) {
         const sourceThread = yield* projectionStore.getThreadShell(sourcePlanRef.threadId);
         if (
-          sourcePlan?.kind !== "proposed_plan" ||
-          sourcePlan.id !== sourcePlanRef.planId ||
-          sourcePlan.threadId !== sourcePlanRef.threadId ||
-          (sourcePlan.status !== "active" &&
-            !(
-              sourcePlan.status === "completed" &&
-              sourcePlan.consumedBy?.threadId === threadId &&
-              sourcePlan.consumedBy.runId === queuedRun.id
-            )) ||
-          (queuedRun.sourcePlanFingerprint !== undefined &&
-            queuedRun.sourcePlanFingerprint !== sourcePlanFingerprint(sourcePlan)) ||
-          sourceThread === null ||
-          sourceThread.deletedAt !== null ||
-          sourceThread.archivedAt !== null ||
-          sourceThread.projectId !== projection.thread.projectId
+          !queuedSourcePlanIsUsable({
+            plan: sourcePlan,
+            ref: sourcePlanRef,
+            sourceThread,
+            threadId,
+            queuedRun,
+            projectId: projection.thread.projectId,
+          })
         ) {
           return yield* new OrchestratorDispatchError({
             commandId,
@@ -1389,40 +1365,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         }
       }
-      const queuedMessageIds = new Set(
-        projection.runs.filter((run) => run.status === "queued").map((run) => run.userMessageId),
-      );
-      const initialTitleSeed = queuedRun.legacyQueue?.titleSeed;
-      const generateInitialTitle =
-        initialTitleSeed !== undefined &&
-        queuedRun.legacyQueue?.titleAtAdmission === projection.thread.title &&
-        !isNativeMaintenanceCommand(queuedMessage) &&
-        !projection.messages.some(
-          (message) =>
-            message.role === "user" &&
-            !queuedMessageIds.has(message.id) &&
-            !isNativeMaintenanceCommand(message),
-        );
-      const capturedThread = {
-        ...projection.thread,
-        ...(generateInitialTitle
-          ? {
-              title: initialTitleSeed ?? projection.thread.title,
-              titleRegeneration: { requestId: commandId, startedAt: now },
-            }
-          : {}),
-        runtimeMode:
-          queuedRun.runtimeMode ??
-          queuedRun.legacyQueue?.runtimeMode ??
-          projection.thread.runtimeMode,
-        interactionMode:
-          queuedRun.interactionMode ??
-          queuedRun.legacyQueue?.interactionMode ??
-          projection.thread.interactionMode,
-      };
-      const modesChanged =
-        capturedThread.runtimeMode !== projection.thread.runtimeMode ||
-        capturedThread.interactionMode !== projection.thread.interactionMode;
+      // SCIENT-FORK:START — the run executes under its captured modes and seeded title.
+      const { capturedThread, generateInitialTitle, modesChanged } = queuedRunExecutionThread({
+        projection,
+        queuedRun,
+        queuedMessage,
+        commandId,
+        now,
+        isNativeMaintenanceCommand,
+      });
+      // SCIENT-FORK:END
       const selectionChanged = !modelSelectionsEqual(
         projection.thread.modelSelection,
         queuedRun.modelSelection,
@@ -3946,34 +3898,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const session = sessionOption.value;
       const now = yield* DateTime.now;
       const emitEvent = emit(input.events, input.command);
-      const executionThread = {
-        ...input.projection.thread,
-        runtimeMode:
-          input.runtimeMode ??
-          (input.delegatedCompletion === undefined ? undefined : targetRun.runtimeMode) ??
-          input.projection.thread.runtimeMode,
-        interactionMode:
-          input.interactionMode ??
-          (input.delegatedCompletion === undefined ? undefined : targetRun.interactionMode) ??
-          input.projection.thread.interactionMode,
-      };
-      const executionModesChanged =
-        // An older active run has no captured policy to prove that a steer can
-        // honor explicitly submitted modes. Restart rather than inherit it.
-        (input.runtimeMode !== undefined &&
-          targetRun.runtimeMode === undefined &&
-          targetRun.legacyQueue?.runtimeMode === undefined) ||
-        (input.interactionMode !== undefined &&
-          targetRun.interactionMode === undefined &&
-          targetRun.legacyQueue?.interactionMode === undefined) ||
-        executionThread.runtimeMode !==
-          (targetRun.runtimeMode ??
-            targetRun.legacyQueue?.runtimeMode ??
-            input.projection.thread.runtimeMode) ||
-        executionThread.interactionMode !==
-          (targetRun.interactionMode ??
-            targetRun.legacyQueue?.interactionMode ??
-            input.projection.thread.interactionMode);
+      // SCIENT-FORK:START — a steer executes under its submitted or captured modes.
+      const { executionThread, executionModesChanged } = steerExecutionThread({
+        thread: input.projection.thread,
+        targetRun,
+        runtimeMode: input.runtimeMode,
+        interactionMode: input.interactionMode,
+        delegatedCompletion: input.delegatedCompletion,
+      });
+      // SCIENT-FORK:END
       const selectionChanged = !modelSelectionsEqual(
         targetRun.modelSelection,
         input.modelSelection,

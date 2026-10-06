@@ -8,7 +8,12 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ConversationMessage,
+  type OrchestrationV2ProviderThread,
+  type ProviderDriverKind,
+  type ProviderInstanceId,
+  type ThreadId,
 } from "@t3tools/contracts";
+import type * as DateTime from "effect/DateTime";
 import type { IdAllocatorV2DeriveShape } from "../IdAllocator.ts";
 import { queuedRunsInDeliveryOrder } from "../QueuedRunOrder.ts";
 
@@ -190,4 +195,32 @@ export function planLegacyQueueReorder(input: {
     moved.push({ ...run, queuePosition: index + 1 });
   }
   return moved;
+}
+
+/** The provider-thread record a held entry's placeholder identity materializes on delivery. */
+export function heldQueueProviderThread(input: {
+  readonly providerThreadId: ProviderThreadId;
+  readonly driver: ProviderDriverKind;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly threadId: ThreadId;
+  readonly now: DateTime.Utc;
+}): OrchestrationV2ProviderThread {
+  const { now } = input;
+  return {
+    id: input.providerThreadId,
+    driver: input.driver,
+    providerInstanceId: input.providerInstanceId,
+    providerSessionId: null,
+    appThreadId: input.threadId,
+    ownerNodeId: null,
+    nativeThreadRef: null,
+    nativeConversationHeadRef: null,
+    status: "not_loaded",
+    firstRunOrdinal: null,
+    lastRunOrdinal: null,
+    handoffIds: [],
+    forkedFrom: null,
+    createdAt: now,
+    updatedAt: now,
+  };
 }
