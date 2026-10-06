@@ -721,6 +721,13 @@ test("an extracted intent has one owner across hydration, owner-close recovery a
     await expect
       .poll(() => stale.getByTestId("composer-editor").innerText(), { timeout: 60000 })
       .toContain("foreign-once");
+    // Visible hydrated text precedes asynchronous journal recovery. Finish the
+    // stale page's lease attempt while the original owner still holds ownership.
+    await expect
+      .poll(() => stale.getByRole("button", { name: "Send message", exact: true }).isEnabled(), {
+        timeout: 60000,
+      })
+      .toBe(true);
     await f.page.close();
     await foreign.reload();
     await expect
@@ -1077,6 +1084,306 @@ test("diagnoses the public controlled-provider composer readiness before intake"
       throw cause;
     }
   } finally {
+    await f.close();
+  }
+}, 180000);
+
+test("drains successful FIFO work and preserves a Stop hold through foreground completion and idle reorder", async () => {
+  const f = await fixture();
+  const sql = new NodeSqlite.DatabaseSync(NodePath.join(f.base, "userdata/statev2.sqlite"), {
+    readOnly: true,
+  });
+  const strip = f.page.getByTestId("thread-queue-strip");
+  const queueRows = strip.locator('[data-testid^="thread-queue-row-"]');
+  const runs = () =>
+    sql
+      .prepare(`
+    SELECT json_extract(m.payload_json, '$.text') AS text, r.status,
+      coalesce(json_extract(r.payload_json, '$.queueHeld'), 0) AS held,
+      coalesce(json_extract(r.payload_json, '$.queuePosition'), r.ordinal) AS position
+    FROM orchestration_v2_projection_runs r
+    JOIN orchestration_v2_projection_messages m
+      ON m.message_id = json_extract(r.payload_json, '$.userMessageId')
+    ORDER BY r.ordinal LIMIT 20
+  `)
+      .all() as Array<{ text: string; status: string; held: number | null; position: number }>;
+  const queued = () =>
+    runs()
+      .filter((run) => run.status === "queued")
+      .toSorted((a, b) => a.position - b.position);
+  const completed = (label: string) =>
+    runs().some(
+      (run) => run.text === `ACP_ACCEPTANCE:ANSWER ${label}` && run.status === "completed",
+    );
+  const queue = async (label: string) => {
+    await typePrompt(f.page, `ACP_ACCEPTANCE:ANSWER ${label}`);
+    await f.page.getByRole("button", { name: "Queue message", exact: true }).click();
+    await expect
+      .poll(() => queued().some((run) => run.text === `ACP_ACCEPTANCE:ANSWER ${label}`), {
+        timeout: 15000,
+      })
+      .toBe(true);
+  };
+  try {
+    await send(f.page, "ACP_ACCEPTANCE:HOLD auto-root");
+    await expect
+      .poll(
+        async () =>
+          (await audit(f.peer)).filter(
+            (event) => event.event === "prompt_accepted" && event.label === "auto-root",
+          ).length,
+        { timeout: 30000 },
+      )
+      .toBe(1);
+    await queue("fifo-first");
+    await queue("fifo-second");
+    await expect.poll(() => queueRows.count(), { timeout: 15000 }).toBe(2);
+    expect(queued().map((run) => run.held)).toEqual([0, 0]);
+    stage("successful queue admitted without a hold");
+
+    // Release the simulated peer's real pending work. It emits its ordinary
+    // ACP idle event; the production worker alone admits both successors.
+    const pending = await NodeFSP.readdir(NodePath.join(f.peer, "control/pending"));
+    expect(pending).toHaveLength(1);
+    const held = JSON.parse(
+      await NodeFSP.readFile(NodePath.join(f.peer, "control/pending", pending[0]!), "utf8"),
+    ) as {
+      turnId: string;
+      action: string;
+      label: string;
+    };
+    expect({ action: held.action, label: held.label }).toEqual({
+      action: "HOLD",
+      label: "auto-root",
+    });
+    await NodeFSP.writeFile(NodePath.join(f.peer, "control/release", held.turnId), "release\n");
+    await expect
+      .poll(() => completed("fifo-first") && completed("fifo-second"), { timeout: 30000 })
+      .toBe(true);
+    await expect.poll(() => queueRows.count(), { timeout: 15000 }).toBe(0);
+    expect(
+      (await audit(f.peer))
+        .filter((event) => event.event === "prompt_accepted")
+        .map((event) => event.label),
+    ).toEqual(["auto-root", "fifo-first", "fifo-second"]);
+    stage("successful completion automatically drained FIFO");
+
+    await send(f.page, "ACP_ACCEPTANCE:HOLD stopped-root");
+    await expect
+      .poll(
+        async () =>
+          (await audit(f.peer)).filter(
+            (event) => event.event === "prompt_accepted" && event.label === "stopped-root",
+          ).length,
+        { timeout: 30000 },
+      )
+      .toBe(1);
+    await queue("held-first");
+    await queue("held-second");
+    await f.page.getByRole("button", { name: "Stop generation", exact: true }).click();
+    await expect.poll(() => queued().map((run) => run.held), { timeout: 30000 }).toEqual([1, 1]);
+    await expect
+      .poll(() => strip.getByRole("button", { name: "Resume queue", exact: true }).isEnabled(), {
+        timeout: 15000,
+      })
+      .toBe(true);
+    stage("public Stop held both pending messages");
+
+    // Exercise the original strip's actual pointer sensor while the thread is idle.
+    const from = await queueRows
+      .nth(1)
+      .getByRole("button", {
+        name: "Reorder queued message",
+        exact: true,
+      })
+      .boundingBox();
+    const to = await queueRows.first().boundingBox();
+    expect(from).not.toBeNull();
+    expect(to).not.toBeNull();
+    await f.page.mouse.move(from!.x + from!.width / 2, from!.y + from!.height / 2);
+    await f.page.mouse.down();
+    await f.page.mouse.move(from!.x + from!.width / 2, to!.y + to!.height / 2, { steps: 10 });
+    await f.page.mouse.up();
+    await expect
+      .poll(() => queued().map((run) => run.text), { timeout: 15000 })
+      .toEqual(["ACP_ACCEPTANCE:ANSWER held-second", "ACP_ACCEPTANCE:ANSWER held-first"]);
+    await expect
+      .poll(() => queueRows.first().innerText(), { timeout: 15000 })
+      .toContain("held-second");
+    stage("idle pointer reorder reached native queue authority");
+
+    await send(f.page, "ACP_ACCEPTANCE:ANSWER foreground-after-stop");
+    await expect.poll(() => completed("foreground-after-stop"), { timeout: 30000 }).toBe(true);
+    expect(queued().map((run) => run.held)).toEqual([1, 1]);
+    expect(
+      (await audit(f.peer))
+        .filter((event) => event.event === "prompt_accepted")
+        .map((event) => event.label),
+    ).toEqual(["auto-root", "fifo-first", "fifo-second", "stopped-root", "foreground-after-stop"]);
+    await expect
+      .poll(() => strip.getByRole("button", { name: "Resume queue", exact: true }).isEnabled(), {
+        timeout: 15000,
+      })
+      .toBe(true);
+    stage("later foreground success preserved the explicit hold");
+
+    await strip.getByRole("button", { name: "Send", exact: true }).click();
+    await expect.poll(() => completed("held-second"), { timeout: 30000 }).toBe(true);
+    expect(queued().map((run) => ({ text: run.text, held: run.held }))).toEqual([
+      { text: "ACP_ACCEPTANCE:ANSWER held-first", held: 1 },
+    ]);
+    await expect.poll(() => queueRows.count(), { timeout: 15000 }).toBe(1);
+    await strip.getByRole("button", { name: "Resume queue", exact: true }).click();
+    await expect.poll(() => completed("held-first"), { timeout: 30000 }).toBe(true);
+    await expect.poll(() => queueRows.count(), { timeout: 15000 }).toBe(0);
+    expect(queued()).toEqual([]);
+    expect(
+      (await audit(f.peer))
+        .filter((event) => event.event === "prompt_accepted")
+        .map((event) => event.label),
+    ).toEqual([
+      "auto-root",
+      "fifo-first",
+      "fifo-second",
+      "stopped-root",
+      "foreground-after-stop",
+      "held-second",
+      "held-first",
+    ]);
+    console.info("[connected queue policy receipt] " + JSON.stringify(runs()));
+  } finally {
+    console.info(
+      "[connected queue policy native observations] " +
+        JSON.stringify(
+          (await audit(f.peer)).filter(
+            (event) => event.event === "prompt_accepted" || event.event === "idle",
+          ),
+        ),
+    );
+    console.info("[connected queue policy final state] " + JSON.stringify(runs()));
+    sql.close();
+    await f.close();
+  }
+}, 180000);
+
+test("promotes one queued message through the public Steer control and real ACP restart", async () => {
+  const f = await fixture();
+  const sql = new NodeSqlite.DatabaseSync(NodePath.join(f.base, "userdata/statev2.sqlite"), {
+    readOnly: true,
+  });
+  const promotions: Array<{ commandId: string; queuedRunId: string; targetRunId: string }> = [];
+  const strip = f.page.getByTestId("thread-queue-strip");
+  try {
+    await f.page.routeWebSocket(/\/ws(?:\?|$)/, (socket) => {
+      const server = socket.connectToServer();
+      socket.onMessage((message) => {
+        const decoded = JSON.parse(message.toString());
+        for (const frame of Array.isArray(decoded) ? decoded : [decoded]) {
+          if (frame._tag === "Request" && frame.payload?.type === "queued-message.promote-to-steer")
+            promotions.push(frame.payload);
+        }
+        server.send(message);
+      });
+      server.onMessage((message) => socket.send(message));
+    });
+    await f.page.reload();
+    await expect
+      .poll(() => f.page.getByTestId("composer-editor").count(), { timeout: 60000 })
+      .toBe(1);
+    await send(f.page, "ACP_ACCEPTANCE:HOLD steer-owner");
+    await expect
+      .poll(
+        async () =>
+          (await audit(f.peer)).filter(
+            (event) => event.event === "prompt_accepted" && event.label === "steer-owner",
+          ).length,
+        { timeout: 30000 },
+      )
+      .toBe(1);
+    await typePrompt(f.page, "ACP_ACCEPTANCE:ANSWER steered-once");
+    await f.page.getByRole("button", { name: "Queue message", exact: true }).click();
+    await expect
+      .poll(() => strip.locator('[data-testid^="thread-queue-row-"]').count(), { timeout: 15000 })
+      .toBe(1);
+    const queued = sql
+      .prepare(`SELECT r.run_id, json_extract(r.payload_json, '$.userMessageId') AS message_id
+      FROM orchestration_v2_projection_runs r WHERE r.status = 'queued'`)
+      .get() as { run_id: string; message_id: string };
+    const active = sql
+      .prepare(`SELECT run_id FROM orchestration_v2_projection_runs
+      WHERE status = 'running'`)
+      .get() as { run_id: string };
+    expect(queued).toBeDefined();
+    expect(active).toBeDefined();
+    await strip.getByRole("button", { name: "Steer", exact: true }).click();
+    await expect
+      .poll(
+        async () =>
+          (await audit(f.peer)).filter(
+            (event) => event.event === "prompt_accepted" && event.label === "steered-once",
+          ).length,
+        { timeout: 30000 },
+      )
+      .toBe(1);
+    await expect
+      .poll(
+        () =>
+          sql
+            .prepare(`SELECT status FROM orchestration_v2_projection_runs
+      WHERE run_id = ?`)
+            .get(active.run_id),
+        { timeout: 30000 },
+      )
+      .toEqual({ status: "completed" });
+    expect(promotions).toHaveLength(1);
+    expect(promotions[0]).toMatchObject({ queuedRunId: queued.run_id, targetRunId: active.run_id });
+    expect(
+      sql
+        .prepare(`SELECT status FROM orchestration_v2_projection_runs WHERE run_id = ?`)
+        .get(queued.run_id),
+    ).toEqual({ status: "cancelled" });
+    const message = sql
+      .prepare(`SELECT m.run_id, json_extract(m.payload_json, '$.text') AS text,
+      json_extract(i.payload_json, '$.inputIntent') AS intent
+      FROM orchestration_v2_projection_messages m JOIN orchestration_v2_projection_turn_items i
+        ON json_extract(i.payload_json, '$.messageId') = m.message_id
+      WHERE m.message_id = ? AND i.type = 'user_message'`)
+      .get(queued.message_id);
+    expect(message).toEqual({
+      run_id: active.run_id,
+      text: "ACP_ACCEPTANCE:ANSWER steered-once",
+      intent: "promoted_queued_to_steer",
+    });
+    await expect
+      .poll(() => strip.locator('[data-testid^="thread-queue-row-"]').count(), { timeout: 15000 })
+      .toBe(0);
+    await expect
+      .poll(() => f.page.locator('[data-user-message-intent="promoted_queued_to_steer"]').count(), {
+        timeout: 15000,
+      })
+      .toBe(1);
+    expect(
+      (await audit(f.peer))
+        .filter((event) => event.event === "prompt_accepted")
+        .map((event) => event.label),
+    ).toEqual(["steer-owner", "steered-once"]);
+    expect(
+      (await audit(f.peer)).filter((event) => event.event === "cancel_requested"),
+    ).toHaveLength(1);
+    console.info("[connected positive steer receipt] " + JSON.stringify({ promotions, message }));
+  } finally {
+    console.info(
+      "[connected positive steer native observations] " +
+        JSON.stringify(
+          (await audit(f.peer)).filter(
+            (event) =>
+              event.event === "prompt_accepted" ||
+              event.event === "idle" ||
+              event.event === "cancel_requested",
+          ),
+        ),
+    );
+    sql.close();
     await f.close();
   }
 }, 180000);
