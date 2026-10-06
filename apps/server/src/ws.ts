@@ -103,13 +103,6 @@ import {
   type ProjectFileErrorReason,
   ProjectListDirectoryError,
   ProjectRenameFileError,
-  AssetGeneratedDocumentAuthorityMismatchError,
-  AssetGeneratedDocumentNotFoundError,
-  AssetGeneratedDocumentResolutionError,
-  AssetAnalysisArtifactNotFoundError,
-  AssetAnalysisArtifactResolutionError,
-  AssetComputeOutputNotFoundError,
-  AssetComputeOutputResolutionError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import {
@@ -192,6 +185,7 @@ import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
+import { isScientAssetResource, issueScientAssetUrl } from "./scient/ScientAssetUrls.ts";
 import { persistChatAttachments } from "./AttachmentPersistence.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -3562,71 +3556,14 @@ const makeWsRpcLayer = (
             WS_METHODS.assetsCreateUrl,
             Effect.gen(function* () {
               const path = yield* Path.Path;
-              if (input.resource._tag === "analysis-artifact") {
-                const analysisArtifact = yield* analysis.resolveArtifact(input.resource).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new AssetAnalysisArtifactResolutionError({
-                        resource: input.resource,
-                        cause,
-                      }),
-                  ),
+              // SCIENT-FORK:START — analysis, compute and generated-document assets.
+              if (isScientAssetResource(input.resource)) {
+                return yield* issueScientAssetUrl(
+                  { resource: input.resource },
+                  { analysis, compute, generatedDocuments },
                 );
-                if (analysisArtifact === null) {
-                  return yield* new AssetAnalysisArtifactNotFoundError({
-                    resource: input.resource,
-                  });
-                }
-                return yield* issueAssetUrl({ resource: input.resource, analysisArtifact });
               }
-              if (input.resource._tag === "compute-output") {
-                const computeOutput = yield* compute.resolveOutputResource(input.resource).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new AssetComputeOutputResolutionError({
-                        resource: input.resource,
-                        cause,
-                      }),
-                  ),
-                );
-                // An image whose bytes are gone or no longer hash to what was
-                // asked for is not an image: a session's transcript outlives
-                // the files it points at, so this is an ordinary outcome
-                // rather than a fault.
-                if (computeOutput === null) {
-                  return yield* new AssetComputeOutputNotFoundError({
-                    resource: input.resource,
-                  });
-                }
-                return yield* issueAssetUrl({ resource: input.resource, computeOutput });
-              }
-              if (input.resource._tag === "generated-document") {
-                const retained = yield* generatedDocuments
-                  .resolveRevisionForAsset(input.resource)
-                  .pipe(
-                    Effect.mapError((cause) => {
-                      if (cause.reason === "authority-mismatch") {
-                        return new AssetGeneratedDocumentAuthorityMismatchError({
-                          resource: input.resource,
-                        });
-                      }
-                      if (cause.reason === "missing-revision") {
-                        return new AssetGeneratedDocumentNotFoundError({
-                          resource: input.resource,
-                        });
-                      }
-                      return new AssetGeneratedDocumentResolutionError({
-                        resource: input.resource,
-                        cause,
-                      });
-                    }),
-                  );
-                return yield* issueAssetUrl({
-                  resource: input.resource,
-                  generatedDocument: retained.document,
-                  generatedDocumentExpiresAtEpochMs: retained.expiresAtEpochMs,
-                });
-              }
+              // SCIENT-FORK:END
               // An absolute media path can be linked from a thread on another environment.
               if (
                 input.resource._tag === "attachment" ||
