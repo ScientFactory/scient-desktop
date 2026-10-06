@@ -1,6 +1,5 @@
 import {
   UserInputAttachmentAnswerPayload,
-  type ChatAttachment,
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -46,10 +45,4 @@ export function retainQuestionAnswers(
     answers.push({ activity, answer: answer.value });
   }
   return { answers, error: null };
-}
-
-export function questionAnswerAttachments(
-  answers: ReadonlyArray<RetainedQuestionAnswer>,
-): ReadonlyArray<ChatAttachment> {
-  return answers.flatMap(({ answer }) => Object.values(answer.attachmentsByQuestionId).flat());
 }

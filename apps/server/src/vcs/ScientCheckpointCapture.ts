@@ -18,11 +18,7 @@ const CHECKPOINT_CAPTURE_TIMEOUT_MS = 90_000;
 const CHECKPOINT_CAPTURE_MAX_FILE_BYTES = 512n * 1024n * 1024n;
 const CHECKPOINT_CAPTURE_MAX_CHANGED_BYTES = 1024n * 1024n * 1024n;
 
-export const checkpointFileError = (
-  cwd: string,
-  operation: string,
-  error: { readonly message: string },
-) =>
+const checkpointFileError = (cwd: string, operation: string, error: { readonly message: string }) =>
   new VcsCheckpointUnavailableError({
     operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
     cwd,

@@ -1,5 +1,4 @@
 import { ThreadId } from "@t3tools/contracts";
-import * as SchemaIssue from "effect/SchemaIssue";
 import * as Schema from "effect/Schema";
 
 import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
@@ -33,7 +32,6 @@ export const OrchestrationCommandRejection = Schema.Union([
   OrchestrationThreadSettleBlockedError,
 ]);
 export type OrchestrationCommandRejection = typeof OrchestrationCommandRejection.Type;
-export const isOrchestrationCommandRejection = Schema.is(OrchestrationCommandRejection);
 
 export class OrchestrationCommandPreviouslyRejectedError extends Schema.TaggedError<OrchestrationCommandPreviouslyRejectedError>()(
   "OrchestrationCommandPreviouslyRejectedError",
@@ -82,12 +80,3 @@ export type OrchestrationDispatchError =
   | OrchestrationCommandIdConflictError
   | OrchestrationCommandPreviouslyRejectedError
   | OrchestrationProjectorDecodeError;
-
-export function toProjectorDecodeError(eventType: string) {
-  return (error: Schema.SchemaError): OrchestrationProjectorDecodeError =>
-    new OrchestrationProjectorDecodeError({
-      eventType,
-      issue: SchemaIssue.makeFormatterDefault()(error.issue),
-      cause: error,
-    });
-}

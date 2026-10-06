@@ -6,7 +6,6 @@ import type {
   ServerProviderAuth,
   ServerProviderModel,
 } from "@t3tools/contracts";
-import type * as EffectAcpSchema from "effect-acp/compat";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -49,14 +48,6 @@ export {
 // SCIENT-FORK:END
 
 // SCIENT-FORK:START
-import {
-  resolveCursorAcpBaseModelId,
-  resolveCursorAcpConfigUpdates,
-} from "../../scient/providerLifecycle/cursorConfigOptions.ts";
-export { resolveCursorAcpBaseModelId, resolveCursorAcpConfigUpdates };
-// SCIENT-FORK:END
-
-// SCIENT-FORK:START
 import { makeCursorCommandCatalog } from "../../scient/providerLifecycle/cursorCommandCatalog.ts";
 export { makeCursorCommandCatalog };
 // SCIENT-FORK:END
@@ -71,12 +62,6 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 });
 
 const CURSOR_SDK_CATALOG_TIMEOUT_MS = 15_000;
-
-export const CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES = {
-  _meta: {
-    parameterizedModelPicker: true,
-  },
-} satisfies NonNullable<EffectAcpSchema.InitializeRequest["clientCapabilities"]>;
 
 export function buildInitialCursorProviderSnapshot(
   cursorSettings: CursorSettings,

@@ -39,7 +39,7 @@ const projectHeader = (
 ): string | null => (value === undefined ? null : Option.getOrElse(decode(value), () => "other"));
 
 // Only closed scalar categories are emitted; arbitrary header, body and error values are excluded.
-export const reportInitialStaticHtmlFailure = (
+const reportInitialStaticHtmlFailure = (
   response: InitialResponse,
   phase: "body-read" | "assertion",
   decodedBody: string | undefined,

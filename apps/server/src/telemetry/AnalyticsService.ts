@@ -44,6 +44,5 @@ export { make };
 // SCIENT-FORK:END
 
 export const layer = Layer.effect(AnalyticsService, make);
-export const layerTest = AnalyticsService.layerTest;
 /** @public Service construction is part of the canonical Effect module API. */
 export const layerDisabled = AnalyticsService.layerDisabled;

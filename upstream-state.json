@@ -127,6 +127,15 @@
         "66f598c48ee968e27b1a53ed1316a3d98549fdcc"
       ],
       "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
+    },
+    {
+      "id": "scient-v2-reviewed-startup-capacity-repair",
+      "merge": "f835e5adf9b33725f20dcc92bc44c77ed0a8fcdc",
+      "parents": [
+        "7238163eabeb697959f87f7d071f19816530f050",
+        "b5467e986ca6bd7f84eb2fdf75d760d9e0d9c254"
+      ],
+      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
     }
   ]
 }

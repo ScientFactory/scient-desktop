@@ -245,18 +245,3 @@ const make = Effect.gen(function* () {
 });
 
 export const ScientForkCheckpointBaselineLive = Layer.effect(ScientForkCheckpointBaseline, make);
-
-export const testLayer = (
-  overrides?: Partial<ScientForkCheckpointBaselineShape>,
-): Layer.Layer<ScientForkCheckpointBaseline> =>
-  Layer.succeed(ScientForkCheckpointBaseline, {
-    isGitRepository: () => Effect.succeed(true),
-    hasCheckpoint: () => Effect.succeed(true),
-    workspaceExists: () => Effect.succeed(true),
-    resolveCheckpoint: () => Effect.succeed("a".repeat(40)),
-    copy: () => Effect.succeed(true),
-    capture: () => Effect.succeed(true),
-    verifyWorktree: () => Effect.succeed(true),
-    discard: () => Effect.void,
-    ...overrides,
-  });

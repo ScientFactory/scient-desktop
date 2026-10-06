@@ -55,8 +55,3 @@ export const insertImportTransfer = Effect.fn("insertImportTransfer")(function* 
     ON CONFLICT(thread_id) DO NOTHING
   `;
 });
-
-export {
-  readInheritedTurnIds,
-  toConversationImportMarker,
-} from "../legacy/LegacyConversationOriginReader.ts";

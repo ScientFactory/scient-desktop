@@ -19,32 +19,6 @@ export const rpcRequestDuration = Metric.timer("t3_rpc_request_duration", {
   description: "RPC request handling duration.",
 });
 
-// SCIENT-FORK:START — the fork keeps the V1 orchestration engine and its reactors
-// live alongside V2, so the V1 command and event metrics stay on the module.
-export const orchestrationCommandsTotal = Metric.counter("t3_orchestration_commands_total", {
-  description: "Total orchestration commands dispatched.",
-});
-
-export const orchestrationCommandDuration = Metric.timer("t3_orchestration_command_duration", {
-  description: "Orchestration command dispatch duration.",
-});
-
-export const orchestrationCommandAckDuration = Metric.timer(
-  "t3_orchestration_command_ack_duration",
-  {
-    description:
-      "Time from orchestration command dispatch to the first committed domain event emitted for that command.",
-  },
-);
-
-export const orchestrationEventsProcessedTotal = Metric.counter(
-  "t3_orchestration_events_processed_total",
-  {
-    description: "Total orchestration intent events processed by runtime reactors.",
-  },
-);
-// SCIENT-FORK:END
-
 export const orchestrationEffectClaimsTotal = Metric.counter(
   "t3_orchestration_effect_claims_total",
   {

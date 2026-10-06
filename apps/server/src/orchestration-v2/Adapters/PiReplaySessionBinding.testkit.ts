@@ -495,7 +495,7 @@ export function reconcilePiRecordedSchedules(input: {
 }
 
 /** Fresh-file entropy is fixed before execution; native allocation and validation still run. */
-export const PI_REPLAY_FRESH_FILE_ID = "00000000-0000-4000-8000-000000000000";
+const PI_REPLAY_FRESH_FILE_ID = "00000000-0000-4000-8000-000000000000";
 
 /** Independent declarations and observed stdio are separate proof inputs. */
 export function declarePiReplaySessionFiles(

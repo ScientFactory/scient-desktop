@@ -1706,10 +1706,3 @@ export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletion
     } satisfies AcpSessionRuntime.AcpSessionRuntime["Service"];
   },
 );
-
-export function promptResponseHasMissingXAiStopReason(
-  response: EffectAcpSchema.PromptResponse,
-): boolean {
-  const meta = response._meta;
-  return meta !== null && typeof meta === "object" && meta[xAiStopReasonMissingMetaKey] === true;
-}

@@ -102,8 +102,8 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
   }
 }
 
-// SCIENT-FORK:START — also used by the V1 Antigravity adapter.
-export function antigravityModelOptions(
+// SCIENT-FORK:START
+function antigravityModelOptions(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
 ) {
   const model = configOptions.find((option) => option.id === "model");
@@ -117,7 +117,7 @@ export function antigravityModelOptions(
  * account offers it, so T3 can pick a newer model than the one Google marks
  * current. Otherwise the agent's current selection stands.
  */
-export function resolveAntigravityModel(input: {
+function resolveAntigravityModel(input: {
   readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
   readonly model: string | null | undefined;
   readonly defaultModel?: string | undefined;

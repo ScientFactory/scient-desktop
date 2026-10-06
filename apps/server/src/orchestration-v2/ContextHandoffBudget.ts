@@ -28,10 +28,6 @@ export const handoffTokenCapConfig = Config.Int("T3CODE_CONTEXT_HANDOFF_TOKEN_CA
 export { hasScientContextHistory };
 // SCIENT-FORK:END
 
-// SCIENT-FORK:START — the Scient preset token-cap override lives in scient-fork/context.
-export { scientHandoffTokenCapOverride } from "./scient-fork/context/handoffBudget.ts";
-// SCIENT-FORK:END
-
 // Live reports belong to provider turns. Use only accepted root attempts whose
 // durable native identity matches this thread; row reuse must not revive old usage.
 export function latestNativeContextUsage(

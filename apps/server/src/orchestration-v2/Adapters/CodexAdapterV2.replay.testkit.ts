@@ -50,7 +50,7 @@ export const CODEX_TEST_RUNTIME_POLICY = ProviderAdapterV2RuntimePolicy.make({
   cwd: "/workspace",
 });
 
-export function makeCodexTestAppThread(input: {
+function makeCodexTestAppThread(input: {
   readonly threadId: ThreadId;
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly now: DateTime.Utc;
@@ -448,7 +448,7 @@ export const INTERRUPT_NATIVE_THREAD = "native-codex-interrupt-thread";
 
 export const INTERRUPT_NATIVE_TURN = "native-codex-interrupt-turn";
 
-export const INTERRUPT_COMMAND_ITEM = "exec-codex-interrupt-command";
+const INTERRUPT_COMMAND_ITEM = "exec-codex-interrupt-command";
 
 export const INTERRUPT_COMMAND = "bash -c 'sleep 30; echo SHOULD_NOT_FINISH_CMD_INTERRUPT_FIXTURE'";
 

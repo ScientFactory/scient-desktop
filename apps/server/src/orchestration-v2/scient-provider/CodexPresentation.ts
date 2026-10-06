@@ -52,7 +52,7 @@ export function codexCitationPresentation(
 }
 
 /** Diagnostics retain the rejection cause without logging native paths or payloads. */
-export function generatedImageImportFailureReason(cause: unknown): string {
+function generatedImageImportFailureReason(cause: unknown): string {
   const knownReasons: Readonly<Record<string, string>> = {
     "Generated image is not a regular file.": "not_regular_file",
     "Generated image is empty or exceeds the chat image size limit.": "invalid_size",

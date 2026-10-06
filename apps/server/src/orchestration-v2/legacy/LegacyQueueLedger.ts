@@ -8,7 +8,6 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { notifyQueue } from "../../scient/threadQueue/signals.ts";
 
 export class QueueError extends Schema.TaggedError<QueueError>()("QueueError", {
   message: Schema.String,
@@ -99,11 +98,10 @@ export const writeQueue = Effect.fn("ScientQueue.write")(function* (
   }
   yield* sql`INSERT INTO scient_thread_queue (thread_id, document, revision) VALUES (${threadId}, ${serialized}, ${document.revision + 1})
     ON CONFLICT(thread_id) DO UPDATE SET document = excluded.document, revision = excluded.revision`;
-  notifyQueue(sql, threadId);
   return { ...document, revision: document.revision + 1 };
 });
 
-/** Must share the caller's transaction: Stop revokes the old turn before waking the worker. */
+/** Keep legacy turn finalization and queue acknowledgement in the caller's transaction. */
 export const suspendQueue = Effect.fn("ScientQueue.suspend")(function* (
   threadId: ThreadId,
   current: QueueDocument,

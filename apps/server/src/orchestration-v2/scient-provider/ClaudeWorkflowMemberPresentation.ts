@@ -12,7 +12,7 @@ import { mergeSubagentPresentation } from "../Adapters/SubagentPresentation.ts";
 import type { ProviderAdapterV2Event } from "../ProviderAdapter.ts";
 
 /** Pure native workflow observation; the registry below owns updates and emission. */
-export function claudeWorkflowMemberObservation({
+function claudeWorkflowMemberObservation({
   entry,
   previous,
   coordinator,
@@ -53,7 +53,7 @@ export function claudeWorkflowMemberObservation({
 }
 
 /** Called only after the adapter accepts a changed observation. */
-export function claudeWorkflowMemberPresentation({
+function claudeWorkflowMemberPresentation({
   entry,
   previous,
   coordinator,

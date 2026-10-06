@@ -208,7 +208,7 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
 }
 
 // SCIENT-FORK:START — message and item clients share one raw-to-display citation projection.
-export function projectMessageForWire(
+function projectMessageForWire(
   message: OrchestrationV2ConversationMessage,
 ): OrchestrationV2ConversationMessage {
   if (message.role !== "assistant") return message;

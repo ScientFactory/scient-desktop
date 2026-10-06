@@ -108,7 +108,7 @@ const bounded = (value: string): string =>
   value.length <= SUMMARY_MAX_CHARS ? value : `${value.slice(0, SUMMARY_MAX_CHARS - 1)}…`;
 
 /** Nested `Task` sub-agents: Droid names the sub-agent type, or titles the call "Task". */
-export function isDroidNestedTaskToolCall(input: {
+function isDroidNestedTaskToolCall(input: {
   readonly title?: string | null | undefined;
   readonly rawInput?: unknown;
 }): boolean {

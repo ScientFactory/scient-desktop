@@ -17,8 +17,6 @@
  */
 import { INERT_TASK_TYPES, MONITOR_TASK_TYPES } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
 export type ThreadBackgroundLiveness = "working" | "monitoring" | null;
 
@@ -168,5 +166,3 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
     },
   };
 }
-
-export const layer = Layer.effect(ThreadBackgroundLivenessService, Effect.sync(make));

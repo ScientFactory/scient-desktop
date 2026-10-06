@@ -241,12 +241,3 @@ const make = Effect.gen(function* () {
 });
 
 export const ScientForkAttachmentCopierLive = Layer.effect(ScientForkAttachmentCopier, make);
-
-export const testLayer = (
-  overrides?: Partial<ScientForkAttachmentCopierShape>,
-): Layer.Layer<ScientForkAttachmentCopier> =>
-  Layer.succeed(ScientForkAttachmentCopier, {
-    copyAll: () => Effect.void,
-    checkSources: () => Effect.void,
-    ...overrides,
-  });
