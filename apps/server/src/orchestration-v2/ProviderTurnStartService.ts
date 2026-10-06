@@ -39,6 +39,9 @@ import {
   startFrozenConversationFork,
 } from "./scient-fork/PortableTurnStart.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — a pending start keeps its session out of idle release.
+import { reserveSessionForStartup } from "./scient-provider/StartupSessionHold.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — a Stop before native acceptance declines and captures the start.
 import {
   pendingStartCancellation,
@@ -647,6 +650,8 @@ export const layer: Layer.Layer<
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );
+      // SCIENT-FORK: reserved before the session is opened or reused, until this start ends.
+      yield* reserveSessionForStartup(providerSessions, providerSessionId);
       const sessionResult = yield* Effect.result(
         providerWork !== undefined
           ? Effect.gen(function* () {
@@ -1565,6 +1570,8 @@ export const layer: Layer.Layer<
     return ProviderTurnStartServiceV2.of({
       start: (input) =>
         start(input).pipe(
+          // SCIENT-FORK: the startup session reservation ends with this start.
+          Effect.scoped,
           Effect.mapError((cause) =>
             isProviderTurnStartError(cause)
               ? cause
