@@ -304,7 +304,6 @@ import {
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
-import type { PreviewStaticImageSurfaceDescriptor } from "../previewStaticImageSurface";
 import { pullRequestPanelContext } from "./pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
@@ -650,7 +649,6 @@ import { assetEnvironment } from "../state/assets";
 import { readPreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
-import { computeEnvironment } from "../state/compute";
 import { Button, InlineButton } from "./ui/button";
 import {
   AlertDialog,
@@ -688,16 +686,17 @@ import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   recallableComposerPrompt,
 } from "./chat/composerPromptHistory";
-import { closeComputeContext } from "~/scient/compute/computeContextCoordinator";
-import { useCancelComputeBatchRun } from "~/scient/compute/useCancelComputeBatchRun";
+// SCIENT-FORK:START — compute tab close and figure follower wiring.
 import {
-  computeFileContextId,
-  createComputeContextId,
-  useComputeContextStore,
-  type ComputeContextId,
-} from "~/scient/compute/computeContextStore";
-import { useComputeFilePresentationStore } from "~/scient/compute/computeFilePresentationStore";
-import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
+  useCloseComputeOwnedSurfaces,
+  useComputeSessionCommands,
+} from "~/scient/compute/useComputeOwnedSurfaces";
+import {
+  ScientComputeFigureFollower,
+  useOpenStaticArtifacts,
+} from "~/scient/compute/chatComputeFigureFollower";
+// SCIENT-FORK:END
+import { createComputeContextId } from "~/scient/compute/computeContextStore";
 import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
 
 const EMPTY_TURN_ITEMS: ReadonlyArray<OrchestrationV2TurnItem> = [];
@@ -794,11 +793,6 @@ const DevicePanel = lazy(() =>
   import("./device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
-const ComputeFigureFollower = lazy(() =>
-  import("../scient/compute/ComputeFigureFollower").then((module) => ({
-    default: module.ComputeFigureFollower,
-  })),
-);
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -1711,14 +1705,9 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
-  const cancelComputeBatchRun = useCancelComputeBatchRun();
-  const stopComputeSession = useAtomCommand(computeEnvironment.stopSession, {
-    reportFailure: false,
-  });
-  const getComputeSession = useAtomQueryRunner(computeEnvironment.session, {
-    reportFailure: false,
-    refresh: true,
-  });
+  // SCIENT-FORK:START — compute session commands used when compute-owned tabs close.
+  const computeSessionCommands = useComputeSessionCommands();
+  // SCIENT-FORK:END
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const serverConfigs = useServerConfigs();
@@ -2460,19 +2449,12 @@ function ChatViewContent(props: ChatViewProps) {
   const activePreviewMiniPlayer = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayer(state.byThreadKey, activeThreadRef),
   );
-  const openStaticArtifacts = useMemo(() => {
-    const bySurfaceId = new Map<string, PreviewStaticImageSurfaceDescriptor>();
-    for (const surface of rightPanelState.surfaces) {
-      if (surface.kind === "scient" && surface.module === "artifact") {
-        bySurfaceId.set(surface.artifact.surfaceId, surface.artifact);
-      }
-    }
-    if (activePreviewMiniPlayer?.content.kind === "static-artifact") {
-      const artifact = activePreviewMiniPlayer.content.artifact;
-      bySurfaceId.set(artifact.surfaceId, artifact);
-    }
-    return [...bySurfaceId.values()];
-  }, [activePreviewMiniPlayer, rightPanelState.surfaces]);
+  // SCIENT-FORK:START — static figures open in the panel or the floating preview.
+  const openStaticArtifacts = useOpenStaticArtifacts(
+    rightPanelState.surfaces,
+    activePreviewMiniPlayer,
+  );
+  // SCIENT-FORK:END
   const panelTerminalIds = useMemo(
     () =>
       new Set(
@@ -5965,59 +5947,13 @@ function ChatViewContent(props: ChatViewProps) {
       storeCloseTerminal,
     ],
   );
-  const computeContextIdForSurface = useCallback(
-    (surface: RightPanelSurface): ComputeContextId | null => {
-      if (surface.kind === "scient" && surface.module === "compute") {
-        return surface.contextId ?? null;
-      }
-      if (surface.kind === "file" && surface.attachment !== undefined) return null;
-      const relativePath =
-        surface.kind === "file"
-          ? surface.relativePath
-          : surface.kind === "scient" && surface.module === "file"
-            ? surface.path
-            : null;
-      if (
-        activeThreadRef === null ||
-        activeWorkspaceRoot === undefined ||
-        relativePath === null ||
-        computeSourceLanguageForPath(relativePath) === null
-      ) {
-        return null;
-      }
-      return computeFileContextId({
-        environmentId: activeThreadRef.environmentId,
-        threadId: activeThreadRef.threadId,
-        cwd: activeWorkspaceRoot,
-        relativePath,
-      });
-    },
-    [activeThreadRef, activeWorkspaceRoot],
-  );
-  const closeComputeOwnedSurfaces = useCallback(
-    async (surfaces: readonly RightPanelSurface[]) => {
-      const contextIds = [
-        ...new Set(
-          surfaces
-            .map(computeContextIdForSurface)
-            .filter((contextId): contextId is ComputeContextId => contextId !== null),
-        ),
-      ];
-      for (const contextId of contextIds) {
-        const result = await closeComputeContext({
-          contextId,
-          stopSession: stopComputeSession,
-          getSession: getComputeSession,
-          cancelBatchRun: cancelComputeBatchRun,
-        });
-        if (!result.closed) return false;
-        useComputeContextStore.getState().removeContext(contextId);
-        useComputeFilePresentationStore.getState().remove(contextId);
-      }
-      return true;
-    },
-    [computeContextIdForSurface, getComputeSession, stopComputeSession, cancelComputeBatchRun],
-  );
+  // SCIENT-FORK:START — compute-owned tabs stop their compute context before closing.
+  const closeComputeOwnedSurfaces = useCloseComputeOwnedSurfaces({
+    activeThreadRef,
+    activeWorkspaceRoot,
+    commands: computeSessionCommands,
+  });
+  // SCIENT-FORK:END
   const closeAfterAgentBrowserConfirmation = useCallback(
     (surfaces: readonly RightPanelSurface[], closeSurfaces: () => void) => {
       const message = agentControlledBrowserCloseConfirmation(
@@ -12088,16 +12024,13 @@ function ChatViewContent(props: ChatViewProps) {
               </div>
             </div>
 
-            {activeThreadRef && activeWorkspaceRoot && openStaticArtifacts.length > 0 ? (
-              <Suspense fallback={null}>
-                <ComputeFigureFollower
-                  artifacts={openStaticArtifacts}
-                  cwd={activeWorkspaceRoot}
-                  environmentId={activeThreadRef.environmentId}
-                  threadRef={activeThreadRef}
-                />
-              </Suspense>
-            ) : null}
+            {/* SCIENT-FORK:START — keeps open compute figures current. */}
+            <ScientComputeFigureFollower
+              activeThreadRef={activeThreadRef}
+              activeWorkspaceRoot={activeWorkspaceRoot}
+              openStaticArtifacts={openStaticArtifacts}
+            />
+            {/* SCIENT-FORK:END */}
 
             {activeThreadRef && activePreviewMiniPlayer && previewMiniPlayerVisible ? (
               <ThreadPreviewMiniPlayer
