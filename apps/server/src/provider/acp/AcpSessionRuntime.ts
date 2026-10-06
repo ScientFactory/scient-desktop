@@ -26,7 +26,6 @@ import * as EffectAcpClient from "effect-acp/client";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
-import type * as EffectAcpRpc from "effect-acp/rpc";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
@@ -49,6 +48,13 @@ import {
   type AcpSessionModeState,
   type AcpToolCallState,
 } from "./AcpRuntimeModel.ts";
+// SCIENT-FORK:START — confirmed config writes.
+import {
+  type AcpConfirmedConfigWrites,
+  makeAcpConfirmedConfigWrites,
+  setConfigOptionInventory,
+} from "./ScientAcpConfirmedConfigWrites.ts";
+// SCIENT-FORK:END
 
 const MAX_SHOWN_TOOL_CALL_IDS = 256;
 
@@ -1429,28 +1435,6 @@ interface AcpActivePrompt {
   readonly completed: Deferred.Deferred<void>;
 }
 
-// SCIENT-FORK:START — what a confirmed config write sees, in the order it
-// arrived from the agent.
-type ConfirmedConfigWriteEvent =
-  | { readonly _tag: "ResponseArrived" }
-  | {
-      readonly _tag: "RequestEnded";
-      readonly exit: Exit.Exit<
-        EffectAcpRpc.LenientSetSessionConfigOptionResponseData,
-        EffectAcpErrors.AcpError
-      >;
-    }
-  | {
-      readonly _tag: "Update";
-      readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
-    };
-interface ConfirmedConfigWrite {
-  readonly events: Queue.Queue<ConfirmedConfigWriteEvent>;
-  /** Set when its request is sent; its response is recognized by this id. */
-  requestId: string | undefined;
-}
-// SCIENT-FORK:END
-
 export const make = (
   options: AcpSessionRuntimeOptions,
 ): Effect.Effect<
@@ -1486,17 +1470,18 @@ export const make = (
       [],
     );
     const notificationSemaphore = yield* Semaphore.make(1);
-    // SCIENT-FORK:START — Confirmed config writes: each is fed its own response
-    // and the config updates in the order they arrived (see `confirmConfigWrite`).
-    // They run one at a time: an update names no request, so "the first update
-    // after my response" is this write's report only while no other write is in
-    // flight, and the request sent while a write is active is known to be its own.
-    const confirmsConfigWrites =
-      options.configOptionTransport !== undefined && options.configOptionTransport !== "request";
-    const configWriteSemaphore = yield* Semaphore.make(1);
-    let activeConfigWrite: ConfirmedConfigWrite | undefined;
-    /** Why the runtime was retired after a write the agent did not report. */
-    let unreportedConfigWrite: EffectAcpErrors.AcpRequestError | undefined;
+    // SCIENT-FORK:START — Confirmed config writes, fed their own response and the
+    // config updates in arrival order, live in their owned module.
+    const configWrites: AcpConfirmedConfigWrites = yield* makeAcpConfirmedConfigWrites({
+      configOptionTransport: options.configOptionTransport,
+      configOptionSettleTimeout: options.configOptionSettleTimeout,
+      configOptionsRef,
+      eventQueue,
+      setSessionConfigOption: (payload) => acp.agent.setSessionConfigOption(payload),
+      retireRuntime: (error) => retireRuntime(error),
+      formatValue: formatConfigOptionValue,
+      currentValueMatches: configOptionCurrentValueMatches,
+    });
     /** What the prompt being sent runs at the write; prompts are sent one at a time. */
     let promptSendHook: Effect.Effect<void> | undefined;
     /** Whether the active prompt's request has been handed to the writer. */
@@ -1882,13 +1867,7 @@ export const make = (
               promptSendHook = undefined;
               return hook ?? Effect.void;
             }
-            if (
-              request.method === "session/set_config_option" &&
-              activeConfigWrite !== undefined &&
-              activeConfigWrite.requestId === undefined
-            ) {
-              activeConfigWrite.requestId = String(request.requestId);
-            }
+            configWrites.requestSent(request);
             return Effect.void;
           }),
         // SCIENT-FORK:END
@@ -1914,12 +1893,7 @@ export const make = (
         // session-update handler below and before the answer reaches the
         // caller, so a response to another request (a running prompt's) is not
         // taken for this write's.
-        onResponse: (response: EffectAcpProtocol.AcpResponseArrival) =>
-          Effect.sync(() => {
-            if (activeConfigWrite?.requestId === String(response.requestId)) {
-              Queue.offerUnsafe(activeConfigWrite.events, { _tag: "ResponseArrived" });
-            }
-          }),
+        onResponse: configWrites.onResponse,
         // SCIENT-FORK:END
       }),
     ).pipe(Effect.provideService(Scope.Scope, runtimeScope));
@@ -1937,12 +1911,7 @@ export const make = (
         assistantItemRuntimeId,
         // SCIENT-FORK:START — a confirmed write is fed every stored update, in
         // the order updates arrive.
-        onConfigOptionsUpdate: (configOptions) =>
-          Effect.sync(() => {
-            if (activeConfigWrite) {
-              Queue.offerUnsafe(activeConfigWrite.events, { _tag: "Update", configOptions });
-            }
-          }),
+        onConfigOptionsUpdate: configWrites.onConfigOptionsUpdate,
         // SCIENT-FORK:END
         params: notification,
       });
@@ -2241,213 +2210,7 @@ export const make = (
         }),
       );
 
-    // SCIENT-FORK:START — An empty acknowledgement confirms the requested
-    // value, not an empty model inventory. A conforming answer carries the
-    // authoritative list; without one, a notification that arrived during the
-    // request wins over the locally applied value.
-    const applySetConfigOptionResponse = (
-      inventory: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
-      previousConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
-      configId: string,
-      value: string | boolean,
-      rawPayload: unknown,
-    ): Effect.Effect<ReadonlyArray<EffectAcpSchema.SessionConfigOption>> =>
-      Effect.gen(function* () {
-        const currentConfigOptions = yield* Ref.get(configOptionsRef);
-        const next =
-          inventory ??
-          (currentConfigOptions !== previousConfigOptions
-            ? currentConfigOptions
-            : currentConfigOptions.map((option): EffectAcpSchema.SessionConfigOption => {
-                if (option.id !== configId) return option;
-                if (option.type === "select" && typeof value === "string") {
-                  return { ...option, currentValue: value };
-                }
-                if (option.type === "boolean" && typeof value === "boolean") {
-                  return { ...option, currentValue: value };
-                }
-                return option;
-              }));
-        if (next === currentConfigOptions) return next;
-        yield* Ref.set(configOptionsRef, next);
-        yield* Queue.offer(eventQueue, {
-          _tag: "ConfigOptionsUpdated",
-          configOptions: next,
-          rawPayload,
-        });
-        return next;
-      });
-
-    /**
-     * Sends one confirmed write and settles it from what the agent reports.
-     *
-     * Droid answers `set_config_option` with `{}` and then publishes one
-     * `config_option_update` with the state it applied, for model, reasoning
-     * effort and autonomy writes alike (verified against Droid 0.183.0,
-     * 0.200.0, 0.213.0 and 0.230.0). So the first update that arrives after
-     * the write's response is its own: a matching value confirms, another
-     * value fails at once. The order is the arrival order on the wire (the
-     * response hook and the update handler both run in the reader), not the
-     * order in which this fiber resumes, so an update right behind the
-     * response counts.
-     *
-     * An update before the response is never this write's report (an earlier
-     * write's, or the agent's own change): it neither confirms nor fails the
-     * write. The response is recognized by the request's id, so the answer to
-     * another request (a running prompt's) is not taken for it. Without a
-     * response and a report after it, the write fails when the confirmation
-     * timeout ends.
-     *
-     * The connection stays usable only when the agent settled the write: it
-     * reported the applied value (the requested one or another), or refused
-     * the request with a JSON-RPC error. Any other end of a write that was
-     * sent (the timeout, an interruption, an answer that is not a valid one,
-     * any other failure) leaves the agent's settings unknown, and its late
-     * report would pass for the next write's. The runtime is retired then: the
-     * process is closed and nothing more is sent to it.
-     */
-    const confirmConfigWrite = (
-      requestPayload: EffectAcpSchema.SetSessionConfigOptionRequest,
-      previousConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
-      configId: string,
-      value: string | boolean,
-    ): Effect.Effect<
-      ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
-      EffectAcpErrors.AcpError
-    > =>
-      Effect.gen(function* () {
-        let outcome: "unknown" | "settled" | "retired" = "unknown";
-        const confirmApplied = (applied: ReadonlyArray<EffectAcpSchema.SessionConfigOption>) => {
-          outcome = "settled";
-          const option = findSessionConfigOption(applied, configId);
-          if (option !== undefined && configOptionCurrentValueMatches(option, value))
-            return Effect.succeed(applied);
-          const appliedValue = option?.currentValue ?? null;
-          return Effect.fail(
-            new EffectAcpErrors.AcpRequestError({
-              code: -32603,
-              errorMessage: `The agent applied ${configId} ${appliedValue === null ? "no value" : formatConfigOptionValue(appliedValue)} instead of ${formatConfigOptionValue(value)}.`,
-              data: { configId, requestedValue: value, appliedValue },
-            }),
-          );
-        };
-        const timeout = Duration.fromInputUnsafe(
-          options.configOptionSettleTimeout ?? Duration.seconds(5),
-        );
-        const write: ConfirmedConfigWrite = {
-          events: yield* Queue.unbounded<ConfirmedConfigWriteEvent>(),
-          requestId: undefined,
-        };
-        activeConfigWrite = write;
-        const change = `change of ${configId} to ${formatConfigOptionValue(value)}`;
-        const retireUnreported = (errorMessage: string) =>
-          Effect.gen(function* () {
-            const error = new EffectAcpErrors.AcpRequestError({
-              code: -32603,
-              errorMessage,
-              data: { configId, requestedValue: value },
-            });
-            outcome = "retired";
-            unreportedConfigWrite ??= error;
-            yield* retireRuntime(error);
-            return yield* error;
-          });
-        return yield* Effect.gen(function* () {
-          yield* acp.agent.setSessionConfigOption(requestPayload).pipe(
-            Effect.exit,
-            Effect.flatMap((exit) => Queue.offer(write.events, { _tag: "RequestEnded", exit })),
-            Effect.forkScoped,
-          );
-          const deadline = (yield* Clock.currentTimeMillis) + Duration.toMillis(timeout);
-          let responseArrived = false;
-          let response: EffectAcpRpc.LenientSetSessionConfigOptionResponseData | undefined;
-          let ownUpdate: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | undefined;
-          while (true) {
-            const reportedInventory = setConfigOptionInventory(response);
-            if (reportedInventory) {
-              // An authoritative response is the agent's report.
-              return yield* confirmApplied(
-                yield* applySetConfigOptionResponse(
-                  reportedInventory,
-                  previousConfigOptions,
-                  configId,
-                  value,
-                  response,
-                ),
-              );
-            }
-            if (response !== undefined && ownUpdate !== undefined)
-              return yield* confirmApplied(ownUpdate);
-            const now = yield* Clock.currentTimeMillis;
-            if (now >= deadline) {
-              const waited = `within ${Duration.toMillis(timeout) / 1000} s`;
-              return yield* retireUnreported(
-                responseArrived
-                  ? `The agent answered the ${change} but did not report the applied value ${waited}, so its session was closed.`
-                  : `The agent did not answer the ${change} ${waited}, so its session was closed.`,
-              );
-            }
-            const event = yield* Queue.take(write.events).pipe(
-              Effect.timeoutOption(Duration.millis(deadline - now)),
-            );
-            if (Option.isNone(event)) continue;
-            switch (event.value._tag) {
-              case "ResponseArrived":
-                responseArrived = true;
-                break;
-              case "RequestEnded": {
-                const ended = event.value.exit;
-                if (Exit.isFailure(ended)) {
-                  const error = Exit.findErrorOption(ended);
-                  // A JSON-RPC error response (`callRpc`) is the agent's refusal:
-                  // it applied nothing and reports nothing more.
-                  if (
-                    Option.isSome(error) &&
-                    error.value._tag === "AcpRequestError" &&
-                    error.value.operation === "receive-response"
-                  )
-                    outcome = "settled";
-                  // A success whose result does not decode is a defect, not an error.
-                  else if (
-                    Option.isNone(error) &&
-                    write.requestId !== undefined &&
-                    !Cause.hasInterrupts(ended.cause)
-                  )
-                    return yield* retireUnreported(
-                      `The agent's answer to the ${change} was not a valid one, so its session was closed.`,
-                    );
-                  return yield* Effect.failCause(ended.cause);
-                }
-                response = ended.value;
-                break;
-              }
-              case "Update":
-                if (responseArrived) ownUpdate ??= event.value.configOptions;
-                break;
-            }
-          }
-        }).pipe(
-          Effect.scoped,
-          Effect.onExit((exit) =>
-            Effect.gen(function* () {
-              if (activeConfigWrite === write) activeConfigWrite = undefined;
-              if (outcome !== "unknown" || write.requestId === undefined || Exit.isSuccess(exit))
-                return;
-              if (Cause.hasInterrupts(exit.cause))
-                return yield* retireUnreported(
-                  `The ${change} was interrupted before the agent reported the applied value, so its session was closed.`,
-                ).pipe(Effect.ignore);
-              // The connection failed under the write: its own error says why.
-              const error = Exit.findErrorOption(exit);
-              if (Option.isSome(error)) return yield* retireRuntime(error.value);
-              yield* retireUnreported(
-                `The ${change} ended without the agent's report, so its session was closed.`,
-              ).pipe(Effect.ignore);
-            }),
-          ),
-        );
-      });
-
+    // SCIENT-FORK:START — confirmed config writes run through their owned module.
     const writeConfigOption = (
       configId: string,
       value: string | boolean,
@@ -2484,7 +2247,7 @@ export const make = (
                 return runLoggedRequest(
                   "session/set_config_option",
                   requestPayload,
-                  confirmConfigWrite(requestPayload, configOptions, configId, value),
+                  configWrites.confirm(requestPayload, configOptions, configId, value),
                 ).pipe(
                   Effect.map(
                     (configOptions) =>
@@ -2500,7 +2263,7 @@ export const make = (
                 acp.agent.setSessionConfigOption(requestPayload),
               ).pipe(
                 Effect.flatMap((response) =>
-                  applySetConfigOptionResponse(
+                  configWrites.applyResponse(
                     setConfigOptionInventory(response),
                     configOptions,
                     configId,
@@ -2524,9 +2287,7 @@ export const make = (
       configId: string,
       value: string | boolean,
     ): Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError> =>
-      confirmsConfigWrites
-        ? configWriteSemaphore.withPermit(writeConfigOption(configId, value))
-        : writeConfigOption(configId, value);
+      configWrites.serialize(writeConfigOption(configId, value));
     // SCIENT-FORK:END
 
     const initializeOnce = Effect.gen(function* () {
@@ -3148,7 +2909,7 @@ export const make = (
               Fiber.join(activePrompt.fiber).pipe(
                 // SCIENT-FORK:START — the process was closed under this prompt:
                 // say why, not how it broke.
-                Effect.mapError((error) => unreportedConfigWrite ?? error),
+                Effect.mapError((error) => configWrites.unreported ?? error),
                 // SCIENT-FORK:END
                 Effect.catchCause((cause) =>
                   options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause)
@@ -3256,16 +3017,6 @@ export const layer = (
   EffectAcpErrors.AcpError,
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
 > => Layer.effect(AcpSessionRuntime, make(options));
-
-// SCIENT-FORK:START — The client normalizes both wire generations into the
-// compat inventory, preserving absent acknowledgements and authoritative [].
-const setConfigOptionInventory = (
-  response: EffectAcpRpc.LenientSetSessionConfigOptionResponseData | undefined,
-): ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined => {
-  if (response === undefined) return undefined;
-  return response.configOptions;
-};
-// SCIENT-FORK:END
 
 function sessionConfigOptionsFromSetup(
   response:
