@@ -45,7 +45,8 @@
     "packages/contracts/src/scientAnalysis.ts",
     "packages/contracts/src/scientCompute.ts",
     "renovate.json5",
-    "packages/contracts/src/scient/scientificRpcs.ts"
+    "packages/contracts/src/scient/scientificRpcs.ts",
+    "apps/server/src/scient/ScientServerLayers.ts"
   ],
   "analysisDiffSignals": [
     "@scientfactory/(analysis|compute|execution)",
@@ -112,7 +113,7 @@
     },
     {
       "path": "apps/server/src/server.ts",
-      "anchor": "AnalysisService",
+      "anchor": "ScientRouteServices.provideScientRouteServices",
       "purpose": "Provide analysis, compute, and execution services to the shared server layer."
     },
     {

@@ -26,7 +26,8 @@
     "packages/contracts/src/scientSkills.ts",
     "packages/contracts/src/scientThreadQueue.ts",
     "packages/scient-operations/src/operation.ts",
-    "packages/contracts/src/scient/skillRpcs.ts"
+    "packages/contracts/src/scient/skillRpcs.ts",
+    "apps/server/src/scient/ScientServerLayers.ts"
   ],
   "skillDiffSignals": [
     "@scientfactory/scient-skills",

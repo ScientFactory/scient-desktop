@@ -22,7 +22,8 @@
     "packages/client-runtime/src/state/scientLatexHttp.ts",
     "packages/contracts/src/scientLatex.ts",
     "packages/contracts/src/latexPdfBuild.ts",
-    "packages/contracts/src/scient/environmentHttpGroups.ts"
+    "packages/contracts/src/scient/environmentHttpGroups.ts",
+    "apps/server/src/scient/ScientServerLayers.ts"
   ],
   "latexDiffSignals": [
     "ScientLatex",
@@ -82,7 +83,7 @@
     },
     {
       "path": "apps/server/src/server.ts",
-      "anchor": "LatexBuildService",
+      "anchor": "ScientRouteServices.provideScientRouteServices",
       "purpose": "Provide the build coordinator and toolchain probe to the shared server layer."
     },
     {
