@@ -10,8 +10,10 @@ import type {
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
+  useSyncExternalStore,
   type Dispatch,
   type SetStateAction,
 } from "react";
@@ -22,6 +24,11 @@ import {
   type ScientForkSource,
 } from "~/components/chat/scient-fork/ScientForkWorkspaceModeDialog";
 import { resolveForkTargetAfterAttempt } from "~/components/ChatView.logic";
+import {
+  hasPendingForkPdfContinuity,
+  restoreForkPdfContinuity,
+  subscribeForkPdfContinuity,
+} from "~/components/scient-fork/forkViewContinuity";
 import { useScientThreadFork, type ForkSource } from "~/components/scient-fork/useScientThreadFork";
 import type { TimelineLatestRun } from "~/components/chat/MessagesTimeline.logic";
 import type { TimelineEntry } from "~/session-logic";
@@ -423,4 +430,30 @@ export function ScientChatForkDialog(input: {
       }}
     />
   );
+}
+
+/**
+ * A fork normally applies its PDF positions when it is created. If they are
+ * still waiting (for example the app reloaded before the fork's folder was
+ * known), hold that fork's panel until they are applied, because a PDF reader
+ * records its own position as soon as it opens. Other threads, and later
+ * folder changes, never hide or remount the panel.
+ */
+export function useForkPdfContinuityPending(
+  activeThreadRef: ScopedThreadRef | null,
+  activeWorkspaceRoot: string | undefined,
+): boolean {
+  const forkPdfContinuityPending = useSyncExternalStore(
+    subscribeForkPdfContinuity,
+    () => activeThreadRef !== null && hasPendingForkPdfContinuity(activeThreadRef),
+  );
+  useLayoutEffect(() => {
+    if (!activeThreadRef || !forkPdfContinuityPending || activeWorkspaceRoot === undefined) return;
+    restoreForkPdfContinuity({
+      environmentId: activeThreadRef.environmentId,
+      threadId: activeThreadRef.threadId,
+      destinationWorkspaceRoot: activeWorkspaceRoot,
+    });
+  }, [activeThreadRef, activeWorkspaceRoot, forkPdfContinuityPending]);
+  return forkPdfContinuityPending;
 }

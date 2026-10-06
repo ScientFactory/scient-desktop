@@ -172,7 +172,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
 import { flushSync } from "react-dom";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -229,6 +228,7 @@ import {
   useClearForkCommandOnThreadChange,
   useForkConversationCommand,
   useForkMessageCommands,
+  useForkPdfContinuityPending,
   useForkTimelineBaseline,
 } from "~/scient/fork/chatViewFork";
 // SCIENT-FORK:END
@@ -521,11 +521,6 @@ import { worktreeSetupAgentStarted } from "./chat/MessagesTimeline.logic";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
-import {
-  hasPendingForkPdfContinuity,
-  restoreForkPdfContinuity,
-  subscribeForkPdfContinuity,
-} from "./scient-fork/forkViewContinuity";
 import {
   PanelLayoutControls,
   RightPanelMaximizeControl,
@@ -4403,23 +4398,12 @@ function ChatViewContent(props: ChatViewProps) {
     activeWorkspaceRoot,
     runAfterPendingFileSave,
   );
-  // SCIENT-FORK: a fork normally applies its PDF positions when it is created.
-  // If they are still waiting (for example the app reloaded before the fork's
-  // folder was known), hold that fork's panel until they are applied, because
-  // a PDF reader records its own position as soon as it opens. Other threads,
-  // and later folder changes, never hide or remount the panel.
-  const forkPdfContinuityPending = useSyncExternalStore(
-    subscribeForkPdfContinuity,
-    () => activeThreadRef !== null && hasPendingForkPdfContinuity(activeThreadRef),
+  // SCIENT-FORK:START — hold a fork's panel until its pending PDF positions are applied.
+  const forkPdfContinuityPending = useForkPdfContinuityPending(
+    activeThreadRef,
+    activeWorkspaceRoot,
   );
-  useLayoutEffect(() => {
-    if (!activeThreadRef || !forkPdfContinuityPending || activeWorkspaceRoot === undefined) return;
-    restoreForkPdfContinuity({
-      environmentId: activeThreadRef.environmentId,
-      threadId: activeThreadRef.threadId,
-      destinationWorkspaceRoot: activeWorkspaceRoot,
-    });
-  }, [activeThreadRef, activeWorkspaceRoot, forkPdfContinuityPending]);
+  // SCIENT-FORK:END
   const activeTerminalTarget = useMemo(
     () =>
       hasProjectWorkspace
