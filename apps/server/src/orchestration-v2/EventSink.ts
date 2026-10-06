@@ -13,6 +13,7 @@ import {
   type PendingStartOwner,
 } from "./scient-fork/PendingStartOwner.ts";
 import { retainCommittedQuestionAnswers } from "./scient-fork/committedQuestionAnswers.ts";
+import { makeCommitPublication } from "./scient-fork/CommitPublication.ts";
 import { makeSourcePlanConsumer } from "./scient-fork/sourcePlanConsumption.ts";
 import {
   readCurrentRunningForkOwner,
@@ -98,30 +99,42 @@ export {
 } from "./scient-fork/PendingStartOwner.ts";
 // SCIENT-FORK:END
 
+/** SQL-only import work committed atomically with its events; must not re-enter the sink. */
+interface EventSinkTransactionHooks {
+  readonly transactionHooks?: {
+    readonly prepare: Effect.Effect<void, unknown>;
+    readonly finalize: Effect.Effect<void, unknown>;
+  };
+}
+
 export interface EventSinkV2Shape {
   readonly captureRunningForkText?: (input: {
     readonly owner: ProviderTextSnapshotOwner;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<ProviderTextSnapshotProjection, EventSinkV2Error | ProviderTextSnapshotError>;
 
-  readonly write: (input: {
-    readonly guardPendingUserInputCancellations?: boolean;
-    /** Internal history position/group repair; retain the payload current at commit. */
-    readonly guardTurnItemPositionRepairs?: boolean;
-    readonly guardLegacyCitationRepairs?: boolean;
-    readonly guardLegacyQuestionInsertions?: boolean;
-    readonly commandId?: CommandId;
-    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
-  }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
-  readonly writeWithEffects: (input: {
-    readonly guardPendingUserInputCancellations?: boolean;
-    readonly guardTurnItemPositionRepairs?: boolean;
-    readonly guardLegacyCitationRepairs?: boolean;
-    readonly guardLegacyQuestionInsertions?: boolean;
-    readonly commandId?: CommandId;
-    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
-    readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
-  }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
+  readonly write: (
+    input: EventSinkTransactionHooks & {
+      readonly guardPendingUserInputCancellations?: boolean;
+      /** Internal history position/group repair; retain the payload current at commit. */
+      readonly guardTurnItemPositionRepairs?: boolean;
+      readonly guardLegacyCitationRepairs?: boolean;
+      readonly guardLegacyQuestionInsertions?: boolean;
+      readonly commandId?: CommandId;
+      readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+    },
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
+  readonly writeWithEffects: (
+    input: EventSinkTransactionHooks & {
+      readonly guardPendingUserInputCancellations?: boolean;
+      readonly guardTurnItemPositionRepairs?: boolean;
+      readonly guardLegacyCitationRepairs?: boolean;
+      readonly guardLegacyQuestionInsertions?: boolean;
+      readonly commandId?: CommandId;
+      readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+      readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
+    },
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
   readonly writeIfRunCurrent: (input: {
     readonly pendingStartOwner?: PendingStartOwner & {
       readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
@@ -258,6 +271,7 @@ const baseLayer: Layer.Layer<
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const projectStore = yield* ProjectStore.ProjectStoreV2;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const commitAndPublish = yield* makeCommitPublication(sql);
     const liveEvents = yield* PubSub.unbounded<OrchestrationV2StoredEvent>();
     const liveEventsByType = new Map<
       OrchestrationV2DomainEvent["type"],
@@ -392,8 +406,9 @@ const baseLayer: Layer.Layer<
         "orchestration_v2.thread_id": input.events[0]?.threadId ?? null,
       });
 
-      const storedEvents = yield* sql.withTransaction(
+      return yield* commitAndPublish(
         Effect.gen(function* () {
+          if (input.transactionHooks !== undefined) yield* input.transactionHooks.prepare;
           // SCIENT-FORK:START — legacy V1 history repairs recheck ownership in this transaction.
           const legacyRepairs = applyLegacyHistoryRepairGuards(sql, input, input.events);
           const positionGuarded = legacyRepairs === undefined ? input.events : yield* legacyRepairs;
@@ -409,15 +424,18 @@ const baseLayer: Layer.Layer<
           });
           yield* applyStoredEvents(committed);
           yield* effectOutbox.enqueue(input.effects);
+          if (input.transactionHooks !== undefined) yield* input.transactionHooks.finalize;
           return committed;
         }),
+        (storedEvents) =>
+          Effect.gen(function* () {
+            yield* eventStore.publishCommitted(storedEvents);
+            yield* publishLiveEvents(storedEvents);
+            if (input.effects.length > 0) {
+              yield* effectOutbox.notifyAvailable(input.effects.length);
+            }
+          }),
       );
-      if (input.effects.length > 0) {
-        yield* effectOutbox.notifyAvailable(input.effects.length);
-      }
-      yield* eventStore.publishCommitted(storedEvents);
-      yield* publishLiveEvents(storedEvents);
-      return storedEvents;
     });
 
     const writeIfRunCurrentEffect = Effect.fn("orchestrationV2.EventSink.writeIfRunCurrent")(
@@ -429,7 +447,7 @@ const baseLayer: Layer.Layer<
           "orchestration_v2.thread_id": input.threadId,
         });
 
-        const result = yield* sql.withTransaction(
+        return yield* commitAndPublish(
           Effect.gen(function* () {
             const rows = yield* sql<{
               readonly status: string;
@@ -498,14 +516,19 @@ const baseLayer: Layer.Layer<
               yield* recordNativeModelContextWindow(sql, capacityOwner, capacity);
             return { committed: true as const, storedEvents };
           }),
+          (result) =>
+            Effect.gen(function* () {
+              if (result.committed) {
+                yield* eventStore.publishCommitted(result.storedEvents);
+                yield* publishLiveEvents(result.storedEvents);
+                if (
+                  input.pendingStartOwner !== undefined &&
+                  input.pendingStartOwner.effects.length > 0
+                )
+                  yield* effectOutbox.notifyAvailable(input.pendingStartOwner.effects.length);
+              }
+            }),
         );
-        if (result.committed) {
-          yield* eventStore.publishCommitted(result.storedEvents);
-          yield* publishLiveEvents(result.storedEvents);
-          if (input.pendingStartOwner !== undefined && input.pendingStartOwner.effects.length > 0)
-            yield* effectOutbox.notifyAvailable(input.pendingStartOwner.effects.length);
-        }
-        return result;
       },
     );
 
@@ -521,7 +544,7 @@ const baseLayer: Layer.Layer<
         "orchestration_v2.expected_last_run_ordinal": input.expectedLastRunOrdinal,
       });
 
-      const result = yield* sql.withTransaction(
+      return yield* commitAndPublish(
         Effect.gen(function* () {
           const rows = yield* sql<{
             readonly active_attempt_id: string | null;
@@ -561,12 +584,14 @@ const baseLayer: Layer.Layer<
           yield* applyStoredEvents(storedEvents);
           return { committed: true as const, storedEvents };
         }),
+        (result) =>
+          Effect.gen(function* () {
+            if (result.committed) {
+              yield* eventStore.publishCommitted(result.storedEvents);
+              yield* publishLiveEvents(result.storedEvents);
+            }
+          }),
       );
-      if (result.committed) {
-        yield* eventStore.publishCommitted(result.storedEvents);
-        yield* publishLiveEvents(result.storedEvents);
-      }
-      return result;
     });
 
     const existingCommandResult = (commandId: CommandId) =>
@@ -592,43 +617,38 @@ const baseLayer: Layer.Layer<
     const captureRunningForkText = Effect.fn("EventSink.captureRunningForkText")(function* (
       input: Parameters<NonNullable<EventSinkV2Shape["captureRunningForkText"]>>[0],
     ) {
-      const result = yield* sql
-        .withTransaction(
+      const result = yield* commitAndPublish(
+        Effect.gen(function* () {
+          yield* readRunningForkOwner(input.owner);
+          const normalized = yield* normalizeEvents(input.events);
+          const storedEvents = yield* eventStore.append({ events: normalized });
+          yield* applyStoredEvents(storedEvents);
+          const projection = yield* readRunningForkOwner(input.owner);
+          const sourceSequence = yield* eventStore.latestSequence({
+            threadId: input.owner.threadId,
+          });
+          const project = yield* projectStore.get(projection.thread.projectId);
+          if (Option.isNone(project))
+            return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
+          return {
+            projection,
+            sourceSequence,
+            storedEvents,
+            workspaceRoot: project.value.workspaceRoot,
+          };
+        }),
+        (committed) =>
           Effect.gen(function* () {
-            yield* readRunningForkOwner(input.owner);
-            const normalized = yield* normalizeEvents(input.events);
-            const storedEvents = yield* eventStore.append({ events: normalized });
-            yield* applyStoredEvents(storedEvents);
-            const projection = yield* readRunningForkOwner(input.owner);
-            const sourceSequence = yield* eventStore.latestSequence({
-              threadId: input.owner.threadId,
-            });
-            const project = yield* projectStore.get(projection.thread.projectId);
-            if (Option.isNone(project))
-              return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
-            return {
-              projection,
-              sourceSequence,
-              storedEvents,
-              workspaceRoot: project.value.workspaceRoot,
-            };
+            yield* eventStore.publishCommitted(committed.storedEvents);
+            yield* publishLiveEvents(committed.storedEvents);
           }),
-        )
-        .pipe(
-          Effect.mapError((cause) =>
-            Schema.is(ProviderTextSnapshotError)(cause)
-              ? cause
-              : new EventSinkWriteError({ eventCount: input.events.length, cause }),
-          ),
-        );
-      yield* eventStore
-        .publishCommitted(result.storedEvents)
-        .pipe(
-          Effect.mapError(
-            (cause) => new EventSinkWriteError({ eventCount: input.events.length, cause }),
-          ),
-        );
-      yield* publishLiveEvents(result.storedEvents);
+      ).pipe(
+        Effect.mapError((cause) =>
+          Schema.is(ProviderTextSnapshotError)(cause)
+            ? cause
+            : new EventSinkWriteError({ eventCount: input.events.length, cause }),
+        ),
+      );
       return {
         projection: result.projection,
         sourceSequence: result.sourceSequence,
@@ -639,7 +659,7 @@ const baseLayer: Layer.Layer<
     const commitCommandEffect = Effect.fn("orchestrationV2.EventSink.commitCommand")(function* (
       input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
     ) {
-      const result = yield* sql.withTransaction(
+      const result = yield* commitAndPublish(
         Effect.gen(function* () {
           const reserved = yield* commandReceipts.insertIfAbsent({
             commandId: input.commandId,
@@ -725,15 +745,18 @@ const baseLayer: Layer.Layer<
                 });
           return { receipt, storedEvents, committed: true as const, cancelledEffectIds };
         }),
+        (committed) =>
+          Effect.gen(function* () {
+            if (committed.committed) {
+              yield* eventStore.publishCommitted(committed.storedEvents);
+              yield* publishLiveEvents(committed.storedEvents);
+            }
+            yield* effectOutbox.signalCancellations(committed.cancelledEffectIds);
+            if (committed.committed && input.effects.length > 0) {
+              yield* effectOutbox.notifyAvailable(input.effects.length);
+            }
+          }),
       );
-      yield* effectOutbox.signalCancellations(result.cancelledEffectIds);
-      if (result.committed && input.effects.length > 0) {
-        yield* effectOutbox.notifyAvailable(input.effects.length);
-      }
-      if (result.committed) {
-        yield* eventStore.publishCommitted(result.storedEvents);
-        yield* publishLiveEvents(result.storedEvents);
-      }
       return {
         receipt: result.receipt,
         storedEvents: result.storedEvents,
@@ -780,7 +803,7 @@ const baseLayer: Layer.Layer<
 
     const commitProjectCommandEffect = Effect.fn("orchestrationV2.EventSink.commitProjectCommand")(
       function* (input: Parameters<EventSinkV2Shape["commitProjectCommand"]>[0]) {
-        const result = yield* sql.withTransaction(
+        const result = yield* commitAndPublish(
           Effect.gen(function* () {
             const reserved: CommandReceiptStore.ProjectCommandReceiptV2 = {
               commandId: input.commandId,
@@ -800,10 +823,11 @@ const baseLayer: Layer.Layer<
             yield* commandReceipts.upsert(receipt);
             return { receipt, event };
           }),
+          (committed) =>
+            committed.event === undefined
+              ? Effect.void
+              : eventStore.publishCommitted([committed.event]),
         );
-        if (result.event !== undefined) {
-          yield* eventStore.publishCommitted([result.event]);
-        }
         return { receipt: result.receipt, committed: result.event !== undefined };
       },
     );

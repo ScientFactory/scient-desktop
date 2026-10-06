@@ -691,13 +691,15 @@ const make = Effect.gen(function* () {
           payload: thread,
         },
       ];
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          yield* prepareLegacyHistory(sql, thread.id);
-          yield* Effect.forEach(
-            previews,
-            (message) =>
-              sql`
+      yield* eventSink.write({
+        events,
+        transactionHooks: {
+          prepare: Effect.gen(function* () {
+            yield* prepareLegacyHistory(sql, thread.id);
+            yield* Effect.forEach(
+              previews,
+              (message) =>
+                sql`
                 INSERT INTO orchestration_v2_turn_item_positions (
                   thread_id,
                   turn_item_id,
@@ -710,10 +712,10 @@ const make = Effect.gen(function* () {
                 )
                 ON CONFLICT(thread_id, turn_item_id) DO NOTHING
               `,
-            { discard: true },
-          );
-          yield* eventSink.write({ events });
-          yield* sql`
+              { discard: true },
+            );
+          }),
+          finalize: sql`
             INSERT INTO orchestration_v2_legacy_imports (
               thread_id,
               source_updated_at,
@@ -731,9 +733,9 @@ const make = Effect.gen(function* () {
               NULL
             )
             ON CONFLICT(thread_id) DO NOTHING
-          `;
-        }),
-      );
+          `.pipe(Effect.asVoid),
+        },
+      });
       importedThreadCount += 1;
       importedMessageCount += previews.length;
     }
