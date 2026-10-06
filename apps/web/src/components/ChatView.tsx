@@ -203,8 +203,6 @@ import {
   parseStandaloneComposerSlashCommand,
 } from "../composer-logic";
 import {
-  derivePendingApprovals,
-  derivePendingUserInputs,
   derivePhase,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   selectHandoffImageResources,
@@ -385,6 +383,8 @@ import {
   ScientRevertDialogDiagnostics,
   useFileHistoryIssue,
 } from "../scient/chat/ScientRevertDialogDiagnostics";
+// per-request response errors.
+import { useRequestResponseErrors } from "../scient/chat/useRequestResponseErrors";
 // token-limit stop notice.
 import { tokenLimitBannerItems, useTokenLimitNotice } from "../scient/chat/tokenLimitNotice";
 // SCIENT-FORK:END
@@ -3422,35 +3422,12 @@ function ChatViewContent(props: ChatViewProps) {
       }),
     [serverProjection?.subagents, serverProjection?.turnItems, serverProjection?.visibleTurnItems],
   );
-  const [requestResponseErrors, setRequestResponseErrors] = useState<Record<string, string>>({});
-  const setRequestResponseError = useCallback(
-    (requestId: RuntimeRequestId, message: string) => {
-      const key = JSON.stringify([environmentId, activeThreadId, requestId]);
-      setRequestResponseErrors((errors) => ({ ...errors, [key]: message }));
-    },
-    [activeThreadId, environmentId],
-  );
   // SCIENT-FORK:START — a failed response stays visible on the request it
   // belongs to, so the composer can explain the failure without a global
-  // thread error. Upstream reads request state straight off the projection;
-  // the fork layers this local shadow on top.
-  const { approvals: pendingApprovals, userInputs: pendingUserInputs } = useMemo(() => {
-    const withLocalError = <T extends { requestId: RuntimeRequestId }>(request: T) => {
-      const responseError =
-        requestResponseErrors[JSON.stringify([environmentId, activeThreadId, request.requestId])];
-      return responseError ? { ...request, responseError } : request;
-    };
-    return {
-      approvals: derivePendingApprovals(pendingRequestModel.approvals).map(withLocalError),
-      userInputs: derivePendingUserInputs(pendingRequestModel.userInputs).map(withLocalError),
-    };
-  }, [
-    pendingRequestModel.approvals,
-    pendingRequestModel.userInputs,
-    requestResponseErrors,
-    environmentId,
-    activeThreadId,
-  ]);
+  // thread error.
+  const { setRequestResponseError, pendingApprovals, pendingUserInputs } = useRequestResponseErrors(
+    { environmentId, activeThreadId, pendingRequestModel },
+  );
   // SCIENT-FORK:END
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const activePendingRequestKey = JSON.stringify([
