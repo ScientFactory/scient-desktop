@@ -470,10 +470,10 @@ function projectDirectoryFailureContext(
       return unexpectedCompatibilityError(error);
   }
 }
-const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // SCIENT-FORK:START — provider-status coalescing lives in scient/providerLifecycle.
-export { coalesceProviderStatusUpdates } from "./scient/providerLifecycle/ProviderStatusCoalescing.ts";
+import { coalesceProviderStatusUpdates } from "./scient/providerLifecycle/ProviderStatusCoalescing.ts";
+export { coalesceProviderStatusUpdates };
 // SCIENT-FORK:END
 
 const ServerWsRpcGroup = WsRpcGroup;
@@ -2794,7 +2794,12 @@ const makeWsRpcLayer = (
           providerConnectionManager,
           providerRuntimeManager,
         }),
-        ...makeCustomModelRpcHandlers({ serverSettings, providerInstances, config }),
+        ...makeCustomModelRpcHandlers({
+          observeRpcEffect,
+          serverSettings,
+          providerInstances,
+          config,
+        }),
         ...makeSkillRpcHandlers({
           observeRpcEffect,
           threadManagement,
@@ -3834,7 +3839,7 @@ const makeWsRpcLayer = (
                 // still pairs up and reaches the client.
                 Stream.concat(
                   Stream.fromEffect(providerRegistry.getProviders),
-                  providerRegistry.streamChanges,
+                  coalesceProviderStatusUpdates(providerRegistry.streamChanges),
                 ),
                 usageLimitSources.streamChanges.pipe(
                   // Quota updates already have their own stream. Republish the model
@@ -3864,7 +3869,6 @@ const makeWsRpcLayer = (
                   type: "providerStatuses" as const,
                   payload: { providers },
                 })),
-                Stream.debounce(Duration.millis(PROVIDER_STATUS_DEBOUNCE_MS)),
               );
               // The only source of published themes: the stream emits the
               // current set before any change, so the snapshot carrying it too
