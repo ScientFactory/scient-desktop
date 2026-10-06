@@ -10,16 +10,12 @@ import type {
 } from "@t3tools/contracts";
 
 import * as Config from "effect/Config";
-import * as Schema from "effect/Schema";
-
-const isImportedActivity = Schema.is(
-  Schema.Struct({
-    kind: Schema.String,
-    summary: Schema.String,
-    tone: Schema.String,
-    payload: Schema.Unknown,
-  }),
-);
+import {
+  hasScientContextHistory,
+  historicalAttachmentReferences,
+  partialSnapshotText,
+  scientHistoricalItemText,
+} from "./scient-fork/context/historicalItems.ts";
 
 export const DEFAULT_HANDOFF_TOKEN_CAP = 16_000;
 const HANDOFF_BYTE_CAP = 64_000;
@@ -28,25 +24,9 @@ export const handoffTokenCapConfig = Config.Int("T3CODE_CONTEXT_HANDOFF_TOKEN_CA
   Config.map((value) => Math.max(1_024, Math.min(HANDOFF_BYTE_CAP, value))),
 );
 
-/** Only canonical imported/forked history inherits Scient's retained-context policy. */
-export function hasScientContextHistory(
-  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "contextTransfers">,
-): boolean {
-  const { thread } = projection;
-  return (
-    thread.historyOrigin === "v1_import" ||
-    thread.historyOrigin === "conversation_import" ||
-    thread.historyOrigin === "scient_fork" ||
-    thread.conversationImport != null ||
-    thread.forkLineage != null ||
-    thread.conversationFork != null ||
-    projection.contextTransfers.some(
-      (transfer) =>
-        transfer.targetThreadId === thread.id &&
-        (transfer.type === "fork" || transfer.type === "merge_back"),
-    )
-  );
-}
+// SCIENT-FORK:START — Scient handoff policy choice lives in scient-fork/context.
+export { hasScientContextHistory };
+// SCIENT-FORK:END
 
 // SCIENT-FORK:START — the Scient preset token-cap override lives in scient-fork/context.
 export { scientHandoffTokenCapOverride } from "./scient-fork/context/handoffBudget.ts";
@@ -174,26 +154,6 @@ export function handoffBudget(input: {
   );
 }
 
-/** Grouping is optional; importer identities and exact frozen copies own inert text. */
-function hasPortableArtifactOwner(item: OrchestrationV2TurnItem): boolean {
-  return (
-    item.historyTurnId !== undefined ||
-    item.inheritedFrom !== undefined ||
-    item.id.startsWith("migration:v1:history:") ||
-    (item.id.startsWith("server:conversation-import:") && item.id.includes(":item:"))
-  );
-}
-
-function hasArtifactExecutionAuthority(item: OrchestrationV2TurnItem): boolean {
-  return (
-    item.runId !== null ||
-    item.nodeId !== null ||
-    item.providerThreadId !== null ||
-    item.providerTurnId !== null ||
-    item.nativeItemRef !== null
-  );
-}
-
 export function historicalMessage(
   item: OrchestrationV2TurnItem,
 ): OrchestrationV2HistoricalMessage | null {
@@ -202,37 +162,9 @@ export function historicalMessage(
     case "user_message":
     case "assistant_message":
       text = item.text;
-      if ((item.attachments?.length ?? 0) > 0) {
-        const references = item.attachments!.map((attachment) => ({
-          id: attachment.id,
-          name: attachment.name,
-          mimeType: attachment.mimeType,
-          contentReattached: false,
-          ...(attachment.type === "image" &&
-          "source" in attachment &&
-          attachment.source?.kind === "snap-shot"
-            ? { capturedWindow: true }
-            : {}),
-        }));
-        text += `\nAttachment references (bytes not replayed): ${JSON.stringify(references)}`;
-      }
-      break;
-    case "reasoning":
-      // Imports and exact forks freeze visible text without retaining execution authority.
-      if (hasArtifactExecutionAuthority(item) || !hasPortableArtifactOwner(item)) return null;
-      text = item.text;
-      break;
-    case "dynamic_tool":
-      if (hasArtifactExecutionAuthority(item)) return null;
-      if (hasPortableArtifactOwner(item) && isImportedActivity(item.input)) {
-        text = `${item.input.summary}\n${JSON.stringify(item.input.payload)}`;
-      } else if (item.inheritedFrom?.runId != null) {
-        text = [
-          `Tool: ${item.toolName}`,
-          `Input: ${JSON.stringify(item.input)}`,
-          `Output: ${typeof item.output === "string" ? item.output : JSON.stringify(item.output)}`,
-        ].join("\n");
-      } else return null;
+      // SCIENT-FORK:START — attachment descriptors; bytes are not replayed.
+      text += historicalAttachmentReferences(item);
+      // SCIENT-FORK:END
       break;
     case "command_execution":
       text = [
@@ -253,45 +185,22 @@ export function historicalMessage(
     case "proposed_plan":
       text = item.markdown;
       break;
+    // SCIENT-FORK:START — reasoning, tool and answer items of imported/forked history.
+    case "reasoning":
+    case "dynamic_tool":
     case "user_input_request": {
-      // Message-mode replies already have an ordinary user message. A native
-      // callback reply only exists on this durable item, and is inert history.
-      const answer = item.questionAnswer;
-      if (item.status !== "completed" || answer === undefined || item.responseMode === "message")
-        return null;
-      text = [
-        "Submitted answers to historical questions:",
-        ...Object.entries(answer.answers).map(([id, value]) => {
-          const question =
-            answer.questionTextById?.[id] ??
-            item.questions.find((candidate) => candidate.id === id)?.question ??
-            id;
-          const attachments = (answer.attachmentsByQuestionId[id] ?? []).map((attachment) => ({
-            id: attachment.id,
-            name: attachment.name,
-            mimeType: attachment.mimeType,
-            contentReattached: false,
-          }));
-          return [
-            `Question: ${question}`,
-            `Answer: ${typeof value === "string" ? value : JSON.stringify(value)}`,
-            ...(attachments.length === 0
-              ? []
-              : [`Attachment references (bytes not replayed): ${JSON.stringify(attachments)}`]),
-          ].join("\n");
-        }),
-      ].join("\n\n");
+      const scientText = scientHistoricalItemText(item);
+      if (scientText === null) return null;
+      text = scientText;
       break;
     }
+    // SCIENT-FORK:END
     default:
       return null;
   }
-  if (
-    item.runId === null &&
-    item.inheritedFrom?.status === "running" &&
-    item.type !== "user_message"
-  )
-    text = `Partial snapshot of unfinished activity at the fork boundary; this is not a completed result.\n${text}`;
+  // SCIENT-FORK:START — label activity copied from an unfinished fork boundary.
+  text = partialSnapshotText(item, text);
+  // SCIENT-FORK:END
   return {
     role: item.type === "user_message" || item.type === "user_input_request" ? "user" : "assistant",
     text,
