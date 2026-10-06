@@ -265,12 +265,9 @@ import {
 import { makeCustomModelRpcHandlers } from "./scient/providerLifecycle/CustomModelRpcHandlers.ts";
 import { workspaceEntryDisposition } from "./scient/workspace/WorkspaceEntryPolicy.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
-import { publishBrowserPdfExport } from "./scient/documentArtifacts/BrowserPdfExportPublication.ts";
-import { publishCapturedDocumentPdf } from "./scient/documentExport/DocumentPdfPublication.ts";
-import { prepareMarkdownPdf } from "./scient/documentExport/MarkdownPdfPreparation.ts";
-import { prepareConversationPdf } from "./scient/documentExport/ConversationPdfPreparation.ts";
-import { removeDocumentCapture } from "./scient/documentExport/DocumentCapture.ts";
 import { ConversationExportService } from "./scient/conversationExport/ConversationExportService.ts";
+import { makeDocumentPdfRpcHandlers } from "./scient/documentExport/DocumentPdfRpcHandlers.ts";
+import { makeFileOpeningRpcHandlers } from "./scient/fileOpening/FileOpeningRpcHandlers.ts";
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
 import {
@@ -283,11 +280,6 @@ import * as ComputeSessionService from "./scient/compute/ComputeSessionService.t
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
 import { makeSkillRpcHandlers } from "./scient/skills/SkillRpcHandlers.ts";
 import { makeVoiceTranscriptCorrection } from "./scient/voice/VoiceTranscriptCorrection.ts";
-import {
-  prepareEnvironmentFileOpen,
-  watchEnvironmentFile,
-} from "./scient/fileOpening/EnvironmentFileOpen.ts";
-import { resolveEnvironmentFileLink } from "./scient/fileOpening/EnvironmentFileLinkResolve.ts";
 import * as NewProject from "./project/NewProject.ts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -3537,57 +3529,14 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
-        [WS_METHODS.filesystemPrepareFileOpen]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.filesystemPrepareFileOpen,
-            prepareEnvironmentFileOpen(input),
-            { "rpc.aggregate": "workspace" },
-          ),
-        [WS_METHODS.filesystemResolveFileLink]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.filesystemResolveFileLink,
-            resolveEnvironmentFileLink(input),
-            { "rpc.aggregate": "workspace" },
-          ),
-        [WS_METHODS.filesystemSubscribeFileChanges]: (input) =>
-          observeRpcStream(WS_METHODS.filesystemSubscribeFileChanges, watchEnvironmentFile(input), {
-            "rpc.aggregate": "workspace",
-          }),
-        [WS_METHODS.documentsPublishBrowserPdfExport]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.documentsPublishBrowserPdfExport,
-            publishBrowserPdfExport(generatedDocuments, input),
-            { "rpc.aggregate": "documents" },
-          ),
-        [WS_METHODS.documentsPrepareMarkdownPdf]: (input) =>
-          observeRpcEffect(WS_METHODS.documentsPrepareMarkdownPdf, prepareMarkdownPdf(input), {
-            "rpc.aggregate": "documents",
-          }),
-        [WS_METHODS.documentsPrepareConversationPdf]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.documentsPrepareConversationPdf,
-            prepareConversationPdf(input).pipe(
-              Effect.provideService(ConversationExportService, conversationExports),
-            ),
-            { "rpc.aggregate": "documents" },
-          ),
-        [WS_METHODS.documentsPublishDocumentPdf]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.documentsPublishDocumentPdf,
-            publishCapturedDocumentPdf(input).pipe(
-              Effect.provideService(
-                GeneratedDocumentStore.GeneratedDocumentStore,
-                generatedDocuments,
-              ),
-            ),
-            { "rpc.aggregate": "documents" },
-          ),
-        [WS_METHODS.documentsReleaseDocumentPdf]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.documentsReleaseDocumentPdf,
-            removeDocumentCapture(input.captureId),
-            { "rpc.aggregate": "documents" },
-          ),
+        // SCIENT-FORK:START — Scient file opening and document PDF handlers.
+        ...makeFileOpeningRpcHandlers({ observeRpcEffect, observeRpcStream }),
+        ...makeDocumentPdfRpcHandlers({
+          observeRpcEffect,
+          generatedDocuments,
+          conversationExports,
+        }),
+        // SCIENT-FORK:END
         [WS_METHODS.attachmentsCreateUploadUrl]: (input) =>
           observeRpcEffect(WS_METHODS.attachmentsCreateUploadUrl, issueAttachmentUploadUrl(input), {
             "rpc.aggregate": "workspace",
