@@ -18,6 +18,7 @@ import {
   scientBrowseKeyDownCapture,
   useScientAddProjectBrowseScope,
   useScientBrowseHighlight,
+  useScientProjectFolderActions,
 } from "~/scient/commandPalette/scientCommandPalette";
 // SCIENT-FORK:END
 import {
@@ -98,7 +99,6 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { useProjectFolderDrop } from "../hooks/useProjectFolderDrop";
 import { useProjectOpening } from "../hooks/useProjectOpening";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
@@ -138,7 +138,6 @@ import {
 } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
-import { getAvailableNewFolderName, getAvailableNewProjectPath } from "../lib/projectEntry";
 import {
   getNewThreadNavigationIntentCoordinator,
   type NewThreadNavigationIntent,
@@ -264,12 +263,6 @@ function getEnvironmentBrowsePlatform(os: string | null | undefined): string {
     return "Linux";
   }
   return typeof navigator === "undefined" ? "" : navigator.platform;
-}
-
-function isMatchingLocalPlatform(environmentPlatform: string, browserPlatform: string): boolean {
-  if (environmentPlatform === "MacIntel") return isMacPlatform(browserPlatform);
-  if (environmentPlatform === "Win32") return isWindowsPlatform(browserPlatform);
-  return environmentPlatform === "Linux" && /linux/u.test(browserPlatform.toLowerCase());
 }
 
 interface AddProjectEnvironmentOption {
@@ -3264,12 +3257,6 @@ function OpenCommandPaletteDialog(props: {
       (browseEnvironmentIsDesktopLocal && browseDesktopInstanceId !== null)) &&
     typeof window !== "undefined" &&
     window.desktopBridge !== undefined;
-  const canDropProjectFolder =
-    canOpenProjectFromFileManager &&
-    !isCloneDestinationStep &&
-    browseEnvironmentId === primaryEnvironmentId &&
-    isMatchingLocalPlatform(browseEnvironmentPlatform, navigator.platform) &&
-    typeof window.desktopBridge?.getPathForFile === "function";
   const fileManagerInitialPath = useMemo(() => {
     if (!canOpenProjectFromFileManager) {
       return undefined;
@@ -3293,18 +3280,29 @@ function OpenCommandPaletteDialog(props: {
     currentProjectCwdForBrowse,
   ]);
 
-  const handleDroppedProjectFolder = useCallback(
-    (path: string) => {
-      setIsNewProjectFolderDraft(false);
-      setQuery(path);
-      void handleAddProject(path, "drag-drop");
-    },
-    [handleAddProject],
-  );
-  const projectFolderDrop = useProjectFolderDrop({
-    enabled: canDropProjectFolder,
-    onFolder: handleDroppedProjectFolder,
+  // SCIENT-FORK:START — drop a folder to open it; start a new folder
+  const {
+    canDropProjectFolder,
+    projectFolderDrop,
+    beginNewProjectFolder,
+    canBeginNewProjectFolder,
+  } = useScientProjectFolderActions({
+    canOpenProjectFromFileManager,
+    isCloneDestinationStep,
+    browseEnvironmentId,
+    primaryEnvironmentId,
+    browseEnvironmentPlatform,
+    isBrowsing,
+    relativePathNeedsActiveProject,
+    browseDirectoryPath,
+    browseEntries,
+    projectPathInputRef,
+    clearHighlightedItem,
+    setIsNewProjectFolderDraft,
+    setQuery,
+    handleAddProject,
   });
+  // SCIENT-FORK:END
 
   function isPrimaryModifierPressed(event: KeyboardEvent<HTMLElement>): boolean {
     return useMetaForMod ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
@@ -3521,30 +3519,6 @@ function OpenCommandPaletteDialog(props: {
     primaryEnvironmentId,
   ]);
 
-  const beginNewProjectFolder = useCallback(() => {
-    if (!isBrowsing || isCloneDestinationStep || relativePathNeedsActiveProject) return;
-    if (!browseDirectoryPath) return;
-    const directoryNames = browseEntries.map((entry) => entry.name);
-    const folderName = getAvailableNewFolderName(directoryNames);
-    const nextQuery = getAvailableNewProjectPath(browseDirectoryPath, directoryNames);
-    clearHighlightedItem();
-    setIsNewProjectFolderDraft(true);
-    setQuery(nextQuery);
-    requestAnimationFrame(() => {
-      projectPathInputRef.current?.focus();
-      projectPathInputRef.current?.setSelectionRange(
-        nextQuery.length - folderName.length,
-        nextQuery.length,
-      );
-    });
-  }, [
-    browseDirectoryPath,
-    browseEntries,
-    isBrowsing,
-    isCloneDestinationStep,
-    relativePathNeedsActiveProject,
-  ]);
-
   const inputAccessory =
     newProjectFlow !== null ? (
       <Tooltip>
@@ -3668,8 +3642,6 @@ function OpenCommandPaletteDialog(props: {
           ? "Select"
           : undefined;
 
-  const canBeginNewProjectFolder =
-    isBrowsing && !isCloneDestinationStep && !relativePathNeedsActiveProject;
   const footerTrailing =
     canBeginNewProjectFolder || canOpenProjectFromFileManager ? (
       <div className="ms-auto flex items-center gap-1">

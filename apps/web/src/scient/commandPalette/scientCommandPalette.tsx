@@ -28,9 +28,12 @@ import {
 } from "~/components/CommandPalette.logic";
 import type { CommandPaletteContent } from "~/components/CommandPaletteContent";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { useProjectFolderDrop } from "~/hooks/useProjectFolderDrop";
 import { useScientProjectInitialization } from "~/hooks/useScientProjectInitialization";
 import { ensureBrowseDirectoryPath, isFilesystemBrowseQuery } from "~/lib/projectPaths";
 import type { ScientProjectInitializationDecision } from "~/lib/scientProjectInitialization";
+import { getAvailableNewFolderName, getAvailableNewProjectPath } from "~/lib/projectEntry";
+import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { recordScientAnalytics, useScientAnalyticsView } from "~/scient/analytics/client";
 import { readPreparedConnection } from "~/state/session";
 import { allEnvironmentProjectSnapshotsReadyAtom } from "~/state/shell";
@@ -411,5 +414,105 @@ export function scientBrowseKeyDownCapture({
     event.preventDefault();
     event.stopPropagation();
     submitCurrentPath();
+  };
+}
+
+function isMatchingLocalPlatform(environmentPlatform: string, browserPlatform: string): boolean {
+  if (environmentPlatform === "MacIntel") return isMacPlatform(browserPlatform);
+  if (environmentPlatform === "Win32") return isWindowsPlatform(browserPlatform);
+  return environmentPlatform === "Linux" && /linux/u.test(browserPlatform.toLowerCase());
+}
+
+/**
+ * Folder actions of Add project: dropping a folder from this computer's file
+ * manager opens it, and New folder starts a draft path in the current folder
+ * with its name selected.
+ */
+export function useScientProjectFolderActions({
+  canOpenProjectFromFileManager,
+  isCloneDestinationStep,
+  browseEnvironmentId,
+  primaryEnvironmentId,
+  browseEnvironmentPlatform,
+  isBrowsing,
+  relativePathNeedsActiveProject,
+  browseDirectoryPath,
+  browseEntries,
+  projectPathInputRef,
+  clearHighlightedItem,
+  setIsNewProjectFolderDraft,
+  setQuery,
+  handleAddProject,
+}: {
+  readonly canOpenProjectFromFileManager: boolean;
+  readonly isCloneDestinationStep: boolean;
+  readonly browseEnvironmentId: EnvironmentId | null;
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly browseEnvironmentPlatform: string;
+  readonly isBrowsing: boolean;
+  readonly relativePathNeedsActiveProject: boolean;
+  readonly browseDirectoryPath: string;
+  readonly browseEntries: FilesystemBrowseResult["entries"];
+  readonly projectPathInputRef: RefObject<HTMLInputElement | null>;
+  readonly clearHighlightedItem: () => void;
+  readonly setIsNewProjectFolderDraft: Dispatch<SetStateAction<boolean>>;
+  readonly setQuery: Dispatch<SetStateAction<string>>;
+  readonly handleAddProject: (rawCwd: string, analyticsMethod: "drag-drop") => Promise<void>;
+}) {
+  const canDropProjectFolder =
+    canOpenProjectFromFileManager &&
+    !isCloneDestinationStep &&
+    browseEnvironmentId === primaryEnvironmentId &&
+    isMatchingLocalPlatform(browseEnvironmentPlatform, navigator.platform) &&
+    typeof window.desktopBridge?.getPathForFile === "function";
+  const handleDroppedProjectFolder = useCallback(
+    (path: string) => {
+      setIsNewProjectFolderDraft(false);
+      setQuery(path);
+      void handleAddProject(path, "drag-drop");
+    },
+    [handleAddProject, setIsNewProjectFolderDraft, setQuery],
+  );
+  const projectFolderDrop = useProjectFolderDrop({
+    enabled: canDropProjectFolder,
+    onFolder: handleDroppedProjectFolder,
+  });
+
+  const beginNewProjectFolder = useCallback(() => {
+    if (!isBrowsing || isCloneDestinationStep || relativePathNeedsActiveProject) return;
+    if (!browseDirectoryPath) return;
+    const directoryNames = browseEntries.map((entry) => entry.name);
+    const folderName = getAvailableNewFolderName(directoryNames);
+    const nextQuery = getAvailableNewProjectPath(browseDirectoryPath, directoryNames);
+    clearHighlightedItem();
+    setIsNewProjectFolderDraft(true);
+    setQuery(nextQuery);
+    requestAnimationFrame(() => {
+      projectPathInputRef.current?.focus();
+      projectPathInputRef.current?.setSelectionRange(
+        nextQuery.length - folderName.length,
+        nextQuery.length,
+      );
+    });
+  }, [
+    browseDirectoryPath,
+    browseEntries,
+    clearHighlightedItem,
+    isBrowsing,
+    isCloneDestinationStep,
+    projectPathInputRef,
+    relativePathNeedsActiveProject,
+    setIsNewProjectFolderDraft,
+    setQuery,
+  ]);
+
+  const canBeginNewProjectFolder =
+    isBrowsing && !isCloneDestinationStep && !relativePathNeedsActiveProject;
+
+  return {
+    canDropProjectFolder,
+    projectFolderDrop,
+    beginNewProjectFolder,
+    canBeginNewProjectFolder,
   };
 }
