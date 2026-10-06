@@ -1,17 +1,31 @@
-import type { ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import type {
+  NodeId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
+  RunAttemptId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import type * as Stream from "effect/Stream";
 
 import {
   ProviderTextSnapshotError,
   type CapturedProviderText,
+  type ProviderAdapterV2Error,
+  type ProviderAdapterV2Event,
   type ProviderAdapterV2InternalEvent,
   type ProviderAdapterV2SessionRuntime,
   type ProviderTextSnapshotBatch,
@@ -19,6 +33,7 @@ import {
   type ProviderTextSnapshotConsumerOwner,
   type ProviderTextSnapshotOwner,
 } from "../ProviderAdapter.ts";
+import type { ProviderTextDeltaCoalescer } from "../Adapters/ProviderTextDeltaCoalescer.ts";
 
 const isProviderTextSnapshotError = Schema.is(ProviderTextSnapshotError);
 
@@ -294,3 +309,172 @@ export const makeProviderTextSnapshots = <Entry extends SnapshotSessionEntry>(in
       route,
     };
   });
+
+type CodexSnapshotTurnContext = {
+  readonly subagent: unknown;
+  readonly input: {
+    readonly threadId: ThreadId;
+    readonly runId: RunId;
+    readonly attemptId: RunAttemptId;
+    readonly runOrdinal: number;
+  };
+  readonly rootNodeId: NodeId;
+  readonly providerTurnId: ProviderTurnId;
+  readonly providerThread: {
+    readonly id: ProviderThreadId;
+    readonly nativeThreadRef: { readonly nativeId: string | null } | null;
+    readonly providerSessionId: ProviderSessionId | null;
+  };
+};
+
+type NodeUpdated = Extract<ProviderAdapterV2Event, { readonly type: "node.updated" }>;
+type MessageUpdated = Extract<ProviderAdapterV2Event, { readonly type: "message.updated" }>;
+type TurnItemUpdated = Extract<ProviderAdapterV2Event, { readonly type: "turn_item.updated" }>;
+
+/** Running-fork text capture for one Codex app-server session. */
+export const makeCodexTextSnapshots = <Context extends CodexSnapshotTurnContext>(input: {
+  readonly driver: ProviderDriverKind;
+  readonly instanceId: ProviderInstanceId;
+  readonly providerSessionId: ProviderSessionId;
+  readonly nativeEvents: Stream.Stream<ProviderAdapterV2InternalEvent, ProviderAdapterV2Error>;
+  readonly events: Queue.Enqueue<ProviderAdapterV2InternalEvent>;
+  readonly generationEnded: Deferred.Deferred<never, ProviderTextSnapshotError>;
+  readonly isGenerationEnded: () => boolean;
+  readonly activeTurns: Ref.Ref<Map<string, Context>>;
+  readonly interruptingNativeTurns: Ref.Ref<Set<string>>;
+  readonly finalAnswerItemIdsByTurn: Ref.Ref<Map<string, Set<string>>>;
+  readonly completedFinalAnswerTextsByTurn: Ref.Ref<Map<string, Set<string>>>;
+  readonly turnTerminalizationPermit: Semaphore.Semaphore;
+  readonly agentMessageDeltas: Pick<ProviderTextDeltaCoalescer, "withSnapshot" | "withWatermark">;
+  readonly buildAgentMessageArtifacts: (
+    context: Context,
+    item: { readonly id: string; readonly text: string },
+    completed: boolean,
+  ) => Effect.Effect<{
+    readonly node: NodeUpdated["node"];
+    readonly message: MessageUpdated["message"];
+    readonly turnItem: TurnItemUpdated["turnItem"];
+  }>;
+}): NonNullable<ProviderAdapterV2SessionRuntime["textSnapshots"]> => {
+  const {
+    activeTurns,
+    agentMessageDeltas,
+    buildAgentMessageArtifacts,
+    completedFinalAnswerTextsByTurn,
+    events,
+    finalAnswerItemIdsByTurn,
+    interruptingNativeTurns,
+    turnTerminalizationPermit,
+  } = input;
+  const CODEX_PROVIDER = input.driver;
+  const textSnapshotOwners = new Map<
+    symbol,
+    {
+      readonly context: Context;
+      readonly owner: ProviderTextSnapshotOwner;
+    }
+  >();
+  const snapshotContext = Effect.fnUntraced(function* (owner: ProviderTextSnapshotOwner) {
+    const context = (yield* Ref.get(activeTurns)).get(owner.nativeTurnId);
+    if (
+      input.isGenerationEnded() ||
+      context === undefined ||
+      context.subagent !== null ||
+      context.input.threadId !== owner.threadId ||
+      context.input.runId !== owner.runId ||
+      context.input.attemptId !== owner.activeAttemptId ||
+      context.rootNodeId !== owner.rootNodeId ||
+      context.input.runOrdinal !== owner.runOrdinal ||
+      context.providerTurnId !== owner.providerTurnId ||
+      context.providerThread.id !== owner.providerThreadId ||
+      context.providerThread.nativeThreadRef?.nativeId !== owner.nativeThreadId ||
+      context.providerThread.providerSessionId !== owner.providerSessionId ||
+      owner.providerSessionId !== input.providerSessionId ||
+      owner.providerInstanceId !== input.instanceId ||
+      owner.driver !== CODEX_PROVIDER ||
+      (yield* Ref.get(interruptingNativeTurns)).has(owner.nativeTurnId)
+    )
+      return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
+    return context;
+  });
+  return {
+    events: input.nativeEvents,
+    ended: Deferred.await(input.generationEnded),
+    request: (owner, token) =>
+      turnTerminalizationPermit.withPermit(
+        Effect.gen(function* () {
+          const context = yield* snapshotContext(owner);
+          yield* agentMessageDeltas.withSnapshot(owner.nativeTurnId, (snapshot) =>
+            Effect.gen(function* () {
+              const artifacts: ProviderAdapterV2Event[] = [];
+              const finalItems = (yield* Ref.get(finalAnswerItemIdsByTurn)).get(owner.nativeTurnId);
+              const completedTexts = (yield* Ref.get(completedFinalAnswerTextsByTurn)).get(
+                owner.nativeTurnId,
+              );
+              for (const item of snapshot.items) {
+                if (
+                  finalItems?.has(item.itemId) &&
+                  ((completedTexts?.size ?? 0) > 0 ||
+                    finalItems.values().next().value !== item.itemId)
+                )
+                  return yield* new ProviderTextSnapshotError({
+                    reason: "not-native-ready",
+                  });
+                const built = yield* buildAgentMessageArtifacts(
+                  context,
+                  { id: item.itemId, text: item.text },
+                  false,
+                );
+                artifacts.push(
+                  { type: "node.updated", driver: CODEX_PROVIDER, node: built.node },
+                  {
+                    type: "message.updated",
+                    driver: CODEX_PROVIDER,
+                    message: built.message,
+                  },
+                  {
+                    type: "turn_item.updated",
+                    driver: CODEX_PROVIDER,
+                    turnItem: built.turnItem,
+                  },
+                );
+              }
+              textSnapshotOwners.set(token, { context, owner });
+              const offered = yield* Queue.offer(events, {
+                type: "internal.text_snapshot",
+                token,
+                owner,
+                watermark: snapshot.watermark,
+                events: artifacts,
+              });
+              if (!offered)
+                return yield* new ProviderTextSnapshotError({ reason: "consumer-ended" });
+            }),
+          );
+        }),
+      ),
+    withCurrent: (token, watermark, commit) =>
+      turnTerminalizationPermit.withPermit(
+        Effect.gen(function* () {
+          const captured = textSnapshotOwners.get(token);
+          if (captured === undefined)
+            return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
+          if ((yield* snapshotContext(captured.owner)) !== captured.context)
+            return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
+          if (watermark === undefined) return yield* commit;
+          const result = yield* agentMessageDeltas.withWatermark(
+            captured.owner.nativeTurnId,
+            watermark,
+            commit,
+          );
+          if (Option.isNone(result))
+            return yield* new ProviderTextSnapshotError({ reason: "newer-delta" });
+          return result.value;
+        }),
+      ),
+    release: (token) =>
+      Effect.sync(() => {
+        textSnapshotOwners.delete(token);
+      }),
+  };
+};

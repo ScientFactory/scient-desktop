@@ -1,6 +1,8 @@
 import * as NodeCrypto from "node:crypto";
 import type { RuntimeCitationSource } from "@t3tools/contracts";
 import { extractCodexCitationSources } from "../../provider/codexCitations.ts";
+// SCIENT-FORK: running-fork text capture producer.
+import { makeCodexTextSnapshots } from "../scient-provider/ProviderTextSnapshots.ts";
 // SCIENT-FORK: pure Codex presentation and diagnostics stay in the owned module.
 import {
   codexCitationPresentation,
@@ -157,7 +159,6 @@ import {
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2InternalEvent,
-  type ProviderTextSnapshotOwner,
   ProviderTextSnapshotError,
   type ProviderAdapterV2ForkThreadInput,
   type ProviderAdapterV2RollbackThreadInput,
@@ -5587,36 +5588,6 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           completedAt: null,
         });
 
-        const textSnapshotOwners = new Map<
-          symbol,
-          {
-            readonly context: ActiveCodexTurnContext;
-            readonly owner: ProviderTextSnapshotOwner;
-          }
-        >();
-        const snapshotContext = Effect.fnUntraced(function* (owner: ProviderTextSnapshotOwner) {
-          const context = (yield* Ref.get(activeTurns)).get(owner.nativeTurnId);
-          if (
-            textGenerationIsEnded ||
-            context === undefined ||
-            context.subagent !== null ||
-            context.input.threadId !== owner.threadId ||
-            context.input.runId !== owner.runId ||
-            context.input.attemptId !== owner.activeAttemptId ||
-            context.rootNodeId !== owner.rootNodeId ||
-            context.input.runOrdinal !== owner.runOrdinal ||
-            context.providerTurnId !== owner.providerTurnId ||
-            context.providerThread.id !== owner.providerThreadId ||
-            context.providerThread.nativeThreadRef?.nativeId !== owner.nativeThreadId ||
-            context.providerThread.providerSessionId !== owner.providerSessionId ||
-            owner.providerSessionId !== input.providerSessionId ||
-            owner.providerInstanceId !== adapterOptions.instanceId ||
-            owner.driver !== CODEX_PROVIDER ||
-            (yield* Ref.get(interruptingNativeTurns)).has(owner.nativeTurnId)
-          )
-            return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
-          return context;
-        });
         const nativeEvents = Stream.fromEffectRepeat(Queue.take(events));
         const runtime: ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
@@ -5628,88 +5599,24 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               (event): event is ProviderAdapterV2Event => event.type !== "internal.text_snapshot",
             ),
           ),
-          textSnapshots: {
-            events: nativeEvents,
-            ended: Deferred.await(textGenerationEnded),
-            request: (owner, token) =>
-              turnTerminalizationPermit.withPermit(
-                Effect.gen(function* () {
-                  const context = yield* snapshotContext(owner);
-                  yield* agentMessageDeltas.withSnapshot(owner.nativeTurnId, (snapshot) =>
-                    Effect.gen(function* () {
-                      const artifacts: ProviderAdapterV2Event[] = [];
-                      const finalItems = (yield* Ref.get(finalAnswerItemIdsByTurn)).get(
-                        owner.nativeTurnId,
-                      );
-                      const completedTexts = (yield* Ref.get(completedFinalAnswerTextsByTurn)).get(
-                        owner.nativeTurnId,
-                      );
-                      for (const item of snapshot.items) {
-                        if (
-                          finalItems?.has(item.itemId) &&
-                          ((completedTexts?.size ?? 0) > 0 ||
-                            finalItems.values().next().value !== item.itemId)
-                        )
-                          return yield* new ProviderTextSnapshotError({
-                            reason: "not-native-ready",
-                          });
-                        const built = yield* buildAgentMessageArtifacts(
-                          context,
-                          { id: item.itemId, text: item.text },
-                          false,
-                        );
-                        artifacts.push(
-                          { type: "node.updated", driver: CODEX_PROVIDER, node: built.node },
-                          {
-                            type: "message.updated",
-                            driver: CODEX_PROVIDER,
-                            message: built.message,
-                          },
-                          {
-                            type: "turn_item.updated",
-                            driver: CODEX_PROVIDER,
-                            turnItem: built.turnItem,
-                          },
-                        );
-                      }
-                      textSnapshotOwners.set(token, { context, owner });
-                      const offered = yield* Queue.offer(events, {
-                        type: "internal.text_snapshot",
-                        token,
-                        owner,
-                        watermark: snapshot.watermark,
-                        events: artifacts,
-                      });
-                      if (!offered)
-                        return yield* new ProviderTextSnapshotError({ reason: "consumer-ended" });
-                    }),
-                  );
-                }),
-              ),
-            withCurrent: (token, watermark, commit) =>
-              turnTerminalizationPermit.withPermit(
-                Effect.gen(function* () {
-                  const captured = textSnapshotOwners.get(token);
-                  if (captured === undefined)
-                    return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
-                  if ((yield* snapshotContext(captured.owner)) !== captured.context)
-                    return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
-                  if (watermark === undefined) return yield* commit;
-                  const result = yield* agentMessageDeltas.withWatermark(
-                    captured.owner.nativeTurnId,
-                    watermark,
-                    commit,
-                  );
-                  if (Option.isNone(result))
-                    return yield* new ProviderTextSnapshotError({ reason: "newer-delta" });
-                  return result.value;
-                }),
-              ),
-            release: (token) =>
-              Effect.sync(() => {
-                textSnapshotOwners.delete(token);
-              }),
-          },
+          // SCIENT-FORK:START — running-fork text capture from this exact app-server session.
+          textSnapshots: makeCodexTextSnapshots({
+            driver: CODEX_PROVIDER,
+            instanceId: adapterOptions.instanceId,
+            providerSessionId: input.providerSessionId,
+            nativeEvents,
+            events,
+            generationEnded: textGenerationEnded,
+            isGenerationEnded: () => textGenerationIsEnded,
+            activeTurns,
+            interruptingNativeTurns,
+            finalAnswerItemIdsByTurn,
+            completedFinalAnswerTextsByTurn,
+            turnTerminalizationPermit,
+            agentMessageDeltas,
+            buildAgentMessageArtifacts,
+          }),
+          // SCIENT-FORK:END
           modelContextWindowLaunchFingerprint: configuration,
           getModelContextWindow: (selection) =>
             selection.instanceId === adapterOptions.instanceId
