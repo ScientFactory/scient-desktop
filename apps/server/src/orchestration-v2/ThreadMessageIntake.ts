@@ -12,6 +12,7 @@ import * as AttachmentClaims from "./AttachmentClaims.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import { reconcileReservationsBestEffort } from "./AttachmentReservationReconciliation.ts";
+import { rejectThreadCommandDuringClone } from "./scient-fork/ThreadDispatchCloneGuard.ts";
 
 // These dispatcher failures occur in receipt validation or planning, before
 // commitCommand. Generic dispatch errors can follow a commit and remain uncertain.
@@ -59,6 +60,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
   command: OrchestrationV2Command,
 ) {
   const threads = yield* ThreadManagement.ThreadManagementService;
+  // SCIENT-FORK:START — no new thread or turn while the project clone runs or failed.
   if (command.type === "thread.create" || command.type === "message.dispatch") {
     const projectId =
       command.type === "thread.create"
@@ -66,21 +68,10 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
         : (yield* threads.getThreadShell(command.threadId))?.projectId;
     if (projectId !== undefined) {
       const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
-      yield* ProjectCloneTracker.rejectCommandsDuringClone(tracker, {
-        type: "thread.create",
-        projectId,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new Orchestrator.OrchestratorCommandRejectedError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause,
-            }),
-        ),
-      );
+      yield* rejectThreadCommandDuringClone(tracker, command, projectId);
     }
   }
+  // SCIENT-FORK:END
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
     const incomingByQuestionId = command.attachmentsByQuestionId;
