@@ -257,6 +257,10 @@ import {
 } from "./scient/providerLifecycle/ProviderConnectionRpcHandlers.ts";
 import { makeCustomModelRpcHandlers } from "./scient/providerLifecycle/CustomModelRpcHandlers.ts";
 import { workspaceEntryDisposition } from "./scient/workspace/WorkspaceEntryPolicy.ts";
+import {
+  projectFileErrorReason,
+  projectFileOsErrorCode,
+} from "./scient/workspace/ProjectFileErrorReason.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import { ConversationExportService } from "./scient/conversationExport/ConversationExportService.ts";
 import { makeDocumentPdfRpcHandlers } from "./scient/documentExport/DocumentPdfRpcHandlers.ts";
@@ -371,27 +375,6 @@ function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntries
       return { failure: "read_directory_failed", parentPath: error.parentPath };
     default:
       return unexpectedCompatibilityError(error);
-  }
-}
-
-/** The operating system's error code for a failed file operation, when it gave one. */
-function projectFileOsErrorCode(cause: unknown): string | undefined {
-  const code =
-    typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
-  return typeof code === "string" && /^[A-Z][A-Z0-9_]{0,31}$/u.test(code) ? code : undefined;
-}
-
-/** The operating system's reason for a failed file operation, when it gave one. */
-function projectFileErrorReason(code: string | undefined): ProjectFileErrorReason | undefined {
-  switch (code) {
-    case "ENOENT":
-    case "ENOTDIR":
-      return "not_found";
-    case "EACCES":
-    case "EPERM":
-      return "permission_denied";
-    default:
-      return undefined;
   }
 }
 
