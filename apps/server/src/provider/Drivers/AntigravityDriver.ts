@@ -7,7 +7,6 @@ import {
   nodeRuntimeUnavailableMessage,
 } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
-import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -29,11 +28,6 @@ import {
 import { makeAntigravityAcpVoiceTranscriptCorrection } from "../../scient/voice/AntigravityAcpVoiceTranscriptCorrection.ts";
 import { makeAntigravityAuth, type AntigravityAuth } from "../AntigravityAuth.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
-import {
-  antigravityConnectionMethod,
-  makeAntigravityConnectionActionsFromController,
-  makeAntigravityManagedRuntimeActions,
-} from "../AntigravityLifecycleBridge.ts";
 import {
   antigravityAuthConfigIssue,
   antigravityAuthLabel,
@@ -59,9 +53,8 @@ import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderCo
 import { makeAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/AntigravityAdapterV2.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { deriveProviderInstanceConfigMap } from "../Layers/ProviderInstanceRegistryHydration.ts";
-import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
 import { makeAntigravityProvider } from "../Layers/AntigravityProvider.ts";
+import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -69,8 +62,15 @@ import {
   type ProviderInstance,
 } from "../ProviderDriver.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { resolveAntigravityReleaseAsset } from "../antigravityRelease.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
+// SCIENT-FORK:START — legacy routing, managed runtime identity and account actions.
+import {
+  makeAntigravityInstanceConnectionActions,
+  makeAntigravityRuntimeIdentity,
+  usesLegacyAntigravityBackend,
+} from "./ScientAntigravityDriver.ts";
+export { usesLegacyAntigravityBackend } from "./ScientAntigravityDriver.ts";
+// SCIENT-FORK:END
 import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
 import {
   LegacyAntigravityDriver,
@@ -94,20 +94,6 @@ export type AntigravityDriverEnv =
   | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService
   | LegacyAntigravityDriverEnv;
-
-export function usesLegacyAntigravityBackend(input: {
-  readonly binaryPath: string;
-  readonly platform: NodeJS.Platform;
-  readonly arch: string;
-}): boolean {
-  const configured = input.binaryPath.trim();
-  if (configured) {
-    const normalized = configured.replaceAll("\\", "/");
-    const basename = normalized.slice(normalized.lastIndexOf("/") + 1).toLowerCase();
-    return basename === "agy" || basename === "agy.exe" || basename === "antigravity";
-  }
-  return resolveAntigravityReleaseAsset(input.platform, input.arch) === null;
-}
 
 /** Each instance owns its Google profile. Executable releases are shared by the environment. */
 export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityDriverEnv> = {
@@ -192,62 +178,19 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
-      const protectedBinaryPaths = serverSettings.getSettings.pipe(
-        Effect.map((current) =>
-          Object.values(deriveProviderInstanceConfigMap(current)).flatMap((entry) => {
-            const value =
-              entry.config &&
-              typeof entry.config === "object" &&
-              "binaryPath" in entry.config &&
-              typeof entry.config.binaryPath === "string"
-                ? entry.config.binaryPath.trim()
-                : "";
-            return value ? [value] : [];
-          }),
-        ),
-        Effect.mapError(
-          (cause) =>
-            new ProviderSetupError({
-              instanceId,
-              operation: "inspectSettings",
-              detail: "Scient could not inspect provider paths before changing Antigravity.",
-              cause,
-            }),
-        ),
-      );
-      const managedRuntimeActions = makeAntigravityManagedRuntimeActions({
+      // SCIENT-FORK:START — managed ACP runtime actions and the connection state they stamp.
+      const { managedRuntimeActions, stampIdentity } = makeAntigravityRuntimeIdentity({
+        instanceId,
+        getSettings: serverSettings.getSettings,
         installation,
         settings,
         environment: processEnvironment,
         platform,
         arch,
-        protectedBinaryPaths,
+        authMethod: auth.authMethod,
+        stampBaseIdentity,
       });
-      const stampIdentity = (draft: ServerProviderDraft) =>
-        managedRuntimeActions.getSummary.pipe(
-          Effect.orElseSucceed(() => ({
-            source: "unknown" as const,
-            supportTier: "unsupported" as const,
-            target: `${platform}-${arch}`,
-            actions: [],
-            managedVersion: null,
-            previousManagedVersion: null,
-            operation: null,
-            message: "Scient could not inspect the Antigravity ACP runtime.",
-          })),
-          Effect.map((runtime) => {
-            const provider = stampBaseIdentity(draft);
-            return {
-              ...provider,
-              connection: {
-                methods: [antigravityConnectionMethod(auth.authMethod)],
-                canDisconnect: provider.auth.status === "authenticated",
-                operation: null,
-                runtime,
-              },
-            };
-          }),
-        );
+      // SCIENT-FORK:END
       // Google returns every model the account can use, including older
       // Gemini generations. The manifest names the current ones so the picker
       // folds the rest under its legacy section, as it does for Codex.
@@ -551,36 +494,14 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const voiceTranscriptCorrection = makeAntigravityAcpVoiceTranscriptCorrection(
         generation.generateStructured,
       );
-      const connectionActions = makeAntigravityConnectionActionsFromController({
+      // SCIENT-FORK:START — assisted account actions over the official auth controller.
+      const connectionActions = makeAntigravityInstanceConnectionActions({
         instanceId,
         authMethod: auth.authMethod,
-        controller: authFlow.controller,
-        stopSessions: authFlow.stopProcesses.pipe(
-          Effect.catchCause((cause) =>
-            Cause.hasInterruptsOnly(cause)
-              ? Effect.failCause(cause)
-              : Effect.fail(
-                  new ProviderSetupError({
-                    instanceId,
-                    operation: "stopSessions",
-                    detail: "Scient could not stop active Antigravity sessions.",
-                    cause,
-                  }),
-                ),
-          ),
-        ),
-        randomOwnerId: crypto.randomUUIDv4.pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderSetupError({
-                instanceId,
-                operation: "start",
-                detail: "Scient could not create an Antigravity sign-in operation.",
-                cause,
-              }),
-          ),
-        ),
+        authFlow,
+        randomUUID: crypto.randomUUIDv4,
       });
+      // SCIENT-FORK:END
 
       const refreshModels = Effect.fn("AntigravityDriver.refreshModels")(
         function* () {
