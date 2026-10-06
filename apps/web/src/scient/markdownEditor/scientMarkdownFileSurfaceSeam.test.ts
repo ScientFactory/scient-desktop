@@ -19,10 +19,14 @@ const browserSource = NodeFS.readFileSync(
   new URL("../../components/files/FileBrowserPanel.tsx", import.meta.url),
   "utf8",
 );
-const chatViewSource = NodeFS.readFileSync(
-  new URL("../../components/ChatView.tsx", import.meta.url),
-  "utf8",
-);
+// ChatView calls the owned right-panel openers for its file surfaces.
+const chatViewSource = [
+  NodeFS.readFileSync(new URL("../../components/ChatView.tsx", import.meta.url), "utf8"),
+  NodeFS.readFileSync(
+    new URL("../rightPanel/useScientRightPanelOpeners.ts", import.meta.url),
+    "utf8",
+  ),
+].join("\n");
 const rightPanelTabsSource = NodeFS.readFileSync(
   new URL("../../components/RightPanelTabs.tsx", import.meta.url),
   "utf8",

@@ -38,6 +38,7 @@
     "apps/web/src/scient/rightPanel/ScientRightPanelSurfaceIcon.tsx",
     "apps/web/src/scient/rightPanel/surfaces.ts",
     "apps/web/src/scient/rightPanel/ScientRightPanelContent.tsx",
+    "apps/web/src/scient/rightPanel/useScientRightPanelOpeners.ts",
     "apps/web/src/state/analysis.ts",
     "apps/web/src/state/compute.ts",
     "apps/web/src/routes/settings.scientific-computing.tsx",

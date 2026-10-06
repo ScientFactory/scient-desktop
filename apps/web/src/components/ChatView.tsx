@@ -276,9 +276,6 @@ import {
   selectActiveRightPanelSurface,
   selectThreadPanelOpen,
   selectThreadRightPanelState,
-  type HtmlFilePresentationRequest,
-  type LatexFilePresentationRequest,
-  type OpenFileOptions,
   type RightPanelSurface,
   useRightPanelStore,
 } from "../rightPanelStore";
@@ -339,19 +336,17 @@ import {
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex, randomUUID } from "~/lib/utils";
-import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
-import { useScientFileOpening } from "~/scient/fileOpening/useScientFileOpening";
 import {
   useActivePendingSurfaceDeparture,
   usePendingSurfaceDeparture,
   usePendingSurfaceNavigationBlocker,
 } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
+// SCIENT-FORK:START — openers for Scient right-panel surfaces.
 import {
-  scientComputeSurface,
-  scientSourcePdfSurface,
-  scientSourcesSurface,
-} from "~/scient/rightPanel/surfaces";
-// SCIENT-FORK:START — Scient-owned right-panel surface content.
+  useFilePresentationRequestHandlers,
+  useScientRightPanelOpeners,
+} from "~/scient/rightPanel/useScientRightPanelOpeners";
+// Scient-owned right-panel surface content.
 import { ScientRightPanelContent } from "~/scient/rightPanel/ScientRightPanelContent";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — thread queue seam. To retire, delete this block, the
@@ -696,7 +691,6 @@ import {
   useOpenStaticArtifacts,
 } from "~/scient/compute/chatComputeFigureFollower";
 // SCIENT-FORK:END
-import { createComputeContextId } from "~/scient/compute/computeContextStore";
 import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
 
 const EMPTY_TURN_ITEMS: ReadonlyArray<OrchestrationV2TurnItem> = [];
@@ -5286,69 +5280,21 @@ function ChatViewContent(props: ChatViewProps) {
   const openChangesFromThreadPanel = useCallback(() => {
     addDiffSurface();
   }, [addDiffSurface]);
-  const addAgentsSurface = useCallback(() => {
-    if (!activeThreadRef) return;
-    runAfterPendingFileSave("agents", () => {
-      useRightPanelStore.getState().open(activeThreadRef, "agents");
-    });
-  }, [activeThreadRef, runAfterPendingFileSave]);
-  const addSourcesSurface = useCallback(() => {
-    if (!activeThreadRef || !activeProject || activeWorkspaceRoot === undefined) return;
-    const surface = scientSourcesSurface();
-    runAfterPendingFileSave(surface.id, () => {
-      useRightPanelStore.getState().openScient(activeThreadRef, surface);
-    });
-  }, [activeProject, activeThreadRef, activeWorkspaceRoot, runAfterPendingFileSave]);
-  const addComputeSurface = useCallback(() => {
-    if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
-    const surface = scientComputeSurface({
-      cwd: activeWorkspaceRoot,
-      contextId: createComputeContextId(),
-    });
-    runAfterPendingFileSave(surface.id, () => {
-      useRightPanelStore.getState().openScient(activeThreadRef, surface);
-    });
-  }, [activeThreadRef, activeWorkspaceRoot, runAfterPendingFileSave]);
-  const openScientSourcePdf = useCallback(
-    (input: {
-      readonly sourceId: string;
-      readonly attachmentId: string;
-      readonly fileName: string;
-    }) => {
-      if (!activeThreadRef) return;
-      const surface = scientSourcePdfSurface(input);
-      runAfterPendingFileSave(surface.id, () => {
-        useRightPanelStore.getState().openScient(activeThreadRef, surface);
-      });
-    },
-    [activeThreadRef, runAfterPendingFileSave],
-  );
-  const openFileSourceSurfaceNow = useCallback(
-    (relativePath: string, line?: number, options?: OpenFileOptions) => {
-      if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
-      const openOptions = {
-        ...(shouldOpenInBrowserByDefault(relativePath)
-          ? { htmlPreviewMode: "source" as const }
-          : {}),
-        ...options,
-      };
-      useRightPanelStore.getState().openFile(activeThreadRef, relativePath, line, openOptions);
-    },
-    [activeThreadRef, activeWorkspaceRoot],
-  );
-  const openFileSurfaceNow = useScientFileOpening({
-    threadRef: activeThreadRef,
-    workspaceRoot: activeWorkspaceRoot ?? null,
-    openSource: openFileSourceSurfaceNow,
+  // SCIENT-FORK:START — openers for the right-panel surfaces Scient adds.
+  const {
+    addAgentsSurface,
+    addSourcesSurface,
+    addComputeSurface,
+    openScientSourcePdf,
+    openFileSurfaceNow,
+    openFileSourceSurface,
+  } = useScientRightPanelOpeners({
+    activeThreadRef,
+    activeProject,
+    activeWorkspaceRoot,
+    runAfterPendingFileSave,
   });
-  const openFileSourceSurface = useCallback(
-    (relativePath: string, line?: number, options?: OpenFileOptions) => {
-      runAfterPendingFileSave(`file:${relativePath}`, () => {
-        openFileSourceSurfaceNow(relativePath, line, options);
-      });
-    },
-    [openFileSourceSurfaceNow, runAfterPendingFileSave],
-  );
+  // SCIENT-FORK:END
   const supportsThreadPullRequests =
     serverConfig?.environment.capabilities.threadPullRequests === true;
   const visiblePullRequests = visibleThreadPullRequests(
@@ -5455,24 +5401,10 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [openFileSurfaceNow, runAfterPendingFileSave],
   );
-  const handleHtmlPresentationRequestHandled = useCallback(
-    (relativePath: string, request: HtmlFilePresentationRequest) => {
-      if (!activeThreadRef) return;
-      useRightPanelStore
-        .getState()
-        .consumeHtmlPresentationRequest(activeThreadRef, relativePath, request.id);
-    },
-    [activeThreadRef],
-  );
-  const handleLatexPresentationRequestHandled = useCallback(
-    (relativePath: string, request: LatexFilePresentationRequest) => {
-      if (!activeThreadRef) return;
-      useRightPanelStore
-        .getState()
-        .consumeLatexPresentationRequest(activeThreadRef, relativePath, request.id);
-    },
-    [activeThreadRef],
-  );
+  // SCIENT-FORK:START — file surfaces report handled HTML and LaTeX presentation requests.
+  const { handleHtmlPresentationRequestHandled, handleLatexPresentationRequestHandled } =
+    useFilePresentationRequestHandlers(activeThreadRef);
+  // SCIENT-FORK:END
   // The thread's own change request, placed against the project it belongs to. Without a
   // project there is nothing to resolve it against, so the caller falls back to the browser.
   const persistedLinkedThreadPullRequest = isServerThread
