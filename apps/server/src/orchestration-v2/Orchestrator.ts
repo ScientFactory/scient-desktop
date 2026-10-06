@@ -68,6 +68,7 @@ import {
   inheritedForkPrefixIsNative,
 } from "./scient-fork/ConversationForkNativeSource.ts";
 // SCIENT-FORK:START — Scient orchestration modules
+import { dispatchCheckpointRollbackComplete } from "./scient-fork/CheckpointRollbackCompletion.ts";
 import {
   ownerPreservingSwitchPlan,
   settingExecutionOwnerOf,
@@ -8966,42 +8967,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
     });
 
-  const dispatchCheckpointRollbackComplete = (
-    command: Extract<
-      OrchestrationV2InternalCommand,
-      { readonly type: "checkpoint.rollback.complete" }
-    >,
-    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-  ) =>
-    Effect.gen(function* () {
-      const thread = yield* projectionStore
-        .getThread(command.threadId)
-        .pipe(mapDispatchError(command));
-      // Superseded work may finish late; it cannot settle the newer request.
-      if (
-        thread.deletedAt !== null ||
-        thread.rollbackRequestId !== command.requestId ||
-        thread.rollbackCompletedRequestId === command.requestId
-      )
-        return;
-      const now = yield* DateTime.now;
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "thread.metadata-updated",
-        threadId: command.threadId,
-        providerInstanceId: thread.providerInstanceId,
-        occurredAt: now,
-        payload: {
-          ...thread,
-          rollbackCompletedRequestId: command.requestId,
-          rollbackFailure: null,
-          updatedAt: now,
-        },
-      });
-    });
-
   /**
    * Records a provider rollback that failed after every retry, so clients
    * waiting on it stop and show the reason. A newer rollback clears it, and a
@@ -10134,7 +10099,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchCheckpointRollback(command, events, effects);
         break;
       case "checkpoint.rollback.complete":
-        yield* dispatchCheckpointRollbackComplete(command, events);
+        // SCIENT-FORK:START — a finished rollback records its completed request.
+        yield* dispatchCheckpointRollbackComplete(
+          { projectionStore, mapDispatchError, emit },
+          command,
+          events,
+        );
+        // SCIENT-FORK:END
         break;
       case "checkpoint.rollback.fail":
         yield* dispatchCheckpointRollbackFail(command, events);
