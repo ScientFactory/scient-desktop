@@ -295,3 +295,196 @@ export function reconcilePiSimpleSettleTail(input: {
     },
   ];
 }
+
+/** Finite overlays for older recordings, never an adaptive replay matcher. */
+const recordedPiSchedules: Readonly<
+  Record<string, { readonly digest: string; readonly states: ReadonlyArray<number> }>
+> = {
+  multi_turn: {
+    digest: "ae2b62f17365f0b8e07633a1efe2e2977d48ecd03a6c8cf01b54e0748b2883d5",
+    states: [43, 76],
+  },
+  pi_compaction: {
+    digest: "1ef8e13b9d6e641309e731396401ef0c9d8817665b059033d202892cd2c0a994",
+    states: [46, 64, 96, 128, 146, 188],
+  },
+  provider_thread_resume: {
+    digest: "b97af5c924913990c50f0ee0230a1e4f7a6cec5deb9920eb143121cead6c0617",
+    states: [59, 126],
+  },
+  message_steering: {
+    digest: "d5529d72f19e7d4bacdda5b39974e330007293b904ede4c7efdb46673b447531",
+    states: [63],
+  },
+  thread_rollback: {
+    digest: "64ddcf990c4b3d3e6114e9220e5eee54cfbb8920ab533ea65496e1872b1cd889",
+    states: [54, 87, 171],
+  },
+  thread_rollback_after_stop: {
+    digest: "ed2599685fb3d50f07fe020885c506b43ab3ab32b67cd46d71ba4e495192b207",
+    states: [44, 216, 286],
+  },
+};
+
+/**
+ * Keep native activity and correlated read-only pairs intact. Confirmations are
+ * static fixture observations, not freshly observed vendor state. Streaming
+ * identity preflight deliberately does not reuse the earlier idle predicate.
+ */
+export function reconcilePiRecordedSchedules(input: {
+  readonly scenario: string;
+  readonly entries: ReadonlyArray<ProviderReplayEntry>;
+}): ReadonlyArray<ProviderReplayEntry> {
+  const pin = Object.hasOwn(recordedPiSchedules, input.scenario)
+    ? recordedPiSchedules[input.scenario]
+    : undefined;
+  if (pin === undefined) return reconcilePiSimpleSettleTail(input);
+  const { entries } = input;
+  const refuse = (): never => {
+    throw new Error(`Pi ${input.scenario} replay schedule no longer matches its pinned recording.`);
+  };
+  if (NodeCrypto.createHash("sha256").update(JSON.stringify(entries)).digest("hex") !== pin.digest)
+    refuse();
+  const response = (index: number, command: string) => {
+    const entry = entries[index];
+    if (
+      entry?.type !== "emit_inbound" ||
+      !Predicate.isObject(entry.frame) ||
+      entry.frame.type !== "response" ||
+      entry.frame.command !== command ||
+      entry.frame.success !== true ||
+      !Predicate.isObject(entry.frame.data)
+    )
+      return refuse();
+    return { entry, frame: entry.frame, data: entry.frame.data };
+  };
+  const syntheticState = (
+    state: ReturnType<typeof response>,
+    id: string,
+    purpose: string,
+    data = state.data,
+  ): Array<ProviderReplayEntry> => {
+    if (
+      entries.some(
+        (entry) =>
+          entry.type !== "runtime_exit" && Predicate.isObject(entry.frame) && entry.frame.id === id,
+      )
+    )
+      refuse();
+    const suffix = processOrdinal(state.entry) === 1 ? "" : `@p${processOrdinal(state.entry)}`;
+    return [
+      {
+        type: "expect_outbound",
+        label: `synthetic:${purpose}:get_state${suffix}`,
+        frame: { type: "get_state", id },
+      },
+      {
+        type: "emit_inbound",
+        label: `synthetic:${purpose}:response:get_state${suffix}`,
+        frame: { ...state.frame, id, data },
+      },
+    ];
+  };
+  const replacements = new Map<number, ReadonlyArray<ProviderReplayEntry>>();
+  for (const [ordinal, index] of pin.states.entries()) {
+    const state = response(index, "get_state");
+    const stats = response(index + 4, "get_session_stats");
+    if (
+      state.data.isStreaming !== false ||
+      state.data.isCompacting !== false ||
+      state.data.pendingMessageCount !== 0 ||
+      state.data.sessionFile !== stats.data.sessionFile ||
+      state.data.sessionId !== stats.data.sessionId ||
+      state.data.thinkingLevel !== "high" ||
+      !Predicate.isObject(state.data.model) ||
+      state.data.model.provider !== "openrouter" ||
+      state.data.model.id !== "deepseek/deepseek-v4-flash"
+    )
+      refuse();
+    const confirmation = syntheticState(state, `t3-${910000 + ordinal}`, "settle-confirmation");
+    if (input.scenario === "pi_compaction" && (index === 64 || index === 146)) {
+      // compaction_end and the compact ACK independently probe idle state.
+      // Gate both reads before replying so both tree cursors retain the same
+      // pinned boundary. These extra replies are static fixture observations.
+      const duplicatePair = (
+        offset: number,
+        id: string,
+        command: string,
+      ): Array<ProviderReplayEntry> => {
+        const original = entries[index + offset]!;
+        const reply = response(index + offset + 1, command);
+        if (original.type !== "expect_outbound" || !Predicate.isObject(original.frame))
+          return refuse();
+        if (
+          entries.some(
+            (entry) =>
+              entry.type !== "runtime_exit" &&
+              Predicate.isObject(entry.frame) &&
+              entry.frame.id === id,
+          )
+        )
+          refuse();
+        return [
+          {
+            ...original,
+            label: `synthetic:concurrent-compaction-probe:${command}`,
+            frame: { ...original.frame, id },
+          },
+          {
+            ...reply.entry,
+            label: `synthetic:concurrent-compaction-probe:response:${command}`,
+            frame: { ...reply.frame, id },
+          },
+        ];
+      };
+      const statistics = duplicatePair(3, `t3-${930000 + ordinal * 3}`, "get_session_stats");
+      const tree = duplicatePair(1, `t3-${930001 + ordinal * 3}`, "get_entries");
+      replacements.set(index + 1, [
+        entries[index + 3]!,
+        statistics[0]!,
+        entries[index + 4]!,
+        statistics[1]!,
+        entries[index + 1]!,
+        tree[0]!,
+        entries[index + 2]!,
+        tree[1]!,
+        ...confirmation,
+        ...syntheticState(state, `t3-${930002 + ordinal * 3}`, "settle-confirmation"),
+      ]);
+    } else {
+      replacements.set(index + 1, [
+        entries[index + 3]!,
+        entries[index + 4]!,
+        entries[index + 1]!,
+        entries[index + 2]!,
+        ...confirmation,
+      ]);
+    }
+  }
+  const result: Array<ProviderReplayEntry> = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    if (input.scenario === "message_steering" && index === 27) {
+      const selected = response(15, "get_state");
+      // The pinned agent_start/message prefix establishes active streaming;
+      // only identity and selection are copied from the earlier observation.
+      result.push(
+        ...syntheticState(selected, "t3-920000", "streaming-identity-preflight", {
+          sessionFile: selected.data.sessionFile,
+          sessionId: selected.data.sessionId,
+          model: selected.data.model,
+          thinkingLevel: selected.data.thinkingLevel,
+          isStreaming: true,
+          isCompacting: false,
+          pendingMessageCount: 0,
+        }),
+      );
+    }
+    const replacement = replacements.get(index);
+    if (replacement === undefined) result.push(entries[index]!);
+    else {
+      result.push(...replacement);
+      index += 3;
+    }
+  }
+  return result;
+}

@@ -44,7 +44,7 @@ import { PI_PROVIDER, PiAdapterV2Driver } from "./PiAdapterV2.ts";
 import { piInstanceStateRoot } from "../../provider/pi/PiSessionFile.ts";
 import {
   PiReplaySessionBinding,
-  reconcilePiSimpleSettleTail,
+  reconcilePiRecordedSchedules,
 } from "./PiReplaySessionBinding.testkit.ts";
 
 export const PI_RPC_REPLAY_PROTOCOL = "pi.rpc-jsonl";
@@ -504,7 +504,23 @@ export const PiOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
         Effect.try({
           try: () => ({
             ...decoded,
-            entries: reconcilePiSimpleSettleTail(decoded),
+            entries: reconcilePiRecordedSchedules(decoded),
+            ...(![
+              "multi_turn",
+              "pi_compaction",
+              "provider_thread_resume",
+              "message_steering",
+              "thread_rollback",
+              "thread_rollback_after_stop",
+            ].includes(decoded.scenario)
+              ? {}
+              : {
+                  metadata: {
+                    ...decoded.metadata,
+                    fixtureSchedule:
+                      "Pinned statistics/entries pairs reordered; explicit synthetic read-only replies for concurrent compaction probes and confirming idle states copy recorded same-session snapshots. Steering adds an explicit synthetic streaming identity preflight with recorded identity/selection. No new vendor observation.",
+                  },
+                }),
             ...(decoded.scenario !== "simple"
               ? {}
               : {

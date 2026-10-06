@@ -11,6 +11,7 @@ import type { ProviderReplayEntry } from "@t3tools/contracts";
 import {
   PiReplaySessionBinding,
   reconcilePiSimpleSettleTail,
+  reconcilePiRecordedSchedules,
 } from "./PiReplaySessionBinding.testkit.ts";
 
 const root = "/owned/pi/sessions";
@@ -367,4 +368,234 @@ describe("Pi simple recorded settle-tail reconciliation", () => {
         );
       }),
   );
+});
+
+const originalSchedulePins = {
+  multi_turn: "71b8237c9be726330faa7a9d8e7ae1888966bbe8f16ffd0096593459b3afb1a7",
+  pi_compaction: "26226612d6558dbb6a3bcc5ae696859a5106e1e2b3ab1b52a2138f2dae043a67",
+  provider_thread_resume: "9b54ec08420f59e0fa94786f91baebd7e0ae045343e7f568324163fb12fdcf38",
+  message_steering: "57eed804122a202e5804019400e576fdf337221f23c9b7231b0e8b19b2cf20ab",
+  thread_rollback: "bd1ddccb72e23676b8c22fda18e9b456457ff18df82354b829b113c4b87edac5",
+  thread_rollback_after_stop: "e66dc46f638aa02af9d14817ece8cf4c8cd245613695ef596237b75a938f8f25",
+} as const;
+
+describe("Pi pinned native read schedules", () => {
+  for (const [scenario, digest] of Object.entries(originalSchedulePins)) {
+    const bytes = () =>
+      NodeFS.readFileSync(
+        new URL(`../testkit/fixtures/${scenario}/pi_transcript.ndjson`, import.meta.url),
+        "utf8",
+      );
+    it.effect(
+      `preserves ${scenario} recording, native activity and session selection with explicit read-only observations`,
+      () =>
+        Effect.gen(function* () {
+          const raw = bytes();
+          assert.equal(NodeCrypto.createHash("sha256").update(raw).digest("hex"), digest);
+          const recorded = yield* decodeProviderReplayNdjson(raw);
+          const before = structuredClone(recorded);
+          const prepared = reconcilePiRecordedSchedules(recorded);
+          const real = prepared.filter(
+            (entry) => entry.type === "runtime_exit" || !entry.label?.startsWith("synthetic:"),
+          );
+          assert.equal(real.length, recorded.entries.length);
+          for (const entry of recorded.entries)
+            assert.equal(real.filter((candidate) => candidate === entry).length, 1);
+          const activity = (entries: ReadonlyArray<ProviderReplayEntry>) =>
+            entries.filter(
+              (entry) =>
+                entry.type !== "runtime_exit" &&
+                Predicate.isObject(entry.frame) &&
+                entry.frame.type !== "get_state" &&
+                entry.frame.type !== "get_entries" &&
+                entry.frame.type !== "get_session_stats" &&
+                !(
+                  entry.frame.type === "response" &&
+                  ["get_state", "get_entries", "get_session_stats"].includes(
+                    String(entry.frame.command),
+                  )
+                ),
+            );
+          assert.deepEqual(activity(prepared), activity(recorded.entries));
+          const confirmations = prepared.filter(
+            (entry) =>
+              entry.type === "emit_inbound" &&
+              entry.label?.startsWith("synthetic:settle-confirmation:"),
+          );
+          assert.equal(
+            confirmations.length,
+            new Map(
+              Object.entries({
+                multi_turn: 2,
+                pi_compaction: 8,
+                provider_thread_resume: 2,
+                message_steering: 1,
+                thread_rollback: 3,
+                thread_rollback_after_stop: 3,
+              }),
+            ).get(scenario),
+          );
+          for (const entry of confirmations) {
+            if (
+              entry.type !== "emit_inbound" ||
+              !Predicate.isObject(entry.frame) ||
+              !Predicate.isObject(entry.frame.data)
+            )
+              throw new Error("Missing confirming state");
+            const frame = entry.frame;
+            const data = entry.frame.data;
+            assert.equal(data.isStreaming, false);
+            assert.equal(data.isCompacting, false);
+            assert.equal(data.pendingMessageCount, 0);
+            assert.isTrue(
+              recorded.entries.some(
+                (original) =>
+                  original.type === "emit_inbound" &&
+                  Predicate.isObject(original.frame) &&
+                  original.frame.command === "get_state" &&
+                  JSON.stringify(original.frame.data) === JSON.stringify(data) &&
+                  original.label?.endsWith("@p2") === entry.label?.endsWith("@p2"),
+              ),
+            );
+            const position = prepared.indexOf(entry);
+            const request = prepared[position - 1]!;
+            assert.deepEqual(request.type === "expect_outbound" ? request.frame : null, {
+              type: "get_state",
+              id: frame.id,
+            });
+            const dualProbe =
+              scenario === "pi_compaction" &&
+              ["t3-910001", "t3-930005", "t3-910004", "t3-930014"].includes(String(frame.id));
+            if (dualProbe) {
+              const reads = prepared
+                .slice(0, position)
+                .filter(
+                  (candidate) =>
+                    candidate.type === "emit_inbound" &&
+                    candidate.label?.startsWith("synthetic:concurrent-compaction-probe:"),
+                );
+              const statistics = reads.findLast(
+                (candidate) =>
+                  candidate.type === "emit_inbound" &&
+                  Predicate.isObject(candidate.frame) &&
+                  candidate.frame.command === "get_session_stats",
+              );
+              const tree = reads.findLast(
+                (candidate) =>
+                  candidate.type === "emit_inbound" &&
+                  Predicate.isObject(candidate.frame) &&
+                  candidate.frame.command === "get_entries",
+              );
+              assert.isDefined(statistics);
+              assert.isDefined(tree);
+              assert.isBelow(prepared.indexOf(statistics), prepared.indexOf(tree));
+              for (const copied of [statistics, tree]) {
+                if (copied.type !== "emit_inbound" || !Predicate.isObject(copied.frame))
+                  throw new Error("Missing copied read");
+                const copiedFrame = copied.frame;
+                assert.isTrue(
+                  recorded.entries.some(
+                    (original) =>
+                      original.type === "emit_inbound" &&
+                      Predicate.isObject(original.frame) &&
+                      original.frame.command === copiedFrame.command &&
+                      JSON.stringify(original.frame.data) === JSON.stringify(copiedFrame.data),
+                  ),
+                );
+                const correlated = prepared.find(
+                  (candidate) =>
+                    candidate.type === "expect_outbound" &&
+                    Predicate.isObject(candidate.frame) &&
+                    candidate.frame.id === copiedFrame.id,
+                );
+                assert.isDefined(correlated);
+                assert.isBelow(prepared.indexOf(correlated), prepared.indexOf(copied));
+              }
+            } else {
+              const tree = prepared[position - 2]!;
+              const statistics = prepared[position - 4]!;
+              assert.isTrue(
+                tree.type === "emit_inbound" &&
+                  Predicate.isObject(tree.frame) &&
+                  tree.frame.command === "get_entries",
+              );
+              assert.isTrue(
+                statistics.type === "emit_inbound" &&
+                  Predicate.isObject(statistics.frame) &&
+                  statistics.frame.command === "get_session_stats",
+              );
+            }
+          }
+          const streaming = prepared.filter(
+            (entry) =>
+              entry.type === "emit_inbound" &&
+              entry.label === "synthetic:streaming-identity-preflight:response:get_state",
+          );
+          assert.equal(streaming.length, scenario === "message_steering" ? 1 : 0);
+          if (scenario === "message_steering") {
+            const entry = streaming[0]!;
+            const selected = recorded.entries[15]!;
+            if (
+              entry.type !== "emit_inbound" ||
+              !Predicate.isObject(entry.frame) ||
+              !Predicate.isObject(entry.frame.data) ||
+              selected.type !== "emit_inbound" ||
+              !Predicate.isObject(selected.frame) ||
+              !Predicate.isObject(selected.frame.data)
+            )
+              throw new Error("Missing steering identity");
+            const data = entry.frame.data;
+            assert.equal(data.isStreaming, true);
+            assert.equal(data.sessionFile, selected.frame.data.sessionFile);
+            assert.equal(data.sessionId, selected.frame.data.sessionId);
+            assert.deepEqual(data.model, selected.frame.data.model);
+            assert.equal(data.thinkingLevel, selected.frame.data.thinkingLevel);
+            assert.strictEqual(prepared[prepared.indexOf(entry) + 1], recorded.entries[27]);
+          }
+          assert.deepEqual(recorded, before);
+          assert.equal(bytes(), raw);
+        }),
+    );
+    it.effect(
+      `refuses unpinned ${scenario} state, activity, order, truncation and reapplication`,
+      () =>
+        Effect.gen(function* () {
+          const recorded = yield* decodeProviderReplayNdjson(bytes());
+          const changedIdentity = structuredClone(recorded.entries);
+          const state = changedIdentity.find(
+            (entry) =>
+              entry.type === "emit_inbound" &&
+              Predicate.isObject(entry.frame) &&
+              entry.frame.command === "get_state",
+          );
+          if (
+            state?.type !== "emit_inbound" ||
+            !Predicate.isObject(state.frame) ||
+            !Predicate.isObject(state.frame.data)
+          )
+            throw new Error("Missing state");
+          state.frame.data.sessionId = "foreign";
+          const reordered = [...recorded.entries];
+          [reordered[1], reordered[2]] = [reordered[2]!, reordered[1]!];
+          for (const entries of [
+            changedIdentity,
+            reordered,
+            recorded.entries.slice(0, -1),
+            [
+              ...recorded.entries,
+              {
+                type: "emit_inbound",
+                label: "agent_start",
+                frame: { type: "agent_start" },
+              } satisfies ProviderReplayEntry,
+            ],
+            reconcilePiRecordedSchedules(recorded),
+          ])
+            assert.throws(
+              () => reconcilePiRecordedSchedules({ ...recorded, entries }),
+              /pinned recording/,
+            );
+        }),
+    );
+  }
 });
