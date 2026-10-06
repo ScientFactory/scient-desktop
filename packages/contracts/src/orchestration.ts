@@ -1441,11 +1441,11 @@ export const ProviderSessionRuntimeStatus = Schema.Literals([
 ]);
 export type ProviderSessionRuntimeStatus = typeof ProviderSessionRuntimeStatus.Type;
 
-export const ProjectionPendingApprovalStatus = Schema.Literals(["pending", "resolved"]);
-export type ProjectionPendingApprovalStatus = typeof ProjectionPendingApprovalStatus.Type;
-
-export const ProjectionPendingApprovalDecision = Schema.NullOr(ProviderApprovalDecision);
-export type ProjectionPendingApprovalDecision = typeof ProjectionPendingApprovalDecision.Type;
+// SCIENT-FORK: retained SQL approval-history codecs have one current owner.
+export {
+  ProjectionPendingApprovalStatus,
+  ProjectionPendingApprovalDecision,
+} from "./scientApprovalProjection.ts";
 
 // The thread-search scan input and match source moved to threadSearch.ts
 // upstream; those two declarations were identical. The match itself is not —

@@ -59,6 +59,11 @@ export {
 // SCIENT-FORK:END
 // SCIENT-ORCHESTRATION:END
 export * from "./orchestrationDispatch.ts";
+// SCIENT-FORK: retained SQL approval codecs stay independent of the legacy barrel.
+export {
+  ProjectionPendingApprovalStatus,
+  ProjectionPendingApprovalDecision,
+} from "./scientApprovalProjection.ts";
 export * from "./orchestrationProject.ts";
 export * from "./orchestrationV2.ts";
 export * from "./applicationEvent.ts";
