@@ -324,6 +324,10 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     readonly providerSessionIdleTimeoutMs?: number;
     /** Observe or gate the real canonical writer without replacing its SQL transaction. */
     readonly decorateEventSink?: (sink: EventSink.EventSinkV2Shape) => EventSink.EventSinkV2Shape;
+    /** Observe real projection reads without replacing their SQL implementation. */
+    readonly decorateProjectionStore?: (
+      store: ProjectionStore.ProjectionStoreV2Shape,
+    ) => ProjectionStore.ProjectionStoreV2Shape;
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
       | MigrationError
@@ -423,9 +427,16 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       ? Layer.succeed(ContextHandoffPolicyOverride, "byte")
       : Layer.empty,
   );
+  const projectionStoreLayer =
+    options.decorateProjectionStore === undefined
+      ? ProjectionStore.layer
+      : Layer.effect(
+          ProjectionStore.ProjectionStoreV2,
+          Effect.map(ProjectionStore.ProjectionStoreV2, options.decorateProjectionStore),
+        ).pipe(Layer.provide(ProjectionStore.layer));
   const storesLayer = Layer.mergeAll(
     EventStore.layer,
-    ProjectionStore.layer,
+    projectionStoreLayer,
     ProjectStore.layer,
     CommandReceiptStore.layer,
     EffectOutbox.layer,

@@ -72,6 +72,16 @@ for (const recovery of [
           const nativeFinish = yield* Deferred.make<Effect.Effect<void>>();
           let nativeOffers = 0;
           let nativeResumeFailures = 0;
+          let observeResume = false;
+          const admissionReads: Array<{
+            operation: "readiness" | "records";
+            outcome: "Success" | "Failure";
+            ready?: boolean;
+            fields?: ReadonlyArray<string>;
+            turnItemTypes?: ReadonlyArray<string>;
+            turnItemRunIds?: ReadonlyArray<RunId | null>;
+            errors?: ReadonlyArray<string>;
+          }> = [];
           const instanceId = ProviderInstanceId.make("omp");
           const modelSelection = { instanceId, model: "history-failure-model" };
           const adapter = makeNativeSessionAdapterV2({
@@ -109,7 +119,55 @@ for (const recovery of [
           const layer = makeOrchestratorV2ReplayLayerWithRegistry(
             { name: "start-history-failure", runtimePolicyOverride: { cwd } },
             makeLayer([adapter]),
-            { configureMcp: false, runEffectWorker: false, databaseLayer: SqlitePersistenceMemory },
+            {
+              configureMcp: false,
+              runEffectWorker: false,
+              databaseLayer: SqlitePersistenceMemory,
+              decorateProjectionStore: (store) => ({
+                ...store,
+                canStartQueuedRun: (threadId) =>
+                  Effect.onExit(store.canStartQueuedRun(threadId), (exit) =>
+                    Effect.sync(() => {
+                      if (!observeResume || admissionReads.length >= 64) return;
+                      admissionReads.push({
+                        operation: "readiness",
+                        outcome: exit._tag,
+                        ...(exit._tag === "Success"
+                          ? { ready: exit.value }
+                          : {
+                              errors: exit.cause.reasons.map((reason) =>
+                                reason._tag === "Fail" ? reason.error._tag : reason._tag,
+                              ),
+                            }),
+                      });
+                    }),
+                  ),
+                getThreadRecords: (threadId, fields, filter) =>
+                  Effect.onExit(store.getThreadRecords(threadId, fields, filter), (exit) =>
+                    Effect.sync(() => {
+                      if (!observeResume || admissionReads.length >= 64) return;
+                      admissionReads.push({
+                        operation: "records",
+                        outcome: exit._tag,
+                        fields,
+                        ...(filter?.turnItemTypes === undefined
+                          ? {}
+                          : { turnItemTypes: filter.turnItemTypes }),
+                        ...(filter?.turnItemRunIds === undefined
+                          ? {}
+                          : { turnItemRunIds: filter.turnItemRunIds }),
+                        ...(exit._tag === "Failure"
+                          ? {
+                              errors: exit.cause.reasons.map((reason) =>
+                                reason._tag === "Fail" ? reason.error._tag : reason._tag,
+                              ),
+                            }
+                          : {}),
+                      });
+                    }),
+                  ),
+              }),
+            },
           ).pipe(Layer.provideMerge(SqlitePersistenceMemory));
           return yield* Effect.gen(function* () {
             const orchestrator = yield* OrchestratorV2;
@@ -259,12 +317,92 @@ for (const recovery of [
               yield* sql`UPDATE orchestration_v2_projection_turn_items SET payload_json = '{}'
         WHERE thread_id = ${threadId} AND turn_item_id = ${history.turn_item_id}`;
             }
-            yield* orchestrator.dispatch({
-              type: "queue.resume",
-              threadId,
-              runId: queued.id,
-              commandId: CommandId.make("history-failure-resume"),
+            let resumeExit:
+              | { tag: "Success"; resultSequence: number; storedEventCount: number }
+              | { tag: "Failure"; errors: ReadonlyArray<string> }
+              | undefined;
+            const observeMissingStart = Effect.fnUntraced(function* (
+              boundary: "resume-failed" | "missing-start",
+            ) {
+              const receipt = yield* sql<{
+                status: string;
+                command_type: string;
+                result_sequence: number;
+              }>`SELECT status, command_type, result_sequence FROM orchestration_command_receipts
+                  WHERE command_id = 'history-failure-resume'`;
+              const runs = yield* sql<{
+                run_id: string;
+                status: string;
+                queue_held: number | null;
+                active_attempt_id: string | null;
+                root_node_id: string | null;
+                provider_thread_id: string | null;
+                provider_instance_id: string | null;
+              }>`SELECT run_id, status, json_extract(payload_json, '$.queueHeld') AS queue_held,
+                  json_extract(payload_json, '$.activeAttemptId') AS active_attempt_id,
+                  json_extract(payload_json, '$.rootNodeId') AS root_node_id,
+                  json_extract(payload_json, '$.providerThreadId') AS provider_thread_id,
+                  json_extract(payload_json, '$.providerInstanceId') AS provider_instance_id
+                  FROM orchestration_v2_projection_runs WHERE thread_id = ${threadId}
+                    AND run_id IN (${foreground.id}, ${queued.id}) ORDER BY ordinal`;
+              const thread = yield* sql<{ active_provider_thread_id: string | null }>`
+                  SELECT json_extract(payload_json, '$.activeProviderThreadId') AS active_provider_thread_id
+                  FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}`;
+              const starts = yield* sql<{
+                effect_id: string;
+                status: string;
+                attempt_count: number;
+                run_id: string | null;
+                expected_attempt_id: string | null;
+                claimed: number;
+              }>`SELECT effect_id, status, attempt_count,
+                  json_extract(payload_json, '$.runId') AS run_id,
+                  json_extract(payload_json, '$.expectedAttemptId') AS expected_attempt_id,
+                  lease_owner IS NOT NULL AS claimed
+                  FROM orchestration_v2_effect_outbox WHERE thread_id = ${threadId}
+                    AND effect_type = 'provider-turn.start' ORDER BY created_at, effect_id LIMIT 8`;
+              yield* Effect.log(
+                "history-start-causal-witness",
+                yield* encodeFrame({
+                  recovery,
+                  boundary,
+                  resumeExit,
+                  receipt,
+                  runs,
+                  thread,
+                  starts,
+                  admissionReads,
+                  truncated: admissionReads.length === 64,
+                }),
+              );
             });
+            observeResume = true;
+            yield* Effect.onExit(
+              orchestrator.dispatch({
+                type: "queue.resume",
+                threadId,
+                runId: queued.id,
+                commandId: CommandId.make("history-failure-resume"),
+              }),
+              (exit) =>
+                Effect.gen(function* () {
+                  resumeExit =
+                    exit._tag === "Success"
+                      ? {
+                          tag: "Success",
+                          resultSequence: exit.value.sequence,
+                          storedEventCount: exit.value.storedEvents.length,
+                        }
+                      : {
+                          tag: "Failure",
+                          errors: exit.cause.reasons.map((reason) =>
+                            reason._tag === "Fail" ? reason.error._tag : reason._tag,
+                          ),
+                        };
+                  if (exit._tag === "Failure") yield* observeMissingStart("resume-failed");
+                }),
+            );
+            observeResume = false;
             if (recoveryRead) {
               yield* sql`UPDATE orchestration_v2_projection_turn_items SET payload_json = '{}'
         WHERE thread_id = ${threadId} AND turn_item_id = ${history.turn_item_id}`;
@@ -272,6 +410,7 @@ for (const recovery of [
             const [start] = yield* sql<{ effect_id: string }>`
         SELECT effect_id FROM orchestration_v2_effect_outbox
         WHERE thread_id = ${threadId} AND effect_type = 'provider-turn.start' AND status = 'pending'`;
+            if (start === undefined) yield* observeMissingStart("missing-start");
             assert.ok(start);
             let replacementAttemptId: typeof queued.activeAttemptId | undefined;
             const replacementEffectId = "history-failure-current-owner-start";
