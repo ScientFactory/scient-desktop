@@ -277,9 +277,9 @@ export class ScientCapacityFailureObservation {
         sessions:
           "SELECT provider_session_id, status FROM orchestration_v2_projection_provider_sessions WHERE thread_id LIKE ? LIMIT 32",
         events:
-          "SELECT sequence, event_type, run_id, node_id, json_extract(payload_json, '$.status') AS status, json_extract(payload_json, '$.providerTurnId') AS provider_turn_id, json_extract(payload_json, '$.tokenUsage.maxTokens') AS max_tokens, CASE WHEN event_type = 'turn-item.updated' AND json_extract(payload_json, '$.type') = 'error' THEN json_extract(payload_json, '$.message') END AS error_message FROM orchestration_v2_events WHERE thread_id LIKE ? ORDER BY sequence DESC LIMIT 32",
+          "SELECT sequence, event_type, json_extract(metadata_json, '$.runId') AS run_id, json_extract(metadata_json, '$.nodeId') AS node_id, json_extract(payload_json, '$.status') AS status, json_extract(payload_json, '$.providerTurnId') AS provider_turn_id, json_extract(payload_json, '$.tokenUsage.maxTokens') AS max_tokens, CASE WHEN event_type = 'turn-item.updated' AND json_extract(payload_json, '$.type') = 'error' THEN json_extract(payload_json, '$.failure.message') END AS error_message FROM orchestration_events WHERE aggregate_kind = 'thread' AND application_event_version = 2 AND stream_id LIKE ? ORDER BY sequence DESC LIMIT 32",
         receipts:
-          "SELECT command_id, command_type, status, result_sequence, error FROM orchestration_v2_command_receipts WHERE thread_id LIKE ? LIMIT 32",
+          "SELECT command_id, command_type, status, result_sequence, error FROM orchestration_command_receipts WHERE aggregate_kind = 'thread' AND aggregate_id LIKE ? LIMIT 32",
         outbox:
           "SELECT effect_id, command_id, effect_type, status, attempt_count, lease_owner, lease_expires_at, completed_at, last_error FROM orchestration_v2_effect_outbox WHERE thread_id LIKE ? LIMIT 32",
       };

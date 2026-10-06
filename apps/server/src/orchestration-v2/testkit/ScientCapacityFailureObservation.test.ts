@@ -5,7 +5,11 @@ import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import { assert, it } from "@effect/vitest";
 import {
+  CommandId,
   EventId,
+  NodeId,
+  ProjectId,
+  RunId,
   MessageId,
   ProviderSessionId,
   ThreadId,
@@ -18,6 +22,12 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import { runMigrations } from "../../persistence/Migrations.ts";
+import * as EventStore from "../EventStore.ts";
+import * as CommandReceiptStore from "../CommandReceiptStore.ts";
 import { ScientCapacityFailureObservation } from "./ScientCapacityFailureObservation.test-support.ts";
 
 const threadId = ThreadId.make("capacity-race:sql-failure");
@@ -418,6 +428,153 @@ it.effect(
         assert.include(text, "running");
         assert.include(text, "worker:synthetic");
         assert.include(text, "unavailable");
+      }),
+    ),
+);
+
+const decodeCanonicalSqlObservation = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    sql: Schema.Struct({
+      events: Schema.Array(Schema.Unknown),
+      receipts: Schema.Array(Schema.Unknown),
+    }),
+  }),
+);
+
+it.effect(
+  "reads migrated canonical store events and receipts, excluding legacy and foreign rows",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "capacity-canonical-")),
+          ),
+          (path) => Effect.sync(() => NodeFS.rmSync(path, { recursive: true })),
+        );
+        const file = NodePath.join(root, "state.sqlite");
+        const stores = Layer.mergeAll(EventStore.layer, CommandReceiptStore.layer).pipe(
+          Layer.provideMerge(NodeSqliteClient.layer({ filename: file })),
+        );
+        yield* Effect.gen(function* () {
+          yield* runMigrations();
+          const sql = yield* SqlClient.SqlClient;
+          const eventStore = yield* EventStore.EventStoreV2;
+          const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+          const commandId = CommandId.make("capacity:canonical-command");
+          const runId = RunId.make("capacity:canonical-run");
+          const nodeId = NodeId.make("capacity:canonical-node");
+          const failure = {
+            class: "transport_error",
+            message: "Canonical typed stream failure",
+            code: "ERR_STREAM_CLOSED",
+            retryable: true,
+          } satisfies OrchestrationV2ProviderFailure;
+          const canonicalEvent = {
+            ...errorEvent(failure),
+            runId,
+            nodeId,
+            payload: { ...errorEvent(failure).payload, runId, nodeId },
+          };
+          const [stored] = yield* eventStore.append({ commandId, events: [canonicalEvent] });
+          assert.ok(stored);
+          const foreignThread = ThreadId.make("foreign-capacity-thread");
+          yield* eventStore.append({
+            events: [{ ...events[0]!, id: EventId.make("foreign-event"), threadId: foreignThread }],
+          });
+          // Negative controls use the actual migrated table, not a duplicated schema.
+          // Copy the producer-encoded row, changing only its version or aggregate identity.
+          for (const [id, kind, version] of [
+            ["legacy-version", "thread", 1],
+            ["unknown-version", "thread", 3],
+            ["project-aggregate", "project", 2],
+          ] as const) {
+            yield* sql`
+            INSERT INTO orchestration_events (
+              event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+              command_id, causation_event_id, correlation_id, actor_kind, payload_json,
+              metadata_json, application_event_version
+            )
+            SELECT ${id}, ${kind}, stream_id, ${version} + 10, event_type, occurred_at,
+              command_id, causation_event_id, correlation_id, actor_kind, payload_json,
+              metadata_json, ${version}
+            FROM orchestration_events WHERE event_id = ${canonicalEvent.id}
+          `;
+          }
+          const receipt = {
+            commandId,
+            threadId,
+            commandType: "thread.send",
+            acceptedAt: occurredAt,
+            resultSequence: stored.sequence,
+            status: "accepted",
+            error: null,
+          } satisfies CommandReceiptStore.CommandReceiptV2;
+          yield* receipts.upsert(receipt);
+          yield* receipts.upsert({
+            ...receipt,
+            commandId: CommandId.make("foreign-thread-receipt"),
+            threadId: foreignThread,
+          });
+          yield* receipts.upsert({
+            commandId: CommandId.make("project-receipt"),
+            projectId: ProjectId.make(threadId),
+            commandType: "project.update",
+            acceptedAt: occurredAt,
+            resultSequence: stored.sequence,
+            status: "accepted",
+            error: null,
+          });
+          // The retired V2 tables still exist for migration; their rows are not current truth.
+          yield* sql`
+          INSERT INTO orchestration_v2_events (
+            event_id, thread_id, run_id, node_id, event_type, occurred_at, payload_json
+          ) SELECT 'legacy-table-event', stream_id, NULL, NULL, event_type, occurred_at,
+            payload_json FROM orchestration_events WHERE event_id = ${canonicalEvent.id}
+        `;
+          yield* sql`
+          INSERT INTO orchestration_v2_command_receipts (
+            command_id, thread_id, command_type, accepted_at, result_sequence, status, error
+          ) SELECT 'legacy-table-receipt', aggregate_id, command_type, accepted_at,
+            result_sequence, status, error FROM orchestration_command_receipts
+            WHERE command_id = ${commandId}
+        `;
+          const before = NodeFS.readFileSync(file);
+          let snapshot: unknown;
+          const observation = new ScientCapacityFailureObservation(file, (value) => {
+            snapshot = value;
+          });
+          observation.at("canonical-reader", threadId);
+          const cause = Cause.fail("original native wait failure");
+          const result = yield* observation
+            .beforeCleanup(Effect.failCause(cause), Effect.succeed(null))
+            .pipe(Effect.exit);
+          assert.isTrue(Exit.isFailure(result));
+          if (Exit.isFailure(result)) assert.strictEqual(result.cause, cause);
+          assert.deepEqual(NodeFS.readFileSync(file), before);
+          const observed = yield* decodeCanonicalSqlObservation(snapshot);
+          assert.deepEqual(observed.sql.events, [
+            {
+              sequence: stored.sequence,
+              event_type: "turn-item.updated",
+              run_id: runId,
+              node_id: nodeId,
+              status: "failed",
+              provider_turn_id: null,
+              max_tokens: null,
+              error_message: failure.message,
+            },
+          ]);
+          assert.deepEqual(observed.sql.receipts, [
+            {
+              command_id: commandId,
+              command_type: "thread.send",
+              status: "accepted",
+              result_sequence: stored.sequence,
+              error: null,
+            },
+          ]);
+        }).pipe(Effect.provide(stores));
       }),
     ),
 );
