@@ -31,7 +31,11 @@ describe("Scient split seams", () => {
   });
 
   it("preserves barred resize cursors except on Windows", () => {
-    const appStyles = readSource("../../index.css");
+    // The app stylesheet and the Scient stylesheet it imports for these cursors.
+    const appStyles = [
+      readSource("../../index.css"),
+      readSource("../presentation/scient-platform-cursors.css"),
+    ].join("\n");
 
     expect(appStyles).toMatch(/\.cursor-platform-col-resize\s*\{\s*cursor: col-resize;/u);
     expect(appStyles).toMatch(/\.cursor-platform-row-resize\s*\{\s*cursor: row-resize;/u);
