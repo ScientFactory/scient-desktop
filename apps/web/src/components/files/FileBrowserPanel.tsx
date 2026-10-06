@@ -11,13 +11,11 @@ import type {
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { ChevronsDownUpIcon, ChevronsUpDownIcon, SearchIcon } from "lucide-react";
+import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "~/lib/utils";
 
 import { Button } from "~/components/ui/button";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
-import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
@@ -36,6 +34,7 @@ import {
 // SCIENT-FORK:START
 import {
   FILE_SEARCH_LIMIT,
+  FileSearchField,
   ScientFileTreeSurface,
   useScientDirectoryView,
   WorkspaceFilesMenu,
@@ -99,79 +98,6 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
       </TooltipTrigger>
       <TooltipPopup>{props.isPending ? "Refreshing…" : "Refresh files"}</TooltipPopup>
     </Tooltip>
-  );
-}
-
-function FileSearchField(props: {
-  ariaLabel: string;
-  name: string;
-  onClose: () => void;
-  onValueChange: (value: string) => void;
-  value: string;
-}) {
-  const renderSearchInput = (autoFocus = false) => (
-    <InputGroupInput
-      type="search"
-      name={props.name}
-      size="sm"
-      value={props.value}
-      aria-label={props.ariaLabel}
-      placeholder="Search files"
-      spellCheck={false}
-      autoFocus={autoFocus}
-      onChange={(event) => props.onValueChange(event.target.value)}
-      onKeyDown={(event) => {
-        if (event.key !== "Escape") return;
-        props.onClose();
-        event.currentTarget.blur();
-      }}
-    />
-  );
-
-  return (
-    <>
-      <InputGroup
-        variant="ghost"
-        className="h-7 min-w-0 flex-1 @max-[14rem]/file-browser-header:hidden"
-      >
-        <InputGroupAddon>
-          <SearchIcon aria-hidden className="size-3.5" />
-        </InputGroupAddon>
-        {renderSearchInput()}
-      </InputGroup>
-      <Popover>
-        <PopoverTrigger
-          render={
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              className="hidden shrink-0 @max-[14rem]/file-browser-header:inline-flex"
-              aria-label={props.ariaLabel}
-              title={props.ariaLabel}
-            />
-          }
-        >
-          <SearchIcon aria-hidden className="size-3.5" />
-        </PopoverTrigger>
-        <PopoverPopup
-          side="top"
-          align="end"
-          alignOffset={8}
-          sideOffset={6}
-          padding="none"
-          surface="bare"
-          className="w-48 max-w-[calc(100vw-2rem)]"
-        >
-          <InputGroup variant="ghost" className="h-7 min-w-0">
-            <InputGroupAddon>
-              <SearchIcon aria-hidden className="size-3.5" />
-            </InputGroupAddon>
-            {renderSearchInput(true)}
-          </InputGroup>
-        </PopoverPopup>
-      </Popover>
-    </>
   );
 }
 
