@@ -96,7 +96,12 @@ import { threadShellFromProjection } from "@t3tools/shared/orchestrationV2Thread
 import { EventSinkV2 } from "./EventSink.ts";
 import { EventStoreV2 } from "./EventStore.ts";
 import { sourcePlanFingerprint } from "./SourcePlan.ts";
-import { planHeldQueueAdmission } from "./legacy/HeldQueueAdmission.ts";
+import {
+  heldQueueAdmissionEvents,
+  legacyQueueImportRefusal,
+  planHeldQueueAdmission,
+  planLegacyQueueReorder,
+} from "./legacy/HeldQueueAdmission.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import {
@@ -10105,48 +10110,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       }
       case "legacy-queue.import": {
+        // SCIENT-FORK:START — migration admits a held legacy entry; its source stays intact.
         const projection = yield* loadProjectionForCommand(command, [
           "runs",
           "messages",
           "providerTurns",
         ]);
-        if (
-          projection.thread.deletedAt !== null ||
-          isProviderNativeSubagentThread(projection.thread)
-        ) {
+        const refusal = legacyQueueImportRefusal({ command, projection });
+        if (refusal !== undefined) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
-            cause: "This thread cannot admit queued work. Its source remains intact.",
+            cause: refusal,
           });
         }
-        if (
-          projection.runs.some((run) => run.userMessageId === command.messageId) ||
-          projection.messages.some((message) => message.id === command.messageId)
-        ) {
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause:
-              "The legacy queue message already belongs to V2 work. Its source remains intact.",
-          });
-        }
-        const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
         const plan = planHeldQueueAdmission({ command, projection, ids: idAllocator.derive });
         yield* validateQueueBudget(command, projection, plan.message);
         const event = emit(events, command);
-        const common = {
-          threadId: command.threadId,
-          runId: plan.run.id,
-          nodeId: plan.node.id,
-          providerInstanceId: modelSelection.instanceId,
-          occurredAt: command.createdAt,
-        };
-        yield* event({ ...common, type: "run.created", payload: plan.run });
-        yield* event({ ...common, type: "run-attempt.created", payload: plan.attempt });
-        yield* event({ ...common, type: "node.updated", payload: plan.node });
-        yield* event({ ...common, type: "message.updated", payload: plan.message });
+        for (const admitted of heldQueueAdmissionEvents({ command, projection, plan }))
+          yield* event(admitted);
         break;
+        // SCIENT-FORK:END
       }
       case "notification.delivery.accept":
         yield* dispatchNotificationAccepted(command, events);
@@ -10249,33 +10233,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchQueuedRunReorder(command, events);
         break;
       case "legacy-queue.reorder": {
+        // SCIENT-FORK:START — the compatibility request reorders only legacy entries.
         const projection = yield* loadProjectionForCommand(command, ["runs", "messages"]);
-        const queued = queuedRunsInDeliveryOrder(projection);
-        const owned = queued.filter((run) => run.legacyQueue !== undefined);
-        const requested = new Set(command.queueItemIds);
-        if (
-          projection.thread.deletedAt !== null ||
-          projection.thread.archivedAt !== null ||
-          requested.size !== owned.length ||
-          requested.size !== command.queueItemIds.length ||
-          owned.some((run) => !requested.has(run.legacyQueue!.queueItemId))
-        )
+        const moved = planLegacyQueueReorder({ command, projection });
+        if (moved === undefined)
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
             cause: "The queue changed. Refresh before reordering it.",
           });
-        const ordered = command.queueItemIds.map((id) =>
-          owned.find((run) => run.legacyQueue!.queueItemId === id)!,
-        );
-        let next = 0;
-        let changed = false;
         const now = yield* DateTime.now;
-        for (const [index, original] of queued.entries()) {
-          // Other native work keeps its position; the compatibility request owns only legacy entries.
-          const run = original.legacyQueue === undefined ? original : ordered[next++]!;
-          if (run.queuePosition === index + 1) continue;
-          changed = true;
+        for (const run of moved)
           yield* emit(
             events,
             command,
@@ -10285,10 +10253,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             runId: run.id,
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: { ...run, queuePosition: index + 1 },
+            payload: run,
           });
-        }
-        if (!changed)
+        if (moved.length === 0)
           yield* emit(
             events,
             command,
@@ -10299,6 +10266,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             payload: projection.thread,
           });
         break;
+        // SCIENT-FORK:END
       }
       case "queued-run.cancel":
         yield* dispatchQueuedRunCancel(command, events);

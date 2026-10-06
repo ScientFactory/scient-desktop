@@ -1,5 +1,7 @@
 import {
+  isProviderNativeSubagentThread,
   ProviderThreadId,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2InternalCommand,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2Run,
@@ -8,6 +10,25 @@ import {
   type OrchestrationV2ConversationMessage,
 } from "@t3tools/contracts";
 import type { IdAllocatorV2DeriveShape } from "../IdAllocator.ts";
+import { queuedRunsInDeliveryOrder } from "../QueuedRunOrder.ts";
+
+/** Why a held legacy entry cannot be admitted, or undefined when it can. Its source stays intact. */
+export function legacyQueueImportRefusal(input: {
+  readonly command: Extract<OrchestrationV2InternalCommand, { type: "legacy-queue.import" }>;
+  readonly projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages">;
+}): string | undefined {
+  const { command, projection } = input;
+  if (projection.thread.deletedAt !== null || isProviderNativeSubagentThread(projection.thread)) {
+    return "This thread cannot admit queued work. Its source remains intact.";
+  }
+  if (
+    projection.runs.some((run) => run.userMessageId === command.messageId) ||
+    projection.messages.some((message) => message.id === command.messageId)
+  ) {
+    return "The legacy queue message already belongs to V2 work. Its source remains intact.";
+  }
+  return undefined;
+}
 
 /** Pure admission. Native sessions, checkpoints and provider delivery wait for Resume. */
 export function planHeldQueueAdmission(input: {
@@ -114,4 +135,59 @@ export function planHeldQueueAdmission(input: {
     updatedAt: command.createdAt,
   };
   return { run, attempt, node, message };
+}
+
+/** The records an admitted held entry commits, in commit order. */
+export function heldQueueAdmissionEvents(input: {
+  readonly command: Extract<OrchestrationV2InternalCommand, { type: "legacy-queue.import" }>;
+  readonly projection: Pick<OrchestrationV2ThreadProjection, "thread">;
+  readonly plan: ReturnType<typeof planHeldQueueAdmission>;
+}): ReadonlyArray<Omit<OrchestrationV2DomainEvent, "id">> {
+  const { command, projection, plan } = input;
+  const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
+  const common = {
+    threadId: command.threadId,
+    runId: plan.run.id,
+    nodeId: plan.node.id,
+    providerInstanceId: modelSelection.instanceId,
+    occurredAt: command.createdAt,
+  };
+  return [
+    { ...common, type: "run.created", payload: plan.run },
+    { ...common, type: "run-attempt.created", payload: plan.attempt },
+    { ...common, type: "node.updated", payload: plan.node },
+    { ...common, type: "message.updated", payload: plan.message },
+  ];
+}
+
+/** Reorder only legacy-owned queue entries; other native work keeps its position.
+ * Returns the runs whose position changes, or undefined when the queue changed under the request. */
+export function planLegacyQueueReorder(input: {
+  readonly command: Extract<OrchestrationV2InternalCommand, { type: "legacy-queue.reorder" }>;
+  readonly projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages">;
+}): ReadonlyArray<OrchestrationV2Run> | undefined {
+  const { command, projection } = input;
+  const queued = queuedRunsInDeliveryOrder(projection);
+  const owned = queued.filter((run) => run.legacyQueue !== undefined);
+  const requested = new Set(command.queueItemIds);
+  if (
+    projection.thread.deletedAt !== null ||
+    projection.thread.archivedAt !== null ||
+    requested.size !== owned.length ||
+    requested.size !== command.queueItemIds.length ||
+    owned.some((run) => !requested.has(run.legacyQueue!.queueItemId))
+  )
+    return undefined;
+  const ordered = command.queueItemIds.map((id) =>
+    owned.find((run) => run.legacyQueue!.queueItemId === id)!,
+  );
+  let next = 0;
+  const moved: Array<OrchestrationV2Run> = [];
+  for (const [index, original] of queued.entries()) {
+    // Other native work keeps its position; the compatibility request owns only legacy entries.
+    const run = original.legacyQueue === undefined ? original : ordered[next++]!;
+    if (run.queuePosition === index + 1) continue;
+    moved.push({ ...run, queuePosition: index + 1 });
+  }
+  return moved;
 }
