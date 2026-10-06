@@ -120,3 +120,21 @@ export function makeScientProviderSettings<BinaryPath extends Schema.Top>({
 
   return { OmpSettings, ScientAgentSettings, DroidSettings };
 }
+
+export const DroidSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+  cloudSessionSync: Schema.optionalKey(Schema.Boolean),
+});
+
+export const OmpSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  homePath: Schema.optionalKey(TrimmedString),
+  profile: Schema.optionalKey(TrimmedString),
+});
+export const ScientAgentSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+});
