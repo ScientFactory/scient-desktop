@@ -16,6 +16,7 @@ import {
   scientInitializeOpenedProject,
   useScientNewThreadAddProjectItem,
   scientBrowseKeyDownCapture,
+  scientMissingGitReadiness,
   useScientAddProjectBrowseScope,
   useScientBrowseHighlight,
   useScientProjectFolderActions,
@@ -422,23 +423,10 @@ function buildAddProjectRemoteSourceReadiness(
     return defaultReadiness;
   }
 
-  const gitMissing = discovery.versionControlSystems.some(
-    (item) => item.kind === "git" && item.status === "missing",
-  );
-  if (gitMissing) {
-    const missingGit = {
-      ready: false,
-      hint: "Git is unavailable in this environment.",
-    } as const;
-    return {
-      url: missingGit,
-      github: missingGit,
-      gitlab: missingGit,
-      forgejo: missingGit,
-      bitbucket: missingGit,
-      "azure-devops": missingGit,
-    };
-  }
+  // SCIENT-FORK:START — no remote source is ready without Git
+  const missingGitReadiness = scientMissingGitReadiness(discovery);
+  if (missingGitReadiness) return missingGitReadiness;
+  // SCIENT-FORK:END
 
   const providerByKind = new Map(
     discovery.sourceControlProviders.map((provider) => [provider.kind, provider]),
