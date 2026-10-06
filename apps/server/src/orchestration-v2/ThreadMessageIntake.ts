@@ -12,6 +12,7 @@ import * as AttachmentClaims from "./AttachmentClaims.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import { reconcileReservationsBestEffort } from "./AttachmentReservationReconciliation.ts";
+import { rejectThreadCommandDuringClone } from "./scient-fork/ThreadDispatchCloneGuard.ts";
 
 // These dispatcher failures occur in receipt validation or planning, before
 // commitCommand. Generic dispatch errors can follow a commit and remain uncertain.
@@ -32,27 +33,9 @@ function dispatchWasNotAccepted(
 }
 const isOrchestratorError = Schema.is(Orchestrator.OrchestratorV2Error);
 
-/** Admission is the committed command's decision, including when its receipt is replayed. */
-export function dispatchCommandReceipt(
-  command: OrchestrationV2Command,
-  result: Orchestrator.OrchestratorV2DispatchResult,
-) {
-  if (command.type !== "message.dispatch") return { sequence: result.sequence };
-  const queued = result.storedEvents.some(
-    ({ event }) =>
-      event.type === "run.created" &&
-      event.payload.userMessageId === command.messageId &&
-      event.payload.status === "queued",
-  );
-  return {
-    sequence: result.sequence,
-    queued,
-    submission: {
-      submissionId: command.messageId,
-      outcome: queued ? ("queued" as const) : ("sent" as const),
-    },
-  };
-}
+// SCIENT-FORK:START — the queued/sent admission receipt lives in scient-fork.
+export { dispatchCommandReceipt } from "./scient-fork/MessageAdmissionReceipt.ts";
+// SCIENT-FORK:END
 
 const releaseUnusedClaims = Effect.fn("ThreadMessageIntake.releaseUnusedClaims")(function* (
   claimedPaths: ReadonlyArray<string>,
@@ -77,6 +60,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
   command: OrchestrationV2Command,
 ) {
   const threads = yield* ThreadManagement.ThreadManagementService;
+  // SCIENT-FORK:START — no new thread or turn while the project clone runs or failed.
   if (command.type === "thread.create" || command.type === "message.dispatch") {
     const projectId =
       command.type === "thread.create"
@@ -84,21 +68,10 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
         : (yield* threads.getThreadShell(command.threadId))?.projectId;
     if (projectId !== undefined) {
       const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
-      yield* ProjectCloneTracker.rejectCommandsDuringClone(tracker, {
-        type: "thread.create",
-        projectId,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new Orchestrator.OrchestratorCommandRejectedError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause,
-            }),
-        ),
-      );
+      yield* rejectThreadCommandDuringClone(tracker, command, projectId);
     }
   }
+  // SCIENT-FORK:END
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
     const incomingByQuestionId = command.attachmentsByQuestionId;

@@ -1,4 +1,5 @@
 import type {
+  ForkContextHandoffSize,
   OrchestrationV2ContextHandoff,
   OrchestrationV2ThreadProjection,
   ProviderInstanceId,
@@ -11,9 +12,11 @@ import {
   DEFAULT_HANDOFF_TOKEN_CAP,
   handoffTokenCapConfig,
   hasScientContextHistory,
-  scientHandoffTokenCapOverride,
 } from "./ContextHandoffBudget.ts";
-import { handoffTokenCap } from "./scient-fork/context/handoffBudget.ts";
+import {
+  handoffTokenCap,
+  scientHandoffTokenCapOverride,
+} from "./scient-fork/context/handoffBudget.ts";
 
 /** Explicit replay-fixture override; production chooses policy from canonical provenance. */
 export class ContextHandoffPolicyOverride extends Context.Reference<"byte" | undefined>(
@@ -26,6 +29,16 @@ export const genericContextHandoffPolicy = handoffTokenCapConfig.pipe(
   Effect.map((tokenCap) => ({ tokenCap, bytesPerToken: 1, byteCap: 64_000 })),
 );
 
+/** A Scient preset's allowance policy: estimated tokens, without the generic byte clamp. */
+export const scientContextHandoffPolicy = (
+  size: ForkContextHandoffSize,
+  environmentOverride: number | undefined,
+) => ({
+  tokenCap: handoffTokenCap(size, environmentOverride),
+  bytesPerToken: 3,
+  byteCap: Infinity,
+});
+
 /** Capture required settings once; read the latest Scient preset at final delivery. */
 export const makeScientContextHandoffPolicy = Effect.fn("ScientContextHandoffPolicy.make")(
   function* () {
@@ -35,14 +48,10 @@ export const makeScientContextHandoffPolicy = Effect.fn("ScientContextHandoffPol
       const override = yield* scientHandoffTokenCapOverride.pipe(
         Effect.orElseSucceed(() => Option.none<number>()),
       );
-      return {
-        tokenCap: handoffTokenCap(
-          snapshot.scientFork.contextHandoffSize,
-          Option.getOrUndefined(override),
-        ),
-        bytesPerToken: 3,
-        byteCap: Infinity,
-      };
+      return scientContextHandoffPolicy(
+        snapshot.scientFork.contextHandoffSize,
+        Option.getOrUndefined(override),
+      );
     });
   },
 );

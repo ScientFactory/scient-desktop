@@ -13,6 +13,7 @@ import {
   TurnItemId,
   TurnId,
   OrchestrationV2ContextHandoff,
+  type ForkContextHandoffSize,
   type OrchestrationV2HistoricalMessage,
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
@@ -24,7 +25,6 @@ import * as Schema from "effect/Schema";
 import {
   contextUsageForHandoff,
   handoffBudget,
-  scientHandoffByteBudget,
   historyCost,
   historyResponseItems,
   selectHistory,
@@ -32,9 +32,23 @@ import {
 } from "./ContextHandoffBudget.ts";
 import { projectContextHandoffForWire } from "./WireProjection.ts";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
+import { scientContextHandoffPolicy } from "./ScientContextHandoffPolicy.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeHandoff = Schema.decodeUnknownSync(OrchestrationV2ContextHandoff);
+
+// The deleted production helper composed exactly this: the live Scient policy
+// passed to the shared allowance formula.
+const scientHandoffByteBudget = (
+  input: Omit<Parameters<typeof handoffBudget>[0], "tokenCap" | "bytesPerToken" | "byteCap"> & {
+    readonly size: ForkContextHandoffSize;
+    readonly environmentOverride: number | undefined;
+  },
+) =>
+  handoffBudget({
+    ...input,
+    ...scientContextHandoffPolicy(input.size, input.environmentOverride),
+  });
 
 const now = DateTime.makeUnsafe("2026-09-17T00:00:00Z");
 const threadId = ThreadId.make("thread:handoff");

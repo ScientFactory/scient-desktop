@@ -1,8 +1,15 @@
-import type { ProviderDriverKind, ThreadId } from "@t3tools/contracts";
+import type {
+  OrchestrationV2ConversationMessage,
+  OrchestrationV2ProviderSession,
+  ProviderDriverKind,
+  ThreadId,
+} from "@t3tools/contracts";
+import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import * as Effect from "effect/Effect";
 
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import { readMcpProviderSession } from "../../mcp/McpProviderSession.ts";
+import { validateProviderCurrentInput } from "../../orchestration-v2/AttachmentPrompt.ts";
 import { scientToolProjectionForProvider } from "../../provider/ScientToolProjection.ts";
 import { prepareScientSkillTurn } from "./ScientSkillInvocation.ts";
 import * as ScientSkillSession from "./ScientSkillSession.ts";
@@ -94,3 +101,61 @@ export const prepareScientV2SkillTurn = Effect.fnUntraced(function* (
   yield* prepared.publish;
   return prepared.text;
 });
+
+/** A steering message's skill scope, prepared from its persisted selection but not
+ * published; the caller publishes after its recheck. Built synchronously and
+ * returned unevaluated, so the steer yields exactly the preparation it always did. */
+export const prepareScientV2SkillScopeForSteer = (input: {
+  readonly threadId: ThreadId;
+  readonly session: {
+    readonly driver: ProviderDriverKind;
+    readonly mcpSessionInjection?: boolean;
+    readonly providerSession: Pick<OrchestrationV2ProviderSession, "cwd">;
+  };
+  readonly message: Pick<
+    OrchestrationV2ConversationMessage,
+    "text" | "context" | "selectedScientSkillNames"
+  >;
+  readonly skillPlanner: ScientSkillSession.ScientSkillSessionPlannerShape;
+}) =>
+  prepareScientV2SkillScope({
+    threadId: input.threadId,
+    driver: input.session.driver,
+    mcpSessionInjection: input.session.mcpSessionInjection === true,
+    projectRoot: input.session.providerSession.cwd ?? undefined,
+    text: projectComposerContextForProvider({
+      text: input.message.text,
+      records: input.message.context?.records ?? [],
+    }),
+    selectedScientSkillNames: input.message.selectedScientSkillNames ?? [],
+  }).pipe(Effect.provideService(ScientSkillSession.ScientSkillSessionPlanner, input.skillPlanner));
+
+/** Validates a steer's prepared text as current input, falling back to the
+ * catalog-marker-free text when the marked text does not fit; `useFallback` receives
+ * that text. Built synchronously, so the steer yields exactly the validation it did. */
+export const validateScientV2SteerInput = (input: {
+  readonly prepared: {
+    readonly text: string;
+    readonly textWithoutCatalogMarker: string | undefined;
+  };
+  readonly attachments: OrchestrationV2ConversationMessage["attachments"];
+  readonly attachmentsDir: string;
+  readonly useFallback: (text: string) => void;
+}) => {
+  const validateCurrent = (text: string) =>
+    Effect.fromResult(
+      validateProviderCurrentInput({
+        text,
+        attachments: input.attachments,
+        attachmentsDir: input.attachmentsDir,
+      }),
+    );
+  return validateCurrent(input.prepared.text).pipe(
+    Effect.catchTag("ProviderCurrentInputError", (cause) => {
+      const fallback = input.prepared.textWithoutCatalogMarker;
+      if (fallback === undefined) return Effect.fail(cause);
+      input.useFallback(fallback);
+      return validateCurrent(fallback);
+    }),
+  );
+};

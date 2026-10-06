@@ -63,7 +63,8 @@ import { EventSinkV2 } from "../EventSink.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
-import { scientHandoffByteBudget } from "../ContextHandoffBudget.ts";
+import { handoffBudget } from "../ContextHandoffBudget.ts";
+import { scientContextHandoffPolicy } from "../ScientContextHandoffPolicy.ts";
 import { deliverContextHandoffs } from "../ContextHandoffDelivery.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
@@ -650,9 +651,8 @@ for (const test of cases) {
                 deliverContextHandoffs({
                   handoffs: pending,
                   providerThread,
-                  budget: scientHandoffByteBudget({
-                    size: test.size,
-                    environmentOverride: undefined,
+                  budget: handoffBudget({
+                    ...scientContextHandoffPolicy(test.size, undefined),
                     userText,
                     attachments: [],
                     providerThread,
