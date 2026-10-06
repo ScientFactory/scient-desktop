@@ -1,13 +1,17 @@
 import type { OrchestrationV2Subagent } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import {
   type ClaudeWorkflowAgentEntry,
+  parseWorkflowProgress,
   workflowAgentStatus,
 } from "../Adapters/ClaudeSubagentPresentation.ts";
 import { mergeSubagentPresentation } from "../Adapters/SubagentPresentation.ts";
+import type { ProviderAdapterV2Event } from "../ProviderAdapter.ts";
 
-/** Pure native workflow observation; the adapter owns registry updates and emission. */
+/** Pure native workflow observation; the registry below owns updates and emission. */
 export function claudeWorkflowMemberObservation({
   entry,
   previous,
@@ -130,3 +134,196 @@ export function claudeWorkflowMemberPresentation({
   };
   return member;
 }
+
+type WorkflowCoordinator = { readonly task: OrchestrationV2Subagent };
+type WorkflowTurnContext<Coordinator extends WorkflowCoordinator> = {
+  readonly subagentsByTaskId: ReadonlyMap<string, Coordinator>;
+  readonly input: {
+    readonly providerThread: {
+      readonly nativeThreadRef: { readonly nativeId: string | null } | null;
+    };
+  };
+};
+type WorkflowEvent = Extract<
+  ProviderAdapterV2Event,
+  { readonly type: "subagent.updated" } | { readonly type: "node.updated" }
+>;
+
+/** Workflow slots are observations owned by their coordinator, not resumable native tasks. */
+export function makeClaudeWorkflowMembers<
+  Coordinator extends WorkflowCoordinator,
+  Context extends WorkflowTurnContext<Coordinator>,
+  E,
+  U,
+>(input: {
+  readonly CLAUDE_PROVIDER: OrchestrationV2Subagent["driver"];
+  readonly emitProviderEvent: (event: WorkflowEvent) => Effect.Effect<void, E>;
+  readonly sessionSubagentsByTaskId: Ref.Ref<Map<string, Coordinator>>;
+  readonly claudeSubagentIds: (
+    context: Context,
+    taskId: string,
+  ) => { readonly nodeId: OrchestrationV2Subagent["id"] };
+  readonly updateCoordinator: (update: {
+    readonly context: Context;
+    readonly taskId: string;
+    readonly status: "failed" | "interrupted" | "cancelled";
+  }) => Effect.Effect<unknown, U>;
+}) {
+  const { CLAUDE_PROVIDER, emitProviderEvent, sessionSubagentsByTaskId, claudeSubagentIds } = input;
+  const workflowCoordinatorOwners = new Map<
+    OrchestrationV2Subagent["id"],
+    {
+      readonly context: Context;
+      readonly taskId: string;
+      readonly nativeThreadId: string;
+    }
+  >();
+  const workflowMembers = new Map<OrchestrationV2Subagent["id"], OrchestrationV2Subagent>();
+  const pendingWorkflowPresentations = new Map<
+    string,
+    Partial<NonNullable<OrchestrationV2Subagent["presentation"]>>
+  >();
+  const workflowMemberFingerprints = new Map<OrchestrationV2Subagent["id"], string>();
+  const workflowMemberActivations = new Map<OrchestrationV2Subagent["id"], number>();
+  const emitWorkflowMember = Effect.fnUntraced(function* (member: OrchestrationV2Subagent) {
+    workflowMembers.set(member.id, member);
+    yield* emitProviderEvent({
+      type: "subagent.updated",
+      driver: CLAUDE_PROVIDER,
+      subagent: member,
+    });
+    yield* emitProviderEvent({
+      type: "node.updated",
+      driver: CLAUDE_PROVIDER,
+      node: {
+        id: member.id,
+        threadId: member.threadId,
+        runId: null,
+        parentNodeId: member.parentNodeId,
+        rootNodeId: member.parentNodeId,
+        kind: "subagent",
+        status: member.status,
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: member.startedAt,
+        completedAt: member.completedAt,
+      },
+    });
+  });
+  return {
+    /** Workflow presentations a run handle announced before its task started. */
+    pendingPresentations: pendingWorkflowPresentations,
+    /** The coordinator's turn owns its workflow members on this native thread. */
+    recordCoordinator(task: OrchestrationV2Subagent, context: Context, taskId: string) {
+      const nativeThreadId = context.input.providerThread.nativeThreadRef?.nativeId;
+      if (
+        task.presentation?.kind === "workflow" &&
+        nativeThreadId !== undefined &&
+        nativeThreadId !== null
+      ) {
+        workflowCoordinatorOwners.set(task.id, {
+          context,
+          taskId,
+          nativeThreadId,
+        });
+      }
+    },
+    ownerOf: (taskId: string, nativeThreadId: string) =>
+      [...workflowCoordinatorOwners.values()].find(
+        (owner) => owner.taskId === taskId && owner.nativeThreadId === nativeThreadId,
+      ),
+    /**
+     * Settle runless display members before the coordinator clears the
+     * final owned background item. The root subscriber can then close
+     * without dropping these terminal member/node receipts. Returns undefined
+     * when no member is open, so ordinary subagents run no extra steps.
+     */
+    settleMembersOf: (
+      workflowId: OrchestrationV2Subagent["id"],
+      status: "completed" | "failed" | "cancelled" | "interrupted",
+      now: DateTime.Utc,
+    ): Effect.Effect<void, E> | undefined => {
+      const isOpenMember = (member: OrchestrationV2Subagent) =>
+        member.presentation?.workflowId === workflowId &&
+        ["pending", "running", "waiting", "idle"].includes(member.status);
+      let hasOpenMember = false;
+      for (const member of workflowMembers.values()) if (isOpenMember(member)) hasOpenMember = true;
+      if (!hasOpenMember) return undefined;
+      return Effect.gen(function* () {
+        for (const member of workflowMembers.values()) {
+          if (!isOpenMember(member)) continue;
+          yield* emitWorkflowMember({
+            ...member,
+            status,
+            completedAt: member.completedAt ?? now,
+            updatedAt: now,
+          });
+        }
+      });
+    },
+    update: Effect.fnUntraced(function* (context: Context, taskId: string, message: unknown) {
+      const record =
+        typeof message === "object" && message !== null ? (message as Record<string, unknown>) : {};
+      const progress = parseWorkflowProgress(record.workflow_progress);
+      if (progress === undefined) return;
+      const coordinator =
+        context.subagentsByTaskId.get(taskId) ??
+        (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
+      if (coordinator === undefined || coordinator.task.status !== "running") return;
+      const now = yield* DateTime.now;
+      for (const entry of progress.agents) {
+        const id = claudeSubagentIds(context, `${taskId}:wf:${entry.index}`).nodeId;
+        const previous = workflowMembers.get(id);
+        const { activation, newActivation, status, fingerprint } = claudeWorkflowMemberObservation({
+          entry,
+          previous,
+          coordinator,
+          id,
+          workflowMemberActivations,
+        });
+        if (workflowMemberFingerprints.get(id) === fingerprint) continue;
+        workflowMemberFingerprints.set(id, fingerprint);
+        workflowMemberActivations.set(id, activation);
+        const member = claudeWorkflowMemberPresentation({
+          entry,
+          previous,
+          coordinator,
+          id,
+          newActivation,
+          status,
+          now,
+          CLAUDE_PROVIDER,
+        });
+        yield* emitWorkflowMember(member);
+      }
+    }),
+    settleForNativeProcess: Effect.fnUntraced(function* (
+      nativeThreadId: string,
+      status: "failed" | "interrupted" | "cancelled",
+    ) {
+      for (const owner of workflowCoordinatorOwners.values()) {
+        if (owner.nativeThreadId !== nativeThreadId) continue;
+        const coordinator = (yield* Ref.get(sessionSubagentsByTaskId)).get(owner.taskId);
+        if (
+          coordinator === undefined ||
+          ["completed", "failed", "cancelled", "interrupted"].includes(coordinator.task.status)
+        )
+          continue;
+        yield* input.updateCoordinator({
+          context: owner.context,
+          taskId: owner.taskId,
+          status,
+        });
+      }
+    }),
+  };
+}
+
+export type ClaudeWorkflowMembers<
+  Coordinator extends WorkflowCoordinator,
+  Context extends WorkflowTurnContext<Coordinator>,
+> = ReturnType<typeof makeClaudeWorkflowMembers<Coordinator, Context, never, never>>;

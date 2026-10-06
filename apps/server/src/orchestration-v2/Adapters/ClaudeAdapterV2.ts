@@ -1,7 +1,7 @@
 // SCIENT-FORK: native workflow display projection lives in its owned leaf.
 import {
-  claudeWorkflowMemberObservation,
-  claudeWorkflowMemberPresentation,
+  type ClaudeWorkflowMembers,
+  makeClaudeWorkflowMembers,
 } from "../scient-provider/ClaudeWorkflowMemberPresentation.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { CLAUDE_SCIENT_TOOL_PROJECTION } from "../../provider/ScientToolProjection.ts";
@@ -11,11 +11,7 @@ import {
   turnStartErrorKeepingReceipt,
 } from "../scient-provider/NativeTurnReceipts.ts";
 import { mergeSubagentPresentation } from "./SubagentPresentation.ts";
-import {
-  claudeTaskPresentation,
-  claudeWorkflowRunHandles,
-  parseWorkflowProgress,
-} from "./ClaudeSubagentPresentation.ts";
+import { claudeTaskPresentation, claudeWorkflowRunHandles } from "./ClaudeSubagentPresentation.ts";
 import * as NodeCrypto from "node:crypto";
 
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
@@ -3671,7 +3667,7 @@ export function makeClaudeAdapterV2(
               preservedOpaqueTombstones,
             );
           }
-          yield* settleWorkflowMembersForNativeProcess(nativeThreadId, "cancelled");
+          yield* workflowRegistry.settleForNativeProcess(nativeThreadId, "cancelled");
           if (!hadRoster && !hadPersistedRoster) {
             return;
           }
@@ -4022,51 +4018,18 @@ export function makeClaudeAdapterV2(
           );
         });
 
-        // Workflow slots are observations owned by their coordinator, not resumable native tasks.
-        const workflowCoordinatorOwners = new Map<
-          OrchestrationV2Subagent["id"],
-          {
-            readonly context: ActiveClaudeTurnContext;
-            readonly taskId: string;
-            readonly nativeThreadId: string;
-          }
-        >();
-        const workflowMembers = new Map<OrchestrationV2Subagent["id"], OrchestrationV2Subagent>();
-        const pendingWorkflowPresentations = new Map<
-          string,
-          Partial<NonNullable<OrchestrationV2Subagent["presentation"]>>
-        >();
-        const workflowMemberFingerprints = new Map<OrchestrationV2Subagent["id"], string>();
-        const workflowMemberActivations = new Map<OrchestrationV2Subagent["id"], number>();
-        const emitWorkflowMember = Effect.fnUntraced(function* (member: OrchestrationV2Subagent) {
-          workflowMembers.set(member.id, member);
-          yield* emitProviderEvent({
-            type: "subagent.updated",
-            driver: CLAUDE_PROVIDER,
-            subagent: member,
-          });
-          yield* emitProviderEvent({
-            type: "node.updated",
-            driver: CLAUDE_PROVIDER,
-            node: {
-              id: member.id,
-              threadId: member.threadId,
-              runId: null,
-              parentNodeId: member.parentNodeId,
-              rootNodeId: member.parentNodeId,
-              kind: "subagent",
-              status: member.status,
-              countsForRun: false,
-              providerThreadId: null,
-              providerTurnId: null,
-              nativeItemRef: null,
-              runtimeRequestId: null,
-              checkpointScopeId: null,
-              startedAt: member.startedAt,
-              completedAt: member.completedAt,
-            },
-          });
+        // SCIENT-FORK:START — workflow members are display observations owned by their coordinator.
+        const workflowRegistry: ClaudeWorkflowMembers<
+          ActiveClaudeSubagent,
+          ActiveClaudeTurnContext
+        > = makeClaudeWorkflowMembers<ActiveClaudeSubagent, ActiveClaudeTurnContext, never, never>({
+          CLAUDE_PROVIDER,
+          emitProviderEvent,
+          sessionSubagentsByTaskId,
+          claudeSubagentIds,
+          updateCoordinator: (update) => updateClaudeSubagentNode(update),
         });
+        // SCIENT-FORK:END
 
         const updateClaudeSubagentNode = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
@@ -4209,18 +4172,8 @@ export function makeClaudeAdapterV2(
               : null,
             updatedAt: now,
           } satisfies OrchestrationV2Subagent;
-          const nativeThreadId = input.context.input.providerThread.nativeThreadRef?.nativeId;
-          if (
-            task.presentation?.kind === "workflow" &&
-            nativeThreadId !== undefined &&
-            nativeThreadId !== null
-          ) {
-            workflowCoordinatorOwners.set(task.id, {
-              context: input.context,
-              taskId: input.taskId,
-              nativeThreadId,
-            });
-          }
+          // SCIENT-FORK: a workflow coordinator owns its members on this native thread.
+          workflowRegistry.recordCoordinator(task, input.context, input.taskId);
           const subagent = {
             task,
             rootNodeId: existingSubagent?.rootNodeId ?? input.context.input.rootNodeId,
@@ -4272,29 +4225,15 @@ export function makeClaudeAdapterV2(
             return new Map(current).set(input.taskId, subagent);
           });
 
-          // Settle runless display members before the coordinator clears the
-          // final owned background item. The root subscriber can then close
-          // without dropping these terminal member/node receipts.
-          if (
+          // SCIENT-FORK: settle runless workflow members before the coordinator's final item clears.
+          const settleWorkflowMembers =
             input.status === "completed" ||
             input.status === "failed" ||
             input.status === "cancelled" ||
             input.status === "interrupted"
-          ) {
-            for (const member of workflowMembers.values()) {
-              if (
-                member.presentation?.workflowId !== task.id ||
-                !["pending", "running", "waiting", "idle"].includes(member.status)
-              )
-                continue;
-              yield* emitWorkflowMember({
-                ...member,
-                status: input.status,
-                completedAt: member.completedAt ?? now,
-                updatedAt: now,
-              });
-            }
-          }
+              ? workflowRegistry.settleMembersOf(task.id, input.status, now)
+              : undefined;
+          if (settleWorkflowMembers !== undefined) yield* settleWorkflowMembers;
 
           if (existingSubagent === undefined) {
             const childThread = makeSubagentChildThread({
@@ -4505,51 +4444,6 @@ export function makeClaudeAdapterV2(
               driver: CLAUDE_PROVIDER,
               turnItem: resultArtifacts.turnItem,
             });
-          }
-        });
-
-        const updateClaudeWorkflowMembers = Effect.fnUntraced(function* (
-          context: ActiveClaudeTurnContext,
-          taskId: string,
-          message: unknown,
-        ) {
-          const record =
-            typeof message === "object" && message !== null
-              ? (message as Record<string, unknown>)
-              : {};
-          const progress = parseWorkflowProgress(record.workflow_progress);
-          if (progress === undefined) return;
-          const coordinator =
-            context.subagentsByTaskId.get(taskId) ??
-            (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
-          if (coordinator === undefined || coordinator.task.status !== "running") return;
-          const now = yield* DateTime.now;
-          for (const entry of progress.agents) {
-            const id = claudeSubagentIds(context, `${taskId}:wf:${entry.index}`).nodeId;
-            const previous = workflowMembers.get(id);
-            // SCIENT-FORK: pure workflow presentation; registry ownership stays here.
-            const { activation, newActivation, status, fingerprint } =
-              claudeWorkflowMemberObservation({
-                entry,
-                previous,
-                coordinator,
-                id,
-                workflowMemberActivations,
-              });
-            if (workflowMemberFingerprints.get(id) === fingerprint) continue;
-            workflowMemberFingerprints.set(id, fingerprint);
-            workflowMemberActivations.set(id, activation);
-            const member = claudeWorkflowMemberPresentation({
-              entry,
-              previous,
-              coordinator,
-              id,
-              newActivation,
-              status,
-              now,
-              CLAUDE_PROVIDER,
-            });
-            yield* emitWorkflowMember(member);
           }
         });
 
@@ -4947,26 +4841,6 @@ export function makeClaudeAdapterV2(
             }),
         });
 
-        const settleWorkflowMembersForNativeProcess = Effect.fnUntraced(function* (
-          nativeThreadId: string,
-          status: "failed" | "interrupted" | "cancelled",
-        ) {
-          for (const owner of workflowCoordinatorOwners.values()) {
-            if (owner.nativeThreadId !== nativeThreadId) continue;
-            const coordinator = (yield* Ref.get(sessionSubagentsByTaskId)).get(owner.taskId);
-            if (
-              coordinator === undefined ||
-              ["completed", "failed", "cancelled", "interrupted"].includes(coordinator.task.status)
-            )
-              continue;
-            yield* updateClaudeSubagentNode({
-              context: owner.context,
-              taskId: owner.taskId,
-              status,
-            });
-          }
-        });
-
         const finalizeActiveTurn = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly status: Extract<
@@ -4981,7 +4855,7 @@ export function makeClaudeAdapterV2(
           if (input.status !== "completed") {
             const nativeThreadId = input.context.input.providerThread.nativeThreadRef?.nativeId;
             if (nativeThreadId !== undefined && nativeThreadId !== null)
-              yield* settleWorkflowMembersForNativeProcess(nativeThreadId, input.status);
+              yield* workflowRegistry.settleForNativeProcess(nativeThreadId, input.status);
           }
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           for (const toolCall of input.context.toolCalls.values()) {
@@ -5749,10 +5623,7 @@ export function makeClaudeAdapterV2(
             const workflowOwner =
               taskId === undefined
                 ? undefined
-                : [...workflowCoordinatorOwners.values()].find(
-                    (owner) =>
-                      owner.taskId === taskId && owner.nativeThreadId === liveQuery.nativeThreadId,
-                  );
+                : workflowRegistry.ownerOf(taskId, liveQuery.nativeThreadId);
             const ownsObservedWorkflowActivation =
               workflowOwner !== undefined &&
               workflowOwner.context.subagentsByTaskId.get(workflowOwner.taskId) ===
@@ -5770,11 +5641,7 @@ export function makeClaudeAdapterV2(
                 presentation: claudeTaskPresentation(message),
                 status: "running",
               });
-              yield* updateClaudeWorkflowMembers(
-                workflowOwner.context,
-                workflowOwner.taskId,
-                message,
-              );
+              yield* workflowRegistry.update(workflowOwner.context, workflowOwner.taskId, message);
               return;
             }
             // task_notification must buffer wake evidence while still tracked
@@ -6208,7 +6075,7 @@ export function makeClaudeAdapterV2(
                 ...(owner === undefined ? {} : { owner }),
                 title: message.description,
                 presentation: {
-                  ...pendingWorkflowPresentations.get(message.task_id),
+                  ...workflowRegistry.pendingPresentations.get(message.task_id),
                   ...claudeTaskPresentation(message),
                   ...(launch?.role === undefined ? {} : { role: launch.role }),
                   ...(launch?.effort === undefined ? {} : { effort: launch.effort }),
@@ -6216,7 +6083,7 @@ export function makeClaudeAdapterV2(
                 status: "running",
                 reopen: true,
               });
-              pendingWorkflowPresentations.delete(message.task_id);
+              workflowRegistry.pendingPresentations.delete(message.task_id);
             }
           }
 
@@ -6269,7 +6136,7 @@ export function makeClaudeAdapterV2(
           }
 
           if (message.type === "system" && message.subtype === "task_progress") {
-            yield* updateClaudeWorkflowMembers(context, message.task_id, message);
+            yield* workflowRegistry.update(context, message.task_id, message);
           }
 
           if (message.type === "system" && message.subtype === "task_notification") {
@@ -6443,7 +6310,7 @@ export function makeClaudeAdapterV2(
                   context.subagentsByTaskId.get(handles.taskId) ??
                   (yield* Ref.get(sessionSubagentsByTaskId)).get(handles.taskId);
                 if (known === undefined)
-                  pendingWorkflowPresentations.set(handles.taskId, handles.presentation);
+                  workflowRegistry.pendingPresentations.set(handles.taskId, handles.presentation);
                 else
                   yield* updateClaudeSubagentNode({
                     context,
@@ -7471,7 +7338,7 @@ export function makeClaudeAdapterV2(
                   const interrupted =
                     active !== null &&
                     (yield* Ref.get(interruptedTurns)).has(active.providerTurnId);
-                  yield* settleWorkflowMembersForNativeProcess(
+                  yield* workflowRegistry.settleForNativeProcess(
                     context.nativeThreadId,
                     interrupted ? "interrupted" : "failed",
                   );
@@ -7956,7 +7823,7 @@ export function makeClaudeAdapterV2(
           if (existing !== null && !existing.stopping) {
             existing.stopping = true;
             yield* existing.query.close.pipe(Effect.ignore);
-            yield* settleWorkflowMembersForNativeProcess(existing.nativeThreadId, "cancelled");
+            yield* workflowRegistry.settleForNativeProcess(existing.nativeThreadId, "cancelled");
           }
           yield* Effect.yieldNow;
           yield* queryRunner.assertComplete.pipe(
