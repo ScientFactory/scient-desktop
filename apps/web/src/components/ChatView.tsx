@@ -385,6 +385,8 @@ import {
 } from "../scient/chat/ScientRevertDialogDiagnostics";
 // per-request response errors.
 import { useRequestResponseErrors } from "../scient/chat/useRequestResponseErrors";
+// agents panel model.
+import { useAgentPanelModel } from "../scient/chat/useAgentPanelModel";
 // token-limit stop notice.
 import { tokenLimitBannerItems, useTokenLimitNotice } from "../scient/chat/tokenLimitNotice";
 // SCIENT-FORK:END
@@ -490,11 +492,6 @@ import { isTimelineScrollTarget } from "./chat/timelineScrollTarget";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
-import { historicalSubagentsToRuntime } from "@t3tools/client-runtime/state/historicalSubagentRuntime";
-import {
-  deriveAgentPanelModel,
-  projectedSubagentsToRuntime,
-} from "@t3tools/client-runtime/state/subagentRuntime";
 import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ChatCanvas } from "./chat/ChatCanvas";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
@@ -3408,21 +3405,9 @@ function ChatViewContent(props: ChatViewProps) {
         : derivePendingThreadRequests(serverProjection),
     [serverProjection],
   );
-  const agentPanelModel = useMemo(
-    () =>
-      deriveAgentPanelModel({
-        agents: [],
-        v2Projection: [
-          ...projectedSubagentsToRuntime(serverProjection?.subagents ?? []),
-          ...historicalSubagentsToRuntime(
-            serverProjection?.turnItems ?? [],
-            serverProjection?.visibleTurnItems ?? [],
-          ),
-        ],
-      }),
-    [serverProjection?.subagents, serverProjection?.turnItems, serverProjection?.visibleTurnItems],
-  );
-  // SCIENT-FORK:START — a failed response stays visible on the request it
+  // SCIENT-FORK:START — the agents panel model.
+  const agentPanelModel = useAgentPanelModel(serverProjection);
+  // a failed response stays visible on the request it
   // belongs to, so the composer can explain the failure without a global
   // thread error.
   const { setRequestResponseError, pendingApprovals, pendingUserInputs } = useRequestResponseErrors(
