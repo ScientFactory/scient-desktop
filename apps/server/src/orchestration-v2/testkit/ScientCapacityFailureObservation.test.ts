@@ -6,9 +6,12 @@ import * as NodeSqlite from "node:sqlite";
 import { assert, it } from "@effect/vitest";
 import {
   EventId,
+  MessageId,
   ProviderSessionId,
   ThreadId,
+  TurnItemId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderFailure,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -30,6 +33,197 @@ const events: ReadonlyArray<OrchestrationV2DomainEvent> = [
   },
 ];
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+const errorEvent = (failure: OrchestrationV2ProviderFailure) =>
+  ({
+    id: EventId.make("diagnostic-error"),
+    type: "turn-item.updated",
+    threadId,
+    occurredAt,
+    payload: {
+      id: TurnItemId.make("diagnostic-error-item"),
+      threadId,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "failed",
+      title: "Provider error",
+      startedAt: occurredAt,
+      completedAt: occurredAt,
+      updatedAt: occurredAt,
+      type: "error",
+      failure,
+    },
+  }) satisfies Extract<OrchestrationV2DomainEvent, { readonly type: "turn-item.updated" }>;
+
+it.effect(
+  "retains requested typed error detail after committed and declined successful writes",
+  () =>
+    Effect.gen(function* () {
+      const failure = {
+        class: "transport_error",
+        message: "The provider event stream closed unexpectedly.",
+        code: "ERR_STREAM_CLOSED",
+        retryable: true,
+        resetAt: null,
+      } satisfies OrchestrationV2ProviderFailure;
+      for (const committed of [true, false]) {
+        let snapshot: unknown;
+        let published = 0;
+        const observation = new ScientCapacityFailureObservation("/missing/db", (value) => {
+          snapshot = value;
+          published++;
+        });
+        observation.at("race.accepted", threadId);
+        const writeResult = { committed };
+        assert.strictEqual(
+          yield* observation.forward(
+            "writeIfRunCurrent",
+            [errorEvent(failure)],
+            Effect.succeed(writeResult),
+          ),
+          writeResult,
+        );
+        assert.equal(published, 0);
+        const originalCause = Cause.fail("original acceptance wait failed");
+        const result = yield* observation
+          .beforeCleanup(Effect.failCause(originalCause), Effect.succeed(null))
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(result));
+        if (Exit.isFailure(result)) assert.strictEqual(result.cause, originalCause);
+        assert.equal(published, 1);
+        const text = encodeJson(snapshot);
+        assert.include(text, '"exit":"Success"');
+        assert.include(text, `"committed":${committed}`);
+        assert.include(text, '"requested":[{"id":"diagnostic-error"');
+        assert.include(text, encodeJson(failure));
+        assert.include(text, "original acceptance wait failed");
+      }
+    }),
+);
+
+it.effect("selects only capacity-race error failures and redacts common credential forms", () =>
+  Effect.gen(function* () {
+    let snapshot: unknown;
+    const observation = new ScientCapacityFailureObservation("/missing/db", (value) => {
+      snapshot = value;
+    });
+    const failure = {
+      class: "transport_error",
+      message: "Stream closed; Bearer secret-token; api_key=credential-canary",
+      code: "ERR_STREAM_CLOSED",
+      retryable: null,
+      prompt: "failure-prompt-canary",
+      parameters: ["sql-parameter-canary"],
+      files: ["/private/file-canary"],
+    } satisfies OrchestrationV2ProviderFailure & {
+      readonly prompt: string;
+      readonly parameters: ReadonlyArray<string>;
+      readonly files: ReadonlyArray<string>;
+    };
+    const selected = errorEvent(failure);
+    const foreignThreadId = ThreadId.make("unrelated-thread");
+    const foreign = errorEvent({ ...failure, message: "foreign-error-canary" });
+    const mismatched = errorEvent({ ...failure, message: "mismatched-error-canary" });
+    const prompt: OrchestrationV2DomainEvent = {
+      ...selected,
+      id: EventId.make("diagnostic-prompt"),
+      payload: {
+        ...selected.payload,
+        type: "assistant_message",
+        messageId: MessageId.make("diagnostic-prompt-message"),
+        text: "assistant-content-canary",
+        streaming: false,
+      },
+    };
+    yield* observation.forward(
+      "writeWithEffects",
+      [
+        { ...selected, payload: { ...selected.payload, title: "title-content-canary" } },
+        {
+          ...foreign,
+          threadId: foreignThreadId,
+          payload: { ...foreign.payload, threadId: foreignThreadId },
+        },
+        { ...mismatched, payload: { ...mismatched.payload, threadId: foreignThreadId } },
+        prompt,
+      ],
+      Effect.void,
+    );
+    yield* observation
+      .beforeCleanup(Effect.fail("original wait failed"), Effect.succeed(null))
+      .pipe(Effect.exit);
+    const text = encodeJson(snapshot);
+    assert.include(text, "Stream closed; Bearer [REDACTED]; api_key=[REDACTED]");
+    assert.include(text, "ERR_STREAM_CLOSED");
+    for (const excluded of [
+      "secret-token",
+      "credential-canary",
+      "failure-prompt-canary",
+      "sql-parameter-canary",
+      "file-canary",
+      "foreign-error-canary",
+      "mismatched-error-canary",
+      "assistant-content-canary",
+      "title-content-canary",
+    ])
+      assert.notInclude(text, excluded);
+    const unrelated = Effect.succeed({ committed: true });
+    assert.strictEqual(
+      observation.forward(
+        "unrelated",
+        [
+          {
+            ...foreign,
+            threadId: foreignThreadId,
+            payload: { ...foreign.payload, threadId: foreignThreadId },
+          },
+        ],
+        unrelated,
+      ),
+      unrelated,
+    );
+  }),
+);
+
+it.effect(
+  "bounds typed failure text and reports invalid failure detail without changing the Cause",
+  () =>
+    Effect.gen(function* () {
+      for (const message of ["a".repeat(4_096), "invalid".repeat(1_000)]) {
+        let snapshot: unknown;
+        const observation = new ScientCapacityFailureObservation("/missing/db", (value) => {
+          snapshot = value;
+        });
+        const cause = Cause.fail({ code: "ORIGINAL_WRITE_FAILURE" });
+        const result = yield* observation
+          .beforeCleanup(
+            observation.forward(
+              "writeIfRunCurrent",
+              [errorEvent({ class: "unknown", message, code: null, retryable: null })],
+              Effect.failCause(cause),
+            ),
+            Effect.succeed(null),
+          )
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(result));
+        if (Exit.isFailure(result)) assert.strictEqual(result.cause, cause);
+        const text = encodeJson(snapshot);
+        assert.include(text, "ORIGINAL_WRITE_FAILURE");
+        if (message.length === 4_096) {
+          assert.include(text, `"message":"${"a".repeat(4_000)}"`);
+          assert.notInclude(text, "a".repeat(4_001));
+        } else {
+          assert.include(text, "Invalid typed provider failure");
+          assert.notInclude(text, "invalidinvalid");
+        }
+      }
+    }),
+);
 
 it.effect("forwards successes and declines unchanged without capturing or publishing", () =>
   Effect.gen(function* () {

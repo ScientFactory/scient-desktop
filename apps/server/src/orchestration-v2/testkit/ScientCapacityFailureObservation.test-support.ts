@@ -2,7 +2,11 @@
 import * as NodeFS from "node:fs";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeUtil from "node:util";
-import type { OrchestrationV2DomainEvent, ThreadId } from "@t3tools/contracts";
+import {
+  OrchestrationV2ProviderFailure,
+  type OrchestrationV2DomainEvent,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -11,8 +15,34 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
+import { makeProviderFailure } from "../ProviderFailure.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeFailure = Schema.decodeUnknownSync(OrchestrationV2ProviderFailure);
+
+// Only the transport-safe typed failure is selected, never arbitrary item/request content.
+// Reuse the producer's common credential redaction; it is not universal text/path sanitization.
+const requestedFailureDetail = (value: OrchestrationV2ProviderFailure) => {
+  try {
+    const failure = decodeFailure(value);
+    const redacted = makeProviderFailure({
+      class: failure.class,
+      message: failure.message,
+      code: failure.code,
+      retryable: failure.retryable,
+      ...(failure.resetAt === undefined ? {} : { resetAt: failure.resetAt }),
+    });
+    return {
+      class: failure.class,
+      message: redacted.message.slice(0, 4_000),
+      code: redacted.code,
+      retryable: failure.retryable,
+      ...(failure.resetAt === undefined ? {} : { resetAt: failure.resetAt }),
+    };
+  } catch {
+    return { unavailable: "Invalid typed provider failure" };
+  }
+};
 
 // Keep nested SQL error codes/causes without serializing request objects or SQL parameters.
 const scalarError = (value: unknown, depth = 0): unknown => {
@@ -173,6 +203,12 @@ export class ScientCapacityFailureObservation {
                   : {}),
                 ...(event.type === "provider-turn.updated"
                   ? { providerTurnId: event.payload.id, status: event.payload.status }
+                  : {}),
+                ...(event.threadId?.startsWith("capacity-race:") &&
+                event.type === "turn-item.updated" &&
+                event.payload.type === "error" &&
+                event.payload.threadId === event.threadId
+                  ? { failure: requestedFailureDetail(event.payload.failure) }
                   : {}),
               })),
             });
