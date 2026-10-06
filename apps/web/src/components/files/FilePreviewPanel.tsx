@@ -27,6 +27,7 @@ import {
   ScientPdfReader,
   ScientSurfaceSuspense,
 } from "~/scient/fileSurfaces/scientLazyFileSurfaces";
+import { useScientFileReadRecovery } from "~/scient/fileSurfaces/scientFileReadRecovery";
 // SCIENT-FORK:END
 import { useAtomValue } from "@effect/atom-react";
 import { Spinner } from "~/components/ui/spinner";
@@ -124,18 +125,7 @@ import {
   useWorkspaceFileRefresh,
 } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 import { usePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
-import {
-  isOutsideProjectFailure,
-  MEDIA_FAILURE_COPY,
-  readFailureBlocksPreview,
-  readOnlyNotice,
-} from "~/scient/fileSurfaces/fileFailureCopy";
-import { FileReadFailure } from "~/scient/fileSurfaces/FileReadFailure";
-import {
-  fileCopyNotice,
-  saveEnvironmentFileCopy,
-} from "~/scient/fileOpening/saveEnvironmentFileCopy";
-import { useMissingFileChoices } from "~/scient/fileSurfaces/useMissingFileChoices";
+import { MEDIA_FAILURE_COPY, readOnlyNotice } from "~/scient/fileSurfaces/fileFailureCopy";
 
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import { AudioPreview } from "./AudioPreview";
@@ -1191,12 +1181,6 @@ export default function FilePreviewPanel({
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
   });
-  // A copy must be of the file as it is now. An exact capability is pinned to
-  // the revision it was issued for, so a cached one would refuse a changed file.
-  const createCopyUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
-    reportFailure: false,
-    refresh: true,
-  });
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
@@ -1457,64 +1441,24 @@ export default function FilePreviewPanel({
     isBrowserPreviewFile(previewPath);
   const absolutePath =
     relativePath && attachment === undefined ? workspaceFileHostPath(relativePath, cwd) : null;
-  const missingFile = useMissingFileChoices({
-    environmentId,
-    cwd,
-    path: attachment === undefined ? relativePath : null,
-    // Asked whenever the path is missing, including under a last good copy of
-    // a file that was renamed or moved while it was open.
-    failureReason: file.failureReason ?? markdownRefreshFailure?.reason ?? null,
-  });
-  const readOnlyHostPath = missingFile.absolutePath;
-  const readFailureShownInstead = readFailureBlocksPreview({
-    hasData: file.data !== null,
-    failure: file.failure,
-    reason: file.failureReason,
-    isHostFile,
-  });
-  // A copy on the device in hand: the one way to take a file Scient cannot
-  // preview to another app when the viewer is not on the machine that holds it.
-  const savingCopyRef = useRef(false);
-  const handleSaveCopy = useCallback(() => {
-    if (!absolutePath || !environmentHttpBaseUrl || savingCopyRef.current) return;
-    savingCopyRef.current = true;
-    void saveEnvironmentFileCopy({
+  // SCIENT-FORK:START — missing-file choices, read failure and save a copy
+  const { missingFile, canSaveCopy, handleSaveCopy, readFailure, blockingReadFailure } =
+    useScientFileReadRecovery({
       environmentId,
-      path: absolutePath,
-      httpBaseUrl: environmentHttpBaseUrl,
-      createAssetUrl: createCopyUrl,
-    })
-      .then(
-        (result) => fileCopyNotice(result),
-        // The desktop shell or browser refused before any result existed.
-        () => fileCopyNotice({ _tag: "failed", reason: "write-failed" }),
-      )
-      .then((notice) => {
-        if (notice) toastManager.add(stackedThreadToast(notice));
-      })
-      .finally(() => {
-        savingCopyRef.current = false;
-      });
-  }, [absolutePath, createCopyUrl, environmentHttpBaseUrl, environmentId]);
-  const canSaveCopy =
-    attachment === undefined && absolutePath !== null && !isDirectory && !!environmentHttpBaseUrl;
-
-  const readFailure = (
-    <FileReadFailure
-      failure={file.failure}
-      reason={file.failureReason}
-      osErrorCode={file.failureOsErrorCode}
-      hostOs={hostOs}
-      message={file.error}
-      retrying={file.isPending}
-      onRetry={requestManualReload}
-      path={missingFile.absolutePath ?? relativePath ?? ""}
-      candidates={missingFile.paths}
-      candidatesIncomplete={missingFile.incomplete}
-      onOpenCandidate={onOpenFile}
-      {...(canSaveCopy ? { onSaveCopy: handleSaveCopy } : {})}
-    />
-  );
+      cwd,
+      relativePath,
+      attachment,
+      isHostFile,
+      isDirectory,
+      absolutePath,
+      environmentHttpBaseUrl,
+      file,
+      markdownRefreshFailure,
+      hostOs,
+      requestManualReload,
+      onOpenFile,
+    });
+  // SCIENT-FORK:END
   const pdfSource = useMemo(
     () =>
       workspacePdfSourceForPreview({
@@ -1794,24 +1738,9 @@ export default function FilePreviewPanel({
               sizeBytes={attachment.sizeBytes}
               asset={{ environmentId, attachmentId: attachment.id }}
             />
-          ) : relativePath && file.data === null && isOutsideProjectFailure(file.failure) ? (
-            // Only an older server refuses a path by location; media and document
-            // previews would fail to authorize it the same way. Its absolute path
-            // still opens read-only.
-            <FileReadFailure
-              failure={file.failure}
-              message={file.error}
-              retrying={false}
-              onRetry={requestManualReload}
-              {...(readOnlyHostPath !== null
-                ? { onOpenReadOnly: () => onOpenFile(readOnlyHostPath) }
-                : {})}
-            />
-          ) : relativePath && readFailureShownInstead ? (
-            // The read already says why nothing can be shown (missing, denied,
-            // or not a regular file); a media or document viewer would only fail
-            // again with less to say.
-            readFailure
+          ) : // SCIENT-FORK:START — the read failure says why nothing can be shown
+          relativePath && blockingReadFailure ? (
+            blockingReadFailure // SCIENT-FORK:END
           ) : relativePath && isVideo && absolutePath ? (
             <WorkspaceVideoPreview
               key={`${environmentId}:${threadRef.threadId}:${absolutePath}`}
