@@ -284,6 +284,10 @@ import { removeDocumentCapture } from "./scient/documentExport/DocumentCapture.t
 import { ConversationExportService } from "./scient/conversationExport/ConversationExportService.ts";
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
+import {
+  makeAnalysisRuntimeInspectionHandlers,
+  makeScientificRpcHandlers,
+} from "./scient/analysis/ScientificRpcHandlers.ts";
 import { WorkspaceBindingResolver } from "./scient/projectScope/WorkspaceBindingResolver.ts";
 import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntimePreferences.ts";
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
@@ -3795,146 +3799,19 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
-        [WS_METHODS.analysisInspectRuntimes]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisInspectRuntimes, analysis.inspectRuntimes(input), {
-            "rpc.aggregate": "analysis",
-          }),
+        // SCIENT-FORK:START — runtime inspection belongs to the analysis handlers.
+        ...makeAnalysisRuntimeInspectionHandlers({ observeRpcEffect, analysis }),
+        // SCIENT-FORK:END
       });
 
-      const handlers3 = WsScientificRpcGroup.of({
-        [WS_METHODS.analysisConfigureRuntime]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisConfigureRuntime, analysis.configureRuntime(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.analysisVerifyRuntime]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisVerifyRuntime, analysis.verifyRuntime(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.analysisStartRun]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisStartRun, analysis.startRun(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.analysisCancelRun]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisCancelRun, analysis.cancelRun(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.analysisListRuns]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisListRuns, analysis.listRuns(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.analysisGetRun]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisGetRun, analysis.getRun(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.analysisStorageSummary]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisStorageSummary, analysis.storageSummary(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.analysisCleanupRun]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisCleanupRun, analysis.cleanupRun(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.analysisCleanupProject]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisCleanupProject, analysis.cleanupProject(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.analysisPromoteRun]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisPromoteRun, analysis.promoteRun(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.subscribeAnalysisRuns]: (input) =>
-          observeRpcStreamEffect(WS_METHODS.subscribeAnalysisRuns, analysis.subscribeRuns(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.computeInspectRuntimes]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.computeInspectRuntimes,
-            computeGateway.inspectRuntimes(input),
-            { "rpc.aggregate": "compute" },
-          ),
-        [WS_METHODS.computeRuntimeInventory]: () =>
-          observeRpcEffect(WS_METHODS.computeRuntimeInventory, computeGateway.runtimeInventory(), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeVerifyRuntime]: (input) =>
-          observeRpcEffect(WS_METHODS.computeVerifyRuntime, computeGateway.verifyRuntime(input), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeManagedRuntimeStatus]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.computeManagedRuntimeStatus,
-            computeGateway.managedRuntimeStatus(input),
-            { "rpc.aggregate": "compute" },
-          ),
-        [WS_METHODS.computeManageRuntime]: (input) =>
-          observeRpcEffect(WS_METHODS.computeManageRuntime, computeGateway.manageRuntime(input), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeCancelManagedRuntime]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.computeCancelManagedRuntime,
-            computeGateway.cancelManagedRuntime(input),
-            { "rpc.aggregate": "compute" },
-          ),
-        [WS_METHODS.computeStartSession]: (input) =>
-          observeRpcEffect(WS_METHODS.computeStartSession, computeGateway.startSession(input), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeListSessions]: (input) =>
-          observeRpcEffect(WS_METHODS.computeListSessions, computeGateway.listSessions(input), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeGetSession]: (input) =>
-          observeRpcEffect(WS_METHODS.computeGetSession, computeGateway.getSession(input), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeRestartSession]: (input) =>
-          observeRpcEffect(WS_METHODS.computeRestartSession, computeGateway.restartSession(input), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeStopSession]: (input) =>
-          observeRpcEffect(WS_METHODS.computeStopSession, computeGateway.stopSession(input), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeSubmitExecution]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.computeSubmitExecution,
-            computeGateway.submitExecution(input),
-            { "rpc.aggregate": "compute" },
-          ),
-        [WS_METHODS.computeCancelExecution]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.computeCancelExecution,
-            computeGateway.cancelExecution(input),
-            { "rpc.aggregate": "compute" },
-          ),
-        [WS_METHODS.computeInterruptSession]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.computeInterruptSession,
-            computeGateway.interruptSession(input),
-            { "rpc.aggregate": "compute" },
-          ),
-        [WS_METHODS.computeListExecutions]: (input) =>
-          observeRpcEffect(WS_METHODS.computeListExecutions, computeGateway.listExecutions(input), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeListOutputs]: (input) =>
-          observeRpcEffect(WS_METHODS.computeListOutputs, computeGateway.listOutputs(input), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeInspectVariables]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.computeInspectVariables,
-            computeGateway.inspectVariables(input),
-            { "rpc.aggregate": "compute" },
-          ),
-        [WS_METHODS.subscribeComputeSessions]: (input) =>
-          observeRpcStreamEffect(
-            WS_METHODS.subscribeComputeSessions,
-            computeGateway.subscribeSessions(input),
-            { "rpc.aggregate": "compute" },
-          ),
+      // SCIENT-FORK:START — the analysis and compute handlers live in scient/analysis.
+      const handlers3 = makeScientificRpcHandlers({
+        observeRpcEffect,
+        observeRpcStreamEffect,
+        analysis,
+        computeGateway,
       });
+      // SCIENT-FORK:END
 
       const handlers4 = WsWorkspaceRpcGroup.of({
         [WS_METHODS.shellOpenInEditor]: (input) =>
