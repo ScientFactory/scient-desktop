@@ -518,16 +518,34 @@ describe("Markdown source persistence integration", () => {
     const selection = window.getSelection()!;
     const setBaseAndExtent = selection.setBaseAndExtent.bind(selection);
     const liveAnchors: boolean[] = [];
+    let phase = "initial-selection";
+    const detachedAnchors: Array<{
+      phase: string;
+      anchorConnected: boolean;
+      focusConnected: boolean;
+      source: string;
+      stack: string | undefined;
+    }> = [];
     vi.spyOn(selection, "setBaseAndExtent").mockImplementation(
       (anchor, anchorOffset, focus, focusOffset) => {
         liveAnchors.push(anchor.isConnected && focus.isConnected);
+        if (!anchor.isConnected || !focus.isConnected)
+          detachedAnchors.push({
+            phase,
+            anchorConnected: anchor.isConnected,
+            focusConnected: focus.isConnected,
+            source: editor.getText(),
+            stack: new Error("Detached source selection").stack,
+          });
         setBaseAndExtent(anchor, anchorOffset, focus, focusOffset);
       },
     );
     const end = { line: 3, character: 6 };
     await act(async () => {
       editor.setSelections([{ start: end, end, direction: "none" }]);
+      phase = "replace-document";
       editor.applyEdits([{ range: { start: { line: 0, character: 0 }, end }, newText: "x" }]);
+      phase = "regrow-document";
       editor.applyEdits([
         {
           range: { start: { line: 0, character: 1 }, end: { line: 0, character: 1 } },
@@ -537,6 +555,8 @@ describe("Markdown source persistence integration", () => {
     });
     expect(editor.getText()).toBe("x\ny\nz\nw");
     expect(liveAnchors.length).toBeGreaterThan(0);
+    if (detachedAnchors.length > 0)
+      console.error("Detached source selection before fixture cleanup", detachedAnchors);
     expect(liveAnchors.every(Boolean)).toBe(true);
     lease.release();
   });
