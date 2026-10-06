@@ -121,11 +121,10 @@ import { PI_FILE_CHANGE_TOOLS } from "./piT3McpExtensionSource.ts";
 
 // SCIENT-FORK:START — native input eligibility in its owned pure module.
 import * as PiInput from "../scient-provider/PiInputCapabilities.ts";
+import { turnStartErrorKeepingReceipt } from "../scient-provider/NativeTurnReceipts.ts";
 // SCIENT-FORK:END
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
-const isNativeStartReceiptError = Schema.is(ProviderAdapter.ProviderAdapterTurnStartError);
-
 const PI_DRIVER_KIND = PI_PROVIDER;
 const DEFAULT_PI_SETTINGS = Schema.decodeSync(PiSettings)({});
 
@@ -3110,19 +3109,7 @@ export function makePiAdapterV2(
             // and extension commands may block on user dialogs indefinitely.
             // Rejections therefore return later as id-less response records
             // handled by the event pump.
-          }).pipe(
-            Effect.mapError((cause) =>
-              isNativeStartReceiptError(cause)
-                ? cause
-                : new ProviderAdapter.ProviderAdapterTurnStartError({
-                    driver: PI_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
-            ),
-          ),
+          }).pipe(Effect.mapError(turnStartErrorKeepingReceipt(PI_PROVIDER, turnInput))),
         steerTurn: (steerInput: ProviderAdapter.ProviderAdapterV2SteerInput) =>
           Effect.suspend(() => {
             const turn = threadState?.activeTurn ?? null;

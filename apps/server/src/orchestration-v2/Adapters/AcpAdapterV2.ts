@@ -1,5 +1,10 @@
 import { DroidSteerDeferred, makeDroidSteerSafety } from "./DroidSteerSafety.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
+// SCIENT-FORK: shared native start receipts and prompt acceptance.
+import {
+  isPreAcceptanceRejectionCode,
+  nativeTurnAcceptance,
+} from "../scient-provider/NativeTurnReceipts.ts";
 import {
   type ChatAttachment,
   type ModelSelection,
@@ -6598,13 +6603,7 @@ export function makeAcpAdapterV2(
           },
           ordinal: context.input.providerTurnOrdinal,
           status,
-          nativeAcceptance:
-            context.acceptedAt !== null
-              ? "accepted"
-              : context.promptOffered
-                ? "unknown"
-                : "pending",
-          ...(context.acceptedAt === null ? {} : { acceptedAt: context.acceptedAt }),
+          ...nativeTurnAcceptance(context),
           startedAt: context.startedAt,
           completedAt,
         });
@@ -7445,9 +7444,7 @@ export function makeAcpAdapterV2(
                       if (
                         context.acceptedAt === null &&
                         isAcpRequestError(promptError) &&
-                        (promptError.code === -32600 ||
-                          promptError.code === -32601 ||
-                          promptError.code === -32602)
+                        isPreAcceptanceRejectionCode(promptError.code)
                       ) {
                         context.promptOffered = false;
                       }

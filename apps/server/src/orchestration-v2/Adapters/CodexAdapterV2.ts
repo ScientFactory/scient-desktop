@@ -13,6 +13,8 @@ import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts"
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "../ContextHandoffBudget.ts";
+// SCIENT-FORK: shared native start receipts and prompt acceptance.
+import { turnStartErrorKeepingReceipt } from "../scient-provider/NativeTurnReceipts.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import {
   mcpToolPresentation,
@@ -173,7 +175,6 @@ import {
 } from "../SubagentProjection.ts";
 
 const isCodexRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
-const isNativeStartReceiptError = Schema.is(ProviderAdapterTurnStartError);
 
 const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
@@ -5692,19 +5693,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   }),
                 ),
               );
-            }).pipe(
-              Effect.mapError((cause) =>
-                isNativeStartReceiptError(cause)
-                  ? cause
-                  : new ProviderAdapterTurnStartError({
-                      driver: CODEX_PROVIDER,
-                      threadId: turnInput.threadId,
-                      providerThreadId: turnInput.providerThread.id,
-                      runId: turnInput.runId,
-                      cause,
-                    }),
-              ),
-            ),
+            }).pipe(Effect.mapError(turnStartErrorKeepingReceipt(CODEX_PROVIDER, turnInput))),
           injectHistory: (input) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(input.providerThread);
@@ -5816,17 +5805,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   }),
                 ).pipe(Effect.ignore),
               ),
-              Effect.mapError((cause) =>
-                isNativeStartReceiptError(cause)
-                  ? cause
-                  : new ProviderAdapterTurnStartError({
-                      driver: CODEX_PROVIDER,
-                      threadId: turnInput.threadId,
-                      providerThreadId: turnInput.providerThread.id,
-                      runId: turnInput.runId,
-                      cause,
-                    }),
-              ),
+              Effect.mapError(turnStartErrorKeepingReceipt(CODEX_PROVIDER, turnInput)),
             ),
           steerTurn: (turnInput) =>
             Effect.gen(function* () {

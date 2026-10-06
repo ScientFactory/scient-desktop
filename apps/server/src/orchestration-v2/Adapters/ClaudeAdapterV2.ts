@@ -5,6 +5,11 @@ import {
 } from "../scient-provider/ClaudeWorkflowMemberPresentation.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { CLAUDE_SCIENT_TOOL_PROJECTION } from "../../provider/ScientToolProjection.ts";
+// SCIENT-FORK: shared native start receipts and prompt acceptance.
+import {
+  nativeTurnAcceptance,
+  turnStartErrorKeepingReceipt,
+} from "../scient-provider/NativeTurnReceipts.ts";
 import { mergeSubagentPresentation } from "./SubagentPresentation.ts";
 import {
   claudeTaskPresentation,
@@ -182,8 +187,6 @@ export function claudeProviderTurnTokenUsage(
   };
 }
 export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROVIDER);
-const isNativeStartReceiptError = Schema.is(ProviderAdapter.ProviderAdapterTurnStartError);
-
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 
 export const ClaudeProviderCapabilitiesV2 = {
@@ -3742,13 +3745,7 @@ export function makeClaudeAdapterV2(
           },
           ordinal: input.context.providerTurnOrdinal,
           status: input.status,
-          nativeAcceptance:
-            input.context.acceptedAt === null
-              ? input.context.promptOffered
-                ? "unknown"
-                : "pending"
-              : "accepted",
-          ...(input.context.acceptedAt === null ? {} : { acceptedAt: input.context.acceptedAt }),
+          ...nativeTurnAcceptance(input.context),
           startedAt: input.context.startedAt,
           completedAt: input.completedAt,
         });
@@ -5940,13 +5937,7 @@ export function makeClaudeAdapterV2(
                   },
                   ordinal: context.providerTurnOrdinal,
                   status: "running",
-                  nativeAcceptance:
-                    context.acceptedAt === null
-                      ? context.promptOffered
-                        ? "unknown"
-                        : "pending"
-                      : "accepted",
-                  ...(context.acceptedAt === null ? {} : { acceptedAt: context.acceptedAt }),
+                  ...nativeTurnAcceptance(context),
                   startedAt: context.startedAt,
                   completedAt: null,
                   tokenUsage: {
@@ -6093,13 +6084,7 @@ export function makeClaudeAdapterV2(
                   },
                   ordinal: context.providerTurnOrdinal,
                   status: "running",
-                  nativeAcceptance:
-                    context.acceptedAt === null
-                      ? context.promptOffered
-                        ? "unknown"
-                        : "pending"
-                      : "accepted",
-                  ...(context.acceptedAt === null ? {} : { acceptedAt: context.acceptedAt }),
+                  ...nativeTurnAcceptance(context),
                   startedAt: context.startedAt,
                   completedAt: null,
                   tokenUsage: claudeProviderTurnTokenUsage(
@@ -7725,19 +7710,7 @@ export function makeClaudeAdapterV2(
             );
           },
           (effect, turnInput) =>
-            effect.pipe(
-              Effect.mapError((cause) =>
-                isNativeStartReceiptError(cause)
-                  ? cause
-                  : new ProviderAdapter.ProviderAdapterTurnStartError({
-                      driver: CLAUDE_PROVIDER,
-                      threadId: turnInput.threadId,
-                      providerThreadId: turnInput.providerThread.id,
-                      runId: turnInput.runId,
-                      cause,
-                    }),
-              ),
-            ),
+            effect.pipe(Effect.mapError(turnStartErrorKeepingReceipt(CLAUDE_PROVIDER, turnInput))),
         );
 
         const interruptTurn = Effect.fn("ClaudeAdapterV2.interruptTurn")(
