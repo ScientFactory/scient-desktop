@@ -56,12 +56,6 @@ export class ProviderWorkspaceMissingError extends Schema.TaggedError<ProviderWo
   }
 }
 
-// SCIENT-FORK:START — v1 provider error families restored for live fork modules.
-export {
-  ProviderAdapterProcessError,
-  ProviderAdapterRequestError,
-  ProviderSessionDirectoryPersistenceError,
-  ProviderValidationError,
-} from "./ScientProviderErrors.ts";
-export type { ProviderAdapterError, ProviderServiceError } from "./ScientProviderErrors.ts";
+// SCIENT-FORK:START — provider input validation error used by attachment intake.
+export { ProviderValidationError } from "./ScientProviderErrors.ts";
 // SCIENT-FORK:END
