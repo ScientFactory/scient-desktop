@@ -585,6 +585,17 @@ turn settlement and does not establish universal physical-reader release.
   retry fails the turn with OMP's message (clipped to 512 characters); `length` completes with that
   stop reason. From 18.3.1 `prompt_result.status` is authoritative. A failed compaction is a
   warning.
+- Native assistant envelopes are execution records, not conversation replies. OMP and Scient
+  Agent publish a reply only when an owned text block has content; tool-only and content-free
+  error envelopes produce no chat row. Visible reasoning stays in separate reasoning items.
+  Each envelope/content-index/kind has its own identity and settles at its block end, with
+  `message_end` as the authoritative final snapshot. Snapshots replace partial streams rather
+  than appending them. Duplicate completions and late deltas cannot reopen settled content.
+  A run-end snapshot repairs its identifiable open envelope, an otherwise unobserved response,
+  or a response following this turn's identifiable observed envelope in the ordered native
+  transcript; it never replays a completed envelope. Native identity and transcript position,
+  rather than wall-clock ordering, establish snapshot ownership. Turn failures, retry warnings, tools,
+  requests, and subagent outcomes retain their independent reporting.
 - At startup the adapter pins the session to `OMP_KNOWN_EVENT_TYPES` with `set_event_filter` on
   18.3.1 and newer, so new event kinds can neither break nor flood a conversation. 18.2.x answers
   that unknown command without an id, so the filter is not sent there.
