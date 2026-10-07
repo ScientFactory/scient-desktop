@@ -213,6 +213,7 @@ function makeDeterministicAdapter(input: {
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
   readonly shouldComplete: (turn: ProviderAdapterV2TurnInput) => boolean;
   readonly terminalGate?: (turn: ProviderAdapterV2TurnInput) => Deferred.Deferred<void> | undefined;
+  readonly afterTurnStarted?: (turn: ProviderAdapterV2TurnInput) => Effect.Effect<void>;
   readonly response: (turn: ProviderAdapterV2TurnInput) => string;
 }): ProviderAdapterV2Shape {
   return {
@@ -280,6 +281,9 @@ function makeDeterministicAdapter(input: {
           resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
           startTurn: (turnInput) =>
             Effect.gen(function* () {
+              // Own this turn's gate before a running event lets the test
+              // replace the thread's gate for its successor.
+              const terminalGate = input.terminalGate?.(turnInput);
               yield* Ref.update(input.capturedTurns, (turns) => [
                 ...turns,
                 {
@@ -315,7 +319,9 @@ function makeDeterministicAdapter(input: {
                   },
                 },
               ]);
-              const terminalGate = input.terminalGate?.(turnInput);
+              if (input.afterTurnStarted !== undefined) {
+                yield* input.afterTurnStarted(turnInput);
+              }
               if (terminalGate !== undefined) {
                 yield* Deferred.await(terminalGate);
               } else if (!input.shouldComplete(turnInput)) {
@@ -514,6 +520,8 @@ describe("orchestrator MCP toolkit", () => {
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const deliveryTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
+          const fanoutFirstAdapterEntered = yield* Deferred.make<void>();
+          const fanoutFirstStartedGate = yield* Deferred.make<void>();
           // These fixture-owned prompts define mock routing and results; provider
           // guidance remains visible in the captured prepared input.
           const claudePrompts = new Map<string, string>();
@@ -539,6 +547,16 @@ describe("orchestrator MCP toolkit", () => {
                 turns: { ...CodexProviderCapabilitiesV2.turns, supportsActiveSteering: false },
               },
               capturedTurns,
+              // Pause the first fan-out delivery after its running event until
+              // the test has selected the next turn's gate. This turn must keep
+              // the gate it owned at admission.
+              afterTurnStarted: (turn) =>
+                turn.threadId === "thread:mcp-fanout-parent" && turn.runOrdinal === 2
+                  ? Effect.gen(function* () {
+                      yield* Deferred.succeed(fanoutFirstAdapterEntered, undefined);
+                      yield* Deferred.await(fanoutFirstStartedGate);
+                    })
+                  : Effect.void,
               shouldComplete: (turn) =>
                 turn.threadId !== parentThreadId &&
                 !turn.threadId.startsWith("thread:mcp-scheduled-") &&
@@ -3698,6 +3716,9 @@ describe("orchestrator MCP toolkit", () => {
               fanoutParentThreadId,
               (projection) => deliveryRunStatus(projection, firstFanoutDelivery) === "running",
             );
+            // Run status is committed before the adapter is called. Fence actual
+            // adapter entry before replacing the gate for the next delivery.
+            yield* Deferred.await(fanoutFirstAdapterEntered);
 
             yield* finishFanoutChildren(duringFirst);
             const pendingDuringFirst = yield* waitForProjection(
@@ -3710,6 +3731,7 @@ describe("orchestrator MCP toolkit", () => {
             expectAtMostOneOutstandingDelivery(pendingDuringFirst);
 
             deliveryTerminalGates.set(fanoutParentThreadId, secondFanoutDeliveryGate);
+            yield* Deferred.succeed(fanoutFirstStartedGate, undefined);
             yield* Deferred.succeed(firstFanoutDeliveryGate, undefined);
             const secondReserved = yield* waitForProjection(
               orchestrator,
