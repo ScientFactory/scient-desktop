@@ -98,6 +98,8 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import {
   SCIENT_DEFAULT_RENDER_MARKDOWN,
   resolveHtmlRenderedState,
+  resolveMarkdownRenderedState,
+  markdownViewTransition,
   resolveInitialFileExplorerOpen,
 } from "~/scient/fileOpening/fileOpeningPolicy";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
@@ -1306,7 +1308,8 @@ export default function FilePreviewPanel({
   const citationRevealActive =
     fileCitation !== undefined && dismissedCitationReveal !== revealRequestId;
   const renderMarkdown =
-    isMarkdownDocument && (renderMarkdownPreferred || citationRevealActive) && revealHandled;
+    isMarkdownDocument &&
+    resolveMarkdownRenderedState(renderMarkdownPreferred, citationRevealActive, revealHandled);
   const requestedHtmlMode =
     htmlPresentationRequest?.id === revealRequestId ? htmlPresentationRequest.mode : null;
   const renderBrowserFile =
@@ -1375,24 +1378,25 @@ export default function FilePreviewPanel({
       renderMarkdown,
       truncated: false,
     });
+  const applyMarkdownViewChange = useCallback(
+    (pressed: boolean) => {
+      const next = markdownViewTransition(pressed, relativePath, revealRequestId);
+      setDismissedCitationReveal(next.dismissedCitationReveal);
+      setRenderMarkdownPreferred(next.preferred);
+      setHandledReveal(next.handledReveal);
+    },
+    [relativePath, revealRequestId, setRenderMarkdownPreferred],
+  );
   const handleRenderMarkdownChange = useCallback(
     (pressed: boolean) => {
-      const apply = () => {
-        setDismissedCitationReveal(revealRequestId);
-        setRenderMarkdownPreferred(pressed);
-        setHandledReveal(
-          pressed && relativePath !== null
-            ? { path: relativePath, requestId: revealRequestId }
-            : null,
-        );
-      };
+      const apply = () => applyMarkdownViewChange(pressed);
       if (relativePath === null) {
         apply();
         return;
       }
       runAfterPendingSave([relativePath], apply);
     },
-    [relativePath, revealRequestId, runAfterPendingSave, setRenderMarkdownPreferred],
+    [relativePath, runAfterPendingSave, applyMarkdownViewChange],
   );
   const handleRenderedChange = useCallback(
     (pressed: boolean) => {
@@ -1686,6 +1690,7 @@ export default function FilePreviewPanel({
         <ScientMarkdownPersistenceNotice
           key={relativePath}
           persistence={markdownLease}
+          {...(!renderMarkdown ? { onReturnToRich: () => applyMarkdownViewChange(true) } : {})}
           {...(markdownRefreshCopy ? { refreshCopy: markdownRefreshCopy } : {})}
           {...(markdownRefreshFailure?.reason === "not_found"
             ? { missingFileChoices: missingFile.paths, onOpenFile }

@@ -322,3 +322,44 @@ describe("applyMarkdownSourcePatches", () => {
     ).toThrow("outside");
   });
 });
+
+describe("nested block kinds", () => {
+  it("lists the blocks nested inside quotes and lists, and nothing for inline-only blocks", () => {
+    const ledger = createMarkdownSourceLedger(
+      "Plain <b>inline</b> text.\n\n> [r]: https://example.org\n>\n> Body.\n\n- Item\n\n  $$\n  x\n  $$\n",
+    );
+
+    expect(ledger.blocks.map((block) => block.nestedBlockKinds)).toEqual([
+      [],
+      ["definition", "paragraph"],
+      ["listItem", "paragraph", "math"],
+    ]);
+  });
+
+  it("reports a paired direction wrapper inside a quote as direction, not HTML", () => {
+    const paired = createMarkdownSourceLedger('> <div dir="rtl">\n>\n> Text\n>\n> </div>\n');
+    const unpaired = createMarkdownSourceLedger("> <!-- note -->\n>\n> Text\n");
+
+    expect(paired.blocks[0]?.nestedBlockKinds).toEqual(["directionWrapper", "paragraph"]);
+    expect(unpaired.blocks[0]?.nestedBlockKinds).toEqual(["html", "paragraph"]);
+  });
+
+  it("reports inline HTML inside a quote or list, but not in a top-level paragraph", () => {
+    const ledger = createMarkdownSourceLedger(
+      "> Keep <!-- note --> here\n\n- Item *with <b>bold</b>*\n\nPlain <!-- note --> text.\n",
+    );
+
+    expect(ledger.blocks.map((block) => block.nestedBlockKinds)).toEqual([
+      ["paragraph", "html"],
+      ["listItem", "paragraph", "html"],
+      [],
+    ]);
+  });
+
+  it("names the block a top-level direction region encloses", () => {
+    const ledger = createMarkdownSourceLedger('<div dir="auto">\n\n## Title\n\n</div>\n');
+
+    expect(ledger.blocks[0]?.kind).toBe("paragraph");
+    expect(ledger.blocks[0]?.directionWrappedKind).toBe("heading");
+  });
+});

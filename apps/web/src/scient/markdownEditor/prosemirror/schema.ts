@@ -308,6 +308,15 @@ nodes = nodes.addBefore("image", "footnote_reference", footnoteReferenceSpec);
 nodes = nodes.addBefore("image", "display_math", displayMathSpec);
 nodes = nodes.addBefore("image", "footnote_definition", footnoteDefinitionSpec);
 nodes = nodes.addBefore("image", "raw_block", rawBlockSpec);
+const headingSpec = nodes.get("heading");
+if (!headingSpec) throw new Error("Missing ProseMirror node spec 'heading'.");
+// A heading holds the same inline content as a paragraph (math, citations,
+// wiki links, footnote markers), except line breaks, which a Markdown heading
+// cannot contain.
+nodes = nodes.update("heading", {
+  ...headingSpec,
+  content: "(text | image | inline_math | wiki_link | citation | footnote_reference)*",
+});
 const imageSpec = nodes.get("image");
 if (!imageSpec) throw new Error("Missing ProseMirror node spec 'image'.");
 nodes = nodes.update("image", {
@@ -440,7 +449,7 @@ export const scientMarkdownSchema: Schema = new Schema({
   nodes,
   marks: defaultMarkdownParser.schema.spec.marks
     .update("link", { ...linkSpec, attrs: { ...linkSpec.attrs, ...referenceAttributes } })
-    .addToEnd("strike", strikeSpec),
+    .addBefore("code", "strike", strikeSpec),
 } satisfies SchemaSpec);
 
 function tableAlignment(token: { readonly attrGet: (name: string) => string | null }): {
@@ -828,6 +837,23 @@ export const scientMarkdownSerializer = new ScientMarkdownSerializer(
       blockWithDirection(state, node, () => {
         defaultMarkdownSerializer.nodes.heading?.(state, node, parent, index);
       });
+    },
+    code_block: (state, node) => {
+      const params = typeof node.attrs.params === "string" ? node.attrs.params : "";
+      // A backtick fence cannot carry an info string that contains a backtick.
+      const marker = params.includes("`") ? "~" : "`";
+      // A loop, not Math.max(...runs): a long block can hold more runs than
+      // a call accepts arguments.
+      let length = 3;
+      for (const run of node.textContent.match(marker === "`" ? /`{3,}/gu : /~{3,}/gu) ?? []) {
+        length = Math.max(length, run.length + 1);
+      }
+      const fence = marker.repeat(length);
+      state.write(`${fence}${params}\n`);
+      state.text(node.textContent, false);
+      state.write("\n");
+      state.write(fence);
+      state.closeBlock(node);
     },
     raw_block: (state, node) => state.write(String(node.attrs.source)),
     wiki_link: (state, node) => {

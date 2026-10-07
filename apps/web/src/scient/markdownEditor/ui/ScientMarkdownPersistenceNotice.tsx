@@ -27,6 +27,7 @@ export function ScientMarkdownPersistenceNotice({
   refreshCopy = UNEXPLAINED_REFRESH_FAILURE,
   missingFileChoices = NO_MISSING_FILE_CHOICES,
   onOpenFile,
+  onReturnToRich,
 }: {
   readonly persistence: MarkdownPersistenceLease;
   /** Names why the last refresh read failed, when the operating system said. */
@@ -37,8 +38,10 @@ export function ScientMarkdownPersistenceNotice({
    */
   readonly missingFileChoices?: ReadonlyArray<string>;
   readonly onOpenFile?: (relativePath: string) => void;
+  readonly onReturnToRich?: () => void;
 }) {
   const snapshot = useSyncExternalStore(persistence.subscribe, persistence.getSnapshot);
+  const pendingInput = useSyncExternalStore(persistence.subscribe, persistence.getPendingInput);
   const titleId = useId();
   const regionRef = useRef<HTMLDivElement>(null);
   const [confirmation, setConfirmation] = useState<{
@@ -48,19 +51,23 @@ export function ScientMarkdownPersistenceNotice({
   const [busy, setBusy] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const previousIssue = useRef<string | null>(null);
-  const issue = snapshot.conflict
-    ? "conflict"
-    : snapshot.error
-      ? snapshot.pending
-        ? "failure"
-        : "refresh"
-      : null;
+  const issue = pendingInput
+    ? "input"
+    : snapshot.conflict
+      ? "conflict"
+      : snapshot.error
+        ? snapshot.pending
+          ? "failure"
+          : "refresh"
+        : null;
   const title =
-    issue === "conflict"
-      ? "This file was changed by another writer"
-      : issue === "refresh"
-        ? refreshCopy.title
-        : "Changes haven’t been saved";
+    issue === "input"
+      ? "Finish the pending edit in Rich"
+      : issue === "conflict"
+        ? "This file was changed by another writer"
+        : issue === "refresh"
+          ? refreshCopy.title
+          : "Changes haven’t been saved";
   const choices =
     issue === "refresh" && onOpenFile ? missingFileChoices.slice(0, MAX_MISSING_FILE_CHOICES) : [];
 
@@ -118,15 +125,17 @@ export function ScientMarkdownPersistenceNotice({
               {title}
             </p>
             <p>
-              {confirmation?.action === "local"
-                ? "Replace the version on disk with your current edits? Scient will check for another change before writing."
-                : confirmation?.action === "disk"
-                  ? "Use the latest disk version? Your current edits will remain recoverable while this document is open."
-                  : issue === "conflict"
-                    ? "Your edits are still open and have not overwritten the newer file on disk."
-                    : issue === "refresh"
-                      ? refreshCopy.description
-                      : "Your edits are still open, but saving or checking the disk version could not finish. Keep this document open and retry."}
+              {issue === "input"
+                ? "Your input remains in its rich editor. Correct or undo it there before editing Source, saving, or replacing this document."
+                : confirmation?.action === "local"
+                  ? "Replace the version on disk with your current edits? Scient will check for another change before writing."
+                  : confirmation?.action === "disk"
+                    ? "Use the latest disk version? Your current edits will remain recoverable while this document is open."
+                    : issue === "conflict"
+                      ? "Your edits are still open and have not overwritten the newer file on disk."
+                      : issue === "refresh"
+                        ? refreshCopy.description
+                        : "Your edits are still open, but saving or checking the disk version could not finish. Keep this document open and retry."}
             </p>
             {reason !== null && confirmation === null ? (
               <p className="opacity-80" data-persistence-reason>
@@ -135,7 +144,13 @@ export function ScientMarkdownPersistenceNotice({
             ) : null}
           </div>
           <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">
-            {confirmation ? (
+            {issue === "input" ? (
+              onReturnToRich ? (
+                <Button size="xs" variant="outline" onClick={onReturnToRich}>
+                  Return to Rich
+                </Button>
+              ) : null
+            ) : confirmation ? (
               <>
                 <Button
                   size="xs"
@@ -219,7 +234,12 @@ export function ScientMarkdownPersistenceNotice({
       {snapshot.recoverySource !== null ? (
         <div className="shrink-0 border-b border-border/50 px-3 py-1.5 scient-reading-micro text-muted-foreground">
           Previous local edits are available while this document remains open.
-          <Button size="xs" variant="ghost" onClick={() => persistence.restoreRecovery()}>
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={pendingInput !== null}
+            onClick={() => persistence.restoreRecovery()}
+          >
             Restore previous edits
           </Button>
         </div>

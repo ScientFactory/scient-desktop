@@ -79,8 +79,86 @@ import { MarkdownSourceSurface } from "~/components/files/FilePreviewPanel";
 import { MarkdownPersistenceRegistry } from "./markdownPersistenceRegistry";
 import { ScientMarkdownWorkspaceSurface } from "../ScientMarkdownWorkspaceSurface";
 import { ScientMarkdownEditorView } from "../prosemirror/view";
+import { ScientMarkdownPersistenceNotice } from "../ui/ScientMarkdownPersistenceNotice";
 
 describe("Markdown source persistence integration", () => {
+  it("blocks an independently open Source editor while rich input is pending and provides a return action", async () => {
+    const source = "# Result [@smith]\n\nTail\n";
+    const write = vi.fn(async () => ({ revision: "r1" }));
+    const registry = new MarkdownPersistenceRegistry({
+      createTransport: () => ({
+        write,
+        read: async () => ({ source, revision: "r0" }),
+        classifyFailure: () => "terminal",
+        subscribe: () => () => {},
+        project: () => {},
+      }),
+    });
+    const richLease = registry.acquire(target, {
+      relativePath: target.relativePath,
+      contents: source,
+      revision: "r0",
+      byteLength: source.length,
+      truncated: false,
+    })!;
+    const sourceLease = registry.acquire(target, null)!;
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const returnToRich = vi.fn();
+    let attached!: () => void;
+    const receipt = new Promise<void>((resolve) => {
+      attached = resolve;
+    });
+    mocks.attached.mockImplementation(() => attached());
+    await act(async () =>
+      root.render(
+        <>
+          <ScientMarkdownWorkspaceSurface persistence={richLease} ariaLabel="Rich" />
+          <ScientMarkdownPersistenceNotice
+            persistence={sourceLease}
+            onReturnToRich={returnToRich}
+          />
+          <MarkdownSourceSurface
+            persistence={sourceLease}
+            {...target}
+            composerDraftTarget={threadRef}
+            resolvedTheme="light"
+            revealRequestId={0}
+            wordWrap={false}
+            onPostRender={() => {}}
+          />
+        </>,
+      ),
+    );
+    await act(async () => receipt);
+    const rich = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+      (controller) => controller.view?.dom.isConnected,
+    )!;
+    let position = -1;
+    rich.view!.state.doc.descendants((node, from) => {
+      if (node.type.name === "citation") position = from;
+    });
+    await act(async () =>
+      rich.view!.dispatch(
+        rich.view!.state.tr.setNodeAttribute(position, "source", "@smith\n@jones"),
+      ),
+    );
+    const shadow = container.querySelector("diffs-container")!.shadowRoot!;
+    expect(shadow.querySelector('[data-content][contenteditable="true"]')).toBeNull();
+    expect(container.textContent).toContain("Finish the pending edit in Rich");
+    const button = [...container.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent === "Return to Rich",
+    )!;
+    await act(async () => button.click());
+    expect(returnToRich).toHaveBeenCalledOnce();
+    await act(async () => mocks.lateChanges.at(-1)!("Unsafe source replacement"));
+    expect(sourceLease.getSnapshot().draftSource).toBe(source);
+    expect(write).not.toHaveBeenCalled();
+    await act(async () => rich.executeKeyboardCommand("markdown.undo"));
+    expect(sourceLease.getPendingInput()).toBeNull();
+    expect(container.textContent).not.toContain("Finish the pending edit in Rich");
+    richLease.release();
+    sourceLease.release();
+  });
   it.each(
     (["append", "prepend", "replace"] as const).flatMap((kind) =>
       [false, true].map((clean) => ({ kind, clean })),
