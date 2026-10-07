@@ -84,9 +84,13 @@ export function startsDirectUserRun(
   );
 }
 
-/** The queued runs a direct user message releases. */
-export function heldQueuedRuns(
+/**
+ * The queued runs a direct user send releases: every queued run, held or not.
+ * A failure whose hold reaction has not run yet leaves its queue unheld; the
+ * release written here is the boundary that reaction must respect.
+ */
+export function queuedRunsReleasedByDirectSend(
   runs: ReadonlyArray<OrchestrationV2Run>,
 ): ReadonlyArray<OrchestrationV2Run> {
-  return runs.filter((run) => run.status === "queued" && run.queueHeld === true);
+  return runs.filter((run) => run.status === "queued");
 }

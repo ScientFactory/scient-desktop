@@ -71,8 +71,8 @@ import {
 import { dispatchCheckpointRollbackComplete } from "./scient-fork/CheckpointRollbackCompletion.ts";
 import { isQueueUsageLimited } from "@t3tools/shared/scientQueuedRunSend";
 import {
-  heldQueuedRuns,
   planQueuedRunSend,
+  queuedRunsReleasedByDirectSend,
   startsDirectUserRun,
 } from "./scient-fork/QueuedRunSend.ts";
 import {
@@ -9938,7 +9938,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (startsDirectUserRun(command, yield* Ref.get(events))) {
           const started = yield* getProjectionWithPendingEvents(command.threadId, events);
           const now = yield* DateTime.now;
-          for (const run of heldQueuedRuns(started.runs)) {
+          for (const run of queuedRunsReleasedByDirectSend(started.runs)) {
             yield* emit(
               events,
               command,

@@ -1625,6 +1625,112 @@ it.live("non-user native interruption holds ordinary queued work without a holdQ
   ),
 );
 
+for (const outcome of ["completed", "failed"] as const) {
+  it.live(
+    `a direct send before a delayed failure reaction keeps the queue released (direct ${outcome})`,
+    () =>
+      withNativeQueue(
+        `queue-policy-direct-send-pending-reactor:${outcome}`,
+        ({ orchestrator, threadId, takeOffer, waitFor, waitForThread, offers }) =>
+          Effect.gen(function* () {
+            const locks = yield* ThreadCommandExecutor;
+            yield* send(orchestrator, threadId, "parent");
+            const parent = yield* takeOffer;
+            yield* waitFor((projection) =>
+              projection.providerTurns.some((turn) => turn.runAttemptId === parent.input.attemptId),
+            );
+            yield* orchestrator.dispatch({
+              type: "delegated_task.request",
+              commandId: CommandId.make(`${threadId}:child`),
+              parentThreadId: threadId,
+              parentRunId: parent.input.runId,
+              parentNodeId: parent.input.rootNodeId,
+              task: "child-foreground",
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              completionWake: "settled_only",
+              createdBy: "user",
+              creationSource: "web",
+            });
+            const child = yield* takeOffer;
+            const childThreadId = child.input.threadId;
+            yield* waitForThread(childThreadId, (projection) =>
+              projection.providerTurns.some((turn) => turn.runAttemptId === child.input.attemptId),
+            );
+            yield* send(orchestrator, childThreadId, "first", true);
+            yield* send(orchestrator, childThreadId, "second", true);
+            const entered = yield* Deferred.make<void>();
+            const unlock = yield* Deferred.make<void>();
+            // The child's terminal reactor takes its parent's lock first, so
+            // holding that lock delays the hold reaction to the child failure.
+            const parentLock = yield* locks
+              .withLock(
+                threadId,
+                Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(unlock))),
+              )
+              .pipe(Effect.forkScoped);
+            yield* Deferred.await(entered);
+            yield* child.settle("failed");
+            const failed = yield* waitForThread(childThreadId, (projection) =>
+              projection.runs.some(
+                (run) => run.id === child.input.runId && run.status === "failed",
+              ),
+            );
+            const queuedIds = failed.runs
+              .filter((run) => run.status === "queued")
+              .map((run) => run.id);
+            assert.equal(queuedIds.length, 2);
+            assert.isTrue(
+              failed.runs
+                .filter((run) => queuedIds.includes(run.id))
+                .every((run) => run.queueHeld !== true),
+              "The failure's hold has not been written yet",
+            );
+            yield* send(orchestrator, childThreadId, "direct");
+            const direct = yield* takeOffer;
+            assert.equal(direct.input.message.text, "direct");
+            const released = yield* orchestrator.getThreadProjection(childThreadId);
+            assert.isTrue(
+              released.runs
+                .filter((run) => queuedIds.includes(run.id))
+                .every((run) => run.queueHeld === false),
+              "The direct send releases every queued run",
+            );
+            yield* Deferred.succeed(unlock, undefined);
+            yield* Fiber.join(parentLock);
+            yield* direct.settle(outcome);
+            if (outcome === "completed") {
+              // The earlier failure's late reaction must not hold the queue.
+              for (const text of ["first", "second"]) {
+                const next = yield* takeOffer;
+                assert.equal(next.input.message.text, text);
+                yield* next.settle("completed");
+              }
+              yield* waitForThread(childThreadId, (projection) =>
+                projection.runs
+                  .filter((run) => queuedIds.includes(run.id))
+                  .every((run) => run.status === "completed"),
+              );
+              assert.deepEqual(offers, ["parent", "child-foreground", "direct", "first", "second"]);
+            } else {
+              // A failure after the direct send holds the queue again.
+              yield* waitForThread(
+                childThreadId,
+                (projection) =>
+                  projection.runs.find((run) => run.id === direct.input.runId)?.status ===
+                    "failed" &&
+                  projection.runs
+                    .filter((run) => queuedIds.includes(run.id))
+                    .every((run) => run.status === "queued" && run.queueHeld === true),
+              );
+              assert.deepEqual(offers, ["parent", "child-foreground", "direct"]);
+            }
+          }),
+      ),
+  );
+}
+
 for (const release of ["whole", "head", "newer-failure", "new-admission"] as const) {
   it.live(`delayed interrupted child checkpoint cannot supersede ${release} queue release`, () =>
     withNativeQueue(
