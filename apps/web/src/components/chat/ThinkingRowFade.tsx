@@ -22,6 +22,7 @@ export function ThinkingRowFade({
         answerAppearing && "opacity-0",
       )}
       aria-hidden={answerAppearing || undefined}
+      inert={answerAppearing || undefined}
     >
       {children}
     </div>
