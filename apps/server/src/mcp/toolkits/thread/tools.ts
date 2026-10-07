@@ -245,7 +245,7 @@ const ThreadSearchTool = Tool.make("scient_thread_search", {
   ...commandTool,
   description:
     // SCIENT-FORK:START — Scient-facing copy.
-    "Search active thread titles and content with the app's existing bounded search. Matches are limited to one project (projectId, else the calling thread's project) out of the global top matches, so this may return fewer than limit. A caller outside a Scient thread that omits projectId searches every project. No pagination or exhaustive-result guarantee.",
+    "Search active thread titles and content with the app's existing bounded search. Thread callers only search their own project; an explicit different project is refused. Matches are filtered out of the global top matches, so this may return fewer than limit. A caller outside a Scient thread that omits projectId searches every project. No pagination or exhaustive-result guarantee.",
   // SCIENT-FORK:END
   parameters: Schema.Struct({
     ...OrchestrationSearchThreadsInput.fields,

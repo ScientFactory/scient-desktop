@@ -1355,6 +1355,141 @@ describe("OrchestratorMcpService provider resolution", () => {
         ),
       );
 
+    const projectReadHarness = Effect.fn("scheduledTasks.projectReadHarness")(function* () {
+      const callerId = ThreadId.make("thread:project-reader");
+      const foreignProjectId = ProjectId.make("project:private");
+      const callerShell = { ...liveThreadShell(callerId), projectId };
+      const caller = idleThreadProjection(callerShell);
+      const listedTasks = [
+        task({}),
+        task({
+          id: ScheduledTaskId.make("scheduled-task:private"),
+          projectId: foreignProjectId,
+          prompt: "Private other-project instruction",
+          webhook: {
+            path: "/hooks/private/credential",
+            url: "https://synthetic.example/hooks/private/credential",
+            hasSecret: false,
+          },
+        }),
+      ];
+      const calls = { tasks: 0, threads: [] as ProjectId[] };
+      const layer = OrchestratorMcpService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            fullAccessCapturedPolicyLayer,
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadRecords: () => Effect.succeed(caller),
+              listProjectThreads: ({ projectId: target }) =>
+                Effect.sync(() => {
+                  calls.threads.push(target);
+                  return [{ ...callerShell, projectId: target }];
+                }),
+            }),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+            Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+              list: () => Effect.succeed([]),
+            }),
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+              list: () =>
+                Effect.sync(() => {
+                  calls.tasks++;
+                  return { tasks: listedTasks };
+                }),
+            }),
+          ),
+        ),
+      );
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(Effect.provide(layer));
+      const callerScope: McpInvocationScope = {
+        ...supervisedClient,
+        thread: {
+          threadId: callerId,
+          providerSessionId: "provider:project-reader",
+          providerInstanceId: callerShell.providerInstanceId,
+        },
+        client: undefined,
+      };
+      return { mcp, callerScope, foreignProjectId, calls };
+    });
+
+    it.effect(
+      "refuses other-project scheduled-task reads before retrieving prompts or webhook grants",
+      () =>
+        Effect.gen(function* () {
+          const { mcp, callerScope, foreignProjectId, calls } = yield* projectReadHarness();
+          const refused = yield* mcp
+            .listScheduledTasks(callerScope, { projectId: foreignProjectId })
+            .pipe(Effect.flip);
+          assert.equal(refused.code, "thread_not_found");
+          assert.equal(calls.tasks, 0);
+          const implicit = yield* mcp.listScheduledTasks(callerScope, {});
+          const explicit = yield* mcp.listScheduledTasks(callerScope, { projectId });
+          assert.deepEqual(
+            implicit.tasks.map((entry) => entry.projectId),
+            [projectId],
+          );
+          assert.deepEqual(explicit.tasks, implicit.tasks);
+          assert.equal(implicit.tasks[0]?.prompt, "Do {{body.instruction}}");
+          assert.equal(calls.tasks, 2);
+        }),
+    );
+
+    it.effect("refuses other-project thread lists before reading their metadata", () =>
+      Effect.gen(function* () {
+        const { mcp, callerScope, foreignProjectId, calls } = yield* projectReadHarness();
+        const refused = yield* mcp
+          .listThreads(callerScope, { projectId: foreignProjectId })
+          .pipe(Effect.flip);
+        assert.equal(refused.code, "thread_not_found");
+        assert.deepEqual(calls.threads, []);
+        const implicit = yield* mcp.listThreads(callerScope, {});
+        const explicit = yield* mcp.listThreads(callerScope, { projectId });
+        assert.equal(implicit.projectId, projectId);
+        assert.equal(implicit.threads[0]?.threadId, callerScope.thread!.threadId);
+        assert.deepEqual(explicit.threads, implicit.threads);
+        assert.deepEqual(calls.threads, [projectId, projectId]);
+      }),
+    );
+
+    it.effect(
+      "preserves external-client global task reads and explicit project task/thread reads",
+      () =>
+        Effect.gen(function* () {
+          const { mcp, foreignProjectId, calls } = yield* projectReadHarness();
+          const external: McpInvocationScope = {
+            ...supervisedClient,
+            client: {
+              sessionId: "external-reader",
+              label: "Synthetic client",
+              access: "full-access",
+            },
+          };
+          const global = yield* mcp.listScheduledTasks(external, {});
+          assert.deepEqual(
+            global.tasks.map((entry) => entry.projectId),
+            [projectId, foreignProjectId],
+          );
+          const targeted = yield* mcp.listScheduledTasks(external, { projectId: foreignProjectId });
+          assert.deepEqual(
+            targeted.tasks.map((entry) => entry.projectId),
+            [foreignProjectId],
+          );
+          assert.equal(
+            targeted.tasks[0]?.webhookUrl,
+            "https://synthetic.example/hooks/private/credential",
+          );
+          const threads = yield* mcp.listThreads(external, { projectId: foreignProjectId });
+          assert.equal(threads.projectId, foreignProjectId);
+          assert.equal(threads.currentThreadId, null);
+          assert.equal(threads.threads.length, 1);
+          assert.deepEqual(calls.threads, [foreignProjectId]);
+        }),
+    );
+
     it.effect("hides a webhook URL from a caller below the task's modes", () =>
       Effect.gen(function* () {
         const upserted = yield* Ref.make(0);
@@ -1381,7 +1516,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     it.effect("hides a webhook URL from a thread whose turn has ended", () =>
       Effect.gen(function* () {
         const callerId = ThreadId.make("thread:scheduled-ended");
-        const shell = liveThreadShell(callerId, { activeRunId: null });
+        const shell = { ...liveThreadShell(callerId, { activeRunId: null }), projectId };
         const listed = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.flatMap((mcp) =>
             mcp.listScheduledTasks(

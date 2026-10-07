@@ -1629,6 +1629,10 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         const projectId = input.projectId ?? parent?.thread.projectId;
+        // SCIENT-FORK:START — Thread credentials cannot read another project's task prompts or grants.
+        if (projectId !== undefined)
+          yield* assertLiveCallerForOtherProject(scope, parent, projectId);
+        // SCIENT-FORK:END
         const { tasks } = yield* scheduledTasks
           .list()
           .pipe(
@@ -2323,6 +2327,9 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { parent } = yield* loadCaller(scope);
         const projectId = yield* resolveProjectTarget(parent, input.projectId);
+        // SCIENT-FORK:START — Explicit list targets do not widen a thread credential's project.
+        yield* assertLiveCallerForOtherProject(scope, parent, projectId);
+        // SCIENT-FORK:END
         const projectThreads = yield* threadManagement
           .listProjectThreads({
             projectId,

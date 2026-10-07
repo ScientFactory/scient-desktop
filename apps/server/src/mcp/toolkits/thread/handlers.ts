@@ -76,15 +76,24 @@ const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
 
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
-  run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
+  run_scheduled_task_now: McpToolAccess.writesEnvironment((input, check) =>
     Effect.gen(function* () {
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;
       const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
-      if (!tasks.some((task) => task.id === input.taskId))
+      // SCIENT-FORK:START — Thread credentials cannot execute another project's tasks.
+      const { caller } = yield* check;
+      if (
+        !tasks.some(
+          (task) =>
+            task.id === input.taskId &&
+            (caller === undefined || task.projectId === caller.projectId),
+        )
+      )
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message: "The scheduled task was not found.",
         });
+      // SCIENT-FORK:END
       const { task } = yield* scheduler
         .runNow({ id: input.taskId })
         .pipe(Effect.mapError(unavailable));
@@ -101,9 +110,14 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     Effect.gen(function* () {
       const { caller } = yield* readCaller();
       const { projectId: requested, ...query } = input;
-      // Like the other project tools, an omitted project means the caller's own; a client
-      // outside a thread searches every project.
-      const projectId = requested ?? caller?.projectId;
+      // SCIENT-FORK:START — Explicit targets never widen a thread credential's project scope.
+      if (caller !== undefined && requested !== undefined && requested !== caller.projectId)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "The project was not found.",
+        });
+      const projectId = caller?.projectId ?? requested;
+      // SCIENT-FORK:END
       const threadSearch = yield* ThreadSearch.ThreadSearch;
       const result = yield* threadSearch.search(query).pipe(Effect.mapError(unavailable));
       return {
