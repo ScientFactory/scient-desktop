@@ -39,6 +39,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import { withoutComputeWorkspaceOwners } from "./scient/compute/ComputeWorkspaceLifetime.ts";
+import { presentQueuedRunsAsBusy } from "./scient/storage/QueuedRunWorktreeRetention.ts";
 
 const decodeCleanupThread = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJson),
@@ -155,7 +156,13 @@ export const make = Effect.gen(function* () {
     const active = yield* projections.getShellSnapshot();
     const archived = yield* projections.getShellSnapshot({ location: "archive" });
     const projects = yield* projectStore.listShells();
-    return { projects, threads: [...active.threads, ...archived.archivedThreads] };
+    // SCIENT-FORK:START queued-run-worktree-retention
+    const threads = yield* presentQueuedRunsAsBusy(sql, [
+      ...active.threads,
+      ...archived.archivedThreads,
+    ]);
+    // SCIENT-FORK:END queued-run-worktree-retention
+    return { projects, threads };
   });
 
   // Local threads under another project need not have a worktreePath of their own.

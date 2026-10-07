@@ -7,7 +7,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { persistChatAttachments } from "../../AttachmentPersistence.ts";
 import { ServerConfig } from "../../config.ts";
-import { QueueError, readQueue, writeQueue } from "./LegacyQueueLedger.ts";
+import { QueueError, readableQueueDocument, readQueue, writeQueue } from "./LegacyQueueLedger.ts";
 import { importLegacyQueue } from "../../scient/threadQueue/migration.ts";
 import { discoverLegacyQueueThreads } from "../../scient/threadQueue/Store.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
@@ -203,15 +203,36 @@ export const cutOverLegacyQueue = Effect.fn("LegacyQueueCutover.thread")(functio
   return imported;
 });
 
-/** Scan both copied SQL documents and read-only JSON compatibility sources. */
+/**
+ * Scan both copied SQL documents and read-only JSON compatibility sources.
+ * A migrated document never reads its JSON source again, and one with no
+ * items has nothing left to admit, so a finished cutover is skipped without
+ * hydrating transcripts or parsing source files on every boot.
+ */
 export const cutOverLegacyQueues = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const config = yield* ServerConfig;
   const rows = yield* sql<{
     thread_id: string;
-  }>`SELECT thread_id FROM scient_thread_queue ORDER BY thread_id`;
-  const files = yield* Effect.tryPromise(() => discoverLegacyQueueThreads(config.stateDir));
-  const threadIds = new Set([...rows.map((row) => ThreadId.make(row.thread_id)), ...files]);
+    document: string;
+  }>`SELECT thread_id, document FROM scient_thread_queue ORDER BY thread_id`;
+  // Only a schema-valid migrated document is evidence. Anything unreadable
+  // stays on the retry path and reports its warning, as before.
+  const migrated = new Set<ThreadId>();
+  const pending: ThreadId[] = [];
+  for (const row of rows) {
+    const threadId = ThreadId.make(row.thread_id);
+    const document = readableQueueDocument(row.document);
+    if (Option.isSome(document) && document.value.migrated) {
+      migrated.add(threadId);
+      if (document.value.items.length === 0) continue;
+    }
+    pending.push(threadId);
+  }
+  const files = yield* Effect.tryPromise(() =>
+    discoverLegacyQueueThreads(config.stateDir, migrated),
+  );
+  const threadIds = new Set([...pending, ...files]);
   let imported = 0;
   for (const threadId of threadIds) {
     imported += yield* cutOverLegacyQueue(threadId).pipe(

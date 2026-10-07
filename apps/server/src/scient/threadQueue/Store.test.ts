@@ -3,7 +3,12 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { ThreadId } from "@t3tools/contracts";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  const readFile = vi.fn(actual.readFile);
+  return { ...actual, default: { ...actual, readFile }, readFile };
+});
 import { discoverLegacyQueueThreads, legacyQueueFilePath, listScientThreadQueue } from "./Store.ts";
 const directories: string[] = [];
 const threadId = ThreadId.make("migration-thread");
@@ -41,6 +46,19 @@ describe("legacy queue migration reader", () => {
       "old message",
     );
     expect(await NodeFSP.readFile(f.path, "utf8")).toBe(f.raw);
+  });
+  it("skips the source files of migrated threads under either name", async () => {
+    const f = await fixture();
+    const other = new Set([ThreadId.make("another-thread")]);
+    const readFile = vi.mocked(NodeFSP.readFile);
+    const reads = () => readFile.mock.calls.map(([path]) => NodePath.basename(String(path)));
+    expect(await discoverLegacyQueueThreads(f.stateDir, other)).toEqual([threadId]);
+    expect(reads()).toContain(NodePath.basename(f.path));
+    readFile.mockClear();
+    expect(await discoverLegacyQueueThreads(f.stateDir, new Set([threadId]))).toEqual([]);
+    await NodeFSP.rename(f.path, NodePath.join(NodePath.dirname(f.path), `${threadId}.json`));
+    expect(await discoverLegacyQueueThreads(f.stateDir, new Set([threadId]))).toEqual([]);
+    expect(reads()).toEqual([]);
   });
   it("reads older safe thread-name files", async () => {
     const f = await fixture();
