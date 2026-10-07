@@ -187,19 +187,17 @@ or replace `lastRefreshMerge` with an owned-main merge.
 
 ### Compose reviewed owned implementation branches
 
-Preserve authored Scient branch history when integrating an independently reviewed
-implementation batch. Record each introduced owned merge in
-`upstream-state.json`'s `ownedIntegrationMerges`: a unique ID, full merge commit,
-its two full ordered parent commits, and a committed maintainer review record
-under `docs/`. The provenance checker requires the exact actual parent vector,
-the merge in the inspected candidate's history, and a regular nonempty review
-record committed in that candidate. A local or symlinked report is insufficient.
+Every merge parent the alignment introduces must be official T3 history or a commit already in
+owned `main`; the provenance checker admits nothing else. Land an independently reviewed Scient
+implementation lane through its own pull request first, then carry it into the alignment with the
+ordinary owned-main catch-up above. Composing unlanded lanes directly into the alignment, and
+especially through octopus merges, produces history the required check rejects.
 
-This records only the exact reviewed merge edges. Every nested merge introduced
-by the implementation branch is still checked; an owned branch must not carry
-an unreviewed upstream PR parent. Keep the original owned base, official target,
-historical donor exceptions and trusted queue/push modes unchanged. An owned
-composition does not advance `integrationBase` or qualify runtime behavior.
+If that has already happened, publish the exact qualified tree as one ordinary commit on the last
+passing boundary (normally the owned-main catch-up merge), prove tree equality with the qualified
+head, archive the original branch under `archive/`, and open a superseding pull request. The
+[2026-10-07 republication](./t3-upstream-sync-20261003-ca7df394ed.md#republication-on-checkable-history--2026-10-07)
+is the recorded example.
 
 ## 4. Audit protected seams
 

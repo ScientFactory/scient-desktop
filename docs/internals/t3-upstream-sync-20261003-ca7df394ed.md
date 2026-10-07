@@ -9,6 +9,11 @@ alignment app and is the exact macOS arm64 artifact source. Available final
 browser functional subcases pass; native/screenshot visual subcases remain
 explicitly unverified. The closing receipt below distinguishes these boundaries.
 
+**Republished 2026-10-07 on checkable history.** The required provenance check
+rejected the original pull request's history; the qualified tree now lands on
+`codex/t3-sync-ca7df394ed-20261007`. See
+[republication](#republication-on-checkable-history--2026-10-07).
+
 The earlier source qualification checkpoint
 `1249a2d1ab29ef75830f0db1a43550bf9f6f0146` has the exact qualified whole
 tree `73b838f17ff6e9d26c2786d99905f442430b6b68`, identical to preserved
@@ -132,6 +137,37 @@ across 890 files, with all 32 package typechecks passing. Earlier isolated app
 evidence at `802e278c28`, `3564658e28` and later dated sections below remains
 limited to those exact revisions. The current status above supersedes their
 then-open repair descriptions; it does not rewrite their outcomes.
+
+## Republication on checkable history — 2026-10-07
+
+The hosted `Verify upstream provenance` check on #465 (head
+`3f71ce747b444627140cd2dae0f23be5a7b661b0`) failed with 169 rejected merge
+parents. From owned main `33ab8e307afbabda3e155c439d89bc788148d379`, that history
+introduces 122 merges whose extra parents are neither official T3 nor owned
+main, including octopus merges of 3 to 20 parents. The receipts the branch
+added admit only exact two-parent edges, so no receipt set could pass. The
+earlier strict passes below covered only the later
+`99eb14cb828944b461466d3da92769160c07e2e6` range; they did not qualify the
+range the required check inspects.
+
+Everything through owned-main checkpoint
+`794ff29ed2120ac2d2ee13f30488e68b17402cb7` passes unchanged: it contains only the
+literal official merge and the main catch-up. Republication therefore:
+
+- commits the exact qualified tree on that checkpoint as `2a48f8bac2`; its diff
+  against `3f71ce747b` is empty, so the qualification evidence for that tree
+  carries over unchanged;
+- keeps the original lanes reachable through tag
+  `archive/v2-alignment-lanes-20261006` (= `3f71ce747b`);
+- removes the now-unused `ownedIntegrationMerges` receipts and restores owned
+  main's provenance verifier, so no exemption path remains; and
+- advances `upstream-state.json` to `ca7df394ed8151fa77f856beefa90bc60a785d60`
+  with upstream merge `b8fbae4ffa84414b02461cf42a0afa4b10a03fcc`, which also lets
+  the seam check resolve V2 mounts against the adopted upstream instead of
+  `54084ae1e6`.
+
+Later commits on the republished branch repair the hosted gates the provenance
+failure had hidden or that failed independently; they are recorded below.
 
 ## Candidate and ancestry
 

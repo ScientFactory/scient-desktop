@@ -6,24 +6,24 @@
   "officialDefaultBranch": "main",
   "updateMode": "thin-fork-merge",
   "candidateStatus": "active-public-desktop",
-  "integrationBase": "54084ae1e6c32809db040e4fa571c80fdf2d8ae4",
-  "reviewedThrough": "54084ae1e6c32809db040e4fa571c80fdf2d8ae4",
-  "reviewedAt": "2026-10-02",
-  "reviewRecord": "docs/internals/2026-10-02-upstream-sync-54084ae1e6.md",
+  "integrationBase": "ca7df394ed8151fa77f856beefa90bc60a785d60",
+  "reviewedThrough": "ca7df394ed8151fa77f856beefa90bc60a785d60",
+  "reviewedAt": "2026-10-07",
+  "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md",
   "verifiedBaseline": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTipAtBootstrap": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTagAtBootstrap": "v0.0.32-nightly.20260806.1012",
   "bootstrapBranch": "agent/d4-bootstrap-20260806",
   "bootstrapMerge": "3e8f7bc0e18be4a42c23b021e68bf30e3690bc4d",
   "bootstrapRecord": "docs/internals/scient-next-d4-bootstrap.md",
-  "lastRefreshBase": "af07bfc0bd1838e9f2e569cde6e3263e49951225",
-  "lastRefreshPreviousOfficialTip": "a3abb5266080c15b2a675d7f92b517b567c427e2",
-  "lastRefreshOfficialTip": "54084ae1e6c32809db040e4fa571c80fdf2d8ae4",
-  "lastRefreshOfficialTag": "v0.0.45-nightly.20260930.2493",
-  "lastRefreshRangeCount": 12,
-  "lastRefreshMerge": "0b0fba47a69b381bbbdf4f7061e69ec952749de6",
-  "lastRefreshBranch": "codex/t3-sync-54084ae1e6-20261002",
-  "lastRefreshVerifiedAt": "2026-10-02T13:43:03Z",
+  "lastRefreshBase": "ad215fd9157e86252a2ee1187e746b65c8b003be",
+  "lastRefreshPreviousOfficialTip": "54084ae1e6c32809db040e4fa571c80fdf2d8ae4",
+  "lastRefreshOfficialTip": "ca7df394ed8151fa77f856beefa90bc60a785d60",
+  "lastRefreshOfficialTag": null,
+  "lastRefreshRangeCount": 15,
+  "lastRefreshMerge": "b8fbae4ffa84414b02461cf42a0afa4b10a03fcc",
+  "lastRefreshBranch": "codex/t3-sync-ca7df394ed-20261007",
+  "lastRefreshVerifiedAt": "2026-10-07T06:11:07Z",
   "historicalExceptions": [
     {
       "id": "t3-pr-5822-projectless-threads",
@@ -44,134 +44,6 @@
       "replacementMerge": null
     }
   ],
-  "lastRefreshOwnedMain": "af07bfc0bd1838e9f2e569cde6e3263e49951225",
-  "lastRefreshOwnedMainMerge": null,
-  "ownedIntegrationMerges": [
-    {
-      "id": "scient-v2-reviewed-seam-composition",
-      "merge": "7ef738fb31cf7595142254dc8fe6dfd47523aa35",
-      "parents": [
-        "c4aad71535abbd98c38659711b2cc47b1ab2fe5d",
-        "e6702d37711cf85e802ce209d24e7da842405d1f"
-      ],
-      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
-    },
-    {
-      "id": "scient-v2-reviewed-seam-integration",
-      "merge": "7a4fedcbbe0067e3336cf70d6a8633b0c40c46b0",
-      "parents": [
-        "d7b4042e3d4b0c797cd7d883bc2d6d6af6395ef2",
-        "7ef738fb31cf7595142254dc8fe6dfd47523aa35"
-      ],
-      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
-    },
-    {
-      "id": "scient-v2-reviewed-architecture-docs",
-      "merge": "6dc7de1d74a288c404b9481874c6a77b1986e580",
-      "parents": [
-        "7ef738fb31cf7595142254dc8fe6dfd47523aa35",
-        "b180c89867f74fa67ef4cd008fd913c2292cb5e5"
-      ],
-      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
-    },
-    {
-      "id": "scient-v2-reviewed-opencode-ack-composition",
-      "merge": "649a9caa1e0a7eba51942bf84e475c3d9931a71e",
-      "parents": [
-        "6dc7de1d74a288c404b9481874c6a77b1986e580",
-        "2a672bd865b89e20768476643925b3e85fc2d90f"
-      ],
-      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
-    },
-    {
-      "id": "scient-v2-reviewed-answer-attention-composition",
-      "merge": "7992b26bef3b9636e2a547c28d1393c8bc4749ac",
-      "parents": [
-        "649a9caa1e0a7eba51942bf84e475c3d9931a71e",
-        "238eb3d822faefa29aef40b1ef70193111b00f16"
-      ],
-      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
-    },
-    {
-      "id": "scient-v2-reviewed-provenance-composition",
-      "merge": "a61371f826c605c8202267cee8a15cc3c7ecce83",
-      "parents": [
-        "3911b36ee87de0c827465a1886e0685aad495a74",
-        "d3bc827adf4fb19ca916355e9f07c6fab86dfac7"
-      ],
-      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
-    },
-    {
-      "id": "scient-v2-reviewed-docs-alignment-sync",
-      "merge": "df7866c8d98f1d9bee15b17f033fa8ed1406d848",
-      "parents": [
-        "fde2233486a4f03ad5577e89a858bcb38cbf88fd",
-        "c4aad71535abbd98c38659711b2cc47b1ab2fe5d"
-      ],
-      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
-    },
-    {
-      "id": "scient-v2-reviewed-smoke-doc-boundaries-composition",
-      "merge": "c1d9a5ea1d498403b5dc257286bf24f85c838353",
-      "parents": [
-        "fbbfdd58c28fbc6988aee22d842452c94026d2fe",
-        "736d7c02183a978102b5a0bd2af92537be2b9ff8"
-      ],
-      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
-    },
-    {
-      "id": "scient-v2-reviewed-divergence-inventory",
-      "merge": "687b37199c8f322dfe6d155c7fe0f8ed25c0b42f",
-      "parents": [
-        "19efc756b53128a4b94dea5d011746b3ddc26d13",
-        "66f598c48ee968e27b1a53ed1316a3d98549fdcc"
-      ],
-      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
-    },
-    {
-      "id": "scient-v2-reviewed-startup-capacity-repair",
-      "merge": "f835e5adf9b33725f20dcc92bc44c77ed0a8fcdc",
-      "parents": [
-        "7238163eabeb697959f87f7d071f19816530f050",
-        "b5467e986ca6bd7f84eb2fdf75d760d9e0d9c254"
-      ],
-      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
-    },
-    {
-      "id": "scient-final-startup-capacity-20261006",
-      "merge": "8d3d0743105556397c77d6c8fecadd1a148d744e",
-      "parents": [
-        "99eb14cb828944b461466d3da92769160c07e2e6",
-        "f835e5adf9b33725f20dcc92bc44c77ed0a8fcdc"
-      ],
-      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
-    },
-    {
-      "id": "scient-final-obsolete-errors-20261006",
-      "merge": "0ef256e3dbdd04f04fdc11b56d183765db3bf143",
-      "parents": [
-        "8d3d0743105556397c77d6c8fecadd1a148d744e",
-        "5e28723441ac924b39d897585cd2a39b6ba378c4"
-      ],
-      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
-    },
-    {
-      "id": "scient-final-native-fixtures-20261006",
-      "merge": "32cdcc102fea25cfda3584c40c18880cc9a5a384",
-      "parents": [
-        "0ef256e3dbdd04f04fdc11b56d183765db3bf143",
-        "1768be85e3b25f338ac4b9500f11a20a79693846"
-      ],
-      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
-    },
-    {
-      "id": "scient-final-omp-ownership-20261006",
-      "merge": "36a69606455b2b52a7bf28835e3de260d2bccf19",
-      "parents": [
-        "32cdcc102fea25cfda3584c40c18880cc9a5a384",
-        "1ac9e21f76d0d02898fbec9df4e1846a4fe1ad1f"
-      ],
-      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
-    }
-  ]
+  "lastRefreshOwnedMain": "33ab8e307afbabda3e155c439d89bc788148d379",
+  "lastRefreshOwnedMainMerge": "794ff29ed2120ac2d2ee13f30488e68b17402cb7"
 }
