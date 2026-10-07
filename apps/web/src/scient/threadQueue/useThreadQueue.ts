@@ -53,6 +53,7 @@ export function useThreadQueue(input: {
   const reorderTail = useRef<Promise<unknown>>(Promise.resolve());
   const refreshInFlight = useRef<string | null>(null);
   const pollFailures = useRef<{ key: string; count: number }>({ key, count: 0 });
+  const rearmPoll = useRef<{ key: string; rearm: () => void } | null>(null);
   const revisionRef = useRef<{ key: string; revision: number | undefined }>({
     key,
     revision: undefined,
@@ -102,7 +103,10 @@ export function useThreadQueue(input: {
           revisionRef.current.key === key ? revisionRef.current.revision : undefined,
         ),
       );
+      const wasBackingOff = pollFailures.current.key === key && pollFailures.current.count > 0;
       pollFailures.current = { key, count: 0 };
+      // Any success, including an explicit refresh, ends the back-off wait.
+      if (wasBackingOff && rearmPoll.current?.key === key) rearmPoll.current.rearm();
     } catch (cause) {
       pollFailures.current = {
         key,
@@ -123,12 +127,23 @@ export function useThreadQueue(input: {
       if (stopped) return;
       const failures = pollFailures.current.key === key ? pollFailures.current.count : 0;
       const wait = threadQueuePollDelayMs(failures) - (Date.now() - startedAt);
+      clearTimeout(timer);
       timer = setTimeout(() => void poll(), Math.max(0, wait));
     };
+    const rearm = {
+      key,
+      rearm: () => {
+        if (stopped) return;
+        clearTimeout(timer);
+        timer = setTimeout(() => void poll(), QUEUE_POLL_MS);
+      },
+    };
+    rearmPoll.current = rearm;
     void poll();
     return () => {
       stopped = true;
       clearTimeout(timer);
+      if (rearmPoll.current === rearm) rearmPoll.current = null;
     };
   }, [connected, refresh, key, state.key, state.snapshot?.nativeQueue]);
   const scope = () => {

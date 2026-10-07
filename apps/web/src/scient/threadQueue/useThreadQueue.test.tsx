@@ -1,5 +1,5 @@
 import { EnvironmentId, ThreadId, type ScientThreadQueueSnapshot } from "@t3tools/contracts";
-import { act } from "react";
+import { act, useEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
@@ -34,11 +34,16 @@ const snapshot = (revision: number): ScientThreadQueueSnapshot => ({
   paused: null,
 });
 
+let latest: ReturnType<typeof useThreadQueue> | undefined;
+
 function Probe() {
-  useThreadQueue({
+  const queueView = useThreadQueue({
     environmentId: EnvironmentId.make("environment-queue-poll"),
     threadId,
     threadBusy: false,
+  });
+  useEffect(() => {
+    latest = queueView;
   });
   return null;
 }
@@ -65,6 +70,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => renderer?.unmount());
   renderer = undefined;
+  latest = undefined;
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -83,4 +89,18 @@ it("returns to one-second polling after a success", async () => {
   queue.respond = (call) =>
     call <= 3 ? Promise.reject(new Error("unavailable")) : Promise.resolve(snapshot(call));
   expect(await mountAndAdvance(16_000)).toEqual([0, 2_000, 6_000, 14_000, 15_000, 16_000]);
+});
+
+it("resumes one-second polling after a successful explicit refresh during back-off", async () => {
+  queue.respond = (call) =>
+    call <= 5 ? Promise.reject(new Error("unavailable")) : Promise.resolve(snapshot(call));
+  // Failures at 0, 2, 6, 14 and 30 s; the next timed poll would wait until 60 s.
+  await mountAndAdvance(30_100);
+  await act(async () => {
+    await latest?.refresh();
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1_000);
+  });
+  expect(queue.calls).toEqual([0, 2_000, 6_000, 14_000, 30_000, 30_100, 31_100]);
 });
