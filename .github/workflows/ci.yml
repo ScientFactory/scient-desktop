@@ -260,7 +260,9 @@ jobs:
   test_server:
     name: Test Server ${{ matrix.shard }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # V2 roughly tripled the server suite (957 files). The three shard names
+    # are required checks, so they get more time rather than more shards.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:

@@ -11,7 +11,7 @@ explicitly unverified. The closing receipt below distinguishes these boundaries.
 
 **Republished 2026-10-07 on checkable history.** The required provenance check
 rejected the original pull request's history; the qualified tree now lands on
-`codex/t3-sync-ca7df394ed-20261007`. See
+`codex/t3-sync-ca7df394ed-20261007` as #466, superseding #465. See
 [republication](#republication-on-checkable-history--2026-10-07).
 
 The earlier source qualification checkpoint
@@ -166,8 +166,20 @@ literal official merge and the main catch-up. Republication therefore:
   the seam check resolve V2 mounts against the adopted upstream instead of
   `54084ae1e6`.
 
-Later commits on the republished branch repair the hosted gates the provenance
-failure had hidden or that failed independently; they are recorded below.
+Later commits on the republished branch repair the gates the provenance failure
+had hidden or that failed independently: seven new V2 paths classified in the
+skills and Oh My Pi seam manifests; the documentation check moved to the oxfmt
+version the commit hook uses; patched Expo packages held at their patched
+versions; two tests made platform-independent (an orphan reaped before the
+desktop smoke assertion, the Oh My Pi frame limit on short temp paths); and the
+server shard timeout raised from 10 to 25 minutes, since the V2 suite takes
+17–18 minutes per shard on hosted runners.
+
+Owned main then advanced with the Markdown trust repairs #454 and #464. The
+second catch-up merges owned main `492f71ca3a` with an ordinary two-parent
+merge; its only overlaps, `FilePreviewPanel.tsx` and
+`MarkdownSourceSurface.test.tsx`, merged cleanly. The web compiler and the
+Markdown, document and file-opening suites pass on the composed candidate.
 
 ## Candidate and ancestry
 

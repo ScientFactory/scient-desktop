@@ -1377,6 +1377,8 @@ describe("Oh My Pi RPC client decoding", () => {
             type: "message_end",
             messageId: "msg-1",
             message: {
+              responseId: "response-1",
+              timestamp: 123,
               role: "assistant",
               content: [],
               stopReason: "error",
@@ -1424,7 +1426,10 @@ describe("Oh My Pi RPC client decoding", () => {
         });
         expect(events[4]).toMatchObject({
           type: "message_end",
+          messageId: "msg-1",
           message: {
+            responseId: "response-1",
+            timestamp: 123,
             role: "assistant",
             stopReason: "error",
             errorMessage: "401 Unauthorized",

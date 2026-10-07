@@ -291,8 +291,11 @@ const degradedProjection = (
     return {
       type: "message_end",
       raw: value,
+      ...pick(value, "messageId", isString),
       message: {
         ...pick(message, "role", isString),
+        ...pick(message, "responseId", isString),
+        ...pick(message, "timestamp", isFiniteNumber),
         ...(message.content === undefined ? {} : { content: message.content }),
         ...pick(message, "stopReason", isString),
         ...pick(message, "errorMessage", isString),
