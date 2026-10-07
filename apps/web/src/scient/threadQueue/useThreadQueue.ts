@@ -22,7 +22,7 @@ const QUEUE_POLL_MS = 1_000;
 const QUEUE_POLL_MAX_MS = 30_000;
 
 /** Healthy polls run every second; each consecutive failure doubles the wait, up to 30 s. */
-export function threadQueuePollDelayMs(consecutiveFailures: number): number {
+function threadQueuePollDelayMs(consecutiveFailures: number): number {
   return Math.min(QUEUE_POLL_MS * 2 ** consecutiveFailures, QUEUE_POLL_MAX_MS);
 }
 
