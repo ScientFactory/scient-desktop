@@ -1,10 +1,11 @@
 /**
- * SCIENT-OWNED rule for sending a held queue.
+ * SCIENT-OWNED rule for Send on a queued message.
  *
- * The server's `queue.resume` handler refuses by this rule and stays the
- * authority. The composer's queue strip offers Send, Retry and Resume queue by
- * the same rule, so an offered action is one the server accepts. The client
- * fails open: it hides a control only when its own data proves the refusal.
+ * Send on any queued message starts it now and resumes the rest of the queue
+ * after it. The server's `queue.resume` handler refuses by this rule and stays
+ * the authority. The web strip and the mobile queue sheet offer Send by the
+ * same rule, so an offered Send is one the server accepts. Clients fail open:
+ * they hide Send only when their own data proves the refusal.
  */
 import type {
   OrchestrationV2Run,
@@ -24,7 +25,10 @@ export type QueueUsageLimitProjection = Pick<
   readonly thread: Pick<Projection["thread"], "providerInstanceId">;
 };
 
-export type QueueHeadProjection = Pick<Projection, "runs" | "messages">;
+export type QueuedRunProjection = Pick<Projection, "runs" | "messages">;
+
+/** Why the server refuses Send on a queued message, before any usage limit. */
+export type QueuedRunSendRefusal = "not_queued" | "automatic" | "busy";
 
 /** A run in one of these states owns the thread, so no queued run may start. */
 function isBlockingRun(run: OrchestrationV2Run): boolean {
@@ -60,37 +64,21 @@ export function isQueueUsageLimited(projection: QueueUsageLimitProjection): bool
 }
 
 /**
- * The queued run the server delivers next. Automatic delegated-completion
- * runs go first; the queue strip hides them, so its first row is then not
- * the head.
+ * Why Send on this queued message would be refused, or null when the server
+ * accepts it. Automatic deliveries (delegated completions and notifications)
+ * are not the user's messages, and a running turn must finish or be steered.
  */
-export function queueDeliveryHead(projection: QueueHeadProjection): OrchestrationV2Run | null {
-  const automatic = new Set(
-    projection.messages
-      .filter((message) => message.delegatedCompletion !== undefined)
-      .map((message) => message.id),
-  );
-  let head: OrchestrationV2Run | null = null;
-  for (const run of projection.runs) {
-    if (run.status !== "queued") continue;
-    if (head === null) {
-      head = run;
-      continue;
-    }
-    const priority =
-      Number(automatic.has(head.userMessageId)) - Number(automatic.has(run.userMessageId));
-    const order =
-      priority ||
-      (run.queuePosition ?? run.ordinal) - (head.queuePosition ?? head.ordinal) ||
-      run.ordinal - head.ordinal;
-    if (order < 0) head = run;
-  }
-  return head;
-}
-
-/** True when `runId` is the next queued run and nothing else owns the thread. */
-export function isIdleQueueHead(projection: QueueHeadProjection, runId: RunId): boolean {
-  return queueDeliveryHead(projection)?.id === runId && !projection.runs.some(isBlockingRun);
+export function queuedRunSendRefusal(
+  projection: QueuedRunProjection,
+  runId: RunId,
+): QueuedRunSendRefusal | null {
+  const run = projection.runs.find((candidate) => candidate.id === runId);
+  if (run?.status !== "queued") return "not_queued";
+  const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+  if (message?.delegatedCompletion !== undefined || message?.notification !== undefined)
+    return "automatic";
+  if (projection.runs.some(isBlockingRun)) return "busy";
+  return null;
 }
 
 /**
@@ -108,14 +96,15 @@ export function isQueueUsageLimitProven(
 }
 
 /**
- * True when the server accepts `queue.resume` for this queued run. A client
- * passes `usageLimited` from `isQueueUsageLimitProven`; the default is the
- * server's own check on a full projection.
+ * True when the server accepts Send on this queued message. A client passes
+ * `usageLimited` from `isQueueUsageLimitProven`; the default is the server's
+ * own check on a full projection.
  */
-export function canSendQueueHead(
-  projection: QueueUsageLimitProjection & QueueHeadProjection,
+export function canSendQueuedRun(
+  projection: QueueUsageLimitProjection & QueuedRunProjection,
   runId: RunId,
-  usageLimited: boolean = isQueueUsageLimited(projection),
+  options?: { readonly usageLimited?: boolean },
 ): boolean {
-  return !usageLimited && isIdleQueueHead(projection, runId);
+  const usageLimited = options?.usageLimited ?? isQueueUsageLimited(projection);
+  return !usageLimited && queuedRunSendRefusal(projection, runId) === null;
 }

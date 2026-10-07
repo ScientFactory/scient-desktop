@@ -331,9 +331,9 @@
       "types": "./src/scientRelease.ts",
       "import": "./src/scientRelease.ts"
     },
-    "./scientQueueHeadSend": {
-      "types": "./src/scientQueueHeadSend.ts",
-      "import": "./src/scientQueueHeadSend.ts"
+    "./scientQueuedRunSend": {
+      "types": "./src/scientQueuedRunSend.ts",
+      "import": "./src/scientQueuedRunSend.ts"
     },
     "./usageMerge": {
       "types": "./src/usageMerge.ts",

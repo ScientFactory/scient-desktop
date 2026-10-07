@@ -11,7 +11,7 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
-import { canSendQueueHead, isQueueUsageLimitProven } from "@t3tools/shared/scientQueueHeadSend";
+import { canSendQueuedRun, isQueueUsageLimitProven } from "@t3tools/shared/scientQueuedRunSend";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
@@ -21,13 +21,13 @@ import { OrchestratorV2 } from "../Orchestrator.ts";
 import { makeLayer } from "../ProviderAdapterRegistry.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 
-// The queue strip offers Send by `canSendQueueHead`; queue.resume must refuse
+// The queue strip offers Send by `canSendQueuedRun`; queue.resume must refuse
 // exactly where the rule says no, with the server's own refusal text.
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "test-model" };
 const testLayer = makeOrchestratorV2ReplayLayerWithRegistry(
-  { name: "queue-head-send-rule" },
+  { name: "queued-run-send-rule" },
   makeLayer([
     {
       instanceId,
@@ -95,6 +95,17 @@ const usageLimitedThread = (threadId: ThreadId) =>
     assert.isDefined(activeRun);
     assert.isDefined(queuedRun);
     assert.isNotNull(activeRun.rootNodeId);
+    // While a turn runs, Send is refused; the row offers Steer instead.
+    assert.isFalse(canSendQueuedRun(before, queuedRun.id));
+    const busy = yield* orchestrator
+      .dispatch({
+        type: "queue.resume",
+        threadId,
+        commandId: CommandId.make(`${threadId}:send-while-busy`),
+        runId: queuedRun.id,
+      })
+      .pipe(Effect.flip);
+    assert.include(refusalText(busy), "Wait for the current turn to finish");
 
     const now = yield* DateTime.now;
     yield* sink.write({
@@ -146,13 +157,13 @@ const usageLimitedThread = (threadId: ThreadId) =>
     return queuedRun;
   });
 
-it.effect("refuses Send of the queue head after the usage limit, as the rule says", () =>
+it.effect("refuses Send after the usage limit, as the rule says", () =>
   Effect.gen(function* () {
     const orchestrator = yield* OrchestratorV2;
-    const threadId = ThreadId.make("queue-head-rule-usage-limit");
+    const threadId = ThreadId.make("queued-run-send-usage-limit");
     const queuedRun = yield* usageLimitedThread(threadId);
     const limited = yield* orchestrator.getThreadProjection(threadId);
-    assert.isFalse(canSendQueueHead(limited, queuedRun.id));
+    assert.isFalse(canSendQueuedRun(limited, queuedRun.id));
     const refused = yield* orchestrator
       .dispatch({
         type: "queue.resume",
@@ -171,7 +182,7 @@ it.effect("keeps Send on a windowed snapshot that misses the session lifting the
   Effect.gen(function* () {
     const orchestrator = yield* OrchestratorV2;
     const sink = yield* EventSinkV2;
-    const threadId = ThreadId.make("queue-head-rule-windowed-session");
+    const threadId = ThreadId.make("queued-run-send-windowed-session");
     const queuedRun = yield* usageLimitedThread(threadId);
     // A newer session for the same provider instance ends with another error.
     // It owns no provider thread, so a windowed snapshot leaves it out.
@@ -209,20 +220,18 @@ it.effect("keeps Send on a windowed snapshot that misses the session lifting the
       [sessionId],
     );
     assert.deepEqual(windowed.providerSessions, []);
-    assert.isTrue(canSendQueueHead(full, queuedRun.id));
+    assert.isTrue(canSendQueuedRun(full, queuedRun.id));
     // The snapshot alone still looks limited; the shell, built from every
     // bound session, does not confirm it, so the client keeps Send.
-    assert.isFalse(canSendQueueHead(windowed, queuedRun.id));
+    assert.isFalse(canSendQueuedRun(windowed, queuedRun.id));
     const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
       (thread) => thread.id === threadId,
     );
     assert.notEqual(shell?.lastErrorClass, "usage_limit");
     assert.isTrue(
-      canSendQueueHead(
-        windowed,
-        queuedRun.id,
-        isQueueUsageLimitProven(windowed, shell?.lastErrorClass),
-      ),
+      canSendQueuedRun(windowed, queuedRun.id, {
+        usageLimited: isQueueUsageLimitProven(windowed, shell?.lastErrorClass),
+      }),
     );
     yield* orchestrator.dispatch({
       type: "queue.resume",
@@ -233,13 +242,13 @@ it.effect("keeps Send on a windowed snapshot that misses the session lifting the
   }).pipe(Effect.provide(testLayer)),
 );
 
-it.effect("refuses Send of the first visible row while a delegated completion goes first", () =>
+it.effect("Send on a message behind a delegated completion lets the completion go first", () =>
   Effect.gen(function* () {
     const orchestrator = yield* OrchestratorV2;
     const sink = yield* EventSinkV2;
-    const threadId = ThreadId.make("queue-head-rule-delegated");
+    const threadId = ThreadId.make("queued-run-send-delegated");
     yield* createThread(threadId);
-    for (const suffix of ["ordinary", "automatic"]) {
+    for (const suffix of ["first", "second", "automatic"]) {
       yield* orchestrator.dispatch({
         type: "legacy-queue.import",
         commandId: CommandId.make(`${threadId}:admit:${suffix}`),
@@ -253,9 +262,11 @@ it.effect("refuses Send of the first visible row while a delegated completion go
       });
     }
     const imported = yield* orchestrator.getThreadProjection(threadId);
-    const [ordinaryRun, automaticRun] = imported.runs;
-    assert.isDefined(ordinaryRun);
+    const [firstRun, secondRun, automaticRun] = imported.runs;
+    assert.isDefined(firstRun);
+    assert.isDefined(secondRun);
     assert.isDefined(automaticRun);
+    assert.isTrue(imported.runs.every((run) => run.queueHeld === true));
     const automatic = imported.messages.find(
       (message) => message.id === automaticRun.userMessageId,
     );
@@ -271,7 +282,7 @@ it.effect("refuses Send of the first visible row while a delegated completion go
           payload: {
             ...automatic,
             delegatedCompletion: {
-              parentRunId: ordinaryRun.id,
+              parentRunId: firstRun.id,
               generation: 1,
               taskIds: [NodeId.make("completed-task")],
             },
@@ -281,24 +292,40 @@ it.effect("refuses Send of the first visible row while a delegated completion go
     });
 
     const projection = yield* orchestrator.getThreadProjection(threadId);
-    assert.isFalse(canSendQueueHead(projection, ordinaryRun.id));
-    assert.isTrue(canSendQueueHead(projection, automaticRun.id));
+    assert.isTrue(canSendQueuedRun(projection, firstRun.id));
+    assert.isTrue(canSendQueuedRun(projection, secondRun.id));
+    assert.isFalse(canSendQueuedRun(projection, automaticRun.id));
     const refused = yield* orchestrator
       .dispatch({
         type: "queue.resume",
         threadId,
-        commandId: CommandId.make(`${threadId}:send-ordinary`),
-        runId: ordinaryRun.id,
+        commandId: CommandId.make(`${threadId}:send-automatic`),
+        runId: automaticRun.id,
       })
       .pipe(Effect.flip);
-    assert.include(refusalText(refused), "Only the idle queue head is ready to send.");
+    assert.include(refusalText(refused), "Automatic deliveries cannot be sent from the queue.");
+
+    // Send on the last user message: the completion still goes first, then the
+    // chosen message, then the rest, and nothing stays held.
     yield* orchestrator.dispatch({
       type: "queue.resume",
       threadId,
-      commandId: CommandId.make(`${threadId}:send-automatic`),
-      runId: automaticRun.id,
+      commandId: CommandId.make(`${threadId}:send-second`),
+      runId: secondRun.id,
     });
     const delivered = yield* orchestrator.getThreadProjection(threadId);
-    assert.equal(delivered.runs.find((run) => run.id === automaticRun.id)?.status, "starting");
+    const runOf = (id: typeof firstRun.id) => delivered.runs.find((run) => run.id === id);
+    assert.equal(runOf(automaticRun.id)?.status, "starting");
+    assert.deepEqual(
+      [secondRun.id, firstRun.id].map((id) => [
+        runOf(id)?.status,
+        runOf(id)?.queuePosition,
+        runOf(id)?.queueHeld,
+      ]),
+      [
+        ["queued", 2, false],
+        ["queued", 3, false],
+      ],
+    );
   }).pipe(Effect.provide(testLayer)),
 );

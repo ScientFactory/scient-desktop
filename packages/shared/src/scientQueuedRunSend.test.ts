@@ -3,11 +3,10 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  canSendQueueHead,
-  isIdleQueueHead,
+  canSendQueuedRun,
   isQueueUsageLimitProven,
-  queueDeliveryHead,
-} from "./scientQueueHeadSend.ts";
+  queuedRunSendRefusal,
+} from "./scientQueuedRunSend.ts";
 
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const runId = (id: string) => id as RunId;
@@ -52,13 +51,14 @@ const usageLimitError = {
   failure: { class: "usage_limit", message: "Usage limit reached." },
 };
 
-describe("canSendQueueHead", () => {
-  it("allows the idle queue head and nothing else", () => {
+describe("canSendQueuedRun", () => {
+  it("allows every queued message on an idle thread, not just the head", () => {
     const idle = projection({
       runs: [run("run:done", 1, "completed"), run("run:a", 2, "queued"), run("run:b", 3, "queued")],
     });
-    expect(canSendQueueHead(idle, runId("run:a"))).toBe(true);
-    expect(canSendQueueHead(idle, runId("run:b"))).toBe(false);
+    expect(canSendQueuedRun(idle, runId("run:a"))).toBe(true);
+    expect(canSendQueuedRun(idle, runId("run:b"))).toBe(true);
+    expect(queuedRunSendRefusal(idle, runId("run:done"))).toBe("not_queued");
   });
 
   it.each(["preparing", "starting", "running", "waiting"])(
@@ -67,7 +67,8 @@ describe("canSendQueueHead", () => {
       const busy = projection({
         runs: [run("run:active", 1, status), run("run:a", 2, "queued")],
       });
-      expect(canSendQueueHead(busy, runId("run:a"))).toBe(false);
+      expect(canSendQueuedRun(busy, runId("run:a"))).toBe(false);
+      expect(queuedRunSendRefusal(busy, runId("run:a"))).toBe("busy");
     },
   );
 
@@ -76,8 +77,8 @@ describe("canSendQueueHead", () => {
       runs: [run("run:limited", 1, "failed"), run("run:a", 2, "queued")],
       turnItems: [usageLimitError],
     });
-    expect(isIdleQueueHead(limited, runId("run:a"))).toBe(true);
-    expect(canSendQueueHead(limited, runId("run:a"))).toBe(false);
+    expect(queuedRunSendRefusal(limited, runId("run:a"))).toBeNull();
+    expect(canSendQueuedRun(limited, runId("run:a"))).toBe(false);
   });
 
   it("lets a client refuse for the limit only when the server's shell confirms it", () => {
@@ -89,7 +90,7 @@ describe("canSendQueueHead", () => {
     for (const shellClass of [null, undefined, "provider_error"]) {
       const usageLimited = isQueueUsageLimitProven(limited, shellClass);
       expect(usageLimited).toBe(false);
-      expect(canSendQueueHead(limited, runId("run:a"), usageLimited)).toBe(true);
+      expect(canSendQueuedRun(limited, runId("run:a"), { usageLimited })).toBe(true);
     }
     const idle = projection({ runs: [run("run:done", 1, "completed"), run("run:a", 2, "queued")] });
     expect(isQueueUsageLimitProven(idle, "usage_limit")).toBe(false);
@@ -107,22 +108,27 @@ describe("canSendQueueHead", () => {
         },
       ],
     });
-    expect(canSendQueueHead(recovered, runId("run:a"))).toBe(true);
+    expect(canSendQueuedRun(recovered, runId("run:a"))).toBe(true);
   });
 
-  it("refuses the first visible row while a delegated completion goes first", () => {
+  it("allows a user message behind a delegated completion, never the completion itself", () => {
     const delegated = projection({
-      runs: [run("run:a", 2, "queued"), run("run:automatic", 3, "queued", { queueHeld: false })],
+      runs: [
+        run("run:a", 2, "queued"),
+        run("run:automatic", 3, "queued", { queueHeld: false }),
+        run("run:notice", 4, "queued"),
+      ],
       messages: [
         { id: "message:run:a" },
         {
           id: "message:run:automatic",
           delegatedCompletion: { parentRunId: "run:parent", generation: 1, taskIds: ["task"] },
         },
+        { id: "message:run:notice", notification: { kind: "notice" } },
       ],
     });
-    expect(queueDeliveryHead(delegated)?.id).toBe("run:automatic");
-    expect(canSendQueueHead(delegated, runId("run:a"))).toBe(false);
-    expect(canSendQueueHead(delegated, runId("run:automatic"))).toBe(true);
+    expect(canSendQueuedRun(delegated, runId("run:a"))).toBe(true);
+    expect(queuedRunSendRefusal(delegated, runId("run:automatic"))).toBe("automatic");
+    expect(queuedRunSendRefusal(delegated, runId("run:notice"))).toBe("automatic");
   });
 });

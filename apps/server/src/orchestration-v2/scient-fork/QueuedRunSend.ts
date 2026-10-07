@@ -1,0 +1,86 @@
+/**
+ * SCIENT-OWNED queue Send and release decisions.
+ *
+ * Send on any queued message starts it now and resumes the rest of the queue
+ * after it. A message the user starts directly on an idle thread also resumes
+ * a held queue. Both are pure plans; the orchestrator emits their events in
+ * the same command, so the terminal hold fence sees one release boundary.
+ */
+import type {
+  OrchestrationV2Command,
+  OrchestrationV2DomainEvent,
+  OrchestrationV2Run,
+  OrchestrationV2ThreadProjection,
+  RunId,
+} from "@t3tools/contracts";
+import { queuedRunSendRefusal } from "@t3tools/shared/scientQueuedRunSend";
+
+import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "../QueuedRunOrder.ts";
+
+const REFUSAL_MESSAGES = {
+  not_queued: "The queued message has already started or was removed.",
+  automatic: "Automatic deliveries cannot be sent from the queue.",
+  busy: "Wait for the current turn to finish, or steer this message into it.",
+} as const;
+
+/**
+ * Send on `runId`: automatic completion deliveries keep going first, then the
+ * chosen message, then the other queued messages in their current order. Every
+ * queued run is released. Returns the refusal text when the server refuses.
+ */
+export function planQueuedRunSend(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
+  runId: RunId,
+):
+  | { readonly refusal: string }
+  | { readonly refusal: null; readonly runs: ReadonlyArray<OrchestrationV2Run> } {
+  const refusal = queuedRunSendRefusal(projection, runId);
+  if (refusal !== null) return { refusal: REFUSAL_MESSAGES[refusal] };
+  const queued = queuedRunsInDeliveryOrder(projection);
+  const automatic = queued.filter((run) => isAutomaticCompletionRun(projection, run));
+  const chosen = queued.filter((run) => run.id === runId);
+  const rest = queued.filter((run) => run.id !== runId && !automatic.includes(run));
+  return {
+    refusal: null,
+    runs: [...automatic, ...chosen, ...rest].map((run, index) => ({
+      ...run,
+      queuePosition: index + 1,
+      queueHeld: false,
+    })),
+  };
+}
+
+/**
+ * True when this message is one the user sent that starts a run of its own.
+ * Such a message resumes a held queue. Automatic deliveries, notifications,
+ * scheduled tasks, the scheduled usage-limit and restart continuations,
+ * steering and queued messages leave a held queue alone.
+ */
+export function startsDirectUserRun(
+  command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+  pendingEvents: ReadonlyArray<OrchestrationV2DomainEvent>,
+): boolean {
+  if (
+    command.createdBy !== "user" ||
+    command.delegatedCompletion !== undefined ||
+    command.notification !== undefined ||
+    command.scheduledTaskId !== undefined ||
+    command.usageLimitContinuationOfRunId !== undefined ||
+    command.restartContinuationOfRunId !== undefined
+  )
+    return false;
+  return pendingEvents.some(
+    (event) =>
+      event.type === "run.created" &&
+      event.threadId === command.threadId &&
+      event.payload.userMessageId === command.messageId &&
+      event.payload.status !== "queued",
+  );
+}
+
+/** The queued runs a direct user message releases. */
+export function heldQueuedRuns(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): ReadonlyArray<OrchestrationV2Run> {
+  return runs.filter((run) => run.status === "queued" && run.queueHeld === true);
+}

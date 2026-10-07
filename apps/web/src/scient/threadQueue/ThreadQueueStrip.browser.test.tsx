@@ -150,7 +150,6 @@ it.each([
       onSteer: vi.fn(),
       onSend: vi.fn(),
       onReorder: vi.fn(),
-      onResume: vi.fn(),
     };
     const onCancelEdit = vi.fn();
     const head = items[0]!;
@@ -171,7 +170,6 @@ it.each([
             paused={false}
             dispatchingItemId={null}
             retryable={false}
-            held
             editingItemId={editingItemId}
             onCancelEdit={onCancelEdit}
             {...callbacks}

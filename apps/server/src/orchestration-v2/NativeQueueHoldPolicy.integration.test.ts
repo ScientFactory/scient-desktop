@@ -1275,65 +1275,55 @@ it.live("normal native completion automatically drains queued messages in FIFO o
   ),
 );
 
-it.live(
-  "native failure holds queued work across a later successful foreground turn until explicit Resume",
-  () =>
-    withNativeQueue(
-      "queue-policy-failure-hold",
-      ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
-        Effect.gen(function* () {
-          yield* send(orchestrator, threadId, "foreground");
-          const foreground = yield* takeOffer;
-          yield* send(orchestrator, threadId, "first", true);
-          yield* send(orchestrator, threadId, "second", true);
-          yield* foreground.settle("failed");
-          const held = yield* waitFor(
-            (projection) =>
-              projection.runs.some(
-                (run) => run.id === foreground.input.runId && run.status === "failed",
-              ) &&
-              projection.runs
-                .filter((run) => run.status === "queued")
-                .every((run) => run.queueHeld === true),
-          );
-          assert.equal(held.runs.filter((run) => run.status === "queued").length, 2);
-          assert.deepEqual(offers, ["foreground"]);
-          yield* send(orchestrator, threadId, "later-foreground");
-          const later = yield* takeOffer;
-          assert.equal(later.input.message.text, "later-foreground");
-          yield* later.settle("completed");
-          const afterSuccess = yield* waitFor((projection) =>
+it.live("native failure holds queued work until a direct send, which the queue then follows", () =>
+  withNativeQueue(
+    "queue-policy-failure-hold",
+    ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
+      Effect.gen(function* () {
+        yield* send(orchestrator, threadId, "foreground");
+        const foreground = yield* takeOffer;
+        yield* send(orchestrator, threadId, "first", true);
+        yield* send(orchestrator, threadId, "second", true);
+        yield* foreground.settle("failed");
+        const held = yield* waitFor(
+          (projection) =>
             projection.runs.some(
-              (run) => run.id === later.input.runId && run.status === "completed",
-            ),
-          );
-          const remaining = afterSuccess.runs.filter((run) => run.status === "queued");
-          assert.equal(remaining.length, 2);
-          assert.isTrue(remaining.every((run) => run.queueHeld === true));
-          assert.deepEqual(offers, ["foreground", "later-foreground"]);
-          yield* orchestrator.dispatch({
-            type: "queue.resume",
-            threadId,
-            commandId: CommandId.make(`${threadId}:resume`),
-          });
-          const first = yield* takeOffer;
-          assert.equal(first.input.message.text, "first");
-          yield* first.settle("completed");
-          const second = yield* takeOffer;
-          assert.equal(second.input.message.text, "second");
-          yield* second.settle("completed");
-          yield* waitFor((projection) =>
-            projection.runs.every(
-              (run) => run.status === "completed" || run.id === foreground.input.runId,
-            ),
-          );
-          assert.deepEqual(offers, ["foreground", "later-foreground", "first", "second"]);
-        }),
-    ),
+              (run) => run.id === foreground.input.runId && run.status === "failed",
+            ) &&
+            projection.runs
+              .filter((run) => run.status === "queued")
+              .every((run) => run.queueHeld === true),
+        );
+        assert.equal(held.runs.filter((run) => run.status === "queued").length, 2);
+        assert.deepEqual(offers, ["foreground"]);
+        yield* send(orchestrator, threadId, "later-foreground");
+        const later = yield* takeOffer;
+        assert.equal(later.input.message.text, "later-foreground");
+        // The direct send released the hold in the same command.
+        const released = yield* orchestrator.getThreadProjection(threadId);
+        const remaining = released.runs.filter((run) => run.status === "queued");
+        assert.equal(remaining.length, 2);
+        assert.isTrue(remaining.every((run) => run.queueHeld === false));
+        yield* later.settle("completed");
+        // The earlier failure must not hold the queue again after the direct send.
+        const first = yield* takeOffer;
+        assert.equal(first.input.message.text, "first");
+        yield* first.settle("completed");
+        const second = yield* takeOffer;
+        assert.equal(second.input.message.text, "second");
+        yield* second.settle("completed");
+        yield* waitFor((projection) =>
+          projection.runs.every(
+            (run) => run.status === "completed" || run.id === foreground.input.runId,
+          ),
+        );
+        assert.deepEqual(offers, ["foreground", "later-foreground", "first", "second"]);
+      }),
+  ),
 );
 
 it.live(
-  "Stop holds native queued work while idle reorder and explicit head Send preserve the remaining hold",
+  "Stop holds native queued work; Send on a non-head message starts it and the rest continue",
   () =>
     withNativeQueue(
       "queue-policy-stop-hold",
@@ -1418,37 +1408,86 @@ it.live(
             first.queuePosition,
           );
           assert.deepEqual(offers, ["foreground"]);
+          // After the reorder, `first` is no longer the head. Send on it starts it
+          // now, and the rest of the queue continues after it without a Resume.
           yield* orchestrator.dispatch({
             type: "queue.resume",
             threadId,
-            runId: second.id,
-            commandId: CommandId.make(`${threadId}:send-head`),
+            runId: first.id,
+            commandId: CommandId.make(`${threadId}:send-non-head`),
           });
-          const head = yield* takeOffer;
-          assert.equal(head.input.runId, second.id);
-          yield* head.settle("completed");
-          const afterHead = yield* waitFor((projection) =>
-            projection.runs.some((run) => run.id === second.id && run.status === "completed"),
-          );
-          assert.equal(afterHead.runs.find((run) => run.id === first.id)?.status, "queued");
-          assert.isTrue(afterHead.runs.find((run) => run.id === first.id)?.queueHeld);
-          assert.deepEqual(offers, ["foreground", "second"]);
-          yield* orchestrator.dispatch({
-            type: "queue.resume",
-            threadId,
-            commandId: CommandId.make(`${threadId}:resume-rest`),
-          });
+          const sent = yield* takeOffer;
+          assert.equal(sent.input.runId, first.id);
+          const afterSend = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(afterSend.runs.find((run) => run.id === second.id)?.status, "queued");
+          assert.isFalse(afterSend.runs.find((run) => run.id === second.id)?.queueHeld);
+          yield* sent.settle("completed");
           const rest = yield* takeOffer;
-          assert.equal(rest.input.runId, first.id);
+          assert.equal(rest.input.runId, second.id);
           yield* rest.settle("completed");
           yield* waitFor(
             (projection) =>
-              projection.runs.find((run) => run.id === first.id)?.status === "completed",
+              projection.runs.find((run) => run.id === second.id)?.status === "completed",
           );
-          assert.deepEqual(offers, ["foreground", "second", "first"]);
+          assert.deepEqual(offers, ["foreground", "first", "second"]);
         }),
       { holdFirstSend: true },
     ),
+);
+
+it.live("a direct send after Stop resumes the held queue, and its failure holds it again", () =>
+  withNativeQueue(
+    "queue-policy-direct-send-release",
+    ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
+      Effect.gen(function* () {
+        yield* send(orchestrator, threadId, "foreground");
+        const foreground = yield* takeOffer;
+        yield* send(orchestrator, threadId, "queued", true);
+        yield* waitFor((projection) =>
+          projection.providerTurns.some(
+            (turn) => turn.runAttemptId === foreground.input.attemptId && turn.status === "running",
+          ),
+        );
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          threadId,
+          runId: foreground.input.runId,
+          holdQueue: true,
+          commandId: CommandId.make(`${threadId}:stop`),
+        });
+        const held = yield* waitFor(
+          (projection) =>
+            projection.runs.some(
+              (run) => run.id === foreground.input.runId && run.status === "interrupted",
+            ) && projection.runs.some((run) => run.status === "queued" && run.queueHeld === true),
+        );
+        const queued = held.runs.find((run) => run.status === "queued");
+        assert.ok(queued);
+        yield* send(orchestrator, threadId, "direct");
+        const direct = yield* takeOffer;
+        assert.equal(direct.input.message.text, "direct");
+        const released = yield* orchestrator.getThreadProjection(threadId);
+        assert.isFalse(released.runs.find((run) => run.id === queued.id)?.queueHeld);
+        // A message queued during the direct turn does not inherit the old hold.
+        yield* send(orchestrator, threadId, "during", true);
+        const during = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.userMessageId === MessageId.make(`${threadId}:message:during`),
+        );
+        assert.ok(during);
+        assert.notEqual(during.queueHeld, true);
+        // The direct turn fails after the release, so the queue is held again.
+        yield* direct.settle("failed");
+        const reheld = yield* waitFor(
+          (projection) =>
+            projection.runs.find((run) => run.id === direct.input.runId)?.status === "failed" &&
+            projection.runs
+              .filter((run) => run.status === "queued")
+              .every((run) => run.queueHeld === true),
+        );
+        assert.equal(reheld.runs.filter((run) => run.status === "queued").length, 2);
+        assert.deepEqual(offers, ["foreground", "direct"]);
+      }),
+  ),
 );
 
 it.live("non-user native interruption holds ordinary queued work without a holdQueue flag", () =>
@@ -1584,10 +1623,8 @@ for (const release of ["whole", "head", "newer-failure", "new-admission"] as con
             if (release === "new-admission")
               yield* send(orchestrator, childThreadId, "third", true);
             const released = yield* orchestrator.getThreadProjection(childThreadId);
-            assert.equal(
-              released.runs.find((run) => run.id === second.id)?.queueHeld,
-              release === "head",
-            );
+            // Send on one message resumes the whole queue, like Resume.
+            assert.isFalse(released.runs.find((run) => run.id === second.id)?.queueHeld);
             let settledUnderParentLock = false;
             if (release === "newer-failure") {
               settledUnderParentLock = true;
@@ -1683,7 +1720,7 @@ for (const release of ["whole", "head", "newer-failure", "new-admission"] as con
               completed.runs.find((run) => run.id === child.input.runId)?.status,
               "interrupted",
             );
-            if (release === "head" || release === "newer-failure") {
+            if (release === "newer-failure") {
               yield* waitForThread(childThreadId, (projection) =>
                 projection.runs.some(
                   (run) =>
@@ -2215,7 +2252,7 @@ it.live(
 );
 
 it.live(
-  "failed native recovery sends only the idle head and a second Stop holds the remaining payload",
+  "failed native recovery: Send on a non-head message, Stop re-holds, a direct send resumes the queue",
   () =>
     withNativeQueue(
       "queue-native-repeated-stop",
@@ -2247,28 +2284,16 @@ it.live(
             (run) => run.userMessageId === MessageId.make(`${threadId}:message:second`),
           );
           assert.ok(first && second);
-          phase = "reject-non-head-resume";
-          assert.equal(
-            (yield* Effect.result(
-              orchestrator.dispatch({
-                type: "queue.resume",
-                threadId,
-                runId: second.id,
-                commandId: CommandId.make(`${threadId}:non-head`),
-              }),
-            ))._tag,
-            "Failure",
-          );
-          phase = "resume-head";
+          phase = "send-non-head";
           yield* orchestrator.dispatch({
             type: "queue.resume",
             threadId,
-            runId: first.id,
-            commandId: CommandId.make(`${threadId}:head`),
+            runId: second.id,
+            commandId: CommandId.make(`${threadId}:non-head`),
           });
           phase = "recovery-offer";
           const recovery = yield* takeOffer;
-          assert.equal(recovery.input.runId, first.id);
+          assert.equal(recovery.input.runId, second.id);
           phase = "recovery-provider-running";
           yield* waitFor((projection) =>
             projection.providerTurns.some(
@@ -2278,7 +2303,7 @@ it.live(
           const stop = {
             type: "run.interrupt" as const,
             threadId,
-            runId: first.id,
+            runId: second.id,
             holdQueue: true,
             commandId: CommandId.make(`${threadId}:stop-recovery`),
           };
@@ -2287,28 +2312,32 @@ it.live(
             concurrency: 2,
           });
           phase = "recovery-interrupted";
-          yield* waitFor(
+          // The Stop came after the Send released the queue, so it holds it again.
+          const stopped = yield* waitFor(
             (projection) =>
-              projection.runs.find((run) => run.id === first.id)?.status === "interrupted",
+              projection.runs.find((run) => run.id === second.id)?.status === "interrupted" &&
+              projection.runs.find((run) => run.id === first.id)?.queueHeld === true,
           );
+          assert.equal(stopped.runs.find((run) => run.id === first.id)?.status, "queued");
           phase = "later-recovery-dispatch";
+          // A message sent directly on the idle thread resumes the held queue.
           yield* send(orchestrator, threadId, "later-recovery");
           phase = "later-recovery-offer";
           const later = yield* takeOffer;
+          const direct = yield* orchestrator.getThreadProjection(threadId);
+          assert.isFalse(direct.runs.find((run) => run.id === first.id)?.queueHeld);
           phase = "later-recovery-terminal";
           yield* later.settle("completed");
-          phase = "later-recovery-completed";
-          const after = yield* waitFor(
+          phase = "held-queue-continues";
+          // The Stop before the direct send must not hold the queue again.
+          const rest = yield* takeOffer;
+          assert.equal(rest.input.runId, first.id);
+          yield* rest.settle("completed");
+          yield* waitFor(
             (projection) =>
-              projection.runs.find((run) => run.id === later.input.runId)?.status === "completed",
+              projection.runs.find((run) => run.id === first.id)?.status === "completed",
           );
-          assert.equal(after.runs.find((run) => run.id === second.id)?.status, "queued");
-          assert.isTrue(after.runs.find((run) => run.id === second.id)?.queueHeld);
-          assert.equal(
-            after.messages.find((message) => message.id === second.userMessageId)?.text,
-            "second",
-          );
-          assert.deepEqual(offers, ["foreground", "first", "later-recovery"]);
+          assert.deepEqual(offers, ["foreground", "second", "later-recovery", "first"]);
         }).pipe(
           Effect.onError((cause) =>
             Effect.gen(function* () {
@@ -2321,7 +2350,6 @@ it.live(
                   "send:first",
                   "send:second",
                   "non-head",
-                  "head",
                   "stop-recovery",
                   "send:later-recovery",
                 ].map((suffix) => CommandId.make(`${threadId}:${suffix}`)),

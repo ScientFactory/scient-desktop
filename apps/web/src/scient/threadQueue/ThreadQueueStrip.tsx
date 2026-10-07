@@ -319,13 +319,15 @@ export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueIte
   readonly editingItemId?: string | null;
   readonly onCancelEdit?: () => void;
   readonly attachmentUrls?: ReadonlyMap<string, string>;
-  readonly held?: boolean;
-  /** Absent while the server would refuse to resume, for example at a usage limit. */
-  readonly onResume?: (() => void) | undefined;
   readonly error: string | null;
   readonly threadBusy: boolean;
   readonly supportsExplicitSend: boolean;
   readonly awaitingCompletion: boolean;
+  /**
+   * Whether the server accepts Send on this row. Send on any row starts that
+   * message and resumes the rest of the queue after it. Absent means every row.
+   */
+  readonly canSendItem?: (item: I) => boolean;
   readonly paused: boolean;
   readonly dispatchingItemId: string | null;
   readonly onSend: (item: I) => void;
@@ -389,22 +391,6 @@ export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueIte
           </Button>
         </div>
       ) : null}
-      {props.held && props.items.length > 0 ? (
-        <div className="flex items-center gap-2 border-b border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground">
-          <span className="flex-1">Queue held</span>
-          {props.onResume ? (
-            <Button
-              type="button"
-              size="micro"
-              variant="ghost-muted"
-              disabled={props.dispatchingItemId !== null || props.threadBusy}
-              onClick={props.onResume}
-            >
-              Resume queue
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
       {props.error !== null && (
         <div
           className="flex items-center gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-1.5 text-xs text-destructive"
@@ -437,7 +423,7 @@ export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueIte
                 items={props.items.map((item) => item.queueItemId)}
                 strategy={verticalListSortingStrategy}
               >
-                {props.items.map((item, index) => (
+                {props.items.map((item) => (
                   <QueueRow
                     key={item.queueItemId}
                     item={item}
@@ -466,12 +452,12 @@ export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueIte
                     }}
                     threadBusy={props.threadBusy}
                     canSend={
-                      index === 0 &&
                       props.supportsExplicitSend &&
                       !props.threadBusy &&
                       props.awaitingCompletion &&
                       !props.paused &&
-                      !props.items.some((entry) => entry.steerRequested)
+                      !props.items.some((entry) => entry.steerRequested) &&
+                      props.canSendItem?.(item) !== false
                     }
                     dispatching={props.dispatchingItemId === item.queueItemId}
                     onSend={props.onSend}

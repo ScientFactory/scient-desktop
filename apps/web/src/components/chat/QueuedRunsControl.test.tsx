@@ -320,7 +320,7 @@ it("shows a held failed-start recovery notice and Retry without dropping the nat
   expect(html).toContain(">Send</button>");
 });
 
-it("renders actual held native workflow reorder and head-only Send before any provider session exists", async () => {
+it("renders actual held native workflow reorder and Send on every row before any provider session exists", async () => {
   const { deriveThreadQueueWorkflowState } = await vi.importActual<
     typeof import("@t3tools/client-runtime/state/thread-workflows")
   >("@t3tools/client-runtime/state/thread-workflows");
@@ -374,8 +374,8 @@ it("renders actual held native workflow reorder and head-only Send before any pr
     />,
   );
   expect(html.match(/aria-label="Reorder queued message"/g)).toHaveLength(2);
-  expect(html.match(/>Send<\/button>/g)).toHaveLength(1);
-  expect(html).toContain("Resume queue");
+  expect(html.match(/>Send<\/button>/g)).toHaveLength(2);
+  expect(html).not.toContain("Resume queue");
   expect(html).not.toContain(">Steer<");
 });
 
@@ -467,7 +467,7 @@ it.each([false, true])(
     expect(after).not.toContain("Retained payload 1");
     expect(after.match(/data-testid="thread-queue-row-/g) ?? []).toHaveLength(hasTail ? 1 : 0);
     expect(after.match(/>Send<\/button>/g) ?? []).toHaveLength(hasTail ? 1 : 0);
-    expect(after.match(/>Resume queue<\/button>/g) ?? []).toHaveLength(hasTail ? 1 : 0);
+    expect(after).not.toContain("Resume queue");
     expect(JSON.stringify(extracted.messages)).toBe(retainedMessages);
     expect(extracted.runs[0]?.status).toBe("cancelled");
     expect(extracted.runs[0]?.queuePosition).toBeNull();
@@ -550,10 +550,11 @@ describe("held queue Send follows the server's queue.resume rule", () => {
     );
   };
 
-  it("offers Send on the idle held head", async () => {
+  it("offers Send on every held row of an idle thread, with no held header", async () => {
     const html = await heldProjection({});
-    expect(html.match(/>Send<\/button>/g)).toHaveLength(1);
-    expect(html).toContain(">Resume queue</button>");
+    expect(html.match(/>Send<\/button>/g)).toHaveLength(2);
+    expect(html).not.toContain("Queue held");
+    expect(html).not.toContain("Resume queue");
   });
 
   // The client's snapshot of a thread whose last root run hit the usage limit.
@@ -608,29 +609,25 @@ describe("held queue Send follows the server's queue.resume rule", () => {
     });
   };
 
-  it("offers no Send or Resume queue when the server's shell confirms the usage limit", async () => {
+  it("offers no Send when the server's shell confirms the usage limit", async () => {
     state.shell = { runtime: { lastErrorClass: "usage_limit" } };
     const html = await limitedSnapshot();
-    expect(html).toContain("Queue held");
     expect(html.match(/data-testid="thread-queue-row-/g)).toHaveLength(2);
     expect(html).not.toContain(">Send</button>");
-    expect(html).not.toContain(">Resume queue</button>");
   });
 
   it.each([
     ["a newer session error lifted it", { runtime: { lastErrorClass: null } }],
     ["no shell has arrived", null],
-  ])("keeps Send and Resume queue on a limited-looking snapshot when %s", async (_case, shell) => {
+  ])("keeps Send on a limited-looking snapshot when %s", async (_case, shell) => {
     state.shell = shell;
     const html = await limitedSnapshot();
-    expect(html.match(/>Send<\/button>/g)).toHaveLength(1);
-    expect(html).toContain(">Resume queue</button>");
+    expect(html.match(/>Send<\/button>/g)).toHaveLength(2);
   });
 
-  it("offers no Send on the first row while a hidden delegated completion goes first", async () => {
+  it("keeps Send on user rows while a hidden delegated completion waits to go first", async () => {
     const html = await heldProjection({ automaticCompletion: true });
     expect(html.match(/data-testid="thread-queue-row-/g)).toHaveLength(2);
-    expect(html).not.toContain(">Send</button>");
-    expect(html).toContain(">Resume queue</button>");
+    expect(html.match(/>Send<\/button>/g)).toHaveLength(2);
   });
 });
