@@ -58,7 +58,11 @@ export async function listScientThreadQueue(input: {
     throw new Error("The saved queue belongs to another thread. Its source file has been kept.");
   return old ?? { threadId: input.threadId, items: [] };
 }
-export async function discoverLegacyQueueThreads(stateDir: string): Promise<ThreadId[]> {
+/** Files of `migrated` threads are skipped unread: their SQL document already owns the queue. */
+export async function discoverLegacyQueueThreads(
+  stateDir: string,
+  migrated: ReadonlySet<ThreadId> = new Set(),
+): Promise<ThreadId[]> {
   let files: string[];
   try {
     files = await NodeFSP.readdir(directory(stateDir));
@@ -66,9 +70,15 @@ export async function discoverLegacyQueueThreads(stateDir: string): Promise<Thre
     if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return [];
     throw cause;
   }
+  const skipped = new Set(
+    [...migrated].flatMap((threadId) => [
+      NodePath.basename(legacyQueueFilePath(stateDir, threadId)),
+      `${threadId}.json`,
+    ]),
+  );
   const ids = new Set<ThreadId>();
   for (const filename of files) {
-    if (!filename.endsWith(".json")) continue;
+    if (!filename.endsWith(".json") || skipped.has(filename)) continue;
     try {
       const doc = await read(NodePath.join(directory(stateDir), filename));
       if (
