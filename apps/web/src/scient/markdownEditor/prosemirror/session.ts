@@ -20,6 +20,8 @@ import { EditorState, NodeSelection, PluginKey, Selection, TextSelection } from 
 import {
   createScientMarkdownProjection,
   projectScientMarkdownSource,
+  prepareScientMarkdownSource,
+  discardScientMarkdownReferenceRefresh,
   refreshScientMarkdownReferences,
   withProjectedDocument,
   type ScientMarkdownProjection,
@@ -43,10 +45,20 @@ export interface ScientProseMirrorSessionOptions {
   readonly revision: string;
   readonly authoritativeSource?: string;
   readonly mode?: MarkdownDocumentMode;
+  readonly onWritebackRefusal?: (pending: ScientMarkdownPendingWriteback | null) => void;
   readonly onUserSourceChange?: (source: string, intent: MarkdownSaveIntent | null) => void;
 }
 
-export type ScientExternalSourceResult = "adopted" | "conflict" | "unchanged";
+export interface ScientMarkdownPendingWriteback {
+  readonly message: string;
+  readonly document: ProseMirrorNode;
+  readonly proposedSource: string;
+  readonly state: EditorState;
+  readonly projection: ScientMarkdownProjection;
+  readonly blockRanges: ReadonlyArray<{ readonly from: number; readonly to: number }>;
+}
+
+export type ScientExternalSourceResult = "adopted" | "conflict" | "unchanged" | "deferred";
 export type ScientExternalConflictResolution = "disk" | "local";
 
 function blockRanges(projection: ScientMarkdownProjection) {
@@ -197,6 +209,7 @@ function rebindNodeMarkup(
  */
 export class ScientProseMirrorSession {
   private projection: ScientMarkdownProjection;
+  private pending: ScientMarkdownPendingWriteback | null = null;
   private documentSession: MarkdownDocumentSession;
   private editorState: EditorState;
   private projectedBlockRanges: ReadonlyArray<{ readonly from: number; readonly to: number }>;
@@ -213,6 +226,24 @@ export class ScientProseMirrorSession {
     this.editorState = createEditorState(this.projection.document, [
       ...buildScientMarkdownPlugins(),
     ]);
+  }
+
+  get pendingWriteback(): ScientMarkdownPendingWriteback | null {
+    return this.pending;
+  }
+
+  restorePendingWriteback(pending: ScientMarkdownPendingWriteback): EditorState {
+    this.pending = pending;
+    this.editorState = pending.state;
+    this.projection = withProjectedDocument(pending.projection, pending.document);
+    this.projectedBlockRanges = pending.blockRanges;
+    return this.editorState;
+  }
+
+  private setPendingWriteback(pending: ScientMarkdownPendingWriteback | null): void {
+    if (this.pending === null && pending === null) return;
+    this.pending = pending;
+    this.options.onWritebackRefusal?.(pending);
   }
 
   get state(): EditorState {
@@ -232,6 +263,7 @@ export class ScientProseMirrorSession {
   }
 
   sourceOffsetForDocumentPosition(position: number): number | null {
+    if (this.pending) return null;
     let matchedIndex = -1;
     this.editorState.doc.forEach((node, offset, index) => {
       if (matchedIndex < 0 && position >= offset && position <= offset + node.nodeSize) {
@@ -243,6 +275,7 @@ export class ScientProseMirrorSession {
 
   /** Current projected source, including unsaved structural edits. Read-only. */
   sourceRangeForDocumentRange(from: number, to: number): { from: number; to: number } | null {
+    if (this.pending) return null;
     if (
       !Number.isSafeInteger(from) ||
       !Number.isSafeInteger(to) ||
@@ -264,6 +297,7 @@ export class ScientProseMirrorSession {
   }
 
   documentPositionForSourceOffset(sourceOffset: number): number | null {
+    if (this.pending) return null;
     if (this.projectedBlockRanges.length === 0) return null;
     const clamped = Math.min(Math.max(0, sourceOffset), this.documentSession.draftSource.length);
     let matchedIndex = this.projectedBlockRanges.findIndex(
@@ -288,6 +322,7 @@ export class ScientProseMirrorSession {
   }
 
   replaceUserSource(source: string): EditorState {
+    if (this.pending) return this.editorState;
     const nextSession = applyUserMarkdownSource(this.documentSession, source);
     if (nextSession === this.documentSession) return this.editorState;
     this.documentSession = nextSession;
@@ -310,7 +345,7 @@ export class ScientProseMirrorSession {
 
   /** Persistence owns document truth; metadata-only acknowledgements preserve the editor state. */
   prepareExternalUpdate(update: MarkdownExternalUpdate): (() => void) | null {
-    if (this.documentSession.draftSource !== update.previousSource) return null;
+    if (this.pending || this.documentSession.draftSource !== update.previousSource) return null;
     const before = this.editorState;
     const prepared = prepareScientExternalProjection(before, this.projectedBlockRanges, update);
     if (!prepared) return null;
@@ -329,6 +364,7 @@ export class ScientProseMirrorSession {
 
   synchronizePersistence(snapshot: MarkdownDocumentSession): boolean {
     const sourceChanged = snapshot.draftSource !== this.documentSession.draftSource;
+    if (this.pending && sourceChanged) return false;
     this.documentSession = { ...snapshot, mode: this.documentSession.mode };
     if (!sourceChanged) return false;
     this.projection = createScientMarkdownProjection(snapshot.draftSource);
@@ -339,6 +375,7 @@ export class ScientProseMirrorSession {
 
   /** A save intent for the current draft against the current baseline revision. */
   createSaveIntent(): MarkdownSaveIntent | null {
+    if (this.pending) return null;
     return beginMarkdownSave(this.documentSession);
   }
 
@@ -352,6 +389,7 @@ export class ScientProseMirrorSession {
     ) {
       return "unchanged";
     }
+    if (this.pending) return "deferred";
     const previousDraft = this.documentSession.draftSource;
     const nextSession = receiveExternalMarkdownSource(this.documentSession, input);
     this.documentSession = nextSession;
@@ -365,6 +403,7 @@ export class ScientProseMirrorSession {
   }
 
   resolveExternalConflict(resolution: ScientExternalConflictResolution): EditorState {
+    if (this.pending) return this.editorState;
     if (this.documentSession.conflict === null) return this.editorState;
     this.documentSession =
       resolution === "disk"
@@ -379,12 +418,14 @@ export class ScientProseMirrorSession {
 
   /** Keep the current document while adopting a host-provided disk snapshot as its CAS baseline. */
   rebaseLocalChanges(input: { readonly source: string; readonly revision: string }): EditorState {
+    if (this.pending) return this.editorState;
     this.documentSession = rebaseLocalMarkdownDraft(this.documentSession, input);
     return this.editorState;
   }
 
   /** Discard is valid even when disk has not changed and no conflict object exists. */
   discardLocalChanges(input: { readonly source: string; readonly revision: string }): EditorState {
+    this.setPendingWriteback(null);
     this.documentSession = {
       ...this.documentSession,
       baselineSource: input.source,
@@ -404,13 +445,18 @@ export class ScientProseMirrorSession {
     transaction.setMeta(scientMarkdownTransactionOriginKey, origin);
     const applied = this.editorState.applyTransaction(transaction);
     let nextState = applied.state;
+    const inputState = nextState;
+    const previousProjection = this.projection;
+    let candidateProjection = withProjectedDocument(previousProjection, nextState.doc);
     this.editorState = nextState;
-    this.projection = withProjectedDocument(this.projection, nextState.doc);
+    this.projection = candidateProjection;
 
     if (
       origin !== "user" ||
       !applied.transactions.some((appliedTransaction) => appliedTransaction.docChanged)
     ) {
+      if (this.pending)
+        this.setPendingWriteback({ ...this.pending, state: nextState, document: nextState.doc });
       return nextState;
     }
     const projected = projectScientMarkdownSource(this.projection, nextState.doc);
@@ -439,8 +485,26 @@ export class ScientProseMirrorSession {
       }
       if (refresh.docChanged) nextState = nextState.applyTransaction(refresh).state;
       this.editorState = nextState;
-      this.projection = withProjectedDocument(references.projection, nextState.doc);
+      candidateProjection = withProjectedDocument(references.projection, nextState.doc);
     }
+    const prepared = prepareScientMarkdownSource(candidateProjection, nextState.doc, projected);
+    if (prepared.status === "refused") {
+      discardScientMarkdownReferenceRefresh(previousProjection);
+      this.editorState = inputState;
+      this.projection = withProjectedDocument(previousProjection, inputState.doc);
+      this.setPendingWriteback({
+        message: prepared.reason,
+        document: inputState.doc,
+        proposedSource: prepared.proposedSource,
+        state: inputState,
+        projection: this.projection,
+        blockRanges: this.projectedBlockRanges,
+      });
+      return inputState;
+    }
+    this.editorState = nextState;
+    this.projection = candidateProjection;
+    this.setPendingWriteback(null);
     const source = projected.source;
     this.projectedBlockRanges = projected.blockRanges;
     const nextSession = applyUserMarkdownSource(this.documentSession, source);

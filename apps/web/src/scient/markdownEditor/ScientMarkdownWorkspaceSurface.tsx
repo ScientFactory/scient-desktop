@@ -8,6 +8,9 @@ import {
 } from "react";
 
 import { readLocalApi } from "~/localApi";
+import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
+import { Button } from "~/components/ui/button";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { attachShortcutHost } from "../keyboard/host";
 import type { FileCitation } from "@t3tools/contracts";
 import { MarkdownCitationActions } from "./MarkdownCitationActions";
@@ -23,6 +26,7 @@ import {
 import type { ScientMarkdownLinkOpenHandler } from "./linkOpen";
 import type { ScientMarkdownImageSourceResolver } from "./nodes";
 import type { ScientMarkdownBlockAction } from "./prosemirror/blocks";
+import type { ScientMarkdownPendingWriteback } from "./prosemirror/session";
 import {
   ScientMarkdownEditorView,
   type ScientMarkdownUploadedImage,
@@ -88,6 +92,15 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
  * controls stay collapsed until the reader opens them or starts typing.
  */
 export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSurfaceProps) {
+  return (
+    <ScientMarkdownWorkspaceSurfaceOwner
+      key={projectFileOperationKey(props.persistence.target)}
+      {...props}
+    />
+  );
+}
+
+function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfaceProps) {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const bindingsRef = useRef(props);
   bindingsRef.current = props;
@@ -95,6 +108,19 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
   const previousWorkspaceResourceIndexKeyRef = useRef(props.workspaceResourceIndexKey);
 
   const [chromeExpanded, setChromeExpanded] = useState(false);
+  const pendingEditorOwner = useRef({}).current;
+  const retainedInput = useSyncExternalStore(
+    props.persistence.subscribe,
+    props.persistence.getPendingInput,
+  );
+  const canEditPendingInput = useSyncExternalStore(props.persistence.subscribe, () =>
+    props.persistence.canEditPendingInput(pendingEditorOwner),
+  );
+  // Only the surface that claims retained input restores it (below); two
+  // surfaces mounting together may both see it unowned during render.
+  const [pendingWriteback, setPendingWriteback] = useState<ScientMarkdownPendingWriteback | null>(
+    null,
+  );
   const controllerRef = useRef<ScientMarkdownEditorView | null>(null);
   const shortcutHost = useRef<HTMLDivElement>(null);
   const activeViewRef = useRef(false);
@@ -117,6 +143,13 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
         revision: persistenceSnapshot.baselineRevision,
         authoritativeSource: persistenceSnapshot.baselineSource,
         mode: "write",
+        onWritebackRefusal: (pending) => {
+          const accepted = bindingsRef.current.persistence.retainPendingInput(
+            pending ? { message: pending.message, payload: pending } : null,
+            pendingEditorOwner,
+          );
+          if (accepted && activeViewRef.current) setPendingWriteback(pending);
+        },
         ariaLabel: props.ariaLabel,
         resolveTheme: () =>
           bindingsRef.current.resolvedTheme ??
@@ -248,13 +281,39 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
     }
   }, [controller, props.workspaceResourceIndexKey]);
 
+  useLayoutEffect(() => {
+    const synchronize = () => {
+      const lease = props.persistence;
+      const input = lease.getPendingInput();
+      const canEdit = lease.canEditPendingInput(pendingEditorOwner);
+      if (input && canEdit && lease.claimPendingInput(pendingEditorOwner)) {
+        const pending = input.payload as ScientMarkdownPendingWriteback;
+        if (controller.session.pendingWriteback !== pending)
+          controller.restorePendingWriteback(pending);
+        if (activeViewRef.current) setPendingWriteback(pending);
+      } else if (activeViewRef.current) setPendingWriteback(null);
+      const snapshot = lease.getSnapshot();
+      controller.setMode(snapshot.editingBlocked || !canEdit ? "read" : "write");
+    };
+    // Ownership changes take effect synchronously, before another DOM input can dispatch.
+    const unsubscribe = props.persistence.subscribe(synchronize);
+    synchronize();
+    return () => {
+      unsubscribe();
+      props.persistence.releasePendingInputClaim(pendingEditorOwner);
+    };
+  }, [controller, props.persistence, pendingEditorOwner]);
+
   useEffect(() => {
-    // Read the current store, not an older React render, after a synchronous edit.
     const snapshot = props.persistence.getSnapshot();
     appliedVersionRef.current = snapshot.editVersion;
-    controller.setMode(snapshot.editingBlocked ? "read" : "write");
+    controller.setMode(
+      snapshot.editingBlocked || !props.persistence.canEditPendingInput(pendingEditorOwner)
+        ? "read"
+        : "write",
+    );
     controller.synchronizePersistence(snapshot);
-  }, [controller, props.persistence, persistenceSnapshot]);
+  }, [controller, props.persistence, persistenceSnapshot, canEditPendingInput, pendingEditorOwner]);
 
   useFinalUnmount(() => {
     // Persistence outlives this view. Unmount must never flush or unblock it.
@@ -379,7 +438,43 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
           {...(props.onWikiLinkSelected ? { onWikiLinkSelected: props.onWikiLinkSelected } : {})}
           documentActions={props.documentActions}
         />
-        <ScientMarkdownDocument mode="write" controller={controller} />
+        <ScientMarkdownDocument
+          mode={persistenceSnapshot.editingBlocked || !canEditPendingInput ? "read" : "write"}
+          controller={controller}
+        />
+        {retainedInput && !canEditPendingInput ? (
+          <div role="status" className="px-3 py-2 text-sm">
+            This document has unfinished input in another open editor. Return there to correct or
+            undo it before editing here.
+          </div>
+        ) : null}
+        {pendingWriteback && canEditPendingInput ? (
+          <div role="status" className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+            <span>
+              {pendingWriteback.message} Your input remains open here. Correct it or undo the
+              change. It is not saved or protected against an app restart.
+            </span>
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => controller.executeKeyboardCommand("markdown.undo")}
+            >
+              Undo
+            </Button>
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() =>
+                void writeTextToClipboard(
+                  JSON.stringify(pendingWriteback.document.toJSON(), null, 2),
+                  "pending document input",
+                )
+              }
+            >
+              Copy recovery data
+            </Button>
+          </div>
+        ) : null}
         {props.citationSource ? (
           <MarkdownCitationActions
             controller={controller}

@@ -472,9 +472,17 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               case "reasoning-delta":
                 return onUpdate({
                   type: "text",
-                  id: `${update.messageId}:reasoning`,
+                  id: update.messageId,
                   delta: client.redaction.exact(update.delta),
                   reasoning: true,
+                });
+              case "content-snapshot":
+                return onUpdate({
+                  type: "text-snapshot",
+                  id: update.messageId,
+                  text: client.redaction.exact(update.text),
+                  reasoning: update.reasoning,
+                  status: update.status,
                 });
               case "assistant-completed":
                 return onUpdate({

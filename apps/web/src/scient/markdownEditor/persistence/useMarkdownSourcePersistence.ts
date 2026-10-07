@@ -10,6 +10,7 @@ import type { MarkdownPersistenceLease } from "./markdownPersistenceRegistry";
  */
 export function useMarkdownSourcePersistence(persistence: MarkdownPersistenceLease) {
   const snapshot = useSyncExternalStore(persistence.subscribe, persistence.getSnapshot);
+  const pendingInput = useSyncExternalStore(persistence.subscribe, persistence.getPendingInput);
   const appliedVersion = useRef(snapshot.editVersion);
   const active = useRef(false);
   const [, rejectStaleProjection] = useState(0);
@@ -30,6 +31,7 @@ export function useMarkdownSourcePersistence(persistence: MarkdownPersistenceLea
   const onContentsChange = useCallback(
     (source: string) => {
       if (!active.current) return;
+      if (persistence.getPendingInput() !== null) return;
       if (!persistence.change(source, appliedVersion.current)) {
         rejectStaleProjection((version) => version + 1);
       } else appliedVersion.current = persistence.getSnapshot().editVersion;
@@ -46,6 +48,6 @@ export function useMarkdownSourcePersistence(persistence: MarkdownPersistenceLea
     onProjectionApplied,
     externalPersistence: persistence,
     onExternalVersionApplied,
-    editingBlocked: snapshot.editingBlocked,
+    editingBlocked: snapshot.editingBlocked || pendingInput !== null,
   };
 }

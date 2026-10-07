@@ -109,6 +109,7 @@ interface ActiveRead {
   readonly request: ReadRequest;
   readonly generation: number;
   readonly editVersion: number;
+  readonly externalUpdatesGeneration: number;
 }
 
 /**
@@ -146,6 +147,33 @@ export class DocumentPersistenceCoordinator<
   private publicationUncertain = false;
   private reconciliationCount = 0;
   private reconciliationDeferred = false;
+  private readonly externalUpdateHolds = new Set<object>();
+  private externalUpdatesGeneration = 0;
+
+  /**
+   * Keep pending input outside the accepted source safe from refreshes. Accepted
+   * writes already in flight can acknowledge, but no new operation starts until
+   * every holder releases and a fresh ordered read verifies the disk again.
+   */
+  suspendExternalUpdates(): () => void {
+    if (this.disposed) return () => {};
+    const hold = {};
+    this.externalUpdateHolds.add(hold);
+    this.externalUpdatesGeneration += 1;
+    this.clearDebounce();
+    this.publish();
+    return () => {
+      if (this.disposed || !this.externalUpdateHolds.delete(hold)) return;
+      this.externalUpdatesGeneration += 1;
+      if (this.externalUpdateHolds.size === 0) {
+        this.requestedGeneration += 1;
+        this.verificationNeeded = true;
+        this.readRequest ??= { purpose: { type: "verify" } };
+      }
+      this.publish();
+      this.drive();
+    };
+  }
 
   resumeExternalUpdates(): void {
     if (!this.reconciliationDeferred || this.disposed) return;
@@ -226,7 +254,12 @@ export class DocumentPersistenceCoordinator<
 
   /** Flushing never unblocks a verified conflict or a terminal failure. */
   flushNow(): Promise<boolean> {
-    if (this.disposed || this.snapshot.conflict !== null || this.snapshot.error !== null) {
+    if (
+      this.disposed ||
+      this.externalUpdateHolds.size > 0 ||
+      this.snapshot.conflict !== null ||
+      this.snapshot.error !== null
+    ) {
       return Promise.resolve(false);
     }
     this.clearDebounce();
@@ -290,6 +323,7 @@ export class DocumentPersistenceCoordinator<
   holdForRename(): (() => void) | null {
     if (
       this.disposed ||
+      this.externalUpdateHolds.size > 0 ||
       this.snapshot.pending ||
       this.snapshot.error !== null ||
       this.snapshot.conflict !== null ||
@@ -341,6 +375,7 @@ export class DocumentPersistenceCoordinator<
   retireClean(): boolean {
     if (
       this.snapshot.draftSource !== this.snapshot.baselineSource ||
+      this.externalUpdateHolds.size > 0 ||
       this.writeOperation !== null ||
       this.ambiguousIntent !== null ||
       this.snapshot.conflict !== null ||
@@ -372,7 +407,11 @@ export class DocumentPersistenceCoordinator<
       this.snapshot.conflict !== null ||
       this.writeOperation !== null ||
       this.ambiguousIntent !== null;
-    const pending = needsPublication || this.renameHold !== null || this.reconciliationDeferred;
+    const pending =
+      needsPublication ||
+      this.renameHold !== null ||
+      this.reconciliationDeferred ||
+      this.externalUpdateHolds.size > 0;
     this.snapshot = {
       ...this.snapshot,
       pending,
@@ -424,6 +463,7 @@ export class DocumentPersistenceCoordinator<
     if (this.dirtySince === null) this.dirtySince = Date.now();
     if (
       this.writeOperation !== null ||
+      this.externalUpdateHolds.size > 0 ||
       this.readOperation !== null ||
       this.snapshot.error !== null ||
       this.snapshot.conflict !== null ||
@@ -452,6 +492,7 @@ export class DocumentPersistenceCoordinator<
   private drive(): void {
     if (
       this.disposed ||
+      this.externalUpdateHolds.size > 0 ||
       this.renameHold !== null ||
       this.reconciliationDeferred ||
       !this.connected ||
@@ -548,6 +589,7 @@ export class DocumentPersistenceCoordinator<
       request,
       generation: this.requestedGeneration,
       editVersion: this.snapshot.editVersion,
+      externalUpdatesGeneration: this.externalUpdatesGeneration,
     };
     this.readOperation = operation;
     this.publish();
@@ -559,6 +601,13 @@ export class DocumentPersistenceCoordinator<
       const disk = await this.options.read();
       if (this.readOperation?.id !== operation.id) return;
       this.readOperation = null;
+      if (
+        this.externalUpdateHolds.size > 0 ||
+        operation.externalUpdatesGeneration !== this.externalUpdatesGeneration
+      ) {
+        this.deferHeldRead(operation);
+        return;
+      }
       const purpose = operation.request.purpose;
       const protectedEditVersion =
         purpose.type === "disk" ? purpose.editVersion : operation.editVersion;
@@ -600,6 +649,13 @@ export class DocumentPersistenceCoordinator<
     } catch (error) {
       if (this.readOperation?.id !== operation.id) return;
       this.readOperation = null;
+      if (
+        this.externalUpdateHolds.size > 0 ||
+        operation.externalUpdatesGeneration !== this.externalUpdatesGeneration
+      ) {
+        this.deferHeldRead(operation);
+        return;
+      }
       const kind = this.classify(error);
       if (this.canRetry(kind)) {
         this.readRequest ??= operation.request;
@@ -621,6 +677,14 @@ export class DocumentPersistenceCoordinator<
         }
       }
     }
+  }
+
+  private deferHeldRead(operation: ActiveRead): void {
+    this.verificationNeeded = true;
+    this.readRequest ??= operation.request;
+    if (this.readRequest !== operation.request) operation.request.resolve?.(false);
+    this.publish();
+    this.drive();
   }
 
   private acceptRead(disk: DocumentPersistenceReadResult, purpose: ReadPurpose): boolean {
@@ -697,6 +761,10 @@ export class DocumentPersistenceCoordinator<
     }
     if (canReconcile) {
       const merged = this.reconcile(current.baselineSource, current.draftSource, disk.source);
+      if (this.externalUpdateHolds.size > 0) {
+        this.verificationNeeded = true;
+        return false;
+      }
       if (merged !== null) {
         const update: DocumentExternalUpdate<R> = {
           ...merged,
@@ -705,7 +773,10 @@ export class DocumentPersistenceCoordinator<
         };
         try {
           const prepared = this.options.prepareExternalUpdate?.(update);
-          if (this.snapshot.editVersion !== current.editVersion) {
+          if (
+            this.externalUpdateHolds.size > 0 ||
+            this.snapshot.editVersion !== current.editVersion
+          ) {
             this.verificationNeeded = true;
             return false;
           }
@@ -717,7 +788,10 @@ export class DocumentPersistenceCoordinator<
           }
           if (prepared !== null) {
             prepared?.();
-            if (this.snapshot.editVersion !== current.editVersion) {
+            if (
+              this.externalUpdateHolds.size > 0 ||
+              this.snapshot.editVersion !== current.editVersion
+            ) {
               this.verificationNeeded = true;
               return false;
             }
@@ -738,6 +812,10 @@ export class DocumentPersistenceCoordinator<
           // Retain both originals if a view cannot apply the prepared update.
         }
       }
+    }
+    if (this.externalUpdateHolds.size > 0) {
+      this.verificationNeeded = true;
+      return false;
     }
     if (clean) {
       // Preserve the established clean-refresh behavior when an incremental

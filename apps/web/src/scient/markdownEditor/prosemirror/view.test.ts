@@ -12,6 +12,57 @@ import { scientMarkdownSchema } from "./schema";
 import { ScientMarkdownEditorView } from "./view";
 
 describe("ScientMarkdownEditorView", () => {
+  it("keeps a refused field edit, selection, and Undo across a view remount", async () => {
+    const onUserSourceChange = vi.fn();
+    const onWritebackRefusal = vi.fn();
+    const source = "# Result [@smith]\n\nTail\n";
+    const first = new ScientMarkdownEditorView({
+      source,
+      revision: "r0",
+      ariaLabel: "Document",
+      mode: "write",
+      onUserSourceChange,
+      onWritebackRefusal,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(first);
+    const view = first.mount(host);
+    let citationPosition = -1;
+    view.state.doc.descendants((node, position) => {
+      if (node.type.name === "citation") citationPosition = position;
+    });
+    expect(citationPosition).toBeGreaterThan(0);
+    await act(() =>
+      view.dispatch(view.state.tr.setNodeAttribute(citationPosition, "source", "@smith\n@jones")),
+    );
+    const pending = first.session.pendingWriteback;
+    expect(pending).not.toBeNull();
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+    expect(first.session.session.draftSource).toBe(source);
+    const retainedState = first.session.state;
+    first.destroy();
+    const second = new ScientMarkdownEditorView({
+      source,
+      revision: "r0",
+      ariaLabel: "Document",
+      mode: "write",
+      onUserSourceChange,
+      onWritebackRefusal,
+    });
+    second.restorePendingWriteback(pending!);
+    mounted.push(second);
+    const nextHost = document.createElement("div");
+    document.body.append(nextHost);
+    second.mount(nextHost);
+    expect(second.session.state).toBe(retainedState);
+    expect(second.session.state.doc.nodeAt(citationPosition)?.attrs.source).toBe("@smith\n@jones");
+    await act(() => expect(second.executeKeyboardCommand("markdown.undo")).toBe(true));
+    expect(second.session.pendingWriteback).toBeNull();
+    expect(second.session.state.doc.nodeAt(citationPosition)?.attrs.source).toBe("@smith");
+    expect(second.session.session.draftSource).toBe(source);
+    expect(onWritebackRefusal).toHaveBeenLastCalledWith(null);
+  });
   it.each(["ltr", "rtl"])("preserves explicit %s direction through DOM parsing", (dir) => {
     const host = document.createElement("div");
     host.innerHTML = `<p dir="${dir}">שלום world</p><h2 dir="${dir}">English עברית</h2><p dir="auto">Auto</p>`;
@@ -1644,7 +1695,7 @@ describe("ScientMarkdownEditorView", () => {
     }
     const active = new Set(controller.getSnapshot().activeMarks);
     expect(active).toEqual(new Set(["code", "strike"]));
-    expect(controller.session.session.draftSource).toBe("Some `~~text~~` here.\n");
+    expect(controller.session.session.draftSource).toBe("Some ~~`text`~~ here.\n");
   });
 
   it.each([

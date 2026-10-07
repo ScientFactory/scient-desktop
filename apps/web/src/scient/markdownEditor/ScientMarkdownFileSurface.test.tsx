@@ -161,6 +161,11 @@ describe("ScientMarkdownFileSurface", () => {
     const persistence = {
       target: { environmentId, cwd: "/workspace", relativePath },
       getSnapshot: coordinator.getSnapshot,
+      getPendingInput: () => null,
+      canEditPendingInput: () => true,
+      claimPendingInput: () => true,
+      releasePendingInputClaim: () => {},
+      retainPendingInput: () => true,
       subscribe: coordinator.subscribe,
       change: (source: string, version: number) => coordinator.change(source, version),
       applyEdit: coordinator.applyEdit.bind(coordinator),
