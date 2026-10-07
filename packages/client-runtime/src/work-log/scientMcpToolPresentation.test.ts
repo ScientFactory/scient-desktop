@@ -100,6 +100,13 @@ describe("Scient tool presentation", () => {
         entry("load", "scient_skill_load"),
         entry("build", "mcp__t3-code__scient_pdf_build"),
       ]).summary,
-    ).toBe("Used skills 2 times and built documents 1 time");
+    ).toBe("Used skills 2 times and prepared documents 1 time");
+    // Builds and exports share the documents summary, so its verb covers both.
+    expect(
+      summarizeToolGroup([
+        entry("build", "scient_latex_build"),
+        entry("export", "scient_document_export"),
+      ]).summary,
+    ).toBe("Prepared documents 2 times");
   });
 });

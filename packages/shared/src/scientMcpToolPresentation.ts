@@ -87,7 +87,8 @@ export function scientMcpToolSummaryLabel(
     case "scient-sources":
       return phrase("Used", "use", `sources ${times}`);
     case "scient-documents":
-      return phrase("Built", "build", `documents ${times}`);
+      // One verb for PDF/LaTeX builds and exports alike.
+      return phrase("Prepared", "prepare", `documents ${times}`);
     case "scient-compute":
       return phrase("Checked", "check", `compute runtimes ${times}`);
   }
