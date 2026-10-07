@@ -103,7 +103,6 @@ function makeHarness(options?: {
   readonly refreshProvider?: (provider: ServerProvider, refreshCount: number) => ServerProvider;
   readonly failStrictRefreshAt?: number;
   readonly useProductionLayer?: boolean;
-  readonly stopProviderSessions?: ProviderRegistryShape["stopProviderSessions"];
 }) {
   return Effect.gen(function* () {
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
@@ -178,7 +177,6 @@ function makeHarness(options?: {
       getVoiceTranscriptCorrectionForInstance: () =>
         // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
         Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
-      stopProviderSessions: options?.stopProviderSessions ?? (() => Effect.void),
       setProviderManagedRuntimeSummary: () => Effect.succeed([]),
       setProviderMaintenanceActionState: () => Ref.get(providersRef),
       setProviderConnectionOperation,
@@ -1915,7 +1913,6 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
           Ref.update(liveInstances, (instances) =>
             instances.filter((id) => id !== instanceId),
           ).pipe(Effect.andThen(note(`stop ${instanceId}`))),
-        stopProviderSessions: () => Effect.die("Independent provider instances must stay live"),
       });
 
       yield* manager.disconnect({ instanceId: SCIENT_INSTANCE, account: "openai-codex" });

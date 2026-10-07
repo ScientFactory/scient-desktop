@@ -84,7 +84,8 @@ import {
 } from "@t3tools/client-runtime/state/composer-dispatch";
 import { Atom } from "effect/unstable/reactivity";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { prepareTurnAttachments } from "../lib/attachmentUpload";
+import { appendPreparedComposerDraftAttachments } from "./composer-attachment-admission";
+import { prepareQueuedRunEditAttachments } from "../lib/queuedEditAttachmentPreparation";
 import { DEFAULT_FOLLOW_UP_BEHAVIOR } from "../lib/followUpBehavior";
 import { mobilePreferencesAtom } from "./preferences";
 import { environmentThreadDetails } from "./threads";
@@ -131,12 +132,14 @@ export function appendReviewCommentToDraft(input: {
   if (input.attachments && input.attachments.length > 0) {
     // Capped: a review comment is new content, not a send-failure restore, so
     // it must not push the draft over the send limit. Overflow is released.
-    const rejectedCount = appendComposerDraftAttachments(threadKey, input.attachments, {
+    const admission = appendPreparedComposerDraftAttachments(threadKey, input.attachments, {
       appendReference: true,
     });
+    const rejectedCount = admission.rejectedCount;
     if (rejectedCount > 0) {
       setPendingConnectionError(
-        `${rejectedCount} comment attachment${rejectedCount === 1 ? " was" : "s were"} not added. Messages can contain at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+        admission.limitError ??
+          `${rejectedCount} comment attachment${rejectedCount === 1 ? " was" : "s were"} not added. Messages can contain at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
       );
     }
   }
@@ -251,6 +254,7 @@ export function useThreadComposerState() {
   const selectedThreadMessages = selectedThreadProjection?.projection.messages;
   const selectedThreadAttempts = selectedThreadProjection?.projection.attempts;
   const selectedThreadNodes = selectedThreadProjection?.projection.nodes;
+  const selectedThreadContextTransfers = selectedThreadProjection?.projection.contextTransfers;
   // A thread whose creation has not delivered its turn yet: the prompt only
   // exists in the outbox, so it is appended to whatever the server has. The
   // detail is usually present but empty during a worktree checkout, so this
@@ -264,6 +268,7 @@ export function useThreadComposerState() {
         : [];
     const feed = buildThreadFeed(selectedThreadVisibleTurnItems, {
       anchoredMessages: pendingCreation,
+      contextTransfers: selectedThreadContextTransfers,
       attempts: selectedThreadAttempts,
       nodes: selectedThreadNodes,
     });
@@ -280,6 +285,7 @@ export function useThreadComposerState() {
     selectedThreadMessages,
     selectedThreadAttempts,
     selectedThreadNodes,
+    selectedThreadContextTransfers,
     selectedThreadVisibleTurnItems,
     pendingCreationMessage,
     selectedThreadKey,
@@ -505,9 +511,10 @@ export function useThreadComposerState() {
     setIsSavingQueuedEdit(true);
     try {
       const capabilities = selectedEnvironmentRuntime?.serverConfig?.environment.capabilities;
-      const prepared = await prepareTurnAttachments({
+      const prepared = await prepareQueuedRunEditAttachments({
         environmentId: thread.environmentId,
         attachments: draft.attachments,
+        edit,
         supportsImageUploads: capabilities?.attachmentUploads === true,
       });
       if (prepared.status !== "ready") return;
@@ -755,13 +762,15 @@ export function useThreadComposerState() {
           ? capabilities.fileAttachments?.maxUploadBytes
           : undefined,
     });
-    const rejectedCount = appendComposerDraftAttachments(threadKey, result.attachments, {
+    const admission = appendPreparedComposerDraftAttachments(threadKey, result.attachments, {
       appendReference: true,
       insertion,
     });
+    const rejectedCount = admission.rejectedCount;
     const problems = [
       ...(result.error ? [result.error] : []),
-      ...(rejectedCount > 0
+      ...(admission.limitError ? [admission.limitError] : []),
+      ...(!admission.limitError && rejectedCount > 0
         ? [`You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments per message.`]
         : []),
     ];
@@ -789,15 +798,17 @@ export function useThreadComposerState() {
       existingCount: countComposerDraftAttachmentsAfterSelection(threadKey, insertion),
       maxBytes,
     });
-    const rejectedCount = appendComposerDraftAttachments(threadKey, result.files, {
+    const admission = appendPreparedComposerDraftAttachments(threadKey, result.files, {
       appendReference: true,
       insertion,
     });
     // The picker error and the live-cap rejection can both happen in one
     // pick; report both in a single alert.
+    const rejectedCount = admission.rejectedCount;
     const problems = [
       ...(result.error ? [result.error] : []),
-      ...(rejectedCount > 0
+      ...(admission.limitError ? [admission.limitError] : []),
+      ...(!admission.limitError && rejectedCount > 0
         ? [`You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`]
         : []),
     ];
@@ -816,7 +827,7 @@ export function useThreadComposerState() {
     const result = await pasteComposerClipboard({
       existingCount: countComposerDraftAttachmentsAfterSelection(threadKey, insertion),
     });
-    const rejectedPasteCount = appendComposerDraftAttachments(threadKey, result.images, {
+    const pasteAdmission = appendPreparedComposerDraftAttachments(threadKey, result.images, {
       appendReference: true,
       insertion,
     });
@@ -860,15 +871,15 @@ export function useThreadComposerState() {
           });
           // Same reference the pasted images above get: a folded paste is only visible
           // as its chip until the message is sent.
-          if (
-            appendComposerDraftAttachments(threadKey, [attachment], {
-              appendReference: true,
-              insertion,
-            }) > 0
-          ) {
+          const admission = appendPreparedComposerDraftAttachments(threadKey, [attachment], {
+            appendReference: true,
+            insertion,
+          });
+          if (admission.rejectedCount > 0) {
             await removePersistedComposerAttachmentFile(attachment.fileUri);
             setPendingConnectionError(
-              `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
+              admission.limitError ??
+                `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
             );
           }
         } catch (error) {
@@ -890,9 +901,10 @@ export function useThreadComposerState() {
     }
     if (result.error) {
       setPendingConnectionError(result.error);
-    } else if (rejectedPasteCount > 0) {
+    } else if (pasteAdmission.rejectedCount > 0) {
       setPendingConnectionError(
-        `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
+        pasteAdmission.limitError ??
+          `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
       );
     }
   }, [
@@ -916,7 +928,11 @@ export function useThreadComposerState() {
           existingCount: countComposerDraftAttachmentsAfterSelection(threadKey, insertion),
         });
         if (images.length > 0) {
-          appendComposerDraftAttachments(threadKey, images, { appendReference: true, insertion });
+          const admission = appendPreparedComposerDraftAttachments(threadKey, images, {
+            appendReference: true,
+            insertion,
+          });
+          if (admission.limitError) setPendingConnectionError(admission.limitError);
         }
       } catch (error) {
         console.error("[native paste] error converting images", {
@@ -955,14 +971,15 @@ export function useThreadComposerState() {
         // The chip is how a folded paste stays visible: without it the attachment is in the
         // draft but nothing in the composer says so until the message is sent. Web folds
         // through its ordinary attach path, which always writes a reference; match that.
-        const rejectedCount = appendComposerDraftAttachments(threadKey, [attachment], {
+        const admission = appendPreparedComposerDraftAttachments(threadKey, [attachment], {
           appendReference: true,
           insertion,
         });
-        if (rejectedCount > 0) {
+        if (admission.rejectedCount > 0) {
           await removePersistedComposerAttachmentFile(attachment.fileUri);
           setPendingConnectionError(
-            `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
+            admission.limitError ??
+              `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
           );
         }
       } catch (error) {

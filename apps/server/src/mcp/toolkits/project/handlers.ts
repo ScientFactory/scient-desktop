@@ -25,11 +25,11 @@ const access = Effect.gen(function* () {
   return yield* Project.ProjectService;
 });
 const mutation = Effect.gen(function* () {
-  const { caller } = yield* readMutationCaller();
+  const { caller, policy } = yield* readMutationCaller();
   if (
     caller.archivedAt !== null ||
-    caller.runtimeMode !== "full-access" ||
-    caller.interactionMode !== "default"
+    policy.runtimeMode !== "full-access" ||
+    policy.interactionMode !== "default"
   )
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",
@@ -40,8 +40,8 @@ const mutation = Effect.gen(function* () {
 export const ProjectHandlersLive = ProjectToolkit.toLayer({
   scient_thread_launch: (input) =>
     Effect.gen(function* () {
-      const { caller, scope } = yield* readMutationCaller();
-      if (caller.runtimeMode !== "full-access" || caller.interactionMode !== "default")
+      const { caller, scope, policy } = yield* readMutationCaller();
+      if (policy.runtimeMode !== "full-access" || policy.interactionMode !== "default")
         return yield* new OrchestratorMcpFailure({
           code: "capability_denied",
           message: "Project launches require a full-access/default calling thread.",
@@ -83,8 +83,8 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
         projectId,
         title: input.title,
         modelSelection: input.modelSelection ?? caller.modelSelection,
-        runtimeMode: input.runtimeMode ?? caller.runtimeMode,
-        interactionMode: input.interactionMode ?? caller.interactionMode,
+        runtimeMode: input.runtimeMode ?? policy.runtimeMode,
+        interactionMode: input.interactionMode ?? policy.interactionMode,
         workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
         ...(input.message === undefined && attachments.length === 0
           ? {}

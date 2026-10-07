@@ -1,6 +1,18 @@
-import { ProviderInstanceId, RunId } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  RunId,
+  OrchestrationV2ContextTransfer,
+  OrchestrationV2TurnItem,
+  ThreadId,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
-import { resolveHandoffEndpoints, type HandoffTimelineRun } from "./handoff.ts";
+import {
+  isForkInitializationHandoff,
+  resolveHandoffEndpoints,
+  type HandoffTimelineRun,
+} from "./handoff.ts";
 
 const from = ProviderInstanceId.make("codex_personal");
 const to = ProviderInstanceId.make("claudeAgent");
@@ -61,5 +73,152 @@ describe("handoff endpoints shared by web and mobile", () => {
     expect(
       resolveHandoffEndpoints(item, [run("target", 2, from, "wrong-model")]).to.model,
     ).toBeUndefined();
+  });
+});
+
+const decodeTransfer = Schema.decodeUnknownSync(OrchestrationV2ContextTransfer);
+const decodeItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
+const now = DateTime.makeUnsafe("2026-10-04T00:00:00Z");
+const initialization = decodeItem({
+  id: "fork-init-handoff",
+  threadId: "child",
+  runId: "first-child-run",
+  nodeId: "root",
+  providerThreadId: "destination-provider-thread",
+  providerTurnId: null,
+  nativeItemRef: null,
+  parentItemId: null,
+  ordinal: 3,
+  status: "completed",
+  title: "Unrelated translated copy",
+  startedAt: now,
+  completedAt: now,
+  updatedAt: now,
+  type: "handoff",
+  contextHandoffId: "fork-init-context",
+  fromProviderThreadIds: [],
+  toProviderThreadId: "destination-provider-thread",
+  fromProviderInstanceIds: [],
+  toProviderInstanceId: "codex",
+  strategy: "full_thread_summary",
+});
+const transfer = decodeTransfer({
+  id: "fork-transfer",
+  type: "fork",
+  sourceThreadId: "source",
+  targetThreadId: "child",
+  sourcePoint: { threadId: "source" },
+  basePoint: null,
+  sourceProviderInstanceId: "codex",
+  targetProviderInstanceId: "codex",
+  targetRunId: "first-child-run",
+  status: "consumed",
+  resolution: { strategy: "portable_context", contextHandoffId: "fork-init-context" },
+  createdBy: "user",
+  error: null,
+  createdAt: now,
+  updatedAt: now,
+  consumedAt: now,
+});
+const localRow = {
+  item: initialization,
+  visibility: "local" as const,
+  position: 3,
+  sourceThreadId: ThreadId.make("child"),
+  sourceItemId: initialization.id,
+};
+
+describe("fork initialization presentation", () => {
+  it("uses exact durable fork ownership regardless of title or provider equality", () => {
+    expect(isForkInitializationHandoff(localRow, [transfer])).toBe(true);
+    expect(
+      isForkInitializationHandoff(localRow, [{ ...transfer, sourceProviderInstanceId: to }]),
+    ).toBe(true);
+  });
+  it("keeps missing metadata, inherited facts and unrelated transfers visible", () => {
+    expect(isForkInitializationHandoff(localRow, undefined)).toBe(false);
+    expect(isForkInitializationHandoff(localRow, [])).toBe(false);
+    expect(isForkInitializationHandoff({ ...localRow, visibility: "inherited" }, [transfer])).toBe(
+      false,
+    );
+    for (const altered of [
+      { ...transfer, type: "provider_handoff" as const },
+      { ...transfer, type: "merge_back" as const },
+      { ...transfer, targetThreadId: ThreadId.make("foreign") },
+      { ...transfer, targetRunId: RunId.make("later-run") },
+      { ...transfer, targetRunId: null },
+      {
+        ...transfer,
+        resolution: {
+          strategy: "portable_context" as const,
+          contextHandoffId:
+            initialization.type === "handoff"
+              ? initialization.contextHandoffId + "foreign"
+              : "foreign",
+        },
+      },
+      { ...transfer, resolution: null },
+    ]) {
+      const candidate = decodeTransfer(altered);
+      expect(isForkInitializationHandoff(localRow, [candidate])).toBe(false);
+    }
+  });
+});
+
+describe("frozen fork initialization provenance", () => {
+  const proof = {
+    transferId: transfer.id,
+    contextHandoffId: "fork-init-context",
+    threadId: "child",
+    runId: "first-child-run",
+  };
+  const frozen = (forkInitialization: unknown = proof) =>
+    decodeItem({
+      ...initialization,
+      threadId: "grand",
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      inheritedFrom: {
+        threadId: "child",
+        itemId: initialization.id,
+        runId: "first-child-run",
+        status: "completed",
+      },
+      forkInitialization,
+    });
+  it("hides the proven initialization after repeated copies without ancestor transfers", () => {
+    for (const threadId of ["grand", "great"]) {
+      const item = decodeItem({ ...frozen(), threadId });
+      expect(isForkInitializationHandoff({ ...localRow, item, visibility: "inherited" }, [])).toBe(
+        true,
+      );
+      expect(item.runId).toBeNull();
+      expect(item.nodeId).toBeNull();
+      expect(item.nativeItemRef).toBeNull();
+    }
+  });
+  it("keeps foreign handoff, thread and run proof visible", () => {
+    for (const altered of [
+      { ...proof, contextHandoffId: "foreign-context" },
+      { ...proof, threadId: "foreign-thread" },
+      { ...proof, runId: "foreign-run" },
+    ])
+      expect(isForkInitializationHandoff({ ...localRow, item: frozen(altered) }, [transfer])).toBe(
+        false,
+      );
+  });
+  it("keeps synthetic rows visible even when they carry copied proof", () => {
+    expect(
+      isForkInitializationHandoff({ ...localRow, item: frozen(), visibility: "synthetic" }, [
+        transfer,
+      ]),
+    ).toBe(false);
+  });
+  it("does not guess the cause of already-copied history", () => {
+    const item = decodeItem({ ...frozen(), forkInitialization: undefined });
+    expect(isForkInitializationHandoff({ ...localRow, item }, [transfer])).toBe(false);
   });
 });

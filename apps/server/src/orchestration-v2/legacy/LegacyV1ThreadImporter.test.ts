@@ -1,11 +1,13 @@
 import { assert, it } from "@effect/vitest";
-import { EventId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, EventId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { readScientThreadForInvocation } from "../../mcp/toolkits/threads/handlers.ts";
+import { AgentInvocationContext } from "../../scient/operations/AgentInvocationContext.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { listLinkedPullRequestThreads } from "../../pullRequest/linkedThreads.ts";
 import * as EventSink from "../EventSink.ts";
@@ -606,6 +608,78 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
         ORDER BY sequence
       `;
       assert.deepStrictEqual(eventsAfterRestart, eventsBeforeRetry);
+    }),
+  );
+
+  it.effect("retrieves the oldest of 501 imported legacy activities through scoped MCP", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:legacy-scoped-reader");
+      const now = "2026-04-01T00:00:00.000Z";
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, scripts_json, created_at, updated_at
+        ) VALUES (
+          'project:legacy-scoped-reader', 'Legacy project', '/tmp/legacy-scoped-reader',
+          '[]', ${now}, ${now}
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode,
+          interaction_mode, created_at, updated_at
+        ) VALUES (
+          ${threadId}, 'project:legacy-scoped-reader', 'Long thread',
+          '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default',
+          ${now}, ${now}
+        )
+      `;
+      for (let index = 0; index < 501; index++) {
+        yield* sql`
+          INSERT INTO projection_thread_activities (
+            activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+          ) VALUES (
+            ${"review-tool-" + index}, ${threadId}, NULL, 'tool', 'tool.completed',
+            ${"Result " + index}, '{}', ${index + 10}, ${now}
+          )
+        `;
+      }
+      const source = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM projection_thread_activities WHERE thread_id = ${threadId}
+      `;
+      yield* Effect.logInfo("Legacy 501 source SQL", source);
+      assert.strictEqual(source[0]?.count, 501);
+      yield* importer.reconcileShells;
+      yield* importer.ensureTranscript(threadId);
+      const imported = yield* projections.getThreadProjection(threadId);
+      assert.lengthOf(imported.turnItems, 501);
+      const oldest = imported.turnItems.find(
+        (item) => item.id === "migration:v1:history:activity:review-tool-0",
+      );
+      yield* Effect.logInfo("Legacy 501 imported oldest item", oldest);
+      assert.isDefined(oldest);
+      const result = yield* readScientThreadForInvocation({
+        threadId,
+        view: "activity",
+        itemId: oldest!.id,
+      }).pipe(
+        Effect.provideService(AgentInvocationContext, {
+          environmentId: EnvironmentId.make("review-environment"),
+          threadId,
+          providerSessionId: "review-session",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          capabilities: new Set(["threads:read"] as const),
+          issuedAt: 1,
+        }),
+      );
+      yield* Effect.logInfo("Legacy 501 scoped MCP result", result);
+      assert.strictEqual(result.thread.itemCount, 501);
+      assert.strictEqual(result.items.length, 1);
+      assert.strictEqual(result.items[0]?.itemId, "migration:v1:history:activity:review-tool-0");
+      assert.include(result.items[0]!.text, "Result 0");
+      assert.include(result.items[0]!.text, "review-tool-0");
     }),
   );
 });

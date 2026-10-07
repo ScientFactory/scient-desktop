@@ -56,6 +56,8 @@ export const OMP_ISOLATED_ARGS = [
 
 /** How long a closed-stdin child gets to exit on its own before it is killed. */
 const OMP_SHUTDOWN_GRACE = "2 seconds";
+/** The native kill implementation can await exit after its signal timers expire. */
+const OMP_SHUTDOWN_KILL_DEADLINE = "3 seconds";
 /**
  * How long stdout may stay open after the child exited. Output the child
  * wrote before exiting still drains; a descendant that inherited the pipe
@@ -111,6 +113,8 @@ export interface OmpRpcProcessOptions {
 
 export interface OmpProcessExit {
   readonly code: number | null;
+  /** Exact child exit observation, including signal termination without a numeric code. */
+  readonly exited?: boolean;
   readonly forced: boolean;
   readonly stderrTail: string;
 }
@@ -557,13 +561,16 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
     }
     // Effect's kill signals the process group on macOS and Linux, and uses
     // `taskkill /T /F` on Windows. A live Oh My Pi child tree has not been verified.
-    yield* child.kill({ killSignal: "SIGTERM", forceKillAfter: "2 seconds" }).pipe(Effect.ignore);
+    yield* child
+      .kill({ killSignal: "SIGTERM", forceKillAfter: "2 seconds" })
+      .pipe(Effect.timeout(OMP_SHUTDOWN_KILL_DEADLINE), Effect.ignore);
     if (grace._tag === "None") {
       const killed = yield* child.exitCode.pipe(Effect.timeout("3 seconds"), Effect.option);
       code = killed._tag === "Some" ? Number(killed.value) : null;
     }
     return {
       code,
+      exited: code !== null || !(yield* child.isRunning.pipe(Effect.orElseSucceed(() => true))),
       forced,
       stderrTail: ompStderrTail(yield* Ref.get(stderrTail), redactionEnv),
     } satisfies OmpProcessExit;
@@ -583,7 +590,12 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
               Effect.timeoutOrElse({
                 duration: OMP_SHUTDOWN_FOLLOWER_DEADLINE,
                 orElse: () =>
-                  Effect.succeed<OmpProcessExit>({ code: null, forced: true, stderrTail: "" }),
+                  Effect.succeed<OmpProcessExit>({
+                    code: null,
+                    exited: false,
+                    forced: true,
+                    stderrTail: "",
+                  }),
               }),
             ),
           );
@@ -592,6 +604,15 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
         yield* Deferred.done(exitInfo, exit);
         return yield* exit;
       }),
+  ).pipe(
+    Effect.flatMap((exit) =>
+      exit.code !== null || exit.exited === true
+        ? Effect.succeed({ ...exit, exited: true })
+        : child.isRunning.pipe(
+            Effect.orElseSucceed(() => true),
+            Effect.map((running) => ({ ...exit, exited: !running })),
+          ),
+    ),
   );
   // The process never outlives the scope that owns it.
   yield* Scope.addFinalizer(scope, shutdown.pipe(Effect.ignore));

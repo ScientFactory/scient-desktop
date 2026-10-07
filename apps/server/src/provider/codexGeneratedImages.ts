@@ -1,4 +1,4 @@
-import type { ProviderEvent, ProviderRuntimeEvent } from "@t3tools/contracts";
+import type { ProviderEvent } from "@t3tools/contracts";
 
 export const CODEX_GENERATED_IMAGE_ARTIFACT_KIND = "scient.codex-generated-image" as const;
 
@@ -79,22 +79,6 @@ export function codexGeneratedImageArtifactFromProviderEvent(input: {
   };
 }
 
-function isCodexGeneratedImageArtifact(value: unknown): value is CodexGeneratedImageArtifact {
-  const artifact = asObject(value);
-  if (artifact?.kind !== CODEX_GENERATED_IMAGE_ARTIFACT_KIND) return false;
-  const callId = artifact.callId;
-  const providerThreadId = artifact.providerThreadId;
-  const providerInstanceId = artifact.providerInstanceId;
-  const sourcePath = artifact.sourcePath;
-  return (
-    (callId === undefined || nonEmptyString(callId) !== undefined) &&
-    (providerInstanceId === undefined || nonEmptyString(providerInstanceId) !== undefined) &&
-    (providerThreadId === undefined || nonEmptyString(providerThreadId) !== undefined) &&
-    (sourcePath === undefined || nonEmptyString(sourcePath) !== undefined) &&
-    (callId !== undefined || sourcePath !== undefined)
-  );
-}
-
 /** Removes inline image bytes while retaining the small recovery metadata. */
 export function sanitizeCodexGeneratedImagePayload(value: unknown): unknown {
   const record = asObject(value);
@@ -120,25 +104,4 @@ export function sanitizeCodexGeneratedImagePayload(value: unknown): unknown {
     changed = true;
   }
   return changed ? nextRecord : value;
-}
-
-export function codexGeneratedImageArtifactFromRuntimeEvent(
-  event: ProviderRuntimeEvent,
-): CodexGeneratedImageArtifact | undefined {
-  if (
-    event.provider !== "codex" ||
-    event.type !== "item.completed" ||
-    event.payload.itemType !== "image_view" ||
-    !isCodexGeneratedImageArtifact(event.payload.data)
-  ) {
-    return undefined;
-  }
-  return event.payload.data;
-}
-
-export function codexGeneratedImageArtifactFromActivityPayload(
-  payload: unknown,
-): CodexGeneratedImageArtifact | undefined {
-  const record = asObject(payload);
-  return isCodexGeneratedImageArtifact(record?.data) ? record.data : undefined;
 }

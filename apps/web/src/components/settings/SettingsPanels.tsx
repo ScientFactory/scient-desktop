@@ -22,12 +22,10 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
-  DEFAULT_CONTENT_DIRECTION,
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
   type ChatWidth,
-  InterfaceFontWeight,
-  type ContentDirection,
+  type InterfaceFontWeight,
   type DiffLayout,
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
@@ -186,18 +184,16 @@ import { AnalyticsPrivacySettings } from "../../scient/analytics/AnalyticsPrivac
 import { ForkContextSettings } from "../../scient/fork/ForkContextSettings";
 import { useRecordScientAnalytics } from "../../scient/analytics/client";
 import { ScientGettingStartedSettingsRow } from "../../scient/onboarding/ScientGettingStartedSettingsRow";
+// SCIENT-FORK:START — Scient appearance and typography rows.
+import { ContentDirectionSettingsRow } from "../../scient/bidi/ContentDirectionSettingsRow";
+import { InterfaceFontWeightSelect } from "../../scient/typography/InterfaceFontWeightSelect";
+// SCIENT-FORK:END
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
   pill: "Version pill",
   none: "None",
-};
-
-const CONTENT_DIRECTION_LABELS: Record<ContentDirection, string> = {
-  auto: "Automatic",
-  rtl: "Right to left",
-  ltr: "Left to right",
 };
 
 const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
@@ -1340,46 +1336,13 @@ export function AppearanceSettingsPanel() {
           />
         ) : null}
 
-        <SettingsRow
-          {...searchableSetting("conversation-text-direction")}
-          description="Control chat prose, lists, and tables without mirroring the application shell."
-          resetAction={
-            settings.contentDirection !== DEFAULT_CONTENT_DIRECTION ? (
-              <SettingResetButton
-                label="conversation text direction"
-                onClick={() => updateSettings({ contentDirection: DEFAULT_CONTENT_DIRECTION })}
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.contentDirection}
-              onValueChange={(value) => {
-                if (value === "auto" || value === "rtl" || value === "ltr") {
-                  updateSettings({ contentDirection: value });
-                  recordAnalytics({
-                    name: "setting.changed",
-                    properties: {
-                      setting: "direction",
-                      value: value === "auto" ? "automatic" : value,
-                    },
-                  });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Conversation text direction">
-                <SelectValue>{CONTENT_DIRECTION_LABELS[settings.contentDirection]}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {Object.entries(CONTENT_DIRECTION_LABELS).map(([value, label]) => (
-                  <SelectItem hideIndicator key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
+        {/* SCIENT-FORK:START — conversation text direction row. */}
+        <ContentDirectionSettingsRow
+          contentDirection={settings.contentDirection}
+          updateSettings={updateSettings}
+          recordAnalytics={recordAnalytics}
         />
+        {/* SCIENT-FORK:END */}
 
         <SettingsRow
           {...searchableSetting("diff-color-scheme")}
@@ -2098,30 +2061,9 @@ function FontFamilySettingsRow({
           )}
         </SelectPopup>
       </Select>
-      {weight ? (
-        <Select
-          value={String(weight.value)}
-          onValueChange={(next) => {
-            const parsed = typeof next === "string" ? Number(next) : null;
-            if (isInterfaceFontWeight(parsed)) weight.onChange(parsed);
-          }}
-        >
-          <SelectTrigger
-            size="sm"
-            className="w-24 min-w-0 shrink-0"
-            aria-label="Interface text weight"
-          >
-            <SelectValue>{INTERFACE_FONT_WEIGHT_LABELS[weight.value]}</SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            {InterfaceFontWeight.literals.map((value) => (
-              <SelectItem hideIndicator key={value} value={String(value)}>
-                {INTERFACE_FONT_WEIGHT_LABELS[value]} — {value}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
-      ) : null}
+      {/* SCIENT-FORK:START — interface text weight picker. */}
+      {weight ? <InterfaceFontWeightSelect weight={weight} /> : null}
+      {/* SCIENT-FORK:END */}
     </div>
   );
   return (
@@ -2138,13 +2080,6 @@ function FontFamilySettingsRow({
 }
 
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
-
-const isInterfaceFontWeight = Schema.is(InterfaceFontWeight);
-const INTERFACE_FONT_WEIGHT_LABELS: Record<InterfaceFontWeight, string> = {
-  300: "Light",
-  400: "Regular",
-  500: "Medium",
-};
 
 function AutoSettleDaysInput({
   value,

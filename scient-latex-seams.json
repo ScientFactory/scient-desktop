@@ -21,7 +21,10 @@
     "scripts/lib/scient-synctex-build.ts",
     "packages/client-runtime/src/state/scientLatexHttp.ts",
     "packages/contracts/src/scientLatex.ts",
-    "packages/contracts/src/latexPdfBuild.ts"
+    "packages/contracts/src/latexPdfBuild.ts",
+    "packages/contracts/src/scient/environmentHttpGroups.ts",
+    "apps/server/src/scient/ScientServerLayers.ts",
+    "apps/web/src/scient/fileSurfaces/scientLazyFileSurfaces.tsx"
   ],
   "latexDiffSignals": [
     "ScientLatex",
@@ -81,7 +84,7 @@
     },
     {
       "path": "apps/server/src/server.ts",
-      "anchor": "LatexBuildService",
+      "anchor": "ScientRouteServices.provideScientRouteServices",
       "purpose": "Provide the build coordinator and toolchain probe to the shared server layer."
     },
     {
@@ -91,7 +94,7 @@
     },
     {
       "path": "apps/web/src/components/ChatView.tsx",
-      "anchor": "const openFileSourceSurface = useCallback(",
+      "anchor": "useScientRightPanelOpeners",
       "purpose": "Open a diagnostic or inverse-SyncTeX source at its reported line through the inherited right-panel store."
     },
     {
@@ -116,7 +119,7 @@
     },
     {
       "path": "packages/contracts/src/environmentHttp.ts",
-      "anchor": "scientLatex",
+      "anchor": ".add(EnvironmentScientLatexHttpApi)",
       "purpose": "Register the LaTeX endpoint group in the shared environment HTTP API."
     },
     {

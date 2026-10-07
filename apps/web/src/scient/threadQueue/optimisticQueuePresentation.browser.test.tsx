@@ -1,4 +1,5 @@
 import "../../index.css";
+import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
 import { MessageId, type ScientThreadQueueItem } from "@t3tools/contracts";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
@@ -7,6 +8,7 @@ import { userEvent } from "vitest/browser";
 import { ThreadQueueStrip } from "./ThreadQueueStrip";
 import {
   pendingQueueAdmissionPreviews,
+  optimisticTimelineMessages,
   settleQueueAdmissionPreview,
   type OptimisticUserMessage,
 } from "./optimisticQueuePresentation";
@@ -77,14 +79,14 @@ function render(
           {serverMessages.map((entry) => (
             <div key={entry.id}>{entry.text}</div>
           ))}
-          {messages
-            .filter(
-              (entry) =>
-                !entry.queueAdmission && !serverMessages.some((server) => server.id === entry.id),
-            )
-            .map((entry) => (
-              <div key={entry.id}>{entry.text}</div>
-            ))}
+          {deriveTimelineEntriesFromVisibleTurnItems({
+            visibleTurnItems: [],
+            optimisticMessages: optimisticTimelineMessages(messages).filter(
+              (entry) => !serverMessages.some((server) => server.id === entry.id),
+            ),
+          }).map((entry) =>
+            entry.kind === "message" ? <div key={entry.id}>{entry.message.text}</div> : null,
+          )}
         </div>
         <ThreadQueueStrip
           items={items}

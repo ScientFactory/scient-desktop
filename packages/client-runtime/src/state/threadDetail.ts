@@ -1,11 +1,4 @@
-import type {
-  OrchestrationCheckpointSummary,
-  OrchestrationMessage,
-  OrchestrationProposedPlan,
-  OrchestrationThreadActivity,
-  OrchestrationV2ThreadProjection,
-  ScopedThreadRef,
-} from "@t3tools/contracts";
+import type { OrchestrationV2ThreadProjection, ScopedThreadRef } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -24,11 +17,6 @@ import {
   type PendingThreadRequests,
 } from "./threadRequests.ts";
 import { arrayElementsEqual, parseThreadKey, threadKey } from "./entities.ts";
-
-const EMPTY_MESSAGES: ReadonlyArray<OrchestrationMessage> = Object.freeze([]);
-const EMPTY_ACTIVITIES: ReadonlyArray<OrchestrationThreadActivity> = Object.freeze([]);
-const EMPTY_PROPOSED_PLANS: ReadonlyArray<OrchestrationProposedPlan> = Object.freeze([]);
-const EMPTY_CHECKPOINTS: ReadonlyArray<OrchestrationCheckpointSummary> = Object.freeze([]);
 
 /**
  * Combine detail-only collections with the shell's authoritative thread metadata.

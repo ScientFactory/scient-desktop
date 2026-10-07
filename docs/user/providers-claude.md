@@ -101,6 +101,14 @@ Claude Code's verbose mode can stay enabled when you use Claude for text generat
 thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,
 Scient uses the Claude configuration on the connected server.
 
+## Connected tools after upgrading
+
+Scient's Claude tool connection is now named `scient` rather than `t3-code`.
+Claude's saved “always allow” choices for the old connection do not carry over,
+so Claude may ask you to approve the connected tools again. Review those requests
+and approve the tools you want to use. Your conversation history and selected
+permission mode are kept.
+
 ## Compact long conversations
 
 If Claude reaches a subscription usage limit mid-turn, the conversation shows the limit and the

@@ -1,5 +1,5 @@
 /**
- * Droid's sub-agents, as Scient's task events.
+ * Droid's sub-agents, as protocol observations.
  *
  * Droid runs a sub-agent through its `Task` tool and reports nothing of the
  * sub-agent's own steps over ACP: the parent tool call is the only sign of it
@@ -22,27 +22,49 @@
  *   (`Status: running`, `Latest progress: …`), and `{ task_id, block: true,
  *   timeout }` waits, silently, for up to `timeout` milliseconds.
  */
-import { RuntimeTaskId, type ProviderRuntimeEvent, type TurnId } from "@t3tools/contracts";
-
+import * as Predicate from "effect/Predicate";
 import type { AcpToolCallState } from "../acp/AcpRuntimeModel.ts";
 
-type TaskEvent<T extends ProviderRuntimeEvent["type"]> = {
+interface DroidSubagentLinkage {
+  readonly taskId: string;
+  readonly taskType: "subagent";
+  readonly title: string;
+  readonly toolUseId: string;
+  readonly role?: string;
+}
+interface DroidTaskEvent<T, P> {
   readonly type: T;
-  /** The turn that launched the sub-agent, whichever turn is open now. */
-  readonly turnId: TurnId | undefined;
-  readonly payload: Extract<ProviderRuntimeEvent, { readonly type: T }>["payload"];
-};
+  readonly turnId: string | undefined;
+  readonly payload: DroidSubagentLinkage & P;
+}
 export type DroidSubagentEvent =
-  | TaskEvent<"task.started">
-  | TaskEvent<"task.progress">
-  | TaskEvent<"task.updated">
-  | TaskEvent<"task.completed">;
+  | DroidTaskEvent<"task.started", { readonly description: string }>
+  | DroidTaskEvent<
+      "task.progress",
+      { readonly description: string; readonly summary: string; readonly status: "running" }
+    >
+  | DroidTaskEvent<
+      "task.updated",
+      {
+        readonly status: "cancelled" | "interrupted" | "idle";
+        readonly error?: string;
+        readonly description?: string;
+      }
+    >
+  | DroidTaskEvent<
+      "task.completed",
+      { readonly status: "completed" | "failed"; readonly summary?: string }
+    >;
+type TaskEvent<T extends DroidSubagentEvent["type"]> = Extract<
+  DroidSubagentEvent,
+  { readonly type: T }
+>;
 
 interface DroidSubagent {
   readonly toolCallId: string;
   readonly title: string;
   readonly role: string | undefined;
-  readonly turnId: TurnId | undefined;
+  readonly turnId: string | undefined;
   /** `background`: launched, and Droid reports on it only through `TaskOutput`. */
   state: "running" | "background" | "ended";
 }
@@ -77,7 +99,7 @@ const BACKGROUND_NOTE =
   "Running in the background. Droid reports on it only when it finishes or the main agent checks.";
 
 const record = (value: unknown): Record<string, unknown> | undefined =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
+  Predicate.isObject(value) && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
 const text = (value: unknown): string | undefined =>
@@ -86,7 +108,7 @@ const bounded = (value: string): string =>
   value.length <= SUMMARY_MAX_CHARS ? value : `${value.slice(0, SUMMARY_MAX_CHARS - 1)}…`;
 
 /** Nested `Task` sub-agents: Droid names the sub-agent type, or titles the call "Task". */
-export function isDroidNestedTaskToolCall(input: {
+function isDroidNestedTaskToolCall(input: {
   readonly title?: string | null | undefined;
   readonly rawInput?: unknown;
 }): boolean {
@@ -124,8 +146,8 @@ function formatWait(millis: number): string {
 }
 
 const linkage = (subagent: DroidSubagent) => ({
-  taskId: RuntimeTaskId.make(subagent.toolCallId),
-  taskType: "subagent",
+  taskId: subagent.toolCallId,
+  taskType: "subagent" as const,
   title: subagent.title,
   toolUseId: subagent.toolCallId,
   ...(subagent.role ? { role: subagent.role } : {}),
@@ -209,7 +231,7 @@ interface DroidSubagentToolCall {
 export function observeDroidSubagentToolCall(
   tracker: DroidSubagentTracker,
   toolCall: AcpToolCallState,
-  turnId: TurnId | undefined,
+  turnId: string | undefined,
 ): DroidSubagentToolCall {
   const id = toolCall.toolCallId;
   const rawInput = record(toolCall.data.rawInput);

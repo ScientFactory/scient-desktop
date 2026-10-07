@@ -1,3 +1,4 @@
+import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration exercises Node HTTP and filesystem boundaries.
 import * as NodeHttp from "node:http";
 import * as NodeFS from "node:fs";
@@ -24,7 +25,7 @@ import * as CliError from "effect/unstable/cli/CliError";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
 
-import { cli, makeCli } from "./bin.ts";
+import { cli, makeCli } from "./binCli.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
@@ -151,6 +152,9 @@ const makeProjectPersistenceLayer = (config: ServerConfig.ServerConfig["Service"
     ThreadManagement.layer.pipe(Layer.provide(replay)),
   ).pipe(
     Layer.provideMerge(ProjectEnrichmentService.layer),
+    Layer.provide(
+      Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ discard: () => Effect.void }),
+    ),
     Layer.provideMerge(RepositoryIdentityResolver.layer),
     Layer.provideMerge(
       ProjectFaviconResolver.layer.pipe(
@@ -509,7 +513,24 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const { output } = yield* captureStdout(runCli(["--help"], noConnectCli));
 
       assert.notInclude(output, "Manage the Scient background service.");
-      assert.notInclude(output, "__service-preflight");
+      for (const command of [
+        "service",
+        "__service-preflight",
+        "update",
+        "uninstall",
+        "__service-launcher",
+      ]) {
+        assert.isFalse(
+          noConnectCli.subcommands
+            .flatMap((group) => group.commands)
+            .some((candidate) => candidate.name === command),
+          command,
+        );
+        // The root accepts a positional cwd, so an unknown name alone is a
+        // directory argument. --help exercises parsing without starting a server.
+        const help = yield* captureStdout(runCli([command, "--help"], noConnectCli));
+        assert.include(help.output, "Run the Scient server.", command);
+      }
     }),
   );
 

@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { materializeCodexOwnerReload } from "./CodexReplayOwnerReload.ts";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
@@ -465,7 +466,7 @@ describe("orchestration V2 thread fork", () => {
         ),
       );
       const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
-        materializeReplayTranscriptWorkspace(rawTranscript, cwd),
+        materializeReplayTranscriptWorkspace(materializeCodexOwnerReload(rawTranscript, 2), cwd),
       );
 
       const materialized = yield* Effect.gen(function* () {
@@ -613,14 +614,49 @@ describe("orchestration V2 thread fork", () => {
       assert.equal(targetProjection.visibleTurnItems[1]?.visibility, "inherited");
       const forkMarker = targetProjection.visibleTurnItems.find((row) => row.item.type === "fork");
       assert.isDefined(forkMarker, "fork target projection should include a visible fork marker");
-      assert.equal(forkMarker.visibility, "synthetic");
+      assert.equal(forkMarker.visibility, "local");
+      assert.equal(forkMarker.item.threadId, materialized.targetThreadId);
+      assert.isNull(forkMarker.item.runId);
+      assert.isNull(forkMarker.item.nodeId);
+      assert.isNull(forkMarker.item.providerTurnId);
+      assert.isNull(forkMarker.item.nativeItemRef);
+      const sourceProjection = result.projections.get(materialized.sourceThreadId);
+      assert.isDefined(sourceProjection);
+      const firstSourceRun = sourceProjection.runs[0];
+      assert.isDefined(firstSourceRun);
+      assert.deepEqual(forkMarker.item.type === "fork" ? forkMarker.item.source : null, {
+        type: "run",
+        threadId: materialized.sourceThreadId,
+        runId: firstSourceRun.id,
+      });
+      assert.equal(
+        result.domainEvents.filter(
+          (event) =>
+            event.type === "turn-item.updated" &&
+            event.threadId === materialized.targetThreadId &&
+            event.payload.type === "fork" &&
+            event.payload.id === forkMarker.item.id,
+        ).length,
+        1,
+        "the fork boundary is a persisted destination fact, not a live source projection",
+      );
       const targetShell = result.shellSnapshot.threads.find(
         (thread) => thread.id === materialized.targetThreadId,
       );
       assert.isDefined(targetShell, "shell snapshot should include the fork target thread");
       assert.equal(targetShell.visibleItemCount, targetProjection.visibleTurnItems.length);
       assert.equal(targetShell.lineage.relationshipToParent, "fork");
-      assert.equal(targetShell.forkedFrom?.type, "run");
+      assert.equal(targetShell.lineage.parentThreadId, materialized.sourceThreadId);
+      assert.isNull(targetShell.forkedFrom);
+      assert.equal(
+        targetProjection.thread.forkLineage?.originThreadId,
+        materialized.sourceThreadId,
+      );
+      assert.equal(
+        targetProjection.contextTransfers[0]?.sourcePoint.threadId,
+        materialized.sourceThreadId,
+      );
+      assert.equal(targetProjection.contextTransfers[0]?.sourcePoint.runId, firstSourceRun.id);
 
       const visibleText = visibleItems
         .filter((item) => item.type === "user_message" || item.type === "assistant_message")
@@ -935,7 +971,15 @@ describe("orchestration V2 thread fork", () => {
             { type: "dispatch", command: materialized.commands[3]!, await: true },
             { type: "dispatch", command: materialized.commands[4]!, await: true },
             { type: "await_thread_idle", threadId: materialized.targetThreadId },
-            { type: "dispatch", command: materialized.commands[5]!, await: true },
+            {
+              type: "rollback_root_checkpoint",
+              command: materialized.commands[5]! as Extract<
+                OrchestrationV2Command,
+                { type: "checkpoint.rollback" }
+              >,
+              ordinal: 1,
+              cwd,
+            },
             {
               type: "await_run_status",
               threadId: materialized.sourceThreadId,
@@ -1152,7 +1196,15 @@ describe("orchestration V2 thread fork", () => {
             { type: "await_thread_idle", threadId: materialized.targetThreadId },
             { type: "dispatch", command: materialized.commands[4]!, await: true },
             { type: "await_thread_idle", threadId: materialized.targetThreadId },
-            { type: "dispatch", command: materialized.commands[5]!, await: true },
+            {
+              type: "rollback_root_checkpoint",
+              command: materialized.commands[5]! as Extract<
+                OrchestrationV2Command,
+                { type: "checkpoint.rollback" }
+              >,
+              ordinal: 1,
+              cwd,
+            },
             {
               type: "await_run_status",
               threadId: materialized.targetThreadId,

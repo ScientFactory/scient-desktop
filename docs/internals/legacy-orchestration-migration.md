@@ -19,16 +19,23 @@ Transcript import reads user and assistant rows from `projection_thread_messages
 message identifiers, text, supported attachments, timestamps, role, and ordering. A message that was
 still streaming becomes an interrupted turn item.
 
-The importer does not translate provider session identity, native provider runs, checkpoints and
-diffs, activities and tool calls, approvals, or proposed plans. V2 therefore must not present those
-records as migrated history.
+Scient's `LegacyScientHistory` also preserves reasoning and system messages, activities and tool
+facts, submitted user-input answers, historical approvals, and proposed plans as inert V2 history.
+`LegacyV1ThreadImporter` hydrates this history, including repair of already-imported threads.
+Historical approvals and callbacks do not acquire active requests or execution authority; plans
+remain inspectable historical facts. The importer does not restore live provider session identity,
+native provider runs, or checkpoint/diff execution state.
 
 ## First continuation
 
 A migrated thread has no active provider thread. Its first continuation creates a fresh provider
-session and sends a legacy handoff built only from user and assistant messages. The handoff selects
-the newest transcript suffix within a 32,000-character budget, including section labels and the
-import notice. This budget is separate from portable provider handoffs.
+session. `ProviderTurnStartService` delivers eligible imported history through the same native
+handoff budget as other portable transfers. Eligible items stay whole: selection prioritizes the
+latest user, latest assistant, and original user items, then fills from newest to oldest and delivers
+in chronological order. Oversized items are omitted. The default allowance is 16,000 tokens with a
+64,000-byte ceiling, reduced for the target window, existing native context, current input,
+attachments, and headroom. See [context handoffs](./context-handoffs.md) for delivery and recovery;
+the former 32,000-character transcript-suffix rule is superseded.
 
 ## Client and server cutover
 
@@ -53,7 +60,8 @@ schema changes belong in a separate migration table or outside the migrator enti
 
 ## Recovery
 
-There is no supported whole-thread export API. Recovery uses an untouched copy of the environment's
-`userdata` directory and opens that copy with SQLite's read-only mode. The user guide documents the
-queries against `projection_threads` and `projection_thread_messages`. Never start a server against
-the recovery copy because startup can run migrations and write new state.
+Scient's conversation export operates on the current V2 conversation. Offline recovery of the
+original V1 data is a separate operation: use an untouched copy of the environment's `userdata`
+directory and open that copy with SQLite's read-only mode. The user guide documents the queries
+against `projection_threads` and `projection_thread_messages`. Never start a server against the
+recovery copy because startup can run migrations and write new state.

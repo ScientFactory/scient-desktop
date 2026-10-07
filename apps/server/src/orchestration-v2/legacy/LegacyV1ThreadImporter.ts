@@ -21,6 +21,7 @@ import {
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
   TurnItemId,
+  TurnId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -31,6 +32,10 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as EventSink from "../EventSink.ts";
+import {
+  CODEX_CITATION_MARKER_PREFIX,
+  projectLegacyCitationText,
+} from "../legacyCitationProjection.ts";
 import { makeKeyedSerialExecutor } from "../KeyedSerialExecutor.ts";
 import { randomUuidV4 } from "../RandomUuid.ts";
 import {
@@ -38,7 +43,7 @@ import {
   makeForkLineageQueries,
   toForkLineageMarker,
   type ProjectionForkLineageRow,
-} from "../scient-fork/ForkBoundaryReadModel.ts";
+} from "./LegacyForkLineageReader.ts";
 import { importLegacyHistory, prepareLegacyHistory } from "./LegacyScientHistory.ts";
 
 const IMPORT_EVENT_PREFIX = "migration:v1";
@@ -79,6 +84,7 @@ interface LegacyRepairRow extends LegacyThreadRow {
 
 interface LegacyMessageRow {
   readonly message_id: string;
+  readonly turn_id: string | null;
   readonly thread_id: string;
   readonly role: "user" | "assistant";
   readonly text: string;
@@ -93,7 +99,12 @@ interface LegacyMessageRow {
 interface LegacyImportRow {
   readonly thread_id: string;
   readonly transcript_imported_at: string | null;
+  readonly history_repair_version: number;
 }
+
+// Increment only when a new missing-only historical repair is required. A
+// transcript timestamp alone cannot qualify imports made by older binaries.
+export const LEGACY_HISTORY_REPAIR_VERSION = 3;
 
 export interface LegacyV1ImportSummary {
   readonly importedThreadCount: number;
@@ -298,6 +309,7 @@ function messageEvents(row: LegacyMessageRow): ReadonlyArray<OrchestrationV2Doma
   };
   const baseTurnItem = {
     id: TurnItemId.make(`${IMPORT_EVENT_PREFIX}:turn-item:${row.message_id}`),
+    ...(row.turn_id === null ? {} : { historyTurnId: TurnId.make(row.turn_id) }),
     threadId,
     runId: null,
     nodeId: null,
@@ -369,6 +381,7 @@ const make = Effect.gen(function* () {
     sql<LegacyMessageRow>`
       SELECT
         message_id,
+        turn_id,
         thread_id,
         role,
         text,
@@ -392,6 +405,7 @@ const make = Effect.gen(function* () {
       const latest = yield* sql<LegacyMessageRow>`
         SELECT
           message.message_id,
+          message.turn_id,
           message.thread_id,
           message.role,
           message.text,
@@ -422,6 +436,7 @@ const make = Effect.gen(function* () {
       const latestUser = yield* sql<LegacyMessageRow>`
         SELECT
           message.message_id,
+          message.turn_id,
           message.thread_id,
           message.role,
           message.text,
@@ -454,6 +469,41 @@ const make = Effect.gen(function* () {
           message !== undefined &&
           selected.findIndex((candidate) => candidate?.message_id === message.message_id) === index,
       );
+    });
+
+  const repairLegacyCitations = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const messages = (yield* listMessages(threadId)).filter(
+        (message) =>
+          message.role === "assistant" && message.text.includes(CODEX_CITATION_MARKER_PREFIX),
+      );
+      if (messages.length === 0) return;
+      const sources = yield* sql<{ turn_id: string; payload_json: string }>`
+      SELECT turn_id, payload_json FROM projection_thread_activities
+      WHERE thread_id = ${threadId} AND turn_id IS NOT NULL AND kind = 'tool.completed'
+        AND json_extract(payload_json, '$.itemType') = 'web_search'
+      ORDER BY created_at, activity_id`;
+      const byTurn = new Map<string, unknown[]>();
+      for (const source of sources) {
+        const payloads = byTurn.get(source.turn_id) ?? [];
+        payloads.push(parseJson(source.payload_json));
+        byTurn.set(source.turn_id, payloads);
+      }
+      const events = messages.flatMap((message) => {
+        const text = projectLegacyCitationText(
+          message.text,
+          message.turn_id === null ? [] : (byTurn.get(message.turn_id) ?? []),
+        );
+        if (text === message.text) return [];
+        return messageEvents({ ...message, text }).map((event) => ({
+          ...event,
+          id: EventId.make(`migration:v1:history:citation:${event.id}`),
+        }));
+      });
+      for (const batch of chunks(events, TRANSCRIPT_EVENT_BATCH_SIZE)) {
+        yield* eventSink.write({ events: batch, guardLegacyCitationRepairs: true });
+        yield* Effect.yieldNow;
+      }
     });
 
   const reconcileShellsBase = Effect.gen(function* () {
@@ -641,13 +691,15 @@ const make = Effect.gen(function* () {
           payload: thread,
         },
       ];
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          yield* prepareLegacyHistory(sql, thread.id);
-          yield* Effect.forEach(
-            previews,
-            (message) =>
-              sql`
+      yield* eventSink.write({
+        events,
+        transactionHooks: {
+          prepare: Effect.gen(function* () {
+            yield* prepareLegacyHistory(sql, thread.id);
+            yield* Effect.forEach(
+              previews,
+              (message) =>
+                sql`
                 INSERT INTO orchestration_v2_turn_item_positions (
                   thread_id,
                   turn_item_id,
@@ -660,10 +712,10 @@ const make = Effect.gen(function* () {
                 )
                 ON CONFLICT(thread_id, turn_item_id) DO NOTHING
               `,
-            { discard: true },
-          );
-          yield* eventSink.write({ events });
-          yield* sql`
+              { discard: true },
+            );
+          }),
+          finalize: sql`
             INSERT INTO orchestration_v2_legacy_imports (
               thread_id,
               source_updated_at,
@@ -681,9 +733,9 @@ const make = Effect.gen(function* () {
               NULL
             )
             ON CONFLICT(thread_id) DO NOTHING
-          `;
-        }),
-      );
+          `.pipe(Effect.asVoid),
+        },
+      });
       importedThreadCount += 1;
       importedMessageCount += previews.length;
     }
@@ -711,6 +763,7 @@ const make = Effect.gen(function* () {
       SELECT legacy_import.thread_id
       FROM orchestration_v2_legacy_imports AS legacy_import
       WHERE legacy_import.transcript_imported_at IS NULL
+        OR legacy_import.history_repair_version < ${LEGACY_HISTORY_REPAIR_VERSION}
     )
   `.pipe(
     Effect.map((rows) => rows[0]?.count ?? 0),
@@ -730,7 +783,7 @@ const make = Effect.gen(function* () {
       threadId,
       Effect.gen(function* () {
         const imports = yield* sql<LegacyImportRow>`
-          SELECT thread_id, transcript_imported_at
+          SELECT thread_id, transcript_imported_at, history_repair_version
           FROM orchestration_v2_legacy_imports
           WHERE thread_id = ${threadId}
           LIMIT 1
@@ -739,9 +792,22 @@ const make = Effect.gen(function* () {
         if (imported === undefined) {
           return { importedThreadCount: 0, importedMessageCount: 0 };
         }
+        if (
+          imported.transcript_imported_at !== null &&
+          imported.history_repair_version >= LEGACY_HISTORY_REPAIR_VERSION
+        ) {
+          confirmedTranscriptThreadIds.add(threadId);
+          return { importedThreadCount: 0, importedMessageCount: 0 };
+        }
         const history = yield* sql.withTransaction(prepareLegacyHistory(sql, threadId, true));
         yield* importLegacyHistory(sql, eventSink, threadId, history);
         if (imported.transcript_imported_at !== null) {
+          yield* repairLegacyCitations(threadId);
+          // Every guarded batch has committed before acknowledging this
+          // generation. Retain the original transcript completion timestamp.
+          yield* sql`UPDATE orchestration_v2_legacy_imports
+            SET history_repair_version = ${LEGACY_HISTORY_REPAIR_VERSION}, last_error = NULL
+            WHERE thread_id = ${threadId}`;
           confirmedTranscriptThreadIds.add(threadId);
           return { importedThreadCount: 0, importedMessageCount: 0 };
         }
@@ -780,11 +846,13 @@ const make = Effect.gen(function* () {
           yield* eventSink.write({ events: batch.flatMap(messageEvents) });
           yield* Effect.yieldNow;
         }
+        yield* repairLegacyCitations(threadId);
         const now = DateTime.formatIso(yield* DateTime.now);
         yield* sql`
           UPDATE orchestration_v2_legacy_imports
           SET
             transcript_imported_at = ${now},
+            history_repair_version = ${LEGACY_HISTORY_REPAIR_VERSION},
             imported_message_count = ${messages.length},
             last_error = NULL
           WHERE thread_id = ${threadId}
@@ -813,9 +881,10 @@ const make = Effect.gen(function* () {
 
   const importPendingTranscripts = Effect.gen(function* () {
     const rows = yield* sql<LegacyImportRow>`
-      SELECT thread_id, transcript_imported_at
+      SELECT thread_id, transcript_imported_at, history_repair_version
       FROM orchestration_v2_legacy_imports
       WHERE transcript_imported_at IS NULL
+        OR history_repair_version < ${LEGACY_HISTORY_REPAIR_VERSION}
       ORDER BY shell_imported_at ASC, thread_id ASC
     `;
     let importedThreadCount = 0;

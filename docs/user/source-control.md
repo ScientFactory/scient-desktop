@@ -259,10 +259,10 @@ Tick a file off in the **Code** tab once you have read it and it collapses; the 
 running count. A tick belongs to the pull request rather than to a commit, so scoping the tab to a
 single commit keeps them. A file pushed to after you cleared it comes back marked **Changed**.
 
-On GitHub these are GitHub's own viewed marks, so a review carries between T3 Code and github.com
-in either direction. Forgejo, GitLab, Bitbucket, and Azure DevOps expose no record T3 Code can read, so the
+On GitHub these are GitHub's own viewed marks, so a review carries between Scient and github.com
+in either direction. Forgejo, GitLab, Bitbucket, and Azure DevOps expose no record Scient can read, so the
 server you are connected to keeps them instead: they follow you across the apps connected to that
-server, but the host's own site will not show them, and the count reads **viewed in T3 Code**.
+server, but the host's own site will not show them, and the count reads **viewed in Scient**.
 
 The **Code** tab is a web and desktop surface. The mobile app reports a pull request's status but
 does not show its diff, so marks are made and read on web and desktop.

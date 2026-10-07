@@ -1,13 +1,12 @@
-import type { RuntimeCitationSource, RuntimeTextCitation } from "@t3tools/contracts";
+import type { RuntimeCitationSource } from "@t3tools/contracts";
 import * as Predicate from "effect/Predicate";
 
-export const CODEX_CITATION_MARKER_PREFIX = "\uE200cite\uE202";
+export {
+  CODEX_CITATION_MARKER_PREFIX,
+  extractCodexTextCitations,
+} from "@scientfactory/conversation/provider-citation-markdown";
 
-const CODEX_CITATION_MARKER_PATTERN = /\uE200cite\uE202([^\uE201]*)\uE201/gu;
-const CODEX_CITATION_SOURCE_SEPARATOR = "\uE202";
 const MAX_CITATION_SOURCES = 128;
-const MAX_TEXT_CITATIONS = 128;
-const MAX_SOURCE_IDS_PER_CITATION = 16;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -111,32 +110,4 @@ export function extractCodexCitationSources(value: unknown): ReadonlyArray<Runti
     sources.push({ id, url, ...(title ? { title } : {}) });
   }
   return sources;
-}
-
-/**
- * Converts Codex's private-use citation markers into provider-neutral text
- * ranges. Offsets deliberately use JavaScript UTF-16 indices, matching the
- * string slicing performed by the server even when Hebrew or emoji precede a
- * marker.
- */
-export function extractCodexTextCitations(text: string): ReadonlyArray<RuntimeTextCitation> {
-  const citations: RuntimeTextCitation[] = [];
-  for (const match of text.matchAll(CODEX_CITATION_MARKER_PATTERN)) {
-    if (citations.length >= MAX_TEXT_CITATIONS || match.index === undefined || !match[0]) break;
-    const sourceIds = Array.from(
-      new Set(
-        (match[1] ?? "")
-          .split(CODEX_CITATION_SOURCE_SEPARATOR)
-          .map((value) => value.trim())
-          .filter((value) => value.length > 0 && value.length <= 256),
-      ),
-    ).slice(0, MAX_SOURCE_IDS_PER_CITATION);
-    if (sourceIds.length === 0) continue;
-    citations.push({
-      start: match.index,
-      end: match.index + match[0].length,
-      sourceIds,
-    });
-  }
-  return citations;
 }

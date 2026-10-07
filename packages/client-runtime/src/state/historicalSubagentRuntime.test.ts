@@ -102,4 +102,37 @@ describe("inert migrated workflow display", () => {
       ]),
     ).toEqual([]);
   });
+  it("uses frozen migration provenance after copied items acquire destination identities", () => {
+    const source = item("copied-start", "task.started", {
+      taskId: "copied-workflow",
+      taskType: "local_workflow",
+      title: "Copied audit",
+    });
+    const copied = decodeItem({
+      ...encodeItem(source),
+      id: "scient-fork:target:item:0",
+      threadId: "target",
+      inheritedFrom: {
+        threadId: source.threadId,
+        itemId: source.id,
+        runId: null,
+        status: source.status,
+      },
+    });
+    const agents = historicalSubagentsToRuntime([copied, copied]);
+    expect(agents).toHaveLength(1);
+    expect(agents[0]).toMatchObject({
+      id: "historical:legacy-thread:copied-workflow",
+      historical: true,
+    });
+    expect(deriveAgentPanelModel({ agents }).liveCount).toBe(0);
+    const wrong = decodeItem({
+      ...encodeItem(copied),
+      inheritedFrom: {
+        ...encodeItem(copied).inheritedFrom,
+        itemId: "provider-owned-tool",
+      },
+    });
+    expect(historicalSubagentsToRuntime([wrong])).toEqual([]);
+  });
 });

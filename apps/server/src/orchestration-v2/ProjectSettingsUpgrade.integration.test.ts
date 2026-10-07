@@ -1,3 +1,4 @@
+import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { ProjectId } from "@t3tools/contracts";
@@ -119,6 +120,10 @@ const unusedEnrichment = {
 /** The production V2 runtime and project service against one file-backed database. */
 const makeRuntimeLayer = (dbPath: string) => {
   const platform = Layer.mergeAll(
+    Layer.mock(ProviderRegistry.ProviderRegistry)({
+      setProviderAuthenticationFailure: () =>
+        Effect.die("Authentication control is not exercised by project migration fixtures."),
+    }),
     Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
     NodeServices.layer,
     Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({

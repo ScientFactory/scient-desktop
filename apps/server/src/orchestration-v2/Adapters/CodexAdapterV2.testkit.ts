@@ -1,9 +1,16 @@
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { type ProviderReplayTranscript } from "@t3tools/contracts";
+import {
+  type ProviderReplayTranscript,
+  type ProviderDriverKind,
+  type ProviderInstanceId,
+  type ThreadId,
+  type ModelSelection,
+} from "@t3tools/contracts";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexReplay from "effect-codex-app-server/replay";
+import * as CodexSchema from "effect-codex-app-server/schema";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -13,7 +20,13 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../../config.ts";
+import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
+import { scientToolProjectionForProvider } from "../../provider/ScientToolProjection.ts";
+import { prepareScientSkillTurn } from "../../scient/skills/ScientSkillInvocation.ts";
 import * as IdAllocator from "../IdAllocator.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import type { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
 import { ProviderAdapterOpenSessionError } from "../ProviderAdapter.ts";
 import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
@@ -184,6 +197,7 @@ export function makeReplayServerConfig(
 export function makeCodexProviderAdapterRegistryReplayLayer(input: {
   readonly transcript: CodexReplay.CodexAppServerReplayTranscript;
   readonly driver?: CodexReplay.CodexAppServerReplayDriver;
+  readonly instanceIds?: ReadonlyArray<ProviderInstanceId>;
 }) {
   const replayLayer =
     input.driver === undefined
@@ -214,11 +228,12 @@ export function makeCodexProviderAdapterRegistryReplayLayer(input: {
   ).pipe(Layer.provide(NodeServices.layer));
   const registryLayer = ProviderAdapterRegistry.makeDriverLayer({
     drivers: [CodexAdapterV2.CodexAdapterV2Driver],
-    configMap: {
-      [CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID]: {
-        driver: CodexAdapterV2.CODEX_DRIVER_KIND,
-      },
-    },
+    configMap: Object.fromEntries(
+      (input.instanceIds ?? [CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID]).map((instanceId) => [
+        instanceId,
+        { driver: CodexAdapterV2.CODEX_DRIVER_KIND },
+      ]),
+    ),
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -237,13 +252,42 @@ const decodeCodexAppServerReplayTranscript = Schema.decodeUnknownEffect(
   CodexReplay.CodexAppServerReplayTranscript,
 );
 
-/** Adapt the upstream capture's host identity; all protocol expectations remain exact. */
+/** Adapt recorded request expectations for Scient identity and always-on core guidance.
+ * Native response/event frames and the structural matcher remain unchanged.
+ */
 function materializeScientClientIdentity(transcript: ProviderReplayTranscript) {
   return {
     ...transcript,
     entries: transcript.entries.map((entry) => {
       if (entry.type !== "expect_outbound" || !Predicate.isObject(entry.frame)) return entry;
       const frame = entry.frame;
+      if (
+        frame.method === "turn/start" &&
+        Predicate.isObject(frame.params) &&
+        frame.params.additionalContext === undefined
+      ) {
+        return {
+          ...entry,
+          frame: {
+            ...frame,
+            params: {
+              ...frame.params,
+              additionalContext: {
+                t3_code_runtime: {
+                  kind: "application",
+                  value: buildRuntimeInstructions({
+                    harness: "Codex",
+                    model: typeof frame.params.model === "string" ? frame.params.model : "gpt-5.4",
+                    reasoningEffort:
+                      typeof frame.params.effort === "string" ? frame.params.effort : "medium",
+                  }),
+                },
+                scient_awareness: { kind: "application", value: buildScientAwareness() },
+              },
+            },
+          },
+        };
+      }
       if (frame.method !== "initialize" || !Predicate.isObject(frame.params)) return entry;
       const params = frame.params;
       if (!Predicate.isObject(params.clientInfo)) return entry;
@@ -263,6 +307,37 @@ function materializeScientClientIdentity(transcript: ProviderReplayTranscript) {
   };
 }
 
+const makeCodexReplayRegistryLayer = (
+  transcript: CodexReplay.CodexAppServerReplayTranscript,
+  options: {
+    readonly replayGate?: ProviderReplayGate;
+    readonly materializeExpectedOutbound?: CodexReplay.CodexAppServerReplayDriver["materializeExpectedOutbound"];
+  } = {},
+) => {
+  return Layer.effectContext(
+    Effect.gen(function* () {
+      const replayGate = options.replayGate;
+      if (replayGate !== undefined) {
+        yield* Effect.addFinalizer(() => Effect.sync(() => replayGate.releaseAll()));
+      }
+      const driver = yield* CodexReplay.makeReplayDriver(transcript, {
+        ...(options.materializeExpectedOutbound === undefined
+          ? {}
+          : { materializeExpectedOutbound: options.materializeExpectedOutbound }),
+        ...(replayGate === undefined
+          ? {}
+          : {
+              beforeEmitInbound: (entry) =>
+                Effect.promise((signal) => replayGate.beforeEmit(entry.label, signal)),
+            }),
+      });
+      return yield* Layer.build(
+        makeCodexProviderAdapterRegistryReplayLayer({ transcript, driver }),
+      );
+    }),
+  );
+};
+
 export const CodexOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
   CodexReplay.CodexAppServerReplayTranscript,
   CodexOrchestratorReplayHarnessError
@@ -278,29 +353,125 @@ export const CodexOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness
           }),
       ),
     ),
-  makeProviderAdapterRegistryLayer: (
-    transcript,
-    options: { readonly replayGate?: ProviderReplayGate } = {},
-  ) => {
-    return Layer.effectContext(
-      Effect.gen(function* () {
-        const replayGate = options.replayGate;
-        if (replayGate !== undefined) {
-          yield* Effect.addFinalizer(() => Effect.sync(() => replayGate.releaseAll()));
-        }
-        const driver = yield* CodexReplay.makeReplayDriver(
-          transcript,
-          replayGate === undefined
-            ? {}
-            : {
-                beforeEmitInbound: (entry) =>
-                  Effect.promise((signal) => replayGate.beforeEmit(entry.label, signal)),
-              },
-        );
-        return yield* Layer.build(
-          makeCodexProviderAdapterRegistryReplayLayer({ transcript, driver }),
-        );
-      }),
-    );
-  },
+  makeProviderAdapterRegistryLayer: makeCodexReplayRegistryLayer,
 };
+
+export interface IssuedCodexReplayScope {
+  readonly threadId: ThreadId;
+  readonly instanceId: ProviderInstanceId;
+  readonly modelSelection: ModelSelection;
+  readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+}
+
+const decodeReplayCodexInput = Schema.decodeUnknownEffect(
+  Schema.Array(CodexSchema.V2TurnStartParams__UserInput),
+);
+
+/** Project a fixture-declared complete empty skill scope, independently of outbound frames. */
+export function emptyMcpReplayPrompt(driver: ProviderDriverKind, text: string): string {
+  const tools = scientToolProjectionForProvider(driver);
+  return (
+    prepareScientSkillTurn(
+      text,
+      [],
+      new Map(),
+      {
+        includeCatalogMarker: true,
+        skillListToolName: tools.name("scient_skills_list"),
+        skillLoadToolName: tools.name("scient_skill_load"),
+        providerNativeSkillTool: tools.providerNativeSkillTool,
+        deferred: tools.deferred,
+      },
+      [],
+      "complete",
+    ).input ?? text
+  );
+}
+
+/** Resolve only fixture-mapped issued scopes; never derive expectations from outbound requests. */
+export function withIssuedCodexMcpReplayExpectations(
+  scopeForLabel: (label: string) => IssuedCodexReplayScope | undefined,
+): typeof CodexOrchestratorReplayHarness {
+  return {
+    ...CodexOrchestratorReplayHarness,
+    makeProviderAdapterRegistryLayer: (transcript, options) =>
+      makeCodexReplayRegistryLayer(transcript, {
+        ...options,
+        materializeExpectedOutbound: (entry) =>
+          Effect.gen(function* () {
+            const frame = entry.frame;
+            if (
+              !Predicate.isObject(frame) ||
+              !Predicate.isObject(frame.params) ||
+              typeof frame.method !== "string" ||
+              !["thread/start", "thread/resume", "thread/fork", "turn/start"].includes(frame.method)
+            )
+              return frame;
+            const scope = entry.label === undefined ? undefined : scopeForLabel(entry.label);
+            if (scope === undefined)
+              return yield* Effect.die(
+                "Native MCP replay request has no fixture-owned scope mapping.",
+              );
+            const issued = McpProviderSession.readMcpProviderSession(scope.threadId);
+            if (
+              issued === undefined ||
+              issued.providerInstanceId !== scope.instanceId ||
+              scope.modelSelection.instanceId !== scope.instanceId
+            ) {
+              return yield* Effect.die(
+                "Native MCP replay scope has no matching issued instance credential.",
+              );
+            }
+            const params = frame.params;
+            if (frame.method !== "turn/start") {
+              const native = CodexAdapterV2.codexThreadRuntimeParams({
+                configureMcp: true,
+                threadId: scope.threadId,
+                modelSelection: scope.modelSelection,
+                runtimePolicy: scope.runtimePolicy,
+              });
+              return {
+                ...frame,
+                params: {
+                  ...native,
+                  ...params,
+                  config: {
+                    ...(Predicate.isObject(params.config) ? params.config : {}),
+                    ...native.config,
+                  },
+                },
+              };
+            }
+            if (typeof params.threadId !== "string")
+              return yield* Effect.die("Native MCP replay turn has no recorded native thread id.");
+            const recordedInput = yield* decodeReplayCodexInput(params.input).pipe(Effect.orDie);
+            const codexInput = recordedInput.map((item) =>
+              item.type === "text" && issued.capabilities.has("skills:read")
+                ? {
+                    ...item,
+                    text: emptyMcpReplayPrompt(CodexAdapterV2.CODEX_DRIVER_KIND, item.text),
+                  }
+                : item,
+            );
+            const native = yield* CodexAdapterV2.buildCodexTurnStartParams({
+              nativeThreadId: params.threadId,
+              codexInput,
+              runtimePolicy: scope.runtimePolicy,
+              modelSelection: scope.modelSelection,
+              hasT3Mcp: true,
+              mcpCapabilities: issued.capabilities,
+            }).pipe(Effect.orDie);
+            return {
+              ...frame,
+              params: {
+                ...native,
+                ...params,
+                input: codexInput,
+                additionalContext: native.additionalContext,
+                collaborationMode: native.collaborationMode,
+              },
+            };
+          }),
+      }),
+  };
+}

@@ -14,6 +14,7 @@ import {
   resolveAttachmentPath,
 } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import { reserveAttachment, type AttachmentReservationOwner } from "./AttachmentFileUse.ts";
 
 export class AttachmentClaimError extends Schema.TaggedError<AttachmentClaimError>()(
   "AttachmentClaimError",
@@ -22,6 +23,8 @@ export class AttachmentClaimError extends Schema.TaggedError<AttachmentClaimErro
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+const isAttachmentClaimError = Schema.is(AttachmentClaimError);
 
 export const validateAttachmentLimits = Effect.fn("AttachmentClaims.validateAttachmentLimits")(
   function* (attachments: ReadonlyArray<ChatAttachment>) {
@@ -33,6 +36,10 @@ export const validateAttachmentLimits = Effect.fn("AttachmentClaims.validateAtta
 export interface ClaimedAttachments {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly claimedPaths: ReadonlyArray<string>;
+  readonly releasePins: Effect.Effect<void>;
+  readonly bindReceipt: (
+    owner: Extract<AttachmentReservationOwner, { kind: "command" }>,
+  ) => Effect.Effect<void, AttachmentClaimError>;
 }
 
 export function attachmentIsPendingUpload(attachment: ChatAttachment): boolean {
@@ -57,7 +64,7 @@ export const releaseClaimedAttachments = Effect.fn("AttachmentClaims.releaseClai
  * thread-scoped id, and rewrites the attachment ref. A copy, not a move — the
  * pending file stays behind as the retry source for a failed bootstrap, and
  * the periodic pending sweep reclaims it later. Already-claimed attachments
- * pass through untouched.
+ * retain a receipt pin and verify managed bytes before admission.
  */
 export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingAttachments")(
   function* (input: {
@@ -65,6 +72,13 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
     readonly attachments: ReadonlyArray<ChatAttachment>;
   }) {
     yield* validateAttachmentLimits(input.attachments);
+    if (input.attachments.length === 0)
+      return {
+        attachments: [],
+        claimedPaths: [],
+        releasePins: Effect.void,
+        bindReceipt: () => Effect.void,
+      } satisfies ClaimedAttachments;
     if (
       new Set(input.attachments.map((attachment) => attachment.id)).size !==
       input.attachments.length
@@ -73,17 +87,26 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
         message: "Duplicate attachment ids are not allowed.",
       });
     }
-    if (!input.attachments.some(attachmentIsPendingUpload)) {
-      return { attachments: input.attachments, claimedPaths: [] } satisfies ClaimedAttachments;
-    }
     const serverConfig = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     const claimedPaths: string[] = [];
+    const releases: Array<Effect.Effect<void>> = [];
+    const ready: Array<
+      (
+        owner: AttachmentReservationOwner,
+      ) => Effect.Effect<void, import("effect/PlatformError").PlatformError>
+    > = [];
+    const releasePins = Effect.suspend(() =>
+      Effect.forEach(releases, (release) => release, { discard: true }),
+    );
     const attachments = yield* Effect.forEach(
       input.attachments,
       (attachment) =>
         Effect.gen(function* () {
           if (!attachmentIsPendingUpload(attachment)) {
+            const pin = yield* reserveAttachment(attachment);
+            releases.push(pin.release);
+            ready.push(pin.ready);
             return attachment;
           }
           const claim = planAttachmentClaim({
@@ -96,6 +119,12 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
               message: `Attachment '${attachment.name}' cannot be sent: ${claim.reason}.`,
             });
           }
+          const pin = yield* reserveAttachment(
+            { ...attachment, id: ChatAttachmentId.make(claim.finalId) },
+            { publication: true },
+          );
+          releases.push(pin.release);
+          ready.push(pin.ready);
           const info = yield* fileSystem.stat(claim.currentPath).pipe(
             Effect.mapError(
               (cause) =>
@@ -143,7 +172,39 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
           return normalized;
         }),
       { concurrency: 1 },
-    ).pipe(Effect.onError(() => releaseClaimedAttachments(claimedPaths)));
-    return { attachments, claimedPaths } satisfies ClaimedAttachments;
+    ).pipe(
+      Effect.mapError((cause) =>
+        isAttachmentClaimError(cause)
+          ? cause
+          : new AttachmentClaimError({
+              message: "Attachment bytes are unavailable before admission.",
+              cause,
+            }),
+      ),
+      Effect.onError(() =>
+        releaseClaimedAttachments(claimedPaths).pipe(Effect.andThen(releasePins)),
+      ),
+    );
+    return {
+      attachments,
+      claimedPaths,
+      releasePins,
+      bindReceipt: (owner) =>
+        Effect.forEach(ready, (publish) => publish(owner), { discard: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new AttachmentClaimError({
+                message: "Could not record attachment receipt ownership.",
+                cause,
+              }),
+          ),
+          Effect.onError(() =>
+            releaseClaimedAttachments(claimedPaths).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.andThen(releasePins),
+            ),
+          ),
+        ),
+    } satisfies ClaimedAttachments;
   },
 );

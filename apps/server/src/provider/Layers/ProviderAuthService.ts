@@ -104,6 +104,33 @@ export const makeProviderAuthService = Effect.gen(function* () {
         ),
       { discard: true },
     );
+    // Stopped/error projections do not certify native close. Exact instance
+    // closure also joins retained pending/failed owners before credential writes.
+    yield* Effect.forEach(
+      affectedIds,
+      (affectedId) =>
+        Effect.gen(function* () {
+          if (affectedId !== instanceId) {
+            const current = yield* registry.getInstance(affectedId);
+            if (
+              !binding ||
+              current?.auth?.credentialBinding?.key !== binding.key ||
+              current.auth.credentialBinding.owner !== binding.owner
+            )
+              return;
+          }
+          yield* providerSessions
+            .closeInstance(affectedId)
+            .pipe(
+              Effect.mapError(() =>
+                failure(
+                  "Could not finish native closure for this provider. Recovery is required before changing sign-in.",
+                ),
+              ),
+            );
+        }),
+      { discard: true },
+    );
     if (binding) {
       yield* Effect.forEach(
         (yield* registry.listInstances).filter(

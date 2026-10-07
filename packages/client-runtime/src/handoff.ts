@@ -1,8 +1,12 @@
 import type {
   OrchestrationV2Run,
+  OrchestrationV2ContextTransfer,
+  OrchestrationV2ProjectedTurnItem,
   OrchestrationV2TurnItem,
   ProviderInstanceId,
 } from "@t3tools/contracts";
+
+import { resolveForkInitialization } from "@t3tools/shared/orchestrationV2ForkInitialization";
 
 /**
  * The subset of a projection run that handoff rows read. Kept minimal so the
@@ -61,4 +65,16 @@ function latestRunModelBefore(
     if (latest === undefined || run.ordinal > latest.ordinal) latest = run;
   }
   return latest?.modelSelection.model;
+}
+
+/** Fork initialization is already represented by the destination's fork boundary. */
+export function isForkInitializationHandoff(
+  row: OrchestrationV2ProjectedTurnItem,
+  transfers: ReadonlyArray<OrchestrationV2ContextTransfer> | undefined,
+): boolean {
+  if (row.visibility === "synthetic") return false;
+  return (
+    resolveForkInitialization(row.item, row.visibility === "local" ? transfers : undefined) !==
+    undefined
+  );
 }

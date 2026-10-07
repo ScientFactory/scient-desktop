@@ -3,18 +3,19 @@ import {
   CheckpointRef,
   ComposerContextId,
   EnvironmentId,
-  EventId,
   MessageId,
   NodeId,
   OrchestrationV2TurnItemJson,
+  OrchestrationV2ContextTransfer,
+  ProviderDriverKind,
+  ProviderInstanceId,
   RunId,
   ThreadId,
-  TurnId,
-  type OrchestrationThreadActivity,
+  TurnItemId,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import {
   deriveAgentPanelModel,
-  foldSubagentActivities,
   projectedSubagentsToRuntime,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
@@ -31,11 +32,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
-import { deriveWorkLogEntries } from "../../session-logic";
+import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
 
 const decodeNativeWorkflowItem = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
+const decodeTimelineTransfer = Schema.decodeUnknownSync(OrchestrationV2ContextTransfer);
 
 const activityTestState = vi.hoisted(() => ({
   expanded: false,
@@ -584,6 +586,138 @@ describe("MessagesTimeline", () => {
       }
     },
   );
+
+  it.each([
+    "fork",
+    "provider_handoff",
+    "merge_back",
+    "missing",
+    "later-run",
+    "inherited",
+    "proven-inherited",
+  ] as const)("renders one fork boundary while preserving %s handoff semantics", (kind) => {
+    const item = decodeNativeWorkflowItem({
+      id: "fork-init-context-row",
+      threadId: "thread-1",
+      runId: "fork-first-run",
+      nodeId: "first-root",
+      providerThreadId: "provider-1",
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 2,
+      status: "completed",
+      title: "Fork context",
+      startedAt: MESSAGE_CREATED_AT,
+      completedAt: MESSAGE_CREATED_AT,
+      updatedAt: MESSAGE_CREATED_AT,
+      type: "handoff",
+      contextHandoffId: "context-1",
+      ...(kind === "proven-inherited"
+        ? {
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            inheritedFrom: {
+              threadId: "child",
+              itemId: "original-handoff",
+              runId: "child-first-run",
+              status: "completed",
+            },
+            forkInitialization: {
+              transferId: "old-fork-transfer",
+              contextHandoffId: "context-1",
+              threadId: "child",
+              runId: "child-first-run",
+            },
+          }
+        : {}),
+      fromProviderThreadIds: [],
+      toProviderThreadId: "provider-1",
+      fromProviderInstanceIds: [],
+      toProviderInstanceId: "codex",
+      strategy: "full_thread_summary",
+    });
+    const now = DateTime.makeUnsafe(MESSAGE_CREATED_AT);
+    const transfer = decodeTimelineTransfer({
+      id: "transfer-1",
+      type: kind === "provider_handoff" || kind === "merge_back" ? kind : "fork",
+      sourceThreadId: "source",
+      targetThreadId: "thread-1",
+      sourcePoint: { threadId: "source" },
+      basePoint: null,
+      sourceProviderInstanceId: "codex",
+      targetProviderInstanceId: "codex",
+      targetRunId: kind === "later-run" ? "later-run" : "fork-first-run",
+      status: "consumed",
+      resolution: { strategy: "portable_context", contextHandoffId: "context-1" },
+      createdBy: "user",
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+      consumedAt: now,
+    });
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        hasForkBaseline
+        forkBaselineAssistantMessageId={null}
+        contextTransfers={kind === "missing" ? undefined : [transfer]}
+        timelineEntries={[
+          {
+            kind: "event",
+            id: item.id,
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem: {
+              item,
+              position: 2,
+              visibility:
+                kind === "inherited" || kind === "proven-inherited" ? "inherited" : "local",
+              sourceThreadId: ThreadId.make("thread-1"),
+              sourceItemId: item.id,
+            },
+          },
+          ...(kind === "proven-inherited"
+            ? [
+                {
+                  kind: "event" as const,
+                  id: "later-real-switch",
+                  createdAt: MESSAGE_CREATED_AT,
+                  projectedItem: {
+                    item: decodeNativeWorkflowItem({
+                      ...item,
+                      id: "later-real-switch",
+                      ordinal: 3,
+                      startedAt: MESSAGE_CREATED_AT,
+                      completedAt: MESSAGE_CREATED_AT,
+                      updatedAt: MESSAGE_CREATED_AT,
+                      contextHandoffId: "later-provider-context",
+                      forkInitialization: undefined,
+                      title: "Provider handoff",
+                      toProviderInstanceId: "claudeAgent",
+                      inheritedFrom: {
+                        threadId: "child",
+                        itemId: "later-real-switch",
+                        runId: "child-second-run",
+                        status: "completed",
+                      },
+                    }),
+                    position: 3,
+                    visibility: "inherited" as const,
+                    sourceThreadId: ThreadId.make("child"),
+                    sourceItemId: TurnItemId.make("later-real-switch"),
+                  },
+                },
+              ]
+            : []),
+        ]}
+      />,
+    );
+    expect(markup.match(/Conversation forked here/g)).toHaveLength(1);
+    if (kind === "proven-inherited") expect(markup.match(/Context handoff/g)).toHaveLength(1);
+    else if (kind === "fork") expect(markup).not.toContain("Context handoff");
+    else expect(markup).toContain("Context handoff");
+  });
 
   it("renders elapsed time for a completed turn", () => {
     const runId = RunId.make("turn-with-fold");
@@ -2207,6 +2341,7 @@ describe("MessagesTimeline", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
+        onForkAssistantMessage={() => undefined}
         timelineEntries={[
           {
             id: "assistant-message-1",
@@ -2227,7 +2362,56 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('aria-label="Fork from this response"');
+    expect(markup.match(/aria-label="Fork conversation from this response"/g)).toHaveLength(1);
+    expect(markup).not.toContain('aria-label="Fork from this response"');
+  });
+
+  it("renders the prior Scient fork separator once and retains outbound fork navigation", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const event = (id: string, targetThreadId: string) => ({
+      kind: "event" as const,
+      id,
+      createdAt: MESSAGE_CREATED_AT,
+      projectedItem: {
+        position: 0,
+        visibility: "local" as const,
+        sourceThreadId: ThreadId.make("thread-1"),
+        sourceItemId: TurnItemId.make(id),
+        item: decodeNativeWorkflowItem({
+          id,
+          threadId: "thread-1",
+          type: "fork",
+          runId: null,
+          nodeId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 0,
+          status: "completed",
+          title: null,
+          startedAt: null,
+          completedAt: null,
+          updatedAt: MESSAGE_CREATED_AT,
+          source:
+            targetThreadId === "thread-1"
+              ? { type: "run", threadId: "original-thread", runId: "original-run" }
+              : { type: "node", nodeId: "outgoing-source-node" },
+          targetThreadId,
+        }),
+      },
+    });
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        hasForkBaseline
+        forkBaselineAssistantMessageId={null}
+        timelineEntries={[event("incoming-fork", "thread-1"), event("outgoing-fork", "next-child")]}
+      />,
+    );
+    expect(markup.match(/Conversation forked here/g)).toHaveLength(1);
+    expect(markup).not.toContain("Forked from conversation");
+    expect(markup).toContain("Open fork");
+    expect(markup).toContain("bg-border/60");
   });
 
   it("applies Scient BiDi to user messages while keeping HTML literal", async () => {
@@ -3797,63 +3981,65 @@ it("announces a runtime failure as an operation, preserving the concise label", 
 });
 
 describe("sub-agent rows: what runs, whether it is alive, how it ended", () => {
-  // Activities as the server stores them for two Droid Task calls and a TaskOutput wait.
+  // V2 turn items as the server projects them for two Droid Task calls and a TaskOutput wait.
   const START = Date.parse(MESSAGE_CREATED_AT);
   const at = (seconds: number) => new Date(START + seconds * 1_000).toISOString();
-  const activityTurnId = TurnId.make("turn-subagents");
   const runId = RunId.make("turn-subagents");
-  const activity = (
-    id: string,
-    kind: string,
-    seconds: number,
-    payload: Record<string, unknown>,
-  ): OrchestrationThreadActivity => ({
-    id: EventId.make(id),
-    kind,
-    summary: kind,
-    tone: "info",
-    turnId: activityTurnId,
-    createdAt: at(seconds),
-    payload: kind.startsWith("task.") ? { ...payload, agentKind: "agent" } : payload,
-  });
-  const linkage = (taskId: string, title: string) => ({
-    taskId,
-    toolUseId: taskId,
-    taskType: "subagent",
-    title,
-    role: "explorer",
-  });
-  const code = linkage("task-code", "Audit scient-desktop code smells");
-  const ci = linkage("task-ci", "Audit build, CI, and release pipeline");
+  const threadId = ThreadId.make("thread-subagents");
+  const itemBase = {
+    threadId,
+    runId,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+  };
   const note = "Droid reports a sub-agent's steps only when it finishes.";
-  const launched = [
-    activity("a1", "task.started", 60, { ...code, detail: code.title }),
-    activity("a2", "task.progress", 60, {
-      ...code,
-      detail: note,
-      summary: note,
-      status: "running",
-    }),
-    activity("a3", "task.started", 60, { ...ci, detail: ci.title }),
-    activity("a4", "task.progress", 60, { ...ci, detail: note, summary: note, status: "running" }),
-  ];
-  const cancelled = activity("a5", "task.updated", 90, {
-    ...code,
-    status: "cancelled",
-    error: "Cancelled when you sent a follow-up message.",
+  const subagent = (
+    id: string,
+    title: string,
+    ordinal: number,
+    status: "running" | "cancelled",
+  ): Extract<OrchestrationV2TurnItem, { type: "subagent" }> => ({
+    ...itemBase,
+    id: TurnItemId.make(id),
+    nodeId: NodeId.make(id),
+    ordinal,
+    type: "subagent",
+    subagentId: NodeId.make(id),
+    origin: "provider_native",
+    driver: ProviderDriverKind.make("droid"),
+    providerInstanceId: ProviderInstanceId.make("droid"),
+    childThreadId: null,
+    title,
+    prompt: title,
+    progress: note,
+    result: status === "cancelled" ? "Cancelled when you sent a follow-up message." : null,
+    status,
+    startedAt: DateTime.makeUnsafe(at(60)),
+    completedAt: status === "cancelled" ? DateTime.makeUnsafe(at(90)) : null,
+    updatedAt: DateTime.makeUnsafe(at(status === "cancelled" ? 90 : 60)),
   });
-  const waiting = {
-    ...activity("a6", "tool.updated", 100, {
-      itemType: "collab_agent_tool_call",
-      toolCallId: "wait-1",
-      status: "inProgress",
-      title: "Waiting for sub-agent · Review OMP host integration (up to 10 min)",
-      data: { toolCallId: "wait-1", kind: "other" },
-    }),
-    tone: "tool" as const,
+  const subagents = [
+    subagent("task-ci", "Audit build, CI, and release pipeline", 0, "running"),
+    subagent("task-code", "Audit scient-desktop code smells", 1, "cancelled"),
+  ];
+  const waiting: OrchestrationV2TurnItem = {
+    ...itemBase,
+    id: TurnItemId.make("wait-1"),
+    nodeId: NodeId.make("root"),
+    ordinal: 2,
+    type: "dynamic_tool",
+    toolName: "TaskOutput",
+    input: { taskId: "task-ci", timeout: 600_000 },
+    status: "running",
+    title: "Waiting for sub-agent · Review OMP host integration (up to 10 min)",
+    startedAt: DateTime.makeUnsafe(at(100)),
+    completedAt: null,
+    updatedAt: DateTime.makeUnsafe(at(100)),
   };
 
-  const timeline = (activities: ReadonlyArray<OrchestrationThreadActivity>) => ({
+  const timeline = (items: ReadonlyArray<OrchestrationV2TurnItem>) => ({
     isWorking: true,
     runningRunId: runId,
     activeTurnStartedAt: MESSAGE_CREATED_AT,
@@ -3863,13 +4049,26 @@ describe("sub-agent rows: what runs, whether it is alive, how it ended", () => {
       startedAt: MESSAGE_CREATED_AT,
       completedAt: null,
     },
-    agentPanelModel: deriveAgentPanelModel({ agents: foldSubagentActivities(activities) }),
-    timelineEntries: deriveWorkLogEntries(activities).map((entry) => ({
-      id: entry.id,
-      kind: "work" as const,
-      createdAt: entry.createdAt,
-      entry: { ...entry, runId },
-    })),
+    agentPanelModel: deriveAgentPanelModel({
+      agents: [],
+      v2Projection: projectedSubagentsToRuntime(
+        items.flatMap((item) =>
+          item.type === "subagent"
+            ? [{ ...item, model: null, presentation: { kind: "subagent", role: "explorer" } }]
+            : [],
+        ),
+      ),
+    }),
+    timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+      optimisticMessages: [],
+      visibleTurnItems: items.map((item, position) => ({
+        position,
+        visibility: "local" as const,
+        sourceThreadId: threadId,
+        sourceItemId: item.id,
+        item,
+      })),
+    }),
   });
   const textOf = (renderer: ReactTestRenderer) =>
     renderer.root
@@ -3887,7 +4086,7 @@ describe("sub-agent rows: what runs, whether it is alive, how it ended", () => {
 
   it("says on the collapsed row how many sub-agents work and for how long", () => {
     const markup = renderToStaticMarkup(
-      <MessagesTimeline {...buildProps()} {...timeline([...launched, cancelled])} />,
+      <MessagesTimeline {...buildProps()} {...timeline(subagents)} />,
     );
     expect(markup).toContain("Kicked off 2 subagents · 1 working");
     // Since the launch, not since the turn began ("Working for 2m 5s").
@@ -3901,9 +4100,7 @@ describe("sub-agent rows: what runs, whether it is alive, how it ended", () => {
     let renderer: ReactTestRenderer | undefined;
     try {
       await act(() => {
-        renderer = create(
-          <MessagesTimeline {...buildProps()} {...timeline([...launched, cancelled])} />,
-        );
+        renderer = create(<MessagesTimeline {...buildProps()} {...timeline(subagents)} />);
       });
       await act(() => renderer!.root.findByProps({ "aria-expanded": false }).props.onClick());
       const text = textOf(renderer!);

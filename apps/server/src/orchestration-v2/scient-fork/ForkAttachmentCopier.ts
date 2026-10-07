@@ -12,6 +12,7 @@ import {
   toSafeThreadAttachmentSegment,
 } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { reserveAttachment } from "../AttachmentFileUse.ts";
 
 export class ScientForkAttachmentCopyError extends Schema.TaggedError<ScientForkAttachmentCopyError>()(
   "ScientForkAttachmentCopyError",
@@ -32,6 +33,8 @@ export class ScientForkAttachmentCopyError extends Schema.TaggedError<ScientFork
   }
 }
 
+const isCopyError = Schema.is(ScientForkAttachmentCopyError);
+
 export interface ScientForkAttachmentCopierShape {
   readonly checkSources: (input: {
     readonly threadId: ThreadId;
@@ -50,7 +53,13 @@ export class ScientForkAttachmentCopier extends Context.Service<
 
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
-  const { attachmentsDir } = yield* ServerConfig;
+  const config = yield* ServerConfig;
+  const { attachmentsDir } = config;
+  const reserve = (attachment: ChatAttachment, options?: { readonly publication?: boolean }) =>
+    reserveAttachment(attachment, options).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(ServerConfig, config),
+    );
   const checkSources: ScientForkAttachmentCopierShape["checkSources"] = (input) =>
     Effect.forEach(
       input.attachments,
@@ -124,6 +133,8 @@ const make = Effect.gen(function* () {
           yield* Effect.addFinalizer(() =>
             fileSystem.remove(temporaryPath, { force: true }).pipe(Effect.ignoreCause),
           );
+          const targetPin = yield* reserve(copy.target, { publication: true });
+          yield* Effect.addFinalizer(() => targetPin.release);
           const existingTarget = yield* fileSystem
             .stat(targetPath)
             .pipe(Effect.catch(() => Effect.succeed(null)));
@@ -132,6 +143,18 @@ const make = Effect.gen(function* () {
             existingTarget.size === BigInt(copy.target.sizeBytes)
           )
             return;
+          const sourcePin = yield* reserve(copy.source).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ScientForkAttachmentCopyError({
+                  threadId: input.threadId,
+                  reason: "source-unavailable",
+                  detail: `Retained attachment '${copy.source.name}' is no longer available in the origin conversation.`,
+                  cause,
+                }),
+            ),
+          );
+          yield* Effect.addFinalizer(() => sourcePin.release);
           const sourceInfo = yield* fileSystem.stat(sourcePath).pipe(
             Effect.mapError(
               (cause) =>
@@ -196,7 +219,20 @@ const make = Effect.gen(function* () {
                 }),
             ),
           );
-        }).pipe(Effect.scoped),
+        }).pipe(
+          Effect.scoped,
+          Effect.uninterruptible,
+          Effect.mapError((cause) =>
+            isCopyError(cause)
+              ? cause
+              : new ScientForkAttachmentCopyError({
+                  threadId: input.threadId,
+                  reason: "target-write-failed",
+                  detail: "Unable to reserve retained attachment bytes.",
+                  cause,
+                }),
+          ),
+        ),
       { concurrency: 1, discard: true },
     );
   });
@@ -205,12 +241,3 @@ const make = Effect.gen(function* () {
 });
 
 export const ScientForkAttachmentCopierLive = Layer.effect(ScientForkAttachmentCopier, make);
-
-export const testLayer = (
-  overrides?: Partial<ScientForkAttachmentCopierShape>,
-): Layer.Layer<ScientForkAttachmentCopier> =>
-  Layer.succeed(ScientForkAttachmentCopier, {
-    copyAll: () => Effect.void,
-    checkSources: () => Effect.void,
-    ...overrides,
-  });

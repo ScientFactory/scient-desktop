@@ -18,14 +18,12 @@ import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
-import * as Stream from "effect/Stream";
 
-import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
+import { nativeOmpSession, watchNativeOmpTextTurn } from "../testUtils/nativeOmpSession.ts";
 import { checkOmpProviderStatus } from "../Layers/OmpProvider.ts";
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
 import { ompLiveInstance, ompQualifyBinary, ompQualifyModel } from "../omp/OmpLive.testFixtures.ts";
@@ -78,7 +76,14 @@ const scientAgentInstance = (home: string, stateDir: string, instanceId: string)
   return {
     agentRoot,
     environment: scientAgentProcessEnvironment({
-      baseEnv: { ...process.env, HOME: home, USERPROFILE: home },
+      baseEnv: {
+        PATH: process.env.PATH ?? "",
+        HOME: home,
+        USERPROFILE: home,
+        HTTPS_PROXY: "http://127.0.0.1:9",
+        HTTP_PROXY: "http://127.0.0.1:9",
+        NO_PROXY: "127.0.0.1,localhost",
+      },
       root: agentRoot,
       platform: HostProcessPlatform.defaultValue(),
     }),
@@ -145,7 +150,7 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
       expect(result.version).toMatch(/^0\.\d+\.\d+/u);
       expect(result.models.length).toBeGreaterThan(0);
       NodeFS.rmSync(root, { recursive: true, force: true });
-    }).pipe(Effect.provide(layer)),
+    }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.effect("lists its sign-ins and runs one the way Scient's sign-in screen does", () =>
@@ -206,34 +211,36 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
       yield* Effect.scoped(actions.disconnectAccount!("openrouter"));
       expect(homeEntries(home)).toEqual([]);
       NodeFS.rmSync(root, { recursive: true, force: true });
-    }).pipe(Effect.provide(layer)),
+    }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.effect("keeps every file it owns under the root Scient assigns", () =>
     Effect.gen(function* () {
       const { root, home, stateDir, attachmentsDir } = makeRoot("ownership");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+      );
       const { environment, agentRoot } = scientAgentInstance(home, stateDir, "scient");
       const workspace = NodePath.join(root, "workspace");
       NodeFS.mkdirSync(workspace);
       writeStubModel(agentRoot);
-      const adapter = yield* makeOmpAdapter({
+      const instanceId = ProviderInstanceId.make("scient");
+      const session = yield* nativeOmpSession({
+        root,
+        cwd: workspace,
         target: scientAgentTarget,
         binaryPath: binary,
-        providerInstanceId: ProviderInstanceId.make("scient"),
+        instanceId,
+        threadId: ThreadId.make("scient-agent-ownership"),
+        modelSelection: createModelSelection(instanceId, "scient-agent-live-test/stub"),
         stateDir,
         attachmentsDir,
         environment,
         homePath: agentRoot,
         makeProcess: yield* gatedProcess,
       });
-      const threadId = ThreadId.make("scient-agent-ownership");
-      const session = yield* adapter.startSession({
-        threadId,
-        cwd: workspace,
-        runtimeMode: "full-access",
-      });
-      expect(session.status).toBe("ready");
-      yield* adapter.stopAll();
+      expect(session.runtime.providerSession.status).toBe("ready");
+      yield* session.close;
 
       // The agent's own state: only under its root.
       for (const expected of ["agent", "logs", "natives"]) {
@@ -246,13 +253,15 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
       expect(NodeFS.existsSync(NodePath.join(stateDir, "omp"))).toBe(false);
       // Starting a conversation writes nothing into the project.
       expect(NodeFS.readdirSync(workspace)).toEqual([]);
-      NodeFS.rmSync(root, { recursive: true, force: true });
-    }).pipe(Effect.provide(layer)),
+    }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.effect("keeps its state under that root when a .env names another place", () =>
     Effect.gen(function* () {
       const { root, home, stateDir, attachmentsDir } = makeRoot("dotenv");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+      );
       const { environment, agentRoot } = scientAgentInstance(home, stateDir, "scient");
       const workspace = NodePath.join(root, "workspace");
       const elsewhere = NodePath.join(root, "elsewhere");
@@ -269,31 +278,30 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
       NodeFS.writeFileSync(NodePath.join(workspace, ".env"), dotenv);
       NodeFS.writeFileSync(NodePath.join(home, ".env"), dotenv);
       writeStubModel(agentRoot);
-      const adapter = yield* makeOmpAdapter({
+      const instanceId = ProviderInstanceId.make("scient");
+      const session = yield* nativeOmpSession({
+        root,
+        cwd: workspace,
         target: scientAgentTarget,
         binaryPath: binary,
-        providerInstanceId: ProviderInstanceId.make("scient"),
+        instanceId,
+        threadId: ThreadId.make("scient-agent-dotenv"),
+        modelSelection: createModelSelection(instanceId, "scient-agent-live-test/stub"),
         stateDir,
         attachmentsDir,
         environment,
         homePath: agentRoot,
         makeProcess: yield* gatedProcess,
       });
-      const session = yield* adapter.startSession({
-        threadId: ThreadId.make("scient-agent-dotenv"),
-        cwd: workspace,
-        runtimeMode: "full-access",
-      });
-      expect(session.status).toBe("ready");
-      yield* adapter.stopAll();
+      expect(session.runtime.providerSession.status).toBe("ready");
+      yield* session.close;
 
       expect(NodeFS.existsSync(NodePath.join(agentRoot, "agent", "agent.db"))).toBe(true);
       expect(NodeFS.existsSync(NodePath.join(agentRoot, "profiles"))).toBe(false);
       expect(NodeFS.existsSync(elsewhere)).toBe(false);
       expect(homeEntries(home)).toEqual([".env"]);
       expect(NodeFS.readdirSync(workspace)).toEqual([".env"]);
-      NodeFS.rmSync(root, { recursive: true, force: true });
-    }).pipe(Effect.provide(layer)),
+    }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   describe.runIf(ompQualifyBinary)("beside a real Oh My Pi", () => {
@@ -324,7 +332,7 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
         expect(asOmp.status).toBe("error");
         expect(asOmp.message).toBe(ompTarget.unsupportedDetail);
         NodeFS.rmSync(root, { recursive: true, force: true });
-      }).pipe(Effect.provide(layer)),
+      }).pipe(Effect.scoped, Effect.provide(layer)),
     );
 
     it.effect(
@@ -339,48 +347,52 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
           // home or profile setting uses it.
           const ompHome = NodePath.join(home, ".omp");
           const ompEnvironment: NodeJS.ProcessEnv = {
-            ...process.env,
+            PATH: process.env.PATH ?? "",
+            HTTPS_PROXY: "http://127.0.0.1:9",
+            HTTP_PROXY: "http://127.0.0.1:9",
+            NO_PROXY: "127.0.0.1,localhost",
             HOME: home,
             USERPROFILE: home,
           };
           for (const name of Object.values(ompTarget.environment)) delete ompEnvironment[name];
-          const omp = yield* makeOmpAdapter({
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+          );
+          const ompId = ProviderInstanceId.make("omp");
+          const omp = yield* nativeOmpSession({
+            root,
+            cwd: workspace,
             target: ompTarget,
             binaryPath: ompBinary,
-            providerInstanceId: ProviderInstanceId.make("omp"),
+            instanceId: ompId,
+            threadId: ThreadId.make("coexistence-omp"),
+            modelSelection: createModelSelection(ompId, ompQualifyModel),
             stateDir,
             attachmentsDir,
             environment: ompEnvironment,
             makeProcess,
           });
-          const ompThread = ThreadId.make("coexistence-omp");
-          yield* omp.startSession({
-            threadId: ompThread,
-            cwd: workspace,
-            runtimeMode: "full-access",
-          });
           const ompFilesBefore = tree(ompHome);
           expect(ompFilesBefore.length).toBeGreaterThan(0);
 
           const { environment, agentRoot } = scientAgentInstance(home, stateDir, "scient");
-          const scientAgent = yield* makeOmpAdapter({
+          const scientId = ProviderInstanceId.make("scient");
+          const scientAgent = yield* nativeOmpSession({
+            root,
+            cwd: workspace,
             target: scientAgentTarget,
             binaryPath: binary,
-            providerInstanceId: ProviderInstanceId.make("scient"),
+            instanceId: scientId,
+            threadId: ThreadId.make("coexistence-scient-agent"),
+            modelSelection: createModelSelection(scientId, ompQualifyModel),
             stateDir,
             attachmentsDir,
             environment,
             homePath: agentRoot,
             makeProcess,
           });
-          const scientAgentThread = ThreadId.make("coexistence-scient-agent");
-          yield* scientAgent.startSession({
-            threadId: scientAgentThread,
-            cwd: workspace,
-            runtimeMode: "full-access",
-          });
-          expect(yield* omp.hasSession(ompThread)).toBe(true);
-          expect(yield* scientAgent.hasSession(scientAgentThread)).toBe(true);
+          expect(omp.runtime.providerSession.status).toBe("ready");
+          expect(scientAgent.runtime.providerSession.status).toBe("ready");
 
           // Scient Agent added nothing to the home directory: Oh My Pi's home
           // is still the only entry.
@@ -392,9 +404,9 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
           );
 
           // Stopping one leaves the other running.
-          yield* scientAgent.stopAll();
-          expect(yield* scientAgent.hasSession(scientAgentThread)).toBe(false);
-          expect(yield* omp.hasSession(ompThread)).toBe(true);
+          yield* scientAgent.close;
+          expect(scientAgent.runtime.providerSession.status).toBe("stopped");
+          expect(omp.runtime.providerSession.status).toBe("ready");
           // Scient Agent's whole life cycle removed nothing Oh My Pi wrote.
           const ompFilesAfter = new Set(tree(ompHome));
           for (const file of ompFilesBefore) {
@@ -403,9 +415,8 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
             }
             expect(ompFilesAfter.has(file), `Oh My Pi lost ${file}`).toBe(true);
           }
-          yield* omp.stopAll();
-          NodeFS.rmSync(root, { recursive: true, force: true });
-        }).pipe(Effect.provide(layer)),
+          yield* omp.close;
+        }).pipe(Effect.scoped, Effect.provide(layer)),
       120_000,
     );
   });
@@ -420,38 +431,53 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
           NodeFS.mkdirSync(workspace);
           const makeProcess = yield* gatedProcess;
           const { environment, agentRoot } = scientAgentInstance(home, stateDir, "scient");
-          const scientAgent = yield* makeOmpAdapter({
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+          );
+          const scientId = ProviderInstanceId.make("scient");
+          const scientOptions = {
+            root,
+            cwd: workspace,
             target: scientAgentTarget,
             binaryPath: binary,
-            providerInstanceId: ProviderInstanceId.make("scient"),
+            instanceId: scientId,
+            modelSelection: createModelSelection(scientId, ompQualifyModel),
             stateDir,
             attachmentsDir,
             environment,
             homePath: agentRoot,
             makeProcess,
+          };
+          const ompInstance = ompLiveInstance(NodePath.join(root, "omp"), {
+            baseEnv: {
+              PATH: process.env.PATH ?? "",
+              HTTPS_PROXY: "http://127.0.0.1:9",
+              HTTP_PROXY: "http://127.0.0.1:9",
+              NO_PROXY: "127.0.0.1,localhost",
+            },
           });
-          const ompInstance = ompLiveInstance(NodePath.join(root, "omp"));
-          const omp = yield* makeOmpAdapter({
+          const ompId = ProviderInstanceId.make("omp");
+          const ompOptions = {
+            root,
+            cwd: workspace,
             target: ompTarget,
             binaryPath: ompQualifyBinary ?? "",
-            providerInstanceId: ProviderInstanceId.make("omp"),
+            instanceId: ompId,
+            modelSelection: createModelSelection(ompId, ompQualifyModel),
             stateDir,
             attachmentsDir,
             environment: ompInstance.environment,
             homePath: ompInstance.homePath,
             makeProcess,
-          });
+          };
           const conversations = Array.from({ length: 6 }, (_, index) => index).flatMap((index) => [
-            { adapter: scientAgent, threadId: ThreadId.make(`load-scient-agent-${index}`) },
-            { adapter: omp, threadId: ThreadId.make(`load-omp-${index}`) },
+            { ...scientOptions, threadId: ThreadId.make(`load-scient-agent-${index}`) },
+            { ...ompOptions, threadId: ThreadId.make(`load-omp-${index}`) },
           ]);
-          const sessions = yield* Effect.all(
-            conversations.map(({ adapter, threadId }) =>
-              adapter.startSession({ threadId, cwd: workspace, runtimeMode: "full-access" }),
-            ),
-            { concurrency: "unbounded" },
-          );
-          expect(sessions.map((session) => session.status)).toEqual(
+          const sessions = yield* Effect.forEach(conversations, nativeOmpSession, {
+            concurrency: "unbounded",
+          });
+          expect(sessions.map((session) => session.runtime.providerSession.status)).toEqual(
             conversations.map(() => "ready"),
           );
           // Every session directory holds exactly one product's conversation.
@@ -467,14 +493,15 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
               .filter((pid) => pid.trim().length > 0);
           expect(running().length).toBeGreaterThanOrEqual(conversations.length);
 
-          yield* Effect.all([scientAgent.stopAll(), omp.stopAll()], { concurrency: "unbounded" });
-          for (const { adapter, threadId } of conversations) {
-            expect(yield* adapter.hasSession(threadId)).toBe(false);
-          }
+          yield* Effect.forEach(sessions, (session) => session.close, {
+            concurrency: "unbounded",
+            discard: true,
+          });
+          for (const session of sessions)
+            expect(session.runtime.providerSession.status).toBe("stopped");
           expect(running()).toEqual([]);
           expect(homeEntries(home)).toEqual([]);
-          NodeFS.rmSync(root, { recursive: true, force: true });
-        }).pipe(Effect.provide(layer)),
+        }).pipe(Effect.scoped, Effect.provide(layer)),
       180_000,
     );
   });
@@ -489,38 +516,31 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
         const { environment, agentRoot } = scientAgentInstance(home, stateDir, "scient");
         const instanceId = ProviderInstanceId.make("scient");
         const makeProcess = yield* gatedProcess;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+        );
         const options = {
+          root,
+          cwd: workspace,
           target: scientAgentTarget,
           binaryPath: binary,
-          providerInstanceId: instanceId,
+          instanceId,
+          threadId: ThreadId.make("scient-agent-turn"),
+          modelSelection: createModelSelection(instanceId, ompQualifyModel),
           stateDir,
           attachmentsDir,
           environment,
           homePath: agentRoot,
           makeProcess,
         };
-        const adapter = yield* makeOmpAdapter(options);
-        const threadId = ThreadId.make("scient-agent-turn");
-        yield* adapter.startSession({ threadId, cwd: workspace, runtimeMode: "full-access" });
-        const terminal = yield* Deferred.make<unknown>();
-        yield* adapter.streamEvents.pipe(
-          Stream.runForEach((event) =>
-            event.type === "turn.completed" || event.type === "turn.aborted"
-              ? Deferred.succeed(terminal, event)
-              : Effect.void,
-          ),
-          Effect.forkScoped,
+        const session = yield* nativeOmpSession(options);
+        const terminal = yield* watchNativeOmpTextTurn(session.events);
+        yield* session.start({
+          text: "Create a file named answer.txt containing only the number 42. Then reply with exactly QUALIFIED_SCIENT_AGENT.",
+        });
+        expect((yield* terminal.pipe(Effect.timeout("120 seconds"))).trim()).toBe(
+          "QUALIFIED_SCIENT_AGENT",
         );
-        yield* adapter.sendTurn({
-          threadId,
-          input:
-            "Create a file named answer.txt containing only the number 42. Then reply with exactly QUALIFIED_SCIENT_AGENT.",
-          modelSelection: createModelSelection(instanceId, ompQualifyModel),
-        });
-        expect(yield* Deferred.await(terminal)).toMatchObject({
-          type: "turn.completed",
-          payload: { state: "completed" },
-        });
         // The task's output is in the project; the agent's state is not.
         expect(NodeFS.readFileSync(NodePath.join(workspace, "answer.txt"), "utf8").trim()).toBe(
           "42",
@@ -528,42 +548,36 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
         expect(NodeFS.readdirSync(workspace)).toEqual(["answer.txt"]);
         expect(homeEntries(home)).toEqual([]);
 
-        const resumeCursor = (yield* adapter.listSessions()).find(
-          (session) => session.threadId === threadId,
-        )?.resumeCursor;
-        expect(resumeCursor).toBeDefined();
-        yield* adapter.stopAll();
+        const prior = session.latestProviderThread();
+        expect(prior.nativeMetadata?.resumeCursor).toBeDefined();
+        yield* session.close;
+        const resumed = yield* nativeOmpSession({ ...options, resumeProviderThread: prior });
+        expect(resumed.runtime.providerSession.status).toBe("ready");
+        expect(resumed.providerThread.nativeThreadRef?.nativeId).toBe(
+          prior.nativeThreadRef?.nativeId,
+        );
+        yield* resumed.close;
 
-        const resumed = yield* (yield* makeOmpAdapter(options)).startSession({
-          threadId,
-          cwd: workspace,
-          runtimeMode: "full-access",
-          resumeCursor,
-        });
-        expect(resumed.status).toBe("ready");
-
-        // An Oh My Pi instance, even one given the same instance id, state
-        // directory and home, refuses Scient Agent's cursor.
+        // Even the same instance id cannot confer cross-product resume authority.
         if (ompQualifyBinary) {
-          const omp = yield* makeOmpAdapter({
+          const refused = yield* nativeOmpSession({
             ...options,
             target: ompTarget,
             binaryPath: ompQualifyBinary,
-            environment: ompLiveInstance(NodePath.join(root, "omp")).environment,
-          });
-          const refused = yield* omp
-            .startSession({
-              threadId,
-              cwd: workspace,
-              runtimeMode: "full-access",
-              resumeCursor,
-            })
-            .pipe(Effect.flip);
-          expect(refused._tag).toBeDefined();
-          yield* omp.stopAll();
+            environment: ompLiveInstance(NodePath.join(root, "omp"), {
+              baseEnv: {
+                PATH: process.env.PATH ?? "",
+                HTTPS_PROXY: "http://127.0.0.1:9",
+                HTTP_PROXY: "http://127.0.0.1:9",
+                NO_PROXY: "127.0.0.1,localhost",
+              },
+            }).environment,
+            resumeProviderThread: prior,
+          }).pipe(Effect.flip);
+          expect(refused._tag).toBe("ProviderAdapterResumeThreadError");
         }
         NodeFS.rmSync(root, { recursive: true, force: true });
-      }).pipe(Effect.provide(layer)),
+      }).pipe(Effect.scoped, Effect.provide(layer)),
     600_000,
   );
 });

@@ -55,13 +55,6 @@ const makeInstance = (
   displayName: String(instanceId),
   enabled: true,
   snapshot: {} as ProviderInstance["snapshot"],
-  adapter: new Proxy({} as ProviderInstance["adapter"], {
-    get: (_target, operation) => {
-      throw new Error(
-        `V2 fixtures must not execute the legacy adapter operation ${String(operation)}`,
-      );
-    },
-  }),
   orchestrationAdapter,
   textGeneration: {} as ProviderInstance["textGeneration"],
 });

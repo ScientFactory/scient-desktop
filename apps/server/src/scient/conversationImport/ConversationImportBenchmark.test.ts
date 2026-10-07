@@ -27,7 +27,7 @@ import {
   SCIC_SNAPSHOT_ENTRY,
   type ScicManifest,
 } from "../conversationFile/scicFormat.ts";
-import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
 import {
   CONVERSATION_IMPORT_MAX_RECORDS,
   ConversationImporter,
@@ -41,7 +41,10 @@ import {
   principal,
   testLease,
 } from "./conversationImport.test-fixtures.ts";
-import { createProjects, importTestLayer } from "./conversationImport.test-harness.ts";
+import {
+  createNativeProjects as createProjects,
+  nativeImportTestLayer as importTestLayer,
+} from "./conversationImport.native-test-harness.ts";
 
 it.effect.skipIf(process.env.SCIENT_IMPORT_BENCH !== "1")(
   "measures one 3,000-message conversation import through the real orchestration engine",
@@ -70,12 +73,14 @@ it.effect.skipIf(process.env.SCIENT_IMPORT_BENCH !== "1")(
           );
           const elapsedMs = performance.now() - started;
           const after = process.memoryUsage();
-          const thread = yield* Effect.flatMap(ProjectionSnapshotQuery, (query) =>
-            query.getThreadDetailById(completion.result.threadId, { fullHistory: true }),
+          const thread = yield* Effect.flatMap(ProjectionStoreV2, (store) =>
+            store.getThreadProjection(completion.result.threadId),
           );
           assert.strictEqual(completion.result.messageCount, 3_000);
-          assert.isTrue(thread._tag === "Some");
-          if (thread._tag === "Some") assert.strictEqual(thread.value.messages.length, 3_000);
+          assert.strictEqual(thread.thread.id, completion.result.threadId);
+          assert.strictEqual(thread.messages.length, 3_000);
+          assert.deepStrictEqual(thread.runs, []);
+          assert.deepStrictEqual(thread.runtimeRequests, []);
           process.stdout.write(
             `SCIENT_IMPORT_BENCH messages=${completion.result.messageCount} turns=1500 importMs=${Math.round(elapsedMs)} rssBeforeBytes=${before.rss} rssAfterBytes=${after.rss} heapBeforeBytes=${before.heapUsed} heapAfterBytes=${after.heapUsed} processMaxRssRaw=${process.resourceUsage().maxRSS}\n`,
           );

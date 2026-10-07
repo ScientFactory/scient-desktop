@@ -1,11 +1,13 @@
 # Provider Lifecycle Capability Audit
 
-> Status: implementation evidence ledger, last refreshed 2026-08-25.
+> Status: dated implementation evidence ledger, with a 2026-08-25 baseline and later updates.
 >
 > This document is evidence for the
 > [provider lifecycle architecture](./provider-lifecycle.md), not an
 > implementation contract and not proof that every listed path has passed packaged-app qualification.
-> It records what the current code and provider documentation appear to support, why some differences
+> Current behavior belongs to [Provider architecture](./providers.md) and
+> [Provider lifecycle architecture](./provider-lifecycle.md).
+> This ledger records what code and provider documentation at each dated boundary appeared to support, why some differences
 > should remain, and which gaps need more investigation. Revalidate the affected rows against the
 > current checkout, upstream T3, the provider CLI or protocol, focused tests, and real-app behavior
 > before changing a provider.

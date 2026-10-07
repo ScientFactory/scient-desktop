@@ -1,5 +1,7 @@
 # T3 alignment through 1ab2dfb5
 
+Historical record; implementation paths and checks describe its dated snapshot, not current V2 architecture.
+
 Status: automated qualification passed; owner requested PR delivery and merge-commit auto-merge.
 No additional visual acceptance is claimed. This is one full,
 history-preserving alignment from the previously integrated official boundary through the exact

@@ -6,8 +6,11 @@ import {
   TurnItemId,
   RuntimeRequestId,
   type OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2TurnItem,
+  OrchestrationV2TurnItemJson,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import {
   deriveTimelineEntriesFromVisibleTurnItems,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
@@ -39,6 +42,10 @@ import {
   WORKTREE_SETUP_ROW_ID,
 } from "./MessagesTimeline.logic";
 import type { WorkLogEntry } from "../../session-logic";
+
+const decodeBoundaryItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
+const decodeJsonBoundaryItem = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
+const encodeJsonBoundaryItem = Schema.encodeSync(OrchestrationV2TurnItemJson);
 
 describe("findLatestCompletedAssistantMessageId", () => {
   it("selects the latest settled terminal response while a newer turn is active", () => {
@@ -1076,6 +1083,89 @@ describe("deriveMessagesTimelineRows", () => {
     });
     expect(rows).toEqual([{ kind: "fork-marker", id: "conversation-fork-marker" }]);
   });
+
+  it.each(["run", "message"] as const)(
+    "renders one Scient %s incoming fork boundary while retaining outgoing and inherited fork history",
+    (sourceType) => {
+      const threadId = ThreadId.make("fork-child");
+      const sourceThreadId = ThreadId.make("fork-parent");
+      const event = (
+        id: string,
+        targetThreadId: ThreadId,
+        visibility: "local" | "inherited",
+      ): TimelineEntry => {
+        const itemId = TurnItemId.make(id);
+        return {
+          kind: "event",
+          id,
+          createdAt: "2026-01-01T00:00:00Z",
+          projectedItem: {
+            position: 0,
+            visibility,
+            sourceThreadId: visibility === "local" ? threadId : sourceThreadId,
+            sourceItemId: itemId,
+            item: decodeBoundaryItem({
+              id: itemId,
+              type: "fork",
+              threadId,
+              runId: null,
+              nodeId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 0,
+              status: "completed",
+              title: null,
+              startedAt: null,
+              completedAt: null,
+              updatedAt: DateTime.makeUnsafe("2026-01-01T00:00:00Z"),
+              source:
+                sourceType === "run"
+                  ? { type: "run", threadId: sourceThreadId, runId: RunId.make("source-run") }
+                  : {
+                      type: "message",
+                      threadId: sourceThreadId,
+                      messageId: MessageId.make("source-message"),
+                      position: "before",
+                    },
+              targetThreadId,
+            }),
+          },
+        };
+      };
+      const entries = [
+        event("incoming", threadId, "local"),
+        event("outgoing", ThreadId.make("next-child"), "local"),
+        event("ancestor", threadId, "inherited"),
+      ];
+      const common = {
+        timelineEntries: entries,
+        isWorking: false,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      };
+      const rows = deriveMessagesTimelineRows({
+        ...common,
+        hasForkBaseline: true,
+        forkBaselineAssistantMessageId: null,
+      });
+      expect(rows.filter((row) => row.kind === "fork-marker")).toHaveLength(1);
+      expect(rows.filter((row) => row.kind === "event").map((row) => row.id)).toEqual([
+        "outgoing",
+        "ancestor",
+      ]);
+      const unloadedBoundary = deriveMessagesTimelineRows({
+        ...common,
+        hasForkBaseline: true,
+        forkBaselineAssistantMessageId: MessageId.make("not-loaded-yet"),
+      });
+      expect(unloadedBoundary.filter((row) => row.kind === "event").map((row) => row.id)).toEqual([
+        "incoming",
+        "outgoing",
+        "ancestor",
+      ]);
+    },
+  );
 
   it("allows a durable user message to be selected as a fork point", () => {
     const rows = deriveMessagesTimelineRows({
@@ -3965,6 +4055,505 @@ describe("resolveTimelineToolPresentation", () => {
 });
 
 describe("v2 run and attempt history", () => {
+  it.each([false, true])(
+    "keeps imported historical responses distinct after native run = %s",
+    (hasNativeRun) => {
+      const threadId = ThreadId.make("imported-thread");
+      const nativeRunId = RunId.make("native-run");
+      const at = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
+      const record = (id: string, second: number, fields: Record<string, unknown>) =>
+        decodeJsonBoundaryItem({
+          id,
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: second,
+          status: "completed",
+          title: null,
+          startedAt: at(second),
+          completedAt: at(second),
+          updatedAt: at(second),
+          ...fields,
+        });
+      const user = (index: number, second: number) =>
+        record(`user-${index}`, second, {
+          type: "user_message",
+          historyTurnId: `history-${index}`,
+          messageId: `prompt-${index}`,
+          text: `Queued prompt ${index}`,
+          attachments: [],
+          inputIntent: "turn_start",
+          createdBy: "user",
+          creationSource: "web",
+        });
+      const answer = (index: number, second: number, partial: boolean) =>
+        record(`answer-${index}${partial ? "-partial" : ""}`, second, {
+          type: "assistant_message",
+          historyTurnId: `history-${index}`,
+          messageId: `answer-${index}${partial ? "-partial" : ""}`,
+          text: partial ? `Inspecting ${index}` : `Completed ${index}`,
+          streaming: false,
+        });
+      const tool = (index: number, second: number) =>
+        record(`tool-${index}`, second, {
+          type: "command_execution",
+          historyTurnId: `history-${index}`,
+          input: "pwd",
+          output: "/synthetic",
+          exitCode: 0,
+        });
+      // Admission-time users sort before their response-time historical items.
+      const items = [
+        user(1, 0),
+        user(2, 1),
+        user(3, 2),
+        answer(1, 10, true),
+        tool(1, 11),
+        answer(1, 12, false),
+        answer(2, 20, true),
+        tool(2, 21),
+        answer(2, 22, false),
+        tool(3, 31),
+        answer(3, 32, false),
+        ...(hasNativeRun
+          ? [
+              record("native-user", 50, {
+                type: "user_message",
+                runId: nativeRunId,
+                nodeId: "native-root",
+                messageId: "native-prompt",
+                text: "Continue",
+                attachments: [],
+                inputIntent: "turn_start",
+                createdBy: "user",
+                creationSource: "web",
+              }),
+              // A coincident historical label must never override native ownership.
+              record("native-partial", 51, {
+                type: "assistant_message",
+                runId: nativeRunId,
+                nodeId: "native-root",
+                historyTurnId: "history-1",
+                messageId: "native-partial",
+                text: "Starting",
+                streaming: false,
+              }),
+              record("native-final", 55, {
+                type: "assistant_message",
+                runId: nativeRunId,
+                nodeId: "native-root",
+                historyTurnId: "history-2",
+                messageId: "native-final",
+                text: "Native answer",
+                streaming: false,
+              }),
+            ]
+          : []),
+      ];
+      const projected = items.map((item, position) => ({
+        position,
+        visibility: "local" as const,
+        sourceThreadId: threadId,
+        sourceItemId: item.id,
+        item,
+      }));
+      for (const visibleTurnItems of [
+        projected,
+        projected.map((row) => ({
+          ...row,
+          item: decodeJsonBoundaryItem(
+            JSON.parse(JSON.stringify(encodeJsonBoundaryItem(row.item))),
+          ),
+        })),
+      ]) {
+        const timelineEntries = deriveTimelineEntriesFromVisibleTurnItems({
+          visibleTurnItems,
+          optimisticMessages: [],
+        });
+        const input = {
+          timelineEntries,
+          latestRun: hasNativeRun
+            ? {
+                runId: nativeRunId,
+                status: "completed" as const,
+                startedAt: at(50),
+                completedAt: at(55),
+              }
+            : null,
+          isWorking: false,
+          turnDiffSummaries: [],
+          supportsConversationRollback: false,
+        };
+        const rows = deriveMessagesTimelineRows(input);
+        const assistantRows = rows.filter(
+          (row) => row.kind === "message" && row.message.role === "assistant",
+        );
+        expect(assistantRows.map((row) => row.id)).toEqual([
+          "answer-1",
+          "answer-2",
+          "answer-3",
+          ...(hasNativeRun ? ["native-final"] : []),
+        ]);
+        expect(assistantRows.every((row) => row.kind === "message" && row.showAssistantMeta)).toBe(
+          true,
+        );
+        expect(
+          rows
+            .filter((row) => row.kind === "message" && row.message.role === "user")
+            .map((row) => row.id),
+        ).toEqual(["prompt-1", "prompt-2", "prompt-3", ...(hasNativeRun ? ["native-prompt"] : [])]);
+        const folds = rows.filter((row) => row.kind === "turn-fold");
+        expect(folds.map((row) => row.label)).toEqual([
+          "Worked for 12s",
+          "Worked for 21s",
+          "Worked for 30s",
+          ...(hasNativeRun ? ["Worked for 5.0s"] : []),
+        ]);
+        const historyOnlyTimeline = deriveTimelineEntriesFromVisibleTurnItems({
+          visibleTurnItems: visibleTurnItems.filter(({ item }) => item.runId === null),
+          optimisticMessages: [],
+        });
+        const beforeNativeRows = deriveMessagesTimelineRows({
+          ...input,
+          timelineEntries: historyOnlyTimeline,
+          latestRun: null,
+        });
+        expect(folds.slice(0, 3).map((row) => row.runId)).toEqual(
+          beforeNativeRows.flatMap((row) => (row.kind === "turn-fold" ? [row.runId] : [])),
+        );
+        const firstFold = folds[0];
+        if (!firstFold) throw new Error("Expected the first historical response fold");
+        const expanded = deriveMessagesTimelineRows({
+          ...input,
+          expandedRunIds: new Set([firstFold.runId]),
+        });
+        expect(
+          expanded
+            .filter((row) => row.kind === "message" && row.message.role === "assistant")
+            .map((row) => row.id),
+        ).toEqual([
+          "answer-1-partial",
+          "answer-1",
+          "answer-2",
+          "answer-3",
+          ...(hasNativeRun ? ["native-final"] : []),
+        ]);
+        expect(
+          expanded.flatMap((row) =>
+            row.kind === "work" ? row.groupedEntries.map((entry) => entry.id) : [],
+          ),
+        ).toEqual(["tool-1"]);
+        // Folding is presentation only; historical items retain null authority.
+        expect(
+          visibleTurnItems
+            .slice(0, 11)
+            .every(
+              ({ item }) =>
+                item.runId === null &&
+                item.nodeId === null &&
+                item.providerTurnId === null &&
+                item.nativeItemRef === null,
+            ),
+        ).toBe(true);
+        expect(
+          timelineEntries.filter((row) => row.kind === "message").map((row) => row.id),
+        ).toEqual([
+          "prompt-1",
+          "prompt-2",
+          "prompt-3",
+          "answer-1-partial",
+          "answer-1",
+          "answer-2-partial",
+          "answer-2",
+          "answer-3",
+          ...(hasNativeRun ? ["native-prompt", "native-partial", "native-final"] : []),
+        ]);
+      }
+    },
+  );
+
+  it("keeps unmatched historical output visible without borrowing a neighboring prompt", () => {
+    const threadId = ThreadId.make("unmatched-history");
+    const at = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
+    const record = (
+      id: string,
+      second: number,
+      historyTurnId: string,
+      fields: Record<string, unknown>,
+    ) =>
+      decodeJsonBoundaryItem({
+        id,
+        threadId,
+        historyTurnId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: second,
+        status: "completed",
+        title: null,
+        startedAt: at(second),
+        completedAt: at(second),
+        updatedAt: at(second),
+        ...fields,
+      });
+    const items = [
+      record("prompt", 0, "known", {
+        type: "user_message",
+        messageId: "prompt",
+        text: "Known prompt",
+        attachments: [],
+        inputIntent: "turn_start",
+        createdBy: "user",
+        creationSource: "web",
+      }),
+      record("known-partial", 1, "known", {
+        type: "assistant_message",
+        messageId: "known-partial",
+        text: "Checking",
+        streaming: false,
+      }),
+      record("known-tool", 2, "known", {
+        type: "command_execution",
+        input: "pwd",
+        output: "/synthetic",
+        exitCode: 0,
+      }),
+      record("known-final", 3, "known", {
+        type: "assistant_message",
+        messageId: "known-final",
+        text: "Known result",
+        streaming: false,
+      }),
+      record("unknown-partial", 4, "missing", {
+        type: "assistant_message",
+        messageId: "unknown-partial",
+        text: "Unmatched intermediate",
+        streaming: false,
+      }),
+      record("unknown-tool", 5, "missing", {
+        type: "command_execution",
+        input: "pwd",
+        output: "/synthetic",
+        exitCode: 0,
+      }),
+      record("unknown-final", 6, "missing", {
+        type: "assistant_message",
+        messageId: "unknown-final",
+        text: "Unmatched result",
+        streaming: false,
+      }),
+    ];
+    const projected = items.map((item, position) => ({
+      position,
+      visibility: "local" as const,
+      sourceThreadId: threadId,
+      sourceItemId: item.id,
+      item,
+    }));
+    for (const visibleTurnItems of [
+      projected,
+      projected.map((row) => ({
+        ...row,
+        item: decodeJsonBoundaryItem(JSON.parse(JSON.stringify(encodeJsonBoundaryItem(row.item)))),
+      })),
+    ]) {
+      const timelineEntries = deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems,
+        optimisticMessages: [],
+      });
+      const input = {
+        timelineEntries,
+        isWorking: false,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      };
+      const collapsed = deriveMessagesTimelineRows(input);
+      expect(collapsed.filter((row) => row.kind === "message").map((row) => row.id)).toEqual([
+        "prompt",
+        "known-final",
+        "unknown-partial",
+        "unknown-final",
+      ]);
+      expect(
+        collapsed.flatMap((row) =>
+          row.kind === "work" ? row.groupedEntries.map((entry) => entry.id) : [],
+        ),
+      ).toEqual(["unknown-tool"]);
+      const folds = collapsed.filter((row) => row.kind === "turn-fold");
+      expect(folds.map((row) => row.label)).toEqual(["Worked for 3.0s"]);
+      const first = folds[0];
+      if (!first) throw new Error("Expected only the matched history fold");
+      const expanded = deriveMessagesTimelineRows({
+        ...input,
+        expandedRunIds: new Set([first.runId]),
+      });
+      expect(expanded.filter((row) => row.kind === "message").map((row) => row.id)).toEqual([
+        "prompt",
+        "known-partial",
+        "known-final",
+        "unknown-partial",
+        "unknown-final",
+      ]);
+      expect(
+        expanded.flatMap((row) =>
+          row.kind === "work" ? row.groupedEntries.map((entry) => entry.id) : [],
+        ),
+      ).toEqual(["known-tool", "unknown-tool"]);
+      const unmatchedPartial = collapsed.find((row) => row.id === "unknown-partial");
+      const unmatchedFinal = collapsed.find((row) => row.id === "unknown-final");
+      expect(unmatchedPartial?.kind === "message" && unmatchedPartial.showAssistantMeta).toBe(
+        false,
+      );
+      expect(unmatchedFinal?.kind === "message" && unmatchedFinal.showAssistantMeta).toBe(true);
+    }
+  });
+
+  it.each([
+    { resource: "incoming-fork", trailingWork: false, nativeRun: false, duration: "21s" },
+    { resource: "outgoing-fork", trailingWork: false, nativeRun: false, duration: "21s" },
+    // Thread creation projects actual work; keep its timing contribution.
+    { resource: "thread-created", trailingWork: false, nativeRun: false, duration: "28m 47s" },
+    { resource: "incoming-fork", trailingWork: true, nativeRun: false, duration: "25s" },
+    { resource: "outgoing-fork", trailingWork: true, nativeRun: true, duration: "21s" },
+  ] as const)(
+    "separates $resource cards from work timing (trailing=$trailingWork, native=$nativeRun)",
+    ({ resource, trailingWork, nativeRun, duration }) => {
+      const threadId = ThreadId.make("fork-destination");
+      const sourceThreadId = ThreadId.make("fork-source");
+      const runId = nativeRun ? RunId.make("native-run") : null;
+      const base = {
+        threadId,
+        runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        status: "completed",
+        title: null,
+      };
+      const at = (seconds: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, seconds)).toISOString();
+      const record = (id: string, seconds: number, fields: Record<string, unknown>) =>
+        decodeJsonBoundaryItem({
+          ...base,
+          id,
+          ordinal: seconds,
+          startedAt: at(seconds),
+          completedAt: at(seconds),
+          updatedAt: at(seconds),
+          ...fields,
+        });
+      const items: OrchestrationV2ProjectedTurnItem[] = [
+        record("prompt", 0, {
+          type: "user_message",
+          messageId: "prompt-message",
+          createdBy: "user",
+          creationSource: "web",
+          inputIntent: "turn_start",
+          text: "Check the workspace",
+          attachments: [],
+        }),
+        record("command", 5, {
+          type: "command_execution",
+          input: "pwd",
+          output: "/workspace",
+          exitCode: 0,
+        }),
+        record("answer", 21, {
+          type: "assistant_message",
+          messageId: "answer-message",
+          text: "Checked",
+          streaming: false,
+        }),
+        ...(trailingWork
+          ? [
+              record("trailing-command", 25, {
+                type: "command_execution",
+                input: "pwd",
+                output: "/workspace",
+                exitCode: 0,
+              }),
+            ]
+          : []),
+      ].map((item, position) => ({
+        position,
+        visibility: nativeRun ? "local" : "inherited",
+        sourceThreadId,
+        sourceItemId: item.id,
+        item,
+      }));
+      const resourceItem = record("later-resource", 1727, {
+        ...(resource === "thread-created"
+          ? {
+              type: "thread_created",
+              targetRunId: null,
+              targetProviderInstanceId: "controlled",
+              targetModel: "controlled-model",
+            }
+          : {
+              type: "fork",
+              source: { type: "run", threadId: sourceThreadId, runId: "source-run" },
+              providerThreadId: undefined,
+            }),
+        targetThreadId: resource === "incoming-fork" ? threadId : "another-destination",
+        runId: nativeRun ? runId : null,
+        startedAt: null,
+      });
+      items.push({
+        position: items.length,
+        visibility: "local",
+        sourceThreadId: threadId,
+        sourceItemId: resourceItem.id,
+        item: resourceItem,
+      });
+
+      // Reload through the wire codec and ChatView's projection/folding path.
+      // Inherited history has no executable run; the native case retains one.
+      for (const projectedItems of [
+        items,
+        items.map((row) => ({
+          ...row,
+          item: decodeJsonBoundaryItem(
+            JSON.parse(JSON.stringify(encodeJsonBoundaryItem(row.item))),
+          ),
+        })),
+      ]) {
+        const rows = deriveMessagesTimelineRows({
+          timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+            visibleTurnItems: projectedItems,
+            optimisticMessages: [],
+          }),
+          latestRun: runId
+            ? { runId, status: "completed", startedAt: at(0), completedAt: at(21) }
+            : null,
+          isWorking: false,
+          turnDiffSummaries: [],
+          supportsConversationRollback: false,
+          hasForkBaseline: !nativeRun,
+          forkBaselineAssistantMessageId: MessageId.make("answer-message"),
+        });
+        expect(rows.filter((row) => row.kind === "turn-fold")).toMatchObject([
+          { label: `Worked for ${duration}`, createdAt: at(0), expanded: false },
+        ]);
+        expect(rows.filter((row) => row.kind === "fork-marker")).toHaveLength(nativeRun ? 0 : 1);
+        const visibleResources = rows.filter((row) => row.kind === "event");
+        expect(visibleResources.map((row) => row.id)).toEqual(
+          resource === "outgoing-fork" ? ["later-resource"] : [],
+        );
+        expect(
+          rows.find((row) => row.kind === "message" && row.message.role === "assistant"),
+        ).toMatchObject({ message: { id: "answer-message", text: "Checked" } });
+      }
+    },
+  );
+
   it("folds settled-turn commentary and work behind a Worked-for row", () => {
     const timelineEntries = [
       {

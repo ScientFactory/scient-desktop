@@ -1,5 +1,25 @@
+import type { RuntimeCitationSource } from "@t3tools/contracts";
+import { extractCodexCitationSources } from "../../provider/codexCitations.ts";
+// SCIENT-FORK: running-fork text capture producer.
+import { makeCodexTextSnapshots } from "../scient-provider/ProviderTextSnapshots.ts";
+// SCIENT-FORK: Codex presentation and generated-image import stay in the owned module.
+import {
+  codexCitationPresentation,
+  emitCodexGeneratedImage,
+} from "../scient-provider/CodexPresentation.ts";
+import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
+import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "../ContextHandoffBudget.ts";
+// SCIENT-FORK: Codex launch identity, learned context windows and native start receipts.
+import {
+  codexLaunchConfiguration,
+  makeCodexModelContextWindows,
+  makeCodexStartReceipts,
+} from "../scient-provider/CodexNativeSession.ts";
+// SCIENT-FORK: shared native start receipts and prompt acceptance.
+import { turnStartErrorKeepingReceipt } from "../scient-provider/NativeTurnReceipts.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import {
   mcpToolPresentation,
@@ -140,10 +160,11 @@ import {
   ProviderAdapterRollbackThreadError,
   ProviderAdapterRuntimeRequestResponseError,
   ProviderAdapterSteerRunError,
-  ProviderAdapterTurnStartError,
   ProviderAdapterV2,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2Event,
+  type ProviderAdapterV2InternalEvent,
+  ProviderTextSnapshotError,
   type ProviderAdapterV2ForkThreadInput,
   type ProviderAdapterV2RollbackThreadInput,
   type ProviderAdapterV2RuntimePolicy,
@@ -700,6 +721,7 @@ export function buildCodexTurnStartParams(input: {
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly modelSelection: ModelSelection;
   readonly hasT3Mcp?: boolean;
+  readonly mcpCapabilities?: ReadonlySet<McpCapability>;
   readonly browserToolsAvailable?: boolean;
   readonly deviceToolsAvailable?: boolean;
   /** ChatGPT token sharing does not accept service tiers. */
@@ -733,12 +755,23 @@ export function buildCodexTurnStartParams(input: {
       input.hasT3Mcp === true
         ? buildCodexAdditionalContext(
             { model: input.modelSelection.model, reasoningEffort: effort ?? "medium" },
-            new Set([
-              ...((input.browserToolsAvailable ?? true) ? (["preview"] as const) : []),
-              ...(input.deviceToolsAvailable ? (["device"] as const) : []),
-            ]),
+            input.mcpCapabilities ??
+              new Set([
+                ...((input.browserToolsAvailable ?? true) ? (["preview"] as const) : []),
+                ...(input.deviceToolsAvailable ? (["device"] as const) : []),
+              ]),
           )
-        : undefined;
+        : {
+            t3_code_runtime: {
+              kind: "application" as const,
+              value: buildRuntimeInstructions({
+                harness: "Codex",
+                model: input.modelSelection.model,
+                reasoningEffort: effort ?? "medium",
+              }),
+            },
+            scient_awareness: { kind: "application" as const, value: buildScientAwareness() },
+          };
     const collaborationMode: CodexSchema.ClientRequest__CollaborationMode | undefined =
       input.runtimePolicy.interactionMode !== "plan" && developerInstructions === undefined
         ? undefined
@@ -1015,6 +1048,7 @@ function codexErrorInfoCode(value: unknown): string | null {
 }
 
 interface ActiveCodexTurnContext {
+  readonly citationSources: Map<string, RuntimeCitationSource>;
   latestProviderFailure?: {
     readonly nativeMessage: string;
     readonly failure: OrchestrationV2ProviderFailure;
@@ -1176,8 +1210,15 @@ export interface CodexAppServerClientFactoryShape {
     readonly threadId: ThreadId;
     readonly providerSessionId: OrchestrationV2ProviderSession["id"];
     readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+    readonly onTermination?: CodexClient.CodexAppServerClientOptions["onTermination"];
     readonly settings: CodexSettings;
     readonly environment: NodeJS.ProcessEnv;
+    /** Resolved once by the adapter and used verbatim by the production spawner. */
+    readonly launch?: {
+      readonly command: string;
+      readonly args: ReadonlyArray<string>;
+      readonly shell: boolean;
+    };
   }) => Effect.Effect<
     CodexClient.CodexAppServerClient["Service"],
     ProviderAdapterOpenSessionError,
@@ -1220,7 +1261,7 @@ export function codexThreadRuntimeParams(input: {
         ? {}
         : {
             mcp_servers: {
-              "t3-code": {
+              scient: {
                 url: mcpSession.endpoint,
                 http_headers: {
                   Authorization: mcpSession.authorizationHeader,
@@ -1356,13 +1397,20 @@ export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
             ...input.environment,
             ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
           };
-          const command = yield* makeCodexAppServerSpawnCommand({
-            command: input.settings.binaryPath || "codex",
-            args: codexAppServerArgs(
-              resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
-            ),
-            env: environment,
-          });
+          const command =
+            input.launch === undefined
+              ? yield* makeCodexAppServerSpawnCommand({
+                  command: input.settings.binaryPath || "codex",
+                  args: codexAppServerArgs(
+                    resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
+                  ),
+                  env: environment,
+                })
+              : ChildProcess.make(input.launch.command, input.launch.args, {
+                  env: environment,
+                  extendEnv: false,
+                  shell: input.launch.shell,
+                });
           const handle = yield* spawner.spawn(command).pipe(
             Effect.provideService(Scope.Scope, scope),
             Effect.mapError(
@@ -1387,7 +1435,12 @@ export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
                   logOutgoing: true,
                   logger: protocolLogger,
                 };
-          const context = yield* Layer.build(CodexClient.layerChildProcess(handle, clientOptions));
+          const context = yield* Layer.build(
+            CodexClient.layerChildProcess(handle, {
+              ...clientOptions,
+              ...(input.onTermination ? { onTermination: input.onTermination } : {}),
+            }),
+          );
           return yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
             Effect.provide(context),
           );
@@ -1412,6 +1465,7 @@ export const createCodexAdapterV2 = (
     const continuationRequests = yield* ProviderContinuationRequests;
     const fileSystem = yield* FileSystem.FileSystem;
     const hostEnvironment = yield* HostProcessEnvironment;
+    const path = yield* Path.Path;
     const idAllocator = yield* IdAllocatorV2;
     const serverConfig = yield* ServerConfig;
     const homeLayout = yield* resolveCodexHomeLayout(config);
@@ -1441,6 +1495,7 @@ export const createCodexAdapterV2 = (
       environment: mergeProviderInstanceEnvironment(environment, hostEnvironment),
       clientFactory,
       fileSystem,
+      path,
       idAllocator,
       serverConfig,
       continuationRequests,
@@ -1468,6 +1523,7 @@ export interface CodexAdapterV2Options {
    */
   readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
   readonly fileSystem: FileSystem.FileSystem;
+  readonly path: Path.Path;
   readonly idAllocator: IdAllocatorV2Shape;
   readonly serverConfig: ServerConfig["Service"];
   /**
@@ -1481,8 +1537,10 @@ export interface CodexAdapterV2Options {
 }
 
 export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): ProviderAdapterV2Shape {
-  const { clientFactory, fileSystem, idAllocator, serverConfig } = adapterOptions;
+  const { clientFactory, fileSystem, path, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
+  // SCIENT-FORK: context windows Codex reported, per exact launch configuration.
+  const modelWindows = makeCodexModelContextWindows(adapterOptions.instanceId);
 
   return ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -1506,13 +1564,46 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     }),
                 ),
               );
+        const settings = Object.freeze({ ...(resolvedRuntime?.config ?? adapterOptions.settings) });
+        const hostEnvironment = yield* HostProcessEnvironment;
+        const environment = Object.freeze({
+          ...hostEnvironment,
+          ...(resolvedRuntime?.environment ?? adapterOptions.environment),
+          ...(settings.homePath ? { CODEX_HOME: settings.homePath } : {}),
+        });
+        const resolvedLaunch = yield* resolveSpawnCommand(
+          settings.binaryPath || "codex",
+          codexAppServerArgs(resolveCodexLaunchArgs(settings.launchArgs, environment)),
+          { env: environment, extendEnv: false },
+        );
+        const launch = Object.freeze({
+          ...resolvedLaunch,
+          args: Object.freeze([...resolvedLaunch.args]),
+        });
+        // SCIENT-FORK: the exact launch identity of this app-server process.
+        const configuration = codexLaunchConfiguration({ settings, launch, environment });
+        const textGenerationEnded = yield* Deferred.make<never, ProviderTextSnapshotError>();
+        let textGenerationIsEnded = false;
         const client = yield* clientFactory.open({
+          onTermination: (cause) =>
+            Effect.sync(() => {
+              textGenerationIsEnded = true;
+            }).pipe(
+              Effect.andThen(
+                Deferred.fail(
+                  textGenerationEnded,
+                  new ProviderTextSnapshotError({ reason: "consumer-ended", cause }),
+                ),
+              ),
+              Effect.asVoid,
+            ),
           instanceId: adapterOptions.instanceId,
           threadId: input.threadId,
           providerSessionId: input.providerSessionId,
           runtimePolicy: input.runtimePolicy,
-          settings: resolvedRuntime?.config ?? adapterOptions.settings,
-          environment: resolvedRuntime?.environment ?? adapterOptions.environment,
+          settings,
+          environment,
+          launch,
         });
         const additionalContextByThread = yield* Ref.make(
           new Map<
@@ -1566,7 +1657,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           model: input.modelSelection.model,
           now,
         });
-        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        const events = yield* Queue.unbounded<ProviderAdapterV2InternalEvent>();
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
@@ -1600,6 +1691,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           ).hasSubagents = true;
         };
         const pendingRootTurns = yield* Ref.make(new Map<string, ProviderAdapterV2TurnInput>());
+        // SCIENT-FORK: only an in-flight native start owns its delivery observation.
+        const startReceipts = makeCodexStartReceipts({ driver: CODEX_PROVIDER, idAllocator });
         const turnWaiters = yield* Ref.make(new Map<string, Deferred.Deferred<void, never>>());
         const subagentThreads = yield* Ref.make(new Map<string, CodexSubagentThreadContext>());
         const subagentModels = new Map<string, string>();
@@ -1717,6 +1810,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               subagent: null,
               startedAt: input.startedAt,
               itemPositions: new Map(),
+              citationSources: new Map(),
             };
             yield* Ref.update(limitedTurnItems, (current) => {
               const next = new Map(current);
@@ -1729,25 +1823,29 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               updated.set(input.nativeTurnId, context);
               return updated;
             });
+            const providerTurn: OrchestrationV2ProviderTurn = {
+              id: providerTurnId,
+              providerThreadId: input.turnInput.providerThread.id,
+              nodeId: input.turnInput.rootNodeId,
+              runAttemptId: input.turnInput.attemptId,
+              nativeTurnRef: {
+                driver: CODEX_PROVIDER,
+                nativeId: input.nativeTurnId,
+                strength: "strong",
+              },
+              ordinal: input.turnInput.providerTurnOrdinal,
+              status: "running",
+              nativeAcceptance: "accepted",
+              acceptedAt: input.startedAt,
+              startedAt: input.startedAt,
+              completedAt: null,
+            };
+            startReceipts.observe(input.turnInput, providerTurn);
             yield* emitProviderEvent({
               type: "provider_turn.updated",
               driver: CODEX_PROVIDER,
               threadId: input.turnInput.threadId,
-              providerTurn: {
-                id: providerTurnId,
-                providerThreadId: input.turnInput.providerThread.id,
-                nodeId: input.turnInput.rootNodeId,
-                runAttemptId: input.turnInput.attemptId,
-                nativeTurnRef: {
-                  driver: CODEX_PROVIDER,
-                  nativeId: input.nativeTurnId,
-                  strength: "strong",
-                },
-                ordinal: input.turnInput.providerTurnOrdinal,
-                status: "running",
-                startedAt: input.startedAt,
-                completedAt: null,
-              },
+              providerTurn,
             });
             return context;
           });
@@ -2269,6 +2367,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               subagent,
               startedAt: turn.startedAt,
               itemPositions: new Map(),
+              citationSources: new Map(),
             };
             beginTurnTokenUsage(activeContext);
             yield* Ref.update(activeTurns, (current) => {
@@ -2760,6 +2859,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               text: codexSkillMentionText(turnInput.message.text),
               attachments: turnInput.message.attachments,
               attachmentsDir: serverConfig.attachmentsDir,
+              ...(turnInput.message.runtimeInstruction === undefined
+                ? {}
+                : { runtimeInstruction: turnInput.message.runtimeInstruction }),
             });
             if (text.length > 0) {
               inputItems.push({
@@ -2785,6 +2887,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           completed: boolean,
         ) =>
           Effect.gen(function* () {
+            // SCIENT-FORK: keep portable citation presentation in the owned Codex module.
+            const { text, citationPresentation } = codexCitationPresentation(
+              context,
+              item,
+              completed,
+            );
             const updatedAt = yield* DateTime.now;
             const completedAt = completed ? updatedAt : null;
             const nodeId = idAllocator.derive.nodeFromProviderItem({
@@ -2825,7 +2933,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               runId: context.projectionRunId,
               nodeId,
               role: "assistant",
-              text: item.text,
+              ...(citationPresentation === undefined ? {} : { citationPresentation }),
+              text,
               attachments: [],
               streaming: !completed,
               createdAt: startedAt,
@@ -2848,7 +2957,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               updatedAt,
               type: "assistant_message",
               messageId,
-              text: item.text,
+              ...(citationPresentation === undefined ? {} : { citationPresentation }),
+              text,
               streaming: !completed,
             };
             return { node, message, turnItem };
@@ -3197,6 +3307,15 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           readonly completed: boolean;
         }) =>
           Effect.gen(function* () {
+            if (input.completed) {
+              for (const source of extractCodexCitationSources(input.item)) {
+                if (
+                  input.context.citationSources.size < 128 ||
+                  input.context.citationSources.has(source.id)
+                )
+                  input.context.citationSources.set(source.id, source);
+              }
+            }
             const updatedAt = yield* DateTime.now;
             const completedAt = input.completed ? updatedAt : null;
             const nodeId = idAllocator.derive.nodeFromProviderItem({
@@ -3775,9 +3894,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               payload.tokenUsage,
             );
             const context = yield* awaitActiveTurn(payload.turnId);
-            if (context === undefined) {
+            if (
+              context === undefined ||
+              context.providerThread.nativeThreadRef?.nativeId !== payload.threadId
+            ) {
               return;
             }
+            // SCIENT-FORK: learn the root model's context window for this launch.
+            modelWindows.record(configuration, context, payload.tokenUsage.modelContextWindow);
             const now = yield* DateTime.now;
             // Live context usage rides on the provider turn (#8144): the turn
             // is the natural owner and re-emitting it never disturbs items.
@@ -3797,6 +3921,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 },
                 ordinal: context.providerTurnOrdinal,
                 status: "running",
+                nativeAcceptance: "accepted",
+                acceptedAt: context.startedAt,
                 startedAt: context.startedAt,
                 completedAt: null,
                 tokenUsage: codexProviderTurnTokenUsage(
@@ -4122,6 +4248,25 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               return;
             }
             const { context, settled } = resolved;
+
+            if (payload.item.type === "imageGeneration") {
+              // SCIENT-FORK: generated images are imported from their authorized Codex homes.
+              yield* emitCodexGeneratedImage({
+                driver: CODEX_PROVIDER,
+                instanceId: adapterOptions.instanceId,
+                attachmentsDir: serverConfig.attachmentsDir,
+                path,
+                image: payload.item,
+                context,
+                resolveLayout: resolveCodexHomeLayout(
+                  resolvedRuntime?.config ?? adapterOptions.settings,
+                ).pipe(Effect.provideService(Path.Path, path)),
+                toProtocolError,
+                buildAgentMessageArtifacts,
+                emitProviderEvent,
+              });
+              return;
+            }
 
             if (payload.item.type === "reasoning") {
               yield* completeReasoning(payload.turnId, payload.item);
@@ -5086,6 +5231,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   },
                   ordinal: input.context.providerTurnOrdinal,
                   status: input.status,
+                  nativeAcceptance: "accepted",
+                  acceptedAt: input.context.startedAt,
                   startedAt: input.context.startedAt,
                   completedAt: input.completedAt,
                   turnTokenUsage: completeCodexTurnTokenUsage(
@@ -5281,12 +5428,37 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           }),
         );
 
+        const nativeEvents = Stream.fromEffectRepeat(Queue.take(events));
         const runtime: ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
           driver: CODEX_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
-          events: Stream.fromEffectRepeat(Queue.take(events)),
+          events: nativeEvents.pipe(
+            Stream.filter(
+              (event): event is ProviderAdapterV2Event => event.type !== "internal.text_snapshot",
+            ),
+          ),
+          // SCIENT-FORK:START — running-fork text capture from this exact app-server session.
+          textSnapshots: makeCodexTextSnapshots({
+            driver: CODEX_PROVIDER,
+            instanceId: adapterOptions.instanceId,
+            providerSessionId: input.providerSessionId,
+            nativeEvents,
+            events,
+            generationEnded: textGenerationEnded,
+            isGenerationEnded: () => textGenerationIsEnded,
+            activeTurns,
+            interruptingNativeTurns,
+            finalAnswerItemIdsByTurn,
+            completedFinalAnswerTextsByTurn,
+            turnTerminalizationPermit,
+            agentMessageDeltas,
+            buildAgentMessageArtifacts,
+          }),
+          // SCIENT-FORK:END
+          modelContextWindowLaunchFingerprint: configuration,
+          getModelContextWindow: (selection) => modelWindows.get(configuration, selection),
           canReuseContextUsage: canReuseCodexContextUsage,
           // Known gap: a subagent that Codex resumes later reads as completed
           // (not pending) between turns, so idle release can win the race
@@ -5417,7 +5589,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               yield* Ref.update(pendingRootTurns, (current) =>
                 new Map(current).set(threadId, turnInput),
               );
+              startReceipts.begin(turnInput);
               yield* client.request("thread/compact/start", { threadId }).pipe(
+                startReceipts.settle(turnInput, () => startReceipts.offered(turnInput)),
                 Effect.tapError(() =>
                   Ref.update(pendingRootTurns, (current) => {
                     const next = new Map(current);
@@ -5426,18 +5600,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   }),
                 ),
               );
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapterTurnStartError({
-                    driver: CODEX_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
-              ),
-            ),
+            }).pipe(Effect.mapError(turnStartErrorKeepingReceipt(CODEX_PROVIDER, turnInput))),
           injectHistory: (input) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(input.providerThread);
@@ -5484,6 +5647,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 runtimePolicy: turnInput.runtimePolicy,
                 modelSelection: turnInput.modelSelection,
                 hasT3Mcp: mcpSession !== undefined,
+                ...(mcpSession === undefined ? {} : { mcpCapabilities: mcpSession.capabilities }),
                 browserToolsAvailable: mcpSession?.capabilities.has("preview") ?? false,
                 deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
                 omitServiceTier: adapterOptions.resolveRuntime !== undefined,
@@ -5500,7 +5664,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 else next.delete(threadId);
                 return next;
               });
-              const started = yield* client.request("turn/start", turnStartParams);
+              // SCIENT-FORK: a possibly offered request, never a native cursor or receipt.
+              const offered = startReceipts.offered(turnInput);
+              startReceipts.begin(turnInput);
+              const started = yield* client
+                .request("turn/start", turnStartParams)
+                .pipe(startReceipts.settle(turnInput, () => offered));
               const nativeTurnId = started.turn.id;
               const startedAt = codexTimestamp(started.turn.startedAt);
               yield* registerRootTurn({
@@ -5524,16 +5693,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   }),
                 ).pipe(Effect.ignore),
               ),
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapterTurnStartError({
-                    driver: CODEX_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
-              ),
+              Effect.mapError(turnStartErrorKeepingReceipt(CODEX_PROVIDER, turnInput)),
             ),
           steerTurn: (turnInput) =>
             Effect.gen(function* () {
@@ -6146,6 +6306,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           forkThread: (threadInput) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(threadInput.sourceProviderThread);
+              // SCIENT-FORK:START — Refuse source reuse before fork-local mutation.
+              const sourceBelongsToInstance =
+                threadInput.sourceProviderThread.providerInstanceId === adapterOptions.instanceId;
               const boundary = yield* resolveCodexForkBoundary(threadInput);
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(
@@ -6175,6 +6338,15 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     }),
                 ),
               );
+              if (sourceBelongsToInstance && response.thread.id === threadId) {
+                return yield* new ProviderAdapterForkThreadError({
+                  driver: CODEX_PROVIDER,
+                  providerThreadId: threadInput.sourceProviderThread.id,
+                  cause:
+                    "Codex fork returned the source native thread instead of a new conversation.",
+                });
+              }
+              // SCIENT-FORK:END
               let forkedThread = response.thread;
               if (boundary.rollbackTurnCount > 0) {
                 // Reached only when the selected source turn has no native

@@ -21,9 +21,6 @@ import { toPersistenceSqlError, type ProjectionRepositoryError } from "../../per
 import { insertPendingFork, markForkReady } from "./forkRepository.ts";
 import { insertImportTransfer } from "./importRepository.ts";
 
-/** Projector name for the `projection_state` bookkeeping row. */
-export const SCIENT_FORK_LINEAGE_PROJECTOR_NAME = "scient.thread-lineage" as const;
-
 export function applyScientThreadLineageProjection(
   event: OrchestrationEvent,
   sql: SqlClient.SqlClient,

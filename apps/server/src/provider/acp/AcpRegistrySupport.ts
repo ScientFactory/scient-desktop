@@ -11,6 +11,7 @@ import {
   type AcpRegistryDistribution as AcpRegistryDistributionKind,
   type AcpRegistryDistributionPreference,
   type AcpRegistrySettings,
+  type ProviderRegistryInstallation,
 } from "@t3tools/contracts";
 import {
   HostProcessArchitecture,
@@ -41,6 +42,9 @@ import * as NodeCrypto from "node:crypto";
 
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
 import type { AcpSpawnInput } from "./AcpSessionRuntime.ts";
+// SCIENT-FORK:START — ownership proofs for app-owned installations
+import { makeAcpRegistryOwnership } from "./ScientAcpRegistryOwnership.ts";
+// SCIENT-FORK:END
 
 const ACP_REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 
@@ -162,7 +166,22 @@ const AcpRegistryPackageInstallReceipt = Schema.Struct({
   packageRoot: Schema.optional(Schema.String),
   packageVersion: Schema.optional(Schema.String),
 });
-type AcpRegistryPackageInstallReceipt = typeof AcpRegistryPackageInstallReceipt.Type;
+export type AcpRegistryPackageInstallReceipt = typeof AcpRegistryPackageInstallReceipt.Type;
+
+const AcpRegistryBinaryInstallReceipt = Schema.Struct({
+  agentId: BoundedAgentId,
+  agentVersion: BoundedVersion,
+  archive: HttpsUrl,
+  installRoot: Schema.String,
+  executablePath: Schema.String,
+});
+const binaryReceiptName = ".scient-acp-install.json";
+const decodeBinaryReceipt = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(AcpRegistryBinaryInstallReceipt),
+);
+const encodeBinaryReceipt = Schema.encodeEffect(
+  Schema.fromJsonString(AcpRegistryBinaryInstallReceipt),
+);
 
 const AcpRegistryIndexEnvelope = Schema.Struct({
   version: BoundedVersion,
@@ -463,7 +482,7 @@ export type AcpRegistryInspection =
       readonly status: "unprepared";
       readonly agentId: string;
       readonly version: string;
-      readonly distribution: "binary";
+      readonly distribution: AcpRegistryDistributionKind;
     }
   | {
       readonly status: "ready";
@@ -471,6 +490,7 @@ export type AcpRegistryInspection =
       readonly version: string | null;
       readonly distribution: AcpRegistryDistributionKind;
       readonly documentationUrl?: string;
+      readonly installation?: ProviderRegistryInstallation;
     };
 
 export class AcpRegistryCatalog extends Context.Service<
@@ -492,7 +512,9 @@ export class AcpRegistryCatalog extends Context.Service<
       environment?: NodeJS.ProcessEnv,
     ) => Effect.Effect<ResolvedAcpRegistryAgent, AcpRegistryError>;
     readonly uninstallManagedBinary: (
-      input: AcpRegistryManagedBinaryUninstallInput,
+      input: AcpRegistryManagedBinaryUninstallInput & {
+        readonly expectedInstallation?: ProviderRegistryInstallation;
+      },
       isReferenced?: Effect.Effect<boolean, AcpRegistryError>,
     ) => Effect.Effect<AcpRegistryManagedBinaryUninstallResult, AcpRegistryError>;
   }
@@ -961,12 +983,22 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       .exists(receipt.value.executablePath)
       .pipe(Effect.orElseSucceed(() => false));
     if (!executableExists) return Option.none<AcpRegistryPackageInstallReceipt>();
+    const installRoot = packageInstallRoot(agent, distribution);
+    yield* assertOwnedInstallRoot(installRoot);
+    yield* assertExecutableInRoot(installRoot, receipt.value.executablePath);
 
     if (distribution === "npx") {
       const packageIdentity = parseNpxPackageSpec(packageSpec);
       if (receipt.value.packageRoot === undefined || receipt.value.packageVersion === undefined) {
         return Option.none<AcpRegistryPackageInstallReceipt>();
       }
+      yield* assertOwnedInstallRoot(receipt.value.packageRoot);
+      const relativePackageRoot = path.relative(installRoot, receipt.value.packageRoot);
+      if (relativePackageRoot.startsWith("..") || path.isAbsolute(relativePackageRoot))
+        return yield* new AcpRegistryError({
+          reason: "install_failed",
+          detail: "ACP Registry package receipt points outside its owned installation.",
+        });
       const manifest = yield* fileSystem
         .readFileString(path.join(receipt.value.packageRoot, "package.json"))
         .pipe(Effect.flatMap(decodeNpmPackageManifest), Effect.option);
@@ -1166,6 +1198,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     if (Option.isSome(receipt) && distribution === "npx") return receipt.value;
 
     const packageRoot = packageInstallRoot(agent, distribution);
+    if (yield* fileSystem.exists(packageRoot)) yield* assertOwnedInstallRoot(packageRoot);
+    else if (yield* fileSystem.exists(agentInstallRoot(agent)))
+      yield* assertOwnedInstallRoot(agentInstallRoot(agent));
+    else if (yield* fileSystem.exists(path.dirname(agentInstallRoot(agent))))
+      yield* assertOwnedInstallRoot(path.dirname(agentInstallRoot(agent)));
     yield* fileSystem.makeDirectory(packageRoot, { recursive: true }).pipe(
       Effect.mapError(
         (cause) =>
@@ -1314,6 +1351,34 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     };
   };
 
+  // SCIENT-FORK:START — ownership proofs for app-owned installations
+  const {
+    assertOwnedInstallRoot,
+    binaryInstallationFacts,
+    installedPackage,
+    removeOwnedInstallations,
+    asOwnedInstallationError,
+  } = makeAcpRegistryOwnership({
+    fileSystem,
+    path,
+    platform,
+    platformTarget,
+    installsDirectory,
+    packageReceiptsDirectory,
+    AcpRegistryError,
+    isAcpRegistryError,
+    NpxPackage,
+    UvxPackage,
+    binaryReceiptName,
+    decodeBinaryReceipt,
+    decodePackageInstallReceipt,
+    packageReceiptPath,
+    readPackageReceipt,
+    loadCachedRegistry,
+    binaryPaths,
+  });
+  // SCIENT-FORK:END
+
   const installBinary = Effect.fn("AcpRegistryCatalog.installBinary")(function* (
     agent: AcpRegistryAgent,
     target: typeof AcpRegistryBinaryTarget.Type,
@@ -1333,6 +1398,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     }
     const { commandSegments, installRoot, executablePath } = paths;
     if (yield* fileSystem.exists(executablePath).pipe(Effect.orElseSucceed(() => false))) {
+      yield* assertOwnedInstallRoot(installRoot);
+      yield* binaryInstallationFacts(agent, paths);
       return yield* assertExecutableInRoot(installRoot, executablePath).pipe(
         Effect.mapError((cause) =>
           isAcpRegistryError(cause)
@@ -1346,6 +1413,10 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       );
     }
 
+    if (yield* fileSystem.exists(path.dirname(installRoot)))
+      yield* assertOwnedInstallRoot(path.dirname(installRoot));
+    else if (yield* fileSystem.exists(path.dirname(path.dirname(installRoot))))
+      yield* assertOwnedInstallRoot(path.dirname(path.dirname(installRoot)));
     yield* fileSystem.makeDirectory(path.dirname(installRoot), { recursive: true }).pipe(
       Effect.mapError(
         (cause) =>
@@ -1489,6 +1560,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       }
       if (platform !== "win32") yield* fileSystem.chmod(stagedExecutable, 0o755);
       yield* assertExecutableInRoot(extractionRoot, stagedExecutable);
+      const receipt = yield* encodeBinaryReceipt({
+        agentId: agent.id,
+        agentVersion: agent.version,
+        archive: target.archive,
+        installRoot,
+        executablePath,
+      });
+      yield* fileSystem.writeFileString(path.join(extractionRoot, binaryReceiptName), receipt);
       yield* fileSystem.remove(installRoot, { recursive: true, force: true });
       yield* fileSystem.rename(extractionRoot, installRoot);
       return yield* assertExecutableInRoot(installRoot, executablePath);
@@ -1608,7 +1687,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         distribution: distribution.kind,
         prepared: true,
       } satisfies AcpRegistryPrepareResult;
-    });
+    }).pipe(
+      // SCIENT-FORK:START — wrap unexpected failures as install failures
+      asOwnedInstallationError("prepare"),
+      // SCIENT-FORK:END
+    );
 
   const inspect: AcpRegistryCatalog["Service"]["inspect"] = (settings, environment) =>
     Effect.gen(function* () {
@@ -1680,23 +1763,38 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
                     }),
               ),
             );
+            yield* assertOwnedInstallRoot(paths.installRoot);
             return {
               status: "ready",
               agentId,
               version: agent.version,
               distribution: "binary",
+              installation: yield* binaryInstallationFacts(agent, paths),
               ...(documentationUrl ? { documentationUrl } : {}),
             } as const;
           }),
         );
       }
 
+      const installation = yield* installSemaphore.withPermits(1)(
+        installedPackage(agent, distribution.kind, distribution.packageName!),
+      );
+      if (Option.isSome(installation)) {
+        return {
+          status: "ready",
+          agentId,
+          version: agent.version,
+          distribution: distribution.kind,
+          installation: installation.value,
+          ...(documentationUrl ? { documentationUrl } : {}),
+        } as const;
+      }
       const runner = packageManagerFor(distribution.kind)!;
       const available =
         resolveExecutable(runner, platform, environment ?? hostEnvironment) !== undefined;
       return available
         ? ({
-            status: "ready",
+            status: "unprepared",
             agentId,
             version: agent.version,
             distribution: distribution.kind,
@@ -1709,7 +1807,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             distribution: distribution.kind,
             runner,
           } as const);
-    });
+    }).pipe(
+      // SCIENT-FORK:START — wrap unexpected failures as install failures
+      asOwnedInstallationError("inspect"),
+      // SCIENT-FORK:END
+    );
 
   const resolve: AcpRegistryCatalog["Service"]["resolve"] = (settings, cwd, environment) =>
     Effect.gen(function* () {
@@ -1780,7 +1882,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           env: spawnEnvironment,
         },
       } satisfies ResolvedAcpRegistryAgent;
-    });
+    }).pipe(
+      // SCIENT-FORK:START — wrap unexpected failures as install failures
+      asOwnedInstallationError("resolve"),
+      // SCIENT-FORK:END
+    );
 
   const uninstallManagedBinary: AcpRegistryCatalog["Service"]["uninstallManagedBinary"] = (
     input,
@@ -1816,37 +1922,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
               }),
           ),
         );
-        if (!existed) return { agentId: safeAgentId, removed: false };
-
-        let removed = false;
-        yield* Effect.gen(function* () {
-          for (const version of yield* fileSystem.readDirectory(agentRoot)) {
-            const versionRoot = path.join(agentRoot, version);
-            for (const entry of yield* fileSystem.readDirectory(versionRoot)) {
-              if (!/^(?:darwin|linux|windows)-(?:aarch64|x86_64)$/u.test(entry)) continue;
-              yield* fileSystem.remove(path.join(versionRoot, entry), {
-                recursive: true,
-                force: true,
-              });
-              removed = true;
-            }
-            if ((yield* fileSystem.readDirectory(versionRoot)).length === 0)
-              yield* fileSystem.remove(versionRoot, { recursive: true });
-          }
-          if ((yield* fileSystem.readDirectory(agentRoot)).length === 0)
-            yield* fileSystem.remove(agentRoot, { recursive: true });
-        }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new AcpRegistryError({
-                reason: "install_failed",
-                detail: `Could not remove managed binaries for ACP Registry agent ${safeAgentId}.`,
-                cause,
-              }),
-          ),
-        );
-        return { agentId: safeAgentId, removed };
-      }),
+        // SCIENT-FORK:START — ownership-checked removal
+        return yield* removeOwnedInstallations(safeAgentId, agentRoot, existed, input);
+        // SCIENT-FORK:END
+      }).pipe(
+        // SCIENT-FORK:START — wrap unexpected failures as install failures
+        asOwnedInstallationError("remove"),
+        // SCIENT-FORK:END
+      ),
     );
 
   return AcpRegistryCatalog.of({

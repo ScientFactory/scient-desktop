@@ -32,6 +32,61 @@ function parseArgs(argv) {
   return values;
 }
 
+/** Validate frozen, reviewed Scient branch merges without trusting their ancestry. */
+export function validateOwnedIntegrationMerges(input) {
+  if (!Array.isArray(input.receipts)) {
+    return { receipts: [], failures: ["ownedIntegrationMerges must be an array"] };
+  }
+  const receipts = [];
+  const failures = [];
+  const ids = new Set();
+  const merges = new Set();
+  const fullCommit = /^[0-9a-f]{40}$/;
+  for (const receipt of input.receipts) {
+    if (
+      !receipt ||
+      typeof receipt.id !== "string" ||
+      receipt.id.trim().length === 0 ||
+      typeof receipt.merge !== "string" ||
+      !fullCommit.test(receipt.merge) ||
+      !Array.isArray(receipt.parents) ||
+      receipt.parents.length !== 2 ||
+      !receipt.parents.every((parent) => typeof parent === "string" && fullCommit.test(parent)) ||
+      typeof receipt.reviewRecord !== "string" ||
+      !receipt.reviewRecord.startsWith("docs/") ||
+      receipt.reviewRecord.includes("\\") ||
+      receipt.reviewRecord.split("/").some((part) => part === ".." || part === "." || part === "")
+    ) {
+      failures.push("Invalid owned integration merge receipt");
+      continue;
+    }
+    if (ids.has(receipt.id) || merges.has(receipt.merge)) {
+      failures.push(`${receipt.id}: duplicate owned integration merge receipt`);
+      continue;
+    }
+    ids.add(receipt.id);
+    merges.add(receipt.merge);
+    const parents = input.parentsOf(receipt.merge);
+    if (
+      parents.length !== receipt.parents.length ||
+      parents.some((parent, index) => parent !== receipt.parents[index])
+    ) {
+      failures.push(`${receipt.id}: owned integration merge parents do not match`);
+      continue;
+    }
+    if (!input.isInOwnedHistory(receipt.merge)) {
+      failures.push(`${receipt.id}: owned integration merge is not in inspected history`);
+      continue;
+    }
+    if (!input.hasCommittedReviewRecord(receipt.reviewRecord)) {
+      failures.push(`${receipt.id}: committed owned integration review record is missing`);
+      continue;
+    }
+    receipts.push(receipt);
+  }
+  return { receipts, failures };
+}
+
 export function validateIntroducedMergeParents(input) {
   const failures = [];
   const queueMerges = new Set();
@@ -63,6 +118,17 @@ export function validateIntroducedMergeParents(input) {
     for (const parent of merge.parents.slice(1)) {
       if (input.isOfficialAncestor(parent)) continue;
       if (input.isOwnedAncestor(parent)) continue;
+      // Exempt only this exact reviewed edge. Nested merges remain in the full
+      // rev-list below and must independently satisfy the same provenance rules.
+      if (
+        (input.ownedIntegrationMerges ?? []).some(
+          (receipt) =>
+            receipt.merge === merge.commit &&
+            receipt.parents.length === merge.parents.length &&
+            receipt.parents.every((candidate, index) => candidate === merge.parents[index]),
+        )
+      )
+        continue;
       const exception = input.exceptions.find(
         (candidate) => candidate.head === parent && candidate.importMerge === merge.commit,
       );
@@ -83,6 +149,30 @@ export function verifyUpstreamProvenance(argv = process.argv.slice(2)) {
   if (!isAncestor(state.integrationBase, head)) {
     failures.push(`integrationBase is not an ancestor of ${head}`);
   }
+
+  const ownedIntegrations = validateOwnedIntegrationMerges({
+    receipts: state.ownedIntegrationMerges === undefined ? [] : state.ownedIntegrationMerges,
+    parentsOf: (commit) => {
+      try {
+        return git(["show", "-s", "--format=%P", commit]).split(" ").filter(Boolean);
+      } catch {
+        return [];
+      }
+    },
+    isInOwnedHistory: (commit) => isAncestor(commit, head),
+    hasCommittedReviewRecord: (path) => {
+      try {
+        const entry = git(["ls-tree", head, "--", path]);
+        return (
+          /^100(?:644|755) blob [0-9a-f]{40}\t/.test(entry) &&
+          git(["show", `${head}:${path}`]).length > 0
+        );
+      } catch {
+        return false;
+      }
+    },
+  });
+  failures.push(...ownedIntegrations.failures);
 
   const exceptions = state.historicalExceptions ?? [];
   for (const exception of exceptions) {
@@ -123,6 +213,7 @@ export function verifyUpstreamProvenance(argv = process.argv.slice(2)) {
             .filter((row) => row.length > 2)
             .map(([commit, ...parents]) => ({ commit, parents })),
           exceptions,
+          ownedIntegrationMerges: ownedIntegrations.receipts,
           allowQueueMerges: args["allow-queue-merges"] === "true",
           allowOwnedHeadMerge: args["allow-owned-head-merge"] === "true",
           isOfficialAncestor: (commit) => isAncestor(commit, args["official-ref"]),

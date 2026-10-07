@@ -4,6 +4,7 @@ import {
   isActivityRunForShell,
   providerInstanceHistoryForShell,
   threadShellFromProjection,
+  COMPLETED_ANSWER_TRIM_CHARACTERS,
 } from "@t3tools/shared/orchestrationV2ThreadShell";
 import type {
   OrchestrationV2AppThread,
@@ -60,6 +61,7 @@ import {
   isOrchestrationV2SupersededInterrupt,
   isOrchestrationV2TurnItemVisible,
 } from "@t3tools/shared/orchestrationV2Timeline";
+import { historicalMessage } from "./ContextHandoffBudget.ts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -75,6 +77,11 @@ import {
   isThreadHistoryTurnStart,
   THREAD_HISTORY_MAX_RAW_TURNS,
 } from "./threadHistoryPaging.ts";
+import { isWorkspaceBoundRootScopeId, rootScopeWorkspaceMatches } from "./CheckpointService.ts";
+import {
+  readRollbackAttachmentOwners,
+  retainedRollbackAttachmentIds,
+} from "./scient-fork/RollbackAttachmentRetention.ts";
 
 export class ProjectionStoreApplyEventError extends Schema.TaggedError<ProjectionStoreApplyEventError>()(
   "ProjectionStoreApplyEventError",
@@ -203,10 +210,11 @@ const ProjectionCheckpointContext = Schema.Struct({
   ),
   checkpoints: Schema.Array(
     OrchestrationV2CheckpointJsonSchema.mapFields(
-      ({ scopeId, runId, appRunOrdinal, status, ref }) => ({
+      ({ scopeId, runId, appRunOrdinal, ordinalWithinScope, status, ref }) => ({
         scopeId,
         runId,
         appRunOrdinal,
+        ordinalWithinScope,
         status,
         ref,
       }),
@@ -304,6 +312,11 @@ export interface ProjectionTimelinePage {
 }
 
 export interface ProjectionStoreV2Shape {
+  readonly getRollbackAttachmentOwners: (input: {
+    readonly threadId: ThreadId;
+    readonly revertedRunIds: ReadonlyArray<RunId>;
+    readonly attachmentIds: ReadonlyArray<string>;
+  }) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
   readonly getThreadAttachmentIds: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
@@ -548,13 +561,35 @@ function upsertById<T extends { readonly id: string }>(items: ReadonlyArray<T>, 
   return updated;
 }
 
+function checkpointScopeBindingError(
+  scope: OrchestrationV2CheckpointScope,
+  existing: OrchestrationV2CheckpointScope | undefined,
+): ProjectionStoreApplyEventError | undefined {
+  if (
+    isWorkspaceBoundRootScopeId(scope.id) &&
+    (!rootScopeWorkspaceMatches(scope) || (existing !== undefined && existing.cwd !== scope.cwd))
+  ) {
+    return new ProjectionStoreApplyEventError({
+      eventType: "checkpoint-scope.created",
+      cause: "A workspace-bound checkpoint root cannot change its captured workspace.",
+    });
+  }
+}
+
 export function upsertProviderTurn(
   turns: ReadonlyArray<OrchestrationV2ProviderTurn>,
   next: OrchestrationV2ProviderTurn,
 ): Array<OrchestrationV2ProviderTurn> {
   const current = turns.find((turn) => turn.id === next.id);
+  const sameOwner =
+    current !== undefined &&
+    current.providerThreadId === next.providerThreadId &&
+    current.nodeId === next.nodeId &&
+    current.runAttemptId === next.runAttemptId;
+  const observedEffort = (sameOwner ? current?.observedEffort : undefined) ?? next.observedEffort;
   return upsertById(turns, {
     ...next,
+    ...(observedEffort === undefined ? {} : { observedEffort }),
     ...((next.tokenUsage ?? current?.tokenUsage) === undefined
       ? {}
       : { tokenUsage: next.tokenUsage ?? current?.tokenUsage }),
@@ -1949,15 +1984,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             break;
           }
           case "provider-turn.updated": {
-            const existingRows =
-              event.payload.tokenUsage === undefined
-                ? yield* sql<PayloadRow>`
-                    SELECT payload_json
-                    FROM orchestration_v2_projection_provider_turns
-                    WHERE provider_turn_id = ${event.payload.id}
-                    LIMIT 1
-                  `
-                : [];
+            // Effort is immutable for this exact owner, even when usage accompanies an update.
+            const existingRows = yield* sql<PayloadRow>`
+              SELECT payload_json
+              FROM orchestration_v2_projection_provider_turns
+              WHERE provider_turn_id = ${event.payload.id}
+              LIMIT 1
+            `;
             const existing = existingRows[0];
             const providerTurn =
               existing === undefined
@@ -2140,7 +2173,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.threadId},
                 ${event.payload.runId},
                 ${event.payload.nodeId},
-                ${event.payload.providerThreadId},
+                ${event.payload.providerThreadId ?? null},
                 ${event.payload.providerTurnId},
                 ${event.payload.parentItemId},
                 ${event.payload.ordinal},
@@ -2166,6 +2199,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             break;
           }
           case "checkpoint-scope.created": {
+            if (isWorkspaceBoundRootScopeId(event.payload.id)) {
+              const rows = yield* sql<PayloadRow>`
+                SELECT payload_json FROM orchestration_v2_projection_checkpoint_scopes
+                WHERE scope_id = ${event.payload.id}
+              `;
+              const existing =
+                rows[0] === undefined
+                  ? undefined
+                  : yield* decodeCheckpointScopePayload(rows[0].payload_json);
+              const error = checkpointScopeBindingError(event.payload, existing);
+              if (error !== undefined) return yield* error;
+            }
             const payloadJson = yield* encodeCheckpointScopePayload(event.payload);
             const payload = parseEncodedPayload(payloadJson);
             yield* sql`
@@ -3601,14 +3646,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const getTurnStartHistory: ProjectionStoreV2Shape["getTurnStartHistory"] = (threadId, runIds) =>
       Effect.gen(function* () {
         const rows = yield* sql<PayloadRow>`
-          SELECT payload_json FROM orchestration_v2_projection_turn_items
-          WHERE thread_id = ${threadId}
-            AND type IN ('user_message','assistant_message','command_execution','error',
+          SELECT item.payload_json FROM orchestration_v2_projection_turn_items AS item
+          WHERE item.thread_id = ${threadId}
+            AND (item.type IN ('user_message','assistant_message','command_execution','error',
               'run_interrupt_result','file_change','proposed_plan')
-            AND ${runIds === undefined ? sql`1` : sql`run_id IN ${sql.in(runIds)}`}
-          ORDER BY ordinal ASC, turn_item_id ASC
+              OR (item.type IN ('reasoning','dynamic_tool') AND item.run_id IS NULL)
+              OR (item.type = 'user_input_request' AND item.status = 'completed'
+                AND json_type(item.payload_json, '$.questionAnswer') = 'object'))
+            AND ${runIds === undefined ? sql`1` : sql`item.run_id IN ${sql.in(runIds)}`}
+          ORDER BY item.ordinal ASC, item.turn_item_id ASC
         `;
-        return yield* decodeRows(decodeTurnItemPayload, threadId)(rows);
+        return (yield* decodeRows(decodeTurnItemPayload, threadId)(rows)).filter(
+          (item) =>
+            (item.type !== "reasoning" && item.type !== "dynamic_tool") ||
+            historicalMessage(item) !== null,
+        );
       }).pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
 
     const getThreadProjection: ProjectionStoreV2Shape["getThreadProjection"] = (threadId) =>
@@ -4196,7 +4248,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `,
               sql`
               SELECT scope_id AS "scopeId", run_id AS "runId",
-                app_run_ordinal AS "appRunOrdinal", status,
+                app_run_ordinal AS "appRunOrdinal", ordinal_within_scope AS "ordinalWithinScope", status,
                 json_extract(payload_json, '$.ref') AS ref
               FROM orchestration_v2_projection_checkpoints
               WHERE thread_id = ${threadId}
@@ -4313,6 +4365,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.map((rows) => (rows[0]?.ordinal ?? 0) + 1),
         Effect.mapError(controlReadError(threadId)),
       );
+
+    // SCIENT-FORK:START — rollback attachment owners, read in one transaction.
+    const getRollbackAttachmentOwners: ProjectionStoreV2Shape["getRollbackAttachmentOwners"] = (
+      input,
+    ) =>
+      readRollbackAttachmentOwners(sql, input, (threadId) =>
+        readCanonicalProjection(threadId, undefined, [
+          "runs",
+          "messages",
+          "turnItems",
+          "runtimeRequests",
+        ]),
+      ).pipe(
+        Effect.mapError(
+          (cause) => new ProjectionStoreReadError({ threadId: input.threadId, cause }),
+        ),
+      );
+    // SCIENT-FORK:END
 
     const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = (threadId) =>
       sql<{ id: string }>`
@@ -4640,7 +4710,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     )
                   )
                   AND m.streaming = 0
-                  AND length(trim(json_extract(m.payload_json, '$.text'))) > 0
+                  AND trim(json_extract(m.payload_json, '$.text'), ${COMPLETED_ANSWER_TRIM_CHARACTERS}) <> ''
                 ORDER BY r.ordinal DESC, m.created_at DESC, m.message_id DESC
                 LIMIT 1
               ) AS latest_completed_answer_json,
@@ -5356,6 +5426,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadSnapshotWindow,
       getTimelinePage,
       getThreadAttachmentIds,
+      getRollbackAttachmentOwners,
     } satisfies ProjectionStoreV2Shape;
   }),
 );
@@ -5369,19 +5440,36 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
     const service: ProjectionStoreV2Shape = {
       apply: (event) =>
         Effect.gen(function* () {
-          const result = yield* Ref.modify(replayState, (existing) => {
-            const next: ProjectionReplayState = {
-              projections: new Map(existing.projections),
-              providerSessionThreadIds: new Map(existing.providerSessionThreadIds),
-            };
-            if (!applyToProjectionReplayState(next, event)) {
-              return [
-                new ProjectionStoreThreadNotFoundError({ threadId: event.threadId }),
-                existing,
-              ] as const;
-            }
-            return [undefined, next] as const;
-          });
+          const result = yield* Ref.modify(
+            replayState,
+            (
+              existing,
+            ): readonly [
+              ProjectionStoreApplyEventError | ProjectionStoreThreadNotFoundError | undefined,
+              ProjectionReplayState,
+            ] => {
+              if (event.type === "checkpoint-scope.created") {
+                const error = checkpointScopeBindingError(
+                  event.payload,
+                  existing.projections
+                    .get(event.threadId)
+                    ?.checkpointScopes.find((scope) => scope.id === event.payload.id),
+                );
+                if (error !== undefined) return [error, existing] as const;
+              }
+              const next: ProjectionReplayState = {
+                projections: new Map(existing.projections),
+                providerSessionThreadIds: new Map(existing.providerSessionThreadIds),
+              };
+              if (!applyToProjectionReplayState(next, event)) {
+                return [
+                  new ProjectionStoreThreadNotFoundError({ threadId: event.threadId }),
+                  existing,
+                ] as const;
+              }
+              return [undefined, next] as const;
+            },
+          );
 
           if (result) {
             return yield* result;
@@ -5590,6 +5678,12 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 ?.turnItems.reduce((max, item) => Math.max(max, item.ordinal), 0) ?? 0) + 1,
           ),
         ),
+      getRollbackAttachmentOwners: (input) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            retainedRollbackAttachmentIds(input, [...state.projections.values()]),
+          ),
+        ),
       getThreadAttachmentIds: (threadId) =>
         service
           .getThreadProjection(threadId)
@@ -5756,10 +5850,11 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               cwd,
             })),
             checkpoints: projection.checkpoints.map(
-              ({ scopeId, runId, appRunOrdinal, status, ref }) => ({
+              ({ scopeId, runId, appRunOrdinal, ordinalWithinScope, status, ref }) => ({
                 scopeId,
                 runId,
                 appRunOrdinal,
+                ordinalWithinScope,
                 status,
                 ref,
               }),
@@ -5865,7 +5960,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             Effect.map((projection) =>
               projection.turnItems.filter(
                 (item) =>
-                  [
+                  ([
                     "user_message",
                     "assistant_message",
                     "command_execution",
@@ -5873,7 +5968,14 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                     "run_interrupt_result",
                     "file_change",
                     "proposed_plan",
-                  ].includes(item.type) &&
+                    "reasoning",
+                    "dynamic_tool",
+                  ].includes(item.type) ||
+                    (item.type === "user_input_request" &&
+                      item.status === "completed" &&
+                      item.questionAnswer !== undefined)) &&
+                  ((item.type !== "reasoning" && item.type !== "dynamic_tool") ||
+                    (item.runId === null && historicalMessage(item) !== null)) &&
                   (runIds === undefined || (item.runId !== null && runIds.includes(item.runId))),
               ),
             ),

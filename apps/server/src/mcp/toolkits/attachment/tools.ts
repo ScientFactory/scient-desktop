@@ -17,12 +17,14 @@ import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { ProviderSessionManagerV2 } from "../../../orchestration-v2/ProviderSessionManager.ts";
 
 const shared = {
   failure: OrchestratorMcpFailure,
   failureMode: "return" as const,
   dependencies: [
     McpInvocationContext.McpInvocationContext,
+    ProviderSessionManagerV2,
     ThreadManagementService.ThreadManagementService,
     ServerConfig.ServerConfig,
     ServerSecretStore.ServerSecretStore,

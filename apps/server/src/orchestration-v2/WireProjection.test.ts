@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 
 import { projectTurnItemForWire, projectDomainEventForWire } from "./WireProjection.ts";
 import { threadShellFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
+import { historicalSubagentsToRuntime } from "../../../../packages/client-runtime/src/state/historicalSubagentRuntime.ts";
 
 const decodeTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
 const encodeTurnItemJson = Schema.encodeSync(OrchestrationV2TurnItemJson);
@@ -45,6 +46,137 @@ const base = {
 };
 
 describe("orchestration V2 wire projection", () => {
+  it("presents an unresolved completed native Codex citation without changing its raw item", () => {
+    const raw = "Evidence 😀 \uE200cite\uE202missing\uE201.";
+    const item = decodeTurnItem({
+      ...base,
+      type: "assistant_message",
+      messageId: MessageId.make("unresolved-citation"),
+      nativeItemRef: { driver: "codex", nativeId: "unresolved", strength: "strong" },
+      text: raw,
+      streaming: false,
+    });
+    const presented = projectTurnItemForWire(item);
+    expect(presented.type).toBe("assistant_message");
+    if (presented.type !== "assistant_message") throw new Error("Missing assistant item");
+    expect(presented.text).toBe("Evidence 😀 [citation unavailable].");
+    expect(item.type === "assistant_message" && item.text).toBe(raw);
+  });
+
+  it("preserves oversized inert task completion identity, usage and bounded display through JSON", () => {
+    const detail = "Evidence checked. " + "😀".repeat(20_000);
+    const item = {
+      ...base,
+      id: TurnItemId.make("migration:v1:history:activity:completion"),
+      input: {
+        activityId: "completion",
+        turnId: "historical-turn",
+        tone: "info",
+        kind: "task.completed",
+        summary: "Completed review",
+        sequence: 2,
+        payload: {
+          taskId: "reviewer",
+          agentKind: "agent",
+          status: "failed",
+          detail,
+          typedUsage: { totalTokens: 123, toolUses: 4 },
+          output: { text: detail },
+        },
+      },
+    } satisfies OrchestrationV2TurnItem;
+    const projected = projectTurnItemForWire(item);
+    const decoded = decodeTurnItemJson(encodeTurnItemJson(projected));
+    const agents = historicalSubagentsToRuntime([decoded]);
+    expect(agents).toHaveLength(1);
+    expect(agents[0]).toMatchObject({
+      id: "historical:thread-1:reviewer",
+      status: "failed",
+      historical: true,
+      usage: { totalTokens: 123, toolUses: 4 },
+    });
+    expect(agents[0]?.error).toMatch(/^Evidence checked\./);
+    expect(agents[0]?.error).not.toContain("\uFFFD");
+    expect(JSON.stringify(projected).length).toBeLessThan(3_000);
+    expect(projectTurnItemForWire(projected)).toEqual(projected);
+    expect(item.input.payload.detail).toBe(detail);
+    expect(item.input.payload.output.text).toBe(detail);
+  });
+
+  it("retains inherited historical workflow structure rather than replacing its activity envelope", () => {
+    const item = {
+      ...base,
+      id: TurnItemId.make("fork:destination:item:0"),
+      inheritedFrom: {
+        threadId: ThreadId.make("source-thread"),
+        itemId: TurnItemId.make("migration:v1:history:activity:workflow"),
+        runId: null,
+        status: "completed" as const,
+      },
+      input: {
+        activityId: "workflow",
+        turnId: null,
+        tone: "info",
+        kind: "task.completed",
+        summary: "Workflow finished",
+        sequence: null,
+        payload: {
+          taskId: "workflow",
+          agentKind: "agent",
+          taskType: "local_workflow",
+          status: "completed",
+          title: "Review",
+          summary: "x".repeat(30_000),
+          phases: [{ index: 0, title: "Phase " + "y".repeat(30_000) }],
+          runHandles: { runId: "historical-display", scriptPath: "/old/review.ts" },
+          typedUsage: { toolUses: 3 },
+        },
+      },
+    } satisfies OrchestrationV2TurnItem;
+    const projected = projectTurnItemForWire(item);
+    const agents = historicalSubagentsToRuntime([projected, projected]);
+    expect(agents).toHaveLength(1);
+    expect(agents[0]).toMatchObject({
+      id: "historical:source-thread:workflow",
+      historical: true,
+      kind: "workflow",
+      status: "completed",
+      usage: { toolUses: 3 },
+      runHandles: { runId: "historical-display", scriptPath: "/old/review.ts" },
+    });
+    expect(agents[0]?.usage?.totalTokens).toBeUndefined();
+    expect(agents[0]?.phases[0]?.title).toMatch(/^Phase /);
+    expect(agents[0]?.phases[0]?.title.length).toBeLessThan(1_100);
+  });
+
+  it.each(["provider-id", "native-owner", "malformed-envelope"])(
+    "does not exempt unproven task-shaped tool input from compaction: %s",
+    (reason) => {
+      const input = {
+        activityId: "pretend",
+        turnId: null,
+        tone: "info",
+        kind: "task.completed",
+        summary: "Pretend",
+        sequence: null,
+        payload: reason === "malformed-envelope" ? null : { detail: "x".repeat(30_000) },
+        extra: "x".repeat(30_000),
+      };
+      const projected = projectTurnItemForWire({
+        ...base,
+        id: TurnItemId.make(
+          reason === "provider-id" ? "provider-id" : "migration:v1:history:activity:pretend",
+        ),
+        ...(reason === "native-owner" ? { nodeId: NodeId.make("native-node") } : {}),
+        input,
+      });
+      expect(projected.type === "dynamic_tool" ? projected.input : null).toMatchObject({
+        truncated: true,
+      });
+      expect(historicalSubagentsToRuntime([projected])).toEqual([]);
+    },
+  );
+
   it("keeps copied handoff transcripts out of activity items and live events", () => {
     const item = {
       ...base,
@@ -72,11 +204,14 @@ describe("orchestration V2 wire projection", () => {
   });
 
   it("preserves image metadata through wire and JSON contracts while redacting output", () => {
+    const imagePath = `/workspace/${"nested folder/".repeat(16)}reference image.webp`;
     const item = {
       ...base,
+      nodeId: NodeId.make("child-tool-owner"),
+      parentItemId: TurnItemId.make("parent-tool"),
       toolName: "Read",
-      input: { file_path: "/workspace/reference.png" },
-      viewedImagePath: "/workspace/reference.png",
+      input: { file_path: imagePath },
+      viewedImagePath: imagePath,
       output: { data: "private-image-data" },
     } satisfies OrchestrationV2TurnItem;
     const projected = projectTurnItemForWire(item);
@@ -84,7 +219,12 @@ describe("orchestration V2 wire projection", () => {
     const encoded = encodeTurnItemJson(live);
     const json = decodeTurnItemJson(encoded);
     const decoded = decodeTurnItem(json);
-    expect(decoded).toMatchObject({ viewedImagePath: "/workspace/reference.png" });
+    expect(decoded).toMatchObject({
+      viewedImagePath: imagePath,
+      nodeId: item.nodeId,
+      parentItemId: item.parentItemId,
+    });
+    expect(projectTurnItemForWire(decoded)).toEqual(decoded);
     expect(decoded).not.toHaveProperty("output");
     expect(item.output.data).toBe("private-image-data");
   });

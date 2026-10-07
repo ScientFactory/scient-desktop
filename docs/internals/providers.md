@@ -7,30 +7,33 @@ orchestration layer does not know which one is behind a thread.
 
 Provider protocols, account ownership, permissions, and capabilities belong at the
 [adapter boundary](../../apps/server/src/orchestration-v2/ProviderAdapter.ts). Normalize there
-instead of spreading provider checks through reactors and clients.
+instead of spreading provider checks through orchestration services and clients.
 
 ## Built-in drivers
 
-[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with ten entries:
+[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with eleven entries:
 
-| Driver kind   | Driver source                                  |
-| ------------- | ---------------------------------------------- |
-| `codex`       | [`Drivers/CodexDriver.ts`][codex]              |
-| `claudeAgent` | [`Drivers/ClaudeDriver.ts`][claude]            |
-| `cursor`      | [`Drivers/CursorDriver.ts`][cursor]            |
-| `grok`        | [`Drivers/GrokDriver.ts`][grok]                |
-| `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode]        |
-| `droid`       | [`Drivers/DroidDriver.ts`][droid]              |
-| `antigravity` | [`Drivers/AntigravityDriver.ts`][antigravity]  |
-| `pi`          | [`Drivers/PiDriver.ts`][pi]                    |
-| `omp`         | [`Drivers/OmpDriver.ts`][omp]                  |
-| `scient`      | [`Drivers/ScientAgentDriver.ts`][scient-agent] |
+| Driver kind   | Driver source                                                                                 |
+| ------------- | --------------------------------------------------------------------------------------------- |
+| `acpRegistry` | [`Drivers/AcpRegistryDriver.ts`](../../apps/server/src/provider/Drivers/AcpRegistryDriver.ts) |
+| `codex`       | [`Drivers/CodexDriver.ts`][codex]                                                             |
+| `claudeAgent` | [`Drivers/ClaudeDriver.ts`][claude]                                                           |
+| `cursor`      | [`Drivers/CursorDriver.ts`][cursor]                                                           |
+| `grok`        | [`Drivers/GrokDriver.ts`][grok]                                                               |
+| `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode]                                                       |
+| `droid`       | [`Drivers/DroidDriver.ts`][droid]                                                             |
+| `antigravity` | [`Drivers/AntigravityDriver.ts`][antigravity]                                                 |
+| `pi`          | [`Drivers/PiDriver.ts`][pi]                                                                   |
+| `omp`         | [`Drivers/OmpDriver.ts`][omp]                                                                 |
+| `scient`      | [`Drivers/ScientAgentDriver.ts`][scient-agent]                                                |
 
-Each driver declares its `driverKind`, a `configSchema`, and a `create` function that builds an
-adapter in a child scope. Adapter implementations live beside them in
-`apps/server/src/provider/Layers/` (`CodexAdapter.ts`, `ClaudeAdapter.ts`, and so on) and conform to
-[`ProviderAdapter.ts`][adapter]. Read the driver plus its adapter to see how a specific agent's
-transport, config, and event shapes are mapped.
+Each driver declares its `driverKind`, configuration schema, and scoped instance factory.
+Live execution uses that instance's `orchestrationAdapter`, implementing
+[`ProviderAdapterV2`][adapter]. Native adapters live in `apps/server/src/orchestration-v2/Adapters/`;
+shared discovery, authentication, process and transport helpers stay under `provider/` and the
+protocol packages. Read the driver and its native adapter together. The V1 `provider/Layers/*Adapter`
+execution facade and its unused service/directory/metrics/queue owners are retired; historical
+readers and migration contracts remain separate compatibility boundaries.
 
 Antigravity separates account profiles per instance while sharing installed executables across the
 environment. It forces file-based credential storage because the native macOS keychain entry would
@@ -82,11 +85,12 @@ claim. Settings displays the effective native model without replacing the stored
 
 ## Runtime context
 
-Every adapter uses `apps/server/src/provider/RuntimeInstructions.ts` to identify T3 Code and
-the harness, and describe Markdown image/video embeds. Codex includes it in developer
-instructions; Claude appends it to its system preset; OpenCode sends it in each prompt's
-`system` field. Cursor, Grok, and Antigravity append a separate text block to ACP prompts,
-which have no system-message field. This does not change the stored user message.
+Native adapters compose shared harness instructions from `provider/RuntimeInstructions.ts`
+where their protocol supports that channel; Pi also carries orchestration guidance through
+its MCP bridge. These instructions describe Markdown image/video embeds and the runtime.
+Codex includes them in developer instructions; Claude appends them to its system preset;
+OpenCode uses a per-prompt `system` field. Cursor appends runtime text to its SDK prompt;
+Grok and Antigravity use separate text blocks in ACP prompts, which have no system-message field. This does not change the stored user message.
 
 Per-turn context includes the current model when known. Codex includes reasoning effort;
 Grok includes it when explicitly selected for the turn. Claude's session-level context omits model and effort because they can
@@ -100,18 +104,9 @@ Each question has a `title` and an optional `options` array of strings. The tool
 without waiting. This is separate from the `item/tool/requestUserInput` server request.
 See the [Codex tool handler](https://github.com/openai/codex/blob/d979df154cf60e13eafb5453e75b6d84f21c67bf/codex-rs/core/src/tools/handlers/request_user_input_async.rs).
 
-The Codex adapter maps completed question items to `user-input.requested` with
-`responseMode: "message"` and stable request and event IDs. Questions use the existing web,
-desktop, and mobile panels. They stay pending while the turn runs and after it finishes.
-
-The engine reads the request's latest stored activity before deciding a reply. This works after
-startup, when the command snapshot has no activities, and after a resolution leaves the recent
-activity window. The query returns one activity, not the full thread history.
-
-For these requests, the decider saves the resolution and a user message in one transaction.
-The standard turn path delivers the message, including session resume and active-turn input.
-It does not send a JSON-RPC response to Codex. Other providers and blocking Codex questions
-keep their existing response paths.
+`CodexAdapterV2` maps async question items into the native V2 request model with stable IDs
+and message-mode response capability. These are distinct from blocking callback questions.
+Web, desktop, and mobile use their existing question panels.
 
 Orchestration v2 persists the same requests as `user_input_request` turn items and runtime
 requests with `responseCapability: { type: "message" }`. Their execution nodes do not block the
@@ -125,23 +120,35 @@ the recent history window.
 
 ## Registry and routing
 
-Two registries separate configuration from live processes:
+Configuration and execution share the canonical instance registry:
 
-- [`ProviderInstanceRegistry`][instances] keys configured instances by `ProviderInstanceId`. Creating
-  one looks up the driver by `driverKind`, decodes `entry.config` with that driver's schema, opens a
-  child scope, and calls `driver.create`.
-- [`ProviderAdapterRegistry`][registry] resolves an instance ID to its live adapter via
-  `getByInstance`.
+- [`ProviderInstanceRegistry`][instances] materializes configuration by instance ID, decoding it
+  through the selected driver's schema and owning its child scope, snapshots and optional lifecycle
+  actions.
+- [`ProviderAdapterRegistryV2`][registry] is a dynamic facade over those instances. `get(instanceId)`
+  obtains `instance.orchestrationAdapter`, so replacement/removal is visible without another
+  settings watcher or routing map.
+- [`ProviderSessionManagerV2`][sessions] owns live session handles, scopes, MCP preparation,
+  per-turn selected-skill scope, idle release and exact-instance teardown. Durable provider sessions
+  and threads remain V2 facts even when an in-memory process has gone away.
 
-[`ProviderService`][service] sits on top. It combines the adapter registry with the provider session
-directory to route session and turn operations for a thread, so callers name a thread, not an agent.
+`ProviderTurnStartService` projects typed composer context, applies selected Scient skills, resolves
+native or portable context transfers, and calls the session manager and `RunExecutionService`.
+Native start and steer expand supported composer citations. Current-input validation includes that
+expansion, projected typed context, selected-skill instructions and attachment descriptors/captured
+data; inherited history has a separate receiving budget. See
+[context handoffs](./context-handoffs.md) for the complete-current-input boundary.
+The importer's historical citation repair is a separate reader boundary, not the mechanism for
+expanding citations in new user prompts.
+`ProviderTurnControlService` owns interrupt/restart/steer execution;
+`RuntimeRequestService` sends callback answers to the recorded session.
+`ProviderEventIngestor` persists adapter output with run/attempt/node attribution.
+The V1 `ProviderService.sendTurn` path is not the current execution boundary.
 
-`ProviderService.sendTurn` expands [assistant citations](./assistant-citations.md) into quoted
-reference data before dispatching to any adapter. Bound user comments remain distinct from the quoted
-assistant text. Persisted messages keep their serialized links.
-
-Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
-orchestration, contract, or client change is required for the common case.
+Adding an ordinary driver requires a native `ProviderAdapterV2`, an instance factory, and registration
+in `BUILT_IN_DRIVERS`. Expose capabilities truthfully; new wire behavior may also require contract
+and client work. Production composition is in
+[`runtimeLayer.ts`](../../apps/server/src/orchestration-v2/runtimeLayer.ts).
 
 ### Grok health check
 
@@ -394,8 +401,8 @@ Each built-in driver has an explicit native delivery decision, guarded against `
 
 - Codex uses developer instructions; Claude appends to its preset system prompt; OpenCode uses its
   per-prompt system field; Grok uses `--rules`; Droid uses `--append-system-prompt`; Pi appends
-  awareness through its session-local `before_agent_start` extension hook. Oh My Pi uses the same
-  hook from the same generated extension; its hook receives the prompt as `string[]` and treats a
+  awareness through its session-local `before_agent_start` extension hook. Oh My Pi and Scient Agent use that
+  hook from their own generated extension; its hook receives the prompt as `string[]` and treats a
   returned value as the whole replacement, so awareness is appended as one more element.
 - Cursor accepts a documented `--plugin-dir`, but live CLI and ACP verification found that
   session-local plugin rules were not applied. Antigravity likewise has no verified
@@ -409,8 +416,8 @@ or undocumented ACP metadata.
 
 ### Droid (Factory) driver
 
-Droid runs the `@factory/cli` binary over ACP (`droid exec --output-format acp`), sharing the ACP
-session runtime with Grok and Cursor. See [Droid in Scient](../user/providers-droid.md) for the
+Droid runs the `@factory/cli` binary over ACP (`droid exec --output-format acp`), using
+`DroidAdapterV2` over the shared `AcpAdapterV2` runtime. Cursor uses its SDK adapter. See [Droid in Scient](../user/providers-droid.md) for the
 user-facing setup flow. Implementation notes that go beyond the shared runtime:
 
 - `Drivers/DroidDriver.ts` composes the existing adapter with the optional Scient lifecycle seam.
@@ -426,8 +433,9 @@ user-facing setup flow. Implementation notes that go beyond the shared runtime:
   it uses `DROID_DEFAULT_MODEL`, a marker never sent to Droid, so the session keeps the same default.
 - `acp/DroidAcpSupport.ts` owns auth-method selection, model and effort parsing, autonomy mapping,
   and the shared model/effort application used by interactive and headless paths.
-- `Layers/DroidAdapter.ts` owns prompt preparation, steering, atomic turn settlement, interruption,
-  ACP elicitation, and the Droid idle watchdog.
+- `orchestration-v2/Adapters/DroidAdapterV2.ts` specializes the shared `AcpAdapterV2` runtime for
+  Droid, including its idle watchdog and failure policy. The shared ACP adapter owns common prompt,
+  steering, event, interruption and elicitation mechanics.
 - `scient/providerLifecycle/DroidConnectionActions.ts` invokes device pairing only when the exact
   initialized peer advertises it. Droid owns its browser flow, and Sign out is exposed only when the
   peer advertises ACP logout.
@@ -445,8 +453,9 @@ tolerantly without weakening non-array validation or editing generated schemas.
 The official ACP path above is the default on supported hosts. Scient's previous `agy`
 stream-json transport remains only for version-2 continuation cursors, explicit legacy executable
 paths (`agy`, `agy.exe`, or the old managed `antigravity` binary), and the unsupported-ACP Intel Mac
-default. `AntigravityCompatibilityAdapter` creates the legacy adapter lazily for old conversations;
-version-1 ACP cursors stay ACP. It never replays or converts one protocol's cursor into the other.
+default. The Antigravity driver's native adapter router chooses `AntigravityAdapterV2` or
+`LegacyAntigravityAdapterV2` from the configured executable and recorded native reference.
+It never replays or converts one protocol's cursor into the other.
 
 `LegacyAntigravityDriver` and [`AgySession.ts`][agy-session] preserve the existing subscription,
 credential-store, attachment, and managed-runtime behavior for that path. The `antigravity` catalog
@@ -457,86 +466,60 @@ The [provider lifecycle architecture](./provider-lifecycle.md) owns the shared m
 
 ### Pi driver
 
-[`PiDriver.ts`][pi] composes the same provider-instance registry, lifecycle actions, settings, and
-orchestration contracts as the other drivers. It does not import a second provider architecture or
-ACP translation layer. Native protocol tests and the managed installation are pinned to the
-qualified official Pi 0.85.1 archives.
+[`PiDriver.ts`][pi] supplies `PiAdapterV2` on the same instance registry and lifecycle surface.
+The native adapter runs Pi's own RPC mode with user extensions, packages, skills, templates,
+configuration and project-trust discovery. It adds a namespaced MCP/permission bridge through
+`piT3McpExtensionSource.ts` and `piT3McpInjection.ts`; it does not use the old V1 `PiScientExtension`
+or `PiContextExtension` as the live turn engine.
 
-- `provider/pi/PiRpcClient.ts` owns the newline-delimited RPC transport, request correlation, bounded
-  frames/queues and query timeouts. Prompt acceptance can wait for extension input; writes remain
-  bounded and Stop remains independent of the prompt lock.
-- `provider/Layers/PiAdapter.ts` maps native streaming, tools, extension questions, errors, steering,
-  and settlement into canonical runtime events. A native cycle ending is not sufficient to complete
-  a Scient turn: streaming, queued prompts, and compaction must also have settled. Context occupancy
-  comes from Pi's context estimate, separately from cumulative processed tokens; unknown usage is
-  not invented. The shared ingestion layer retains its buffered assistant-output default and does
-  not display a separate reasoning transcript. `ProviderService` supplies server-owned original
-  user text alongside the augmented model prompt. Pi sends recognized native commands verbatim
-  using the active session's catalog; ordinary prompts retain skill instructions. Per-turn MCP
-  skill scope replacement is unchanged. Attachments with native commands are explicitly rejected.
-- `provider/pi/PiSessionFile.ts` stores exact private per-instance JSONL session cursors, validates
-  containment, real paths, header identity and workspace, and rejects multiple live writers. Stop
-  closes the owned process; the durable cursor supports restart. Unrelated session imports and
-  provider-side rollback are unsupported, not simulated.
-- `provider/pi/PiScientExtension.ts` adapts the existing `McpProviderSession` endpoint and credential
-  into native Pi tools. It preserves canonical names, authorization, cancellation, structured
-  output and tool-error state. It does not infer authority from `cwd` or add a separate tool registry.
-  Tool discovery failure prevents silently starting a session without the bridge. Terminal-only Pi
-  UI APIs are not emulated.
-- `provider/pi/PiContextExtension.ts` runs in the same session-local bridge. Its
-  `before_provider_request` hook estimates the final payload (UTF-8 text, system/tool
-  schemas and image allowances), takes the larger of that estimate and native context
-  occupancy, reserves headroom, and bounds known provider output/thinking ceilings.
-  It never deletes request messages. An oversized input starts native compaction without
-  awaiting it inside the request hook; native compaction aborts the unsent request.
-  One hidden continuation resumes the existing task afterward. Scient holds the same turn
-  open through that handoff, and recovery failures or continuation errors settle it.
-  Recovery is bounded to one attempt per input and Stop closes the owning process.
-  The bridge also registers `/compact` for RPC mode and exposes it through the existing
-  manual-compaction capability. Endpoint accounting remains authoritative; unknown
-  windows are not invented, and final context errors retain saved work with an actionable
-  explanation. The payload estimate is not a model-specific tokenizer, and later user
-  extensions can still rewrite the request.
-- `provider/Layers/PiProvider.ts` discovers models, thinking options, native skills and templates
-  passively with user extensions/tools/context disabled. Scient's explicitly supplied model-registration
-  extension remains available. Authentication remains model-specific and
-  unknown until exercised. The driver's shared `snapshotForCwd` hook discovers workspace-local
-  resources without overriding Pi's project-trust policy. Live execution verifies the selected
-  model and thinking level, including image support when steering.
-- `textGeneration/PiTextGeneration.ts` uses ephemeral, tool-free sessions with user extensions disabled for
-  internal structured-output helpers, without Scient MCP credentials or project instructions.
-- `provider/pi/PiCustomModels.ts` supplies the same custom-model registration to discovery, chat,
-  and background generation. See [Custom model connections](./custom-models.md) for ownership,
-  credential handling, update semantics, and qualification limits.
-- `scient/providerLifecycle/PiManagedRuntimeActions.ts` and the shared runtime package own private
-  installation/repair/removal. The bundled SHA-256-pinned macOS ARM64 archive is the only managed
-  target currently qualified. `supportedRuntimeModes` restricts clients to explicit Full access;
-  no native sandbox or approval enforcement is claimed.
+`Adapters/PiRpc.ts` owns native RPC transport. `PiAdapterV2` maps text, reasoning, tools,
+extension questions, compaction and settled lifecycle into V2 provider events. One low-level cycle
+ending is not enough to complete a root turn while queued prompts or compaction remain active.
+Extension dialogs use the existing runtime-request path; unsupported terminal UI is not emulated.
+Native commands retain their own dispatch semantics instead of becoming model prompts.
 
-Orchestration v2 runs the user's own `pi` install in RPC mode and owns native extension, package,
-and project-trust discovery. Scient injects only its namespaced MCP bridge, so a Pi session behaves
-as it does in the Pi TUI. Pi session files back native resume, rollback, and same-instance thread
-forks. Forks use Pi's CLI in the destination directory because RPC session switching retains the
-source session's cwd. Provider switches still use portable handoff summaries. See the
-[adapter](../../apps/server/src/orchestration-v2/Adapters/PiAdapterV2.ts).
+Session files support native resume, rollback snapshots and same-instance provider thread forks.
+Forking through Pi's CLI in the destination directory preserves the correct cwd; generic Scient
+exact-boundary continuity still requires its frozen ownership proof and falls back to portable
+history when that proof is unavailable. Provider switches use the shared whole-item handoff budget.
+The native adapter advertises supported permission modes through its permission hook; do not retain
+the V1 claim that Pi is always Full access or that rollback and thread forks are unsupported.
 
-The native adapter/test foundation was selectively adapted from the main-based
-[T3 Pi proposal #5688](https://github.com/pingdotgg/t3code/pull/5688), donor
-`f3eb5d0f6779059aa463ee5e7b54439f7eea4aa2`. It was not merged wholesale and is not inherited T3 main
-functionality. Scient-specific bridge, lifecycle and safety adaptations live in this repository.
-The later V2-dependent Pi proposal was not imported. Official Pi RPC/model behavior was checked at
-`853a80d26c90a14c1886f0ebb8ffaae133ca2185`; see the [Pi source notice][pi-notice].
+Pi's session manager leases each known native session file before opening a
+replacement process. It resolves symlinks to one server-side path, admits a
+single live writer across provider instances, and retains the lease until the
+owning process scope closes successfully. Failed cleanup retains the lease. A cancelled startup
+releases unpublished or published ownership only after its owned process scope closes successfully;
+a later start can then acquire the file. Repeated opens of
+the same provider session share its runtime and spawn one process.
 
-The opt-in `provider/pi/PiRuntime.live.test.ts` uses `SCIENT_PI_TEST_BINARY` with isolated synthetic
-profiles and local model/MCP endpoints. It exercises the real binary without user credentials.
-Passing it proves native protocol/tool integration, not hosted authentication, every third-party
-extension, cross-platform runtime support, or human product acceptance.
+Passive model/catalog discovery remains `provider/Layers/PiProvider.ts`;
+`provider/pi/PiCustomModels.ts` and `textGeneration/PiTextGeneration.ts` retain custom-model and
+headless-generation ownership. Managed installation is owned by the driver lifecycle actions and
+shared runtime package. Runtime catalogs and platform qualification remain separate from native
+orchestration compatibility.
+
+The earlier main-based Pi proposal was selectively adapted, not merged as a second host platform;
+see [the Pi source notice][pi-notice] for provenance. Native tests and replay exercise the V2
+adapter; real-process tests still do not establish every extension, hosted account or platform.
 
 ### Oh My Pi driver
 
-[`OmpDriver.ts`][omp] is an external provider on the current adapter. `packages/effect-omp-rpc` speaks
-Oh My Pi's newline JSON protocol, including protocol v2 chunk reassembly, and imports no Scient
-orchestration types. The adapter owns the process and the turn mapping.
+[`OmpDriver.ts`][omp] constructs the native
+[`OmpAdapterV2`](../../apps/server/src/orchestration-v2/Adapters/OmpAdapterV2.ts).
+Discovery remains in
+[`provider/Layers/OmpProvider.ts`](../../apps/server/src/provider/Layers/OmpProvider.ts).
+The driver supplies the custom-model-aware factory from
+[`OmpCustomModels.ts`](../../apps/server/src/provider/omp/OmpCustomModels.ts);
+[`OmpRpcProcess.ts`](../../apps/server/src/provider/omp/OmpRpcProcess.ts) owns process launch and the
+RPC transport connection.
+[`provider/omp/OmpSessionRuntime.ts`](../../apps/server/src/provider/omp/OmpSessionRuntime.ts)
+tracks native prompt and background-work settlement; the V2 adapter maps it to orchestration events.
+`packages/effect-omp-rpc` speaks Oh My Pi's newline JSON protocol, including protocol v2 chunk
+reassembly, and imports no Scient orchestration types. The adapter's
+[`OmpProcessOwnership`](../../apps/server/src/orchestration-v2/scient-provider/OmpProcessOwnership.ts)
+retains shutdown confirmation before releasing its session lock. This is distinct from logical
+turn settlement and does not establish universal physical-reader release.
 
 - The executable is `omp` 18.2.8 or newer and below major 19; a newer major is refused until it is
   qualified. Launch arguments are `--mode rpc` and
@@ -617,8 +600,8 @@ orchestration types. The adapter owns the process and the turn mapping.
   message as attachment paths for OMP's `read` tool, which returns image content to image-capable
   models (verified live on 18.3.1). Larger images are rejected with the limit in the message. Audio
   is advertised nowhere.
-- Fork budgeting queries the selected instance/model's native `contextWindow`. The shared
-  provider service still owns context budgeting and prepends the retained history exactly once.
+- Context delivery uses `ContextHandoffBudget` and `ProviderTurnStartService` with the selected
+  instance/model's allowance. V2 delivery records the target native identity and selected items.
   When that augmented text cannot fit the RPC frame, OMP receives a reference to a private
   `0600` UTF-8 file under its session directory, containing the exact text. The handoff tells
   the agent to read the whole file, including successive ranges and wrapped long lines when
@@ -666,7 +649,8 @@ orchestration types. The adapter owns the process and the turn mapping.
   thread only when OMP confirms success. Only explicitly qualified commands are exposed; discovered
   session, export, sharing, model, configuration, and extension commands are rejected. The
   v18.2.8 runtime exposes context usage through `get_state`, not a standalone event, so OMP does not
-  advertise a native context-window projection yet.
+  invent a native context-window capacity when none is reported. V2 provider-turn usage and
+  shared session-runtime estimates remain separately attributed.
 - `provider/omp/OmpCustomModels.ts` adapts the shared custom-model connection contract to OMP's
   explicit extension API for discovery, chat, and background generation. It passes credentials only
   through a per-process bootstrap file for connections published at process start,
@@ -675,10 +659,9 @@ orchestration types. The adapter owns the process and the turn mapping.
   until the next OMP process instead of interrupting an active turn. Custom-model readiness is
   projected separately from native OMP models. See [Custom model connections](./custom-models.md)
   for ownership and qualification limits.
-- Scient tools, Scient skills, and awareness reach OMP like Pi: `OmpAdapter.startSession` reads the
+- Scient tools, Scient skills, and awareness reach OMP like Pi: `OmpAdapterV2` session opening reads the
   thread's MCP provider session, rejects one issued to another provider instance, and writes the
-  extension from `provider/omp/OmpScientExtension.ts` (an explicit source template; Pi's
-  `PiScientExtension.ts` is untouched) as a 0600 file in the session scope, between the session
+  extension from `provider/omp/OmpScientExtension.ts` (a source template separate from Pi's V2 MCP bridge) as a 0600 file in the session scope, between the session
   lock and the process, so it is removed after the process on every close path. The file carries
   no secret. The endpoint, bearer token, and awareness are in a 0600 bootstrap file beside it
   (`provider/omp/OmpExtensionBootstrap.ts`), which the extension reads and deletes while OMP
@@ -699,7 +682,8 @@ orchestration types. The adapter owns the process and the turn mapping.
   `mcpSessionInjection`, and `SCIENT_SKILL_DELIVERY.omp` is `mcp`.
 - OMP's RPC host tools (`set_host_tools`) are not used. An unexpected host-tool call is rejected
   with an explicit warning rather than being silently dropped. Full access is the only runtime
-  mode. There is no Orchestration V2 adapter.
+  mode. `Adapters/OmpAdapterV2.ts` maps the shared native session runtime into V2;
+  Scient Agent uses that same adapter with its own target identity.
 
 ### Scient Agent driver
 
@@ -782,6 +766,9 @@ Codex, Claude, Cursor, Antigravity, Grok, and Droid optionally expose assisted r
 capabilities on their existing provider instances. OpenCode keeps its inherited multi-provider setup.
 Pi, Oh My Pi, and Scient Agent expose assisted runtime management, but leave model-specific credentials to the
 agent rather than inventing a single account login or logout flow.
+ACP Registry agents expose supported install/remove actions for app-owned registry runtimes and use
+the configured agent's authentication capabilities. Their recorded installation owner is separate
+from generic managed-runtime catalog qualification; executable overrides remain external.
 The lifecycle extension does not create another provider registry, session router, model catalog,
 credential store, or updater.
 
@@ -801,8 +788,9 @@ At the integration boundary:
 - [`packages/scient-provider-runtime`][runtime-package] owns the reviewed artifact and filesystem
   boundary.
 
-The surrounding T3 provider host remains authoritative for provider instances, enablement, adapters,
-sessions, models, external maintenance, and turn execution.
+The canonical provider host owns instances, enablement, discovery, and external maintenance.
+Live sessions and turns run through V2 `ProviderSessionManager`, the effect worker, and native
+adapters; the lifecycle extension does not route conversation work through a V1 provider service.
 
 ### Settings presentation seam
 
@@ -883,69 +871,80 @@ when its adapter explicitly supports that fallback.
 
 ## How provider work is requested
 
-Clients never call a provider directly. They dispatch orchestration commands over the RPC method
-`orchestration.dispatchCommand`, defined with the rest of the orchestration surface in
-[`orchestration.ts`][contracts]. The client-dispatchable provider-facing commands are
-`thread.turn.start`, `thread.turn.interrupt`, `thread.approval.respond`,
-`thread.user-input.respond`, `thread.checkpoint.revert`, and `thread.session.stop`, plus the mode
-setters `thread.runtime-mode.set` and `thread.interaction-mode.set`.
+Clients dispatch native commands through `orchestration.dispatchCommand`, defined in
+[`orchestrationV2.ts`][contracts]. Provider-facing requests include `message.dispatch`, `run.interrupt`,
+`runtime-request.respond`, `checkpoint.rollback`, and `provider-session.detach`, with
+`thread.model-selection.set`, `thread.runtime-mode.set`, and `thread.interaction-mode.set`. Native queued-run controls share this path.
+The retained Scient message-boundary fork command is routed to `ConversationForkService`.
 
-The engine persists an event for the command, and a server-side reactor performs the provider call.
-Provider output comes back as internal commands such as `thread.message.assistant.delta` and
-`thread.session.set`, which clients observe through `orchestration.subscribeThread`. See
-[overview.md](./overview.md) for the command/event loop.
+`Orchestrator` serializes the thread command, plans state transitions, and commits events, receipt,
+projection and outbox effects through `EventSink`. `EffectWorker` performs the provider call via
+the owning V2 service. Adapters emit `ProviderAdapterV2Event` records; `ProviderEventIngestor`
+normalizes and persists them. Clients read bounded shell and thread streams, not V1 internal
+commands or an authoritative client-side queue. See [the overview](./overview.md).
+
+### Provider-initiated native work
+
+A native extension can start work after the previous Scient run settles. Its adapter buffers the
+new frames and offers `ProviderContinuationRequest.initiated` through the shared continuation queue. The
+server admits an independent run only while that exact provider instance, live session and native
+thread still own an idle application thread. The request has a stable work ID, a generation guard
+invalidated by Stop, and a callback that disposes a dropped buffer. Duplicate offers replay the
+same command receipt; archived, replaced or busy owners cannot acquire another run.
+
+[`ProviderContinuationService`](../../apps/server/src/orchestration-v2/ProviderContinuationService.ts)
+handles the offer and generation-guarded reoffer; native adoption uses the existing runtime rather
+than sending another prompt. Pi session-file ownership is leased by
+[`PiSessionFileLeases`](../../apps/server/src/orchestration-v2/scient-provider/PiSessionFileLeases.ts)
+through `ProviderSessionManager`. Shared native producer close/interrupt ordering lives in
+[`NativeProducerLifecycle`](../../apps/server/src/orchestration-v2/scient-provider/NativeProducerLifecycle.ts)
+and is used by `NativeSessionAdapterV2`; Pi's own RPC adapter keeps its protocol-specific generation
+and turn ownership.
+
+The adapter captures the applied model, runtime policy and workspace when that native generation
+begins. Admission records this immutable configuration with its exact native owner; adoption does
+not apply later thread defaults, reopen a disposed session or reload its conversation. Changing
+next-turn defaults cannot relabel existing work or widen its run-scoped MCP authority. A captured
+owner that is lost before adoption fails the run rather than recreating the buffered generation.
+
+The captured cwd must be a known absolute execution directory. Both ordinary and pending-transfer
+admission persist checkpoint ownership in that directory, even if the project's workspace is
+relocated before admission or adoption. Startup refuses a checkpoint scope that differs from the
+captured native cwd. Unknown native cwd is refused rather than replaced with current project
+ownership; the producer must supply its actual applied directory.
+
+Admission records an agent-authored system notification rather than a user message. The adapter's
+`startTurn` receives `message.notification.source.kind = "provider_work"` and its `workId`: it
+adopts the buffered native work under the admitted run/attempt identities and sends no prompt.
+Normal event ingestion, terminal settlement and Stop then use that run's ownership. Adapters must
+not project unowned frames or treat the notification text as instructions for another native turn.
 
 ### Stop ownership and confirmation
 
-Accepting an interrupt command is not evidence that execution ended. The command reactor tracks
-Stop separately from its event worker, with a 30-second provider-wait budget including the interrupt,
-confirmation, and recovery waits. Repeated requests for the same observed turn join; a newer turn's
-Stop is independent. Natural terminal events remain authoritative, and conditional recovery writes
-are checked against the current session inside the serialized command decider.
+An accepted `run.interrupt` commits intent; it does not prove the external process ended.
+The outbox captures the exact run attempt, provider session, thread and turn. V2
+`ProviderTurnControlService` loads that recorded context and calls the owning live session's
+interrupt operation. A pre-acceptance start uses `interruptPendingStart` and durable native
+acceptance evidence; absence of a turn receipt is not permission to target a replacement session.
+Restart waits for terminal provider/attempt state before replacement when a live session exists.
+Natural terminal events and persisted attempt identity remain authoritative.
 
-Adapters may capture a cancellation handle tied to a runtime and native turn. Codex implements
-this with runtime identity, native turn identity, and a generation incremented before submitting
-new work. Its provider-side status probe is bounded; unknown or missing runtime state never
-confirms termination. Session teardown retains ownership until it succeeds, checks process exit
-before announcing closure, and continues under an owned scope if the caller's wait expires.
-Starting a replacement session joins that cleanup before acquiring the thread's runtime.
-A provider-confirmed idle turn leaves its session ready, not stopped.
+Adapters own protocol cancellation and process teardown. `ProviderSessionManager` owns scopes,
+idle release and exact-instance close; `ProviderRuntimeRecoveryService` settles process loss.
+Stop, failure and interruption hold ordinary queued runs. Neither session-idle state nor a later
+successful message implicitly releases that hold. Delayed terminal/checkpoint echoes from an older
+attempt cannot override newer explicit Send/Resume or hold work admitted after its original terminal
+boundary. Do not reintroduce the V1 command-reactor's
+cancellation handle or its timing assumptions as the shared V2 policy.
 
-Claude and OMP close their sessions on Stop so native background work cannot continue. Other
-adapters retain native interrupt behavior. The Monitoring banner's Stop targets a ready session
-with no turn. It carries that session's `updatedAt`, so a delayed click cannot close a replacement
-session, and it calls the captured handle's `stop`. Codex, Claude, OMP, and Antigravity close the
-idle session that owns the background work; Antigravity does so only while no prompt is running. Automatic destructive recovery is available only
-through an adapter-owned cancellation handle; shared code must not stop whichever runtime happens
-to occupy a thread later. An unconfirmed result keeps execution state intact and reports the
-failure through the existing activity and session-error surfaces. Stale terminal-event guards
-remain enabled, with bounded diagnostic logging.
+### Assistant delivery
 
-Clients combine independent shell and thread-detail streams. The newer session timestamp wins
-between two present sessions, so a late sidebar snapshot cannot resurrect an already-completed
-turn. Equal timestamps and explicit shell session removal retain shell authority.
-
-## Server-side workers
-
-Provider work flows through three queue-backed workers. All three are built with
-`makeDrainableWorker` from [`DrainableWorker.ts`][worker] and expose `drain` for deterministic test
-synchronization.
-
-1. [`ProviderRuntimeIngestion`][ingest] consumes provider runtime streams and emits orchestration
-   commands.
-2. [`ProviderCommandReactor`][cmd] reacts to orchestration intent events and dispatches provider
-   calls.
-3. [`CheckpointReactor`][checkpoint] captures workspace checkpoints on turn start and completion,
-   and performs reverts.
-
-### Buffered assistant delivery
-
-A thread in `buffered` assistant delivery mode accumulates assistant text instead of streaming each
-delta. The buffer is not held until turn completion. In [`ProviderRuntimeIngestion`][ingest],
-`MAX_BUFFERED_ASSISTANT_CHARS` is 24,000: the append that would exceed it invalidates the buffer and
-spills the whole accumulated text as one delta. The buffer also flushes at interaction boundaries,
-when a request opens (approval) or user input is requested, via
-`flushBufferedAssistantMessagesForTurn`.
+`RunExecutionService` applies `assistantStreaming.ts` to assistant and reasoning output.
+`responseStreamingMode: "turn"` retains streaming text until completion; `"paragraph"` emits
+stable Markdown boundaries with a 400-ms update throttle, preserving unfinished fences and
+headings until their content arrives. Completed items flush in either mode. This replaces the
+V1 ingestion buffer's 24,000-character spill rule. Thread live-event coalescing and wire budgets
+bound client delivery separately from provider execution and stored history.
 
 [drivers]: ../../apps/server/src/provider/builtInDrivers.ts
 [codex]: ../../apps/server/src/provider/Drivers/CodexDriver.ts
@@ -954,7 +953,7 @@ when a request opens (approval) or user input is requested, via
 [grok]: ../../apps/server/src/provider/Drivers/GrokDriver.ts
 [opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts
 [antigravity]: ../../apps/server/src/provider/Drivers/AntigravityDriver.ts
-[antigravity-adapter]: ../../apps/server/src/provider/Layers/AntigravityAdapter.ts
+[antigravity-adapter]: ../../apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.ts
 [antigravity-provider]: ../../apps/server/src/provider/Layers/AntigravityProvider.ts
 [antigravity-installation]: ../../apps/server/src/provider/AntigravityInstallation.ts
 [antigravity-release]: ../../apps/server/src/provider/antigravityRelease.ts
@@ -970,21 +969,17 @@ when a request opens (approval) or user input is requested, via
 [scient-agent]: ../../apps/server/src/provider/Drivers/ScientAgentDriver.ts
 [pi-notice]: ../../apps/server/src/provider/pi/NOTICE.md
 [agy-session]: ../../apps/server/src/provider/antigravity/AgySession.ts
-[adapter]: ../../apps/server/src/provider/Services/ProviderAdapter.ts
+[adapter]: ../../apps/server/src/orchestration-v2/ProviderAdapter.ts
 [awareness]: ../../apps/server/src/provider/ScientAwareness.ts
 [instances]: ../../apps/server/src/provider/Services/ProviderInstanceRegistry.ts
-[registry]: ../../apps/server/src/provider/Services/ProviderAdapterRegistry.ts
-[service]: ../../apps/server/src/provider/Layers/ProviderService.ts
+[registry]: ../../apps/server/src/orchestration-v2/ProviderAdapterRegistry.ts
+[sessions]: ../../apps/server/src/orchestration-v2/ProviderSessionManager.ts
 [driver]: ../../apps/server/src/provider/ProviderDriver.ts
 [provider-registry]: ../../apps/server/src/provider/Layers/ProviderRegistry.ts
 [connection-manager]: ../../apps/server/src/scient/providerLifecycle/ProviderConnectionManager.ts
 [runtime-manager]: ../../apps/server/src/scient/providerLifecycle/ProviderRuntimeManager.ts
 [runtime-package]: ../../packages/scient-provider-runtime/
-[contracts]: ../../packages/contracts/src/orchestration.ts
-[worker]: ../../packages/shared/src/DrainableWorker.ts
-[ingest]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
-[cmd]: ../../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
-[checkpoint]: ../../apps/server/src/orchestration/Layers/CheckpointReactor.ts
+[contracts]: ../../packages/contracts/src/orchestrationV2.ts
 
 Managed subscription-sharing OAuth and remote handoff are retained as upstream machinery,
 but are not enabled in Scient. Native Codex sign-in remains the active connection path.

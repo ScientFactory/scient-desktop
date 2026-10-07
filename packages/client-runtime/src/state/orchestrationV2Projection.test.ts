@@ -12,6 +12,7 @@ import {
   ProviderTurnId,
   RunId,
   ThreadId,
+  ThreadSectionId,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -39,7 +40,7 @@ const run = {
   contextHandoffId: null,
 } satisfies OrchestrationV2Run;
 
-function commandItem(id: string, output = "done", ordinal = 1): OrchestrationV2TurnItem {
+function commandItem(id: string, output = "done", ordinal = 1) {
   return {
     id: TurnItemId.make(id),
     threadId,
@@ -59,7 +60,7 @@ function commandItem(id: string, output = "done", ordinal = 1): OrchestrationV2T
     input: "pwd",
     output,
     exitCode: 0,
-  };
+  } satisfies OrchestrationV2TurnItem;
 }
 const emptyProjection = {
   thread: {
@@ -143,6 +144,30 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.providerTurns[0]?.status).toBe("completed");
     expect(next?.providerTurns[0]?.tokenUsage).toEqual(running.tokenUsage);
   });
+
+  it.each([ThreadSectionId.make("research"), null])(
+    "files the native thread into section %s without activity and retains it on rename",
+    (sectionId) => {
+      const filed = applyOrchestrationV2ProjectionEvent(emptyProjection, {
+        id: "native-section",
+        type: "thread.metadata-updated",
+        threadId,
+        occurredAt: DateTime.add(now, { hours: 1 }),
+        payload: { ...emptyProjection.thread, sectionId },
+      } as OrchestrationV2DomainEvent);
+      expect(filed?.thread.sectionId).toBe(sectionId);
+      expect(filed?.thread.updatedAt).toEqual(emptyProjection.thread.updatedAt);
+      const renamed = applyOrchestrationV2ProjectionEvent(filed!, {
+        id: "native-rename",
+        type: "thread.metadata-updated",
+        threadId,
+        occurredAt: DateTime.add(now, { hours: 2 }),
+        payload: { ...filed!.thread, title: "Renamed", updatedAt: DateTime.add(now, { hours: 2 }) },
+      } as OrchestrationV2DomainEvent);
+      expect(renamed?.thread.sectionId).toBe(sectionId);
+      expect(renamed?.thread.title).toBe("Renamed");
+    },
+  );
 
   it("applies thread lifecycle payloads instead of leaving stale metadata", () => {
     const archivedAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
@@ -240,6 +265,162 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.visibleTurnItems[0]).not.toBe(firstRow);
     expect(next?.visibleTurnItems[0]?.item).toBe(updated);
     expect(next?.visibleTurnItems[1]).toBe(secondRow);
+  });
+
+  it.each([
+    {
+      name: "same visible run",
+      anchorOrdinal: 2_000_001,
+      anchorRunId: runId,
+      visibility: "local",
+      admitted: true,
+    },
+    {
+      name: "truncated same-run tail",
+      anchorOrdinal: 2_000_010,
+      anchorRunId: runId,
+      visibility: "local",
+      admitted: false,
+    },
+    {
+      name: "known off-window run",
+      anchorOrdinal: 2_000_001,
+      anchorRunId: RunId.make("other-run"),
+      visibility: "local",
+      admitted: false,
+    },
+    {
+      name: "inherited run only",
+      anchorOrdinal: 2_000_001,
+      anchorRunId: runId,
+      visibility: "inherited",
+      admitted: false,
+    },
+    {
+      name: "unowned imported history",
+      anchorOrdinal: 2_000_001,
+      anchorRunId: null,
+      visibility: "local",
+      admitted: false,
+    },
+  ] as const)(
+    "bounds missing partial items by their $name",
+    ({ anchorOrdinal, anchorRunId, visibility, admitted }) => {
+      const anchor = {
+        ...commandItem("window-anchor", "visible", anchorOrdinal),
+        runId: anchorRunId,
+      };
+      const incoming = commandItem("late-sibling", "late", 2_000_002);
+      const projection: OrchestrationV2ThreadProjection = {
+        ...emptyProjection,
+        runs: [run],
+        turnItems: [anchor],
+        visibleTurnItems: [
+          {
+            position: 0,
+            visibility,
+            sourceThreadId: threadId,
+            sourceItemId: anchor.id,
+            item: anchor,
+          },
+        ],
+      };
+      const next = applyOrchestrationV2ProjectionEvent(
+        projection,
+        {
+          id: "late-sibling-event",
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload: incoming,
+        } as OrchestrationV2DomainEvent,
+        { partialTimeline: true, latestLocalTurnOrdinal: 3_000_001 },
+      );
+      expect(next?.turnItems.some((item) => item.id === incoming.id)).toBe(admitted);
+      expect(next?.visibleTurnItems.some((row) => row.sourceItemId === incoming.id)).toBe(admitted);
+      if (!admitted) expect(next).toBe(projection);
+    },
+  );
+
+  it("inserts an active-run answer despite a future queued run's watermark", () => {
+    const active = commandItem("active-run-prompt", "active", 2_000_001);
+    const queuedRunId = RunId.make("future-queued-run");
+    const queued: OrchestrationV2TurnItem = {
+      ...commandItem("future-queued-prompt", "queued", 3_000_001),
+      runId: queuedRunId,
+      type: "user_message",
+      messageId: MessageId.make("future-queued-message"),
+      createdBy: "user",
+      creationSource: "web",
+      inputIntent: "queued_turn",
+      text: "Send after the active run",
+      attachments: [],
+    };
+    const incoming = commandItem("active-run-answer", "late", 2_000_002);
+    const projection: OrchestrationV2ThreadProjection = {
+      ...emptyProjection,
+      runs: [
+        { ...run, status: "running" },
+        { ...run, id: queuedRunId, ordinal: 3, status: "queued" },
+      ],
+      turnItems: [active, queued],
+      visibleTurnItems: [active, queued].map((item, position) => ({
+        position,
+        visibility: "local",
+        sourceThreadId: threadId,
+        sourceItemId: item.id,
+        item,
+      })),
+    };
+    const next = applyOrchestrationV2ProjectionEvent(
+      projection,
+      {
+        id: "active-run-answer-event",
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: incoming,
+      } as OrchestrationV2DomainEvent,
+      { partialTimeline: true, latestLocalTurnOrdinal: queued.ordinal },
+    );
+    expect(next?.visibleTurnItems.map((row) => row.sourceItemId)).toEqual([
+      active.id,
+      incoming.id,
+      queued.id,
+    ]);
+    expect(next?.runs.find((candidate) => candidate.id === queuedRunId)?.status).toBe("queued");
+  });
+
+  it("retains visibility fences when inserting a late partial-window sibling", () => {
+    const anchor = commandItem("rolled-back-anchor", "visible", 2_000_001);
+    const incoming = commandItem("rolled-back-sibling", "hidden", 2_000_002);
+    const projection: OrchestrationV2ThreadProjection = {
+      ...emptyProjection,
+      runs: [{ ...run, status: "rolled_back" }],
+      turnItems: [anchor],
+      visibleTurnItems: [
+        {
+          position: 0,
+          visibility: "local",
+          sourceThreadId: threadId,
+          sourceItemId: anchor.id,
+          item: anchor,
+        },
+      ],
+    };
+    const next = applyOrchestrationV2ProjectionEvent(
+      projection,
+      {
+        id: "rolled-back-sibling-event",
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: incoming,
+      } as OrchestrationV2DomainEvent,
+      { partialTimeline: true, latestLocalTurnOrdinal: 3_000_001 },
+    );
+    expect(next?.turnItems.some((item) => item.id === incoming.id)).toBe(true);
+    expect(next?.visibleTurnItems.some((row) => row.sourceItemId === incoming.id)).toBe(false);
   });
 
   it("inserts live turn items by authoritative ordinal", () => {

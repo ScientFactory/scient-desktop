@@ -12,8 +12,6 @@
  * @module ThreadPlanProgressService
  */
 import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
 export interface ThreadPlanProgress {
   readonly step: string;
@@ -72,5 +70,3 @@ export function make(): ThreadPlanProgressService["Service"] {
     getThreadPlanProgress: (threadId) => progressByThreadId.get(threadId) ?? null,
   };
 }
-
-export const layer = Layer.effect(ThreadPlanProgressService, Effect.sync(make));

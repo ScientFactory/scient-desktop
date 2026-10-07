@@ -1,3 +1,4 @@
+import { ProviderCitationPresentation } from "./providerCitationPresentation.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ScientConversationFork } from "./scientConversationFork.ts";
 import * as Effect from "effect/Effect";
@@ -37,6 +38,31 @@ import {
 import { ChatAttachment } from "./chatAttachment.ts";
 // SCIENT-FORK:START — explicit Scient skill selection travels with the turn.
 import { SelectedScientSkillNames } from "./scientSkillSelection.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient's own V2 wire schemas, re-exported under their names.
+import {
+  OrchestrationV2DroidHeldSteer,
+  OrchestrationV2ProviderRuntimePolicy,
+  OrchestrationV2SubagentPresentation,
+  ScientInternalCommands,
+  ScientNotificationSources,
+  ThreadSectionSetCommand,
+} from "./scient/orchestrationV2Schemas.ts";
+export {
+  OrchestrationV2DroidHeldSteer,
+  OrchestrationV2ProviderRuntimePolicy,
+  OrchestrationV2SubagentPresentation,
+} from "./scient/orchestrationV2Schemas.ts";
+import {
+  makeMessageForkItems,
+  makeTurnItemBaseFields,
+  OrchestrationV2ClaudeForkBoundaryEvidence,
+  OrchestrationV2ForkInitialization,
+} from "./scient/orchestrationV2Fork.ts";
+export {
+  OrchestrationV2ClaudeForkBoundaryEvidence,
+  OrchestrationV2ForkInitialization,
+} from "./scient/orchestrationV2Fork.ts";
 // SCIENT-FORK:END
 import {
   OrchestrationGetFullThreadDiffInput,
@@ -185,6 +211,10 @@ export const OrchestrationV2ContextTransfer = Schema.Struct({
   sourcePoint: OrchestrationV2ContextSourcePoint,
   basePoint: Schema.NullOr(OrchestrationV2ContextSourcePoint),
   sourceProviderInstanceId: Schema.NullOr(ProviderInstanceId),
+  /** Scient exact-prefix forks own this immutable native proof on the destination. */
+  frozenSource: Schema.optional(Schema.suspend(() => OrchestrationV2FrozenForkSource)),
+  /** Durable explanation when a frozen prefix needs portable delivery. */
+  portableReason: Schema.optional(Schema.String),
   targetProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   targetRunId: Schema.NullOr(RunId),
   status: Schema.Literals([
@@ -379,6 +409,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
+  /** Canonical event-source stamp preserves committed workspace authority through compaction. */
+  workspaceAuthorityRevision: Schema.optional(NonNegativeInt),
   title: TrimmedNonEmptyString,
   providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
@@ -546,10 +578,17 @@ export const OrchestrationV2Run = Schema.Struct({
   modelSelection: ModelSelection,
   providerThreadId: Schema.NullOr(ProviderThreadId),
   userMessageId: MessageId,
+  /** Execution settings captured at admission; older runs use the thread settings. */
+  runtimeMode: Schema.optional(RuntimeMode),
+  interactionMode: Schema.optional(ProviderInteractionMode),
   rootNodeId: Schema.NullOr(NodeId),
   activeAttemptId: Schema.NullOr(RunAttemptId),
   status: OrchestrationV2RunStatus,
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
+  /** SCIENT: registration and pre-admission retain the original execution owner. */
+  heldDroidSteer: Schema.optional(OrchestrationV2DroidHeldSteer),
+  /** Policy carried from the admitted intent to its replacement start. */
+  steeringRuntimePolicy: Schema.optional(OrchestrationV2ProviderRuntimePolicy),
   /** Restart recovery holds the queue until the user explicitly resumes it. */
   queueHeld: Schema.optional(Schema.Boolean),
   /** Captured legacy queue options; only an explicit resume grants delivery authority. */
@@ -584,6 +623,8 @@ export const OrchestrationV2Run = Schema.Struct({
       planId: PlanId,
     }),
   ),
+  /** Exact proposed-plan content selected by a run before native acceptance. */
+  sourcePlanFingerprint: Schema.optional(Schema.String),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
@@ -653,57 +694,6 @@ export const OrchestrationV2ExecutionNode = Schema.Struct({
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ExecutionNode = typeof OrchestrationV2ExecutionNode.Type;
-
-/** Observed display metadata. These fields never grant execution or continuation authority. */
-export const OrchestrationV2SubagentPresentation = Schema.Struct({
-  kind: Schema.Literals(["subagent", "subagent_batch", "workflow", "workflow_agent"]),
-  role: Schema.optional(Schema.String),
-  effort: Schema.optional(Schema.String),
-  workflowId: Schema.optional(NodeId),
-  workflowName: Schema.optional(Schema.String),
-  agentIndex: Schema.optional(NonNegativeInt),
-  phaseIndex: Schema.optional(NonNegativeInt),
-  phaseTitle: Schema.optional(Schema.String),
-  attempt: Schema.optional(NonNegativeInt),
-  activationCount: Schema.optional(PositiveInt),
-  firstSeenAt: Schema.optional(IsoDateTime),
-  phases: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        index: NonNegativeInt,
-        title: Schema.String,
-      }),
-    ).check(Schema.isMaxLength(64)),
-  ),
-  usage: Schema.optional(
-    Schema.Struct({
-      totalTokens: Schema.optional(NonNegativeInt),
-      inputTokens: Schema.optional(NonNegativeInt),
-      cachedInputTokens: Schema.optional(NonNegativeInt),
-      outputTokens: Schema.optional(NonNegativeInt),
-      reasoningOutputTokens: Schema.optional(NonNegativeInt),
-      toolUses: Schema.optional(NonNegativeInt),
-      durationMs: Schema.optional(NonNegativeInt),
-    }).check(
-      Schema.makeFilter(
-        (usage) =>
-          Object.values(usage).some((count) => count !== undefined) ||
-          "Usage must include an observed count.",
-      ),
-    ),
-  ),
-  lastToolName: Schema.optional(Schema.String),
-  outputFile: Schema.optional(Schema.String),
-  runHandles: Schema.optional(
-    Schema.Struct({
-      runId: Schema.optional(Schema.String),
-      scriptPath: Schema.optional(Schema.String),
-      transcriptDir: Schema.optional(Schema.String),
-      sessionUrl: Schema.optional(Schema.String.check(Schema.isPattern(/^https?:\/\//))),
-    }),
-  ),
-});
-export type OrchestrationV2SubagentPresentation = typeof OrchestrationV2SubagentPresentation.Type;
 
 export const OrchestrationV2Subagent = Schema.Struct({
   presentation: Schema.optional(OrchestrationV2SubagentPresentation),
@@ -955,6 +945,9 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
   summaryMessageId: Schema.NullOr(MessageId),
   summaryText: Schema.String,
   // Optional fields keep existing preview events and projections readable without a migration.
+  /** Producer-owned history policy, never native execution authority. Absence is backward compatible:
+   * canonical fork/import provenance may still select Scient; ordinary history keeps generic policy. */
+  budgetPolicy: Schema.optional(Schema.Literal("scient")),
   history: Schema.optional(
     Schema.Struct({
       messages: Schema.Array(OrchestrationV2HistoricalMessage),
@@ -1009,12 +1002,30 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
     "failed",
     "cancelled",
   ]),
+  /** Native prompt acknowledgement or owned native execution output, never local installation. */
+  acceptedAt: Schema.optional(Schema.DateTimeUtc),
+  /** Absent on old records whose delivery is unknown; pending is safe to retry after refusal. */
+  nativeAcceptance: Schema.optional(Schema.Literals(["pending", "unknown", "accepted"])),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
+  /** Immutable observed native root state for display; absence is unknown, never policy or acceptance. */
+  observedEffort: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
   tokenUsage: Schema.optional(OrchestrationV2ProviderTurnTokenUsage),
   turnTokenUsage: Schema.optional(TurnTokenUsage),
 });
 export type OrchestrationV2ProviderTurn = typeof OrchestrationV2ProviderTurn.Type;
+
+export const OrchestrationV2FrozenForkSource = Schema.Struct({
+  sourceThreadId: ThreadId,
+  driver: ProviderDriverKind,
+  modelSelection: ModelSelection,
+  sourceRun: OrchestrationV2Run,
+  sourceProviderThread: OrchestrationV2ProviderThread,
+  sourceProviderTurns: Schema.Array(OrchestrationV2ProviderTurn),
+  providerTurnId: ProviderTurnId,
+  claudeBoundaryEvidence: Schema.optional(Schema.Array(OrchestrationV2ClaudeForkBoundaryEvidence)),
+});
+export type OrchestrationV2FrozenForkSource = typeof OrchestrationV2FrozenForkSource.Type;
 
 export const OrchestrationV2RuntimeRequest = Schema.Struct({
   id: RuntimeRequestId,
@@ -1087,11 +1098,8 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
     CommandNotificationSource,
     Schema.Struct({ kind: Schema.Literal("monitor") }),
     Schema.Struct({ kind: Schema.Literal("background_task") }),
-    // SCIENT-FORK: a persisted, successful-but-cut-short provider response.
-    Schema.Struct({
-      kind: Schema.Literal("output_truncated"),
-      stopReason: Schema.String,
-    }),
+    // SCIENT-FORK: provider work and cut-short responses are Scient notification kinds.
+    ...ScientNotificationSources,
   ],
   (kind) => Schema.Struct({ kind }),
   () => ({ kind: "background_task" }),
@@ -1110,6 +1118,9 @@ export const OrchestrationV2Notification = Schema.Struct({
 export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Type;
 
 export const OrchestrationV2ConversationMessage = Schema.Struct({
+  // SCIENT-FORK:START — inert citation provenance survives history copies and wire decoding.
+  citationPresentation: Schema.optional(ProviderCitationPresentation),
+  // SCIENT-FORK:END
   /** Opaque editing snapshot; never interpreted as provider authority. */
   composerSnapshot: Schema.optional(Schema.String),
   notification: Schema.optional(OrchestrationV2Notification),
@@ -1186,6 +1197,15 @@ export const OrchestrationV2PlanArtifact = Schema.Union([
     ...OrchestrationV2PlanArtifactBaseFields,
     kind: Schema.Literal("proposed_plan"),
     markdown: Schema.String,
+    /** Native acceptance consumes a source plan exactly once for this owner. */
+    consumedBy: Schema.optional(
+      Schema.Struct({
+        threadId: ThreadId,
+        runId: RunId,
+        runAttemptId: RunAttemptId,
+        providerTurnId: ProviderTurnId,
+      }),
+    ),
   }),
   Schema.Struct({
     ...OrchestrationV2PlanArtifactBaseFields,
@@ -1318,36 +1338,14 @@ export const OrchestrationV2UserMessageInputIntent = Schema.Literals([
 export type OrchestrationV2UserMessageInputIntent =
   typeof OrchestrationV2UserMessageInputIntent.Type;
 
-const OrchestrationV2TurnItemBaseFields = {
-  /** Group portable historical records without adopting an executable run. */
-  historyTurnId: Schema.optional(TurnId),
-  /** Frozen history carries provenance, never an executable source run or request. */
-  inheritedFrom: Schema.optional(
-    Schema.Struct({
-      threadId: ThreadId,
-      itemId: TurnItemId,
-      runId: Schema.NullOr(RunId),
-      status: OrchestrationV2TurnItemStatus,
-    }),
-  ),
-  toolSurface: Schema.optional(ToolActivitySurface),
-  toolIcon: Schema.optional(ToolActivityIcon),
-  toolSource: Schema.optional(ToolActivitySource),
-  id: TurnItemId,
-  threadId: ThreadId,
-  runId: Schema.NullOr(RunId),
-  nodeId: Schema.NullOr(NodeId),
-  providerThreadId: Schema.NullOr(ProviderThreadId),
-  providerTurnId: Schema.NullOr(ProviderTurnId),
-  nativeItemRef: Schema.NullOr(OrchestrationV2ProviderRef),
-  parentItemId: Schema.NullOr(TurnItemId),
-  ordinal: NonNegativeInt,
-  status: OrchestrationV2TurnItemStatus,
-  title: Schema.NullOr(Schema.String),
-  startedAt: Schema.NullOr(Schema.DateTimeUtc),
-  completedAt: Schema.NullOr(Schema.DateTimeUtc),
-  updatedAt: Schema.DateTimeUtc,
-} as const;
+// SCIENT-FORK:START — message-boundary fork items and the notice older clients decode.
+const OrchestrationV2TurnItemBaseFields = makeTurnItemBaseFields(
+  OrchestrationV2TurnItemStatus,
+  OrchestrationV2ProviderRef,
+);
+const { MessageForkItem, MessageForkNoticeItem, MessageForkItemJson, MessageForkNoticeItemJson } =
+  makeMessageForkItems(OrchestrationV2TurnItemBaseFields);
+// SCIENT-FORK:END
 
 export const OrchestrationV2FileSearchResult = Schema.Struct({
   fileName: TrimmedNonEmptyString,
@@ -1365,6 +1363,7 @@ export const OrchestrationV2WebSearchResult = Schema.Struct({
 export type OrchestrationV2WebSearchResult = typeof OrchestrationV2WebSearchResult.Type;
 
 export const OrchestrationV2TurnItem = Schema.Union([
+  MessageForkNoticeItem,
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("notification"),
@@ -1385,6 +1384,9 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("assistant_message"),
+    // SCIENT-FORK:START — carry syntax provenance without retaining native ownership.
+    citationPresentation: Schema.optional(ProviderCitationPresentation),
+    // SCIENT-FORK:END
     messageId: MessageId,
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
@@ -1499,6 +1501,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("handoff"),
+    forkInitialization: Schema.optional(OrchestrationV2ForkInitialization),
     contextHandoffId: ContextHandoffId,
     fromProviderThreadIds: Schema.Array(ProviderThreadId),
     toProviderThreadId: ProviderThreadId,
@@ -1533,6 +1536,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     targetThreadId: ThreadId,
     providerThreadId: Schema.optional(ProviderThreadId),
   }),
+  MessageForkItem,
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("thread_created"),
@@ -2047,12 +2051,23 @@ export const OrchestrationV2ContextTransferJson = OrchestrationV2ContextTransfer
     createdAt: Schema.DateTimeUtcFromString,
     updatedAt: Schema.DateTimeUtcFromString,
     consumedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+    frozenSource: Schema.optional(
+      Schema.suspend(() =>
+        OrchestrationV2FrozenForkSource.mapFields((fields) => ({
+          ...fields,
+          sourceRun: OrchestrationV2RunJson,
+          sourceProviderThread: OrchestrationV2ProviderThreadJson,
+          sourceProviderTurns: Schema.Array(OrchestrationV2ProviderTurnJson),
+        })),
+      ),
+    ),
   }),
 );
 export type OrchestrationV2ContextTransferJson = typeof OrchestrationV2ContextTransferJson.Type;
 
 export const OrchestrationV2ProviderTurnJson = OrchestrationV2ProviderTurn.mapFields((fields) => ({
   ...fields,
+  acceptedAt: Schema.optional(Schema.DateTimeUtcFromString),
   startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 }));
@@ -2097,6 +2112,7 @@ const OrchestrationV2TurnItemJsonBaseFields = {
 } as const;
 
 export const OrchestrationV2TurnItemJson = Schema.Union([
+  MessageForkNoticeItemJson,
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("notification"),
@@ -2117,6 +2133,9 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("assistant_message"),
+    // SCIENT-FORK:START — carry syntax provenance without retaining native ownership.
+    citationPresentation: Schema.optional(ProviderCitationPresentation),
+    // SCIENT-FORK:END
     messageId: MessageId,
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
@@ -2231,6 +2250,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("handoff"),
+    forkInitialization: Schema.optional(OrchestrationV2ForkInitialization),
     contextHandoffId: ContextHandoffId,
     fromProviderThreadIds: Schema.Array(ProviderThreadId),
     toProviderThreadId: ProviderThreadId,
@@ -2262,6 +2282,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     targetThreadId: ThreadId,
     providerThreadId: Schema.optional(ProviderThreadId),
   }),
+  MessageForkItemJson,
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("thread_created"),
@@ -2655,12 +2676,7 @@ export const OrchestrationV2Command = Schema.Union([
     orderKey: TrimmedNonEmptyString,
   }),
   // SCIENT-FORK: filing changes presentation without recording new activity.
-  Schema.Struct({
-    type: Schema.Literal("thread.section.set"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    sectionId: Schema.NullOr(ThreadSectionId),
-  }),
+  ThreadSectionSetCommand,
   Schema.Struct({
     type: Schema.Literal("thread.visit"),
     commandId: CommandId,
@@ -2765,6 +2781,9 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("message.dispatch"),
+    /** Omitted by older clients; resolved and persisted at admission. */
+    runtimeMode: Schema.optional(RuntimeMode),
+    interactionMode: Schema.optional(ProviderInteractionMode),
     notification: Schema.optional(OrchestrationV2Notification),
     ...OrchestrationV2CreationFields,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
@@ -2984,38 +3003,8 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("legacy-queue.reorder"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    queueItemIds: Schema.Array(TrimmedNonEmptyString),
-  }),
-  /** Migration admission creates held work and never executes a provider. */
-  Schema.Struct({
-    type: Schema.Literal("legacy-queue.import"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    queueItemId: TrimmedNonEmptyString,
-    messageId: MessageId,
-    text: Schema.String,
-    attachments: Schema.Array(ChatAttachment),
-    context: Schema.optional(OrchestrationMessageContext),
-    composerSnapshot: Schema.optional(Schema.String),
-    selectedScientSkillNames: Schema.optional(SelectedScientSkillNames),
-    modelSelection: Schema.optional(ModelSelection),
-    runtimeMode: Schema.optional(RuntimeMode),
-    interactionMode: Schema.optional(ProviderInteractionMode),
-    titleSeed: Schema.optional(TrimmedNonEmptyString),
-    sourceProposedPlan: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
-    createdAt: Schema.DateTimeUtc,
-  }),
-  /** Server-owned receipt after provider rollback and file restoration succeed. */
-  Schema.Struct({
-    type: Schema.Literal("checkpoint.rollback.complete"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    requestId: CommandId,
-  }),
+  // SCIENT-FORK: Scient's server-only admission and receipt commands come first.
+  ...ScientInternalCommands,
   /** Records that the provider rollback `requestId` failed for good. */
   Schema.Struct({
     type: Schema.Literal("checkpoint.rollback.fail"),
@@ -3122,9 +3111,9 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
       text: Schema.String,
       context: Schema.optional(OrchestrationMessageContext),
       attachments: Schema.Array(ChatAttachment),
-      // SCIENT-FORK:START — a thread's opening turn is a `message.dispatch` on
-      // the server, so the first turn carries the selection just like any other.
+      // SCIENT-FORK:START — preserve opening-turn selections and plan provenance.
       selectedScientSkillNames: Schema.optional(SelectedScientSkillNames),
+      sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
       // SCIENT-FORK:END
     }),
   ),
@@ -3305,6 +3294,8 @@ export class OrchestrationV2DispatchCommandError extends Schema.TaggedError<Orch
     commandType: Schema.String,
     message: Schema.String,
     detail: Schema.optional(Schema.String),
+    /** A durable rejected receipt proves that this command committed no execution. */
+    commandDisposition: Schema.optional(Schema.Literal("rejected")),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}

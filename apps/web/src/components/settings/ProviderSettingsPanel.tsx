@@ -842,21 +842,13 @@ export function EnvironmentProviderSettings({
     if (effectiveInstance !== undefined) {
       const isDirty =
         explicitInstance !== undefined || !Equal.equals(legacyConfig, defaultLegacyConfig);
-      if (
-        driver === "codex" ||
-        driver === "claudeAgent" ||
-        isDirty ||
-        resolveProviderInstanceEnabled(effectiveInstance) ||
-        defaultInstanceId === targetInstanceId
-      ) {
-        rows.push({
-          instanceId: defaultInstanceId,
-          instance: effectiveInstance,
-          driver,
-          isDefault: true,
-          isDirty,
-        });
-      }
+      rows.push({
+        instanceId: defaultInstanceId,
+        instance: effectiveInstance,
+        driver,
+        isDefault: true,
+        isDirty,
+      });
     }
     for (const [id, instance] of instancesByDriver.get(providerSettings.provider) ?? []) {
       if (id === defaultInstanceId) continue;

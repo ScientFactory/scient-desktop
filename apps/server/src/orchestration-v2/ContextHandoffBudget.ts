@@ -10,6 +10,12 @@ import type {
 } from "@t3tools/contracts";
 
 import * as Config from "effect/Config";
+import {
+  hasScientContextHistory,
+  historicalAttachmentReferences,
+  partialSnapshotText,
+  scientHistoricalItemText,
+} from "./scient-fork/context/historicalItems.ts";
 
 export const DEFAULT_HANDOFF_TOKEN_CAP = 16_000;
 const HANDOFF_BYTE_CAP = 64_000;
@@ -17,6 +23,10 @@ export const handoffTokenCapConfig = Config.Int("T3CODE_CONTEXT_HANDOFF_TOKEN_CA
   Config.withDefault(DEFAULT_HANDOFF_TOKEN_CAP),
   Config.map((value) => Math.max(1_024, Math.min(HANDOFF_BYTE_CAP, value))),
 );
+
+// SCIENT-FORK:START — Scient handoff policy choice lives in scient-fork/context.
+export { hasScientContextHistory };
+// SCIENT-FORK:END
 
 // Live reports belong to provider turns. Use only accepted root attempts whose
 // durable native identity matches this thread; row reuse must not revive old usage.
@@ -109,7 +119,9 @@ export function attachmentTokenAllowance(attachments: ReadonlyArray<ChatAttachme
 // custom models. Unknown windows use a 128k allowance, reserving a quarter for
 // tools, instructions and subsequent work. Current input is never truncated.
 export function handoffBudget(input: {
-  readonly tokenCap: number;
+  readonly tokenCap: number | null;
+  readonly bytesPerToken?: number;
+  readonly byteCap?: number;
   readonly userText: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly providerThread: OrchestrationV2ProviderThread;
@@ -123,16 +135,17 @@ export function handoffBudget(input: {
     usage?.autoCompactThreshold ?? Infinity,
   );
   const native = usage?.usedTokens ?? input.nativeContextEstimate;
+  const bytesPerToken = input.bytesPerToken ?? 1;
   const current =
-    Buffer.byteLength(JSON.stringify(input.userText)) + attachmentTokenAllowance(input.attachments);
+    Math.ceil(Buffer.byteLength(JSON.stringify(input.userText)) / bytesPerToken) +
+    attachmentTokenAllowance(input.attachments);
   return Math.max(
     0,
     Math.min(
-      input.tokenCap,
-      // Cap only imported history. Attachment transport limits belong to adapters;
-      // they may send binary/base64 data separately from the history request.
-      HANDOFF_BYTE_CAP,
-      window - native - current - Math.max(16_000, Math.ceil(window / 4)),
+      input.byteCap ?? HANDOFF_BYTE_CAP,
+      // The selector consumes bytes; provider capacity and preset caps consume tokens.
+      (input.tokenCap ?? Infinity) * bytesPerToken,
+      (window - native - current - Math.max(16_000, Math.ceil(window / 4))) * bytesPerToken,
     ),
   );
 }
@@ -145,6 +158,9 @@ export function historicalMessage(
     case "user_message":
     case "assistant_message":
       text = item.text;
+      // SCIENT-FORK:START — attachment descriptors; bytes are not replayed.
+      text += historicalAttachmentReferences(item);
+      // SCIENT-FORK:END
       break;
     case "command_execution":
       text = [
@@ -165,11 +181,24 @@ export function historicalMessage(
     case "proposed_plan":
       text = item.markdown;
       break;
+    // SCIENT-FORK:START — reasoning, tool and answer items of imported/forked history.
+    case "reasoning":
+    case "dynamic_tool":
+    case "user_input_request": {
+      const scientText = scientHistoricalItemText(item);
+      if (scientText === null) return null;
+      text = scientText;
+      break;
+    }
+    // SCIENT-FORK:END
     default:
       return null;
   }
+  // SCIENT-FORK:START — label activity copied from an unfinished fork boundary.
+  text = partialSnapshotText(item, text);
+  // SCIENT-FORK:END
   return {
-    role: item.type === "user_message" ? "user" : "assistant",
+    role: item.type === "user_message" || item.type === "user_input_request" ? "user" : "assistant",
     text,
     threadId: item.threadId,
     runId: item.runId,

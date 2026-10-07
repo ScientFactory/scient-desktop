@@ -479,11 +479,174 @@ const completedAnswerSurvivesNewRuns = Effect.gen(function* () {
   assert.isNull((yield* store.getThreadShell(threadId))?.latestCompletedAnswer);
 });
 
+const completedAnswerWhitespaceAndOrder = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const threadId = yield* addRolledBackRecoveryCandidate("answer-whitespace-order");
+  const initial = (yield* store.getThreadProjection(threadId)).runs[0];
+  assert.isDefined(initial);
+  if (!initial) return;
+  const now = yield* DateTime.now;
+  const run = { ...initial, status: "completed" as const, completedAt: now };
+  yield* store.apply({
+    id: EventId.make("answer-order-run"),
+    type: "run.updated",
+    threadId,
+    runId: run.id,
+    occurredAt: now,
+    payload: run,
+  });
+  const texts = [
+    " ",
+    "\t\r\n",
+    "\u00a0",
+    "\ufeff",
+    "\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000",
+    "\u200b",
+    "\u0000",
+    "\u0000Answer",
+    "Answer\u0000",
+  ];
+  for (const [index, text] of texts.entries()) {
+    const message = {
+      createdBy: "agent" as const,
+      creationSource: "provider" as const,
+      id: MessageId.make("answer-whitespace"),
+      threadId,
+      runId: run.id,
+      nodeId: run.rootNodeId,
+      role: "assistant" as const,
+      text,
+      attachments: [],
+      streaming: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+    yield* store.apply({
+      id: EventId.make(`answer-whitespace:${index}`),
+      type: "message.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: message,
+    });
+    const expected = text.trim()
+      ? { turnId: TurnId.make(run.id), messageId: message.id, completedAt: DateTime.formatIso(now) }
+      : null;
+    assert.deepEqual((yield* store.getThreadShell(threadId))?.latestCompletedAnswer, expected);
+    assert.deepEqual(
+      threadShellFromProjection(yield* store.getThreadProjection(threadId)).latestCompletedAnswer,
+      expected,
+    );
+  }
+  // Case and supplementary characters intentionally exercise binary rather than locale ordering.
+  const ids = ["z", "a", "A", "\ue000", "\u{10000}"];
+  for (const id of ids) {
+    yield* store.apply({
+      id: EventId.make(`answer-order:${id}`),
+      type: "message.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: {
+        createdBy: "agent",
+        creationSource: "provider",
+        id: MessageId.make(id),
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId,
+        role: "assistant",
+        text: "Answer",
+        attachments: [],
+        streaming: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    const expected = {
+      turnId: TurnId.make(run.id),
+      messageId: MessageId.make(id === "A" ? "z" : id === "a" ? "z" : id),
+      completedAt: DateTime.formatIso(now),
+    };
+    assert.deepEqual((yield* store.getThreadShell(threadId))?.latestCompletedAnswer, expected);
+    assert.deepEqual(
+      (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId)
+        ?.latestCompletedAnswer,
+      expected,
+    );
+    assert.deepEqual(
+      threadShellFromProjection(yield* store.getThreadProjection(threadId)).latestCompletedAnswer,
+      expected,
+    );
+  }
+});
+it.effect("memory completed answers use ECMAScript whitespace and deterministic ID ties", () =>
+  completedAnswerWhitespaceAndOrder.pipe(Effect.provide(ProjectionStore.layerMemory)),
+);
+
+const completedQuestionsInRecoveryHistory = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const threadId = yield* addRolledBackRecoveryCandidate("question-recovery-history");
+  const projection = yield* store.getThreadProjection(threadId);
+  const run = projection.runs[0]!;
+  const now = yield* DateTime.now;
+  for (const [index, status] of (["completed", "running", "cancelled"] as const).entries()) {
+    yield* store.apply({
+      id: EventId.make(`question-history:${status}`),
+      type: "turn-item.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make(`question-history:${status}`),
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 100 + index,
+        status,
+        startedAt: now,
+        completedAt: status === "running" ? null : now,
+        updatedAt: now,
+        type: "user_input_request",
+        title: "Dataset",
+        requestId: RuntimeRequestId.make(`request:${status}`),
+        questions: [{ id: "dataset", header: "Dataset", question: "Which dataset?", options: [] }],
+        questionAnswer: {
+          requestId: `request:${status}`,
+          answers: { dataset: "Measured data" },
+          attachmentsByQuestionId: {},
+        },
+      },
+    });
+  }
+  const all = yield* store.getTurnStartHistory(threadId);
+  const answers = all.filter((item) => item.type === "user_input_request");
+  assert.lengthOf(answers, 1);
+  assert.equal(answers[0]?.status, "completed");
+  assert.deepEqual(yield* store.getTurnStartHistory(threadId, [run.id]), all);
+  assert.deepEqual(yield* store.getTurnStartHistory(threadId, []), []);
+});
+it.effect("memory recovery history retains only completed submitted native questions", () =>
+  completedQuestionsInRecoveryHistory.pipe(Effect.provide(ProjectionStore.layerMemory)),
+);
+
 it.effect("memory shell preserves the completed answer until it is rolled back", () =>
   completedAnswerSurvivesNewRuns.pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
 
 it.layer(TestLayer)("ProjectionStoreV2", (it) => {
+  it.effect(
+    "SQL completed answers match memory whitespace and deterministic ID ties",
+    () => completedAnswerWhitespaceAndOrder,
+  );
+
+  it.effect(
+    "SQL recovery history retains only completed submitted native questions",
+    () => completedQuestionsInRecoveryHistory,
+  );
   it.effect(
     "SQL shell preserves the completed answer until it is rolled back",
     () => completedAnswerSurvivesNewRuns,
@@ -540,6 +703,95 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       assert.deepEqual(yield* store.getTurnStartHistory(threadId, [RunId.make("run:other")]), []);
     }),
   );
+  it.effect(
+    "retains immutable observed effort with usage-present updates only for the same owner",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const threadId = yield* addRolledBackRecoveryCandidate("observed-effort");
+        const now = yield* DateTime.now;
+        const turn = {
+          id: ProviderTurnId.make("observed-effort-turn"),
+          providerThreadId: ProviderThreadId.make("observed-effort-provider-thread"),
+          nodeId: NodeId.make("observed-effort-root"),
+          runAttemptId: RunAttemptId.make("observed-effort-attempt"),
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "running" as const,
+          startedAt: now,
+          completedAt: null,
+        };
+        const usage = { usedTokens: 5, updatedAt: "2026-10-05T00:00:00.000Z" };
+        const write = (
+          suffix: string,
+          payload: import("@t3tools/contracts").OrchestrationV2ProviderTurn,
+        ) =>
+          store.apply({
+            id: EventId.make(`observed-effort-${suffix}`),
+            type: "provider-turn.updated",
+            threadId,
+            driver,
+            nodeId: payload.nodeId,
+            occurredAt: now,
+            payload,
+          });
+        yield* write("initial", { ...turn, observedEffort: "off" });
+        yield* write("terminal", {
+          ...turn,
+          status: "completed",
+          completedAt: now,
+          tokenUsage: usage,
+        });
+        assert.equal(
+          (yield* store.getThreadProjection(threadId)).providerTurns[0]?.observedEffort,
+          "off",
+        );
+        yield* write("stale-known", { ...turn, observedEffort: "high", tokenUsage: usage });
+        const retained = (yield* store.getThreadProjection(threadId)).providerTurns[0]!;
+        assert.equal(retained.observedEffort, "off");
+        assert.equal(
+          ProjectionStore.upsertProviderTurn([retained], { ...turn, tokenUsage: usage })[0]
+            ?.observedEffort,
+          "off",
+        );
+        assert.equal(
+          ProjectionStore.upsertProviderTurn([retained], {
+            ...turn,
+            observedEffort: "high",
+            tokenUsage: usage,
+          })[0]?.observedEffort,
+          "off",
+        );
+        assert.deepEqual(retained.tokenUsage, usage);
+        for (const displaced of [
+          { ...turn, nodeId: NodeId.make("foreign-root") },
+          { ...turn, runAttemptId: RunAttemptId.make("foreign-attempt") },
+          { ...turn, providerThreadId: ProviderThreadId.make("foreign-thread") },
+        ]) {
+          assert.notProperty(
+            ProjectionStore.upsertProviderTurn([retained], displaced)[0],
+            "observedEffort",
+          );
+        }
+        assert.notProperty(
+          ProjectionStore.upsertProviderTurn([retained], {
+            ...turn,
+            id: ProviderTurnId.make("another-turn"),
+          })[1],
+          "observedEffort",
+        );
+        yield* write("foreign-owner", {
+          ...turn,
+          runAttemptId: RunAttemptId.make("foreign-attempt"),
+          tokenUsage: usage,
+        });
+        assert.notProperty(
+          (yield* store.getThreadProjection(threadId)).providerTurns[0],
+          "observedEffort",
+        );
+      }),
+  );
+
   it.effect("preserves stored provider usage when a terminal update omits it", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -2823,7 +3075,9 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         assert.deepEqual(yield* projectionStore.getCheckpointContext(threadId), {
           runs: [{ id: runId, ordinal: 1, status: "completed" }],
           checkpointScopes: [{ id: scopeId, runId, kind: "root_run", cwd: "/repo/worktree" }],
-          checkpoints: [{ scopeId, runId, appRunOrdinal: 1, status: "ready", ref }],
+          checkpoints: [
+            { scopeId, runId, appRunOrdinal: 1, ordinalWithinScope: 1, status: "ready", ref },
+          ],
         });
         const missing = yield* projectionStore
           .getCheckpointContext(ThreadId.make("thread:checkpoint-context:missing"))

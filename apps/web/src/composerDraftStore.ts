@@ -1,3 +1,11 @@
+// SCIENT-FORK: extracted queue image membership and recovery stay in their owner.
+import * as ExtractedImages from "./scient/threadQueue/extractedImageSelection";
+import {
+  ExtractedDraftIntent,
+  normalizeExtractedDraftIntent,
+  transferredExtractedDraftIntent,
+} from "./scient/threadQueue/extractedDraftIntent";
+export { ExtractedDraftIntent } from "./scient/threadQueue/extractedDraftIntent";
 import { stripInlineContextReferences } from "./lib/composerContextReferences";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
@@ -234,8 +242,10 @@ export const PersistedTerminalContextDraft = Schema.Struct({
 type PersistedTerminalContextDraft = typeof PersistedTerminalContextDraft.Type;
 
 const PersistedComposerThreadDraftState = Schema.Struct({
+  extractedIntent: Schema.optionalKey(ExtractedDraftIntent),
   prompt: Schema.String,
   attachments: Schema.Array(PersistedComposerImageAttachment),
+  ...ExtractedImages.extractedImagePersistenceFields,
   files: Schema.optionalKey(Schema.Array(PersistedComposerDraftFileAttachment)),
   terminalContexts: Schema.optionalKey(Schema.Array(PersistedTerminalContextDraft)),
   previewAnnotations: Schema.optionalKey(Schema.Array(PreviewAnnotationPayloadSchema)),
@@ -386,7 +396,8 @@ export type ComposerContextInsertionHandler = (
 ) => boolean;
 const contextInsertionHandlers = new Map<string, ComposerContextInsertionHandler>();
 
-export interface ComposerThreadDraftState {
+export interface ComposerThreadDraftState extends ExtractedImages.ExtractedImageRecoveryState {
+  extractedIntent?: ExtractedDraftIntent;
   /** Context editing for a queue-owned hidden draft; not project/server authority.
    * Its queue journal owns persistence, not the new-project draft registry. */
   contextThreadId?: ThreadId;
@@ -906,7 +917,9 @@ export function createEmptyThreadDraft(): ComposerThreadDraftState {
   };
 }
 
-function composerImageDedupKey(image: ComposerImageAttachment): string {
+export function composerImageDedupKey(
+  image: Pick<ComposerImageAttachment, "mimeType" | "sizeBytes" | "name">,
+): string {
   // Keep this independent from File.lastModified so dedupe is stable for hydrated
   // images reconstructed from localStorage (which get a fresh lastModified value).
   return `${image.mimeType}\u0000${image.sizeBytes}\u0000${image.name}`;
@@ -986,6 +999,7 @@ function normalizeTerminalContextsForThread(
 
 function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
   return (
+    draft.extractedIntent === undefined &&
     draft.prompt.length === 0 &&
     draft.images.length === 0 &&
     draft.files.length === 0 &&
@@ -1960,6 +1974,11 @@ function normalizePersistedDraftsByThreadId(
       continue;
     }
     const draftCandidate = draftValue as PersistedComposerThreadDraftState;
+    const extractedIntent =
+      "extractedIntent" in draftValue
+        ? normalizeExtractedDraftIntent(draftCandidate.extractedIntent)
+        : undefined;
+    const imageSelection = ExtractedImages.normalizeExtractedImageSelection(draftValue);
     const promptCandidate = typeof draftCandidate.prompt === "string" ? draftCandidate.prompt : "";
     const attachments = Array.isArray(draftCandidate.attachments)
       ? draftCandidate.attachments.flatMap((entry) => {
@@ -2097,6 +2116,7 @@ function normalizePersistedDraftsByThreadId(
     const hasModelData =
       Object.keys(modelSelectionByProvider).length > 0 || activeProvider !== null;
     if (
+      extractedIntent === undefined &&
       promptCandidate.length === 0 &&
       attachments.length === 0 &&
       files.length === 0 &&
@@ -2123,8 +2143,10 @@ function normalizePersistedDraftsByThreadId(
                 : threadKeyOrId;
             })();
     nextDraftsByThreadKey[normalizedThreadKey] = {
+      ...(extractedIntent ? { extractedIntent } : {}),
       prompt,
       attachments,
+      ...(imageSelection !== undefined ? { imageSelection } : {}),
       ...(files.length > 0 ? { files } : {}),
       ...(terminalContexts.length > 0 ? { terminalContexts } : {}),
       ...(previewAnnotations.length > 0 ? { previewAnnotations } : {}),
@@ -2165,6 +2187,7 @@ function stripLegacyModelSeedsFromEmptyDraftSessions(
     Object.entries(draftsByThreadKey).flatMap(([threadKey, draft]) => {
       if (
         draftThreadsByThreadKey[threadKey] === undefined ||
+        draft.extractedIntent !== undefined ||
         draft.modelSelectionExplicit === true ||
         persistedComposerDraftHasUserContent(draft)
       ) {
@@ -2213,6 +2236,7 @@ export function partializeComposerDraftStoreState(
         ([threadKey, draftThread]) =>
           mappedDraftKeys.has(threadKey) ||
           isDraftThreadPromoting(draftThread) ||
+          state.draftsByThreadKey[threadKey]?.extractedIntent !== undefined ||
           composerDraftHasUserContent(state.draftsByThreadKey[threadKey]),
       )
       .map(([threadKey]) => threadKey),
@@ -2232,6 +2256,7 @@ export function partializeComposerDraftStoreState(
     const hasModelData =
       Object.keys(draft.modelSelectionByProvider).length > 0 || draft.activeProvider !== null;
     if (
+      draft.extractedIntent === undefined &&
       draft.prompt.length === 0 &&
       draft.persistedAttachments.length === 0 &&
       draft.files.length === 0 &&
@@ -2246,8 +2271,10 @@ export function partializeComposerDraftStoreState(
       continue;
     }
     const persistedDraft: DeepMutable<PersistedComposerThreadDraftState> = {
+      ...(draft.extractedIntent ? { extractedIntent: draft.extractedIntent } : {}),
       prompt: draft.prompt,
       attachments: draft.persistedAttachments,
+      ...ExtractedImages.persistedExtractedImageSelection(draft),
       ...(draft.files.length > 0
         ? {
             // A file whose upload has not finished has no serializable bytes.
@@ -2558,6 +2585,7 @@ function toHydratedThreadDraft(
     })) ?? [];
 
   return {
+    ...(persistedDraft.extractedIntent ? { extractedIntent: persistedDraft.extractedIntent } : {}),
     // Files predating inline references get a chip appended; images stay shelf-only.
     prompt: ensureInlineContextReferences(persistedDraft.prompt, [
       ...(persistedDraft.reviewComments ?? []).map(reviewCommentContextReference),
@@ -2565,7 +2593,17 @@ function toHydratedThreadDraft(
       ...(persistedDraft.threadContexts ?? []).map(threadContextReference),
       ...files.map(fileContextReference),
     ]),
-    images: hydrateImagesFromPersisted(persistedDraft.attachments),
+    images: hydrateImagesFromPersisted(
+      ExtractedImages.selectedExtractedImageAttachments(
+        persistedDraft.attachments,
+        persistedDraft.extractedIntent,
+        persistedDraft.imageSelection,
+      ),
+    ),
+    ...ExtractedImages.hydratedExtractedImageSelection(
+      persistedDraft.extractedIntent,
+      persistedDraft.imageSelection,
+    ),
     files,
     nonPersistedImageIds: [],
     persistedAttachments: [...persistedDraft.attachments],
@@ -3568,6 +3606,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 toKindScopedComposerContextId("image", imageId),
               ).prompt,
               images: current.images.filter((image) => image.id !== imageId),
+              ...ExtractedImages.removedExtractedImageSelection(
+                current.pendingImageSelection,
+                imageId,
+              ),
               nonPersistedImageIds: current.nonPersistedImageIds.filter((id) => id !== imageId),
               persistedAttachments: current.persistedAttachments.filter(
                 (attachment) => attachment.id !== imageId,
@@ -4006,6 +4048,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ).prompt,
               previewAnnotations,
               images: current.images.filter((image) => image.id !== annotationId),
+              ...ExtractedImages.removedExtractedImageSelection(
+                current.pendingImageSelection,
+                annotationId,
+              ),
               persistedAttachments: current.persistedAttachments.filter(
                 (image) => image.id !== annotationId,
               ),
@@ -4247,10 +4293,12 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (!current) {
               return state;
             }
+            const { extractedIntent: _extractedIntent, ...ordinary } = current;
             const nextDraft: ComposerThreadDraftState = {
-              ...current,
+              ...ordinary,
               prompt: "",
               images: [],
+              pendingImageSelection: undefined,
               files: [],
               nonPersistedImageIds: [],
               persistedAttachments: [],
@@ -4290,6 +4338,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 ...current.previewAnnotations.map(previewAnnotationContextReference),
               ]),
               images: [],
+              pendingImageSelection: undefined,
               files: [],
               nonPersistedImageIds: [],
               persistedAttachments: [],
@@ -4315,6 +4364,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               return state;
             }
             const destination = state.draftsByThreadKey[toKey] ?? createEmptyThreadDraft();
+            ExtractedImages.assertExtractedImagesRecovered([source, destination]);
             const destinationEnvironmentId =
               typeof to === "string"
                 ? (state.draftThreadsByThreadKey[toKey]?.environmentId ??
@@ -4398,8 +4448,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 ...destination.previewAnnotations.map(previewAnnotationContextReference),
               ],
             );
+            const transferredIntent = transferredExtractedDraftIntent(
+              source.extractedIntent,
+              destination.extractedIntent,
+            );
             const nextDestination: ComposerThreadDraftState = {
               ...destination,
+              ...transferredIntent,
               prompt: movedPrompt,
               images: [...destination.images, ...movedImages],
               files: [...destination.files, ...movedFiles],

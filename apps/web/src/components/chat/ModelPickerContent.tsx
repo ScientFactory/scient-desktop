@@ -1,11 +1,4 @@
-import {
-  getAntigravityModelGroups,
-  groupAntigravityModelRows,
-} from "@t3tools/client-runtime/antigravity-model-presentation";
-import {
-  getDroidModelSection,
-  groupDroidModelRows,
-} from "@t3tools/client-runtime/droid-model-presentation";
+import { getDroidModelSection } from "@t3tools/client-runtime/droid-model-presentation";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
@@ -25,10 +18,10 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { DownloadIcon, Loader2Icon, SearchIcon, SplitIcon } from "lucide-react";
+import { SearchIcon } from "lucide-react";
+import { ModelPickerNewChatFooter } from "./ModelPickerNewChatFooter";
 import { ModelListDisclosureContent } from "./ModelListDisclosureContent";
 import { ModelListRow } from "./ModelListRow";
-import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { prioritizeActiveProviderInstance } from "./modelPickerProviderOrder";
 import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
@@ -56,24 +49,20 @@ import {
   shortcutLabelForCommand,
 } from "../../keybindings";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
-import { useLocalStorage } from "~/hooks/useLocalStorage";
 import {
-  buildModelSourceSectionRows,
-  COLLAPSED_MODEL_SOURCES_STORAGE_KEY,
-  CollapsedModelSources,
-  groupModelsBySource,
   hasModelSourceSections,
-  modelSourceSection,
   modelSourceSectionKey,
   modelSourceSectionLabel,
-  modelSourceSectionsApply,
-  NO_COLLAPSED_MODEL_SOURCES,
   parseModelSourceSectionKey,
 } from "~/scient/modelPicker/modelSourceSections";
+import {
+  useModelSourceSectionState,
+  useScientModelPickerGroups,
+} from "~/scient/modelPicker/useScientModelPickerGroups";
 import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
-import { Button, InlineButton } from "../ui/button";
+import { InlineButton } from "../ui/button";
 import {
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
@@ -81,7 +70,7 @@ import {
 } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
 
-type ModelPickerItem = {
+export type ModelPickerItem = {
   isDefault?: boolean | undefined;
   slug: string;
   name: string;
@@ -186,109 +175,6 @@ function ModelListSeparator() {
   return <div className="h-0.5" />;
 }
 
-export function ModelPickerProviderLockNotice(props: {
-  readonly disabled: boolean;
-  readonly onFork: () => void;
-}) {
-  return (
-    <div className="flex shrink-0 items-center gap-2 border-t border-border/70 px-2 py-1">
-      <p className="min-w-0 text-[11px] leading-snug text-muted-foreground">
-        Continue this conversation with another provider.
-      </p>
-      <Button
-        type="button"
-        size="micro"
-        variant="ghost-muted"
-        className="shrink-0"
-        disabled={props.disabled}
-        aria-label="Fork conversation to switch providers"
-        onClick={props.onFork}
-      >
-        <SplitIcon className="size-3 rotate-90 text-primary/80" />
-        Fork
-      </Button>
-    </div>
-  );
-}
-
-export function ModelPickerProviderUpdateFooter(props: {
-  readonly displayName: string;
-  readonly driverKind: ProviderDriverKind;
-  readonly accentColor?: string | undefined;
-  readonly disabled: boolean;
-  readonly disabledReason?: string | undefined;
-  readonly isStarting: boolean;
-  readonly isUpdating: boolean;
-  /** The update is staged and waits for the provider's running turns to finish. */
-  readonly isWaitingForIdle?: boolean | undefined;
-  readonly hasError?: boolean | undefined;
-  readonly onUpdate: () => void;
-}) {
-  const actionLabel = props.hasError ? "Retry" : "Update";
-  const accessibleActionLabel = props.disabledReason
-    ? `${props.displayName} update unavailable. ${props.disabledReason}`
-    : `${actionLabel} ${props.displayName}`;
-  const progressLabel = props.isWaitingForIdle
-    ? `${props.displayName} will update when idle`
-    : props.isUpdating
-      ? `Updating ${props.displayName}…`
-      : `Preparing ${props.displayName} update…`;
-
-  return (
-    <div className="flex shrink-0 items-center gap-2 border-t border-border/70 px-2 py-1">
-      {props.isStarting || props.isUpdating ? (
-        <>
-          <ProviderInstanceIcon
-            driverKind={props.driverKind}
-            displayName={props.displayName}
-            accentColor={props.accentColor}
-            className="size-3.5"
-            iconClassName="size-3.5"
-          />
-          {/* A wait can last a whole turn; it gets no continuously repainting spinner. */}
-          {props.isWaitingForIdle ? null : (
-            <Loader2Icon
-              aria-hidden="true"
-              className="size-3 shrink-0 animate-spin text-primary [animation-duration:1.35s] [animation-timing-function:linear] motion-reduce:animate-none"
-            />
-          )}
-          <p
-            aria-live="polite"
-            className="min-w-0 truncate text-[11px] leading-snug text-muted-foreground"
-          >
-            {progressLabel}
-          </p>
-        </>
-      ) : (
-        <>
-          <p
-            aria-live="polite"
-            className={cn(
-              "min-w-0 truncate text-[11px] leading-snug text-muted-foreground",
-              props.hasError && "text-destructive",
-            )}
-          >
-            {props.hasError ? "Couldn’t start update" : `${props.displayName} update available`}
-          </p>
-          <Button
-            type="button"
-            size="micro"
-            variant="ghost-primary"
-            className="shrink-0"
-            disabled={props.disabled || props.isStarting}
-            aria-label={accessibleActionLabel}
-            title={props.disabledReason}
-            onClick={props.onUpdate}
-          >
-            <DownloadIcon className="size-3.5" />
-            {actionLabel}
-          </Button>
-        </>
-      )}
-    </div>
-  );
-}
-
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
   /** The instance currently selected in the composer (combobox "value"). */
   activeInstanceId: ProviderInstanceId;
@@ -328,8 +214,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   renderProviderSetup?: (entry: ProviderInstanceEntry) => ReactNode;
   /** Optional context row beneath the selected provider's model list. */
   renderProviderFooter?: (entry: ProviderInstanceEntry) => ReactNode;
-  onForkToSwitchProvider?: () => void;
-  forkToSwitchProviderDisabled?: boolean;
+  onContinueInNewChat?: () => void;
+  continueInNewChatDisabled?: boolean;
 }) {
   const {
     keybindings: providedKeybindings,
@@ -423,20 +309,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           : [],
       ),
   );
-  const [collapsedModelSources, setCollapsedModelSources] = useLocalStorage(
-    COLLAPSED_MODEL_SOURCES_STORAGE_KEY,
-    NO_COLLAPSED_MODEL_SOURCES,
-    CollapsedModelSources,
-  );
-  // The section holding the selected model opens with the picker.
-  const [revealedModelSources, setRevealedModelSources] = useState(
-    () =>
-      new Set<string>(
-        activeModelSlug && hasModelSourceSections(activeEntry?.driverKind)
-          ? [modelSourceSectionKey(props.activeInstanceId, modelSourceSection(activeModelSlug))]
-          : [],
-      ),
-  );
+  // SCIENT-FORK:START — model source sections remember what the user collapsed
+  const sourceSectionState = useModelSourceSectionState({
+    activeInstanceId: props.activeInstanceId,
+    activeModelSlug,
+    activeDriverKind: activeEntry?.driverKind,
+  });
+  // SCIENT-FORK:END
   const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindings = providedKeybindings ?? serverKeybindings;
   const updateSettings = useUpdateClientSettings();
@@ -600,10 +479,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return [...available, ...disabled];
   }, [instanceEntries, isLocked, matchesLockedProvider, props.activeInstanceId]);
-  const hasAlternativeProvider = useMemo(
-    () => sidebarInstanceEntries.some((entry) => !matchesLockedProvider(entry)),
-    [matchesLockedProvider, sidebarInstanceEntries],
-  );
   const setupAvailableInstanceIds = useMemo(() => {
     if (!props.isProviderSetupAvailable || !props.renderProviderSetup || isLocked) {
       return undefined;
@@ -737,111 +612,19 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     selectedInstanceId,
   ]);
 
-  const filteredModels = useMemo(() => {
-    // Favorites remain exact model/effort shortcuts, including pre-existing bookmarks.
-    if (
-      selectedInstanceId === "favorites" ||
-      !ungroupedFilteredModels.some((model) => model.driverKind === "antigravity")
-    )
-      return ungroupedFilteredModels;
-    const visible = new Map<string, ModelPickerItem>();
-    for (const entry of instanceEntries) {
-      const rows = ungroupedFilteredModels.filter((model) => model.instanceId === entry.instanceId);
-      const groups = getAntigravityModelGroups(entry.driverKind, entry.models);
-      for (const row of groupAntigravityModelRows(
-        rows,
-        groups,
-        entry.instanceId === props.activeInstanceId ? activeModelSlug : null,
-      )) {
-        visible.set(providerModelKey(row.instanceId, row.slug), row);
-      }
-    }
-    return ungroupedFilteredModels.flatMap((row) => {
-      const shown = visible.get(providerModelKey(row.instanceId, row.slug));
-      return shown ? [shown] : [];
+  // SCIENT-FORK:START — Antigravity families, Droid sections and model source sections
+  const { filteredModels, droidGroups, sourceSectionRows, toggleModelSourceSection } =
+    useScientModelPickerGroups({
+      ungroupedFilteredModels,
+      selectedInstanceId,
+      instanceEntries,
+      entryByInstanceId,
+      activeInstanceId: props.activeInstanceId,
+      activeModelSlug,
+      isSearching,
+      sourceSectionState,
     });
-  }, [
-    ungroupedFilteredModels,
-    selectedInstanceId,
-    instanceEntries,
-    props.activeInstanceId,
-    activeModelSlug,
-  ]);
-
-  const selectedEntry =
-    selectedInstanceId === "favorites" ? undefined : entryByInstanceId.get(selectedInstanceId);
-  const providerSetupEntries =
-    !isSearching && props.onOpenProviderSetup
-      ? instanceEntries.filter(
-          (entry) =>
-            matchesLockedProvider(entry) &&
-            shouldOfferModelPickerSetup(
-              entry,
-              modelOptionsByInstance.get(entry.instanceId) ?? [],
-            ) &&
-            (selectedEntry
-              ? entry.instanceId === selectedEntry.instanceId
-              : filteredModels.length === 0),
-        )
-      : [];
-
-  const droidGroups = useMemo(() => {
-    if (
-      isSearching ||
-      selectedInstanceId === "favorites" ||
-      instanceEntries.find((entry) => entry.instanceId === selectedInstanceId)?.driverKind !==
-        "droid"
-    )
-      return null;
-    return groupDroidModelRows(filteredModels);
-  }, [isSearching, selectedInstanceId, instanceEntries, filteredModels]);
-
-  const sourceSectionRows = useMemo(() => {
-    const showsFavorites = selectedInstanceId === "favorites";
-    if (
-      showsFavorites ||
-      !modelSourceSectionsApply({
-        isSearching,
-        showsFavorites,
-        driverKind: entryByInstanceId.get(selectedInstanceId)?.driverKind,
-      })
-    )
-      return null;
-    const groups = groupModelsBySource(filteredModels);
-    return groups
-      ? buildModelSourceSectionRows({
-          instanceId: selectedInstanceId,
-          groups,
-          collapsed: new Set(collapsedModelSources),
-          revealed: revealedModelSources,
-          modelKey: (model) => modelPickerModelKey(model.instanceId, model.slug),
-        })
-      : null;
-  }, [
-    collapsedModelSources,
-    entryByInstanceId,
-    filteredModels,
-    isSearching,
-    revealedModelSources,
-    selectedInstanceId,
-  ]);
-
-  const toggleModelSourceSection = useCallback(
-    (key: string) => {
-      const expanded = sourceSectionRows?.sections.get(key)?.expanded ?? true;
-      setRevealedModelSources((revealed) => {
-        const next = new Set(revealed);
-        next.delete(key);
-        return next;
-      });
-      setCollapsedModelSources((collapsed) =>
-        expanded
-          ? [...collapsed.filter((entry) => entry !== key), key]
-          : collapsed.filter((entry) => entry !== key),
-      );
-    },
-    [setCollapsedModelSources, sourceSectionRows],
-  );
+  // SCIENT-FORK:END
 
   const legacySection = useMemo(() => {
     if (isSearching || selectedInstanceId === "favorites" || sourceSectionRows) {
@@ -880,6 +663,23 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     ];
   }, [droidGroups, filteredModels, legacySection, sourceSectionRows]);
 
+  const selectedEntry =
+    selectedInstanceId === "favorites" ? undefined : entryByInstanceId.get(selectedInstanceId);
+  const providerSetupEntries =
+    !isSearching && props.onOpenProviderSetup
+      ? instanceEntries.filter(
+          (entry) =>
+            matchesLockedProvider(entry) &&
+            shouldOfferModelPickerSetup(
+              entry,
+              modelOptionsByInstance.get(entry.instanceId) ?? [],
+            ) &&
+            (selectedEntry
+              ? entry.instanceId === selectedEntry.instanceId
+              : filteredModels.length === 0),
+        )
+      : [];
+
   const toggleLegacySection = useCallback((instanceId: ProviderInstanceId) => {
     setExpandedLegacyInstances((expanded) => {
       const next = new Set(expanded);
@@ -892,11 +692,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     });
   }, []);
 
-  const handleForkToSwitchProvider = useCallback(() => {
-    if (props.forkToSwitchProviderDisabled) return;
+  const handleContinueInNewChat = useCallback(() => {
+    if (props.continueInNewChatDisabled) return;
     props.onRequestClose?.();
-    props.onForkToSwitchProvider?.();
-  }, [props.forkToSwitchProviderDisabled, props.onForkToSwitchProvider, props.onRequestClose]);
+    props.onContinueInNewChat?.();
+  }, [props.continueInNewChatDisabled, props.onContinueInNewChat, props.onRequestClose]);
 
   const handleModelSelect = useCallback(
     (modelSlug: string, instanceId: ProviderInstanceId, additive = false) => {
@@ -1399,12 +1199,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             {selectedFooterEntry && props.renderProviderFooter
               ? props.renderProviderFooter(selectedFooterEntry)
               : null}
-            {isLocked && hasAlternativeProvider && props.onForkToSwitchProvider ? (
-              <ModelPickerProviderLockNotice
-                disabled={props.forkToSwitchProviderDisabled ?? false}
-                onFork={handleForkToSwitchProvider}
-              />
-            ) : null}
             {providerSetupEntries.length > 0 && !selectedSetupEntry ? (
               <div className="max-h-44 shrink-0 overflow-y-auto border-t border-border/70 p-2">
                 {providerSetupEntries.map((entry) => (
@@ -1426,6 +1220,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   </div>
                 ))}
               </div>
+            ) : null}
+            {props.onContinueInNewChat ? (
+              <ModelPickerNewChatFooter
+                disabled={props.continueInNewChatDisabled ?? false}
+                onFork={handleContinueInNewChat}
+              />
             ) : null}
           </div>
         </Combobox>

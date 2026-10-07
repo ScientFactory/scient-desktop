@@ -5,6 +5,7 @@ import { assert, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   type ApplicationStoredEvent,
+  ChatAttachmentId,
   CheckpointId,
   CheckpointRef,
   CommandId,
@@ -26,14 +27,20 @@ import {
   RunId,
   ThreadId,
   ThreadSectionId,
+  ORCHESTRATION_V2_WS_METHODS,
+  WsRpcGroup,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { dispatchCommandRpcError } from "./DispatchCommandRpcError.ts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as Path from "effect/Path";
+import * as FileSystem from "effect/FileSystem";
+import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -50,6 +57,8 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import { makeProviderRegistryMock } from "../provider/testUtils/providerRegistryMock.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -75,9 +84,26 @@ import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as ResourceCleanupService from "./ResourceCleanupService.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+
+const dispatchRpc = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
+if (!dispatchRpc) throw new Error("Missing registered dispatch RPC");
+const encodeDispatchRpcError = Schema.encodeEffect(dispatchRpc.errorSchema);
+const decodeDispatchRpcError = Schema.decodeEffect(dispatchRpc.errorSchema);
+
+const ProviderRegistryTestLayer = Layer.succeed(ProviderRegistry.ProviderRegistry, {
+  ...makeProviderRegistryMock(),
+  setProviderAuthenticationFailure: () =>
+    Effect.die("Unexpected authentication mutation in runtime-layer fixtures"),
+});
 
 const PlatformTestLayer = Layer.mergeAll(
-  Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
+  Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({
+    get: () => Effect.succeed(null),
+    discard: () => Effect.void,
+  }),
   NodeServices.layer,
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
     resolveLink: () => Effect.die("unused title link"),
@@ -130,13 +156,6 @@ const providerInstance = {
   enabled: true,
   // No supportedRuntimeModes: every runtime mode runs as stored.
   snapshot: { getSnapshot: Effect.succeed({}) } as unknown as ProviderInstance["snapshot"],
-  adapter: new Proxy({} as ProviderInstance["adapter"], {
-    get: (_target, operation) => {
-      throw new Error(
-        `V2 fixtures must not execute the legacy adapter operation ${String(operation)}`,
-      );
-    },
-  }),
   orchestrationAdapter,
   textGeneration: {} as ProviderInstance["textGeneration"],
 } satisfies ProviderInstance;
@@ -229,14 +248,26 @@ const TestLayer = Layer.mergeAll(
   ThreadCommandExecutor.layer,
 ).pipe(
   Layer.provide(McpSessionRegistryTestkit.layer),
-  Layer.provide(SqlitePersistenceMemory),
+  Layer.provideMerge(SqlitePersistenceMemory),
   Layer.provide(CheckpointStoreTestLayer),
-  Layer.provide(ServerConfigLayer),
+  Layer.provideMerge(ServerConfigLayer),
   Layer.provide(ServerSettings.layerTest()),
   Layer.provide(TestProviderInstanceRegistry),
+  Layer.provide(ProviderRegistryTestLayer),
   Layer.provide(GitWorkflowTestLayer),
   Layer.provide(ProjectServiceTestLayer),
-  Layer.provide(PlatformTestLayer),
+  Layer.provideMerge(PlatformTestLayer),
+);
+
+// SCIENT-FORK: exercise live attachment unlink in an isolated, idle lifecycle fixture.
+const AttachmentDeletionTestLayer = TestLayer.pipe(
+  Layer.provide(
+    ResourceCleanupService.live.pipe(
+      Layer.provide(Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void })),
+      Layer.provide(ServerConfigLayer),
+      Layer.provide(PlatformTestLayer),
+    ),
+  ),
 );
 
 const LegacyImportTestLayer = OrchestrationV2LayerLive.pipe(
@@ -246,6 +277,7 @@ const LegacyImportTestLayer = OrchestrationV2LayerLive.pipe(
   Layer.provide(ServerConfigLayer),
   Layer.provide(ServerSettings.layerTest()),
   Layer.provide(TestProviderInstanceRegistry),
+  Layer.provide(ProviderRegistryTestLayer),
   Layer.provide(GitWorkflowTestLayer),
   Layer.provide(ProjectServiceTestLayer),
   Layer.provide(PlatformTestLayer),
@@ -285,6 +317,7 @@ const ProjectDeletionTestLayer = Layer.mergeAll(
   Layer.provide(ServerConfigLayer),
   Layer.provide(ServerSettings.layerTest()),
   Layer.provide(TestProviderInstanceRegistry),
+  Layer.provide(ProviderRegistryTestLayer),
   Layer.provide(GitWorkflowTestLayer),
   Layer.provide(PlatformTestLayer),
 );
@@ -429,6 +462,7 @@ const SharedApplicationDataPlaneTestLayer = Layer.mergeAll(
   Layer.provide(ServerConfigLayer),
   Layer.provide(ServerSettings.layerTest()),
   Layer.provide(TestProviderInstanceRegistry),
+  Layer.provide(ProviderRegistryTestLayer),
   Layer.provide(GitWorkflowTestLayer),
   Layer.provide(PlatformTestLayer),
 );
@@ -1946,6 +1980,147 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  // SCIENT-FORK: preserve the old thread.delete receipt boundary on the native cleanup path.
+  it.effect("cleans real attachments only after the native delete receipt commits", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const sql = yield* SqlClient.SqlClient;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      const threadId = ThreadId.make("native-delete-receipt-thread");
+      const projectId = ProjectId.make("native-delete-receipt-project");
+      const now = yield* DateTime.now;
+      yield* seedProject({
+        projectId,
+        title: "Native delete receipt project",
+        workspaceRoot: process.cwd(),
+        defaultModelSelection: modelSelection,
+        createdAt: DateTime.formatIso(now),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("native-delete-receipt-create"),
+        threadId,
+        projectId,
+        title: "Idle attachment owner",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const attachmentId = createAttachmentId(threadId, "png");
+      assert.ok(attachmentId);
+      const bytes = new Uint8Array([0, 1, 17, 128, 255, 10]);
+      const attachment = {
+        type: "image" as const,
+        id: ChatAttachmentId.make(attachmentId),
+        name: "owned.png",
+        mimeType: "image/png",
+        sizeBytes: bytes.length,
+      };
+      const attachmentPath = resolveAttachmentPath({
+        attachmentsDir: config.attachmentsDir,
+        attachment,
+      });
+      assert.ok(attachmentPath);
+      yield* fileSystem.writeFile(attachmentPath, bytes);
+      // Seed a real native message through EventSink without starting a provider or run.
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("native-delete-receipt-message"),
+            type: "message.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: MessageId.make("native-delete-receipt-message"),
+              threadId,
+              runId: null,
+              nodeId: null,
+              role: "user",
+              text: "Owned attachment",
+              attachments: [attachment],
+              streaming: false,
+              createdAt: now,
+              updatedAt: now,
+              createdBy: "user",
+              creationSource: "web",
+            },
+          },
+        ],
+      });
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      assert.isNull(before.thread.deletedAt);
+      assert.deepEqual(before.messages[0]?.attachments, [attachment]);
+      assert.deepEqual(yield* projectionStore.getThreadAttachmentIds(threadId), [attachmentId]);
+      assert.deepEqual(before.runs, []);
+      assert.deepEqual(before.providerSessions, []);
+      assert.deepEqual(yield* fileSystem.readFile(attachmentPath), bytes);
+      const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+      const command = {
+        type: "thread.delete",
+        commandId: CommandId.make("native-delete-receipt-delete"),
+        threadId,
+      } as const;
+      const readReceipt = sql<{ readonly status: string; readonly resultSequence: number }>`
+        SELECT status, result_sequence AS "resultSequence" FROM orchestration_command_receipts
+        WHERE command_id = ${command.commandId}
+      `;
+      yield* sql`CREATE TRIGGER fail_native_delete_receipt
+        BEFORE INSERT ON orchestration_command_receipts
+        WHEN NEW.command_id = 'native-delete-receipt-delete' AND NEW.status = 'accepted'
+        BEGIN SELECT RAISE(ABORT, 'forced native delete receipt failure'); END`;
+      const failure = yield* orchestrator.dispatch(command).pipe(Effect.flip);
+      assert.instanceOf(failure, Orchestrator.OrchestratorDispatchError);
+      assert.instanceOf(failure.cause, EventSink.EventSinkWriteError);
+      assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), before);
+      assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
+      assert.deepEqual(yield* sink.readByCommandId(command).pipe(Stream.runCollect), []);
+      assert.deepEqual(yield* readReceipt, []);
+      assert.deepEqual(yield* outbox.listByCommandId(command.commandId), []);
+      yield* worker.drain();
+      assert.deepEqual(yield* fileSystem.readFile(attachmentPath), bytes);
+      yield* sql`DROP TRIGGER fail_native_delete_receipt`;
+
+      const accepted = yield* orchestrator.dispatch(command);
+      assert.deepEqual(yield* readReceipt, [
+        { status: "accepted", resultSequence: accepted.sequence },
+      ]);
+      assert.isAbove(accepted.sequence, sequence);
+      assert.deepEqual(
+        accepted.storedEvents.map((stored) => stored.event.type),
+        ["thread.deleted"],
+      );
+      assert.isNotNull((yield* orchestrator.getThreadProjection(threadId)).thread.deletedAt);
+      const pending = yield* outbox.listByCommandId(command.commandId);
+      assert.deepEqual(
+        pending.map((effect) => effect.request),
+        [
+          { type: "attachment.cleanup", attachmentIds: [attachmentId] },
+          { type: "terminal.cleanup" },
+        ],
+      );
+      assert.isTrue(pending.every((effect) => effect.status === "pending"));
+      assert.deepEqual(yield* fileSystem.readFile(attachmentPath), bytes);
+      yield* worker.drain();
+      assert.isFalse(yield* fileSystem.exists(attachmentPath));
+      const completed = yield* outbox.listByCommandId(command.commandId);
+      assert.lengthOf(completed, 2);
+      assert.isTrue(completed.every((effect) => effect.status === "succeeded"));
+      assert.deepEqual(yield* readReceipt, [
+        { status: "accepted", resultSequence: accepted.sequence },
+      ]);
+      assert.equal(yield* orchestrator.getThreadEventSequence(threadId), accepted.sequence);
+    }).pipe(Effect.provide(Layer.fresh(AttachmentDeletionTestLayer))),
+  );
+
   it.effect("persists linked pull requests through projection rebuilds and unlinking", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -3355,6 +3530,11 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       const before = yield* orchestrator.getThreadProjection(threadId);
       const queuedRun = before.runs.find((run) => run.status === "queued");
       assert.isDefined(queuedRun);
+      const capturedRevision = before.messages.find(
+        (message) => message.id === queuedRun.userMessageId,
+      )?.updatedAt;
+      assert.ok(capturedRevision);
+      yield* TestClock.adjust("1 second");
 
       yield* orchestrator.dispatch({
         type: "queued-run.edit",
@@ -3381,28 +3561,37 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       );
       assert.isUndefined(editedItem, "editing queue state must not create a timeline turn item");
 
+      const fileSystem = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      const queuedAttachmentId = createAttachmentId(threadId, "png");
+      assert.ok(queuedAttachmentId);
+      const queuedAttachment = {
+        type: "image" as const,
+        id: ChatAttachmentId.make(queuedAttachmentId),
+        name: "screenshot.png",
+        mimeType: "image/png",
+        sizeBytes: 128,
+      };
+      const queuedAttachmentPath = resolveAttachmentPath({
+        attachmentsDir: config.attachmentsDir,
+        attachment: queuedAttachment,
+      });
+      assert.ok(queuedAttachmentPath);
+      yield* fileSystem.writeFile(queuedAttachmentPath, new Uint8Array(128));
       yield* orchestrator.dispatch({
         type: "queued-run.edit",
         commandId: CommandId.make("runtime-layer-queued-edit-attachments"),
         threadId,
         runId: queuedRun.id,
         text: "Updated queued text with an attachment.",
-        attachments: [
-          {
-            type: "image",
-            id: "runtime-layer-queued-edit-attachment",
-            name: "screenshot.png",
-            mimeType: "image/png",
-            sizeBytes: 128,
-          },
-        ],
+        attachments: [queuedAttachment],
       });
       const afterAttachmentEdit = yield* orchestrator.getThreadProjection(threadId);
       assert.deepEqual(
         afterAttachmentEdit.messages
           .find((message) => message.id === queuedRun.userMessageId)
           ?.attachments.map((attachment) => attachment.id),
-        ["runtime-layer-queued-edit-attachment"],
+        [queuedAttachment.id],
       );
 
       yield* orchestrator.dispatch({
@@ -3423,7 +3612,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         afterTextOnlyEdit.messages
           .find((message) => message.id === queuedRun.userMessageId)
           ?.attachments.map((attachment) => attachment.id),
-        ["runtime-layer-queued-edit-attachment"],
+        [queuedAttachment.id],
         "an edit without attachments must leave the stored attachments untouched",
       );
 
@@ -3437,6 +3626,47 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         })
         .pipe(Effect.flip);
       assert.equal(emptyEditError._tag, "OrchestratorCommandRejectedError");
+
+      const staleExtraction = {
+        type: "queued-run.cancel" as const,
+        commandId: CommandId.make("runtime-queue-extract-stale"),
+        threadId,
+        runId: queuedRun.id,
+        expectedUpdatedAt: capturedRevision,
+      };
+      const firstRefusal = yield* orchestrator.dispatch(staleExtraction).pipe(Effect.flip);
+      assert.equal(firstRefusal._tag, "OrchestratorCommandRejectedError");
+      const replayRefusal = yield* orchestrator.dispatch(staleExtraction).pipe(Effect.flip);
+      assert.equal(replayRefusal._tag, "OrchestratorCommandPreviouslyRejectedError");
+      for (const cause of [firstRefusal, replayRefusal]) {
+        const transport = dispatchCommandRpcError(staleExtraction, cause);
+        const encoded = yield* encodeDispatchRpcError(transport);
+        const decoded = yield* decodeDispatchRpcError(encoded);
+        assert.equal(decoded._tag, "OrchestrationV2DispatchCommandError");
+        if (decoded._tag === "OrchestrationV2DispatchCommandError")
+          assert.equal(decoded.commandDisposition, "rejected");
+      }
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TRIGGER refuse_extraction_receipt BEFORE INSERT ON orchestration_command_receipts
+        WHEN NEW.command_id = 'runtime-queue-extract-storage'
+        BEGIN SELECT RAISE(ABORT, 'rejection receipt unavailable'); END`;
+      const storageExtraction = {
+        ...staleExtraction,
+        commandId: CommandId.make("runtime-queue-extract-storage"),
+      };
+      const undecided = yield* orchestrator.dispatch(storageExtraction).pipe(Effect.flip);
+      assert.isUndefined(dispatchCommandRpcError(storageExtraction, undecided).commandDisposition);
+      assert.equal(
+        (yield* sql<{ count: number }>`SELECT COUNT(*) AS count FROM orchestration_command_receipts
+        WHERE command_id = ${storageExtraction.commandId}`)[0]?.count,
+        0,
+      );
+      yield* sql`DROP TRIGGER refuse_extraction_receipt`;
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).messages,
+        afterTextOnlyEdit.messages,
+      );
+      assert.equal(Number((yield* fileSystem.stat(queuedAttachmentPath)).size), 128);
 
       yield* orchestrator.dispatch({
         type: "queued-run.cancel",
@@ -3471,7 +3701,17 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
           runId: queuedRun.id,
         })
         .pipe(Effect.flip);
-      assert.equal(cancelAgainError._tag, "OrchestratorDispatchError");
+      assert.equal(cancelAgainError._tag, "OrchestratorCommandRejectedError");
+      assert.equal(
+        dispatchCommandRpcError(
+          {
+            commandId: CommandId.make("runtime-layer-queued-edit-cancel-again"),
+            type: "queued-run.cancel",
+          },
+          cancelAgainError,
+        ).commandDisposition,
+        "rejected",
+      );
     }),
   );
 });

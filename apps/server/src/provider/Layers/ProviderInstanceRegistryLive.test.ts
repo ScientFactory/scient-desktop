@@ -953,7 +953,6 @@ describe("ProviderInstanceRegistryLive — enabled resolution", () => {
           displayName: undefined,
           enabled,
           snapshot: {} as ProviderInstance["snapshot"],
-          adapter: {} as ProviderInstance["adapter"],
           orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
           textGeneration: {} as ProviderInstance["textGeneration"],
         } satisfies ProviderInstance;

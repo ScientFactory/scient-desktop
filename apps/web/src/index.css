@@ -343,43 +343,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
-/* The stage background remains a component-layer class; register its name
-   for the upstream unknown-class check without moving its theme rules. */
-@utility scient-stage-art {
-  --scient-semantic-hook: 1;
-}
-
-/* Semantic hook for the shared rich-math source toolbar. */
-@utility scient-math-source-toolbar {
-  --scient-semantic-hook: 1;
-}
-
-/* Small semantic utilities retained from Scient's established visual language. */
-@utility tracking-subtle {
-  letter-spacing: -0.005em;
-}
-
-@utility leading-compact {
-  line-height: 1.45;
-}
-
-@utility backdrop-blur-px {
-  backdrop-filter: blur(1px);
-}
-
-@utility ease-drawer {
-  transition-timing-function: var(--ease-drawer);
-}
-
-@utility text-4xs {
-  font-size: 0.4375rem;
-  line-height: 1;
-}
-
-@utility text-xl-scient {
-  font-size: 1.4rem;
-  line-height: 1.75rem;
-}
+/* SCIENT-FORK:START — Scient utility names */
+@import "./scient/presentation/scient-utilities.css";
+/* SCIENT-FORK:END */
 
 @utility surface-glass {
   background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
@@ -732,120 +698,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+/* SCIENT-FORK:START — sidebar brand and stage art */
+@import "./scient/presentation/scient-sidebar-stage.css";
+/* SCIENT-FORK:END */
+
 @layer components {
-  .sidebar-brand {
-    display: none;
-  }
-
-  .sidebar-brand-stage {
-    display: none;
-  }
-
-  /* The desktop sidebar never narrows below its legal 13.5rem minimum, where
-     the compact Scient wordmark and native window controls still fit. The
-     brand also stays shrinkable, so a wider titlebar inset or a larger OS
-     font truncates the wordmark instead of spilling past the sidebar edge. */
-  @media (min-width: 48rem) {
-    .sidebar-brand {
-      display: flex;
-    }
-
-    @container sidebar-header (min-width: 15.75rem) {
-      .sidebar-brand-stage {
-        display: inline-flex;
-      }
-    }
-  }
-
-  /* Scient owns the restrained stage composition while the inherited stage
-     token contract supplies reviewed colors for each built-in theme. */
-  .sidebar-stage-backdrop {
-    --stage-fade: var(--sidebar-stage-fade, var(--app-chrome-background));
-    mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
-    -webkit-mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
-  }
-
-  .sidebar-stage-backdrop::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(
-      to bottom,
-      transparent 0%,
-      transparent 28%,
-      color-mix(in srgb, var(--stage-fade) 10%, transparent) 40%,
-      color-mix(in srgb, var(--stage-fade) 30%, transparent) 52%,
-      color-mix(in srgb, var(--stage-fade) 58%, transparent) 64%,
-      color-mix(in srgb, var(--stage-fade) 82%, transparent) 75%,
-      color-mix(in srgb, var(--stage-fade) 96%, transparent) 85%,
-      var(--stage-fade) 93%
-    );
-  }
-
-  .scient-stage-art {
-    background:
-      radial-gradient(
-        18rem 7rem at 82% -30%,
-        color-mix(in oklch, var(--scient-stage-highlight) 28%, transparent),
-        transparent 72%
-      ),
-      radial-gradient(
-        14rem 6rem at 14% 10%,
-        color-mix(in oklch, var(--scient-stage-secondary) 24%, transparent),
-        transparent 76%
-      ),
-      linear-gradient(
-        135deg,
-        var(--scient-stage-top) 0%,
-        var(--scient-stage-mid) 52%,
-        var(--scient-stage-bottom) 100%
-      );
-  }
-
-  .scient-stage-watermark {
-    opacity: 0.07;
-  }
-
-  .sidebar-brand-on-stage[data-stage-variant="dev"] {
-    color: var(--stage-art-line);
-  }
-
-  .sidebar-brand-on-stage[data-stage-variant="nightly"] {
-    color: var(--stage-night-line);
-  }
-
-  .sidebar-brand-stage-label {
-    opacity: 0.78;
-  }
-
-  [data-slot="sidebar-trigger"][data-stage-variant="dev"] {
-    --scient-stage-control-highlight: var(--stage-art-highlight);
-    --scient-stage-control-line: var(--stage-art-line);
-  }
-
-  [data-slot="sidebar-trigger"][data-stage-variant="nightly"] {
-    --scient-stage-control-highlight: var(--stage-night-highlight);
-    --scient-stage-control-line: var(--stage-night-line);
-  }
-
-  [data-slot="sidebar-trigger"][data-stage-variant] {
-    --tw-ring-color: var(--scient-stage-control-line);
-    color: var(--scient-stage-control-line);
-  }
-
-  [data-slot="sidebar-trigger"][data-stage-variant]:is(:hover, [data-pressed]) {
-    background: color-mix(in oklch, var(--scient-stage-control-highlight) 18%, transparent);
-  }
-
-  [data-slot="sidebar-trigger"][data-stage-variant] svg {
-    stroke: var(--scient-stage-control-line) !important;
-    opacity: 1 !important;
-  }
-
-  .dark .scient-stage-watermark {
-    opacity: 0.12;
-  }
-
   /* AnimatedHeight owns resizing for its contents. Nested collapsibles must
      expose their final layout immediately, otherwise each animation frame
      restarts the parent's transition and the dialog trails behind its content. */
@@ -857,6 +714,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   [data-slot="animated-height"] [data-slot="collapsible-panel"][data-closed] {
     display: none;
   }
+
   /* Each maintainer palette gives the same line art its own material: rose
      vellum, forest drafting paper, marine cyanotype, copper, and violet ink.
      These colors stay deliberately deep at the top edge so the white stage
@@ -1825,21 +1683,9 @@ body {
   --desktop-window-right-resize-inset: 6px;
 }
 
-.cursor-platform-col-resize {
-  cursor: col-resize;
-}
-
-.cursor-platform-row-resize {
-  cursor: row-resize;
-}
-
-.electron-windows .cursor-platform-col-resize {
-  cursor: ew-resize;
-}
-
-.electron-windows .cursor-platform-row-resize {
-  cursor: ns-resize;
-}
+/* SCIENT-FORK:START — platform resize cursors */
+@import "./scient/presentation/scient-platform-cursors.css";
+/* SCIENT-FORK:END */
 
 /* App-chrome grain. Baked into each surface's own background (behind
    content) rather than a fixed overlay on top: a full-viewport overlay
@@ -1872,25 +1718,9 @@ code {
   font-family: var(--font-mono);
 }
 
-@layer base {
-  /* Explicit font-medium/semibold/bold utilities still own emphasis. */
-  pre,
-  code,
-  kbd,
-  samp,
-  .font-mono,
-  diffs-container,
-  .scient-markdown-code-block,
-  .scient-markdown-source-island-editor,
-  .scient-markdown-reference-source,
-  .scient-markdown-math-source {
-    font-weight: var(--font-weight-monospace, inherit);
-  }
-  b,
-  strong {
-    font-weight: var(--font-weight-emphasis, bolder);
-  }
-}
+/* SCIENT-FORK:START — appearance font weights */
+@import "./scient/presentation/scient-font-weights.css";
+/* SCIENT-FORK:END */
 
 /* Code blocks in chat carry the size preference. Scoped to chat markdown
    rather than every pre: a global rule would beat text-size utilities and
@@ -1953,66 +1783,9 @@ code {
   background: var(--app-scrollbar-thumb-hover);
 }
 
-/* A single decorative outline keeps the standard card radius and a smaller raised cue. */
-.settings-source-group {
-  position: relative;
-  isolation: isolate;
-}
-
-.settings-source-group > [data-source-panel] {
-  margin-top: 20px;
-}
-
-[data-compute-settings] [data-slot="settings-row"] {
-  border-radius: 0;
-}
-
-.settings-source-outline {
-  position: absolute;
-  pointer-events: none;
-  z-index: -1;
-  overflow: visible;
-  fill: color-mix(in oklab, var(--card) 40%, transparent);
-  stroke: color-mix(in oklab, var(--border) 60%, transparent);
-  stroke-width: 1px;
-  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 5%));
-}
-
-.settings-source-group[data-source-outline="ready"] > [data-source-panel] {
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
-}
-
-/* Compact horizontal selectors reveal their scrollbar only on interaction. */
-.settings-source-strip {
-  scrollbar-color: transparent transparent;
-  scrollbar-width: thin;
-}
-
-.settings-source-strip::-webkit-scrollbar {
-  height: 3px;
-}
-
-.settings-source-strip::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: transparent;
-}
-
-.settings-source-strip:hover,
-.settings-source-strip:has(:focus-visible) {
-  scrollbar-color: var(--app-scrollbar-thumb) transparent;
-}
-
-.settings-source-strip:hover::-webkit-scrollbar-thumb,
-.settings-source-strip:has(:focus-visible)::-webkit-scrollbar-thumb {
-  background: var(--app-scrollbar-thumb);
-}
-
-.settings-source-strip:hover::-webkit-scrollbar-thumb:hover,
-.settings-source-strip:has(:focus-visible)::-webkit-scrollbar-thumb:hover {
-  background: var(--app-scrollbar-thumb-hover);
-}
+/* SCIENT-FORK:START — settings source groups */
+@import "./scient/presentation/scient-settings-sources.css";
+/* SCIENT-FORK:END */
 
 /* Chat markdown rendering */
 
@@ -2443,28 +2216,9 @@ html[data-theme-id] .chat-markdown .chat-markdown-codeblock {
   border-color: var(--markdown-code-block-border);
 }
 
-/* The rich editor's code header reuses the chat code-block chrome actions. */
-.scient-markdown-code-header [data-slot="button"] {
-  color: color-mix(in srgb, var(--contrast-foreground) 72%, transparent);
-}
-
-.scient-markdown-code-header [data-slot="button"]:hover {
-  color: var(--contrast-foreground);
-}
-
-.scient-markdown-code-header [data-slot="button"][aria-pressed="true"] {
-  color: var(--contrast-foreground);
-  background: color-mix(in srgb, var(--contrast-foreground) 8%, transparent);
-}
-
-html[data-theme-id] .scient-markdown-code-header [data-slot="button"] {
-  color: color-mix(in srgb, var(--code-foreground) 72%, transparent);
-}
-
-html[data-theme-id] .scient-markdown-code-header [data-slot="button"]:hover,
-html[data-theme-id] .scient-markdown-code-header [data-slot="button"][aria-pressed="true"] {
-  color: var(--code-foreground);
-}
+/* SCIENT-FORK:START — rich editor code header */
+@import "./scient/presentation/scient-markdown-code-header.css";
+/* SCIENT-FORK:END */
 
 /* Interrupted row separators: the line stops short of each cell edge. */
 .chat-markdown thead th,
@@ -2480,58 +2234,9 @@ html[data-theme-id] .scient-markdown-code-header [data-slot="button"][aria-press
   background-size: calc(100% - 1rem) 1px;
 }
 
-/* Visual-card utilities are quiet; chart exploration keeps its own toolbar. */
-.scient-visual-utility-controls {
-  column-gap: 0;
-}
-
-.scient-visual-utility-controls button:not([data-scient-toolbar-move]) {
-  isolation: isolate;
-  width: 1.75rem;
-  height: 1.75rem;
-  padding: 0;
-  border: 0;
-  border-radius: 0.35rem;
-  background: transparent;
-  box-shadow: none;
-  --control-icon-color: color-mix(in oklab, var(--muted-foreground) 80%, transparent);
-  color: var(--control-icon-color);
-}
-
-.scient-visual-utility-controls button:not([data-scient-toolbar-move])::before {
-  inset: 2px;
-  z-index: -1;
-  border-radius: inherit;
-}
-
-[data-scient-image-controls]
-  .scient-visual-utility-controls
-  button:not([data-scient-toolbar-move]) {
-  width: calc(1.75rem - 2px);
-  height: calc(1.75rem - 2px);
-}
-
-[data-scient-image-controls]
-  .scient-visual-utility-controls
-  button:not([data-scient-toolbar-move])::before {
-  inset: 1px;
-}
-
-.scient-visual-utility-controls button:not([data-scient-toolbar-move]):hover,
-.scient-visual-utility-controls button:not([data-scient-toolbar-move])[data-popup-open] {
-  --control-icon-color: var(--foreground);
-  color: var(--control-icon-color);
-}
-
-.scient-visual-utility-controls button:not([data-scient-toolbar-move]):hover::before,
-.scient-visual-utility-controls button:not([data-scient-toolbar-move])[data-popup-open]::before {
-  background: color-mix(in oklab, var(--foreground) 6%, transparent);
-}
-
-.scient-visual-utility-controls button:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 1px;
-}
+/* SCIENT-FORK:START — visual card utility controls */
+@import "./scient/presentation/scient-visual-utility-controls.css";
+/* SCIENT-FORK:END */
 
 /* Let the sortable rows open label clearance before painting the dividers.
    This runs once per pickup; rows retain dnd-kit's normal 200ms transitions. */

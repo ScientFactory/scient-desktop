@@ -11,6 +11,7 @@ import * as Path from "effect/Path";
 import * as ServerConfig from "./config.ts";
 import { attachmentRelativePath, createDeterministicAttachmentId } from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
+import { reserveAttachment } from "./orchestration-v2/AttachmentFileUse.ts";
 
 export const persistChatAttachments = Effect.fn("AttachmentPersistence.persistChatAttachments")(
   function* (input: {
@@ -66,6 +67,17 @@ export const persistChatAttachments = Effect.fn("AttachmentPersistence.persistCh
           mimeType: attachment.mimeType,
           sizeBytes: attachment.sizeBytes,
         };
+        // This API publishes before client admission. Keep its durable reservation
+        // until an explicit receipt owner can reconcile the separate operation.
+        const reservation = yield* reserveAttachment(persisted, { publication: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new PersistChatAttachmentsError({
+                message: "Could not reserve attachment publication.",
+                cause,
+              }),
+          ),
+        );
         const destination = path.join(config.attachmentsDir, attachmentRelativePath(persisted)!);
         yield* Effect.scoped(
           Effect.gen(function* () {
@@ -106,6 +118,21 @@ export const persistChatAttachments = Effect.fn("AttachmentPersistence.persistCh
               }),
           ),
         );
+        yield* reservation
+          .ready({
+            kind: "message-publication",
+            threadId: input.threadId,
+            messageId: input.messageId,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new PersistChatAttachmentsError({
+                  message: "Could not record attachment publication.",
+                  cause,
+                }),
+            ),
+          );
         return persisted;
       }),
       { concurrency: 2 },

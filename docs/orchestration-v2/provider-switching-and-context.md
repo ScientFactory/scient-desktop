@@ -1,5 +1,7 @@
 # Provider Switching And Context Handoff
 
+Historical V2 design reference; [the maintained architecture](../internals/overview.md) describes the live engine and compatibility boundaries.
+
 Provider switching is a first-class V2 feature. An app thread may contain runs from multiple providers while preserving each provider's native conversation handles and the app's canonical conversation history.
 
 This document describes the provider-switching specialization of the broader [Thread Lineage And Context Transfer](./thread-lineage-and-context-transfer.md) model. Provider switching is a context transfer where the source and target app thread are usually the same thread. Forking, merge-back, and subagents use the same source-point/resolution concepts with different product lifecycles.

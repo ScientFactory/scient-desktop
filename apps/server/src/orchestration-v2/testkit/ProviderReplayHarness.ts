@@ -1,7 +1,13 @@
+import { ContextHandoffPolicyOverride } from "../ScientContextHandoffPolicy.ts";
+import type { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { ProviderDriverKind, ProviderReplayTranscript } from "@t3tools/contracts";
+import type {
+  ProviderDriverKind,
+  ProviderReplayTranscript,
+  ResponseStreamingMode,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -24,6 +30,8 @@ import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import * as CheckpointCaptureService from "../CheckpointCaptureService.ts";
 import * as CheckpointService from "../CheckpointService.ts";
+import { layer as attachmentRollbackPruneLayer } from "../AttachmentRollbackPruneService.ts";
+import { layer as attachmentReconciliationLayer } from "../AttachmentReservationReconciliation.ts";
 import * as CheckpointRollbackService from "../CheckpointRollbackService.ts";
 import * as CommandPolicy from "../CommandPolicy.ts";
 import * as CommandReceiptStore from "../CommandReceiptStore.ts";
@@ -37,6 +45,8 @@ import * as Orchestrator from "../Orchestrator.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
+import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
 import * as ProviderAuthService from "../../provider/Services/ProviderAuthService.ts";
 import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
 import * as ProviderContinuationService from "../ProviderContinuationService.ts";
@@ -55,6 +65,7 @@ import * as TurnItemPositionStore from "../TurnItemPositionStore.ts";
 import * as RuntimeRequestService from "../RuntimeRequestService.ts";
 import * as ThreadForkService from "../ThreadForkService.ts";
 import * as ConversationForks from "../scient-fork/ConversationForkService.ts";
+import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
 import { ScientForkCheckpointBaselineLive } from "../scient-fork/ForkCheckpointBaseline.ts";
 import { ScientForkAttachmentCopierLive } from "../scient-fork/ForkAttachmentCopier.ts";
 import { layer as threadCommandExecutorLayer } from "../ThreadCommandExecutor.ts";
@@ -198,7 +209,12 @@ export function runOrchestratorV2ProviderReplayScenario<
     /** Exercise production session credential issuance; disabled for recorded transports. */
     readonly configureMcp?: boolean;
     readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
+    /** Auth integration tests must supply the actual snapshot registry. */
+    readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
     readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
+    readonly responseStreamingMode?: ResponseStreamingMode;
+    /** Inject an external Git process failure while retaining native checkpoint services. */
+    readonly vcsProcessLayer?: Layer.Layer<VcsProcess.VcsProcess>;
     // Start continuation runs for provider wake turns, as the live runtime does.
     // Off by default: most fixtures record no wake turn.
     readonly runContinuationWorker?: boolean;
@@ -206,6 +222,8 @@ export function runOrchestratorV2ProviderReplayScenario<
     // as server startup does after a crash or restart.
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
+    readonly contextHandoffPolicy?: "scient" | "byte";
   } = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
@@ -253,6 +271,8 @@ export function makeOrchestratorV2ProviderReplayLayer<
     /** Exercise production session credential issuance; disabled for recorded transports. */
     readonly configureMcp?: boolean;
     readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
+    /** Auth integration tests must supply the actual snapshot registry. */
+    readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
     // Start continuation runs for provider wake turns, as the live runtime does.
     // Off by default: most fixtures record no wake turn.
     readonly runContinuationWorker?: boolean;
@@ -260,18 +280,26 @@ export function makeOrchestratorV2ProviderReplayLayer<
     // as server startup does after a crash or restart.
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
+    readonly contextHandoffPolicy?: "scient" | "byte";
     readonly replayGate?: ProviderReplayGate;
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | ProviderTurnStartService.ProviderTurnStartServiceV2
+  | CommandReceiptStore.CommandReceiptStoreV2
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
+  | EventStore.EventStoreV2
+  | CheckpointService.CheckpointServiceV2
+  | CheckpointStore.CheckpointStore
   | ConversationForks.ConversationForkService
+  | LegacyV1ThreadImporter.LegacyV1ThreadImporter
   | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
-  | ServerConfig.ServerConfig,
+  | ServerConfig.ServerConfig
+  | ServerSettings.ServerSettingsService,
   | Error
   | MigrationError
   | PlatformError.PlatformError
@@ -290,6 +318,16 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   scenario: Pick<OrchestratorV2ProviderReplayScenario, "name" | "runtimePolicyOverride">,
   registryLayer: Layer.Layer<ProviderAdapterRegistry.ProviderAdapterRegistryV2, Error>,
   options: {
+    /** Preserve one disposable profile across file-backed restart and recovery tests. */
+    readonly serverConfigLayer?: Layer.Layer<ServerConfig.ServerConfig>;
+    readonly serverSettingsLayer?: Layer.Layer<ServerSettings.ServerSettingsService>;
+    readonly providerSessionIdleTimeoutMs?: number;
+    /** Observe or gate the real canonical writer without replacing its SQL transaction. */
+    readonly decorateEventSink?: (sink: EventSink.EventSinkV2Shape) => EventSink.EventSinkV2Shape;
+    /** Observe real projection reads without replacing their SQL implementation. */
+    readonly decorateProjectionStore?: (
+      store: ProjectionStore.ProjectionStoreV2Shape,
+    ) => ProjectionStore.ProjectionStoreV2Shape;
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
       | MigrationError
@@ -299,10 +337,29 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       | V2DatabaseImportError
     >;
     readonly runEffectWorker?: boolean;
+    /** Inject a fault around the production copier without replacing native provisioning. */
+    readonly forkAttachmentCopierLayer?: typeof ScientForkAttachmentCopierLive;
+    /** Run actual attachment cleanup on isolated test profiles. */
+    readonly resourceCleanupLayer?: Layer.Layer<
+      never,
+      never,
+      ServerConfig.ServerConfig | FileSystem.FileSystem
+    >;
+    /** Exercise native fork checkout with the production Git workflow. */
+    readonly forkGitWorkflowLayer?: Layer.Layer<
+      GitWorkflowService,
+      never,
+      ServerConfig.ServerConfig
+    >;
     /** Exercise production session credential issuance; disabled for recorded transports. */
     readonly configureMcp?: boolean;
     readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
+    /** Auth integration tests must supply the actual snapshot registry. */
+    readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
     readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
+    readonly responseStreamingMode?: ResponseStreamingMode;
+    /** Inject an external Git process failure while retaining native checkpoint services. */
+    readonly vcsProcessLayer?: Layer.Layer<VcsProcess.VcsProcess>;
     // Start continuation runs for provider wake turns, as the live runtime does.
     // Off by default: most fixtures record no wake turn.
     readonly runContinuationWorker?: boolean;
@@ -310,18 +367,26 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     // as server startup does after a crash or restart.
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
+    readonly contextHandoffPolicy?: "scient" | "byte";
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | ProviderTurnStartService.ProviderTurnStartServiceV2
+  | CommandReceiptStore.CommandReceiptStoreV2
   | EffectWorker.OrchestrationEffectWorkerV2
   | EffectOutbox.EffectOutboxV2
   | EventSink.EventSinkV2
+  | EventStore.EventStoreV2
+  | CheckpointService.CheckpointServiceV2
+  | CheckpointStore.CheckpointStore
   | ConversationForks.ConversationForkService
+  | LegacyV1ThreadImporter.LegacyV1ThreadImporter
   | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
-  | ServerConfig.ServerConfig,
+  | ServerConfig.ServerConfig
+  | ServerSettings.ServerSettingsService,
   | Error
   | MigrationError
   | PlatformError.PlatformError
@@ -329,10 +394,12 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   | ScientMigrationError
   | V2DatabaseImportError
 > {
-  const serverConfigLayer = Layer.effect(
-    ServerConfig.ServerConfig,
-    makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
-  ).pipe(Layer.provide(NodeServices.layer));
+  const serverConfigLayer =
+    options.serverConfigLayer ??
+    Layer.effect(
+      ServerConfig.ServerConfig,
+      makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
+    ).pipe(Layer.provide(NodeServices.layer));
   const runtimeLayer =
     options.runtimePolicyLayer ??
     (scenario.runtimePolicyOverride === undefined
@@ -346,29 +413,64 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const continuationRequestsLayer =
     options.runContinuationWorker === true ? ProviderContinuationRequests.layer : Layer.empty;
   const providedRegistryLayer = registryLayer.pipe(Layer.provide(continuationRequestsLayer));
-  const serverSettingsLayer = ServerSettings.layerTest({
-    responseStreamingMode: "turn",
-    ...(options.continueThreadsAfterServerUpdate === undefined
-      ? {}
-      : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
-  }).pipe(Layer.orDie);
+  const serverSettingsLayer =
+    options.serverSettingsLayer ??
+    ServerSettings.layerTest({
+      responseStreamingMode: options.responseStreamingMode ?? "turn",
+      ...(options.continueThreadsAfterServerUpdate === undefined
+        ? {}
+        : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
+    }).pipe(Layer.orDie);
+  const handoffSettingsLayer = Layer.merge(
+    serverSettingsLayer,
+    options.contextHandoffPolicy === "byte"
+      ? Layer.succeed(ContextHandoffPolicyOverride, "byte")
+      : Layer.empty,
+  );
+  const projectionStoreLayer =
+    options.decorateProjectionStore === undefined
+      ? ProjectionStore.layer
+      : Layer.effect(
+          ProjectionStore.ProjectionStoreV2,
+          Effect.map(ProjectionStore.ProjectionStoreV2, options.decorateProjectionStore),
+        ).pipe(Layer.provide(ProjectionStore.layer));
   const storesLayer = Layer.mergeAll(
     EventStore.layer,
-    ProjectionStore.layer,
+    projectionStoreLayer,
     ProjectStore.layer,
     CommandReceiptStore.layer,
     EffectOutbox.layer,
     TurnItemPositionStore.layer,
   ).pipe(Layer.provide(databaseLayer));
-  const eventSinkProvided = EventSink.layerFromStores.pipe(
+  const actualEventSink = EventSink.layerFromStores.pipe(
     Layer.provide(Layer.mergeAll(storesLayer, databaseLayer)),
   );
+  const eventSinkProvided =
+    options.decorateEventSink === undefined
+      ? actualEventSink
+      : Layer.effect(
+          EventSink.EventSinkV2,
+          Effect.map(EventSink.EventSinkV2, options.decorateEventSink),
+        ).pipe(Layer.provide(actualEventSink));
   const commandReceiptStoreProvided = CommandReceiptStore.layer.pipe(Layer.provide(databaseLayer));
+  const attachmentReconciliationProvided = attachmentReconciliationLayer.pipe(
+    Layer.provide(Layer.merge(storesLayer, serverConfigLayer)),
+  );
+  const legacyImporterProvided = LegacyV1ThreadImporter.layer.pipe(
+    Layer.provide(Layer.mergeAll(eventSinkProvided, databaseLayer)),
+  );
   const providerEventIngestorProvided = ProviderEventIngestor.layer.pipe(
-    Layer.provide(Layer.mergeAll(storesLayer, eventSinkProvided, IdAllocator.layer)),
+    Layer.provide(
+      Layer.mergeAll(
+        storesLayer,
+        eventSinkProvided,
+        IdAllocator.layer,
+        attachmentReconciliationProvided,
+      ),
+    ),
   );
   const vcsDriverRegistryLayer = VcsDriverRegistry.layer.pipe(
-    Layer.provide(VcsProcess.layer),
+    Layer.provide(options.vcsProcessLayer ?? VcsProcess.layer),
     Layer.provide(serverConfigLayer),
     Layer.provide(NodeServices.layer),
   );
@@ -380,7 +482,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(Layer.mergeAll(checkpointStoreLayer, IdAllocator.layer)),
   );
   const contextHandoffServiceProvided = ContextHandoffService.layer.pipe(
-    Layer.provide(IdAllocator.layer),
+    Layer.provide(Layer.mergeAll(IdAllocator.layer, handoffSettingsLayer)),
   );
   const persistenceLayer = Layer.mergeAll(
     storesLayer,
@@ -389,12 +491,25 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     IdAllocator.layer,
     providerEventIngestorProvided,
   );
+  // Recorded transports have no snapshot instance registry. Unexpected auth
+  // control must fail visibly; dedicated auth proofs provide the live registry.
+  const snapshotRegistryLayer =
+    options.providerRegistryLayer ??
+    Layer.succeed(ProviderRegistry.ProviderRegistry, {
+      ...makeProviderRegistryMock(),
+      setProviderAuthenticationFailure: () =>
+        Effect.die("Unexpected authentication invalidation in recorded provider replay."),
+    });
   const providerSessionManagerProvided = ProviderSessionManager.layerWithOptions({
     configureMcp: options.configureMcp ?? false,
+    ...(options.providerSessionIdleTimeoutMs === undefined
+      ? {}
+      : { idleTimeoutMs: options.providerSessionIdleTimeoutMs }),
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
         providedRegistryLayer,
+        snapshotRegistryLayer,
         eventSinkProvided,
         IdAllocator.layer,
         options.mcpSessionRegistryLayer ?? McpSessionRegistryTestkit.layer,
@@ -421,6 +536,9 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(
       Layer.mergeAll(
         contextHandoffServiceProvided,
+        serverConfigLayer,
+        handoffSettingsLayer,
+        databaseLayer,
         eventSinkProvided,
         IdAllocator.layer,
         storesLayer,
@@ -434,7 +552,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     ),
   );
   const providerTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
-    Layer.provide(Layer.merge(storesLayer, providerSessionManagerProvided)),
+    Layer.provide(Layer.mergeAll(storesLayer, providerSessionManagerProvided, serverConfigLayer)),
   );
   const runtimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
     Layer.provide(Layer.merge(storesLayer, providerSessionManagerProvided)),
@@ -468,6 +586,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const orchestratorProvided = Orchestrator.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        serverConfigLayer,
         checkpointServiceProvided,
         CommandPolicy.layer,
         contextHandoffServiceProvided,
@@ -503,12 +622,14 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const conversationForkProvided = ConversationForks.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        providerSessionManagerProvided,
         storesLayer,
         eventSinkProvided,
         commandReceiptStoreProvided,
         threadCommandExecutorLayer,
+        legacyImporterProvided,
         ScientForkCheckpointBaselineLive,
-        ScientForkAttachmentCopierLive,
+        options.forkAttachmentCopierLayer ?? ScientForkAttachmentCopierLive,
       ),
     ),
     Layer.provide(Layer.mergeAll(checkpointStoreLayer, serverConfigLayer, VcsProcess.layer)),
@@ -516,6 +637,20 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const effectExecutorProvided = EffectWorker.executorLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        attachmentRollbackPruneLayer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              storesLayer,
+              threadCommandExecutorLayer,
+              providerSessionManagerProvided,
+              serverConfigLayer,
+              attachmentReconciliationProvided,
+            ),
+          ),
+        ),
+        options.resourceCleanupLayer?.pipe(
+          Layer.provide(Layer.merge(serverConfigLayer, NodeServices.layer)),
+        ) ?? Layer.empty,
         runFinalizationServiceProvided,
         checkpointRollbackServiceProvided,
         providerSessionManagerProvided,
@@ -533,6 +668,12 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(Layer.merge(storesLayer, effectExecutorProvided)),
   );
   const replayRuntime = Layer.mergeAll(
+    attachmentReconciliationProvided,
+    serverSettingsLayer,
+    commandReceiptStoreProvided,
+    checkpointServiceProvided,
+    checkpointStoreLayer,
+    legacyImporterProvided,
     serverConfigLayer,
     conversationForkProvided,
     storesLayer,
@@ -542,7 +683,15 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     effectWorkerProvided,
     eventSinkProvided,
     continuationWorkerProvided,
-  ).pipe(Layer.provide(worktreeRepairDependenciesTestLayer), Layer.provide(NodeServices.layer));
+  ).pipe(
+    Layer.provide(
+      Layer.merge(
+        worktreeRepairDependenciesTestLayer,
+        (options.forkGitWorkflowLayer ?? Layer.empty).pipe(Layer.provide(serverConfigLayer)),
+      ),
+    ),
+    Layer.provide(NodeServices.layer),
+  );
 
   // Build the daemon from the exact worker instance exposed alongside the
   // orchestrator. Keeping this acquisition in the replay layer makes the

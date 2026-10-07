@@ -337,6 +337,7 @@ export function notificationChildThreadId(
       return source.childThreadId;
     case "command":
     case "monitor":
+    case "provider_work":
     case "background_task":
     case "output_truncated":
       return undefined;

@@ -8,7 +8,10 @@ import {
   OrchestrationV2ConversationMessageJson,
   OrchestrationV2TurnItemJson,
   ChatAttachment,
+  type CommandId,
+  type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ExecutionNode,
@@ -17,14 +20,23 @@ import {
   type ThreadForkAttachmentCopy,
 } from "@t3tools/contracts";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
+import { resolveForkInitialization } from "@t3tools/shared/orchestrationV2ForkInitialization";
+import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { attachmentFileExtension, createDeterministicAttachmentId } from "../../attachmentStore.ts";
+import type { PendingOrchestrationEffectV2 } from "../EffectOutbox.ts";
+import {
+  readHistoricalSystemMessage,
+  HistoricalSystemMessage,
+} from "../legacy/HistoricalSystemMessage.ts";
 
 export type ConversationForkSource =
   | { readonly kind: "assistant-response"; readonly messageId: MessageId }
   | { readonly kind: "user-message"; readonly messageId: MessageId }
-  | { readonly kind: "running-turn"; readonly runId: RunId };
+  | { readonly kind: "running-turn"; readonly runId: RunId }
+  | { readonly kind: "settled-run"; readonly runId: RunId };
 
 export class ConversationForkPlanError extends Schema.TaggedError<ConversationForkPlanError>()(
   "ConversationForkPlanError",
@@ -71,7 +83,27 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
           candidate.inheritedFrom?.runId === selected.inheritedFrom.runId;
   let end = -1;
   let boundaryRunId: RunId | null = null;
-  if (source.kind === "running-turn") {
+  if (source.kind === "settled-run") {
+    const run = projection.runs.find((run) => run.id === source.runId);
+    if (
+      !run ||
+      !["completed", "waiting", "failed", "interrupted", "cancelled"].includes(run.status)
+    )
+      return yield* reject("The selected run has not settled at a forkable boundary.");
+    boundaryRunId = run.id;
+    end = rows.findLastIndex(({ item }) => item.runId === run.id);
+    if (end < 0) {
+      // A cancelled queued run has no rendered item. Preserve the preceding
+      // history, without admitting a later run or adopting its execution.
+      const ordinals = new Map(
+        projection.runs.map((candidate) => [candidate.id, candidate.ordinal]),
+      );
+      const next = rows.findIndex(
+        ({ item }) => item.runId !== null && (ordinals.get(item.runId) ?? Infinity) > run.ordinal,
+      );
+      end = next < 0 ? rows.length - 1 : next - 1;
+    }
+  } else if (source.kind === "running-turn") {
     const run = projection.runs.find((run) => run.id === source.runId);
     if (!run || !["preparing", "starting", "running", "waiting"].includes(run.status)) {
       return yield* reject(
@@ -110,11 +142,19 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
       }
       const run =
         item.runId === null ? undefined : projection.runs.find((run) => run.id === item.runId);
+      const node = projection.nodes.find((node) => node.id === item.nodeId);
       if (
         run &&
         run.rootNodeId !== null &&
         item.nodeId !== null &&
-        item.nodeId !== run.rootNodeId
+        item.nodeId !== run.rootNodeId &&
+        !(
+          node?.kind === "assistant_message" &&
+          node.threadId === projection.thread.id &&
+          node.runId === run.id &&
+          node.parentNodeId === run.rootNodeId &&
+          node.rootNodeId === run.rootNodeId
+        )
       ) {
         return yield* reject("Choose a response from the conversation, not a nested task.");
       }
@@ -130,12 +170,24 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
       end = lastInBoundary < 0 ? clicked : lastInBoundary;
     }
   }
-  const retained = rows.slice(0, end + 1);
+  const selectedRun = projection.runs.find((run) => run.id === boundaryRunId);
+  const runOrdinals = new Map(projection.runs.map((run) => [run.id, run.ordinal]));
+  // A later request can be recorded before the selected answer finishes.
+  // Durable run ownership prevents that overlap from extending this prefix.
+  const retained = rows
+    .slice(0, end + 1)
+    .filter(
+      ({ item }) =>
+        selectedRun === undefined ||
+        item.runId === null ||
+        (runOrdinals.get(item.runId) ?? Infinity) <= selectedRun.ordinal,
+    );
   const messageIds = new Map<MessageId, MessageId>();
   const itemIds = new Map<TurnItemId, TurnItemId>();
   const attachmentMap = new Map<string, ChatAttachment>();
   const attachmentCopies: ThreadForkAttachmentCopy[] = [];
   const sourceAttachments: ChatAttachment[] = [];
+  const systemMessages = new Map<TurnItemId, typeof HistoricalSystemMessage.Type>();
   const collectAttachments = (attachments: ReadonlyArray<ChatAttachment>) => {
     for (const source of attachments) {
       if (attachmentMap.has(source.id)) continue;
@@ -159,6 +211,17 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
     return true;
   };
   for (const [index, { item }] of retained.entries()) {
+    if (
+      item.type === "user_input_request" &&
+      item.questionAnswer !== undefined &&
+      item.status === "completed" &&
+      item.runId === null &&
+      item.historyTurnId === undefined &&
+      item.inheritedFrom?.runId == null
+    )
+      return yield* reject(
+        "A retained submitted question answer has no authoritative turn boundary.",
+      );
     itemIds.set(item.id, TurnItemId.make(`scient-fork:${targetThreadId}:item:${index}`));
     if (item.type === "user_message" || item.type === "assistant_message") {
       if (!messageIds.has(item.messageId))
@@ -168,6 +231,20 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
         );
       if (!collectAttachments(item.attachments ?? []))
         return yield* reject("The destination cannot own retained attachment files.");
+    }
+    const historicalSystem = readHistoricalSystemMessage(item);
+    if (Option.isSome(historicalSystem)) {
+      const system = historicalSystem.value;
+      systemMessages.set(item.id, system);
+      if (!messageIds.has(system.messageId)) {
+        messageIds.set(
+          system.messageId,
+          MessageId.make(`scient-fork:${targetThreadId}:message:${messageIds.size}`),
+        );
+      }
+      if (!collectAttachments(system.attachments ?? [])) {
+        return yield* reject("The destination cannot own retained system attachments.");
+      }
     }
     if (item.type === "user_input_request" && item.questionAnswer) {
       const answerMessageId = item.questionAnswer.messageId;
@@ -278,6 +355,35 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
       base.nodeId = nodeId;
     }
     switch (original.type) {
+      case "handoff": {
+        const forkInitialization = resolveForkInitialization(original, projection.contextTransfers);
+        return {
+          ...original,
+          ...base,
+          ...(forkInitialization === undefined ? {} : { forkInitialization }),
+        };
+      }
+      case "dynamic_tool": {
+        const system = systemMessages.get(original.id);
+        return system === undefined
+          ? { ...original, ...base }
+          : {
+              ...original,
+              ...base,
+              input: {
+                ...system,
+                messageId: messageIds.get(system.messageId)!,
+                attachments:
+                  system.attachments === null ? null : remapAttachments(system.attachments),
+                context:
+                  system.context === null
+                    ? null
+                    : remapComposerContextAttachments(system.context, sourceAttachments, [
+                        ...attachmentMap.values(),
+                      ]),
+              },
+            };
+      }
       case "user_message":
         return {
           ...original,
@@ -378,3 +484,59 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
     boundaryRunId,
   };
 });
+
+/** The inherited history a fork commits after its thread and transfer, in commit order:
+ * messages, items, the fork boundary, nodes, then plans. */
+export function conversationForkHistoryEvents(input: {
+  readonly targetThreadId: ThreadId;
+  readonly history: Pick<
+    Effect.Success<ReturnType<typeof planConversationFork>>,
+    "messages" | "items" | "nodes" | "plans"
+  >;
+  readonly boundaryItem: OrchestrationV2TurnItem;
+  readonly occurredAt: DateTime.Utc;
+}): ReadonlyArray<Omit<OrchestrationV2DomainEvent, "id">> {
+  const { targetThreadId: threadId, history, boundaryItem, occurredAt } = input;
+  return [
+    ...history.messages.map((payload) => ({
+      type: "message.updated" as const,
+      threadId,
+      occurredAt,
+      payload,
+    })),
+    ...history.items.map((payload) => ({
+      type: "turn-item.updated" as const,
+      threadId,
+      occurredAt,
+      payload,
+    })),
+    { type: "turn-item.updated" as const, threadId, occurredAt, payload: boundaryItem },
+    ...history.nodes.map((payload) => ({
+      type: "node.updated" as const,
+      threadId,
+      occurredAt,
+      payload,
+    })),
+    ...history.plans.map((payload) => ({
+      type: "plan.updated" as const,
+      threadId,
+      occurredAt,
+      payload,
+    })),
+  ];
+}
+
+/** A fork whose workspace is still pending asks the effect worker to provision it. */
+export function conversationForkProvisionEffect(
+  commandId: CommandId,
+  targetThread: OrchestrationV2AppThread,
+): PendingOrchestrationEffectV2 | undefined {
+  return targetThread.conversationFork?.status === "pending"
+    ? {
+        id: `effect:${commandId}:scient-fork.provision`,
+        commandId,
+        threadId: targetThread.id,
+        request: { type: "scient-fork.provision" },
+      }
+    : undefined;
+}

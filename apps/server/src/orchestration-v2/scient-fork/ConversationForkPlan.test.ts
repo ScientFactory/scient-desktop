@@ -12,15 +12,23 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2ConversationMessage,
+  type OrchestrationV2ExecutionNode,
   type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import {
+  HistoricalSystemMessage,
+  HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME,
+} from "../legacy/HistoricalSystemMessage.ts";
 import { emptyProjection } from "../ProjectionStore.ts";
 import { planConversationFork } from "./ConversationForkPlan.ts";
+import { historicalMessage } from "../ContextHandoffBudget.ts";
 
 const now = DateTime.makeUnsafe("2026-10-03T00:00:00.000Z");
+const decodeHistoricalSystemMessage = Schema.decodeUnknownEffect(HistoricalSystemMessage);
 const threadId = ThreadId.make("fork-source");
 const targetThreadId = ThreadId.make("fork-destination");
 const instanceId = ProviderInstanceId.make("codex-one");
@@ -139,6 +147,7 @@ function makeProjection() {
       ...itemBase,
       id: TurnItemId.make("answer-one"),
       runId: completed,
+      nodeId: runs[0]!.rootNodeId,
       ordinal: 2,
       status: "completed",
       type: "assistant_message",
@@ -175,6 +184,7 @@ function makeProjection() {
       ...itemBase,
       id: TurnItemId.make("partial-answer"),
       runId: running,
+      nodeId: runs[1]!.rootNodeId,
       ordinal: 5,
       status: "running",
       type: "assistant_message",
@@ -221,6 +231,23 @@ function makeProjection() {
   return {
     ...base,
     runs,
+    nodes: runs.map((run): OrchestrationV2ExecutionNode => ({
+      id: run.rootNodeId!,
+      threadId,
+      runId: run.id,
+      parentNodeId: null,
+      rootNodeId: run.rootNodeId!,
+      kind: "root_turn",
+      status: run.status === "completed" ? "completed" : "running",
+      countsForRun: true,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      runtimeRequestId: null,
+      checkpointScopeId: null,
+      startedAt: now,
+      completedAt: run.completedAt,
+    })),
     turnItems,
     messages,
     visibleTurnItems: turnItems.map((item, position) => ({
@@ -402,4 +429,462 @@ it.effect("rejects missing, streaming, and nested response boundaries", () =>
       "Failure",
     );
   }),
+);
+
+it.effect("refuses a running-turn fork after its durable run has settled", () =>
+  Effect.gen(function* () {
+    for (const status of ["completed", "failed", "interrupted", "cancelled"] as const) {
+      const projection = makeProjection();
+      projection.runs[1] = { ...projection.runs[1]!, status, completedAt: now };
+      const result = yield* Effect.result(
+        planConversationFork({
+          projection,
+          targetThreadId,
+          source: { kind: "running-turn", runId: running },
+        }),
+      );
+      assert.equal(result._tag, "Failure", status);
+      if (result._tag === "Failure") assert.include(result.failure.message, "no longer active");
+    }
+  }),
+);
+
+it.effect("accepts a direct assistant-message child owned by the response's run", () =>
+  Effect.gen(function* () {
+    const projection = makeProjection();
+    const root = projection.nodes[0]!;
+    const child = {
+      ...root,
+      id: NodeId.make("ordinary-answer-node"),
+      parentNodeId: root.id,
+      kind: "assistant_message" as const,
+      countsForRun: false,
+    };
+    projection.nodes.push(child);
+    projection.visibleTurnItems[2] = {
+      ...projection.visibleTurnItems[2]!,
+      item: { ...projection.turnItems[2]!, nodeId: child.id },
+    };
+    projection.messages = projection.messages.map((message) =>
+      message.id === "answer-one" ? { ...message, nodeId: child.id } : message,
+    );
+    const plan = yield* planConversationFork({
+      projection,
+      targetThreadId,
+      source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
+    });
+    assert.equal(plan.boundaryRunId, completed);
+    assert.equal(plan.messages.at(-1)?.text, "First answer");
+    assert.ok(plan.items.every((item) => item.runId === null && item.nodeId === null));
+  }),
+);
+
+it.effect("rejects nested, unknown, and mismatched assistant-node ownership", () =>
+  Effect.gen(function* () {
+    for (const mismatch of ["nested", "unknown", "run", "thread", "root", "kind"] as const) {
+      const projection = makeProjection();
+      const root = projection.nodes[0]!;
+      const child = {
+        ...root,
+        id: NodeId.make("untrusted-answer-node"),
+        parentNodeId: mismatch === "nested" ? NodeId.make("subagent-parent") : root.id,
+        rootNodeId: mismatch === "root" ? NodeId.make("foreign-root") : root.id,
+        runId: mismatch === "run" ? running : root.runId,
+        threadId: mismatch === "thread" ? targetThreadId : threadId,
+        kind: mismatch === "kind" ? ("subagent" as const) : ("assistant_message" as const),
+        countsForRun: false,
+      };
+      if (mismatch === "nested") {
+        projection.nodes.push({
+          ...root,
+          id: child.parentNodeId,
+          parentNodeId: root.id,
+          kind: "subagent",
+        });
+      }
+      if (mismatch !== "unknown") projection.nodes.push(child);
+      projection.visibleTurnItems[2] = {
+        ...projection.visibleTurnItems[2]!,
+        item: { ...projection.turnItems[2]!, nodeId: child.id },
+      };
+      const result = yield* Effect.result(
+        planConversationFork({
+          projection,
+          targetThreadId,
+          source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
+        }),
+      );
+      assert.equal(result._tag, "Failure", mismatch);
+      if (result._tag === "Failure") {
+        assert.include(result.failure.message, "not a nested task");
+      }
+    }
+  }),
+);
+
+it.effect(
+  "owns inert system history and degrades malformed fields without granting attachment authority",
+  () =>
+    Effect.gen(function* () {
+      const projection = makeProjection();
+      const systemAttachment = {
+        ...attachment,
+        id: "system-source-22222222-2222-2222-2222-222222222222-pdf",
+      };
+      const context = {
+        version: 1 as const,
+        records: [
+          {
+            version: 1 as const,
+            kind: "file" as const,
+            contextId: ComposerContextId.make("system-file"),
+            label: systemAttachment.name,
+            attachmentId: systemAttachment.id,
+            name: systemAttachment.name,
+            mimeType: systemAttachment.mimeType,
+            sizeBytes: systemAttachment.sizeBytes,
+          },
+        ],
+      };
+      const commandItem = projection.turnItems[1]!;
+      assert.ok(commandItem.type === "command_execution");
+      const systemItem: Extract<OrchestrationV2TurnItem, { readonly type: "dynamic_tool" }> = {
+        ...commandItem,
+        id: TurnItemId.make("migration:v1:history:system:historical-system"),
+        runId: null,
+        type: "dynamic_tool",
+        toolName: HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME,
+        input: {
+          messageId: MessageId.make("historical-system"),
+          text: "System history",
+          attachments: [systemAttachment],
+          context,
+        },
+      };
+      projection.visibleTurnItems[1] = { ...projection.visibleTurnItems[1]!, item: systemItem };
+      const input = {
+        projection,
+        targetThreadId,
+        source: { kind: "assistant-response" as const, messageId: MessageId.make("answer-one") },
+      };
+      const plan = yield* planConversationFork(input);
+      const copiedItem = plan.items[1]!;
+      assert.ok(copiedItem.type === "dynamic_tool");
+      const record = yield* decodeHistoricalSystemMessage(copiedItem.input);
+      assert.notEqual(record.messageId, "historical-system");
+      assert.equal(record.text, "System history");
+      const ownedId = plan.attachmentCopies.find(({ source }) => source.id === systemAttachment.id)
+        ?.target.id;
+      assert.ok(ownedId);
+      assert.equal(record.attachments?.[0]?.id, ownedId);
+      assert.deepEqual(record.context, {
+        ...context,
+        records: [{ ...context.records[0]!, attachmentId: ownedId }],
+      });
+      projection.visibleTurnItems[1] = {
+        ...projection.visibleTurnItems[1]!,
+        item: { ...systemItem, input: {} },
+      };
+      const invalid = yield* planConversationFork(input);
+      const generic = invalid.items[1]!;
+      assert.ok(generic.type === "dynamic_tool");
+      assert.deepEqual(generic.input, {});
+      assert.notInclude(
+        invalid.attachmentCopies.map((copy) => copy.source.id),
+        systemAttachment.id,
+      );
+      projection.visibleTurnItems[1] = {
+        ...projection.visibleTurnItems[1]!,
+        item: {
+          ...systemItem,
+          input: {
+            ...(systemItem.input as object),
+            attachments: [{ type: "file", id: "unsafe", name: "unsafe" }],
+            context: { version: -1 },
+          },
+        },
+      };
+      const partial = yield* planConversationFork(input);
+      const sanitized = partial.items[1]!;
+      assert.ok(sanitized.type === "dynamic_tool");
+      const safeRecord = yield* decodeHistoricalSystemMessage(sanitized.input);
+      assert.equal(safeRecord.text, "System history");
+      assert.isNull(safeRecord.attachments);
+      assert.isNull(safeRecord.context);
+      assert.notInclude(
+        partial.attachmentCopies.map((copy) => copy.source.id),
+        systemAttachment.id,
+      );
+      // The same tool name and record from a native run grant no history/file authority.
+      projection.visibleTurnItems[1] = {
+        ...projection.visibleTurnItems[1]!,
+        item: { ...systemItem, id: TurnItemId.make("native-system-tool"), runId: completed },
+      };
+      const native = yield* planConversationFork(input);
+      assert.notInclude(
+        native.attachmentCopies.map((copy) => copy.source.id),
+        systemAttachment.id,
+      );
+      const nativeItem = native.items[1]!;
+      assert.ok(nativeItem.type === "dynamic_tool");
+      assert.deepEqual(nativeItem.input, systemItem.input);
+    }),
+);
+
+it.effect("freezes a settled native run through its trailing facts and excludes later runs", () =>
+  Effect.gen(function* () {
+    const projection = makeProjection();
+    const plan = yield* planConversationFork({
+      projection,
+      targetThreadId,
+      source: { kind: "settled-run", runId: completed },
+    });
+    assert.equal(plan.boundaryRunId, completed);
+    assert.deepEqual(
+      plan.items.map((item) => item.inheritedFrom?.itemId),
+      projection.visibleTurnItems
+        .filter(({ item }) => item.runId === completed)
+        .map(({ item }) => item.id),
+    );
+    assert.isTrue(
+      plan.items.every((item) => item.threadId === targetThreadId && item.runId === null),
+    );
+  }),
+);
+
+it.effect("a cancelled run with no rendered facts keeps only the earlier frozen prefix", () =>
+  Effect.gen(function* () {
+    const projection = makeProjection();
+    const cancelledId = RunId.make("empty-cancelled-run");
+    const prior = projection.runs[0]!;
+    const later = projection.runs[1]!;
+    projection.runs = [
+      prior,
+      { ...later, id: cancelledId, ordinal: 2, status: "cancelled" },
+      { ...later, ordinal: 3 },
+    ];
+    const plan = yield* planConversationFork({
+      projection,
+      targetThreadId,
+      source: { kind: "settled-run", runId: cancelledId },
+    });
+    assert.equal(plan.boundaryRunId, cancelledId);
+    assert.deepEqual(
+      plan.items.map((item) => item.inheritedFrom?.itemId),
+      projection.visibleTurnItems
+        .filter(({ item }) => item.runId === completed)
+        .map(({ item }) => item.id),
+    );
+  }),
+);
+
+it.effect("a completed-looking response in an active native run is not a settled boundary", () =>
+  Effect.gen(function* () {
+    for (const status of ["queued", "preparing", "starting", "running"] as const) {
+      const projection = makeProjection();
+      projection.runs[0] = { ...projection.runs[0]!, status, completedAt: null };
+      assert.equal(
+        (yield* Effect.result(
+          planConversationFork({
+            projection,
+            targetThreadId,
+            source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
+          }),
+        ))._tag,
+        "Failure",
+        status,
+      );
+    }
+    const accepted = yield* planConversationFork({
+      projection: makeProjection(),
+      targetThreadId,
+      source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
+    });
+    assert.equal(accepted.boundaryRunId, completed);
+  }),
+);
+
+it.effect(
+  "a running native fork retains interrupted and unanswered requests once under their own run ownership",
+  () =>
+    Effect.gen(function* () {
+      const projection = makeProjection();
+      const unanswered = RunId.make("interrupted-unanswered");
+      projection.runs.splice(1, 0, {
+        ...projection.runs[0]!,
+        id: unanswered,
+        ordinal: 2,
+        userMessageId: MessageId.make("interrupted-question"),
+        rootNodeId: null,
+        status: "interrupted",
+      });
+      projection.runs[2] = { ...projection.runs[2]!, ordinal: 3 };
+      const request = {
+        ...projection.turnItems[0]!,
+        id: TurnItemId.make("interrupted-question"),
+        runId: unanswered,
+        ordinal: 3,
+        messageId: MessageId.make("interrupted-question"),
+        text: "Interrupted question",
+        attachments: [],
+      };
+      const work = {
+        ...projection.turnItems[1]!,
+        id: TurnItemId.make("interrupted-work"),
+        runId: unanswered,
+        ordinal: 4,
+        status: "interrupted" as const,
+      };
+      projection.turnItems.splice(3, 0, request, work);
+      projection.visibleTurnItems = projection.turnItems.map((item, position) => ({
+        item,
+        position,
+        sourceThreadId: threadId,
+        sourceItemId: item.id,
+        visibility: "local" as const,
+      }));
+      const plan = yield* planConversationFork({
+        projection,
+        targetThreadId,
+        source: { kind: "running-turn", runId: running },
+      });
+      const copied = plan.items.filter((item) => item.inheritedFrom?.runId === unanswered);
+      assert.lengthOf(copied, 2);
+      assert.isTrue(copied.every((item) => item.runId === null));
+      assert.equal(
+        copied.filter(
+          (item) => item.type === "user_message" && item.text === "Interrupted question",
+        ).length,
+        1,
+      );
+      assert.equal(
+        plan.items.filter(
+          (item) =>
+            item.inheritedFrom?.runId === running &&
+            item.type === "user_message" &&
+            item.inputIntent === "turn_start",
+        ).length,
+        1,
+      );
+      assert.ok(plan.messages.some((message) => message.text === "First answer"));
+      assert.isFalse(
+        plan.items.some(
+          (item) =>
+            item.inheritedFrom?.runId === running && item.inheritedFrom?.itemId === request.id,
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "a later unanswered native run requested before an earlier answer finishes stays outside that answer's fork",
+  () =>
+    Effect.gen(function* () {
+      const projection = makeProjection();
+      const question = projection.turnItems[3]!;
+      projection.visibleTurnItems = [
+        projection.turnItems[0]!,
+        question,
+        projection.turnItems[1]!,
+        projection.turnItems[2]!,
+        ...projection.turnItems.slice(4),
+      ].map((item, position) => ({
+        item,
+        position,
+        sourceThreadId: threadId,
+        sourceItemId: item.id,
+        visibility: "local" as const,
+      }));
+      const plan = yield* planConversationFork({
+        projection,
+        targetThreadId,
+        source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
+      });
+      assert.deepEqual(
+        plan.messages.map((message) => message.text),
+        ["First question", "First answer"],
+      );
+      assert.isFalse(plan.items.some((item) => item.inheritedFrom?.runId === running));
+    }),
+);
+
+it.effect(
+  "native question history follows retained run ownership and excludes pending and message-mode replay",
+  () =>
+    Effect.gen(function* () {
+      const projection = makeProjection();
+      const question = (
+        id: string,
+        runId: RunId,
+      ): Extract<OrchestrationV2TurnItem, { type: "user_input_request" }> => ({
+        id: TurnItemId.make(id),
+        threadId,
+        runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 0,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "user_input_request",
+        requestId: RuntimeRequestId.make(id),
+        questions: [{ id: "dataset", header: "Data", question: "Which dataset?", options: [] }],
+        questionAnswer: { requestId: id, answers: { dataset: id }, attachmentsByQuestionId: {} },
+      });
+      const chosen = question("retained-answer", completed);
+      const pending = {
+        ...question("pending-answer", completed),
+        status: "running" as const,
+        questionAnswer: undefined,
+      };
+      const messageMode = {
+        ...question("message-mode-answer", completed),
+        responseMode: "message" as const,
+      };
+      const later = question("later-answer", running);
+      const items = [
+        projection.turnItems[0]!,
+        chosen,
+        pending,
+        messageMode,
+        later,
+        ...projection.turnItems.slice(1),
+      ];
+      const plan = yield* planConversationFork({
+        projection: {
+          ...projection,
+          turnItems: items,
+          visibleTurnItems: items.map((item, position) => ({
+            item,
+            position,
+            sourceThreadId: threadId,
+            sourceItemId: item.id,
+            visibility: "local" as const,
+          })),
+        },
+        targetThreadId,
+        source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
+      });
+      const answers = plan.items.filter((item) => item.type === "user_input_request");
+      assert.lengthOf(answers, 3);
+      assert.isFalse(answers.some((item) => item.inheritedFrom?.itemId === later.id));
+      const replayed = answers.flatMap((item) => {
+        const message = historicalMessage(item);
+        return message ? [message.text] : [];
+      });
+      assert.lengthOf(replayed, 1);
+      assert.include(replayed[0]!, "Which dataset?");
+      assert.include(replayed[0]!, "retained-answer");
+      assert.notInclude(replayed[0]!, "later-answer");
+      assert.isTrue(
+        answers.every(
+          (item) => item.runId === null && item.nodeId === null && item.nativeItemRef === null,
+        ),
+      );
+    }),
 );

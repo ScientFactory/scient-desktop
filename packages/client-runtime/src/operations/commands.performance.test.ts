@@ -234,7 +234,14 @@ describe("routine command transport budget", () => {
       if (!("sequence" in receipt)) {
         throw new Error("Expected a dispatch receipt");
       }
-      const { deliveryIntent: _deliveryIntent, ...formerCommand } = command;
+      // The recorded former command predates captured send modes as well as
+      // server-resolved delivery. Keep its byte baseline tied to that wire shape.
+      const {
+        deliveryIntent: _deliveryIntent,
+        runtimeMode: _runtimeMode,
+        interactionMode: _interactionMode,
+        ...formerCommand
+      } = command;
 
       const historicalApplicationBytes =
         encodedBytes(projection) + encodedBytes(formerCommand) + encodedBytes(receipt);
@@ -277,6 +284,8 @@ describe("routine command transport budget", () => {
         type: "message.dispatch",
         deliveryIntent: "auto",
         dispatchMode: { type: "start_immediately" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
       });
       expect(currentRpcJsonBytes).toBeLessThanOrEqual(MAX_CURRENT_SEND_RPC_JSON_BYTES);
       expect(currentRpcJsonBytes / formerRpcJsonBytes).toBeLessThanOrEqual(0.000_06);

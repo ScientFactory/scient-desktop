@@ -126,6 +126,7 @@ export type DroidAcpRuntime = AcpSessionRuntime.AcpSessionRuntime["Service"] & {
    * continue a turn (steers) keep its budget, so a breach sticks for the turn.
    */
   readonly beginTurn?: Effect.Effect<void>;
+  readonly beginRunBudget?: (threadId: string, runId: string) => Effect.Effect<void>;
   /** Set when Scient ended the current turn at its custom-model request limit. */
   readonly requestLimitBreach?: () => DroidRequestLimitBreach | undefined;
   /**

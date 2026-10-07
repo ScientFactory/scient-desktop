@@ -26,6 +26,7 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { ProviderSessionManagerV2 } from "../../../orchestration-v2/ProviderSessionManager.ts";
 
 const ThreadOrganizeTool = Tool.make("scient_thread_organize", {
   description:
@@ -50,6 +51,7 @@ const ThreadOrganizeTool = Tool.make("scient_thread_organize", {
   failureMode: "return" as const,
   dependencies: [
     McpInvocationContext.McpInvocationContext,
+    ProviderSessionManagerV2,
     ThreadManagementService.ThreadManagementService,
     Crypto.Crypto,
   ],
@@ -64,6 +66,7 @@ const commandTool = {
   failureMode: "return" as const,
   dependencies: [
     McpInvocationContext.McpInvocationContext,
+    ProviderSessionManagerV2,
     ThreadManagementService.ThreadManagementService,
     Crypto.Crypto,
   ],

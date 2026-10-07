@@ -38,7 +38,11 @@ import {
 import type { ServerSettingsService } from "../../serverSettings.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import { makeDroidAcpRuntime, type DroidAcpRuntimeFactory } from "../acp/DroidAcpSupport.ts";
-import { makeDroidKeyBroker, type DroidKeyBroker } from "./DroidKeyBroker.ts";
+import {
+  makeDroidRunBudgetStore,
+  makeDroidKeyBroker,
+  type DroidKeyBroker,
+} from "./DroidKeyBroker.ts";
 import { readDroidOrgHookPolicy, type DroidOrgHookPolicy } from "./DroidOrgPolicy.ts";
 
 const DROID_PROVIDER_BY_PROTOCOL = {
@@ -350,6 +354,7 @@ export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
+  const runBudgetStore = makeDroidRunBudgetStore();
   const readPolicy: ReadDroidOrgHookPolicy =
     readOrgHookPolicy ?? ((input) => readDroidOrgHookPolicy({ ...input, platform }));
   return ({ modelTools, ...input }: Parameters<DroidAcpRuntimeFactory>[0]) =>
@@ -432,6 +437,7 @@ export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
       return yield* Effect.gen(function* () {
         const broker = yield* makeDroidKeyBroker({
           connections,
+          runBudgetStore,
           // Checked in the step that starts each upstream request, so a
           // committed rotation or removal is either seen or after dispatch.
           isCurrent: () => !invalidated && !revokedBy(settings.committedCustomModels().connections),
@@ -485,6 +491,7 @@ export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
         return {
           ...runtime,
           beginTurn: broker.beginTurn,
+          beginRunBudget: broker.beginRunBudget,
           requestLimitBreach: broker.currentBreach,
           upstreamRetrying: broker.turnRetrying,
           assessModelConnections: (models: ReadonlyArray<ServerProviderModel>) =>

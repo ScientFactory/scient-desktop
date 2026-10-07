@@ -22,13 +22,6 @@
  * @module provider/ProviderDriver
  */
 import type {
-  ModelSelection,
-  ProviderAuthorizationUrlKind,
-  ProviderConnectionMethod,
-  ProviderManagedRuntimeAction,
-  ProviderRuntimeOperationStatus,
-  ProviderRuntimePlan,
-  ProviderRuntimeSummary,
   ProviderConsumeResetCreditOutcome,
   AcpRegistryListSessionsResult,
   AcpRegistryListProvidersResult,
@@ -38,8 +31,6 @@ import type {
   ProviderInstanceEnvironment,
   ProviderInstanceId,
   ServerProvider,
-  VoiceTranscriptionLanguage,
-  VoiceTranscriptCorrectionError,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
@@ -47,10 +38,27 @@ import type * as Scope from "effect/Scope";
 
 import type { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import type { ProviderAdapterV2Shape } from "../orchestration-v2/ProviderAdapter.ts";
-import type { ProviderAdapterError, ProviderDriverError } from "./Errors.ts";
+import type { ProviderDriverError } from "./Errors.ts";
 import type { ProviderAuthController } from "./Services/ProviderAuthService.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
-import type { ProviderAdapterShape } from "./Services/ProviderAdapter.ts";
+// SCIENT-FORK:START — optional Scient instance seams live in their own module.
+import type {
+  ProviderConnectionActions,
+  ProviderManagedRuntimeActions,
+  ProviderSkillActions,
+  ProviderVoiceTranscriptCorrection,
+} from "./ScientProviderInstanceSeams.ts";
+export type {
+  ProviderConnectionActionFailure,
+  ProviderConnectionActions,
+  ProviderConnectionAttempt,
+  ProviderManagedRuntimeActions,
+  ProviderManagedRuntimeProgress,
+  ProviderSkillActionFailure,
+  ProviderSkillActions,
+  ProviderVoiceTranscriptCorrection,
+} from "./ScientProviderInstanceSeams.ts";
+// SCIENT-FORK:END
 
 /**
  * Static metadata advertised by a driver. Used for default presentation
@@ -67,15 +75,6 @@ export interface ProviderDriverMetadata {
    * rejects multi-instance configurations with a clear error.
    */
   readonly supportsMultipleInstances?: boolean;
-}
-
-/** Optional, tightly sandboxed one-shot cleanup for local voice transcripts. */
-export interface ProviderVoiceTranscriptCorrection {
-  readonly correct: (input: {
-    readonly transcript: string;
-    readonly language?: VoiceTranscriptionLanguage;
-    readonly modelSelection: ModelSelection;
-  }) => Effect.Effect<{ readonly text: string }, VoiceTranscriptCorrectionError>;
 }
 
 /**
@@ -108,18 +107,33 @@ export interface ProviderInstance {
     ProviderConsumeResetCreditOutcome,
     ProviderDriverError
   >;
-  // Retained for legacy library compatibility. Production execution routes
-  // exclusively through orchestrationAdapter and V2 orchestration.
-  readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly orchestrationAdapter: ProviderAdapterV2Shape;
   readonly textGeneration: TextGeneration["Service"];
   readonly auth?: ProviderAuthController;
-  /**
-   * Optional ACP session/provider-management seam. Upstream places this on the
-   * instance (not on the driver-specific runtime actions) so `ws.ts` can reach
-   * it uniformly for every ACP-backed provider.
-   */
-  readonly acpSessionManagement?: ProviderAcpSessionManagement;
+  readonly acpSessionManagement?: {
+    readonly listSessions: (input: {
+      readonly cwd: string;
+      readonly cursor?: string;
+    }) => Effect.Effect<AcpRegistryListSessionsResult, AcpRegistryOperationError>;
+    readonly logout: (cwd: string) => Effect.Effect<void, AcpRegistryOperationError>;
+    readonly deleteSession: (input: {
+      readonly cwd: string;
+      readonly sessionId: string;
+    }) => Effect.Effect<void, AcpRegistryOperationError>;
+    readonly listProviders: (
+      cwd: string,
+    ) => Effect.Effect<AcpRegistryListProvidersResult, AcpRegistryOperationError>;
+    readonly setProvider: (
+      input: Omit<AcpRegistrySetProviderInput, "instanceId" | "projectId"> & {
+        readonly cwd: string;
+      },
+    ) => Effect.Effect<void, AcpRegistryOperationError>;
+    readonly disableProvider: (input: {
+      readonly cwd: string;
+      readonly providerId: string;
+    }) => Effect.Effect<void, AcpRegistryOperationError>;
+  };
+  // SCIENT-FORK:START — optional Scient capabilities; absent drivers keep pure T3 behavior.
   /** Optional provider capability; unsupported drivers leave it absent. */
   readonly voiceTranscriptCorrection?: ProviderVoiceTranscriptCorrection | undefined;
   /** Scient-owned optional lifecycle seam; absent drivers keep pure T3 behavior. */
@@ -128,159 +142,7 @@ export interface ProviderInstance {
   readonly managedRuntimeActions?: ProviderManagedRuntimeActions | undefined;
   /** Optional provider-owned native skill management seam. */
   readonly skillActions?: ProviderSkillActions | undefined;
-}
-
-export interface ProviderSkillActionFailure {
-  readonly message: string;
-  readonly cause?: unknown;
-}
-
-export interface ProviderSkillActions {
-  readonly setEnabled: (input: {
-    readonly name: string;
-    readonly path: string;
-    readonly scope?: string | undefined;
-    readonly enabled: boolean;
-  }) => Effect.Effect<{ readonly effectiveEnabled: boolean }, ProviderSkillActionFailure>;
-}
-
-export interface ProviderConnectionActionFailure {
-  readonly message: string;
-  readonly cause?: unknown;
-  /**
-   * An account sign-out failed without the provider saying it kept the
-   * sign-in (its process ended, or never answered). The manager then treats
-   * the sign-in as possibly removed.
-   */
-  readonly signInMayBeRemoved?: boolean | undefined;
-}
-
-export interface ProviderConnectionAttempt {
-  /** Present only when the provider exposes a browser URL to Scient. */
-  readonly authorizationUrl?: string | undefined;
-  /** Explicitly declares whether the client should open this URL automatically. */
-  readonly authorizationUrlKind?: ProviderAuthorizationUrlKind | undefined;
-  /** Explicit initial state; never inferred from method names, URLs, or codes. */
-  readonly initialStatus: "waiting_for_browser" | "waiting_for_device_code" | "verifying";
-  readonly userCode?: string | undefined;
-  /** What the provider asks the user to do or paste, shown as written. */
-  readonly instructions?: string | undefined;
-  readonly authorizationResponseKind?: "code" | "callback_url" | undefined;
-  /**
-   * Some official browser flows return a code or redirect URL that must be handed
-   * back to the provider CLI. The response is written directly to the live
-   * provider process and is never persisted in Scient state.
-   */
-  readonly submitAuthorizationCode?:
-    | ((code: string) => Effect.Effect<void, ProviderConnectionActionFailure>)
-    | undefined;
-  /**
-   * For a flow whose first question can come after the attempt is described:
-   * resolves when the provider asks it. The manager then republishes the
-   * operation as accepting an answer. Absent when a question already arrived
-   * or the flow never asks one.
-   */
-  readonly laterQuestion?:
-    | Effect.Effect<{
-        readonly instructions?: string | undefined;
-        readonly submitAuthorizationCode: (
-          code: string,
-        ) => Effect.Effect<void, ProviderConnectionActionFailure>;
-      }>
-    | undefined;
-  readonly waitForCompletion: Effect.Effect<void, ProviderConnectionActionFailure>;
-  readonly cancel: Effect.Effect<void, ProviderConnectionActionFailure>;
-}
-
-/**
- * Minimal optional driver SPI for official provider-owned account flows.
- * Drivers retain credential ownership; the registry only supervises state.
- */
-export interface ProviderConnectionActions {
-  readonly methods: ReadonlyArray<ProviderConnectionMethod>;
-  /**
-   * `account` names an entry of the provider's own sign-in list. The manager
-   * passes it only for a provider whose snapshot lists accounts, and only an
-   * id from that list.
-   */
-  readonly start: (
-    method: ProviderConnectionMethod,
-    account?: string,
-  ) => Effect.Effect<ProviderConnectionAttempt, ProviderConnectionActionFailure, Scope.Scope>;
-  readonly disconnect: Effect.Effect<void, ProviderConnectionActionFailure, Scope.Scope>;
-  /**
-   * The provider signs in to accounts from its own list, never to a single
-   * account. The manager then starts nothing, and publishes nothing, without
-   * an account from that list.
-   */
-  readonly requiresAccount?: boolean | undefined;
-  /** Signs out of one entry of the provider's sign-in list. */
-  readonly disconnectAccount?:
-    | ((account: string) => Effect.Effect<void, ProviderConnectionActionFailure, Scope.Scope>)
-    | undefined;
-}
-
-export interface ProviderManagedRuntimeProgress {
-  readonly status: ProviderRuntimeOperationStatus;
-  readonly message: string;
-  readonly downloadedBytes?: number | undefined;
-  readonly totalBytes?: number | undefined;
-  readonly waitingForIdle?: boolean | undefined;
-}
-
-export interface ProviderManagedRuntimeActions {
-  readonly getSummary: Effect.Effect<ProviderRuntimeSummary, ProviderConnectionActionFailure>;
-  readonly plan: (
-    action: ProviderManagedRuntimeAction,
-  ) => Effect.Effect<Omit<ProviderRuntimePlan, "instanceId">, ProviderConnectionActionFailure>;
-  /**
-   * Runs a planned action. Download, verification, and staging may proceed
-   * while the provider is in use; `awaitActivationWindow` must complete
-   * immediately before the live runtime changes. The runtime manager always
-   * supplies it: it waits for the provider's running work to finish and then
-   * stops its sessions. Direct callers such as tests may omit it.
-   */
-  readonly run: (
-    action: ProviderManagedRuntimeAction,
-    catalogRevision: string,
-    report: (progress: ProviderManagedRuntimeProgress) => Effect.Effect<void>,
-    awaitActivationWindow?: Effect.Effect<void, ProviderConnectionActionFailure>,
-  ) => Effect.Effect<void, ProviderConnectionActionFailure>;
-  /**
-   * Whether a fresh check would select a different runtime than the one this
-   * instance launches, for providers whose selection can fall back. The owner
-   * reloads the instance when it returns true.
-   */
-  readonly selectionChanged?: Effect.Effect<boolean>;
-}
-
-/**
- * Optional ACP session/provider-management seam. Only ACP-backed drivers that
- * support listing, deleting, and reconfiguring remote sessions populate it;
- * every other driver leaves it absent.
- */
-export interface ProviderAcpSessionManagement {
-  readonly listSessions: (input: {
-    readonly cwd: string;
-    readonly cursor?: string;
-  }) => Effect.Effect<AcpRegistryListSessionsResult, AcpRegistryOperationError>;
-  readonly logout: (cwd: string) => Effect.Effect<void, AcpRegistryOperationError>;
-  readonly deleteSession: (input: {
-    readonly cwd: string;
-    readonly sessionId: string;
-  }) => Effect.Effect<void, AcpRegistryOperationError>;
-  readonly listProviders: (
-    cwd: string,
-  ) => Effect.Effect<AcpRegistryListProvidersResult, AcpRegistryOperationError>;
-  readonly setProvider: (
-    input: Omit<AcpRegistrySetProviderInput, "instanceId" | "projectId"> & {
-      readonly cwd: string;
-    },
-  ) => Effect.Effect<void, AcpRegistryOperationError>;
-  readonly disableProvider: (input: {
-    readonly cwd: string;
-    readonly providerId: string;
-  }) => Effect.Effect<void, AcpRegistryOperationError>;
+  // SCIENT-FORK:END
 }
 
 export interface ProviderContinuationIdentity {

@@ -1,4 +1,7 @@
-import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
+import type {
+  OrchestrationV2ThreadProjection,
+  OrchestrationV2HistoricalMessage,
+} from "@t3tools/contracts";
 import {
   ChatAttachment,
   CheckpointId,
@@ -19,7 +22,7 @@ import {
   OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
   ProviderApprovalDecision,
-  ProviderInteractionMode,
+  OrchestrationV2ProviderRuntimePolicy,
   ProviderDriverKind,
   ProviderInstanceId,
   PositiveInt,
@@ -27,7 +30,6 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
-  RuntimeMode,
   RuntimeRequestId,
   RunAttemptId,
   RunId,
@@ -37,6 +39,7 @@ import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
+import type * as Option from "effect/Option";
 import type * as Stream from "effect/Stream";
 
 import type {
@@ -44,23 +47,19 @@ import type {
   ProviderSelectionTransitionPlan,
 } from "./ProviderSelectionTransition.ts";
 
-export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
-  runtimeMode: RuntimeMode,
-  interactionMode: ProviderInteractionMode,
-  cwd: Schema.NullOr(Schema.String),
-  approvalPolicy: Schema.optional(Schema.Unknown),
-  sandboxPolicy: Schema.optional(Schema.Unknown),
-  reasoningEffort: Schema.optional(Schema.String),
-});
+export const ProviderAdapterV2RuntimePolicy = OrchestrationV2ProviderRuntimePolicy;
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 
 export const ProviderAdapterV2TurnMessage = Schema.Struct({
   messageId: MessageId,
   text: Schema.String,
+  // Server-generated orientation only; explicit selection metadata owns skill authority.
+  runtimeInstruction: Schema.optional(Schema.String),
   attachments: Schema.Array(ChatAttachment),
   createdBy: OrchestrationV2ConversationMessage.fields.createdBy,
   creationSource: OrchestrationV2ConversationMessage.fields.creationSource,
   scheduledTaskId: OrchestrationV2ConversationMessage.fields.scheduledTaskId,
+  notification: OrchestrationV2ConversationMessage.fields.notification,
   senderThreadId: OrchestrationV2ConversationMessage.fields.senderThreadId,
 });
 export type ProviderAdapterV2TurnMessage = typeof ProviderAdapterV2TurnMessage.Type;
@@ -76,6 +75,13 @@ export const ProviderAdapterV2SessionStatus = Schema.Literals([
 export type ProviderAdapterV2SessionStatus = typeof ProviderAdapterV2SessionStatus.Type;
 
 export const ProviderAdapterV2Event = Schema.Union([
+  // Consumed by the owning session manager before canonical run ingestion.
+  // The manager supplies trusted instance identity; native frames do not.
+  Schema.Struct({
+    type: Schema.Literal("authentication.invalidated"),
+    driver: ProviderDriverKind,
+    message: Schema.String,
+  }),
   Schema.Struct({
     type: Schema.Literal("app_thread.created"),
     driver: ProviderDriverKind,
@@ -153,6 +159,66 @@ export const ProviderAdapterV2Event = Schema.Union([
   }),
 ]);
 export type ProviderAdapterV2Event = typeof ProviderAdapterV2Event.Type;
+
+/** Private native capture identity, never a serialized execution capability. */
+export interface ProviderTextSnapshotOwner {
+  readonly threadId: ThreadId;
+  readonly runId: RunId;
+  readonly activeAttemptId: RunAttemptId;
+  readonly rootNodeId: NodeId;
+  readonly runOrdinal: number;
+  readonly providerThreadId: ProviderThreadId;
+  readonly nativeThreadId: string;
+  readonly providerTurnId: ProviderTurnId;
+  readonly nativeTurnId: string;
+  readonly providerSessionId: ProviderSessionId;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly driver: ProviderDriverKind;
+}
+export type ProviderTextSnapshotConsumerOwner = Omit<
+  ProviderTextSnapshotOwner,
+  "nativeThreadId" | "providerTurnId" | "nativeTurnId"
+>;
+export class ProviderTextSnapshotError extends Schema.TaggedError<ProviderTextSnapshotError>()(
+  "ProviderTextSnapshotError",
+  {
+    reason: Schema.Literals([
+      "unsupported",
+      "not-native-ready",
+      "busy",
+      "owner-lost",
+      "newer-delta",
+      "consumer-ended",
+      "capture-failed",
+    ]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+export interface ProviderTextSnapshotProjection {
+  readonly workspaceRoot: string;
+  readonly projection: OrchestrationV2ThreadProjection;
+  readonly sourceSequence: number;
+}
+export interface CapturedProviderText extends ProviderTextSnapshotProjection {
+  readonly token: symbol;
+  readonly owner: ProviderTextSnapshotOwner;
+  readonly watermark: number;
+}
+export interface ProviderTextSnapshotBatch {
+  readonly type: "internal.text_snapshot";
+  readonly token: symbol;
+  readonly owner: ProviderTextSnapshotOwner;
+  readonly watermark: number;
+  readonly events: ReadonlyArray<ProviderAdapterV2Event>;
+}
+export type ProviderAdapterV2InternalEvent = ProviderAdapterV2Event | ProviderTextSnapshotBatch;
+export interface ProviderTextSnapshotConsumer {
+  readonly bind: (owner: ProviderTextSnapshotConsumerOwner) => Effect.Effect<void>;
+  readonly consume: <E, R>(
+    batch: ProviderTextSnapshotBatch,
+    write: Effect.Effect<ProviderTextSnapshotProjection, E, R>,
+  ) => Effect.Effect<void, never, R>;
+}
 
 export class ProviderAdapterCapabilitiesError extends Schema.TaggedError<ProviderAdapterCapabilitiesError>()(
   "ProviderAdapterCapabilitiesError",
@@ -266,6 +332,8 @@ export class ProviderAdapterTurnStartError extends Schema.TaggedError<ProviderAd
     threadId: ThreadId,
     providerThreadId: ProviderThreadId,
     runId: RunId,
+    /** Exact adapter delivery observation, retained if stream ingestion loses the start race. */
+    providerTurn: Schema.optional(OrchestrationV2ProviderTurn),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -408,6 +476,8 @@ export interface ProviderAdapterV2TurnInput {
   readonly message: ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+  /** Recheck after native preparation and immediately before the prompt write. */
+  readonly shouldStartProviderTurn?: () => Effect.Effect<boolean>;
 }
 
 export interface ProviderAdapterV2SteerInput {
@@ -423,6 +493,8 @@ export interface ProviderAdapterV2InterruptInput {
   readonly providerTurnId: ProviderTurnId;
   /** When true, the next `startTurn` may respawn the provider runtime (Grok Stop recovery). */
   readonly requestRuntimeRestart?: boolean;
+  /** SCIENT: private Droid admission token, consumed before interrupt mutates its native owner. */
+  readonly droidSteerLease?: string;
 }
 
 export interface ProviderAdapterV2RuntimeRequestResponseInput {
@@ -473,6 +545,10 @@ export interface ProviderAdapterV2ForkThreadInput {
   readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
 }
 
+export interface ProviderTextSnapshotSubscription extends ProviderAdapterV2EventSubscription {
+  readonly snapshotEvents: Stream.Stream<ProviderAdapterV2InternalEvent, ProviderAdapterV2Error>;
+  readonly textSnapshotConsumer: ProviderTextSnapshotConsumer;
+}
 export interface ProviderAdapterV2EventSubscription {
   readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
   readonly close: Effect.Effect<void>;
@@ -483,7 +559,66 @@ export interface ProviderAdapterV2HistoricalContext {
   readonly context: string;
 }
 
+/** Internal native-generation authority; never serialized as a command capability. */
+export interface ProviderAdapterV2InitiatedWorkIdentity {
+  readonly threadId: ThreadId;
+  readonly providerThreadId: ProviderThreadId;
+  readonly providerSessionId: ProviderSessionId;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly driver: ProviderDriverKind;
+  readonly workId: string;
+  readonly modelSelection: ModelSelection;
+  readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+}
+
 export interface ProviderAdapterV2SessionRuntime {
+  readonly subscribeTextSnapshotEvents?: Effect.Effect<ProviderTextSnapshotSubscription>;
+  /** Uses the same native sequencer; the manager is its sole reader. */
+  readonly textSnapshots?: {
+    readonly events: Stream.Stream<ProviderAdapterV2InternalEvent, ProviderAdapterV2Error>;
+    readonly request: (
+      owner: ProviderTextSnapshotOwner,
+      token: symbol,
+    ) => Effect.Effect<void, ProviderTextSnapshotError>;
+    readonly ended: Effect.Effect<never, ProviderTextSnapshotError>;
+    readonly withCurrent: <A, E, R>(
+      token: symbol,
+      watermark: number | undefined,
+      commit: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E | ProviderTextSnapshotError, R>;
+    readonly release: (token: symbol) => Effect.Effect<void>;
+  };
+
+  // SCIENT-FORK:START — readiness is process-local; held intent remains canonical on the run.
+  readonly configureDroidSteerOwner?: (input: {
+    readonly attemptId: RunAttemptId;
+    readonly held: Effect.Effect<boolean>;
+    readonly drop: Effect.Effect<void>;
+  }) => Effect.Effect<void>;
+  readonly droidSteerTerminalHeld?: (
+    attemptId: RunAttemptId,
+    status: string,
+  ) => Effect.Effect<boolean>;
+  readonly reserveDroidSteer?: (input: {
+    readonly attemptId: RunAttemptId;
+    readonly providerTurnId: ProviderTurnId;
+    readonly revision: string;
+  }) => Effect.Effect<string | undefined>;
+  readonly validateDroidSteer?: (lease: string) => boolean;
+  readonly droidSteerConsumed?: (lease?: string) => boolean;
+  readonly invalidateDroidSteer?: () => void;
+  readonly consumeDroidSteer?: (
+    input: ProviderAdapterV2InterruptInput & { readonly droidSteerLease: string },
+  ) => Effect.Effect<boolean, ProviderAdapterV2Error>;
+  // SCIENT-FORK:END
+  /** Called only under the Orchestrator thread lock, around final durable admission. */
+  readonly withInitiatedWorkAdmission?: <A, E, R>(
+    identity: ProviderAdapterV2InitiatedWorkIdentity,
+    commit: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<Option.Option<A>, E, R>;
+  /** Reserve the exact eligible manager owner under the fence; physical close follows outside it. */
+  readonly invalidateInitiatedWork?: (reserve?: Effect.Effect<boolean>) => Effect.Effect<boolean>;
+
   /** Manager-projected, instance-specific host MCP injection support. Absence is unsupported. */
   readonly mcpSessionInjection?: boolean;
   readonly instanceId: ProviderInstanceId;
@@ -497,6 +632,16 @@ export interface ProviderAdapterV2SessionRuntime {
    * Adapter runtimes may omit this and expose only their single-consumer event stream.
    */
   readonly subscribeEvents?: Effect.Effect<ProviderAdapterV2EventSubscription>;
+  /**
+   * Native single-consumer spool lease. Retain before publishing the pump;
+   * producer close only seals writes. EOF/cancel releases it automatically.
+   * The publisher must dispose a never-started or explicitly abandoned pump;
+   * disposal retires undelivered receipts and does not acknowledge delivery.
+   */
+  readonly eventConsumer?: {
+    readonly retain: Effect.Effect<void>;
+    readonly dispose: Effect.Effect<void>;
+  };
   /**
    * Adapters whose native runtime can hold pending work outside an active
    * turn (for example Claude background tasks and their wake turns) report it
@@ -512,6 +657,8 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly hasPendingBackgroundWorkForThread?: (
     providerThread: OrchestrationV2ProviderThread,
   ) => Effect.Effect<boolean>;
+  /** Trusted adapter-owned immutable hash of the actual native launch; never protocol metadata. */
+  readonly modelContextWindowLaunchFingerprint?: string;
   /**
    * Capacity for the requested model/options, independent of native thread usage.
    * `cwd` is the thread's working directory, for providers whose project config

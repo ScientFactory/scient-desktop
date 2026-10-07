@@ -3,13 +3,14 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import {
-  CheckpointRef,
+  EventId,
+  TurnItemId,
+  type ThreadForkCommand,
+  type OrchestrationV2DomainEvent,
   CommandId,
   MessageId,
   ProviderInstanceId,
   ThreadId,
-  TurnId,
-  type OrchestrationThread,
 } from "@t3tools/contracts";
 import {
   buildConversationDocument,
@@ -24,14 +25,21 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { ServerConfig } from "../../config.ts";
-import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ScientForkContextDelivery } from "../../orchestration-v2/scient-fork/ForkContextDelivery.ts";
+import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
+import * as EventSink from "../../orchestration-v2/EventSink.ts";
+import { handoffBudget } from "../../orchestration-v2/ContextHandoffBudget.ts";
+import { makeScientContextHandoffPolicy } from "../../orchestration-v2/ScientContextHandoffPolicy.ts";
+import { deliverContextHandoffs } from "../../orchestration-v2/ContextHandoffDelivery.ts";
+import { ConversationForkService } from "../../orchestration-v2/scient-fork/ConversationForkService.ts";
+import { ConversationImportCommit } from "./ConversationImportCommit.ts";
+import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
+import { conversationSnapshotProjection } from "../conversationExport/conversationSnapshotProjection.ts";
+
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import {
   ConversationImporter,
@@ -63,6 +71,7 @@ import {
 import {
   createProjects,
   importTestLayer,
+  importHistoryTestLayer,
   type ImportTestControls,
 } from "./conversationImport.test-harness.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -72,16 +81,216 @@ const attemptDirectory = (name = "attempt") =>
     NodePath.join(config.stateDir, "conversation-imports", IMPORT_ID, name),
   );
 
-const decodeTurnIds = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const readProjection = (threadId: ThreadId) =>
+  Effect.flatMap(ProjectionStore.ProjectionStoreV2, (query) => query.getThreadProjection(threadId));
 
 const readThread = (threadId: ThreadId) =>
-  Effect.flatMap(ProjectionSnapshotQuery, (query) =>
-    query.getThreadDetailById(threadId, { fullHistory: true }),
-  ).pipe(Effect.map(Option.getOrUndefined));
+  readProjection(threadId).pipe(
+    Effect.map((projection) => conversationSnapshotProjection(projection, null)),
+  );
+
+/** Admit through the real orchestrator; the fixture never starts the effect worker. */
+const continueHistory = Effect.fn("ImportTest.continueHistory")(function* (
+  threadId: ThreadId,
+  messageId: MessageId,
+  commandId: CommandId,
+  text: string,
+  at: string,
+) {
+  yield* TestClock.setTime(Date.parse(at));
+  yield* (yield* Orchestrator.OrchestratorV2).dispatch({
+    type: "message.dispatch",
+    commandId,
+    threadId,
+    messageId,
+    text,
+    attachments: [],
+    createdBy: "user",
+    creationSource: "web",
+    dispatchMode: { type: "start_immediately" },
+  });
+});
+
+/** Render actual committed handoffs, recording pending/accepted delivery through EventSink. */
+const prepareHistory = Effect.fn("ImportTest.prepareHistory")(function* (threadId: ThreadId) {
+  const projection = yield* readProjection(threadId);
+  const run = projection.runs.at(-1)!;
+  const providerThread = projection.providerThreads.find(
+    (thread) => thread.id === run.providerThreadId,
+  )!;
+  const sink = yield* EventSink.EventSinkV2;
+  const current = projection.messages.find(
+    (message) => message.runId === run.id && message.role === "user",
+  )!;
+  const policy = yield* yield* makeScientContextHandoffPolicy();
+  const budget = handoffBudget({
+    ...policy,
+    providerThread,
+    userText: current.text,
+    attachments: current.attachments,
+    nativeContextEstimate: 0,
+  });
+  return yield* deliverContextHandoffs({
+    handoffs: projection.contextHandoffs,
+    providerThread,
+    budget,
+    alreadyDeliveredItemIds: new Set(),
+    sourceOmissions:
+      projection.thread.conversationImport?.omissions ??
+      projection.thread.forkLineage?.sourceImport?.omissions ??
+      [],
+    importedMaterial: "conversation",
+    persist: (handoff) =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`${handoff.id}:${yield* sink.latestSequence()}`),
+              type: "context-handoff.updated",
+              threadId,
+              occurredAt: now,
+              payload: handoff,
+            },
+          ],
+        });
+      }).pipe(Effect.orDie),
+  });
+});
+
+/** A controlled local provider identity, persisted on the actual owned native thread. */
+const bindHistoryIdentity = Effect.fn("ImportTest.bindHistoryIdentity")(function* (
+  threadId: ThreadId,
+  nativeId: string,
+) {
+  const projection = yield* readProjection(threadId);
+  const run = projection.runs.at(-1)!;
+  const thread = projection.providerThreads.find(
+    (candidate) => candidate.id === run.providerThreadId,
+  )!;
+  const now = yield* DateTime.now;
+  yield* (yield* EventSink.EventSinkV2).write({
+    events: [
+      {
+        id: EventId.make(`${thread.id}:${nativeId}`),
+        threadId,
+        occurredAt: now,
+        type: "provider-thread.updated",
+        payload: {
+          ...thread,
+          nativeThreadRef: { driver: thread.driver, nativeId, strength: "strong" },
+          updatedAt: now,
+        },
+      },
+    ],
+  });
+  return thread.id;
+});
+
+/** Controlled journal-history producer: write terminal events, never fabricated query results. */
+const finishHistory = Effect.fn("ImportTest.finishHistory")(function* (
+  threadId: ThreadId,
+  at: string,
+  answer?: { readonly id: MessageId; readonly text: string },
+) {
+  yield* TestClock.setTime(Date.parse(at));
+  const projection = yield* readProjection(threadId);
+  const run = projection.runs.at(-1)!;
+  const root = projection.nodes.find((node) => node.id === run.rootNodeId)!;
+  const now = yield* DateTime.now;
+  const events: OrchestrationV2DomainEvent[] = [];
+  if (answer !== undefined) {
+    events.push(
+      {
+        id: EventId.make(`${answer.id}:message`),
+        threadId,
+        occurredAt: now,
+        type: "message.updated",
+        payload: {
+          id: answer.id,
+          threadId,
+          runId: run.id,
+          nodeId: root.id,
+          role: "assistant",
+          createdBy: "agent",
+          creationSource: "server",
+          text: answer.text,
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      {
+        id: EventId.make(`${answer.id}:item`),
+        threadId,
+        occurredAt: now,
+        type: "turn-item.updated",
+        payload: {
+          id: TurnItemId.make(`${answer.id}:item`),
+          threadId,
+          runId: run.id,
+          nodeId: root.id,
+          providerThreadId: run.providerThreadId,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: run.ordinal * 100 + 1,
+          title: null,
+          type: "assistant_message",
+          messageId: answer.id,
+          text: answer.text,
+          streaming: false,
+          status: "completed",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+        },
+      },
+    );
+  }
+  events.push(
+    {
+      id: EventId.make(`${run.id}:finished`),
+      threadId,
+      occurredAt: now,
+      type: "run.updated",
+      payload: { ...run, status: "completed", completedAt: now },
+    },
+    {
+      id: EventId.make(`${root.id}:finished`),
+      threadId,
+      occurredAt: now,
+      type: "node.updated",
+      payload: { ...root, status: "completed", completedAt: now },
+    },
+  );
+  yield* (yield* EventSink.EventSinkV2).write({ events });
+});
+
+/** Observe the native creation receipt before invoking the production provisioner. */
+const forkHistory = Effect.fn("ImportTest.forkHistory")(function* (command: ThreadForkCommand) {
+  const sink = yield* EventSink.EventSinkV2;
+  const pull = yield* Stream.toPull(
+    sink.stream({
+      threadId: command.newThreadId,
+      eventType: "thread.created",
+      afterSequence: 0,
+    }),
+  );
+  const forks = yield* ConversationForkService;
+  const waiting = yield* forks.dispatch(command).pipe(Effect.forkChild);
+  yield* pull;
+  yield* forks.provision(command.newThreadId, false);
+  yield* Fiber.join(waiting);
+});
 
 const threadCount = Effect.flatMap(
   SqlClient.SqlClient,
-  (sql) => sql<{ readonly count: number }>`SELECT COUNT(*) AS count FROM projection_threads`,
+  (sql) =>
+    sql<{
+      readonly count: number;
+    }>`SELECT COUNT(*) AS count FROM orchestration_v2_projection_threads`,
 ).pipe(Effect.map((rows) => rows[0]?.count ?? 0));
 
 const importRequest = (overrides: Parameters<typeof destination>[0] = {}) => ({
@@ -105,7 +314,7 @@ const leaseFor = (
   );
 
 /**
- * Every test runs against a fresh engine, database, and state directory, on a
+ * Every test runs against fresh native stores, a database, and a state directory, on a
  * clock set after the fixtures' history (the test clock otherwise starts in
  * 1970, which would date every fixture after the import).
  */
@@ -114,6 +323,13 @@ const withImporter = <A, E, R>(effect: Effect.Effect<A, E, R>, controls?: Import
     Effect.andThen(createProjects),
     Effect.andThen(effect),
     Effect.provide(importTestLayer(controls)),
+  );
+
+const withNativeImporter = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  TestClock.setTime(Date.parse("2026-09-28T09:30:00.000Z")).pipe(
+    Effect.andThen(createProjects),
+    Effect.andThen(effect),
+    Effect.provide(importHistoryTestLayer()),
   );
 
 const failImport = (lease: ConversationImportLease, request = importRequest()) =>
@@ -132,7 +348,7 @@ const settle = (directory: string, reason: "cancelled" | "expired" | "startup" =
 const journalOf = (directory: string) =>
   readConversationImportJournal(directory).pipe(Effect.map(Option.getOrThrow));
 
-function allMessageIds(thread: OrchestrationThread) {
+function allMessageIds(thread: ReturnType<typeof conversationSnapshotProjection>) {
   return thread.messages.map((message) => message.id);
 }
 
@@ -367,7 +583,10 @@ describe("ConversationImporter", () => {
         const completion = yield* importOnce(lease, importRequest({ runtimeMode: "full-access" }));
         assert.strictEqual(completion.result.destination.runtimeMode, "approval-required");
         const thread = (yield* readThread(completion.result.threadId))!;
-        assert.strictEqual(thread.runtimeMode, "approval-required");
+        assert.strictEqual(
+          (yield* (yield* ProjectionStore.ProjectionStoreV2).getThread(thread.id)).runtimeMode,
+          "approval-required",
+        );
         const journal = yield* journalOf(lease.attemptDirectory);
         assert.strictEqual(journal.binding.destination.runtimeMode, "approval-required");
         // The command itself never carries another mode, whatever destination it is given.
@@ -480,7 +699,7 @@ describe("ConversationImporter", () => {
   it.effect(
     "keeps history dated after this server's clock as an inherited prefix, with a note",
     () =>
-      withImporter(
+      withNativeImporter(
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse("2026-09-28T10:00:00.000Z"));
           // The sender's clock ran a day and a little ahead of this server's.
@@ -537,34 +756,25 @@ describe("ConversationImporter", () => {
 
           // A message sent after the import shows after all of it, and the
           // agent receives all of it.
-          const engine = yield* OrchestrationEngineService;
           const messageId = MessageId.make("after-skewed-import");
-          yield* engine.dispatch({
-            type: "thread.turn.start",
-            commandId: CommandId.make("start-after-skewed-import"),
-            threadId: result.threadId,
-            message: { messageId, role: "user", text: "Carry on", attachments: [] },
-            runtimeMode: "approval-required",
-            interactionMode: "default",
-            createdAt: "2026-09-28T10:05:00.000Z",
-          });
+          yield* continueHistory(
+            result.threadId,
+            messageId,
+            CommandId.make("start-after-skewed-import"),
+            "Carry on",
+            "2026-09-28T10:05:00.000Z",
+          );
           const thread = (yield* readThread(result.threadId))!;
           assert.strictEqual(thread.messages.at(-1)?.id, messageId);
-          const prepared = yield* Effect.flatMap(ScientForkContextDelivery, (delivery) =>
-            delivery.prepareTurn({
-              thread,
-              message: thread.messages.at(-1)!,
-              userText: "Carry on",
-              attachments: [],
-              nativeThreadKey: null,
-              sessionRunning: false,
-            }),
+          const prepared = yield* prepareHistory(result.threadId);
+          assert.isNotEmpty(prepared.context);
+
+          assert.strictEqual(
+            (yield* readProjection(result.threadId)).contextHandoffs.at(-1)!.history!.omittedItems,
+            0,
           );
-          assert.strictEqual(prepared.kind, "deliver");
-          if (prepared.kind !== "deliver") return;
-          assert.strictEqual(prepared.omittedItemCount, 0);
           for (const text of ["Question 1", "Answer 3", "Thinking about 3", "ok 3", "Ship it"]) {
-            assert.include(prepared.contextPreamble, text);
+            assert.include(prepared.context, text);
           }
 
           // Exporting again keeps the note; a later import adds its own move.
@@ -615,7 +825,7 @@ describe("ConversationImporter", () => {
         assert.strictEqual(completion.packageSha256, fixture.input.package.packageSha256);
 
         const thread = (yield* readThread(completion.result.threadId))!;
-        assert.strictEqual(thread.projectId, PROJECT_ID);
+        assert.strictEqual((yield* readProjection(thread.id)).thread.projectId, PROJECT_ID);
         assert.strictEqual(thread.title, "Imported design discussion");
         assert.strictEqual(thread.modelSelection.instanceId, PROVIDER_ID);
         // 3 requests, 3 answers, 3 reasoning items; no id is an external one.
@@ -677,13 +887,14 @@ describe("ConversationImporter", () => {
           "user-input.answer-submitted",
         ]);
         assert.strictEqual(thread.proposedPlans.length, 1);
-        const shell = yield* Effect.flatMap(ProjectionSnapshotQuery, (query) =>
-          query.getThreadShellById(thread.id),
-        );
-        assert.isTrue(Option.isSome(shell));
-        assert.isFalse(Option.getOrThrow(shell).hasPendingApprovals);
-        assert.isFalse(Option.getOrThrow(shell).hasPendingUserInput);
-        assert.strictEqual(Option.getOrThrow(shell).conversationImport?.exportId, "7f3c9a2e41b8");
+        const native = yield* readProjection(thread.id);
+        const shell = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadShell(thread.id);
+        assert.ok(shell);
+        assert.isEmpty(native.runtimeRequests);
+        assert.isEmpty(native.runs);
+        assert.isEmpty(native.providerSessions);
+        assert.isNull(native.thread.activeProviderThreadId);
+        assert.strictEqual(shell.conversationImport?.exportId, "7f3c9a2e41b8");
 
         // External identity lives only in the import marker.
         assert.deepStrictEqual(thread.conversationImport, {
@@ -696,41 +907,36 @@ describe("ConversationImporter", () => {
           importedAt: thread.conversationImport!.importedAt,
           omissions: [{ _tag: "attachments-unavailable", count: 1 }],
         });
-        assert.strictEqual(thread.latestTurn?.state, "completed");
-
-        const sql = yield* SqlClient.SqlClient;
-        const [transfer] = yield* sql<{
-          readonly type: string;
-          readonly source_thread_id: string | null;
-          readonly status: string;
-          readonly inherited_turn_ids_json: string;
-        }>`
-          SELECT type, source_thread_id, status, inherited_turn_ids_json
-          FROM scient_context_transfers WHERE thread_id = ${thread.id}
-        `;
-        assert.strictEqual(transfer?.type, "import");
-        assert.isNull(transfer?.source_thread_id);
-        assert.strictEqual(transfer?.status, "pending");
+        // Imported groups are inert item history, never executable native runs/transfers.
+        assert.isNull(thread.activeTurn);
+        assert.strictEqual(native.thread.historyOrigin, "conversation_import");
+        assert.isEmpty(native.contextTransfers);
+        assert.isEmpty(native.contextHandoffs);
         assert.deepStrictEqual(
-          new Set(decodeTurnIds(transfer!.inherited_turn_ids_json)),
-          new Set<string | null>(thread.messages.map((message) => message.turnId)),
+          new Set(native.turnItems.map((item) => item.historyTurnId ?? null)),
+          new Set(thread.messages.map((message) => message.turnId)),
         );
-        const turns = yield* sql<{
-          readonly pending_message_id: string | null;
-          readonly assistant_message_id: string | null;
-          readonly state: string;
-        }>`
-          SELECT pending_message_id, assistant_message_id, state
-          FROM projection_turns WHERE thread_id = ${thread.id} ORDER BY requested_at
-        `;
-        assert.strictEqual(turns.length, 3);
+        const pairs = [0, 1, 2].map((index) => {
+          const items = native.turnItems.filter(
+            (item) => item.historyTurnId === first[2 * index]!.turnId,
+          );
+          const user = items.find((item) => item.type === "user_message")!;
+          const assistant = items.find((item) => item.type === "assistant_message")!;
+          assert.strictEqual(user.type, "user_message");
+          assert.strictEqual(assistant.type, "assistant_message");
+          return [user.messageId, assistant.messageId, user.status, assistant.status];
+        });
         assert.deepStrictEqual(
-          turns.map((turn) => [turn.pending_message_id, turn.assistant_message_id, turn.state]),
-          [0, 1, 2].map((index) => [first[2 * index]!.id, first[2 * index + 1]!.id, "completed"]),
+          pairs,
+          [0, 1, 2].map((index) => [
+            first[2 * index]!.id,
+            first[2 * index + 1]!.id,
+            "completed",
+            "completed",
+          ]),
         );
-        assert.isEmpty(
-          yield* sql`SELECT thread_id FROM scient_thread_lineage WHERE thread_id = ${thread.id}`,
-        );
+        assert.isNull(native.thread.forkLineage ?? null);
+        assert.isNull(native.thread.lineage.parentThreadId);
 
         // The journal names the exact paths this attempt owns.
         const journal = yield* journalOf(lease.attemptDirectory);
@@ -744,7 +950,7 @@ describe("ConversationImporter", () => {
   );
 
   it.effect("keeps async answers folded through import, continuation, and re-export", () =>
-    withImporter(
+    withNativeImporter(
       Effect.gen(function* () {
         const fixture = importFixture({ turns: 1 });
         const source = fixture.input.snapshot;
@@ -799,7 +1005,6 @@ describe("ConversationImporter", () => {
 
         const { lease } = yield* leaseFor({ ...fixture, input });
         const { result } = yield* importOnce(lease);
-        const engine = yield* OrchestrationEngineService;
         const inherited = (yield* readThread(result.threadId))!;
         const importedAnswer = inherited.activities.find(
           (activity) => activity.kind === "user-input.answer-submitted",
@@ -812,83 +1017,19 @@ describe("ConversationImporter", () => {
         );
         const continuationId = MessageId.make("async-answer-continuation-user");
         const assistantId = MessageId.make("async-answer-continuation-assistant");
-        yield* engine.dispatch({
-          type: "thread.turn.start",
-          commandId: CommandId.make("start-async-answer-continuation"),
-          threadId: result.threadId,
-          message: { messageId: continuationId, role: "user", text: "Continue", attachments: [] },
-          runtimeMode: "approval-required",
-          interactionMode: "default",
-          createdAt: "2026-09-28T11:00:00.000Z",
-        });
-        const continuing = (yield* readThread(result.threadId))!;
-        const current = continuing.messages.find((message) => message.id === continuationId)!;
-        const delivery = yield* ScientForkContextDelivery;
-        const prepared = yield* delivery.prepareTurn({
-          thread: continuing,
-          message: current,
-          userText: current.text,
-          attachments: [],
-          nativeThreadKey: null,
-          sessionRunning: false,
-        });
-        assert.strictEqual(prepared.kind, "deliver");
-        if (prepared.kind === "deliver") assert.include(prepared.contextPreamble, answerText);
-
-        const continuedTurnId = TurnId.make("async-answer-continued-turn");
-        yield* engine.dispatch({
-          type: "thread.session.set",
-          commandId: CommandId.make("session-async-answer-continuation"),
-          threadId: result.threadId,
-          session: {
-            threadId: result.threadId,
-            status: "running",
-            providerName: "codex",
-            providerInstanceId: PROVIDER_ID,
-            runtimeMode: "approval-required",
-            activeTurnId: continuedTurnId,
-            lastError: null,
-            updatedAt: "2026-09-28T11:00:01.000Z",
-          },
-          createdAt: "2026-09-28T11:00:01.000Z",
-        });
-        yield* engine.dispatch({
-          type: "thread.message.assistant.complete",
-          commandId: CommandId.make("answer-async-answer-continuation"),
-          threadId: result.threadId,
-          messageId: assistantId,
+        yield* continueHistory(
+          result.threadId,
+          continuationId,
+          CommandId.make("start-async-answer-continuation"),
+          "Continue",
+          "2026-09-28T11:00:00.000Z",
+        );
+        const prepared = yield* prepareHistory(result.threadId);
+        assert.isNotEmpty(prepared.context);
+        assert.include(prepared.context, answerText);
+        yield* finishHistory(result.threadId, "2026-09-28T11:00:02.000Z", {
+          id: assistantId,
           text: "Continued",
-          turnId: continuedTurnId,
-          createdAt: "2026-09-28T11:00:01.000Z",
-        });
-        yield* engine.dispatch({
-          type: "thread.turn.diff.complete",
-          commandId: CommandId.make("complete-async-answer-continuation"),
-          threadId: result.threadId,
-          turnId: continuedTurnId,
-          completedAt: "2026-09-28T11:00:02.000Z",
-          checkpointRef: CheckpointRef.make(`refs/t3/checkpoints/${result.threadId}/turn/1`),
-          status: "ready",
-          files: [],
-          assistantMessageId: assistantId,
-          checkpointTurnCount: 1,
-          createdAt: "2026-09-28T11:00:02.000Z",
-        });
-        yield* engine.dispatch({
-          type: "thread.session.set",
-          commandId: CommandId.make("finish-async-answer-continuation"),
-          threadId: result.threadId,
-          session: {
-            threadId: result.threadId,
-            status: "ready",
-            providerName: "codex",
-            providerInstanceId: PROVIDER_ID,
-            runtimeMode: "approval-required",
-            activeTurnId: null,
-            lastError: null,
-            updatedAt: "2026-09-28T11:00:02.000Z",
-          },
-          createdAt: "2026-09-28T11:00:02.000Z",
         });
         const snapshot = buildConversationSnapshot({
           thread: (yield* readThread(result.threadId))!,
@@ -930,7 +1071,7 @@ describe("ConversationImporter", () => {
   it.effect(
     "keeps a folded answer after an ordinary message at the same time, and keeps it folded",
     () =>
-      withImporter(
+      withNativeImporter(
         Effect.gen(function* () {
           const fixture = importFixture({ turns: 1 });
           const source = fixture.input.snapshot;
@@ -977,36 +1118,23 @@ describe("ConversationImporter", () => {
           assert.strictEqual((answer.payload as { messageId?: string }).messageId, folded.id);
           assert.isFalse(folded.id.startsWith("async-answer:"));
 
-          const engine = yield* OrchestrationEngineService;
           const continuationId = MessageId.make("folded-tie-continuation-user");
-          yield* engine.dispatch({
-            type: "thread.turn.start",
-            commandId: CommandId.make("start-folded-tie-continuation"),
-            threadId: result.threadId,
-            message: { messageId: continuationId, role: "user", text: "Go on", attachments: [] },
-            runtimeMode: "approval-required",
-            interactionMode: "default",
-            createdAt: "2026-09-28T11:00:00.000Z",
-          });
-          const continuing = (yield* readThread(result.threadId))!;
-          const current = continuing.messages.find((message) => message.id === continuationId)!;
-          const prepared = yield* Effect.flatMap(ScientForkContextDelivery, (delivery) =>
-            delivery.prepareTurn({
-              thread: continuing,
-              message: current,
-              userText: current.text,
-              attachments: [],
-              nativeThreadKey: null,
-              sessionRunning: false,
-            }),
+          yield* continueHistory(
+            result.threadId,
+            continuationId,
+            CommandId.make("start-folded-tie-continuation"),
+            "Go on",
+            "2026-09-28T11:00:00.000Z",
           );
-          assert.strictEqual(prepared.kind, "deliver");
-          if (prepared.kind !== "deliver") return;
-          const answerAt = prepared.contextPreamble.indexOf('"Answer 1"');
-          const blueAt = prepared.contextPreamble.search(/"text":\s*"Blue"/u);
+          const prepared = yield* prepareHistory(result.threadId);
+          assert.isNotEmpty(prepared.context);
+
+          const answerAt = prepared.context.indexOf("Answer 1");
+          const blueAt = prepared.context.indexOf("\nBlue");
           assert.isAbove(answerAt, -1);
           assert.isAbove(blueAt, answerAt);
 
+          yield* finishHistory(result.threadId, "2026-09-28T11:00:02.000Z");
           const snapshot = buildConversationSnapshot({
             thread: (yield* readThread(result.threadId))!,
             snapshotSequence: 1,
@@ -1053,7 +1181,7 @@ describe("ConversationImporter", () => {
   );
 
   it.effect("keeps the file's own notices on the imported thread, its forks, and re-export", () =>
-    withImporter(
+    withNativeImporter(
       Effect.gen(function* () {
         const fixture = importFixture({ turns: 2 });
         const newer = { major: 1, minor: 1 };
@@ -1097,18 +1225,16 @@ describe("ConversationImporter", () => {
         assert.deepStrictEqual(imported.conversationImport?.notices, notices);
 
         const forkId = ThreadId.make("fork-keeps-notices");
-        yield* Effect.flatMap(OrchestrationEngineService, (engine) =>
-          engine.dispatch({
-            type: "thread.fork",
-            commandId: CommandId.make("fork-keeps-notices"),
-            originThreadId: result.threadId,
-            newThreadId: forkId,
-            sourceAssistantMessageId: imported.messages.find(
-              (message) => message.text === "Answer 2",
-            )!.id,
-            workspaceMode: "local",
-          }),
-        );
+        yield* forkHistory({
+          type: "thread.fork",
+          commandId: CommandId.make("fork-keeps-notices"),
+          originThreadId: result.threadId,
+          newThreadId: forkId,
+          sourceAssistantMessageId: imported.messages.find(
+            (message) => message.text === "Answer 2",
+          )!.id,
+          workspaceMode: "local",
+        });
         const fork = (yield* readThread(forkId))!;
         assert.deepStrictEqual(fork.forkLineage?.sourceImport?.notices, notices);
 
@@ -1276,7 +1402,7 @@ describe("ConversationImporter", () => {
   });
 
   it.effect("a fork of an imported folded answer names the fork's copy of its message", () =>
-    withImporter(
+    withNativeImporter(
       Effect.gen(function* () {
         const fixture = importFixture({ turns: 2 });
         const source = fixture.input.snapshot;
@@ -1312,18 +1438,16 @@ describe("ConversationImporter", () => {
         const { result } = yield* importOnce(lease);
         const imported = (yield* readThread(result.threadId))!;
         const forkId = ThreadId.make("fork-of-folded-answer");
-        yield* Effect.flatMap(OrchestrationEngineService, (engine) =>
-          engine.dispatch({
-            type: "thread.fork",
-            commandId: CommandId.make("fork-folded-answer"),
-            originThreadId: result.threadId,
-            newThreadId: forkId,
-            sourceAssistantMessageId: imported.messages.find(
-              (message) => message.text === "Answer 2",
-            )!.id,
-            workspaceMode: "local",
-          }),
-        );
+        yield* forkHistory({
+          type: "thread.fork",
+          commandId: CommandId.make("fork-folded-answer"),
+          originThreadId: result.threadId,
+          newThreadId: forkId,
+          sourceAssistantMessageId: imported.messages.find(
+            (message) => message.text === "Answer 2",
+          )!.id,
+          workspaceMode: "local",
+        });
         const fork = (yield* readThread(forkId))!;
         const answer = fork.activities.find(
           (activity) => activity.kind === "user-input.answer-submitted",
@@ -1344,7 +1468,7 @@ describe("ConversationImporter", () => {
   it.effect(
     "keeps the source order of records that share a timestamp through history, continuation, and re-export",
     () =>
-      withImporter(
+      withNativeImporter(
         Effect.gen(function* () {
           // Everything of one kind shares one timestamp, so only the ids order it.
           const fixture = importFixture({ turns: 4, workLog: true, workLogPerTurn: 2 });
@@ -1398,34 +1522,42 @@ describe("ConversationImporter", () => {
             ["1. Plan 1", "2. Plan 2", "3. Plan 3", "4. Plan 4"],
           );
 
-          const engine = yield* OrchestrationEngineService;
           const continuationId = MessageId.make("tied-continuation-user");
-          yield* engine.dispatch({
-            type: "thread.turn.start",
-            commandId: CommandId.make("start-tied-continuation"),
-            threadId: result.threadId,
-            message: { messageId: continuationId, role: "user", text: "Go on", attachments: [] },
-            runtimeMode: "approval-required",
-            interactionMode: "default",
-            createdAt: "2026-09-28T11:00:00.000Z",
-          });
-          const continuing = (yield* readThread(result.threadId))!;
-          const current = continuing.messages.find((message) => message.id === continuationId)!;
-          const prepared = yield* Effect.flatMap(ScientForkContextDelivery, (delivery) =>
-            delivery.prepareTurn({
-              thread: continuing,
-              message: current,
-              userText: current.text,
-              attachments: [],
-              nativeThreadKey: null,
-              sessionRunning: false,
-            }),
+          yield* continueHistory(
+            result.threadId,
+            continuationId,
+            CommandId.make("start-tied-continuation"),
+            "Go on",
+            "2026-09-28T11:00:00.000Z",
           );
-          assert.strictEqual(prepared.kind, "deliver");
-          if (prepared.kind !== "deliver") return;
-          inOrder(prepared.contextPreamble, [...messageTexts, ...stepTitles]);
-          inOrder(prepared.contextPreamble, ["Plan 1", "Plan 2", "Plan 3", "Plan 4"]);
+          const prepared = yield* prepareHistory(result.threadId);
+          assert.isNotEmpty(prepared.context);
 
+          // SCIC v1 side facts stay within their historical turn; each kind's
+          // source order and the original timestamps remain independent.
+          inOrder(prepared.context, [
+            "Question 1",
+            "Answer 1",
+            "Step 1",
+            "Step 2",
+            "Question 2",
+            "Answer 2",
+            "Step 3",
+            "Step 4",
+            "Question 3",
+            "Answer 3",
+            "Step 5",
+            "Step 6",
+            "Question 4",
+            "Answer 4",
+            "Step 7",
+            "Step 8",
+          ]);
+          inOrder(prepared.context, messageTexts);
+          inOrder(prepared.context, stepTitles);
+          inOrder(prepared.context, ["Plan 1", "Plan 2", "Plan 3", "Plan 4"]);
+
+          yield* finishHistory(result.threadId, "2026-09-28T11:00:02.000Z");
           const snapshot = buildConversationSnapshot({
             thread: (yield* readThread(result.threadId))!,
             snapshotSequence: 1,
@@ -1468,93 +1600,79 @@ describe("ConversationImporter", () => {
   it.effect(
     "delivers retained history to continuation and re-delivers after a provider switch",
     () =>
-      withImporter(
+      withNativeImporter(
         Effect.gen(function* () {
           const fixture = importFixture({ turns: 3, reasoning: true, workLog: true });
           const { lease } = yield* leaseFor(fixture);
           const { result } = yield* importOnce(lease);
-          const engine = yield* OrchestrationEngineService;
-          const delivery = yield* ScientForkContextDelivery;
-          const sql = yield* SqlClient.SqlClient;
           const messageId = MessageId.make("import-continuation-user");
-          yield* engine.dispatch({
-            type: "thread.turn.start",
-            commandId: CommandId.make("start-import-continuation"),
-            threadId: result.threadId,
-            message: { messageId, role: "user", text: "Continue the design", attachments: [] },
-            runtimeMode: "approval-required",
-            interactionMode: "default",
-            createdAt: "2026-09-28T11:00:00.000Z",
-          });
-          const thread = (yield* readThread(result.threadId))!;
-          const current = thread.messages.find((message) => message.id === messageId)!;
-          assert.isNull(thread.session);
-          assert.isEmpty(
-            yield* sql`SELECT thread_id FROM provider_session_runtime WHERE thread_id = ${thread.id}`,
-          );
-
-          const prepare = (nativeThreadKey: string | null, providerInstanceId: string) =>
-            delivery.prepareTurn({
-              thread,
-              message: current,
-              userText: current.text,
-              attachments: [],
-              nativeThreadKey,
-              sessionRunning: false,
-              modelSelection: {
-                instanceId: ProviderInstanceId.make(providerInstanceId),
-                model: providerInstanceId === "codex" ? "gpt-5-codex" : "claude-sonnet",
-              },
-            });
-          const initial = yield* prepare("codex@codex:local-session", "codex");
-          assert.strictEqual(initial.kind, "deliver");
-          if (initial.kind !== "deliver") return;
-          for (const text of ["Question 1", "Answer 1", "Question 3", "Answer 3"]) {
-            assert.include(initial.contextPreamble, text);
-          }
-          assert.notInclude(initial.contextPreamble, "Continue the design");
-          assert.notInclude(initial.contextPreamble, "thread-on-another-machine");
-          assert.strictEqual(initial.omittedItemCount, 0);
-          yield* delivery.beginDelivery({
-            threadId: thread.id,
-            handoffId: initial.handoffId,
+          yield* continueHistory(
+            result.threadId,
             messageId,
-            nativeThreadKey: "codex@codex:local-session",
-            includedItemCount: initial.includedItemCount,
-            omittedItemCount: initial.omittedItemCount,
-            budgetTokens: initial.budgetTokens,
-            contextPreamble: initial.contextPreamble,
-          });
-          yield* engine.dispatch({
-            type: "thread.session.set",
-            commandId: CommandId.make("session-import-continuation"),
+            CommandId.make("start-import-continuation"),
+            "Continue the design",
+            "2026-09-28T11:00:00.000Z",
+          );
+          const thread = (yield* readThread(result.threadId))!;
+          const native = yield* readProjection(thread.id);
+          assert.isEmpty(native.providerSessions);
+          assert.isNull(native.providerThreads.at(-1)!.nativeThreadRef);
+          const firstProviderThreadId = yield* bindHistoryIdentity(
+            thread.id,
+            "codex@codex:local-session",
+          );
+          const initial = yield* prepareHistory(thread.id);
+          assert.isNotEmpty(initial.context);
+          for (const text of ["Question 1", "Answer 1", "Question 3", "Answer 3"]) {
+            assert.include(initial.context, text);
+          }
+          assert.notInclude(initial.context, "Continue the design");
+          assert.notInclude(initial.context, "thread-on-another-machine");
+          assert.strictEqual(native.contextHandoffs.at(-1)!.history!.omittedItems, 0);
+          const pending = (yield* readProjection(thread.id)).contextHandoffs.at(-1)!;
+          assert.strictEqual(pending.delivery?.status, "pending");
+          assert.deepStrictEqual(pending.delivery?.omittedItemIds, []);
+          assert.strictEqual(pending.delivery?.nativeThreadId, "codex@codex:local-session");
+          yield* initial.delivered;
+          assert.strictEqual((yield* prepareHistory(thread.id)).context, "");
+          assert.strictEqual(
+            (yield* readProjection(thread.id)).contextHandoffs.at(-1)!.delivery?.status,
+            "inline",
+          );
+          yield* finishHistory(thread.id, "2026-09-28T11:00:02.000Z");
+          yield* (yield* Orchestrator.OrchestratorV2).dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make("switch-import-provider"),
             threadId: thread.id,
-            session: {
-              threadId: thread.id,
-              status: "running",
-              providerName: "codex",
-              providerInstanceId: PROVIDER_ID,
-              runtimeMode: "approval-required",
-              activeTurnId: TurnId.make("local-provider-turn"),
-              lastError: null,
-              updatedAt: "2026-09-28T11:00:01.000Z",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claude"),
+              model: "claude-sonnet",
             },
-            createdAt: "2026-09-28T11:00:01.000Z",
           });
-          yield* delivery.settleDelivery({
-            threadId: thread.id,
-            handoffId: initial.handoffId,
-            outcome: { type: "accepted", nativeThreadKey: "codex@codex:local-session" },
-          });
-          assert.strictEqual((yield* prepare("codex@codex:local-session", "codex")).kind, "none");
-
-          const switched = yield* prepare("claude@claude:fresh-session", "claude");
-          assert.strictEqual(switched.kind, "deliver");
-          if (switched.kind !== "deliver") return;
-          assert.isTrue(switched.requireFreshSession);
-          assert.include(switched.contextPreamble, "Question 1");
-          assert.include(switched.contextPreamble, "Answer 3");
-          assert.notInclude(switched.contextPreamble, "codex@codex:local-session");
+          yield* continueHistory(
+            thread.id,
+            MessageId.make("switched-continuation"),
+            CommandId.make("start-switched-continuation"),
+            "Carry on with Claude",
+            "2026-09-28T11:00:03.000Z",
+          );
+          const secondProviderThreadId = yield* bindHistoryIdentity(
+            thread.id,
+            "claude@claude:fresh-session",
+          );
+          assert.notStrictEqual(secondProviderThreadId, firstProviderThreadId);
+          const switchedNative = yield* readProjection(thread.id);
+          assert.strictEqual(
+            switchedNative.providerThreads.find(
+              (candidate) => candidate.id === secondProviderThreadId,
+            )!.providerInstanceId,
+            ProviderInstanceId.make("claude"),
+          );
+          const switched = yield* prepareHistory(thread.id);
+          assert.isNotEmpty(switched.context);
+          assert.include(switched.context, "Question 1");
+          assert.include(switched.context, "Answer 3");
+          assert.notInclude(switched.context, "codex@codex:local-session");
           assert.strictEqual(
             (yield* readThread(thread.id))!.conversationImport?.sourceThreadId,
             "thread-on-another-machine",
@@ -1566,7 +1684,7 @@ describe("ConversationImporter", () => {
   it.effect(
     "forks an inherited imported answer after revert without losing history or provenance",
     () =>
-      withImporter(
+      withNativeImporter(
         Effect.gen(function* () {
           const fixture = importFixture({ turns: 3, reasoning: true });
           const sourceOmission = { _tag: "range-truncated" as const, throughMessageN: 2 };
@@ -1589,98 +1707,58 @@ describe("ConversationImporter", () => {
           };
           const { lease } = yield* leaseFor({ ...fixture, input });
           const { result } = yield* importOnce(lease);
-          const engine = yield* OrchestrationEngineService;
-          const sql = yield* SqlClient.SqlClient;
           const before = (yield* readThread(result.threadId))!;
           assert.deepInclude(before.conversationImport!.omissions, sourceOmission);
           const inherited = before.messages.map((message) => [message.role, message.text]);
           const inheritedTurnIds = new Set(before.messages.map((message) => message.turnId));
           const userId = MessageId.make("post-import-user");
           const assistantId = MessageId.make("post-import-assistant");
-          yield* engine.dispatch({
-            type: "thread.turn.start",
-            commandId: CommandId.make("start-post-import-turn"),
-            threadId: result.threadId,
-            message: {
-              messageId: userId,
-              role: "user",
-              text: "Temporary follow-up",
-              attachments: [],
-            },
-            runtimeMode: "approval-required",
-            interactionMode: "default",
-            createdAt: "2026-09-28T11:00:00.000Z",
-          });
-          const postTurnId = TurnId.make("post-import-provider-turn");
-          yield* engine.dispatch({
-            type: "thread.session.set",
-            commandId: CommandId.make("session-post-import-turn"),
-            threadId: result.threadId,
-            session: {
-              threadId: result.threadId,
-              status: "running",
-              providerName: "codex",
-              providerInstanceId: PROVIDER_ID,
-              runtimeMode: "approval-required",
-              activeTurnId: postTurnId,
-              lastError: null,
-              updatedAt: "2026-09-28T11:00:01.000Z",
-            },
-            createdAt: "2026-09-28T11:00:01.000Z",
-          });
-          const [postTurn] = yield* sql<{ readonly turn_id: string }>`
-          SELECT turn_id FROM projection_turns
-          WHERE thread_id = ${result.threadId} AND pending_message_id = ${userId}
-        `;
-          assert.strictEqual(postTurn?.turn_id, postTurnId);
-          yield* engine.dispatch({
-            type: "thread.message.assistant.complete",
-            commandId: CommandId.make("complete-post-import-answer"),
-            threadId: result.threadId,
-            messageId: assistantId,
+          yield* continueHistory(
+            result.threadId,
+            userId,
+            CommandId.make("start-post-import-turn"),
+            "Temporary follow-up",
+            "2026-09-28T11:00:00.000Z",
+          );
+          const started = yield* readProjection(result.threadId);
+          const postRun = started.runs.at(-1)!;
+          assert.strictEqual(
+            started.messages.find((message) => message.id === userId)!.runId,
+            postRun.id,
+          );
+          yield* finishHistory(result.threadId, "2026-09-28T11:00:02.000Z", {
+            id: assistantId,
             text: "Temporary answer",
-            turnId: postTurnId,
-            createdAt: "2026-09-28T11:00:01.000Z",
-          });
-          yield* engine.dispatch({
-            type: "thread.turn.diff.complete",
-            commandId: CommandId.make("complete-post-import-turn"),
-            threadId: result.threadId,
-            turnId: postTurnId,
-            completedAt: "2026-09-28T11:00:02.000Z",
-            checkpointRef: CheckpointRef.make(`refs/t3/checkpoints/${result.threadId}/turn/1`),
-            status: "ready",
-            files: [],
-            assistantMessageId: assistantId,
-            checkpointTurnCount: 1,
-            createdAt: "2026-09-28T11:00:02.000Z",
-          });
-          yield* engine.dispatch({
-            type: "thread.session.set",
-            commandId: CommandId.make("finish-post-import-turn"),
-            threadId: result.threadId,
-            session: {
-              threadId: result.threadId,
-              status: "ready",
-              providerName: "codex",
-              providerInstanceId: PROVIDER_ID,
-              runtimeMode: "approval-required",
-              activeTurnId: null,
-              lastError: null,
-              updatedAt: "2026-09-28T11:00:02.000Z",
-            },
-            createdAt: "2026-09-28T11:00:02.000Z",
           });
           assert.include(
             (yield* readThread(result.threadId))!.messages.map((message) => message.text),
             "Temporary answer",
           );
-          yield* engine.dispatch({
-            type: "thread.revert.complete",
-            commandId: CommandId.make("revert-post-import-turn"),
-            threadId: result.threadId,
-            turnCount: 0,
-            createdAt: "2026-09-28T11:00:03.000Z",
+          const completed = yield* readProjection(result.threadId);
+          const completedRun = completed.runs.find((run) => run.id === postRun.id)!;
+          const completedRoot = completed.nodes.find(
+            (node) => node.id === completedRun.rootNodeId,
+          )!;
+          const revertedAt = DateTime.makeUnsafe("2026-09-28T11:00:03.000Z");
+          // The old fixture supplied revert-complete directly too; test projection history boundaries,
+          // without claiming that an inert provider performed a filesystem/native-thread rollback.
+          yield* (yield* EventSink.EventSinkV2).write({
+            events: [
+              {
+                id: EventId.make("revert-post-import-run"),
+                threadId: result.threadId,
+                occurredAt: revertedAt,
+                type: "run.updated",
+                payload: { ...completedRun, status: "rolled_back", completedAt: revertedAt },
+              },
+              {
+                id: EventId.make("revert-post-import-root"),
+                threadId: result.threadId,
+                occurredAt: revertedAt,
+                type: "node.updated",
+                payload: { ...completedRoot, status: "rolled_back", completedAt: revertedAt },
+              },
+            ],
           });
           const reverted = (yield* readThread(result.threadId))!;
           assert.deepStrictEqual(
@@ -1692,13 +1770,18 @@ describe("ConversationImporter", () => {
             inheritedTurnIds,
           );
           assert.deepStrictEqual(reverted.conversationImport, before.conversationImport);
-          assert.isEmpty(
-            yield* sql`SELECT turn_id FROM projection_turns WHERE thread_id = ${result.threadId} AND turn_id = ${postTurnId}`,
+          const afterRollback = yield* readProjection(result.threadId);
+          assert.strictEqual(
+            afterRollback.runs.find((run) => run.id === postRun.id)!.status,
+            "rolled_back",
+          );
+          assert.isFalse(
+            afterRollback.visibleTurnItems.some(({ item }) => item.runId === postRun.id),
           );
 
           const sourceAnswer = reverted.messages.find((message) => message.text === "Answer 2")!;
           const forkId = ThreadId.make("fork-of-imported-history");
-          yield* engine.dispatch({
+          yield* forkHistory({
             type: "thread.fork",
             commandId: CommandId.make("fork-inherited-imported-answer"),
             originThreadId: result.threadId,
@@ -1713,7 +1796,7 @@ describe("ConversationImporter", () => {
               .map((message) => message.text),
             ["Question 1", "Answer 1", "Question 2", "Answer 2"],
           );
-          assert.isUndefined(fork.conversationImport);
+          assert.isNull(fork.conversationImport);
           assert.strictEqual(fork.forkLineage?.originThreadId, result.threadId);
           assert.deepStrictEqual(fork.forkLineage?.sourceImport, {
             source: before.conversationImport!.source,
@@ -1725,56 +1808,48 @@ describe("ConversationImporter", () => {
             importedAt: before.conversationImport!.importedAt,
             omissions: before.conversationImport!.omissions,
           });
-          const forkShell = yield* Effect.flatMap(ProjectionSnapshotQuery, (query) =>
-            query.getThreadShellById(forkId),
+          const forkNative = yield* readProjection(forkId);
+          const forkShell = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadShell(
+            forkId,
           );
+          assert.ok(forkShell);
           assert.deepStrictEqual(
-            Option.getOrThrow(forkShell).forkLineage?.sourceImport,
+            forkShell.forkLineage?.sourceImport,
             fork.forkLineage?.sourceImport,
           );
-          const [lineage] = yield* sql<{ readonly inherited_turn_ids_json: string }>`
-          SELECT inherited_turn_ids_json FROM scient_thread_lineage WHERE thread_id = ${forkId}
-        `;
-          assert.strictEqual(decodeTurnIds(lineage!.inherited_turn_ids_json).length, 2);
-          const [transfer] = yield* sql<{
-            readonly type: string;
-            readonly source_thread_id: string | null;
-            readonly origin_json: string | null;
-          }>`
-          SELECT type, source_thread_id, origin_json
-          FROM scient_context_transfers WHERE thread_id = ${forkId}
-        `;
-          assert.strictEqual(transfer?.type, "fork");
-          assert.strictEqual(transfer?.source_thread_id, result.threadId);
-          assert.isNotNull(transfer?.origin_json);
-          const delivery = yield* ScientForkContextDelivery;
-          assert.isNull(
-            yield* delivery.planNativeFork({ threadId: forkId, providerInstanceId: PROVIDER_ID }),
+          assert.strictEqual(
+            new Set(
+              forkNative.turnItems.flatMap((item) =>
+                item.historyTurnId === undefined ? [] : [item.historyTurnId],
+              ),
+            ).size,
+            2,
           );
-          const next = {
-            id: MessageId.make("fork-continuation"),
-            role: "user" as const,
-            text: "Continue from answer two",
-            turnId: null,
-            streaming: false,
-            createdAt: "2026-09-28T11:00:04.000Z",
-            updatedAt: "2026-09-28T11:00:04.000Z",
-          };
-          const context = yield* delivery.prepareTurn({
-            thread: fork,
-            message: next,
-            userText: next.text,
-            attachments: [],
-            nativeThreadKey: null,
-            sessionRunning: false,
-          });
-          assert.strictEqual(context.kind, "deliver");
-          if (context.kind !== "deliver") return;
-          assert.include(context.contextPreamble, "Question 1");
-          assert.include(context.contextPreamble, "Answer 2");
-          assert.include(context.contextPreamble, '"knownSourceOmissions"');
-          assert.include(context.contextPreamble, '"range-truncated"');
-          assert.notInclude(context.contextPreamble, "Answer 3");
+          const transfer = forkNative.contextTransfers.find(
+            (transfer) => transfer.targetThreadId === forkId,
+          )!;
+          assert.strictEqual(transfer.type, "fork");
+          assert.strictEqual(transfer.sourceThreadId, result.threadId);
+          assert.isNotNull(transfer.portableReason ?? null);
+          assert.isNull(forkNative.thread.activeProviderThreadId);
+          assert.isEmpty(forkNative.providerThreads);
+          assert.isNull(forkNative.thread.forkedFrom);
+          assert.isUndefined(transfer.sourcePoint.providerThreadRef);
+          const nextId = MessageId.make("fork-continuation");
+          yield* continueHistory(
+            forkId,
+            nextId,
+            CommandId.make("start-fork-continuation"),
+            "Continue from answer two",
+            "2026-09-28T11:00:04.000Z",
+          );
+          const context = yield* prepareHistory(forkId);
+          assert.isNotEmpty(context.context);
+          assert.include(context.context, "Question 1");
+          assert.include(context.context, "Answer 2");
+          assert.include(context.context, "Known source omissions (unverified)");
+          assert.include(context.context, '"range-truncated"');
+          assert.notInclude(context.context, "Answer 3");
           const snapshot = buildConversationSnapshot({
             thread: fork,
             snapshotSequence: 1,
@@ -1820,17 +1895,13 @@ describe("ConversationImporter", () => {
           });
           assert.deepInclude(reimport.origin.omissions, sourceOmission);
 
-          yield* engine.dispatch({
-            type: "thread.fork.complete",
-            commandId: CommandId.make("complete-imported-fork-provisioning"),
-            threadId: forkId,
-            checkpointStatus: "unavailable",
-            workspaceStatus: "shared",
-            createdAt: "2026-09-28T11:01:30.000Z",
-          });
+          assert.strictEqual(
+            (yield* readProjection(forkId)).thread.conversationFork?.status,
+            "ready",
+          );
           const secondForkId = ThreadId.make("fork-of-imported-fork");
           const secondSource = fork.messages.find((message) => message.text === "Answer 2")!;
-          yield* engine.dispatch({
+          yield* forkHistory({
             type: "thread.fork",
             commandId: CommandId.make("fork-imported-fork"),
             originThreadId: forkId,
@@ -1843,7 +1914,7 @@ describe("ConversationImporter", () => {
             secondFork.forkLineage?.sourceImport,
             fork.forkLineage?.sourceImport,
           );
-          assert.isUndefined(secondFork.conversationImport);
+          assert.isNull(secondFork.conversationImport);
           assert.deepStrictEqual(
             (yield* readThread(result.threadId))!.conversationImport,
             before.conversationImport,
@@ -1964,14 +2035,14 @@ describe("ConversationImporter", () => {
       Effect.gen(function* () {
         const fixture = importFixture({ attachments: true });
         const { lease } = yield* leaseFor(fixture);
-        // The first dispatch never reaches the engine.
+        // The first dispatch never reaches the native commit.
         const error = yield* failImport(lease);
         assert.strictEqual(error.reason, "import-failed");
         const journal = yield* journalOf(lease.attemptDirectory);
 
         // The same command commits, as if the process stopped before reporting it.
-        const engine = yield* OrchestrationEngineService;
-        yield* engine.dispatch(
+        const commit = yield* ConversationImportCommit;
+        yield* commit.dispatch(
           buildConversationImportCommand({
             validated: fixture.input,
             ids: journal.ids,
@@ -1996,10 +2067,10 @@ describe("ConversationImporter", () => {
       {
         dispatch: (() => {
           let calls = 0;
-          return (command, engine) =>
+          return (command, commit) =>
             calls++ === 0
               ? Effect.die(new Error("The server stopped before the dispatch."))
-              : engine.dispatch(command);
+              : commit.dispatch(command);
         })(),
       },
     ),
@@ -2015,8 +2086,8 @@ describe("ConversationImporter", () => {
         assert.isDefined(yield* readThread(completion.result.threadId));
       }),
       {
-        dispatch: (command, engine) =>
-          engine.dispatch(command).pipe(Effect.andThen(Effect.die(new Error("reply lost")))),
+        dispatch: (command, commit) =>
+          commit.dispatch(command).pipe(Effect.andThen(Effect.die(new Error("reply lost")))),
       },
     ),
   );
@@ -2028,11 +2099,23 @@ describe("ConversationImporter", () => {
         const { lease } = yield* leaseFor(fixture);
         const completion = yield* importOnce(lease);
         const journal = yield* journalOf(lease.attemptDirectory);
-        const engine = yield* OrchestrationEngineService;
-        yield* engine.dispatch({
-          type: "thread.delete",
+        const native = yield* readProjection(completion.result.threadId);
+        const now = yield* DateTime.now;
+        yield* (yield* EventSink.EventSinkV2).commitCommand({
           commandId: CommandId.make("delete-imported"),
-          threadId: completion.result.threadId,
+          threadId: native.thread.id,
+          commandType: "thread.delete",
+          acceptedAt: now,
+          effects: [],
+          events: [
+            {
+              id: EventId.make("delete-imported:event"),
+              threadId: native.thread.id,
+              type: "thread.deleted",
+              occurredAt: now,
+              payload: { ...native.thread, deletedAt: now },
+            },
+          ],
         });
         const present = journal.attachments.map((attachment) => NodeFS.existsSync(attachment.path));
         const settled = yield* settle(lease.attemptDirectory, "expired");
@@ -2065,7 +2148,7 @@ describe("ConversationImporter", () => {
 
           const error = yield* failImport(lease);
           assert.strictEqual(error.reason, "import-rejected");
-          assert.include(error.detail, "deleted");
+          assert.strictEqual(error.detail, "The destination project no longer exists.");
           assert.strictEqual(copied.length, 2);
           for (const path of copied) assert.isFalse(NodeFS.existsSync(path));
           assert.isTrue(NodeFS.existsSync(bystander));
@@ -2085,11 +2168,24 @@ describe("ConversationImporter", () => {
             let calls = 0;
             return (command) =>
               command.type === "thread.conversation.import" && calls++ === 0
-                ? Effect.flatMap(OrchestrationEngineService, (engine) =>
-                    engine.dispatch({
-                      type: "project.delete",
+                ? Effect.flatMap(EventSink.EventSinkV2, (sink) =>
+                    sink.commitProjectCommand({
                       commandId: CommandId.make("delete-destination"),
                       projectId: PROJECT_ID,
+                      commandType: "project.delete",
+                      acceptedAt: DateTime.makeUnsafe(command.createdAt),
+                      event: {
+                        eventId: EventId.make("delete-destination:event"),
+                        type: "project.deleted",
+                        aggregateKind: "project",
+                        aggregateId: PROJECT_ID,
+                        occurredAt: command.createdAt,
+                        commandId: null,
+                        causationEventId: null,
+                        correlationId: null,
+                        metadata: {},
+                        payload: { projectId: PROJECT_ID, deletedAt: command.createdAt },
+                      },
                     }),
                   ).pipe(Effect.orDie, Effect.asVoid)
                 : Effect.void;
@@ -2283,8 +2379,8 @@ describe("ConversationImporter", () => {
       {
         dispatch: (() => {
           let calls = 0;
-          return (command, engine) =>
-            calls++ === 0 ? Effect.die(new Error("dispatch lost")) : engine.dispatch(command);
+          return (command, commit) =>
+            calls++ === 0 ? Effect.die(new Error("dispatch lost")) : commit.dispatch(command);
         })(),
       },
     ),

@@ -1,5 +1,7 @@
 # Thread Lineage And Context Transfer
 
+Historical V2 design reference; [the maintained architecture](../internals/overview.md) describes the live engine and compatibility boundaries.
+
 Forking, provider handoff, merge-back, and subagents are separate product features, but they should share one orchestration model. The common primitive is not "fork" and not "summary". It is:
 
 ```text

@@ -1,3 +1,4 @@
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import {
   XAiPromptFailureText,
@@ -355,6 +356,7 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
       (({ runtimePolicy, ...input }) =>
         makeGrokAcpRuntime({
           ...input,
+          rules: input.scientAwareness ?? buildScientAwareness(),
           configOptionTransport: "request-confirmed",
           interruptPromptOnCancel: input.interruptPromptOnCancel ?? false,
           grokSettings: options.settings,

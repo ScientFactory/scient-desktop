@@ -26,6 +26,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as ProjectService from "./ProjectService.ts";
+import * as ProjectCloneTracker from "./ProjectCloneTracker.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const workspacePathsLayer = Layer.succeed(WorkspacePaths.WorkspacePaths, {
@@ -60,6 +61,9 @@ const makeTestLayer = (
   >,
 ) =>
   ProjectServiceLayerLive.pipe(
+    Layer.provide(
+      Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ discard: () => Effect.void }),
+    ),
     Layer.provideMerge(ProjectEnrichmentService.layer),
     Layer.provideMerge(workspacePathsLayer),
     Layer.provideMerge(projectMetadataLayer),
@@ -77,6 +81,7 @@ const ProjectServiceDependenciesLayer = Layer.mergeAll(
   ProjectionStore.layer,
   IdAllocator.layer,
   ThreadCommandExecutor.layer,
+  Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ discard: () => Effect.void }),
 ).pipe(
   Layer.provideMerge(
     LegacyV1ThreadImporter.layer.pipe(Layer.provide(OrchestrationV2EventSinkLayerLive)),

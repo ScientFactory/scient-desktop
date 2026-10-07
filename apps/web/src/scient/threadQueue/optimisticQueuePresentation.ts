@@ -58,3 +58,8 @@ export function pendingQueueAdmissionPreviews(
   ]);
   return pending.filter((message) => !knownIds.has(message.id));
 }
+
+/** Admission previews belong to the queue strip until the receipt selects ordinary delivery. */
+export function optimisticTimelineMessages(messages: ReadonlyArray<OptimisticUserMessage>) {
+  return messages.filter((message) => message.queueAdmission === undefined);
+}

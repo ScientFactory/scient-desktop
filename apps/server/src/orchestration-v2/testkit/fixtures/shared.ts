@@ -504,6 +504,7 @@ function dispatchMessageCommand(input: {
 export function materializeFixtureInput(input: {
   readonly scenario: string;
   readonly fixtureInput: OrchestratorFixtureInput;
+  readonly checkpointWorkspace?: string;
   readonly driver: ProviderDriverKind;
   readonly modelSelection: ModelSelection;
 }): Effect.Effect<
@@ -906,7 +907,10 @@ export function materializeFixtureInput(input: {
               threadId: ids.threadId,
               name: step.checkpointScopeSuffix,
             });
-            pushDispatch({
+            const command: Extract<
+              OrchestrationV2Command,
+              { readonly type: "checkpoint.rollback" }
+            > = {
               type: "checkpoint.rollback",
               restoreFiles: false,
               commandId: yield* idAllocator.allocate.command({
@@ -919,7 +923,22 @@ export function materializeFixtureInput(input: {
                 checkpointScopeId: scopeId,
                 name: step.checkpointSuffix,
               }),
-            });
+            };
+            if (step.checkpointScopeSuffix === "root" && input.checkpointWorkspace !== undefined) {
+              const ordinal = Number(step.checkpointSuffix);
+              if (!Number.isSafeInteger(ordinal) || ordinal < 1)
+                throw new Error("Replay root rollback requires a positive recorded app ordinal.");
+              commands.push(command);
+              steps.push({
+                type: "rollback_root_checkpoint",
+                command,
+                ordinal,
+                cwd: input.checkpointWorkspace,
+              });
+              steps.push({ type: "advance_clock", duration: "1 millis" });
+            } else {
+              pushDispatch(command);
+            }
           }
           break;
       }

@@ -29,6 +29,7 @@ import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.t
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { ProviderSessionManagerV2 } from "../../../orchestration-v2/ProviderSessionManager.ts";
 
 const shared = {
   success: Project,
@@ -36,6 +37,7 @@ const shared = {
   failureMode: "return" as const,
   dependencies: [
     McpInvocationContext.McpInvocationContext,
+    ProviderSessionManagerV2,
     ThreadManagementService.ThreadManagementService,
     ProjectService.ProjectService,
     Crypto.Crypto,

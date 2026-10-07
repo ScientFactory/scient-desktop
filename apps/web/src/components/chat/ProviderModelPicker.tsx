@@ -61,8 +61,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   renderProviderSetup?: (entry: ProviderInstanceEntry) => ReactNode;
   renderProviderFooter?: (entry: ProviderInstanceEntry) => ReactNode;
   statusLabel?: string;
-  onForkToSwitchProvider?: () => void;
-  forkToSwitchProviderDisabled?: boolean;
+  onContinueInNewChat?: () => void;
+  continueInNewChatDisabled?: boolean;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
   const composerFloatingLayerProps = useComposerMenuProps();
@@ -357,10 +357,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           {...(props.renderProviderFooter
             ? { renderProviderFooter: props.renderProviderFooter }
             : {})}
-          {...(props.onForkToSwitchProvider
-            ? { onForkToSwitchProvider: props.onForkToSwitchProvider }
-            : {})}
-          forkToSwitchProviderDisabled={props.forkToSwitchProviderDisabled ?? false}
+          {...(props.onContinueInNewChat ? { onContinueInNewChat: props.onContinueInNewChat } : {})}
+          continueInNewChatDisabled={props.continueInNewChatDisabled ?? false}
           onInstanceModelChange={handleInstanceModelChange}
         />
         {props.selectedModels === undefined ? (

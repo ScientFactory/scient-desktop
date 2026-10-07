@@ -4,7 +4,6 @@ import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtime
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { scientSkillSurface } from "~/scient/rightPanel/surfaces";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
@@ -22,7 +21,6 @@ import type {
   KeybindingCommand,
   AssistantCitation,
   ComposerCitation,
-  ChatAttachment as ContractChatAttachment,
   ChatFileAttachment,
   EnvironmentId,
   ModelSelection,
@@ -33,7 +31,6 @@ import type {
   ThreadContextRecord,
   ProviderInteractionMode,
   ProviderOptionSelection,
-  ProviderRuntimeSummary,
   ResolvedKeybindingsConfig,
   RuntimeMode,
   RuntimeRequestId,
@@ -47,7 +44,6 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
-  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
@@ -78,24 +74,15 @@ import {
 import { createPortal, flushSync } from "react-dom";
 import { ScientVoiceComposerControl } from "../../scient/voice/ScientVoiceComposerControl.tsx";
 import { mergeEffectiveProviderSkills } from "../../scient/skills/effectiveSkills.ts";
-import { resolveScientSkillListInput } from "../../scient/skills/scientSkillListInput.ts";
-import { scientSkillsInventory } from "../../scient/skills/scientSkillsState.ts";
-import { useEnvironmentQuery } from "../../state/query.ts";
+import { openComposerSkill, useScientComposerSkills } from "../../scient/skills/composerSkills.ts";
 import { applyVoiceTranscript } from "../../scient/voice/voiceComposerInsert.ts";
+import { ProviderOnboardingPicker } from "../../scient/providerConnection/ProviderOnboardingPicker.tsx";
 import {
-  ProviderLifecycleSetupSurface,
-  ProviderOnboardingPicker,
-} from "../../scient/providerConnection/ProviderOnboardingPicker.tsx";
-import {
-  activeProviderRuntimeUpdateOperation,
-  providerConnectionPresentation,
-  shouldShowProviderLifecycleSetupInComposer,
-} from "../../scient/providerConnection/providerConnectionPresentation.ts";
-import { ComposerProviderUpdateFooter } from "../../scient/providerConnection/ComposerProviderUpdateFooter.tsx";
-import {
-  currentOptimisticProviderValue,
-  type OptimisticProviderValue,
-} from "../../scient/providerConnection/optimisticProviderValue.ts";
+  useComposerProviderRuntimeUpdate,
+  useComposerProviderSetupRenderers,
+  useComposerProviderUpdateFooter,
+  useReconcileAntigravityComposerSelection,
+} from "../../scient/providerConnection/useComposerProviderConnection.tsx";
 import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
@@ -180,13 +167,15 @@ import {
   type ComposerBannerStackContent,
   type ComposerBannerStackItem,
 } from "./ComposerBannerStack";
-import { compressImageForStash, prepareImageForAttachment } from "../../lib/imageCompression";
+import { compressImageForStash } from "../../lib/imageCompression";
+import { stageComposerAttachmentBatch } from "./composerAttachmentStaging";
 import {
   fileAttachmentTooLargeMessage,
   formatAttachmentSize,
 } from "@t3tools/client-runtime/state/attachments";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
+  composerDraftAttachmentFacts,
   composerOtherFilesForPresentation,
   classifyComposerAttachmentFile,
   fileAttachmentCapabilityBlockReason,
@@ -285,8 +274,10 @@ import {
   usePullRequestList,
   type EnvironmentQueryTarget,
 } from "~/state/pullRequests";
+import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { useComposerModelPickerFork } from "./composerModelPickerFork";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import {
   type ComposerCommandItem,
@@ -1156,7 +1147,6 @@ import {
   getProviderSkillsForSlashMenu,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
-  scientManagedSkillReleaseKey,
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useDelayedStatus } from "../../hooks/useDelayedStatus";
@@ -1412,7 +1402,6 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   preserveComposerFocusOnPointerDown?: boolean;
   showSendWhileRunning?: boolean;
 
-  isEditingQueuedMessage: boolean;
   onSubmitMessage: React.MouseEventHandler<HTMLButtonElement>;
   onResume: () => void;
   onPreviousPendingQuestion: () => void;
@@ -1454,7 +1443,6 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         showSendWhileRunning={props.showSendWhileRunning ?? false}
 
-        isEditingQueuedMessage={props.isEditingQueuedMessage}
         onSubmitMessage={props.onSubmitMessage}
         onResume={props.onResume}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
@@ -1564,6 +1552,8 @@ export interface ChatComposerProps {
   activeThread: Thread | undefined;
   /** The routed server thread's shell, present before its detail loads. */
   activeThreadShell: ThreadShell | null;
+  /** Committed conversation messages, excluding drafts and queue admission previews. */
+  hasConversationMessages: boolean;
   /** Timeline messages including optimistic sends, for ArrowUp prompt recall. */
   promptHistoryMessages: ReadonlyArray<ChatMessage>;
   isServerThread: boolean;
@@ -1669,14 +1659,6 @@ export interface ChatComposerProps {
 
   // Queued runs strip rendered above the composer (v2 queue/steer).
   queuedRunsControl?: ReactNode;
-  // Queued-message edit mode: attachments already stored on the message being
-  // edited. Rendered in the attachment strip with a remove control; removal is
-  // client state in ChatView until the edit is saved.
-  editingQueuedAttachments: ReadonlyArray<{
-    readonly attachment: ContractChatAttachment;
-    readonly url: string | null;
-  }> | null;
-  onRemoveEditingQueuedAttachment: (attachmentId: string) => void;
 
   // Callbacks
   onCompactContext: () => void;
@@ -1836,8 +1818,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setThreadError,
     onExpandImage,
     onFileOpen,
-    editingQueuedAttachments,
-    onRemoveEditingQueuedAttachment,
   } = props;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
@@ -1847,7 +1827,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const shownSyncPhase = useDelayedStatus(composerDraftTargetKey, props.threadSyncPhase);
   const activeTasksProgress = shownSyncPhase === null ? props.activeTasksProgress : null;
   const activeTaskSteps = shownSyncPhase === null ? props.activeTaskSteps : null;
-  const isEditingQueuedMessage = editingQueuedAttachments !== null;
   // ------------------------------------------------------------------
   // Store subscriptions (prompt / images / terminal contexts)
   // ------------------------------------------------------------------
@@ -1930,16 +1909,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const openPrLink = useOpenPrLink(routeThreadRef);
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const previewFile = composerFiles.find((file) => file.id === previewFileId);
-  const scientSkills = useEnvironmentQuery(
-    scientSkillsInventory({
-      environmentId,
-      input: resolveScientSkillListInput({
-        routeKind,
-        threadId: activeThreadId,
-        projectId: activeProjectId,
-      }),
-    }),
-  ).data;
+  // SCIENT-FORK:START — Scient skill inventory for the composer
+  const scientSkills = useScientComposerSkills({
+    environmentId,
+    routeKind,
+    threadId: activeThreadId,
+    projectId: activeProjectId,
+  });
+  // SCIENT-FORK:END
   const composerContextActions = useMemo(
     () => ({
       environmentId,
@@ -1949,27 +1926,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       openFile: setPreviewFileId,
       openMention: (path: string) => useRightPanelStore.getState().openFile(routeThreadRef, path),
-      openSkill: (skill: ServerProviderSkill) => {
-        const releaseKey = scientManagedSkillReleaseKey(skill);
-        if (releaseKey === null) {
-          useRightPanelStore.getState().openFile(routeThreadRef, skill.path);
-          return;
-        }
-        const managedSkill = scientSkills?.skills.find(
-          (candidate) => candidate.releaseKey === releaseKey,
-        );
-        if (managedSkill?.path) {
-          useRightPanelStore.getState().openFile(routeThreadRef, managedSkill.path);
-          return;
-        }
-        useRightPanelStore.getState().openScient(
-          routeThreadRef,
-          scientSkillSurface({
-            releaseKey,
-            title: formatProviderSkillDisplayName(skill),
-          }),
-        );
-      },
+      // SCIENT-FORK:START — open a skill chip's file or Scient skill surface
+      openSkill: (skill: ServerProviderSkill) =>
+        openComposerSkill(skill, { routeThreadRef, scientSkills }),
+      // SCIENT-FORK:END
       expandVideo: (fileId: string) => {
         const file = composerFiles.find((candidate) => candidate.id === fileId);
         if (!file || !isVideoAttachment(file)) return;
@@ -2206,33 +2166,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const selectedInstanceId =
     selectedProviderEntry?.instanceId ?? NO_PROVIDER_MODEL_SELECTION.instanceId;
-  const [localRuntimeUpdate, setLocalRuntimeUpdate] =
-    useState<OptimisticProviderValue<ProviderRuntimeSummary> | null>(null);
-  const [preparingRuntimeUpdateInstanceId, setPreparingRuntimeUpdateInstanceId] =
-    useState<ProviderInstanceId | null>(null);
-  const optimisticRuntimeUpdate = selectedProviderEntry
-    ? currentOptimisticProviderValue(localRuntimeUpdate, selectedProviderEntry.snapshot)
-    : null;
-  const selectedProviderRuntime =
-    optimisticRuntimeUpdate ?? selectedProviderEntry?.snapshot.connection?.runtime;
-  const activeSelectedProviderRuntimeUpdate =
-    activeProviderRuntimeUpdateOperation(selectedProviderRuntime);
-  const selectedProviderIsUpdating =
-    preparingRuntimeUpdateInstanceId === selectedInstanceId ||
-    activeSelectedProviderRuntimeUpdate !== null;
-  const selectedProviderUpdateLabel = selectedProviderEntry
-    ? `Updating ${selectedProviderEntry.displayName}…`
-    : "Updating provider…";
-  const providerRuntimeUpdateSendDisabledReason = selectedProviderIsUpdating
-    ? `${selectedProviderEntry?.displayName ?? "Provider"} is updating.`
-    : null;
-  const getComposerModelDisabledReason = useCallback(
-    (instanceId: ProviderInstanceId, model: string) =>
-      instanceId === selectedInstanceId && providerRuntimeUpdateSendDisabledReason
-        ? providerRuntimeUpdateSendDisabledReason
-        : getModelDisabledReason(instanceId, model),
-    [getModelDisabledReason, providerRuntimeUpdateSendDisabledReason, selectedInstanceId],
-  );
+  // SCIENT-FORK:START — managed runtime updates and provider connection state
+  const providerRuntimeUpdate = useComposerProviderRuntimeUpdate({
+    selectedProviderEntry,
+    selectedInstanceId,
+    lockedProvider,
+    getModelDisabledReason,
+  });
+  const {
+    providerRuntimeUpdateSendDisabledReason,
+    getComposerModelDisabledReason,
+    selectedProviderNeedsConnection,
+    reconnectProviderEntry,
+  } = providerRuntimeUpdate;
+  // SCIENT-FORK:END
   const noProviderAvailable =
     selectedProviderEntry === undefined && multipleModelSelections === null;
   // Before the catalog arrives, every thread resolves to "no provider". Send
@@ -2243,22 +2190,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const showProviderUnavailable = noProviderAvailable && !providerCatalogPending;
   const resolvedCompactDisabledReason =
     compactDisabledReason ?? (noProviderAvailable ? "Compacting is unavailable right now" : null);
-  const selectedProviderNeedsConnection =
-    selectedProviderEntry !== undefined &&
-    shouldShowProviderLifecycleSetupInComposer(
-      selectedProviderEntry.snapshot,
-      selectedProviderRuntime,
-    );
-  const selectedProviderConnectionKind = providerConnectionPresentation(
-    selectedProviderEntry?.snapshot,
-  ).kind;
-  const reconnectProviderEntry =
-    lockedProvider !== null &&
-    selectedProviderEntry !== undefined &&
-    (selectedProviderConnectionKind === "not-connected" ||
-      selectedProviderConnectionKind === "connecting")
-      ? selectedProviderEntry
-      : undefined;
   // The driver kind follows the instance that will actually run the turn,
   // which can differ from the persisted selection when that selection is
   // disabled.
@@ -2285,34 +2216,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const hasStartedModelSession = activeThread
     ? threadShellHasStarted(props.activeThreadShell)
     : routeKind !== "draft";
-  useLayoutEffect(() => {
-    if (!selectedProviderEntry) return;
-    if (
-      composerDraft.activeProvider &&
-      composerDraft.activeProvider !== selectedProviderEntry.instanceId
-    )
-      return;
-    const source =
-      composerDraft.modelSelectionByProvider[selectedProviderEntry.instanceId] ??
-      fallbackModelSelection;
-    if (!source) return;
-    useComposerDraftStore.getState().reconcileAntigravityDraftSelection({
-      threadRef: composerDraftTarget,
-      provider: selectedProviderEntry.snapshot,
-      hasStartedSession: hasStartedModelSession,
-      fallbackSelection: fallbackModelSelection,
-      hiddenModels:
-        settings.providerModelPreferences[selectedProviderEntry.instanceId]?.hiddenModels,
-    });
-  }, [
+  // SCIENT-FORK:START — map historical Antigravity selections to live variants
+  useReconcileAntigravityComposerSelection({
     composerDraftTarget,
     selectedProviderEntry,
     hasStartedModelSession,
     fallbackModelSelection,
-    composerDraft.activeProvider,
-    composerDraft.modelSelectionByProvider,
-    settings.providerModelPreferences,
-  ]);
+    draftActiveProvider: composerDraft.activeProvider,
+    draftModelSelectionByProvider: composerDraft.modelSelectionByProvider,
+    providerModelPreferences: settings.providerModelPreferences,
+  });
+  // SCIENT-FORK:END
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadRef: composerDraftTarget,
@@ -2415,16 +2329,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => selectedProviderEntry?.models ?? [],
     [selectedProviderEntry],
   );
-  const isProviderSetupAvailable = useCallback(
-    (entry: ProviderInstanceEntry) => entry.enabled && entry.isAvailable,
-    [],
-  );
-  const renderProviderSetup = useCallback(
-    (entry: ProviderInstanceEntry) => (
-      <ProviderLifecycleSetupSurface environmentId={environmentId} entry={entry} />
-    ),
-    [environmentId],
-  );
+  // SCIENT-FORK:START — inline provider setup inside the model picker
+  const { isProviderSetupAvailable, renderProviderSetup } =
+    useComposerProviderSetupRenderers(environmentId);
+  // SCIENT-FORK:END
 
   const composerPromptInjectionState = useMemo(
     () => getComposerPromptInjectionState(prompt),
@@ -2535,36 +2443,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
+  // SCIENT-FORK:START — provider onboarding and managed runtime update footer
   const [isProviderOnboardingOpen, setIsProviderOnboardingOpen] = useState(false);
-  // The server stages an update while turns run and switches runtimes only
-  // once the provider is idle, so a running turn does not block starting one.
-  const providerUpdateDisabledReason =
-    environmentUnavailable !== null ? "Available when this environment reconnects." : undefined;
-  const renderProviderUpdateFooter = useCallback(
-    (entry: ProviderInstanceEntry) => (
-      <ComposerProviderUpdateFooter
-        key={entry.instanceId}
-        environmentId={environmentId}
-        entry={entry}
-        {...(preparingRuntimeUpdateInstanceId !== null &&
-        preparingRuntimeUpdateInstanceId !== entry.instanceId
-          ? { disabledReason: "Another provider update is being prepared." }
-          : providerUpdateDisabledReason
-            ? { disabledReason: providerUpdateDisabledReason }
-            : {})}
-        onPreparingChange={(isPreparing) => {
-          setPreparingRuntimeUpdateInstanceId(isPreparing ? entry.instanceId : null);
-        }}
-        onUpdateStarted={(provider) => {
-          const runtime = provider.connection?.runtime;
-          if (runtime) {
-            setLocalRuntimeUpdate({ baseProvider: entry.snapshot, value: runtime });
-          }
-        }}
-      />
-    ),
-    [environmentId, preparingRuntimeUpdateInstanceId, providerUpdateDisabledReason],
-  );
+  const renderProviderUpdateFooter = useComposerProviderUpdateFooter({
+    environmentId,
+    environmentUnavailable,
+    runtimeUpdate: providerRuntimeUpdate,
+  });
+  // SCIENT-FORK:END
 
   const isMobileViewport = useMediaQuery("max-sm");
   const {
@@ -2587,9 +2473,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     key: 0,
     active: false,
   });
-  const handleForkToSwitchProvider = useCallback(() => {
-    onForkConversation({ preserveComposerDraft: true });
-  }, [onForkConversation]);
+  const continueInNewChat = useComposerModelPickerFork({
+    hasConversationMessages: props.hasConversationMessages,
+    onForkConversation,
+  });
 
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
@@ -3200,8 +3087,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   // SCIENT-FORK:END
 
-  const showResumeAction =
-    canResume && !composerDraftHasUserContent(composerDraft) && !isEditingQueuedMessage;
+  const showResumeAction = canResume && !composerDraftHasUserContent(composerDraft);
   const collapsedComposerPrimaryActionDisabled =
     isSendBusy ||
     isSendDisabled ||
@@ -5674,17 +5560,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const hiddenRestingBlockIds = restingBlockDefs
     .slice(restingBlockDefs.length - restingHiddenBlockCount)
     .map((def) => def.id);
-  // SCIENT-FORK: Scient routes every "provider cannot run this turn" state
-  // through the onboarding picker, which subsumes upstream's plain
+  // SCIENT-FORK:START — Scient routes every "provider cannot run this turn"
+  // state through the onboarding picker, which subsumes upstream's plain
   // "No provider available" ComposerControl (this condition is a strict
   // superset of upstream's `showProviderUnavailable`). The model picker below
-  // is upstream's, with this fork's provider-setup/fork-switch affordances
+  // is upstream's, with this fork's provider-setup/new-chat affordances
   // re-applied.
-  const composerControls =
+  const continueInNewChatDisabled =
+    phase === "running" ||
+    isSendBusy ||
+    isConnecting ||
+    isPreparingWorktree ||
+    environmentUnavailable !== null;
+  const scientProviderOnboardingPicker =
     selectedProviderNeedsConnection || showProviderUnavailable || isProviderOnboardingOpen ? (
       <ProviderOnboardingPicker
         key={composerTargetKey(composerDraftTarget)}
         autoSelectReadyProvider={!hasStartedModelSession && lockedProvider === null}
+        {...(continueInNewChat ? { onContinueInNewChat: continueInNewChat } : {})}
+        continueInNewChatDisabled={continueInNewChatDisabled}
         compact={isComposerFooterCompact || composerControlsCollapsed}
         environmentId={environmentId}
         instanceEntries={providerInstanceEntries}
@@ -5697,121 +5591,120 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         onInstanceModelChange={onProviderModelSelect}
         onOpenProviderSetup={onOpenProviderSetup}
       />
-    ) : (
-      <>
-        {composerControlsCollapsed &&
-        restingControlsHost !== null &&
-        restingControlsHaveLeadingContext ? (
-          <ComposerControlSeparator
-            size="xs"
-            className="@max-[400px]/composer-surface:hidden"
-            data-resting-controls-separator="true"
-          />
-        ) : null}
-        <ProviderModelPicker
-          isComposerOwned
-          disabled={providerCatalogPending || isSendBusy}
-          {...(routeKind === "draft" && supportsMultipleModels
-            ? {
-                ...(multipleModelSelections !== null
-                  ? { selectedModels: multipleModelSelections }
-                  : {}),
-                onToggleModel: (instanceId: ProviderInstanceId, model: string) => {
-                  const current = multipleModelSelections ?? [selectedModelSelection];
-                  const matchesModel = (selection: ModelSelection) => {
-                    if (selection.instanceId !== instanceId) return false;
-                    const entry = providerInstanceEntries.find(
-                      (candidate) => candidate.instanceId === selection.instanceId,
-                    );
-                    const resolvedModel = resolveModelPickerSelectedModel({
-                      driverKind: entry?.driverKind,
-                      model: selection.model,
-                      options: modelOptionsByInstance.get(selection.instanceId) ?? [],
-                    });
-                    return (resolvedModel?.slug ?? selection.model) === model;
-                  };
-                  const exists = current.some(matchesModel);
-                  const next = exists
-                    ? current.filter((selection) => !matchesModel(selection))
-                    : [...current, createModelSelection(instanceId, model)];
-                  if (next.length > 1) {
-                    setMultipleModelSelections(next);
-                  } else {
-                    setMultipleModelSelections(null);
-                    const remaining = next[0] ?? selectedModelSelection;
-                    onProviderModelSelect(remaining.instanceId, remaining.model, {
-                      focusComposer: false,
-                    });
-                  }
-                },
-              }
-            : {})}
-          activeInstanceId={
-            providerCatalogPending
-              ? (activeThreadModelSelection?.instanceId ?? selectedInstanceId)
-              : selectedInstanceId
-          }
-          model={
-            providerCatalogPending
-              ? (activeThreadModelSelection?.model ?? selectedModelForPickerWithCustomFallback)
-              : selectedModelForPickerWithCustomFallback
-          }
-          lockedProvider={lockedProvider}
-          lockedContinuationGroupKey={lockedContinuationGroupKey}
-          instanceEntries={providerInstanceEntries}
-          keybindings={keybindings}
-          modelOptionsByInstance={modelOptionsByInstance}
-          size={composerControlsCollapsed ? "xs" : "sm"}
-          triggerClassName={
-            composerControlsCollapsed
-              ? cn(
-                  "min-w-13 shrink text-xs!",
-                  !showInlineRestingControls &&
-                    "@max-[640px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:w-0 @max-[640px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:flex-none",
-                )
-              : "-ms-2.5 min-w-13"
-          }
-          terminalOpen={terminalOpen}
-          open={isComposerModelPickerOpen}
-          {...(selectedProviderIsUpdating
-            ? {
-                statusLabel: selectedProviderUpdateLabel,
-                triggerAriaLabel: `${selectedProviderEntry?.displayName ?? "Provider"} update in progress`,
-              }
-            : {})}
-          instanceIndicatorBackground={
-            composerControlsCollapsed
-              ? "color-mix(in srgb, var(--chat-composer-glass-surface) var(--glass-opacity), transparent)"
-              : "var(--contrast-input)"
-          }
-          {...(composerProviderState.modelPickerIconClassName || composerControlsCollapsed
-            ? {
-                activeProviderIconClassName: cn(
-                  composerProviderState.modelPickerIconClassName,
-                  composerControlsCollapsed &&
-                    "fill-muted-foreground/70! text-muted-foreground/70! [&_path]:fill-muted-foreground/70! [&_rect]:fill-muted-foreground/70! [&_[data-opencode-hole]]:fill-transparent!",
-                ),
-              }
-            : {})}
-          onOpenChange={setIsComposerModelPickerOpen}
-          getModelDisabledReason={getComposerModelDisabledReason}
-          isProviderSetupAvailable={isProviderSetupAvailable}
-          renderProviderSetup={renderProviderSetup}
-          renderProviderFooter={renderProviderUpdateFooter}
-          onForkToSwitchProvider={handleForkToSwitchProvider}
-          forkToSwitchProviderDisabled={
-            phase === "running" ||
-            isSendBusy ||
-            isConnecting ||
-            isPreparingWorktree ||
-            environmentUnavailable !== null
-          }
-          onInstanceModelChange={(instanceId, model) => {
-            setMultipleModelSelections(null);
-            onProviderModelSelect(instanceId, model);
-          }}
-          onOpenProviderSetup={onOpenProviderSetup}
+    ) : null;
+  const scientModelPickerProps = {
+    ...providerRuntimeUpdate.modelPickerUpdateStatusProps,
+    isProviderSetupAvailable,
+    renderProviderSetup,
+    renderProviderFooter: renderProviderUpdateFooter,
+    ...(continueInNewChat ? { onContinueInNewChat: continueInNewChat } : {}),
+    continueInNewChatDisabled,
+  };
+  // SCIENT-FORK:END
+  const composerControls = scientProviderOnboardingPicker ?? (
+    <>
+      {composerControlsCollapsed &&
+      restingControlsHost !== null &&
+      restingControlsHaveLeadingContext ? (
+        <ComposerControlSeparator
+          size="xs"
+          className="@max-[400px]/composer-surface:hidden"
+          data-resting-controls-separator="true"
         />
+      ) : null}
+      <ProviderModelPicker
+        compact={false}
+        isComposerOwned
+        disabled={providerCatalogPending || isSendBusy}
+        {...(routeKind === "draft" && supportsMultipleModels
+          ? {
+              ...(multipleModelSelections !== null
+                ? { selectedModels: multipleModelSelections }
+                : {}),
+              onToggleModel: (instanceId: ProviderInstanceId, model: string) => {
+                const current = multipleModelSelections ?? [selectedModelSelection];
+                const matchesModel = (selection: ModelSelection) => {
+                  if (selection.instanceId !== instanceId) return false;
+                  const entry = providerInstanceEntries.find(
+                    (entry) => entry.instanceId === selection.instanceId,
+                  );
+                  const resolvedModel = resolveModelPickerSelectedModel({
+                    driverKind: entry?.driverKind,
+                    model: selection.model,
+                    options: modelOptionsByInstance.get(selection.instanceId) ?? [],
+                  });
+                  return (resolvedModel?.slug ?? selection.model) === model;
+                };
+                const exists = current.some(matchesModel);
+                const next = exists
+                  ? current.filter((selection) => !matchesModel(selection))
+                  : [...current, createModelSelection(instanceId, model)];
+                if (next.length > 1) {
+                  setMultipleModelSelections(next);
+                } else {
+                  setMultipleModelSelections(null);
+                  const remaining = next[0] ?? selectedModelSelection;
+                  onProviderModelSelect(remaining.instanceId, remaining.model, {
+                    focusComposer: false,
+                  });
+                }
+              },
+            }
+          : {})}
+        activeInstanceId={
+          providerCatalogPending
+            ? (activeThreadModelSelection?.instanceId ?? selectedInstanceId)
+            : selectedInstanceId
+        }
+        model={
+          providerCatalogPending
+            ? (activeThreadModelSelection?.model ?? selectedModelForPickerWithCustomFallback)
+            : selectedModelForPickerWithCustomFallback
+        }
+        lockedProvider={lockedProvider}
+        lockedContinuationGroupKey={lockedContinuationGroupKey}
+        instanceEntries={providerInstanceEntries}
+        keybindings={keybindings}
+        modelOptionsByInstance={modelOptionsByInstance}
+        size={composerControlsCollapsed ? "xs" : "sm"}
+        triggerClassName={
+          composerControlsCollapsed
+            ? cn(
+                "min-w-13 shrink text-xs!",
+                !showInlineRestingControls &&
+                  "@max-[640px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:w-0 @max-[640px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:flex-none",
+              )
+            : "-ms-2.5 min-w-13"
+        }
+        terminalOpen={terminalOpen}
+        open={isComposerModelPickerOpen}
+        instanceIndicatorBackground={
+          composerControlsCollapsed
+            ? "color-mix(in srgb, var(--chat-composer-glass-surface) var(--glass-opacity), transparent)"
+            : "var(--contrast-input)"
+        }
+        {...(composerProviderState.modelPickerIconClassName || composerControlsCollapsed
+          ? {
+              activeProviderIconClassName: cn(
+                composerProviderState.modelPickerIconClassName,
+                composerControlsCollapsed &&
+                  "fill-muted-foreground/70! text-muted-foreground/70! [&_path]:fill-muted-foreground/70! [&_rect]:fill-muted-foreground/70! [&_[data-opencode-hole]]:fill-transparent!",
+              ),
+            }
+          : {})}
+        onOpenChange={setIsComposerModelPickerOpen}
+        getModelDisabledReason={getComposerModelDisabledReason}
+        // SCIENT-FORK:START — provider setup, update and new-chat affordances
+        {...scientModelPickerProps}
+        // SCIENT-FORK:END
+        onInstanceModelChange={(instanceId, model) => {
+          setMultipleModelSelections(null);
+          onProviderModelSelect(instanceId, model);
+        }}
+        onOpenProviderSetup={onOpenProviderSetup}
+      />
+
+      <>
         {restingBlockDefs.map((def, index) => {
           const hidden = index >= restingBlockDefs.length - restingHiddenBlockCount;
           return (
@@ -5858,7 +5751,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           />
         </div>
       </>
-    );
+    </>
+  );
   const showTasksTab =
     !hasBannerItems &&
     !showComposerTopDrawer &&
@@ -5961,26 +5855,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Callbacks: attachments
   // ------------------------------------------------------------------
-  const countReservedAttachments = () => {
+  const otherQuestionAttachmentKeys = () => {
     const questionRequest = pendingUserInputs[0];
-    const otherQuestionKeys =
-      questionAttachmentTarget && questionRequest && activeThreadId
-        ? questionRequest.questions
-            .map((question) =>
-              questionAttachmentDraftId(
-                environmentId,
-                activeThreadId,
-                questionRequest.requestId,
-                question.id,
-              ),
-            )
-            .filter((key) => key !== questionAttachmentTarget)
-        : [];
+    return questionAttachmentTarget && questionRequest && activeThreadId
+      ? questionRequest.questions
+          .map((question) =>
+            questionAttachmentDraftId(
+              environmentId,
+              activeThreadId,
+              questionRequest.requestId,
+              question.id,
+            ),
+          )
+          .filter((key) => key !== questionAttachmentTarget)
+      : [];
+  };
+  const countReservedAttachments = () => {
     return (
       composerImagesRef.current.length +
       composerFilesRef.current.length +
       (pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0) +
-      countQuestionAttachments(otherQuestionKeys)
+      countQuestionAttachments(otherQuestionAttachmentKeys())
     );
   };
   /** Resolves true when at least one chip was inserted for the accepted attachments. */
@@ -6099,32 +5994,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
     }
     setThreadError(threadId, error);
-    let insertedAny = false;
-    if (acceptedFiles.length > 0) {
-      // Only files the draft actually took get a chip; a duplicate is deduped by the store
-      // and a chip for it would point at nothing.
-      const storedIds = new Set(addComposerFilesToDraft(acceptedFiles));
-      const storedFiles = acceptedFiles.filter((file) => storedIds.has(file.id));
-      if (storedFiles.length > 0) {
-        insertedAny = insertAttachmentReferences(
-          storedFiles.map(fileContextReference),
-          options?.selection,
-        );
-      }
-      if (options?.source?._tag === "pasted-text" && storedFiles.length > 0) {
-        const attached = storedFiles[0]!;
-        toastManager.add({
-          type: "info",
-          title: `Large paste attached as ${attached.name}`,
-          description: `${formatAttachmentSize(attached.sizeBytes)} · Use ${
-            isMacPlatform(navigator.platform) ? "⌘⇧V" : "Ctrl+Shift+V"
-          } to keep a large paste inline.`,
-          data: { hideCopyButton: true },
-        });
-      }
-    }
-    if (acceptedImages.length === 0) return insertedAny;
-
+    // Reserve all async image slots before conversion. Files are staged only
+    // with the admitted batch, so a byte-limit rejection leaves the draft intact.
     pendingImageCompressionsRef.current.set(
       attachmentTargetKey,
       pendingCount + acceptedImages.length,
@@ -6132,60 +6003,83 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (questionAttachmentTarget)
       changeQuestionAttachmentPreparation(questionAttachmentTarget, acceptedImages.length);
     try {
-      const nextImages: ComposerImageAttachment[] = [];
-      let compressionError: string | null = null;
-      for (const file of acceptedImages) {
-        // Images over the wire cap are downscaled to fit rather than
-        // refused; files already within it pass through byte-for-byte.
-        const compressed = await prepareImageForAttachment(
-          file,
-          PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
-        );
-        if (!compressed.ok) {
-          compressionError =
-            compressed.reason === "unreadable"
-              ? `'${file.name}' could not be read as an image.`
-              : `'${file.name}' is too large to attach, even after compression.`;
-          continue;
-        }
-        const attachmentFile = compressed.file;
-        const previewUrl = URL.createObjectURL(attachmentFile);
-        nextImages.push({
-          type: "image",
-          id: randomUUID(),
-          name: attachmentFile.name || "image",
-          mimeType: attachmentFile.type,
-          sizeBytes: attachmentFile.size,
-          previewUrl,
-          file: attachmentFile,
-        });
-      }
-      if (
-        questionAttachmentTarget &&
-        !useQuestionAttachmentPreparation.getState().counts[questionAttachmentTarget]
-      ) {
-        for (const image of nextImages) URL.revokeObjectURL(image.previewUrl);
-        return false;
-      }
-      const storedImageIds = new Set(
-        nextImages.length === 1 && nextImages[0]
-          ? addComposerImage(nextImages[0])
-          : nextImages.length > 1
-            ? addComposerImagesToDraft(nextImages)
-            : [],
-      );
-      const storedImages = nextImages.filter((image) => storedImageIds.has(image.id));
-      if (storedImages.length > 0 && imageAttachmentsGetChips) {
-        insertedAny =
-          insertAttachmentReferences(storedImages.map(imageContextReference)) || insertedAny;
-      }
-      // Only failures are reported here. Success must not pass `null`: by
-      // now other work (a failed send, an overlapping paste) may have set a
-      // thread error this call knows nothing about, and clearing it would
-      // swallow that message.
-      if (compressionError !== null) {
-        setThreadError(threadId, compressionError);
-      }
+      const staged = await stageComposerAttachmentBatch({
+        images: acceptedImages,
+        files: acceptedFiles,
+        readExisting: () => {
+          const targetDraft = getComposerDraft(attachmentDraftTarget) ?? {
+            images: [],
+            files: [],
+            persistedAttachments: [],
+          };
+          return [
+            ...composerDraftAttachmentFacts(targetDraft),
+            ...otherQuestionAttachmentKeys().flatMap((key) => {
+              const draft = getComposerDraft(key);
+              return draft
+                ? composerDraftAttachmentFacts(draft).map((attachment) => ({
+                    id: attachment.id,
+                    type: attachment.type,
+                    mimeType: attachment.mimeType,
+                    sizeBytes: attachment.sizeBytes,
+                  }))
+                : [];
+            }),
+          ].filter((attachment) => !replacedReattachMarkerIds.has(attachment.id));
+        },
+        stillWanted: () =>
+          acceptedImages.length === 0 ||
+          !questionAttachmentTarget ||
+          Boolean(useQuestionAttachmentPreparation.getState().counts[questionAttachmentTarget]),
+        commit: ({ images, files }) => {
+          let insertedAny = false;
+          if (files.length > 0) {
+            const storedIds = new Set(addComposerFilesToDraft([...files]));
+            const storedFiles = files.filter((file) => storedIds.has(file.id));
+            if (storedFiles.length > 0) {
+              insertedAny = insertAttachmentReferences(
+                storedFiles.map(fileContextReference),
+                options?.selection,
+              );
+            }
+            if (options?.source?._tag === "pasted-text" && storedFiles.length > 0) {
+              const attached = storedFiles[0]!;
+              toastManager.add({
+                type: "info",
+                title: `Large paste attached as ${attached.name}`,
+                description: `${formatAttachmentSize(attached.sizeBytes)} · Use ${
+                  isMacPlatform(navigator.platform) ? "⌘⇧V" : "Ctrl+Shift+V"
+                } to keep a large paste inline.`,
+                data: { hideCopyButton: true },
+              });
+            }
+          }
+          const nextImages: ComposerImageAttachment[] = images.map((file) => ({
+            type: "image",
+            id: randomUUID(),
+            name: file.name || "image",
+            mimeType: file.type,
+            sizeBytes: file.size,
+            previewUrl: URL.createObjectURL(file),
+            file,
+          }));
+          const storedImageIds = new Set(
+            nextImages.length === 1 && nextImages[0]
+              ? addComposerImage(nextImages[0])
+              : nextImages.length > 1
+                ? addComposerImagesToDraft(nextImages)
+                : [],
+          );
+          const storedImages = nextImages.filter((image) => storedImageIds.has(image.id));
+          if (storedImages.length > 0 && imageAttachmentsGetChips) {
+            insertedAny =
+              insertAttachmentReferences(storedImages.map(imageContextReference)) || insertedAny;
+          }
+          return insertedAny;
+        },
+      });
+      if (staged.error !== null) setThreadError(threadId, staged.error);
+      return staged.inserted;
     } finally {
       if (questionAttachmentTarget)
         changeQuestionAttachmentPreparation(questionAttachmentTarget, -acceptedImages.length);
@@ -6197,7 +6091,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         pendingImageCompressionsRef.current.delete(attachmentTargetKey);
       }
     }
-    return insertedAny;
   };
 
   /**
@@ -7251,42 +7144,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               {!isComposerCollapsedMobile &&
                 !isComposerApprovalState &&
                 pendingUserInputs.length === 0 &&
-                editingQueuedAttachments !== null &&
-                editingQueuedAttachments.length > 0 && (
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    {editingQueuedAttachments.map(({ attachment, url }) => (
-                      <div
-                        key={attachment.id}
-                        className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
-                      >
-                        {attachment.type === "image" && url ? (
-                          <img
-                            src={url}
-                            alt={attachment.name}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center px-1 text-center text-3xs text-secondary-label">
-                            {attachment.name}
-                          </div>
-                        )}
-                        <Button
-                          variant="media-close"
-                          size="icon-xs"
-                          className="absolute right-1 top-1"
-                          onClick={() => onRemoveEditingQueuedAttachment(attachment.id)}
-                          aria-label={`Remove ${attachment.name}`}
-                        >
-                          <XIcon />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-              {!isComposerCollapsedMobile &&
-                !isComposerApprovalState &&
-                pendingUserInputs.length === 0 &&
                 (uncommittedSnapShotIds.length > 0 ||
                   composerVideos.length > 0 ||
                   expandedComposerImages.length > 0) && (
@@ -7918,7 +7775,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     preserveComposerFocusOnPointerDown={isMobileViewport || isComposerResting}
                     showSendWhileRunning
 
-                    isEditingQueuedMessage={isEditingQueuedMessage}
                     onSubmitMessage={handleSubmitMessage}
                     onResume={onResume}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}

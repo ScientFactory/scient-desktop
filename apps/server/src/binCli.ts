@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 import { Argument, Command } from "effect/unstable/cli";
 import * as CliError from "effect/unstable/cli/CliError";
 
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as NetService from "@t3tools/shared/Net";
 import packageJson from "../package.json" with { type: "json" };
 import { acpMcpBridgeCommand, acpMcpCallCommand } from "./cli/acpMcpBridge.ts";
@@ -53,7 +54,10 @@ const connectUnavailableCommand = Command.make("connect", {
   ),
 );
 
-export const makeCli = ({ cloudEnabled = hasCloudPublicConfig() } = {}) =>
+export const makeCli = ({
+  cloudEnabled = hasCloudPublicConfig(),
+  serviceEnabled = !SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled,
+} = {}) =>
   Command.make("t3", { ...sharedServerCommandFlags }).pipe(
     Command.withDescription("Run the Scient server."),
     Command.withHandler((flags) => runServerCommand(flags)),
@@ -66,14 +70,20 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig() } = {}) =>
       pairCommand,
       authCommand,
       projectCommand,
-      serviceCommand,
-      updateCommand,
-      uninstallCommand,
-      serviceLauncherCommand,
+      // Inherited service and standalone-install lifecycle remains dormant in
+      // Scient. Desktop updates use the owned desktop updater.
+      ...(serviceEnabled
+        ? [
+            serviceCommand,
+            servicePreflightCommand,
+            updateCommand,
+            uninstallCommand,
+            serviceLauncherCommand,
+          ]
+        : []),
       claudeHistoryCommand,
       sshHelperCommand,
 
-      servicePreflightCommand,
       themeCommand,
       traceCommand,
       triageCommand,

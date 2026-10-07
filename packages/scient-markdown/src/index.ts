@@ -36,6 +36,7 @@ export { reconcileMarkdown, type MarkdownReconciliation } from "./reconciliation
 export {
   MARKDOWN_FRONT_MATTER_EXTENSIONS,
   inspectMarkdownDocument,
+  markdownProseTextSpans,
   mermaidSourcesInMarkdown,
   rewriteMarkdownImageDestinations,
   resolveMarkdownDocumentRelativePath,

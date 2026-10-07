@@ -1,7 +1,10 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ServerConfig from "../config.ts";
 import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  CommandId,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -36,10 +39,21 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as EffectWorker from "./EffectWorker.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
+import * as ProviderTurnControl from "./ProviderTurnControlService.ts";
+import * as CheckpointRollback from "./CheckpointRollbackService.ts";
+import * as RunFinalization from "./RunFinalizationService.ts";
+import * as RuntimeRequest from "./RuntimeRequestService.ts";
+import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as ResourceCleanup from "./ResourceCleanupService.ts";
+import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
 
-it("does not commit running state when inherited background routing cannot be read", async () => {
+it("keeps inherited background routing failure retryable without committing running state", async () => {
   const threadId = ThreadId.make("thread_provider_turn_start_projection_failure");
   const runId = RunId.make("run_provider_turn_start_projection_failure");
   const attemptId = RunAttemptId.make("attempt_provider_turn_start_projection_failure");
@@ -91,6 +105,10 @@ it("does not commit running state when inherited background routing cannot be re
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
+        ServerSettings.layerTest(),
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
@@ -136,7 +154,7 @@ it("does not commit running state when inherited background routing cannot be re
 
   await Effect.gen(function* () {
     const error = yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2)
-      .start({ threadId, runId })
+      .start({ threadId, runId, willRetry: true })
       .pipe(Effect.flip);
 
     expect(error._tag).toBe("ProviderTurnStartError");
@@ -452,6 +470,10 @@ function makeLocalCommandHarness(input: {
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
+        ServerSettings.layerTest(),
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
           prepareProviderHandoff: () => Effect.die("history read must fail first"),
         }),
@@ -497,6 +519,9 @@ function makeLocalCommandHarness(input: {
     ),
   );
   return {
+    layer,
+    threadId,
+    runId,
     open,
     writeIfRunCurrent,
     startRootRun,
@@ -691,15 +716,33 @@ effectIt.effect(
         historyReadFailureAfterFallback: new Error("database unavailable"),
       });
 
-      const error = yield* harness.start.pipe(Effect.flip);
+      const error = yield* harness.startWithRetry.pipe(Effect.flip);
 
-      // The provider succeeded; the failing stage is the projection read, so
-      // the run is not failed as a provider error on the last attempt.
+      // The typed store failure stays retryable until the worker's final attempt.
       expect(error._tag).toBe("ProviderTurnStartError");
       expect((error.cause as { _tag?: string } | undefined)?._tag).toBe("ProjectionStoreReadError");
       expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
       expect(harness.projection().runs.at(-1)?.status).toBe("starting");
       expect(harness.events).toEqual([]);
+    }),
+);
+
+effectIt.effect(
+  "terminalizes the final portable-resume history failure without provider dispatch",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        historyReadFailureAfterFallback: new Error("database unavailable"),
+      });
+      yield* harness.start;
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+      expect(harness.projection().runs.at(-1)).toMatchObject({ status: "failed", startedAt: null });
+      expect(harness.projection().attempts[0]).toMatchObject({ status: "failed", startedAt: null });
+      expect(harness.projection().nodes[0]).toMatchObject({ status: "failed", startedAt: null });
+      expect(harness.projection().turnItems).toMatchObject([
+        { type: "error", title: "Provider history could not be prepared", status: "failed" },
+      ]);
     }),
 );
 
@@ -802,3 +845,80 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+effectIt.effect("a stale outbox start cannot execute the newer retry attempt", () =>
+  Effect.gen(function* () {
+    const h = makeLocalCommandHarness({
+      text: "Retained queued retry",
+      openFailure: new Error("Controlled native open failure"),
+    });
+    const executorLayer = EffectWorker.executorLayer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          h.layer,
+          Layer.mock(ResourceCleanup.ResourceCleanupService)({}),
+          Layer.mock(CheckpointRollback.CheckpointRollbackServiceV2)({}),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+          Layer.mock(ProviderTurnControl.ProviderTurnControlServiceV2)({}),
+          Layer.mock(RunFinalization.RunFinalizationService)({}),
+          Layer.mock(RuntimeRequest.RuntimeRequestServiceV2)({}),
+          Layer.mock(ThreadTitleRegeneration.ThreadTitleRegenerationService)({}),
+          Layer.mock(ThreadManagement.ThreadManagementService)({}),
+          Layer.mock(ConversationForkService)({}),
+          ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
+            Layer.provide(NodeServices.layer),
+          ),
+          ServerSettings.layerTest(),
+        ),
+      ),
+    );
+    const timestamp = DateTime.formatIso(yield* DateTime.now);
+    const stale: EffectOutbox.OrchestrationEffectV2 = {
+      id: "effect:queued:stale-attempt",
+      commandId: CommandId.make("command:queued:stale-attempt"),
+      threadId: h.threadId,
+      request: {
+        type: "provider-turn.start",
+        runId: h.runId,
+        expectedAttemptId: RunAttemptId.make("failed-predecessor-attempt"),
+      },
+      status: "running",
+      attemptCount: 1,
+      availableAt: timestamp,
+      leaseOwner: "fixture-worker",
+      leaseExpiresAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null,
+      lastError: null,
+    };
+    yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      yield* executor.execute(stale, { willRetry: false });
+      expect(h.open).not.toHaveBeenCalled();
+      expect(h.tryHandlePromptCommand).not.toHaveBeenCalled();
+      expect(h.writeIfRunCurrent).not.toHaveBeenCalled();
+      expect(h.startRootRun).not.toHaveBeenCalled();
+      expect(h.projection().runs.at(-1)).toMatchObject({
+        status: "starting",
+        activeAttemptId: h.attemptId,
+      });
+      // The matching new attempt still follows the real startup path and owns
+      // its own failure receipt; the fence does not block legitimate Retry.
+      yield* executor.execute(
+        {
+          ...stale,
+          id: "effect:queued:current-attempt",
+          request: { type: "provider-turn.start", runId: h.runId, expectedAttemptId: h.attemptId },
+        },
+        { willRetry: false },
+      );
+      expect(h.open).toHaveBeenCalledOnce();
+      expect(h.writeIfRunCurrent).toHaveBeenCalled();
+      expect(h.projection().runs.at(-1)).toMatchObject({
+        status: "failed",
+        activeAttemptId: h.attemptId,
+      });
+    }).pipe(Effect.provide(executorLayer));
+  }),
+);

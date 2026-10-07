@@ -1,3 +1,4 @@
+import type { NativeModelCapacityOwner } from "./scient-fork/NativeModelContextWindow.ts";
 import {
   NodeId,
   CommandId,
@@ -31,6 +32,10 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { ProviderAdapterV2Event } from "./ProviderAdapter.ts";
 import { makeProviderFailureTurnItem } from "./ProviderFailure.ts";
+import {
+  AttachmentReservationReconciliation,
+  reconcileReservationsBestEffort,
+} from "./AttachmentReservationReconciliation.ts";
 
 export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEventNormalizeError>()(
   "ProviderEventNormalizeError",
@@ -212,6 +217,7 @@ export interface ProviderEventIngestorV2Shape {
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2DomainEvent>, ProviderEventIngestorV2Error>;
   readonly ingestNormalized: (
     input: ProviderEventIngestInput & {
+      readonly nativeModelCapacityOwner?: NativeModelCapacityOwner;
       /**
        * Atomically reject mutable provider state emitted by an attempt that
        * lost ownership while the adapter event was in flight.
@@ -257,6 +263,7 @@ export const layer: Layer.Layer<
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const analytics = yield* ProviderTurnAnalytics;
+    const reconciliation = yield* AttachmentReservationReconciliation;
     const completedTurnAnalytics = new Set<string>();
 
     const makeDomainEvent = (
@@ -349,6 +356,9 @@ export const layer: Layer.Layer<
                 payload: input.event.appThread,
               }),
             ];
+          case "authentication.invalidated":
+            // Private manager control event, never part of canonical run history.
+            return [];
           case "provider_session.updated":
             return [
               yield* makeDomainEvent(input, {
@@ -364,7 +374,16 @@ export const layer: Layer.Layer<
                 payload: input.event.providerThread,
               }),
             ];
-          case "provider_turn.updated":
+          case "provider_turn.updated": {
+            const turn = input.event.providerTurn;
+            const usage = turn.tokenUsage;
+            // Keep raw adapter reports intact; invalid Codex capacity is unknown canonically.
+            const providerTurn =
+              input.event.driver === "codex" &&
+              usage?.maxTokens != null &&
+              (!Number.isFinite(usage.maxTokens) || usage.maxTokens < 0)
+                ? { ...turn, tokenUsage: { ...usage, maxTokens: null } }
+                : turn;
             return [
               ...(["completed", "interrupted", "failed", "cancelled"].includes(
                 input.event.providerTurn.status,
@@ -378,10 +397,11 @@ export const layer: Layer.Layer<
               yield* makeDomainEvent(input, {
                 type: "provider-turn.updated",
                 ...(input.event.threadId === undefined ? {} : { threadId: input.event.threadId }),
-                payload: input.event.providerTurn,
+                payload: providerTurn,
                 nodeId: input.event.providerTurn.nodeId,
               }),
             ];
+          }
           case "node.updated":
             return [
               yield* makeDomainEvent(input, {
@@ -538,11 +558,26 @@ export const layer: Layer.Layer<
               ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
               threadId: input.threadId,
               ...input.writeIfRunCurrent,
+              ...(input.nativeModelCapacityOwner === undefined
+                ? {}
+                : { nativeModelCapacityOwner: input.nativeModelCapacityOwner }),
               events,
             })
             .pipe(Effect.mapError(mapWriteError));
           return result.storedEvents;
         }).pipe(
+          Effect.tap((storedEvents) =>
+            reconcileReservationsBestEffort(
+              storedEvents.flatMap(({ event }) =>
+                event.type === "message.updated"
+                  ? event.payload.attachments.map((a) => a.id)
+                  : event.type === "turn-item.updated" && event.payload.type === "assistant_message"
+                    ? (event.payload.attachments ?? []).map((a) => a.id)
+                    : [],
+              ),
+              reconciliation,
+            ),
+          ),
           Effect.tap((storedEvents) =>
             Effect.gen(function* () {
               if (storedEvents.length === 0 || input.event.type !== "provider_turn.updated") return;

@@ -1,6 +1,6 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
-import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts";
+import { CommandId, type ChatAttachment, type OrchestrationV2Command } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
@@ -11,6 +11,8 @@ import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as AttachmentClaims from "./AttachmentClaims.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import { reconcileReservationsBestEffort } from "./AttachmentReservationReconciliation.ts";
+import { rejectThreadCommandDuringClone } from "./scient-fork/ThreadDispatchCloneGuard.ts";
 
 // These dispatcher failures occur in receipt validation or planning, before
 // commitCommand. Generic dispatch errors can follow a commit and remain uncertain.
@@ -31,27 +33,9 @@ function dispatchWasNotAccepted(
 }
 const isOrchestratorError = Schema.is(Orchestrator.OrchestratorV2Error);
 
-/** Admission is the committed command's decision, including when its receipt is replayed. */
-export function dispatchCommandReceipt(
-  command: OrchestrationV2Command,
-  result: Orchestrator.OrchestratorV2DispatchResult,
-) {
-  if (command.type !== "message.dispatch") return { sequence: result.sequence };
-  const queued = result.storedEvents.some(
-    ({ event }) =>
-      event.type === "run.created" &&
-      event.payload.userMessageId === command.messageId &&
-      event.payload.status === "queued",
-  );
-  return {
-    sequence: result.sequence,
-    queued,
-    submission: {
-      submissionId: command.messageId,
-      outcome: queued ? ("queued" as const) : ("sent" as const),
-    },
-  };
-}
+// SCIENT-FORK:START — the queued/sent admission receipt lives in scient-fork.
+export { dispatchCommandReceipt } from "./scient-fork/MessageAdmissionReceipt.ts";
+// SCIENT-FORK:END
 
 const releaseUnusedClaims = Effect.fn("ThreadMessageIntake.releaseUnusedClaims")(function* (
   claimedPaths: ReadonlyArray<string>,
@@ -76,6 +60,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
   command: OrchestrationV2Command,
 ) {
   const threads = yield* ThreadManagement.ThreadManagementService;
+  // SCIENT-FORK:START — no new thread or turn while the project clone runs or failed.
   if (command.type === "thread.create" || command.type === "message.dispatch") {
     const projectId =
       command.type === "thread.create"
@@ -83,28 +68,31 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
         : (yield* threads.getThreadShell(command.threadId))?.projectId;
     if (projectId !== undefined) {
       const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
-      yield* ProjectCloneTracker.rejectCommandsDuringClone(tracker, {
-        type: "thread.create",
-        projectId,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new Orchestrator.OrchestratorCommandRejectedError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause,
-            }),
-        ),
-      );
+      yield* rejectThreadCommandDuringClone(tracker, command, projectId);
     }
   }
+  // SCIENT-FORK:END
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
     const incomingByQuestionId = command.attachmentsByQuestionId;
     yield* AttachmentClaims.validateAttachmentLimits(Object.values(incomingByQuestionId).flat());
+    if (
+      Object.values(incomingByQuestionId)
+        .flat()
+        .some((attachment) => !AttachmentClaims.attachmentIsPendingUpload(attachment))
+    ) {
+      return yield* new AttachmentClaims.AttachmentClaimError({
+        message: "Question attachment must be a pending upload.",
+      });
+    }
     // Claims accumulate across questions, so all of preparation shares one
     // rollback boundary: any failure before dispatch removes every new copy.
     const claimedPaths: string[] = [];
+    const pinReleases: Array<Effect.Effect<void>> = [];
+    const claims: AttachmentClaims.ClaimedAttachments[] = [];
+    const releasePins = Effect.suspend(() =>
+      Effect.forEach(pinReleases, (release) => release, { discard: true }),
+    );
     const prepared = yield* Effect.gen(function* () {
       const attachmentsByQuestionId: import("@t3tools/contracts").UserInputAttachments = {};
       for (const [questionId, attachments] of Object.entries(incomingByQuestionId)) {
@@ -113,6 +101,8 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
           attachments,
         });
         claimedPaths.push(...claimed.claimedPaths);
+        pinReleases.push(claimed.releasePins);
+        claims.push(claimed);
         Object.defineProperty(attachmentsByQuestionId, questionId, {
           value: claimed.attachments,
           enumerable: true,
@@ -127,8 +117,24 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
           (cause) => new AttachmentClaims.AttachmentClaimError({ message: cause.issue }),
         ),
       );
+      yield* Effect.forEach(
+        claims,
+        (claim) =>
+          claim.bindReceipt({
+            kind: "command",
+            threadId: command.threadId,
+            commandId: command.commandId,
+            commandType: command.type,
+            target: { type: "question", requestId: command.requestId },
+          }),
+        { discard: true },
+      );
       return { answers, attachmentsByQuestionId };
-    }).pipe(Effect.onError(() => AttachmentClaims.releaseClaimedAttachments(claimedPaths)));
+    }).pipe(
+      Effect.onError(() =>
+        AttachmentClaims.releaseClaimedAttachments(claimedPaths).pipe(Effect.andThen(releasePins)),
+      ),
+    );
     return yield* threads
       .dispatch({
         ...command,
@@ -136,6 +142,11 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
         attachmentsByQuestionId: prepared.attachmentsByQuestionId,
       })
       .pipe(
+        Effect.onExit(() =>
+          reconcileReservationsBestEffort(
+            claims.flatMap((claim) => claim.attachments.map((a) => a.id)),
+          ),
+        ),
         Effect.tap((result) => {
           // A replayed receipt reports the first attempt's answer, so this
           // attempt's copies go unreferenced and are released. The resolved
@@ -158,12 +169,14 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
                     ? []
                     : Object.values(item.questionAnswer.attachmentsByQuestionId).flat(),
                 ),
-              )
+              ).pipe(Effect.andThen(releasePins))
             : Effect.void;
         }),
         Effect.tapError((error) =>
           dispatchWasNotAccepted(error)
-            ? AttachmentClaims.releaseClaimedAttachments(claimedPaths)
+            ? AttachmentClaims.releaseClaimedAttachments(claimedPaths).pipe(
+                Effect.andThen(releasePins),
+              )
             : Effect.void,
         ),
       );
@@ -176,6 +189,16 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
   const claimed = yield* AttachmentClaims.claimPendingAttachments({
     threadId: command.threadId,
     attachments: command.attachments ?? [],
+  });
+  yield* claimed.bindReceipt({
+    kind: "command",
+    threadId: command.threadId,
+    commandId: command.commandId,
+    commandType: command.type,
+    target:
+      command.type === "message.dispatch"
+        ? { type: "message", messageId: command.messageId }
+        : { type: "run", runId: command.runId },
   });
   return yield* threads
     .dispatch({
@@ -192,17 +215,26 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
         : {}),
     })
     .pipe(
+      Effect.onExit(() => reconcileReservationsBestEffort(claimed.attachments.map((a) => a.id))),
       Effect.tap((result) =>
         releaseUnusedClaims(
           claimed.claimedPaths,
           result.storedEvents.flatMap(({ event }) =>
             event.type === "message.updated" ? event.payload.attachments : [],
           ),
+        ).pipe(
+          Effect.andThen(
+            result.storedEvents.some(({ event }) => event.type === "message.updated")
+              ? claimed.releasePins
+              : Effect.void,
+          ),
         ),
       ),
       Effect.tapError((error) =>
         dispatchWasNotAccepted(error)
-          ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
+          ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths).pipe(
+              Effect.andThen(claimed.releasePins),
+            )
           : Effect.void,
       ),
     );
@@ -213,11 +245,25 @@ export const sendToThread = Effect.fn("ThreadMessageIntake.sendToThread")(functi
 ) {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const claimed = yield* AttachmentClaims.claimPendingAttachments(input);
+  yield* claimed.bindReceipt({
+    kind: "command",
+    threadId: input.threadId,
+    commandId: input.commandId,
+    commandType: "message.dispatch",
+    target: { type: "message", messageId: input.messageId },
+  });
   return yield* threads.sendToThread({ ...input, attachments: claimed.attachments }).pipe(
-    Effect.tap((result) => releaseUnusedClaims(claimed.claimedPaths, result.message.attachments)),
+    Effect.onExit(() => reconcileReservationsBestEffort(claimed.attachments.map((a) => a.id))),
+    Effect.tap((result) =>
+      releaseUnusedClaims(claimed.claimedPaths, result.message.attachments).pipe(
+        Effect.andThen(claimed.releasePins),
+      ),
+    ),
     Effect.tapError((error) =>
       dispatchWasNotAccepted(error)
-        ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
+        ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths).pipe(
+            Effect.andThen(claimed.releasePins),
+          )
         : Effect.void,
     ),
   );
@@ -243,7 +289,7 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
     ),
   );
   yield* AttachmentClaims.validateAttachmentLimits(input.initialMessage?.attachments ?? []);
-  if (!input.initialMessage?.attachments.some(AttachmentClaims.attachmentIsPendingUpload)) {
+  if (!input.initialMessage?.attachments.length) {
     return yield* launches.launch(input);
   }
   if (input.threadId === undefined) {
@@ -254,6 +300,16 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
   const claimed = yield* AttachmentClaims.claimPendingAttachments({
     threadId: input.threadId,
     attachments: input.initialMessage.attachments,
+  });
+  yield* claimed.bindReceipt({
+    kind: "command",
+    threadId: input.threadId,
+    commandId: CommandId.make(`${input.commandId}:initial-message`),
+    commandType: "message.dispatch",
+    target:
+      input.initialMessage.messageId === undefined
+        ? { type: "initial-message" }
+        : { type: "message", messageId: input.initialMessage.messageId },
   });
   return yield* launches
     .launch({
@@ -273,11 +329,12 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
       },
     })
     .pipe(
+      Effect.onExit(() => reconcileReservationsBestEffort(claimed.attachments.map((a) => a.id))),
       Effect.tap((result) =>
         releaseUnusedClaims(
           claimed.claimedPaths,
           result.projection.messages.flatMap((message) => message.attachments),
-        ),
+        ).pipe(Effect.andThen(claimed.releasePins)),
       ),
       Effect.tapError((error) => {
         // Project/receipt reads precede message dispatch. The create-thread error
@@ -292,7 +349,9 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
               error.cause._tag !== "OrchestratorProjectionError") &&
             dispatchWasNotAccepted(error.cause));
         return notAccepted
-          ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
+          ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths).pipe(
+              Effect.andThen(claimed.releasePins),
+            )
           : Effect.void;
       }),
     );

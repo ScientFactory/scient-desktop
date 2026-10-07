@@ -44,6 +44,15 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("provider-turn.start"),
     runId: RunId,
+    /** Newly queued starts cannot execute a later retry's active attempt. */
+    expectedAttemptId: Schema.optional(RunAttemptId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("provider-run.interrupt"),
+    runId: RunId,
+    expectedAttemptId: RunAttemptId,
+    providerSessionId: ProviderSessionId,
+    providerThreadId: ProviderThreadId,
   }),
   Schema.Struct({
     type: Schema.Literal("provider-turn.interrupt"),
@@ -98,6 +107,13 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("terminal.cleanup"),
   }),
   Schema.Struct({
+    type: Schema.Literal("attachment.rollback-prune"),
+    attachmentIds: Schema.Array(Schema.String),
+    revertedRunIds: Schema.Array(RunId),
+    checkpointId: CheckpointId,
+    providerThreadId: ProviderThreadId,
+  }),
+  Schema.Struct({
     type: Schema.Literal("attachment.cleanup"),
     attachmentIds: Schema.Array(Schema.String),
   }),
@@ -119,12 +135,14 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "checkpoint.capture",
   "terminal.cleanup",
   "attachment.cleanup",
+  "attachment.rollback-prune",
   "thread-title.generate",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const PROCESS_BOUND_EFFECT_TYPES = [
   "provider-turn.start",
   "provider-turn.interrupt",
+  "provider-run.interrupt",
   "provider-turn.steer",
   "provider-turn.restart",
   "runtime-request.respond",
@@ -290,7 +308,9 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
     // Title generation is correlated metadata work, so it has its own
-    // per-thread lane and cannot delay provider lifecycle effects.
+    // per-thread lane and cannot delay provider lifecycle effects. A steer can
+    // reach a running turn while its start effect holds a long native send.
+    // Other lifecycle effects and concurrent steers retain thread ordering.
     const claimableCandidatePredicate = (availableBefore?: string) =>
       sql`
         ${
@@ -313,6 +333,10 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               (
                 candidate.effect_type != 'thread-title.generate'
                 AND active.effect_type != 'thread-title.generate'
+                AND NOT (
+                  candidate.effect_type = 'provider-turn.steer'
+                  AND active.effect_type = 'provider-turn.start'
+                )
               )
             )
         )

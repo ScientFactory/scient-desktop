@@ -15,8 +15,6 @@ import type {
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
-import * as Context from "effect/Context";
-import * as Scope from "effect/Scope";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -41,16 +39,6 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import { withoutComputeWorkspaceOwners } from "./scient/compute/ComputeWorkspaceLifetime.ts";
-
-// SCIENT-FORK:START — the shared runtime owns one drainable cleanup service.
-export class StorageCleanup extends Context.Service<
-  StorageCleanup,
-  {
-    readonly start: () => Effect.Effect<void, never, Scope.Scope>;
-    readonly drain: Effect.Effect<void>;
-  }
->()("t3/storageCleanup") {}
-// SCIENT-FORK:END
 
 const decodeCleanupThread = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJson),

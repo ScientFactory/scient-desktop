@@ -8,6 +8,10 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./provider-citation-markdown": {
+      "types": "./src/providerCitationMarkdown.ts",
+      "import": "./src/providerCitationMarkdown.ts"
+    },
     "./chat-math-delimiters": {
       "types": "./src/chatMathDelimiters.ts",
       "import": "./src/chatMathDelimiters.ts"
@@ -22,6 +26,7 @@
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
+    "@scientfactory/scient-markdown": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "effect": "catalog:",

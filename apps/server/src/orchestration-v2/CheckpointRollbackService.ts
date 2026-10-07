@@ -1,6 +1,7 @@
 import {
   CheckpointId,
   CheckpointScopeId,
+  CommandId,
   type OrchestrationV2DomainEvent,
   ProviderThreadId,
   ThreadId,
@@ -70,6 +71,7 @@ export interface CheckpointRollbackServiceV2Shape {
     readonly checkpointId: CheckpointId;
     readonly scopeId: CheckpointScopeId;
     readonly restoreFiles?: boolean;
+    readonly commandId?: CommandId;
   }) => Effect.Effect<void, CheckpointRollbackExecutionError>;
 }
 
@@ -109,6 +111,7 @@ export const layer: Layer.Layer<
       readonly checkpointId: CheckpointId;
       readonly scopeId: CheckpointScopeId;
       readonly restoreFiles?: boolean;
+      readonly commandId?: CommandId;
     }) {
       const projection = yield* projections.getThreadRecords(input.threadId, [
         "providerThreads",
@@ -119,6 +122,8 @@ export const layer: Layer.Layer<
         "attempts",
         "nodes",
         "providerTurns",
+        "messages",
+        "turnItems",
       ]);
       const providerThread = projection.providerThreads.find(
         (candidate) => candidate.id === input.providerThreadId,
@@ -339,7 +344,60 @@ export const layer: Layer.Layer<
           );
         }
       }
-      yield* eventSink.write({ events });
+      const revertedRunIds = runsToRollback.map((run) => run.id);
+      const candidates = [
+        ...new Set([
+          ...projection.messages
+            .filter(
+              (message) =>
+                message.threadId === input.threadId &&
+                message.runId !== null &&
+                revertedRunIds.includes(message.runId),
+            )
+            .flatMap((message) => message.attachments.map((attachment) => attachment.id)),
+          ...projection.turnItems
+            .filter(
+              (item) =>
+                item.threadId === input.threadId &&
+                item.inheritedFrom === undefined &&
+                item.runId !== null &&
+                revertedRunIds.includes(item.runId) &&
+                item.type === "user_input_request" &&
+                item.status === "completed",
+            )
+            .flatMap((item) =>
+              item.type === "user_input_request" && item.questionAnswer !== undefined
+                ? Object.values(item.questionAnswer.attachmentsByQuestionId)
+                    .flat()
+                    .map((attachment) => attachment.id)
+                : [],
+            ),
+        ]),
+      ];
+      const commandId =
+        input.commandId ?? CommandId.make(`rollback:${input.threadId}:${input.checkpointId}`);
+      // Filesystem cleanup is a separate replay-safe effect. Its retries cannot
+      // repeat rewind or change the already committed rollback outcome.
+      yield* eventSink.writeWithEffects({
+        events,
+        effects:
+          candidates.length === 0
+            ? []
+            : [
+                {
+                  id: `rollback-prune:${commandId}`,
+                  commandId,
+                  threadId: input.threadId,
+                  request: {
+                    type: "attachment.rollback-prune",
+                    attachmentIds: candidates,
+                    revertedRunIds,
+                    checkpointId: input.checkpointId,
+                    providerThreadId: input.providerThreadId,
+                  },
+                },
+              ],
+      });
     });
 
     return CheckpointRollbackServiceV2.of({

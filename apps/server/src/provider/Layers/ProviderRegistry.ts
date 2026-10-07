@@ -24,9 +24,6 @@
  */
 import {
   defaultInstanceIdForDriver,
-  isProviderAvailable,
-  type ProviderConnectionOperation,
-  type ProviderRuntimeSummary,
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
@@ -62,6 +59,18 @@ import {
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
+// SCIENT-FORK:START — model merge, transient state, reload and instance actions.
+import {
+  mergeScientProviderModel,
+  scientRetainMissingProviderModels,
+} from "./ScientProviderModelMerge.ts";
+import { makeScientProviderInstanceActions } from "./ScientProviderInstanceActions.ts";
+import { makeScientProviderReload } from "./ScientProviderReload.ts";
+import {
+  makeScientProviderTransientState,
+  overlayScientProviderTransientState,
+} from "./ScientProviderTransientState.ts";
+// SCIENT-FORK:END
 
 const loadProviders = (
   providerSources: ReadonlyArray<ProviderSnapshotSource>,
@@ -118,29 +127,10 @@ export function upsertProviderWorkspaceSnapshot(
 }
 
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
-  // Claude's probe returns T3's curated versioned catalog together with the
-  // current settings-defined custom models. Treat it as authoritative so SDK
-  // aliases or models from an older catalog cannot survive a refresh.
-  if (provider.driver === ProviderDriverKind.make("claudeAgent")) {
-    return false;
-  }
-
-  // Droid's ACP catalog is likewise authoritative: models are discovered live
-  // from the CLI, and a model Factory removes or revokes must not linger in
-  // the picker. Same state-aware policy as OpenCode below — retain during
-  // pending initial probes and failed installed-probe refreshes, replace on
-  // successful discovery.
-  // Scient Agent lists its models live from the running agent, the same way.
-  if (
-    provider.driver === ProviderDriverKind.make("droid") ||
-    provider.driver === ProviderDriverKind.make("pi") ||
-    provider.driver === ProviderDriverKind.make("scient")
-  ) {
-    const isPendingInitialProbe =
-      provider.enabled && !provider.installed && provider.status === "warning";
-    const didInstalledProviderProbeFail = provider.installed && provider.status === "error";
-    return isPendingInitialProbe || didInstalledProviderProbeFail;
-  }
+  // SCIENT-FORK:START — Claude, Droid, Pi and Scient Agent catalogs are authoritative.
+  const scientRetain = scientRetainMissingProviderModels(provider);
+  if (scientRetain !== undefined) return scientRetain;
+  // SCIENT-FORK:END
 
   if (provider.driver === ProviderDriverKind.make("acpRegistry")) {
     // ACP Registry discovery probes return the agent's complete inventory, so
@@ -202,25 +192,11 @@ const mergeProviderModels = (
 
   const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
   const mergedModels = nextModels.map((model) => {
-    // A successful Pi or Scient Agent inventory explicitly describes the
-    // current model's options, including that it has none.
-    if (
-      provider.driver === ProviderDriverKind.make("pi") ||
-      provider.driver === ProviderDriverKind.make("scient")
-    ) {
-      return model;
-    }
+    // SCIENT-FORK:START — Pi, Scient Agent and Droid model authority.
+    const scientModel = mergeScientProviderModel(provider, model, previousBySlug);
+    if (scientModel !== undefined) return scientModel;
+    // SCIENT-FORK:END
     const previousModel = previousBySlug.get(model.slug);
-    if (provider.driver === ProviderDriverKind.make("droid")) {
-      // Droid uses the contract's nullable capability shape as an authority
-      // marker: null means the per-model ladder was not observed, while an
-      // empty descriptor list means the model was observed and has no effort
-      // selector. Only the unknown state may inherit a last-known value.
-      if (previousModel && model.capabilities === null && previousModel.capabilities !== null) {
-        return { ...model, capabilities: previousModel.capabilities };
-      }
-      return model;
-    }
     if (!previousModel || hasModelCapabilities(model) || !hasModelCapabilities(previousModel)) {
       return model;
     }
@@ -475,15 +451,10 @@ export const ProviderRegistryLive = Layer.effect(
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
     >(new Map());
-    const connectionOperationStatesRef = yield* Ref.make<
-      ReadonlyMap<ProviderInstanceId, ProviderConnectionOperation>
-    >(new Map());
-    const authenticationFailuresRef = yield* Ref.make<
-      ReadonlyMap<ProviderInstanceId, { readonly message: string }>
-    >(new Map());
-    const managedRuntimeStatesRef = yield* Ref.make<
-      ReadonlyMap<ProviderInstanceId, ProviderRuntimeSummary>
-    >(new Map());
+    // SCIENT-FORK:START — connection operations, account failures and managed runtimes.
+    const scientTransientState = yield* makeScientProviderTransientState();
+    const { authenticationFailuresRef } = scientTransientState;
+    // SCIENT-FORK:END
 
     // Live-source registry — the dynamic counterpart to the boot-time
     // `bootSources`. Keyed by `instanceId`; the stored `ProviderInstance`
@@ -527,69 +498,13 @@ export const ProviderRegistryLive = Layer.effect(
     ) {
       const maintenanceActionStates = yield* Ref.get(maintenanceActionStatesRef);
       const updateState = maintenanceActionStates.get(provider.instanceId)?.update;
-      const connectionOperation = (yield* Ref.get(connectionOperationStatesRef)).get(
-        provider.instanceId,
-      );
-      const authenticationFailure = (yield* Ref.get(authenticationFailuresRef)).get(
-        provider.instanceId,
-      );
-      const managedRuntime = (yield* Ref.get(managedRuntimeStatesRef)).get(provider.instanceId);
+      // SCIENT-FORK:START — overlay the connection, account-failure and runtime states.
+      const scientStates = yield* scientTransientState.read(provider.instanceId);
       const providerWithUpdateState = updateState
         ? { ...provider, updateState }
         : (({ updateState: _updateState, ...rest }) => rest)(provider);
-      if (!providerWithUpdateState.connection) {
-        return providerWithUpdateState;
-      }
-      // A sign-in to one of a provider's accounts has its own field, which an
-      // older client ignores. See `ProviderConnectionSummary.accountOperation`.
-      const { accountOperation: _accountOperation, ...connectionWithoutAccountOperation } =
-        providerWithUpdateState.connection;
-      const providerWithConnection = {
-        ...providerWithUpdateState,
-        connection:
-          connectionOperation?.account === undefined
-            ? { ...connectionWithoutAccountOperation, operation: connectionOperation ?? null }
-            : {
-                ...connectionWithoutAccountOperation,
-                operation: null,
-                accountOperation: connectionOperation,
-              },
-      };
-      const providerWithRuntime: ServerProvider & {
-        readonly connection: NonNullable<ServerProvider["connection"]>;
-      } = !managedRuntime
-        ? providerWithConnection
-        : {
-            ...providerWithConnection,
-            connection: {
-              ...providerWithConnection.connection,
-              runtime: managedRuntime,
-            },
-          };
-      const canPresentAuthenticationFailure =
-        providerWithRuntime.connection.methods.length > 0 &&
-        isProviderAvailable(providerWithRuntime) &&
-        providerWithRuntime.enabled &&
-        providerWithRuntime.installed &&
-        providerWithRuntime.status !== "error";
-      if (!authenticationFailure || !canPresentAuthenticationFailure) {
-        return providerWithRuntime;
-      }
-
-      const providerWithAuthenticationFailure: ServerProvider = {
-        ...providerWithRuntime,
-        status: "warning",
-        auth: {
-          ...providerWithRuntime.auth,
-          status: "unauthenticated",
-        },
-        connection: {
-          ...providerWithRuntime.connection,
-          canDisconnect: false,
-        },
-        message: authenticationFailure.message,
-      };
-      return providerWithAuthenticationFailure;
+      return overlayScientProviderTransientState(providerWithUpdateState, scientStates);
+      // SCIENT-FORK:END
     });
 
     const upsertProviders = Effect.fn("upsertProviders")(function* (
@@ -726,86 +641,18 @@ export const ProviderRegistryLive = Layer.effect(
       },
     );
 
-    const setProviderConnectionOperation = Effect.fn("setProviderConnectionOperation")(
-      function* (input: {
-        readonly instanceId: ProviderInstanceId;
-        readonly operation: ProviderConnectionOperation | null;
-      }) {
-        yield* Ref.update(connectionOperationStatesRef, (previous) => {
-          const next = new Map(previous);
-          if (input.operation === null) {
-            next.delete(input.instanceId);
-          } else {
-            next.set(input.instanceId, input.operation);
-          }
-          return next;
-        });
-
-        const existingProviders = yield* Ref.get(providersRef);
-        const matchingProvider = existingProviders.find(
-          (candidate) => candidate.instanceId === input.instanceId,
-        );
-        if (!matchingProvider) {
-          return existingProviders;
-        }
-
-        const nextProvider = yield* applyProviderTransientState(matchingProvider);
-        return yield* upsertProviders([nextProvider], {
-          persist: false,
-        });
-      },
-    );
-
-    const setProviderAuthenticationFailure = Effect.fn("setProviderAuthenticationFailure")(
-      function* (input: { readonly instanceId: ProviderInstanceId; readonly message: string }) {
-        const existingProviders = yield* Ref.get(providersRef);
-        const matchingProvider = existingProviders.find(
-          (candidate) => candidate.instanceId === input.instanceId,
-        );
-        if (!matchingProvider || (matchingProvider.connection?.methods.length ?? 0) === 0) {
-          return existingProviders;
-        }
-
-        yield* Ref.update(authenticationFailuresRef, (previous) => {
-          const next = new Map(previous);
-          next.set(input.instanceId, { message: input.message });
-          return next;
-        });
-
-        const nextProvider = yield* applyProviderTransientState(matchingProvider);
-        return yield* upsertProviders([nextProvider], { persist: false });
-      },
-    );
-
-    const setProviderManagedRuntimeSummary = Effect.fn("setProviderManagedRuntimeSummary")(
-      function* (input: {
-        readonly instanceId: ProviderInstanceId;
-        readonly runtime: ProviderRuntimeSummary | null;
-        readonly preserveOperation?: boolean;
-      }) {
-        yield* Ref.update(managedRuntimeStatesRef, (previous) => {
-          const next = new Map(previous);
-          if (input.runtime === null) next.delete(input.instanceId);
-          else {
-            const current = previous.get(input.instanceId);
-            next.set(
-              input.instanceId,
-              input.preserveOperation && current?.operation
-                ? { ...input.runtime, operation: current.operation }
-                : input.runtime,
-            );
-          }
-          return next;
-        });
-        const existingProviders = yield* Ref.get(providersRef);
-        const matchingProvider = existingProviders.find(
-          (candidate) => candidate.instanceId === input.instanceId,
-        );
-        if (!matchingProvider) return existingProviders;
-        const nextProvider = yield* applyProviderTransientState(matchingProvider);
-        return yield* upsertProviders([nextProvider], { persist: false });
-      },
-    );
+    // SCIENT-FORK:START — setters for the Scient transient states.
+    const {
+      setProviderConnectionOperation,
+      setProviderAuthenticationFailure,
+      setProviderManagedRuntimeSummary,
+    } = scientTransientState.makeSetters({
+      providersRef,
+      instanceRegistry,
+      applyProviderTransientState,
+      upsertProviders,
+    });
+    // SCIENT-FORK:END
 
     const readRefreshedSource = Effect.fn("readRefreshedSource")(function* (
       providerSource: ProviderSnapshotSource,
@@ -872,44 +719,14 @@ export const ProviderRegistryLive = Layer.effect(
       return yield* instance.snapshot.resolveMaintenance(options);
     });
 
-    const getProviderConnectionActionsForInstance = Effect.fn(
-      "getProviderConnectionActionsForInstance",
-    )(function* (instanceId: ProviderInstanceId) {
-      const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
-      return instance?.connectionActions;
-    });
-
-    const getProviderManagedRuntimeActionsForInstance = Effect.fn(
-      "getProviderManagedRuntimeActionsForInstance",
-    )(function* (instanceId: ProviderInstanceId) {
-      const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
-      return instance?.managedRuntimeActions;
-    });
-
-    const getProviderSkillActionsForInstance = Effect.fn("getProviderSkillActionsForInstance")(
-      function* (instanceId: ProviderInstanceId) {
-        const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
-        return instance?.skillActions;
-      },
-    );
-
-    const getVoiceTranscriptCorrectionForInstance = Effect.fn(
-      "getVoiceTranscriptCorrectionForInstance",
-    )(function* (instanceId: ProviderInstanceId) {
-      const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
-      return instance?.voiceTranscriptCorrection;
-    });
-
-    const stopProviderSessions = Effect.fn("stopProviderSessions")(function* (
-      provider: ProviderDriverKind,
-    ) {
-      const instances = yield* instanceRegistry.listInstances;
-      yield* Effect.forEach(
-        instances.filter((instance) => instance.driverKind === provider),
-        (instance) => instance.adapter.stopAll(),
-        { concurrency: "unbounded", discard: true },
-      );
-    });
+    // SCIENT-FORK:START — per-instance action lookups.
+    const {
+      getProviderConnectionActionsForInstance,
+      getProviderManagedRuntimeActionsForInstance,
+      getProviderSkillActionsForInstance,
+      getVoiceTranscriptCorrectionForInstance,
+    } = makeScientProviderInstanceActions(liveSubsRef);
+    // SCIENT-FORK:END
 
     /**
      * Diff the aggregator's live-source set against the current
@@ -1052,27 +869,9 @@ export const ProviderRegistryLive = Layer.effect(
           }
           return next;
         });
-        yield* Ref.update(connectionOperationStatesRef, (previous) => {
-          const next = new Map(previous);
-          for (const instanceId of previous.keys()) {
-            if (!knownInstanceIds.has(instanceId)) next.delete(instanceId);
-          }
-          return next;
-        });
-        yield* Ref.update(authenticationFailuresRef, (previous) => {
-          const next = new Map(previous);
-          for (const instanceId of previous.keys()) {
-            if (!knownInstanceIds.has(instanceId)) next.delete(instanceId);
-          }
-          return next;
-        });
-        yield* Ref.update(managedRuntimeStatesRef, (previous) => {
-          const next = new Map(previous);
-          for (const instanceId of previous.keys()) {
-            if (!knownInstanceIds.has(instanceId)) next.delete(instanceId);
-          }
-          return next;
-        });
+        // SCIENT-FORK:START — forget the transient states of removed instances.
+        yield* scientTransientState.prune(knownInstanceIds);
+        // SCIENT-FORK:END
       }),
     );
     const syncLiveSourcesAndContinue = syncLiveSources.pipe(
@@ -1138,15 +937,24 @@ export const ProviderRegistryLive = Layer.effect(
       () => syncLiveSourcesAndContinue,
     ).pipe(Effect.forkScoped);
 
-    const reloadInstance = Effect.fn("ProviderRegistry.reloadInstance")(function* (
-      instanceId: ProviderInstanceId,
-    ) {
-      yield* instanceRegistry.rebuildInstance(instanceId);
-      // Do not race the registry-change subscriber: attach the replacement
-      // source synchronously before asking it to probe the newly active path.
-      yield* syncLiveSources.pipe(Effect.provideService(Scope.Scope, layerScope));
-      return yield* refreshInstance(instanceId);
+    // SCIENT-FORK:START — reload and strict refreshes.
+    const {
+      reloadInstance,
+      refreshInstanceStrict,
+      refreshInstanceAfterAccountChange,
+      reloadInstanceStrict,
+    } = makeScientProviderReload({
+      instanceRegistry,
+      layerScope,
+      syncLiveSources,
+      getLiveSources,
+      refreshInstance,
+      refreshOneSource,
+      readRefreshedSource,
+      syncProvider,
+      authenticationFailuresRef,
     });
+    // SCIENT-FORK:END
 
     const recoverRefreshFailure = Effect.fn("recoverRefreshFailure")(function* (
       cause: Cause.Cause<unknown>,
@@ -1158,90 +966,6 @@ export const ProviderRegistryLive = Layer.effect(
         cause: Cause.pretty(cause),
       });
       return yield* Ref.get(providersRef);
-    });
-
-    const failStrictRefresh = (
-      operation: ProviderRegistry.ProviderRegistryRefreshError["operation"],
-      instanceId: ProviderInstanceId,
-    ) =>
-      Effect.catchCause((cause: Cause.Cause<unknown>) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.interrupt
-          : Effect.fail(
-              new ProviderRegistry.ProviderRegistryRefreshError({
-                operation,
-                instanceId,
-                message: `Provider ${operation} failed for ${instanceId}.`,
-                cause,
-              }),
-            ),
-      );
-
-    const refreshInstanceStrict = Effect.fn("ProviderRegistry.refreshInstanceStrict")(function* (
-      instanceId: ProviderInstanceId,
-    ) {
-      const sources = yield* getLiveSources;
-      const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
-      if (!providerSource) {
-        return yield* new ProviderRegistry.ProviderRegistryRefreshError({
-          operation: "refresh",
-          instanceId,
-          message: `Provider refresh failed for ${instanceId}: no live source is available.`,
-        });
-      }
-      return yield* refreshOneSource(providerSource).pipe(failStrictRefresh("refresh", instanceId));
-    });
-
-    const refreshInstanceAfterAccountChange = Effect.fn(
-      "ProviderRegistry.refreshInstanceAfterAccountChange",
-    )(function* (instanceId: ProviderInstanceId) {
-      const previousFailure = (yield* Ref.get(authenticationFailuresRef)).get(instanceId);
-      const sources = yield* getLiveSources;
-      const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
-      if (!providerSource) {
-        return yield* new ProviderRegistry.ProviderRegistryRefreshError({
-          operation: "refresh",
-          instanceId,
-          message: `Provider refresh failed for ${instanceId}: no live source is available.`,
-        });
-      }
-
-      // Keep the proven failure visible while the provider performs fresh
-      // account verification. Clearing it first creates a false-ready window
-      // and requires incomplete rollback on failure or interruption.
-      const canonicalProvider = yield* readRefreshedSource(providerSource).pipe(
-        failStrictRefresh("refresh", instanceId),
-      );
-      if (previousFailure) {
-        yield* Ref.update(authenticationFailuresRef, (previous) => {
-          if (previous.get(instanceId) !== previousFailure) {
-            return previous;
-          }
-          const next = new Map(previous);
-          next.delete(instanceId);
-          return next;
-        });
-      }
-      return yield* syncProvider(canonicalProvider);
-    });
-
-    const reloadInstanceStrict = Effect.fn("ProviderRegistry.reloadInstanceStrict")(function* (
-      instanceId: ProviderInstanceId,
-    ) {
-      return yield* Effect.gen(function* () {
-        yield* instanceRegistry.rebuildInstance(instanceId);
-        yield* syncLiveSources.pipe(Effect.provideService(Scope.Scope, layerScope));
-        const sources = yield* getLiveSources;
-        const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
-        if (!providerSource) {
-          return yield* new ProviderRegistry.ProviderRegistryRefreshError({
-            operation: "reload",
-            instanceId,
-            message: `Provider reload failed for ${instanceId}: no live source is available.`,
-          });
-        }
-        return yield* refreshOneSource(providerSource);
-      }).pipe(failStrictRefresh("reload", instanceId));
     });
 
     const updateProviders = (
@@ -1355,7 +1079,6 @@ export const ProviderRegistryLive = Layer.effect(
       getProviderManagedRuntimeActionsForInstance,
       getProviderSkillActionsForInstance,
       getVoiceTranscriptCorrectionForInstance,
-      stopProviderSessions,
       setProviderMaintenanceActionState,
       setProviderConnectionOperation,
       setProviderAuthenticationFailure,

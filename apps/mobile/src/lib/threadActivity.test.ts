@@ -1,5 +1,6 @@
 import {
   ContextHandoffId,
+  OrchestrationV2ContextTransfer,
   MessageId,
   CheckpointId,
   CheckpointScopeId,
@@ -18,10 +19,12 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2TurnItem,
+  OrchestrationV2TurnItem as TurnItemSchema,
 } from "@t3tools/contracts";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { summarizeToolGroup } from "@t3tools/client-runtime/work-log/presentation";
 import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -38,6 +41,9 @@ import {
   isPendingUserInputOptionSelected,
   buildPendingUserInputAnswers,
 } from "./threadActivity";
+
+const decodeBoundaryItem = Schema.decodeUnknownSync(TurnItemSchema);
+const decodeFeedTransfer = Schema.decodeUnknownSync(OrchestrationV2ContextTransfer);
 
 const threadId = ThreadId.make("thread-1");
 const sourceThreadId = ThreadId.make("thread-source");
@@ -199,6 +205,104 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
     streaming: false,
   };
 }
+
+describe("fork initialization context in the native feed", () => {
+  it.each([
+    "fork",
+    "provider_handoff",
+    "merge_back",
+    "missing",
+    "later-run",
+    "inherited",
+    "proven-inherited",
+  ] as const)("removes only the exact local initialization; %s remains truthful", (kind) => {
+    const now = DateTime.makeUnsafe("2026-10-04T00:00:00Z");
+    const handoff = decodeBoundaryItem({
+      ...base("fork-initialization-context", "2026-10-04T00:00:00Z", 2),
+      runId: "fork-first-run",
+      type: "handoff",
+      title: "Fork context",
+      contextHandoffId: "context-1",
+      ...(kind === "proven-inherited"
+        ? {
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            inheritedFrom: {
+              threadId: "child",
+              itemId: "original-handoff",
+              runId: "child-first-run",
+              status: "completed",
+            },
+            forkInitialization: {
+              transferId: "old-fork-transfer",
+              contextHandoffId: "context-1",
+              threadId: "child",
+              runId: "child-first-run",
+            },
+          }
+        : {}),
+      fromProviderThreadIds: [],
+      toProviderThreadId: "provider-1",
+      fromProviderInstanceIds: [],
+      toProviderInstanceId: "codex",
+      strategy: "full_thread_summary",
+    });
+    const transfer = decodeFeedTransfer({
+      id: "transfer-1",
+      type: kind === "provider_handoff" || kind === "merge_back" ? kind : "fork",
+      sourceThreadId: "source",
+      targetThreadId: threadId,
+      sourcePoint: { threadId: "source" },
+      basePoint: null,
+      sourceProviderInstanceId: "codex",
+      targetProviderInstanceId: "codex",
+      targetRunId: kind === "later-run" ? "later-run" : "fork-first-run",
+      status: "consumed",
+      resolution: { strategy: "portable_context", contextHandoffId: "context-1" },
+      createdBy: "user",
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+      consumedAt: now,
+    });
+    const row = projected(
+      handoff,
+      2,
+      kind === "inherited" || kind === "proven-inherited" ? "inherited" : "local",
+    );
+    const initial = buildThreadFeed([row]);
+    expect(initial).toHaveLength(kind === "proven-inherited" ? 0 : 1);
+    const reloaded = buildThreadFeed([row], {
+      contextTransfers: kind === "missing" ? undefined : [transfer],
+    });
+    expect(reloaded).toHaveLength(kind === "fork" || kind === "proven-inherited" ? 0 : 1);
+    expect(row.item).toBe(handoff);
+    if (kind === "proven-inherited") {
+      const later = decodeBoundaryItem({
+        ...handoff,
+        id: "later-real-switch",
+        ordinal: 3,
+        contextHandoffId: "later-provider-context",
+        forkInitialization: undefined,
+        title: "Provider handoff",
+        toProviderInstanceId: "claudeAgent",
+        inheritedFrom: {
+          threadId: "child",
+          itemId: "later-real-switch",
+          runId: "child-second-run",
+          status: "completed",
+        },
+      });
+      const feed = buildThreadFeed([row, projected(later, 3, "inherited")]);
+      expect(feed).toHaveLength(1);
+      expect(feed[0]).toMatchObject({
+        type: "activity-group",
+        activities: [{ projectedItem: { item: later } }],
+      });
+    }
+  });
+});
 
 describe("buildThreadFeed", () => {
   it("keeps async answers in question history instead of user bubbles", () => {
@@ -785,6 +889,76 @@ describe("buildThreadFeed", () => {
     ]);
     expect(activities.at(-1)?.prominent).toBe(true);
   });
+
+  for (const source of [
+    { type: "run" as const, threadId: sourceThreadId, runId },
+    {
+      type: "message" as const,
+      threadId: sourceThreadId,
+      messageId: MessageId.make("historical-answer"),
+      position: "after" as const,
+    },
+  ]) {
+    it(`keeps one destination-owned ${source.type} fork boundary between inherited and local messages`, () => {
+      const { providerThreadId: _providerThreadId, ...forkBase } = base(
+        "local-fork-boundary",
+        "2026-06-20T00:00:03.000Z",
+        2,
+      );
+      const marker = decodeBoundaryItem({
+        ...forkBase,
+        runId: null,
+        type: "fork",
+        source,
+        targetThreadId: threadId,
+        title: "Conversation forked here",
+      });
+      const projectedMarker = projected(marker, 2);
+      const feed = buildThreadFeed([
+        projected({ ...userMessage(), runId: null }, 0, "inherited"),
+        projected({ ...assistantMessage(), runId: null }, 1, "inherited"),
+        projectedMarker,
+        projected(
+          {
+            ...userMessage("2026-06-20T00:00:04.000Z"),
+            id: TurnItemId.make("local-request"),
+            messageId: MessageId.make("local-request"),
+          },
+          3,
+        ),
+      ]);
+      const presentation = deriveThreadFeedPresentation(
+        feed,
+        {
+          runId,
+          status: "completed",
+          startedAt: "2026-06-20T00:00:04.000Z",
+          completedAt: "2026-06-20T00:00:05.000Z",
+        },
+        new Set(),
+      );
+      const forkGroups = presentation.filter(
+        (entry) =>
+          entry.type === "activity-group" &&
+          entry.activities.some((activity) => activity.projectedItem.item.type === "fork"),
+      );
+      expect(forkGroups).toHaveLength(1);
+      expect(presentation.map((entry) => entry.type)).toEqual([
+        "message",
+        "message",
+        "activity-group",
+        "message",
+      ]);
+      const activities = forkGroups.flatMap((entry) =>
+        entry.type === "activity-group" ? entry.activities : [],
+      );
+      expect(activities[0]?.summary).toBe("Conversation forked here");
+      expect(activities[0]?.prominent).toBe(true);
+      expect(activities[0]?.projectedItem).toBe(projectedMarker);
+      expect(activities[0]?.runId).toBeNull();
+      expect(activities[0]?.attemptId).toBeNull();
+    });
+  }
 
   it("keeps orchestration relationship cards visible when a completed run is folded", () => {
     const { providerThreadId: _providerThreadId, ...forkBase } = base(

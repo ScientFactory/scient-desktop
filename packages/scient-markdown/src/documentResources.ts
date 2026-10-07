@@ -56,6 +56,44 @@ function parse(source: string): Root {
   });
 }
 
+/** Original UTF-16 ranges of prose that can be rewritten without touching Markdown syntax. */
+export function markdownProseTextSpans(source: string): ReadonlyArray<{
+  readonly start: number;
+  readonly end: number;
+}> {
+  const spans: { start: number; end: number }[] = [];
+  const visit = (node: Nodes) => {
+    if (node.type === "text") {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (start !== undefined && end !== undefined) spans.push({ start, end });
+      return;
+    }
+    if (
+      node.type === "link" ||
+      node.type === "linkReference" ||
+      node.type === "image" ||
+      node.type === "imageReference" ||
+      node.type === "html" ||
+      node.type === "code" ||
+      node.type === "inlineCode" ||
+      node.type === "math" ||
+      node.type === "inlineMath" ||
+      node.type === "yaml" ||
+      node.type === "definition"
+    )
+      return;
+    if ("children" in node) {
+      // Inline HTML can surround text nodes without appearing as their parent.
+      // Leave that ambiguous container unchanged rather than rewriting authored HTML.
+      if (node.type !== "root" && node.children.some((child) => child.type === "html")) return;
+      for (const child of node.children) visit(child);
+    }
+  };
+  visit(parse(source));
+  return spans;
+}
+
 function boundedTitle(text: string): string | null {
   const normalized = text.replace(/\s+/gu, " ").trim();
   return normalized ? normalized.slice(0, MAX_TITLE_LENGTH) : null;

@@ -17,14 +17,17 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProviderReplayEntry,
+  ProviderInstanceId,
   type ProviderInstanceEnvironment,
   type ProviderReplayTranscript,
   type ProviderReplayEntry as ProviderReplayEntryType,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -39,6 +42,12 @@ import {
   type OrchestratorV2ProviderReplayHarness,
 } from "../testkit/ProviderReplayHarness.ts";
 import { PI_PROVIDER, PiAdapterV2Driver } from "./PiAdapterV2.ts";
+import { piInstanceStateRoot } from "../../provider/pi/PiSessionFile.ts";
+import {
+  PiReplaySessionBinding,
+  reconcilePiBoundLaunchProtocol,
+  registerPiReplayFixtureEvidence,
+} from "./PiReplaySessionBinding.testkit.ts";
 
 export const PI_RPC_REPLAY_PROTOCOL = "pi.rpc-jsonl";
 export const PI_REPLAY_ANY = "<any>";
@@ -67,6 +76,8 @@ class PiReplayTranscriptDecodeError extends Schema.TaggedError<PiReplayTranscrip
     return `Failed to decode Pi RPC replay transcript for scenario ${this.scenario ?? "<unknown>"}.`;
   }
 }
+
+const isPiReplayTranscriptDecodeError = Schema.is(PiReplayTranscriptDecodeError);
 
 class PiReplayMismatchError extends Schema.TaggedError<PiReplayMismatchError>()(
   "PiReplayMismatchError",
@@ -224,10 +235,24 @@ class PiReplayController {
   private readonly held: Array<{ readonly process: PiReplayProcess; readonly actual: unknown }> =
     [];
   private readonly processes: Array<PiReplayProcess> = [];
-  private readonly transcript: PiRpcReplayTranscript;
+  private transcript: PiRpcReplayTranscript;
+  private readonly bindings: PiReplaySessionBinding;
 
-  constructor(transcript: PiRpcReplayTranscript) {
+  constructor(transcript: PiRpcReplayTranscript, stateRoot: string) {
     this.transcript = transcript;
+    this.bindings = new PiReplaySessionBinding(transcript.entries, stateRoot);
+  }
+
+  prepareSpawn(command: ChildProcess.Command) {
+    if (!ChildProcess.isStandardCommand(command) || command.options.cwd === undefined)
+      throw new Error("Pi replay requires a standard command with captured cwd.");
+    const prepared = this.bindings.bind({
+      ordinal: this.processes.length + 1,
+      args: command.args,
+      cwd: command.options.cwd,
+    });
+    this.transcript = { ...this.transcript, entries: prepared.entries };
+    return prepared.headers;
   }
 
   spawn(
@@ -375,9 +400,40 @@ const REPLAY_PID = 999_999_999;
 
 function makePiReplaySpawner(
   controller: PiReplayController,
+  fs: FileSystem.FileSystem,
 ): ChildProcessSpawner.ChildProcessSpawner["Service"] {
   return ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
+      const headers = yield* Effect.sync(() => controller.prepareSpawn(command));
+      // The transcript-backed process simulates Pi's private session header write,
+      // so the unchanged production reopen validator still reads actual owned files.
+      for (const header of headers) {
+        const exists = yield* fs.exists(header.file);
+        if (exists) {
+          const real = yield* fs.realPath(header.file);
+          const stat = yield* fs.stat(header.file);
+          if (real !== header.file || stat.type !== "File")
+            throw new Error("Pi replay session file is not an owned regular file.");
+        }
+        const existing = exists ? yield* fs.readFileString(header.file) : undefined;
+        if (existing !== undefined && existing.length > 0) {
+          const firstLine = existing.split("\n")[0]!;
+          const actual: unknown = decodeJsonLine(firstLine);
+          if (
+            !isRecord(actual) ||
+            actual.type !== "session" ||
+            actual.id !== header.id ||
+            actual.cwd !== header.cwd
+          )
+            throw new Error("Pi replay cannot overwrite another session header.");
+        } else {
+          yield* fs.writeFileString(
+            header.file,
+            `${encodeJsonLine({ type: "session", version: 3, id: header.id, cwd: header.cwd })}\n`,
+            { flag: exists ? "w" : "wx", mode: 0o600 },
+          );
+        }
+      }
       const process = controller.spawn(command, yield* Queue.unbounded<Uint8Array, Cause.Done>());
       yield* Effect.addFinalizer(() => Effect.sync(() => controller.close(process)));
       const split = makeLineSplitter();
@@ -446,30 +502,127 @@ export const PiOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
   driver: PI_PROVIDER,
   decodeTranscript: (transcript: ProviderReplayTranscript) =>
     decodePiRpcReplayTranscript(transcript).pipe(
-      Effect.mapError(
-        (cause) =>
-          new PiReplayTranscriptDecodeError({
-            driver: transcript.provider,
-            protocol: transcript.protocol,
-            scenario: transcript.scenario,
-            cause,
-          }),
+      Effect.flatMap((decoded) =>
+        Effect.try({
+          try: () => {
+            const current = reconcilePiBoundLaunchProtocol(decoded);
+            return {
+              ...decoded,
+              entries: current.entries,
+              metadata: {
+                ...decoded.metadata,
+                currentProtocolAdaptation: {
+                  description:
+                    "Pinned historical reopened switch_session request/reply retained here, not executed. Current --session launch plus correlated get_state confirms the independently declared same session before prompting.",
+                  historicalRPCFrames: current.historicalRPCFrames,
+                },
+                ...(![
+                  "multi_turn",
+                  "pi_compaction",
+                  "provider_thread_resume",
+                  "message_steering",
+                  "thread_rollback",
+                  "thread_rollback_after_stop",
+                ].includes(decoded.scenario)
+                  ? {}
+                  : {
+                      fixtureSchedule:
+                        "Pinned statistics/entries pairs reordered; explicit synthetic read-only replies for concurrent compaction probes and confirming idle states copy recorded same-session snapshots. Steering adds an explicit synthetic streaming identity preflight with recorded identity/selection. No new vendor observation.",
+                    }),
+                ...(decoded.scenario !== "simple"
+                  ? {}
+                  : {
+                      settleConfirmation:
+                        "Synthetic read-only confirming-state pair copied from pinned recorded idle state; statistics/entries pairs reordered without altering native frames. Not newly recorded vendor evidence.",
+                    }),
+              },
+            };
+          },
+          catch: (cause) =>
+            new PiReplayTranscriptDecodeError({
+              driver: transcript.provider,
+              protocol: transcript.protocol,
+              scenario: transcript.scenario,
+              cause,
+            }),
+        }),
+      ),
+      Effect.mapError((cause) =>
+        isPiReplayTranscriptDecodeError(cause)
+          ? cause
+          : new PiReplayTranscriptDecodeError({
+              driver: transcript.provider,
+              protocol: transcript.protocol,
+              scenario: transcript.scenario,
+              cause,
+            }),
       ),
     ),
-  makeProviderAdapterRegistryLayer: (transcript) =>
-    makePiProviderAdapterRegistryLayer({
+  makeProviderAdapterRegistryLayer: (transcript) => {
+    const registry = makePiProviderAdapterRegistryLayer({
       scenario: transcript.scenario,
       binaryPath: "pi",
       launchArgs: metadataString(transcript, "launchArgs"),
       spawner: Layer.effect(
         ChildProcessSpawner.ChildProcessSpawner,
         Effect.gen(function* () {
-          const controller = new PiReplayController(transcript);
+          const fs = yield* FileSystem.FileSystem;
+          const config = yield* ServerConfig.ServerConfig;
+          const declaredRoot = yield* piInstanceStateRoot({
+            stateDir: config.stateDir,
+            instanceId: PI_PROVIDER,
+          });
+          yield* fs.makeDirectory(declaredRoot, { recursive: true, mode: 0o700 });
+          const root = yield* fs.realPath(declaredRoot);
+          const evidence = registerPiReplayFixtureEvidence(transcript, root);
+          const controller = new PiReplayController(
+            { ...transcript, entries: evidence.entries },
+            root,
+          );
           yield* Effect.addFinalizer(() => Effect.sync(() => controller.assertComplete()));
-          return makePiReplaySpawner(controller);
-        }),
+          return makePiRecordingSpawner(makePiReplaySpawner(controller, fs), evidence.observed);
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapterDriverCreateError({
+                driver: PI_PROVIDER,
+                instanceId: ProviderInstanceId.make(PI_PROVIDER),
+                detail: "Failed to prepare private Pi replay session files.",
+                cause,
+              }),
+          ),
+        ),
       ),
-    }),
+    });
+    // Only fresh native file entropy is controlled. The driver still allocates
+    // the file, performs real header validation and consumes strict RPC frames.
+    return Layer.effect(
+      ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+      Effect.map(ProviderAdapterRegistry.ProviderAdapterRegistryV2, (original) => ({
+        ...original,
+        get: (instanceId) =>
+          original.get(instanceId).pipe(
+            Effect.map((adapter) => ({
+              ...adapter,
+              openSession: (input) =>
+                Effect.gen(function* () {
+                  const fallback = yield* Random.Random;
+                  let bytes = 0;
+                  return yield* adapter.openSession(input).pipe(
+                    Effect.provideService(Random.Random, {
+                      nextIntUnsafe: () => fallback.nextIntUnsafe(),
+                      nextDoubleUnsafe: () =>
+                        input.initialNativeThreadId === undefined && bytes++ < 16
+                          ? 0
+                          : fallback.nextDoubleUnsafe(),
+                    }),
+                  );
+                }),
+            })),
+          ),
+      })),
+    ).pipe(Layer.provide(registry));
+  },
 };
 
 // ── recording ─────────────────────────────────────────────────

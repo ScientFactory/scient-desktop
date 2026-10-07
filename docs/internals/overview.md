@@ -7,25 +7,20 @@ Scient uses a server runtime that owns agent sessions, workspaces, and version c
 execution boundary: every provider process, terminal, git operation, and filesystem read happens
 there, never in the client.
 
-```
-┌────────────────────────────────────────────────┐
-│ Clients: apps/web, apps/desktop, apps/mobile   │
-│ shared runtime: packages/client-runtime        │
-│  connection supervisor, RPC session, Atom state│
-└──────────────────┬─────────────────────────────┘
-                   │ Effect RPC over WebSocket (/ws)
-                   │ contract: packages/contracts
-┌──────────────────▼─────────────────────────────┐
-│ apps/server                                    │
-│  orchestration engine (event-sourced)          │
-│  provider driver registry (8 built-in drivers) │
-│  checkpointing, VCS, terminals, filesystem     │
-└──────────────────┬─────────────────────────────┘
-                   │ per-driver transport
-┌──────────────────▼─────────────────────────────┐
-│ Agent CLIs: Codex, Claude, Cursor, Grok,       │
-│ OpenCode, Droid, Antigravity                   │
-└────────────────────────────────────────────────┘
+```text
+Clients: web, Electron desktop, mobile
+  shared connection/domain runtime: packages/client-runtime
+             |
+             | authenticated Effect RPC (/ws) + bounded HTTP reads
+             v
+Server: orchestration V2, provider instances and native adapters
+  event log + projections + command receipts + effect outbox
+  provider execution, checkpointing, VCS, terminals, filesystem
+             |
+             | provider-specific process, SDK or protocol transport
+             v
+Agent runtimes: Codex, Claude, Cursor, Grok, OpenCode, Droid,
+                Antigravity, Pi, Oh My Pi, Scient Agent, ACP registry
 ```
 
 ## The RPC boundary
@@ -48,8 +43,10 @@ environment descriptor, never through a client version or an assumed coordinated
 | Only `threadPullRequestLinking: true` | Use `linkedPullRequest` and the existing `thread.meta.update` single-link operation. Do not call multi-link RPCs. |
 | Neither flag                          | Hide linking actions; existing branch-discovered PR display remains available.                                    |
 
-New environments continue advertising the legacy flag, accepting legacy metadata commands, and
-emitting the derived `linkedPullRequest` field for older clients. That hostless field includes only
+V2 environments retain the linking capability and derived `linkedPullRequest` field, and use
+native `thread.metadata.update` for single-link metadata. The old `thread.meta.update` command
+belongs to older hosts; V2 rejects unsupported legacy-only commands with a client-update error.
+The retained message-boundary fork wire command is an explicit exception routed to a V2 service. That hostless field includes only
 links in the thread project's own repository; cross-host and cross-repository links require the
 multi-link protocol. New clients accept snapshots that
 omit `pullRequests`. Retain the legacy wire fields, projection column, and replay support; this feature
@@ -80,17 +77,30 @@ select known environment-local checkouts; the group itself does not store inheri
 
 The event log is the source of truth for orchestration state. The
 [v2 orchestrator](../../apps/server/src/orchestration-v2/Orchestrator.ts) serializes commands and
-decides events without performing provider or filesystem work.
+plans durable events and effects; provider execution belongs to the effect services.
 [EventSink](../../apps/server/src/orchestration-v2/EventSink.ts) commits events, persisted projections,
 the accepted command receipt, and outbox effects in one database transaction. Subscribers receive
-events after that commit. This keeps command retries idempotent and prevents a persisted projection
+events after that commit, in database sequence order. This keeps command retries idempotent and prevents a persisted projection
 from getting ahead of the event log.
+
+The sink's
+[`CommitPublication`](../../apps/server/src/orchestration-v2/scient-fork/CommitPublication.ts)
+serializes commit and publication across command, provider, and project writes. After commit,
+the sink publishes to the all-event and event-type buses, then wakes outbox workers.
+Its transaction body can be interrupted and rolled back; once commit succeeds,
+publication finishes before cancellation releases the writer. Publishing writes own their SQL
+transaction. Import preparation and its final ledger write run inside that transaction, so a failed
+import cannot publish events that rolled back. Callers must not nest a publishing write inside
+another SQL transaction.
 
 The [effect worker](../../apps/server/src/orchestration-v2/EffectWorker.ts) performs side effects
 after intent has been recorded, then feeds results back into orchestration. A command acknowledgement
 therefore means the intent committed, not that the provider, checkpoint, or other follow-up work
-finished. Keep external I/O out of command decisions and the database transaction. Effects tied to
-a lost provider process cannot simply replay; recovery retires them before admitting new work.
+finished. Admission also validates attachment sources and reads their actual file sizes; Scient
+boundary forks freeze a Git checkpoint before committing fork intent. Provider execution and durable
+provisioning follow committed outbox intent. External process calls do not run inside the EventSink
+SQL transaction. Effects tied to a lost provider process cannot simply replay; recovery retires them
+before admitting new work.
 
 ## Shared client runtime
 
@@ -102,119 +112,111 @@ background-activity layers) and differ beyond that only in the platform layer th
 UI they build on top. React components never construct transports, retry loops,
 or RPC clients. See [connection-runtime.md](./connection-runtime.md).
 
-## Orchestration is event-sourced
+## Orchestration V2
 
-The server does not mutate app state directly. Clients dispatch typed commands; the engine turns them
-into persisted events; projections derive the read model.
+Production composition lives in [`runtimeLayer.ts`][runtime]. The application graph separates
+app threads and messages from runs, attempts, execution nodes, provider sessions, provider threads,
+provider turns, turn items, runtime requests, checkpoints, and context transfers. App IDs are
+primary; native provider IDs are attributed references, not interchangeable app identities.
+[`orchestrationV2.ts`][contracts] defines the commands, events, and projections.
 
-[`OrchestrationEngine.ts`][engine] serializes this. `dispatch` offers a `CommandEnvelope` onto
-`commandQueue` and awaits its result; a single worker fiber takes envelopes one at a time, so command
-processing is totally ordered. For each envelope `processEnvelope`:
+[`Orchestrator.ts`][orchestrator] plans commands against persisted state. `ThreadCommandExecutor`
+serializes each thread independently; forks acquire source and destination locks in a stable order.
+There is no global V1 command worker or authoritative in-memory V1 read model. Dispatch checks
+`CommandReceiptStore`, validates the request through `CommandPolicy` and command invariants,
+then commits through [`EventSink.ts`][sink]. The accepted receipt, events, materialized projection,
+and requested effects share one SQL transaction. Publication and worker wakeups follow commit.
+A retry returns the durable receipt; a command ID cannot be reused for another thread.
 
-1. checks the durable command receipt, making retries idempotent;
-2. runs `decideOrchestrationCommand` ([`decider.ts`][decider]) to produce events from command plus
-   current state, pure and side-effect free;
-3. inside one SQL transaction, appends events to the event store, applies them to the in-memory read
-   model via [`projector.ts`][projector], projects them into persisted tables, and writes the
-   accepted receipt;
-4. after commit, swaps in the new read model, cleans up attachments, and publishes committed events
-   to subscribers. Attachment cleanup failures are logged and do not reject committed commands.
+The disconnected V1 provider service, session directory, metrics and queue execution helpers
+are retired, along with the unused V1 provider-adapter SPI and its orphan integration fixtures.
+The live adapter SPI remains `orchestration-v2/ProviderAdapter.ts`; current read operations use
+`orchestration-v2/ProjectionStore.ts`, not the removed V1 Query tag or contracts facade.
+Unused V1 projection CRUD facades and disconnected fork/handoff/history wrappers are also retired.
+Retained readers such as
+[`LegacyV1ThreadImporter`](../../apps/server/src/orchestration-v2/legacy/LegacyV1ThreadImporter.ts)
+and [`LegacyScientHistory`](../../apps/server/src/orchestration-v2/legacy/LegacyScientHistory.ts)
+read historical SQL directly. Historical SQL and queue-document readers remain import boundaries;
+their schemas and migrations are not runtime execution authorities. Retained snapshot/view schemas,
+SQL approval scalars and current RPC method names have canonical owners in
+`packages/contracts/src/scientOrchestrationSnapshot.ts`, `scientApprovalProjection.ts` and
+`scientOrchestrationRpcMethods.ts`. Public exports retain the same schema objects.
 
-Because persistence and projection share a transaction, the read model cannot durably disagree with
-the event log. On dispatch failure the engine rereads persisted events past the starting sequence and
-reconciles.
+Retired execution does not retire compatibility data: saved V1 contracts, immutable SQL migrations
+and historical readers still support import/recovery. These owner paths describe source structure,
+not proof of packaged-app behavior or release of an external process or physical attachment reader.
 
-Command and event names live in [`orchestration.ts`][contracts]. Some commands are client
-dispatchable (`thread.create`, `thread.turn.start`, `thread.approval.respond`); others are internal
-and produced only by server-side reactors (`thread.message.assistant.delta`,
-`thread.turn.diff.complete`).
+Clients send commands such as `message.dispatch`, `run.interrupt`, `runtime-request.respond`,
+`queued-run.cancel`, and `checkpoint.rollback`. Provider adapters emit normalized V2 events;
+[`ProviderEventIngestor.ts`][ingest] associates them with the recorded run/attempt/node and
+persists them through the same sink. `ProjectionStore` builds persisted read models;
+`WireProjection`, `ThreadStream`, and `ShellStream` provide bounded client views. Change domain
+facts through commands/events, not by treating a UI snapshot as write authority.
 
-A turn is complete when its session leaves `running` status, projected by
-`settledTurnStateForSessionStatus` in [`projector.ts`][projector]. Checkpoint work settling later
-does not define turn end.
+Root provider completion and run finalization are separate. `RunExecutionService` records
+provider outcomes; [`RunFinalizationService.ts`][finalization] captures the checkpoint and advances
+finalization. Child/subagent completion does not complete the root run. Late checkpoint or diff
+work does not extend provider duration or masquerade as an active provider turn.
 
-Orchestration v2 keeps the same split. It records provider turn and run state independently from
-[run finalization](../../apps/server/src/orchestration-v2/RunFinalizationService.ts), so a late
-checkpoint or diff cannot extend the recorded provider duration or keep the client showing provider
-work as active.
+Automatic settlement settings belong to each server. Clients synchronize shared keys only to
+connected settings targets that advertise `threadAutoSettlement` and warn on drift; an unavailable
+environment is not silently replaced by another target.
+[`ThreadSettlementService.ts`][settlement] owns evaluation. Its server sweep
+works without a connected client; settings and PR merge notifications trigger reevaluation.
+The guarded `thread.auto-settle` command rejects newer activity, explicit overrides, and live or
+blocked work. It records the activity timestamp and detaches idle provider sessions. Clients render
+the persisted result rather than deriving settlement from their clocks or PR caches.
 
-Thread settlement is server-owned. Each server's own settings control PR and inactivity
-settlement. Those keys are user preferences, so clients write them to every shared-settings sync
-target (`SHARED_SERVER_SETTING_KEYS` in `packages/client-runtime/src/state/sharedSettings.ts`) and
-warn when another target drifts. A target must have an active connection and advertise the
-`threadAutoSettlement` capability, which signals that the server can hold every shared key.
-[`ThreadSettlementReactor`][settlement] checks threads at startup, when those settings change, and
-once per minute, including when no client is connected. It dispatches the guarded internal
-`thread.auto-settle` command, which uses the existing settlement event lifecycle. Automatic
-settlement excludes live background work and requires a comparable PR timestamp for immediate PR
-settlement. The command carries the latest activity timestamp and rejects any later event for its
-thread after the reactor's snapshot. The sweep looks a branch up from the thread's worktree when it
-still exists, so it shares the per-cwd PR cache the sidebar polls instead of spending a second host
-request. Clients render the persisted settlement state and do not derive settlement from PR or
-inactivity state. A committed `thread.settled` event also lets `ProviderCommandReactor` stop an idle
-provider session.
+At provider termination and checkpoint finalization, the V2 execution/capture services refresh PR discovery for the thread's matching
+non-default branch when no newer run is active. `VcsStatusBroadcaster` requires loaded remote
+status and permission from background policy. `GitManager` retries only a successful "no PR"
+cache entry, preserving known PRs and failure backoff without fetching remotes. Remote status
+reads that write the broadcaster cache share a lock per cwd.
 
-Orchestration v2 evaluates those rules in the
-[settlement service](../../apps/server/src/orchestration-v2/ThreadSettlementService.ts) rather than
-a reactor. It needs no connected client, merge notifications invalidate cached PR state and trigger
-a check, and the guarded `thread.auto-settle` command rejects newer activity, explicit settlement
-overrides, and live or blocked work. It records the activity timestamp for stable sorting and
-detaches idle provider sessions, and clients still render the persisted result instead of deriving
-settlement from their own clocks or PR caches.
+## Asynchronous effects and recovery
 
-At turn completion, `CheckpointReactor` refreshes PR discovery when the checkout matches the
-thread's non-default branch and no newer run is active. `VcsStatusBroadcaster` requires loaded remote
-status and permission from background policy. `GitManager` retries only a successful "no PR" cache
-entry for the current branch, preserving known PRs and failure backoff without fetching remotes.
-Remote status reads that write the broadcaster cache share a lock per cwd, including the initial
-status load.
+[`EffectOutbox.ts`][outbox] persists pending work with leases and terminal outcomes.
+[`EffectWorker.ts`][worker] claims it and calls the owning execution service: provider turn start
+and control, runtime-request response, checkpoint rollback/finalization, fork provisioning, title
+generation, or resource cleanup. Tests drain the V2 worker or await a specific persisted event or
+command receipt. A receipt of command acceptance is distinct from completion of its effects.
+Do not substitute a fixed delay or a V1 reactor test for live V2 completion evidence.
 
-## Drainable workers
+`ProviderRuntimeRecoveryService` reconciles lost processes before the worker starts. Replay-safe
+work can be requeued; process-bound starts, steering, interrupts, and callback replies cannot be
+blindly replayed against a vanished runtime. Recovery persists outcomes before admitting new work.
+Old database/queue readers hydrate saved facts into V2; they do not execute V1 commands.
 
-Follow-up work runs asynchronously in queue-backed workers built on [`DrainableWorker`][worker]:
-[`ProviderRuntimeIngestion`][ingest] normalizes provider runtime streams into orchestration commands,
-[`ProviderCommandReactor`][cmd] dispatches provider calls in response to intent events,
-[`CheckpointReactor`][checkpoint] captures and reverts workspace checkpoints, and
-[`ThreadSettlementReactor`][settlement] evaluates server-owned automatic settlement rules.
-
-`DrainableWorker` pairs a transactional queue with a transactional count of outstanding items.
-`enqueue` atomically offers and increments; processing always decrements. `drain` retries until the
-count reaches zero, so a test can await "queue empty and current item finished" instead of sleeping.
-Each of these four services exposes `drain` for exactly this.
-
-Orchestration v2 tests drain the effect worker or await a specific persisted event or receipt
-instead. Those test signals stay separate from the durable command receipts that make dispatch
-idempotent, and production behavior must use persisted state and events rather than test
-instrumentation or assumptions about elapsed time.
-
-Runtime receipts are a test-only mechanism. `RuntimeReceiptBusLive` in
-[`RuntimeReceiptBus.ts`][receipts] publishes nothing; only the test layer is PubSub-backed. Do not
-build production behavior on receipts.
+Native queued runs are the sole live queue authority. Admission, order, holds, and advancement
+belong to `Orchestrator`; `QueuedRunsControl` adapts them into the Scient `ThreadQueueStrip`.
+See [the queue contract](./scient-thread-queue.md) and
+[legacy import](./legacy-orchestration-migration.md).
 
 ## Provider drivers
 
-Nine drivers ship built in, registered in [`builtInDrivers.ts`][drivers] as `BUILT_IN_DRIVERS`:
-Codex, Claude, Cursor, Grok, OpenCode, Droid, Antigravity, Pi, and Oh My Pi. A driver declares its kind and config schema and creates a
-scoped adapter; `ProviderInstanceRegistry` owns live instances and `ProviderAdapterRegistry` resolves
-an instance to its adapter, so `ProviderService` routes session and turn operations without knowing
-which agent is behind them. See [providers.md](./providers.md).
+[`builtInDrivers.ts`][drivers] registers eleven built-in drivers: ACP registry, Codex, Claude,
+Cursor, Grok, OpenCode, Droid, Antigravity, Pi, Oh My Pi, and Scient Agent. Drivers own instance
+configuration, discovery, lifecycle capabilities, and native adapter construction.
+`ProviderInstanceRegistry` owns configured runtime instances. `ProviderAdapterRegistryV2` obtains
+their `ProviderAdapterV2` by instance ID, and `ProviderSessionManagerV2` owns live session scopes,
+MCP credentials, idle release, and teardown. Protocol differences stay in `Adapters/` and shared
+provider runtime helpers. See [providers.md](./providers.md).
 
 ## Checkpointing
 
-Scient attempts workspace checkpoints around each turn to support diffs and reverts. Capture
-availability is separate from whether the agent answered successfully. `CheckpointStore`
-captures state as hidden Git refs through the VCS driver's checkpoint operations;
-`CheckpointDiffQuery` answers turn and full-thread diff requests; `CheckpointReactor` coordinates
-baseline capture, completed-turn capture, diff projection, and reverting both the workspace and the
-provider conversation. The storage contract is `VcsCheckpointOps` in
-[`VcsDriver.ts`](../../apps/server/src/vcs/VcsDriver.ts), implemented for Git in the same directory.
+V2 `CheckpointService` defines checkpointable workspace scopes. `RunExecutionService` attempts a
+baseline, `CheckpointCaptureService` records completed-run capture/diffs, and
+`CheckpointRollbackService` restores the workspace and reconciles the provider conversation.
+Capture availability is separate from answer success. `CheckpointStore` still stores hidden Git
+refs through `VcsCheckpointOps`; `CheckpointDiffQuery` serves diff reads. These are not a
+Git-independent file-history backend.
 
-Capture admission retains its limits (512 MiB per changed file, 1 GiB in changed files and bounded
-path enumeration), together with the existing execution timeout. Size accounting measures symlinks without following their targets and resolves
-porcelain paths from the repository root, within the workspace staging pathspec. A declined capture
-has a typed availability error; it is not reported as a fabricated Git process exit. Capture still stages in a temporary repository and
-publishes only after successful staging, with cleanup on failure or interruption. These checkpoints still depend on Git; they are
-not a Git-independent file-history backend.
+Capture admission retains its limits (512 MiB per changed file, 1 GiB in changed files, bounded
+path enumeration and execution time). Symlink accounting does not follow targets; porcelain paths
+resolve from the repository root within the staging pathspec. Declined capture has a typed
+availability error. Capture stages in a temporary repository and publishes only after staging
+succeeds, with cleanup on failure or interruption. Shared-workspace restore safety is enforced by
+V2 rollback policy, separately from conversation-only rollback.
 
 ## Issue presentation
 
@@ -235,11 +237,12 @@ not imply a failed answer. Tool outcomes retain their existing tool-specific pre
 
 ## Startup
 
-[`serverRuntimeStartup.ts`][startup] runs a fixed lifecycle: start keybindings, settings, and
-reactors; publish welcome; signal command readiness (logged as `Accepting commands`); wait for the
-HTTP listener via `markHttpListening`; publish ready; fork the heartbeat; then either print headless
-output or open the browser. Command readiness precedes the listener, so a socket that opens can
-already dispatch.
+[`serverRuntimeStartup.ts`][startup] starts keybindings and settings, reconciles legacy thread
+shells and admits old queued payloads as held V2 runs, reconciles lost provider runtimes, then starts
+the V2 effect worker and awareness relay. Auto-bootstrap, heartbeat, and headless/browser presentation
+follow recovery. Startup then waits for `markHttpListening` and auxiliary readiness, publishes
+welcome, activates the server, logs `Accepting commands`, signals command readiness, and publishes
+ready. The HTTP listener can exist while command readiness is still gated.
 
 ## Related
 
@@ -253,19 +256,18 @@ already dispatch.
 - [D4 bootstrap record](./scient-next-d4-bootstrap.md)
 
 [rpc]: ../../packages/contracts/src/rpc.ts
-[contracts]: ../../packages/contracts/src/orchestration.ts
+[contracts]: ../../packages/contracts/src/orchestrationV2.ts
 [ws]: ../../apps/server/src/ws.ts
 [session]: ../../packages/client-runtime/src/rpc/session.ts
 [startup]: ../../apps/server/src/serverRuntimeStartup.ts
-[engine]: ../../apps/server/src/orchestration/Layers/OrchestrationEngine.ts
-[decider]: ../../apps/server/src/orchestration/decider.ts
-[projector]: ../../apps/server/src/orchestration/projector.ts
-[worker]: ../../packages/shared/src/DrainableWorker.ts
-[ingest]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
-[cmd]: ../../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
-[checkpoint]: ../../apps/server/src/orchestration/Layers/CheckpointReactor.ts
-[settlement]: ../../apps/server/src/orchestration/ThreadSettlementReactor.ts
-[receipts]: ../../apps/server/src/orchestration/Layers/RuntimeReceiptBus.ts
+[runtime]: ../../apps/server/src/orchestration-v2/runtimeLayer.ts
+[orchestrator]: ../../apps/server/src/orchestration-v2/Orchestrator.ts
+[sink]: ../../apps/server/src/orchestration-v2/EventSink.ts
+[ingest]: ../../apps/server/src/orchestration-v2/ProviderEventIngestor.ts
+[worker]: ../../apps/server/src/orchestration-v2/EffectWorker.ts
+[outbox]: ../../apps/server/src/orchestration-v2/EffectOutbox.ts
+[finalization]: ../../apps/server/src/orchestration-v2/RunFinalizationService.ts
+[settlement]: ../../apps/server/src/orchestration-v2/ThreadSettlementService.ts
 [drivers]: ../../apps/server/src/provider/builtInDrivers.ts
 
 ## Desktop startup and native isolation

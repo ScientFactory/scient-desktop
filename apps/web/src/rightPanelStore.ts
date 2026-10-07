@@ -21,13 +21,25 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
 import {
   normalizeScientRightPanelSurface,
-  scientArtifactSurface,
   type ScientRightPanelSurface,
 } from "./scient/rightPanel/surfaces";
+import type { PreviewStaticImageSurfaceDescriptor } from "./previewStaticImageSurface";
+// SCIENT-FORK:START
 import {
-  previewStaticImageDescriptorKey,
-  type PreviewStaticImageSurfaceDescriptor,
-} from "./previewStaticImageSurface";
+  type HtmlFilePresentationRequest,
+  type LatexFilePresentationRequest,
+  type OpenFileOptions,
+  scientFileSurfaceRequests,
+  scientPersistedLatexRootRelativePath,
+  scientRightPanelActions,
+  withoutTransientFileRequests,
+} from "./scient/rightPanel/scientRightPanelStore";
+export type {
+  HtmlFilePresentationRequest,
+  LatexFilePresentationRequest,
+  OpenFileOptions,
+} from "./scient/rightPanel/scientRightPanelStore";
+// SCIENT-FORK:END
 
 import type { ThreadPanelPresentation } from "./rightPanelLayout";
 
@@ -44,24 +56,6 @@ const RIGHT_PANEL_KINDS = [
   "scient",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
-
-export interface LatexFilePresentationRequest {
-  readonly id: number;
-  readonly mode: "split";
-}
-
-export interface HtmlFilePresentationRequest {
-  readonly id: number;
-  readonly mode: "source";
-}
-
-export interface OpenFileOptions {
-  readonly fileCitation?: FileCitation;
-  readonly htmlPreviewMode?: HtmlFilePresentationRequest["mode"];
-  readonly latexPreviewMode?: LatexFilePresentationRequest["mode"];
-  /** Root retained when SyncTeX navigates from a multi-file PDF to a source. */
-  readonly latexRootRelativePath?: string;
-}
 
 export interface DeviceTabTarget {
   hostId: string;
@@ -297,26 +291,9 @@ const fileSurface = (
   relativePath,
   revealLine,
   revealRequestId,
-  ...(options?.fileCitation ? { fileCitation: options.fileCitation } : {}),
-  ...(options?.htmlPreviewMode === undefined
-    ? {}
-    : {
-        htmlPresentationRequest: {
-          id: revealRequestId,
-          mode: options.htmlPreviewMode,
-        },
-      }),
-  ...(options?.latexPreviewMode === undefined
-    ? {}
-    : {
-        latexPresentationRequest: {
-          id: revealRequestId,
-          mode: options.latexPreviewMode,
-        },
-      }),
-  ...(typeof options?.latexRootRelativePath === "string"
-    ? { latexRootRelativePath: options.latexRootRelativePath }
-    : {}),
+  // SCIENT-FORK:START — citation reveal and presentation requests
+  ...scientFileSurfaceRequests(revealRequestId, options),
+  // SCIENT-FORK:END
 });
 
 const attachmentSurface = (attachment: ChatFileAttachment): RightPanelSurface => ({
@@ -549,15 +526,9 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         surface.revealRequestId >= 0
                           ? surface.revealRequestId
                           : 0;
-                      const latexRootRelativePath =
-                        typeof persistedLatexRootRelativePath === "string" &&
-                        persistedLatexRootRelativePath.length > 0 &&
-                        persistedLatexRootRelativePath.length <= 4_096 &&
-                        !persistedLatexRootRelativePath.includes("\0") &&
-                        !/^(?:[\\/]|[A-Za-z]:)/u.test(persistedLatexRootRelativePath) &&
-                        !persistedLatexRootRelativePath.split(/[\\/]/u).includes("..")
-                          ? persistedLatexRootRelativePath
-                          : undefined;
+                      const latexRootRelativePath = scientPersistedLatexRootRelativePath(
+                        persistedLatexRootRelativePath,
+                      );
                       return [
                         {
                           ...persistentSurface,
@@ -794,67 +765,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               : next;
           }),
         ),
-      openScient: (ref, surface) =>
-        set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
-            const next = upsertSurface(current, surface);
-            if (!current.surfaces.some((entry) => entry.id === surface.id)) return next;
-            return {
-              ...next,
-              surfaces: current.surfaces.map((entry) =>
-                entry.id === surface.id ? surface : entry,
-              ),
-            };
-          }),
-        ),
-      updateScientGeneratedPdf: (ref, surface) =>
-        set((state) => ({
-          ...updateThread(state, scopedThreadKey(ref), (current) => {
-            if (!current.surfaces.some((entry) => entry.id === surface.id)) return current;
-            return {
-              ...current,
-              surfaces: current.surfaces.map((entry) =>
-                entry.id === surface.id ? surface : entry,
-              ),
-            };
-          }),
-        })),
-      openScientArtifact: (ref, artifact) =>
-        set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
-            const surface = scientArtifactSurface(artifact);
-            const existing = current.surfaces.some((entry) => entry.id === surface.id);
-            return {
-              isOpen: true,
-              activeSurfaceId: surface.id,
-              surfaces: existing
-                ? current.surfaces.map((entry) => (entry.id === surface.id ? surface : entry))
-                : [...current.surfaces, surface],
-            };
-          }),
-        ),
-      updateScientArtifact: (ref, artifact) =>
-        set((state) => ({
-          ...updateThread(state, scopedThreadKey(ref), (current) => {
-            const surface = scientArtifactSurface(artifact);
-            const existing = current.surfaces.find((entry) => entry.id === surface.id);
-            if (!existing || existing.kind !== "scient" || existing.module !== "artifact") {
-              return current;
-            }
-            if (
-              previewStaticImageDescriptorKey(existing.artifact) ===
-              previewStaticImageDescriptorKey(artifact)
-            ) {
-              return current;
-            }
-            return {
-              ...current,
-              surfaces: current.surfaces.map((entry) =>
-                entry.id === surface.id ? surface : entry,
-              ),
-            };
-          }),
-        })),
+      // SCIENT-FORK:START — Scient surfaces and file presentation requests
+      ...scientRightPanelActions(set, { updateThread, upsertSurface, userAction }),
+      // SCIENT-FORK:END
       openFile: (ref, requestedPath, line, options) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
@@ -892,50 +805,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             };
           }),
         ),
-      consumeLatexPresentationRequest: (ref, relativePath, requestId) =>
-        set((state) => ({
-          ...updateThread(state, scopedThreadKey(ref), (current) => {
-            let changed = false;
-            const surfaces = current.surfaces.map((surface): RightPanelSurface => {
-              if (
-                surface.kind !== "file" ||
-                surface.relativePath !== relativePath ||
-                surface.latexPresentationRequest?.id !== requestId
-              ) {
-                return surface;
-              }
-              changed = true;
-              const {
-                latexPresentationRequest: _consumedLatexPresentationRequest,
-                ...remainingSurface
-              } = surface;
-              return remainingSurface;
-            });
-            return changed ? { ...current, surfaces } : current;
-          }),
-        })),
-      consumeHtmlPresentationRequest: (ref, relativePath, requestId) =>
-        set((state) => ({
-          ...updateThread(state, scopedThreadKey(ref), (current) => {
-            let changed = false;
-            const surfaces = current.surfaces.map((surface): RightPanelSurface => {
-              if (
-                surface.kind !== "file" ||
-                surface.relativePath !== relativePath ||
-                surface.htmlPresentationRequest?.id !== requestId
-              ) {
-                return surface;
-              }
-              changed = true;
-              const {
-                htmlPresentationRequest: _consumedHtmlPresentationRequest,
-                ...remainingSurface
-              } = surface;
-              return remainingSurface;
-            });
-            return changed ? { ...current, surfaces } : current;
-          }),
-        })),
       openAttachment: (ref, attachment) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
@@ -1244,16 +1113,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               threadKey,
               {
                 ...threadState,
-                surfaces: threadState.surfaces.map((surface): RightPanelSurface => {
-                  if (surface.kind !== "file") return surface;
-                  const {
-                    htmlPresentationRequest: _transientHtmlPresentationRequest,
-                    latexPresentationRequest: _transientLatexPresentationRequest,
-                    fileCitation: _transientFileCitation,
-                    ...persistentSurface
-                  } = surface;
-                  return persistentSurface;
-                }),
+                // SCIENT-FORK:START — file presentation requests are transient
+                surfaces: threadState.surfaces.map(withoutTransientFileRequests),
+                // SCIENT-FORK:END
               },
             ]),
         ),

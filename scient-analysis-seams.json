@@ -21,6 +21,8 @@
     "apps/server/scripts/compute-recipes.ts",
     "apps/server/scripts/publish-compute-recipe.ts",
     "apps/server/scripts/qualify-compute-backend.ts",
+    "apps/server/src/assets/ScientAssetAccess.ts",
+    "apps/server/src/assets/ScientAssetClaims.ts",
     "apps/server/src/telemetry/ComputeOutputAnalytics.ts",
     "apps/server/src/orchestration-v2/scient-fork/migrations/005_AnalysisRunIndex.ts",
     "apps/server/src/orchestration-v2/scient-fork/migrations/006_AnalysisRunProjectionState.ts",
@@ -35,6 +37,8 @@
     "apps/web/src/scient/pdf/ScientPdfReader.tsx",
     "apps/web/src/scient/rightPanel/ScientRightPanelSurfaceIcon.tsx",
     "apps/web/src/scient/rightPanel/surfaces.ts",
+    "apps/web/src/scient/rightPanel/ScientRightPanelContent.tsx",
+    "apps/web/src/scient/rightPanel/useScientRightPanelOpeners.ts",
     "apps/web/src/state/analysis.ts",
     "apps/web/src/state/compute.ts",
     "apps/web/src/routes/settings.scientific-computing.tsx",
@@ -42,7 +46,15 @@
     "packages/client-runtime/src/state/compute.ts",
     "packages/contracts/src/scientAnalysis.ts",
     "packages/contracts/src/scientCompute.ts",
-    "renovate.json5"
+    "renovate.json5",
+    "packages/contracts/src/scient/scientificRpcs.ts",
+    "apps/server/src/scient/ScientServerLayers.ts",
+    "packages/contracts/src/scient/scientificComputingSettings.ts",
+    "apps/web/src/components/preview/ScientMiniPlayerParts.tsx",
+    "apps/web/src/scient/rightPanel/scientRightPanelStore.ts",
+    "apps/web/src/scientPreviewMiniPlayerArtifacts.ts",
+    "apps/server/src/scient/ScientAssetUrls.ts",
+    "apps/server/src/scient/ScientWsServices.ts"
   ],
   "analysisDiffSignals": [
     "@scientfactory/(analysis|compute|execution)",
@@ -109,7 +121,7 @@
     },
     {
       "path": "apps/server/src/server.ts",
-      "anchor": "AnalysisService",
+      "anchor": "ScientRouteServices.provideScientRouteServices",
       "purpose": "Provide analysis, compute, and execution services to the shared server layer."
     },
     {
@@ -129,7 +141,7 @@
     },
     {
       "path": "apps/web/src/components/ChatView.tsx",
-      "anchor": "ComputePanel",
+      "anchor": "ScientRightPanelContent",
       "purpose": "Mount Scient artifact and compute content in the inherited right-panel layout."
     },
     {
@@ -244,7 +256,7 @@
     },
     {
       "path": "packages/contracts/src/rpc.ts",
-      "anchor": "computeStartSession",
+      "anchor": "...SCIENT_SCIENTIFIC_WS_METHODS",
       "purpose": "Register analysis and compute methods in the shared typed RPC surface."
     },
     {

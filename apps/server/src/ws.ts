@@ -14,7 +14,6 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
-import * as SchemaAST from "effect/SchemaAST";
 import { rpcInitialItems } from "./rpcInitialItems.ts";
 import {
   OrchestrationDispatchCommandError,
@@ -35,7 +34,6 @@ import {
   type FileManagerRevealKind,
   type OrchestrationClientOrigin,
   type OrchestrationV2Command,
-  type ClientOrchestrationCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
   type AcpRegistryImportSessionInput,
@@ -48,10 +46,8 @@ import {
   OrchestrationSearchThreadsError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_V2_WS_METHODS,
-  OrchestrationV2RpcSchemas,
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
   ORCHESTRATION_PROTOCOL_VERSION,
-  OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
@@ -73,7 +69,6 @@ import {
   type RelayClientInstallProgressEvent,
   type ServerSelfUpdateError,
   type ServerSelfUpdateProgressEvent,
-  type ProviderConnectionOperation,
   type ServerLifecycleStreamEvent,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
@@ -81,7 +76,7 @@ import {
   AssetWorkspaceContextResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
-  ProjectId,
+  type ProjectId,
   type ProviderDriverKind,
   type ProviderInstanceId,
   ThreadId,
@@ -99,29 +94,12 @@ import {
   WsWorkspaceRpcGroup,
   WsInteractiveRpcGroup,
   WsDeviceAndTelemetryRpcGroup,
-  CustomModelError,
-  TextGenerationError,
-  supportsModelConnections,
-  AuthOrchestrationOperateScope,
-  type OrchestrationEvent,
-  OrchestrationGetSnapshotError,
   ORCHESTRATION_WS_METHODS,
-  PROVIDER_DISPLAY_NAMES,
-  type ProjectCreateNewInput,
   type ProjectDirectoryFailure,
   type ProjectDirectoryOperation,
   type ProjectFileErrorReason,
   ProjectListDirectoryError,
   ProjectRenameFileError,
-  type ServerProvider,
-  ScientSkillManagementError,
-  AssetGeneratedDocumentAuthorityMismatchError,
-  AssetGeneratedDocumentNotFoundError,
-  AssetGeneratedDocumentResolutionError,
-  AssetAnalysisArtifactNotFoundError,
-  AssetAnalysisArtifactResolutionError,
-  AssetComputeOutputNotFoundError,
-  AssetComputeOutputResolutionError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import {
@@ -178,7 +156,7 @@ import {
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as OrchestrationEventStore from "./persistence/Services/OrchestrationEventStore.ts";
-import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErrors.ts";
+import { dispatchCommandRpcError } from "./orchestration-v2/DispatchCommandRpcError.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
@@ -204,6 +182,7 @@ import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
+import { isScientAssetResource, issueScientAssetUrl } from "./scient/ScientAssetUrls.ts";
 import { persistChatAttachments } from "./AttachmentPersistence.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -262,85 +241,47 @@ import {
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
-import * as Cause from "effect/Cause";
-import { createModelSelection } from "@t3tools/shared/model";
-import * as EffectAcpErrors from "effect-acp/errors";
-import { customModelProviderId } from "./customModels.ts";
-import { droidCustomModelId } from "./provider/droid/DroidCustomModels.ts";
-import { droidToolGuardTestRefusal } from "./textGeneration/DroidTextGeneration.ts";
-import { encodeOmpModelSlug } from "./provider/omp/OmpModel.ts";
-import { encodePiModelSlug } from "./provider/pi/PiModel.ts";
-import * as Predicate from "effect/Predicate";
 import { rejectCodexSubscriptionSharing } from "./scient/providerLifecycle/codexSubscriptionSharingPolicy.ts";
 import { ConversationForkService } from "./orchestration-v2/scient-fork/ConversationForkService.ts";
+import {
+  isOrchestrationDispatchCommandError,
+  makeConversationForkRpcHandlers,
+} from "./orchestration-v2/scient-fork/ConversationForkRpcHandlers.ts";
 import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderConnectionManager.ts";
-import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
 import * as ManagedRuntimeCatalog from "./scient/providerLifecycle/ManagedRuntimeCatalog.ts";
-import { reconcileManagedRuntimeProviders } from "./scient/providerLifecycle/ManagedRuntimeCatalogReconciler.ts";
+import {
+  makeProviderConnectionRpcHandlers,
+  providerProjectionForSession,
+  refreshManagedRuntimes,
+} from "./scient/providerLifecycle/ProviderConnectionRpcHandlers.ts";
+import { makeCustomModelRpcHandlers } from "./scient/providerLifecycle/CustomModelRpcHandlers.ts";
 import { workspaceEntryDisposition } from "./scient/workspace/WorkspaceEntryPolicy.ts";
+import {
+  projectFileErrorReason,
+  projectFileOsErrorCode,
+} from "./scient/workspace/ProjectFileErrorReason.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
-import { publishBrowserPdfExport } from "./scient/documentArtifacts/BrowserPdfExportPublication.ts";
-import { publishCapturedDocumentPdf } from "./scient/documentExport/DocumentPdfPublication.ts";
-import { prepareMarkdownPdf } from "./scient/documentExport/MarkdownPdfPreparation.ts";
-import { prepareConversationPdf } from "./scient/documentExport/ConversationPdfPreparation.ts";
-import { removeDocumentCapture } from "./scient/documentExport/DocumentCapture.ts";
 import { ConversationExportService } from "./scient/conversationExport/ConversationExportService.ts";
+import { makeDocumentPdfRpcHandlers } from "./scient/documentExport/DocumentPdfRpcHandlers.ts";
+import { makeFileOpeningRpcHandlers } from "./scient/fileOpening/FileOpeningRpcHandlers.ts";
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
+import {
+  makeAnalysisRuntimeInspectionHandlers,
+  makeScientificRpcHandlers,
+} from "./scient/analysis/ScientificRpcHandlers.ts";
 import { WorkspaceBindingResolver } from "./scient/projectScope/WorkspaceBindingResolver.ts";
+import { makeScientProjectFolders } from "./scient/projectScope/ScientProjectFolders.ts";
+import { captureScientWsServices } from "./scient/ScientWsServices.ts";
 import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntimePreferences.ts";
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
-import * as ProviderSkillManagement from "./scient/skills/ProviderSkillManagement.ts";
+import { makeSkillRpcHandlers } from "./scient/skills/SkillRpcHandlers.ts";
 import { makeVoiceTranscriptCorrection } from "./scient/voice/VoiceTranscriptCorrection.ts";
-import {
-  prepareEnvironmentFileOpen,
-  watchEnvironmentFile,
-} from "./scient/fileOpening/EnvironmentFileOpen.ts";
-import { resolveEnvironmentFileLink } from "./scient/fileOpening/EnvironmentFileLinkResolve.ts";
-import * as NewProject from "./project/NewProject.ts";
-import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
-const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
-const isTextGenerationError = Schema.is(TextGenerationError);
-const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
-
-const compactProviderError = (value: unknown): string | null => {
-  if (typeof value !== "string") return null;
-  const compact = value.replace(/\s+/g, " ").trim();
-  if (!compact) return null;
-  return compact.length <= 500 ? compact : `${compact.slice(0, 497)}...`;
-};
-
-const CUSTOM_MODEL_TEST_TIMEOUT_SECONDS = 45;
-
-/** Names the agent the test ran through: its instance label, else the driver's name. */
-const customModelTestFailure = (
-  instance: { readonly driverKind: ProviderDriverKind; readonly displayName: string | undefined },
-  cause: unknown,
-) => {
-  const agent =
-    instance.displayName ?? PROVIDER_DISPLAY_NAMES[instance.driverKind] ?? instance.driverKind;
-  if (Predicate.isTagged(cause, "TimeoutError"))
-    return new CustomModelError({
-      message: `${agent}: No response within ${CUSTOM_MODEL_TEST_TIMEOUT_SECONDS} s.`,
-    });
-  // Droid refuses to run without its tool blocking; say so for a Test, not for titles.
-  const toolGuard = isTextGenerationError(cause) ? droidToolGuardTestRefusal(cause) : undefined;
-  if (toolGuard !== undefined) return new CustomModelError({ message: `${agent}: ${toolGuard}` });
-  if (isTextGenerationError(cause) && isAcpRequestError(cause.cause)) {
-    const providerDetail = compactProviderError(cause.cause.data);
-    if (providerDetail) return new CustomModelError({ message: `${agent}: ${providerDetail}` });
-    const providerMessage = compactProviderError(cause.cause.errorMessage);
-    if (providerMessage) return new CustomModelError({ message: `${agent}: ${providerMessage}` });
-  }
-  return new CustomModelError({
-    message: `${agent} could not use this model. Check the key, model ID and model settings.`,
-  });
-};
 
 const resolveDiscoveryForConfig = <A, E, R>(
   discovery: Effect.Effect<A, E, R>,
@@ -358,48 +299,6 @@ export const resolveAvailableEditorsForConfig = <A, E, R>(
 export const resolveFileManagerRevealKindForConfig = <E, R>(
   discovery: Effect.Effect<FileManagerRevealKind | undefined, E, R>,
 ) => resolveDiscoveryForConfig(discovery, () => undefined);
-
-const hasAuthorizationMaterial = (
-  operation: ProviderConnectionOperation | null | undefined,
-): operation is ProviderConnectionOperation =>
-  operation !== null &&
-  operation !== undefined &&
-  (operation.authorizationUrl !== undefined ||
-    operation.userCode !== undefined ||
-    operation.instructions !== undefined);
-
-const withoutAuthorizationMaterial = (
-  operation: ProviderConnectionOperation,
-): ProviderConnectionOperation => {
-  const redactedOperation = { ...operation };
-  delete redactedOperation.authorizationUrl;
-  delete redactedOperation.authorizationUrlKind;
-  delete redactedOperation.userCode;
-  // The provider's own wording can repeat the device code.
-  delete redactedOperation.instructions;
-  return redactedOperation;
-};
-
-const redactProviderAuthorizationForReadOnlyClient = (provider: ServerProvider): ServerProvider => {
-  const connection = provider.connection;
-  if (connection === undefined) return provider;
-  const { operation, accountOperation } = connection;
-  if (!hasAuthorizationMaterial(operation) && !hasAuthorizationMaterial(accountOperation)) {
-    return provider;
-  }
-  return {
-    ...provider,
-    connection: {
-      ...connection,
-      ...(hasAuthorizationMaterial(operation)
-        ? { operation: withoutAuthorizationMaterial(operation) }
-        : {}),
-      ...(hasAuthorizationMaterial(accountOperation)
-        ? { accountOperation: withoutAuthorizationMaterial(accountOperation) }
-        : {}),
-    },
-  };
-};
 
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
@@ -476,27 +375,6 @@ function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntries
       return { failure: "read_directory_failed", parentPath: error.parentPath };
     default:
       return unexpectedCompatibilityError(error);
-  }
-}
-
-/** The operating system's error code for a failed file operation, when it gave one. */
-function projectFileOsErrorCode(cause: unknown): string | undefined {
-  const code =
-    typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
-  return typeof code === "string" && /^[A-Z][A-Z0-9_]{0,31}$/u.test(code) ? code : undefined;
-}
-
-/** The operating system's reason for a failed file operation, when it gave one. */
-function projectFileErrorReason(code: string | undefined): ProjectFileErrorReason | undefined {
-  switch (code) {
-    case "ENOENT":
-    case "ENOTDIR":
-      return "not_found";
-    case "EACCES":
-    case "EPERM":
-      return "permission_denied";
-    default:
-      return undefined;
   }
 }
 
@@ -592,47 +470,11 @@ function projectDirectoryFailureContext(
       return unexpectedCompatibilityError(error);
   }
 }
-const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
-export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
-  OrchestrationEvent,
-  {
-    type:
-      | "thread.message-sent"
-      | "thread.proposed-plan-upserted"
-      | "thread.activity-appended"
-      | "thread.turn-diff-completed"
-      | "thread.reverted"
-      | "thread.session-set";
-  }
-> {
-  return (
-    event.type === "thread.message-sent" ||
-    event.type === "thread.proposed-plan-upserted" ||
-    event.type === "thread.activity-appended" ||
-    event.type === "thread.turn-diff-completed" ||
-    event.type === "thread.reverted" ||
-    event.type === "thread.session-set"
-  );
-}
-
-const PROVIDER_STATUS_COALESCE_MAX_CHUNK = 256;
-const PROVIDER_STATUS_COALESCE_WINDOW = Duration.millis(200);
-
-/**
- * Bound provider-status traffic without waiting for the entire stream to go
- * quiet. Runtime downloads can publish progress continuously, so a trailing
- * debounce can indefinitely hide the final succeeded/failed snapshot from
- * connected clients. Fixed windows preserve the latest snapshot at least once
- * per window while still collapsing noisy byte-level progress updates.
- */
-export const coalesceProviderStatusUpdates = <E, R>(
-  updates: Stream.Stream<ReadonlyArray<ServerProvider>, E, R>,
-): Stream.Stream<ReadonlyArray<ServerProvider>, E, R> =>
-  updates.pipe(
-    Stream.groupedWithin(PROVIDER_STATUS_COALESCE_MAX_CHUNK, PROVIDER_STATUS_COALESCE_WINDOW),
-    Stream.map((batch) => batch[batch.length - 1]!),
-  );
+// SCIENT-FORK:START — provider-status coalescing lives in scient/providerLifecycle.
+import { coalesceProviderStatusUpdates } from "./scient/providerLifecycle/ProviderStatusCoalescing.ts";
+export { coalesceProviderStatusUpdates };
+// SCIENT-FORK:END
 
 const ServerWsRpcGroup = WsRpcGroup;
 // When a resuming client's cursor is more than this many events behind the
@@ -1280,59 +1122,6 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   },
 );
 
-// SCIENT-FORK:START — one wire tag, two engines.
-// `ORCHESTRATION_WS_METHODS.dispatchCommand` and `ORCHESTRATION_V2_WS_METHODS.dispatchCommand`
-// are the same string, so `RpcGroup.make` can hold exactly one handler body under it.
-// `ClientOrchestrationCommand` is still the transport for commands `OrchestrationV2Command`
-// has no schema for, so the single body dispatches on the command itself.
-
-/** Command-type literals of a tagged schema, read from its AST. */
-const commandTypeLiterals = (ast: SchemaAST.AST): ReadonlyArray<string> => {
-  if (SchemaAST.isUnion(ast)) return ast.types.flatMap(commandTypeLiterals);
-  if (SchemaAST.isLiteral(ast)) return typeof ast.literal === "string" ? [ast.literal] : [];
-  if (SchemaAST.isObjects(ast)) {
-    const type = ast.propertySignatures.find((property) => property.name === "type");
-    return type === undefined ? [] : commandTypeLiterals(type.type);
-  }
-  return [];
-};
-
-/**
- * Every command type the V2 dispatch RPC accepts, read from its payload schema
- * so the list cannot drift from it.
- */
-const ORCHESTRATION_V2_COMMAND_TYPES: ReadonlySet<string> = new Set(
-  commandTypeLiterals(OrchestrationV2RpcSchemas.dispatchCommand.input.ast),
-);
-
-/**
- * Routes a `dispatchCommand` payload to the legacy engine.
- *
- * The rule: the V2 intake owns a command when — and only when —
- * `OrchestrationV2Command` declares a schema for that command's `type`. Everything
- * else is a retained compatibility command. The conversation fork has its own
- * V2 service; unsupported legacy commands fail explicitly. Deriving the
- * set from the schema keeps the other direction true too: a new V2 command type
- * routes to the V2 intake without anyone editing this file.
- *
- * `thread.fork` is the one tag both unions declare, and the tag alone cannot separate
- * them. V1's fork names `originThreadId`/`newThreadId`/`workspaceMode` and its result
- * carries `forkAttachmentIdMap`, which web reads; V2's fork names
- * `sourceThreadId`/`targetThreadId`/`sourcePoint` and its result is `{ sequence }`. The
- * tag cannot decide, so the fork's own fields do.
- *
- * The declared guard widens to all of `ClientOrchestrationCommand` on purpose: every
- * V1 union member satisfies it, so the legacy branch keeps upstream's own parameter
- * type, and the V2 branch is left holding only the V2 members V1 does not already
- * cover.
- */
-const isV1OnlyDispatchCommand = (
-  command: ClientOrchestrationCommand | OrchestrationV2Command,
-): command is ClientOrchestrationCommand =>
-  !ORCHESTRATION_V2_COMMAND_TYPES.has(command.type) ||
-  (command.type === "thread.fork" && "originThreadId" in command);
-// SCIENT-FORK:END
-
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
@@ -1438,60 +1227,6 @@ const makeWsRpcLayer = (
         workspaceFileSystem,
       });
       const scientSkillManagement = yield* ScientSkillManagement.ScientSkillManagement;
-      const skillContextError = (operation: string, message: string) =>
-        new ScientSkillManagementError({ operation, message });
-      const resolveScientSkillProjectRoot = Effect.fn("ws.resolveScientSkillProjectRoot")(
-        function* (input: {
-          readonly projectId?: ProjectId | undefined;
-          readonly threadId?: ThreadId | undefined;
-        }) {
-          if (input.threadId) {
-            const thread = yield* threadManagement.getThreadShell(input.threadId).pipe(
-              Effect.map((thread) => (thread === null ? Option.none() : Option.some(thread))),
-              Effect.mapError(() =>
-                skillContextError("list", "The thread workspace could not be resolved."),
-              ),
-            );
-            if (Option.isNone(thread)) {
-              return yield* skillContextError("list", "That thread is not available.");
-            }
-            if (input.projectId && thread.value.projectId !== input.projectId) {
-              return yield* skillContextError(
-                "list",
-                "The requested thread does not belong to that project.",
-              );
-            }
-            if (thread.value.worktreePath) return thread.value.worktreePath;
-            if (thread.value.projectId) {
-              const project = yield* projectService
-                .getShell(thread.value.projectId)
-                .pipe(
-                  Effect.mapError(() =>
-                    skillContextError("list", "The project workspace could not be resolved."),
-                  ),
-                );
-              if (Option.isSome(project)) return project.value.workspaceRoot;
-            }
-            return yield* skillContextError("list", "That thread has no project workspace.");
-          }
-          if (input.projectId) {
-            const project = yield* projectService
-              .getShell(input.projectId)
-              .pipe(
-                Effect.mapError(() =>
-                  skillContextError("list", "The project workspace could not be resolved."),
-                ),
-              );
-            if (Option.isNone(project)) {
-              return yield* skillContextError("list", "That project is not available.");
-            }
-            return project.value.workspaceRoot;
-          }
-          return undefined;
-        },
-      );
-      const providerSkillManagement =
-        ProviderSkillManagement.makeProviderSkillManagement(providerRegistry);
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
       const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
@@ -1561,12 +1296,9 @@ const makeWsRpcLayer = (
         currentSession.scopes.includes(requiredScope)
           ? stream
           : Stream.fail(authorizationError(requiredScope));
-      const projectProvidersForCurrentSession = currentSession.scopes.includes(
-        AuthOrchestrationOperateScope,
-      )
-        ? (providers: ReadonlyArray<ServerProvider>) => providers
-        : (providers: ReadonlyArray<ServerProvider>) =>
-            providers.map(redactProviderAuthorizationForReadOnlyClient);
+      // SCIENT-FORK:START — read-only clients never see provider authorization material.
+      const projectProvidersForCurrentSession = providerProjectionForSession(currentSession);
+      // SCIENT-FORK:END
 
       const acpRegistryProject = Effect.fn("ws.acpRegistry.project")(function* (
         projectId: ProjectId,
@@ -1952,172 +1684,21 @@ const makeWsRpcLayer = (
           ),
         );
 
-      const path = yield* Path.Path;
-      // Scratch threads run in a plain folder. Production uses the data dir;
-      // the dev runner can select isolated storage outside its checkout.
-      // Offer it only when the selected parent is outside any work tree,
-      // so it cannot inherit a repository's Git status and checkpoints. Detection failures and
-      // defects fail closed and hide the folder, never the config.
-      // Probed once per connection: a negative VCS detection is not cached.
-      // An interrupt stays an interrupt, so a config load cancelled mid-probe
-      // invalidates the cache and the next load probes again.
-      // SCIENT-FORK:START — Product policy and environment capability share
-      // this advertisement. Scratch retains a real owning project; each
-      // thread's registered plain folder is also admitted by Scient's resolver.
-      const scratchThreadsOffered = SCIENT_DESKTOP_IDENTITY.projectlessThreadsEnabled;
-      const scratchWorkspaceRoot = ServerConfig.scratchWorkspaceRoot(config, path);
+      // SCIENT-FORK:START — Scratch and name-only project folders follow Scient's product policy.
+      const {
+        resolveScratchWorkspaceRoot,
+        ensureScratchProject,
+        newProjectsRoot,
+        createNewProject,
+      } = yield* makeScientProjectFolders({
+        config,
+        gitWorkflow,
+        projectService,
+        randomUUID,
+        serverCommandId,
+        toDispatchCommandError,
+      });
       // SCIENT-FORK:END
-      const [cachedScratchWorkspaceRoot, invalidateScratchWorkspaceRoot] =
-        yield* Effect.cachedInvalidateWithTTL(
-          gitWorkflow.isRepository(path.dirname(scratchWorkspaceRoot)).pipe(
-            Effect.map((isRepository) =>
-              !scratchThreadsOffered || isRepository ? undefined : scratchWorkspaceRoot,
-            ),
-            Effect.catchCause((cause) =>
-              Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(undefined),
-            ),
-          ),
-          Duration.infinity,
-        );
-      const resolveScratchWorkspaceRoot = cachedScratchWorkspaceRoot.pipe(
-        Effect.onInterrupt(() => invalidateScratchWorkspaceRoot),
-      );
-
-      const fileSystem = yield* FileSystem.FileSystem;
-      // Each Scratch thread gets its own folder under the Scratch root, named
-      // from its date, first words, and id. It rides in worktreePath like any
-      // thread that runs outside its project root, so the provider, terminal,
-      // and file tree all use it. Threads that already name a folder keep it.
-      // One Scratch project per environment, created the first time a client
-      // asks. Two clients racing the create both reach dispatch; the loser's
-      // duplicate-root rejection resolves to the project the winner made.
-      // The folder is (re)made on every call so a deleted Scratch still runs.
-      const ensureScratchProject = Effect.gen(function* () {
-        const workspaceRoot = yield* resolveScratchWorkspaceRoot;
-        if (workspaceRoot === undefined) {
-          return yield* new OrchestrationDispatchCommandError({
-            message: "Threads without a project are not available on this environment.",
-          });
-        }
-        yield* fileSystem.makeDirectory(workspaceRoot, { recursive: true }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new OrchestrationDispatchCommandError({
-                message: "Failed to create the folder for threads without a project.",
-                cause,
-              }),
-          ),
-        );
-        const findScratchProjectId = projectService.getByWorkspaceRoot(workspaceRoot).pipe(
-          Effect.map(Option.map((project) => project.id)),
-          Effect.mapError(
-            (cause) =>
-              new OrchestrationDispatchCommandError({
-                message: "Failed to look up the home for threads without a project.",
-                cause,
-              }),
-          ),
-        );
-        const existingProjectId = yield* findScratchProjectId;
-        if (Option.isSome(existingProjectId)) {
-          return { projectId: existingProjectId.value };
-        }
-        const projectId = ProjectId.make(yield* randomUUID);
-        return yield* Effect.gen(function* () {
-          yield* projectService.create({
-            commandId: yield* serverCommandId("scratch-project-create"),
-            projectId,
-            title: "No project",
-            workspaceRoot,
-          });
-          yield* projectService.update({
-            commandId: yield* serverCommandId("scratch-project-icon"),
-            projectId,
-            projectIcon: { kind: "lucide", name: "message-square-dashed", color: "gray" },
-          });
-          return { projectId };
-        }).pipe(
-          Effect.catch((error) =>
-            findScratchProjectId.pipe(
-              Effect.flatMap(
-                Option.match({
-                  onNone: () => Effect.fail(error),
-                  onSome: (racedProjectId) => Effect.succeed({ projectId: racedProjectId }),
-                }),
-              ),
-            ),
-          ),
-        );
-      }).pipe(
-        Effect.mapError((cause) =>
-          toDispatchCommandError(cause, "Failed to create the Scratch project."),
-        ),
-      );
-
-      // Projects started from just a name live beside Scratch and worktrees,
-      // away from folders the user organizes by hand. A nested repository is
-      // fine here (unlike Scratch) because each project gets its own `git init`.
-      // SCIENT-FORK:START — Scient already creates a project from any typed
-      // path ("Create & Add"), and that path also runs Scient's project
-      // initialization. Upstream's name-only root skips all of that, so it stays
-      // unadvertised until the owner picks between the two paths.
-      const newProjectsRoot = SCIENT_DESKTOP_IDENTITY.createProjectFromNameEnabled
-        ? path.resolve(config.baseDir, "projects")
-        : undefined;
-      // SCIENT-FORK:END
-      const createNewProject = (input: ProjectCreateNewInput) =>
-        Effect.gen(function* () {
-          if (newProjectsRoot === undefined) {
-            return yield* new OrchestrationDispatchCommandError({
-              message: "Starting a project from just a name is not available on this environment.",
-            });
-          }
-          const folder = yield* NewProject.createNewProjectFolder({
-            root: newProjectsRoot,
-            name: input.name,
-          }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new OrchestrationDispatchCommandError({
-                  message: "Failed to create the project folder.",
-                  cause,
-                }),
-            ),
-          );
-          const projectId = ProjectId.make(yield* randomUUID);
-          yield* Effect.gen(function* () {
-            yield* projectService.create({
-              commandId: yield* serverCommandId("project-create-new"),
-              projectId,
-              title: input.name,
-              workspaceRoot: folder.workspaceRoot,
-            });
-          }).pipe(
-            // Only a rejected command means no project uses the folder. An
-            // interrupt can land after the command is queued, so keep it then.
-            Effect.tapError(() =>
-              projectService.getById(projectId).pipe(
-                Effect.flatMap((project) =>
-                  Option.isSome(project)
-                    ? Effect.void
-                    : fileSystem.remove(folder.workspaceRoot, { recursive: true }),
-                ),
-                Effect.ignoreCause({ log: true }),
-              ),
-            ),
-          );
-          return {
-            projectId,
-            workspaceRoot: folder.workspaceRoot,
-            ...(folder.commitError === undefined ? {} : { commitError: folder.commitError }),
-          };
-        }).pipe(
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-          Effect.mapError((cause) =>
-            toDispatchCommandError(cause, "Failed to create the project."),
-          ),
-        );
 
       // Only clients that answer /usage-limits themselves see it in the catalogs;
       // an older client would send the injected command to the provider.
@@ -2258,84 +1839,55 @@ const makeWsRpcLayer = (
       });
 
       const mutateProject = Effect.fn("ws.projects.mutate")(function* (mutation: ProjectMutation) {
-        const result = yield* projectMutationOperation(projectService, mutation);
-        if (mutation.type === "project.delete")
-          yield* projectCloneTracker.discard(mutation.projectId);
-        return result;
+        return yield* projectMutationOperation(projectService, mutation);
       });
 
+      // SCIENT-FORK:START — message-boundary forks use Scient's native fork service.
+      const forkRpc = makeConversationForkRpcHandlers({
+        observeRpcEffect,
+        startup,
+        conversationForks,
+      });
+      // SCIENT-FORK:END
       const handlers0 = WsConversationRpcGroup.of({
-        // Retained conversation-fork transport commits native V2 history and effects.
-        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
-          isV1OnlyDispatchCommand(command)
-            ? observeRpcEffect(
-                ORCHESTRATION_WS_METHODS.dispatchCommand,
-                command.type === "thread.fork"
-                  ? startup.enqueueCommand(conversationForks.dispatch(command)).pipe(
-                      Effect.mapError((cause) =>
-                        isOrchestrationDispatchCommandError(cause)
-                          ? cause
-                          : new OrchestrationDispatchCommandError({
-                              message: cause.message,
-                              cause,
-                            }),
-                      ),
-                    )
-                  : Effect.fail(
-                      new OrchestrationDispatchCommandError({
-                        message: "This legacy command is unsupported. Update the client.",
-                      }),
-                    ),
-                { "rpc.aggregate": "orchestration" },
+        // SCIENT-FORK: message-boundary forks go to Scient's native fork service first.
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: forkRpc.route((command) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+            startup
+              .enqueueCommand(
+                ThreadMessageIntake.dispatchCommand(
+                  ThreadManagementService.withCreationProvenance(command, {
+                    createdBy: "user",
+                    creationSource: "creationSource" in command ? command.creationSource : "web",
+                  }),
+                ).pipe(Effect.provide(intakeContext)),
               )
-            : observeRpcEffect(
-                ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
-                startup
-                  .enqueueCommand(
-                    ThreadMessageIntake.dispatchCommand(
-                      ThreadManagementService.withCreationProvenance(command, {
-                        createdBy: "user",
-                        creationSource:
-                          "creationSource" in command ? command.creationSource : "web",
-                      }),
-                    ).pipe(Effect.provide(intakeContext)),
-                  )
-                  .pipe(
-                    Effect.tap(() => recordV2ClientCommandAnalytics(command)),
-                    Effect.map((result) =>
-                      ThreadMessageIntake.dispatchCommandReceipt(command, result),
-                    ),
-                    Effect.mapError((cause) => {
-                      const detail = userFacingDispatchErrorMessage(cause);
-                      return new OrchestrationV2DispatchCommandError({
-                        commandId: command.commandId,
-                        commandType: command.type,
-                        message: detail ?? "Failed to dispatch orchestration V2 command",
-                        ...(detail === undefined ? {} : { detail }),
-                        cause,
-                      });
-                    }),
-                  ),
-                {
-                  "rpc.aggregate": "orchestrationV2",
-                  "orchestration_v2.command_id": command.commandId,
-                  "orchestration_v2.command_type": command.type,
-                  "orchestration_v2.thread_id":
-                    command.type === "thread.fork" || command.type === "thread.merge_back"
-                      ? command.targetThreadId
-                      : command.type === "delegated_task.request" ||
-                          command.type === "delegated_task.wake-policy" ||
-                          command.type === "delegated_task.completion-delivery.acknowledge" ||
-                          command.type === "delegated_task.completion-delivery.dispose" ||
-                          command.type === "thread.created.record"
-                        ? command.parentThreadId
-                        : command.threadId,
-                  ...(command.type === "thread.fork" || command.type === "thread.merge_back"
-                    ? { "orchestration_v2.source_thread_id": command.sourceThreadId }
-                    : {}),
-                },
+              .pipe(
+                Effect.tap(() => recordV2ClientCommandAnalytics(command)),
+                Effect.map((result) => ThreadMessageIntake.dispatchCommandReceipt(command, result)),
+                Effect.mapError((cause) => dispatchCommandRpcError(command, cause)),
               ),
-        // SCIENT-FORK:END
+            {
+              "rpc.aggregate": "orchestrationV2",
+              "orchestration_v2.command_id": command.commandId,
+              "orchestration_v2.command_type": command.type,
+              "orchestration_v2.thread_id":
+                command.type === "thread.fork" || command.type === "thread.merge_back"
+                  ? command.targetThreadId
+                  : command.type === "delegated_task.request" ||
+                      command.type === "delegated_task.wake-policy" ||
+                      command.type === "delegated_task.completion-delivery.acknowledge" ||
+                      command.type === "delegated_task.completion-delivery.dispose" ||
+                      command.type === "thread.created.record"
+                    ? command.parentThreadId
+                    : command.threadId,
+              ...(command.type === "thread.fork" || command.type === "thread.merge_back"
+                ? { "orchestration_v2.source_thread_id": command.sourceThreadId }
+                : {}),
+            },
+          ),
+        ),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
@@ -2450,6 +2002,15 @@ const makeWsRpcLayer = (
                             ? {}
                             : { messageId: input.initialMessage.messageId }),
                           text: input.initialMessage.text,
+                          ...(input.initialMessage.selectedScientSkillNames === undefined
+                            ? {}
+                            : {
+                                selectedScientSkillNames:
+                                  input.initialMessage.selectedScientSkillNames,
+                              }),
+                          ...(input.initialMessage.sourcePlanRef === undefined
+                            ? {}
+                            : { sourcePlanRef: input.initialMessage.sourcePlanRef }),
                           attachments: input.initialMessage.attachments,
                           ...(input.initialMessage.context === undefined
                             ? {}
@@ -2749,18 +2310,9 @@ const makeWsRpcLayer = (
             persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),
             { "rpc.aggregate": "orchestration" },
           ),
-        [ORCHESTRATION_WS_METHODS.getForkOptions]: (input) =>
-          observeRpcEffect(
-            ORCHESTRATION_WS_METHODS.getForkOptions,
-            conversationForks
-              .getOptions(input)
-              .pipe(
-                Effect.mapError(
-                  (cause) => new OrchestrationGetSnapshotError({ message: cause.message, cause }),
-                ),
-              ),
-            { "rpc.aggregate": "orchestration" },
-          ),
+        // SCIENT-FORK:START — fork options for a message-boundary fork.
+        ...forkRpc.handlers,
+        // SCIENT-FORK:END
       });
 
       const handlers1 = WsServerManagementRpcGroup.of({
@@ -2804,32 +2356,15 @@ const makeWsRpcLayer = (
                   { concurrency: "unbounded", discard: true },
                 );
               }
+              // SCIENT-FORK:START — an explicit runtime refresh re-checks managed runtimes.
               if (input.refreshManagedRuntimeCatalog === true) {
-                // An explicit runtime refresh re-checks a runtime that fell back
-                // after a failed check; switching back waits for running work.
-                const reselectInstances = yield* providerInstances.listInstances;
-                yield* Effect.forEach(
-                  reselectInstances.filter(
-                    (instance) =>
-                      input.instanceId === undefined || input.instanceId === instance.instanceId,
-                  ),
-                  (instance) =>
-                    providerRuntimeManager.reselect(instance.instanceId).pipe(Effect.forkDetach),
-                  { discard: true },
-                );
-                const before = yield* managedRuntimeCatalog.current;
-                const after = yield* managedRuntimeCatalog.refreshNow;
-                const changedProviders = ManagedRuntimeCatalog.changedManagedRuntimeProviders(
-                  before,
-                  after,
-                );
-                if (changedProviders.length > 0) {
-                  // Refresh publishes an async event for the process
-                  // reconciler. Reconcile here too so this explicit RPC
-                  // returns new actions without a UI race.
-                  yield* reconcileManagedRuntimeProviders(changedProviders);
-                }
+                yield* refreshManagedRuntimes(input, {
+                  providerInstances,
+                  providerRuntimeManager,
+                  managedRuntimeCatalog,
+                });
               }
+              // SCIENT-FORK:END
               // An untargeted refresh is "re-read everything's status", which
               // includes quota from configured usage-limit sources. Awaited,
               // not forked: the RPC scope closes on return and would
@@ -2876,12 +2411,6 @@ const makeWsRpcLayer = (
               return { providers };
             }),
             { "rpc.aggregate": "server" },
-          ),
-        [WS_METHODS.providerSkillsSetEnabled]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.providerSkillsSetEnabled,
-            providerSkillManagement.setEnabled(input),
-            { "rpc.aggregate": "skills" },
           ),
         [WS_METHODS.voiceCorrectTranscript]: (input) =>
           observeRpcEffect(
@@ -2949,48 +2478,6 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
-          ),
-        [WS_METHODS.serverStartProviderConnection]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverStartProviderConnection,
-            providerConnectionManager.start(input),
-            { "rpc.aggregate": "server" },
-          ),
-        [WS_METHODS.serverCancelProviderConnection]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverCancelProviderConnection,
-            providerConnectionManager.cancel(input),
-            { "rpc.aggregate": "server" },
-          ),
-        [WS_METHODS.serverSubmitProviderAuthorizationCode]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverSubmitProviderAuthorizationCode,
-            providerConnectionManager.submitAuthorizationCode(input),
-            { "rpc.aggregate": "server" },
-          ),
-        [WS_METHODS.serverDisconnectProvider]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverDisconnectProvider,
-            providerConnectionManager.disconnect(input),
-            { "rpc.aggregate": "server" },
-          ),
-        [WS_METHODS.serverPlanProviderRuntime]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverPlanProviderRuntime,
-            providerRuntimeManager.plan(input),
-            { "rpc.aggregate": "server" },
-          ),
-        [WS_METHODS.serverStartProviderRuntime]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverStartProviderRuntime,
-            providerRuntimeManager.start(input),
-            { "rpc.aggregate": "server" },
-          ),
-        [WS_METHODS.serverCancelProviderRuntime]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverCancelProviderRuntime,
-            providerRuntimeManager.cancel(input),
-            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.providerConsumeResetCredit]: (input) =>
           observeRpcEffect(
@@ -3162,63 +2649,6 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
-        [WS_METHODS.serverSaveCustomModel]: (input) => serverSettings.saveCustomModel(input),
-        [WS_METHODS.serverRemoveCustomModel]: (input) => serverSettings.removeCustomModel(input),
-        [WS_METHODS.serverTestCustomModel]: (input) =>
-          Effect.gen(function* () {
-            const settings = yield* serverSettings.getSettings;
-            if (settings.customModels.revision !== input.revision)
-              return yield* new CustomModelError({
-                message: "Custom models changed. Test the updated configuration.",
-              });
-            const connection = settings.customModels.connections.find(
-              (c) => c.id === input.connectionId,
-            );
-            const model = connection?.models.find((m) => m.id === input.modelId);
-            const instance = yield* providerInstances.getInstance(input.instanceId);
-            if (
-              !connection ||
-              !model ||
-              !model.instanceIds.includes(input.instanceId) ||
-              !instance?.enabled ||
-              !supportsModelConnections(instance.driverKind, connection.protocol)
-            )
-              return yield* new CustomModelError({
-                message:
-                  "Connect this model to an enabled Pi, Droid, Oh My Pi, or Scient agent first.",
-              });
-            const resolved = yield* serverSettings.resolveCustomModels(input.instanceId);
-            const credentialError = resolved.find((c) => c.id === connection.id)?.credentialError;
-            if (credentialError !== undefined)
-              return yield* new CustomModelError({ message: credentialError });
-            const slug =
-              instance.driverKind === "droid"
-                ? droidCustomModelId(connection.id, model.id)
-                : instance.driverKind === "omp" || instance.driverKind === "scient"
-                  ? encodeOmpModelSlug(customModelProviderId(connection.id), model.modelId)
-                  : encodePiModelSlug(customModelProviderId(connection.id), model.modelId);
-            if (!slug) return yield* new CustomModelError({ message: "Invalid model ID." });
-            yield* instance.textGeneration
-              .generateThreadTitle({
-                cwd: config.cwd,
-                message: "Connection test",
-                modelSelection: createModelSelection(input.instanceId, slug),
-              })
-              .pipe(
-                Effect.timeout(Duration.seconds(CUSTOM_MODEL_TEST_TIMEOUT_SECONDS)),
-                Effect.mapError((cause) => customModelTestFailure(instance, cause)),
-              );
-            const latest = yield* serverSettings.getSettings;
-            if (latest.customModels.revision !== input.revision)
-              return yield* new CustomModelError({
-                message: "Custom models changed during the test. Test again.",
-              });
-            return { revision: input.revision };
-          }).pipe(
-            Effect.catchTag("ServerSettingsError", () =>
-              Effect.fail(new CustomModelError({ message: "Could not read custom models." })),
-            ),
-          ),
         [WS_METHODS.serverUpdateSettings]: ({ patch, providerInstanceMutation }) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateSettings,
@@ -3237,49 +2667,6 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
-          ),
-        [WS_METHODS.skillsList]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.skillsList,
-            Effect.gen(function* () {
-              const projectRoot = yield* resolveScientSkillProjectRoot(input);
-              return yield* scientSkillManagement.list(projectRoot);
-            }),
-            { "rpc.aggregate": "skills" },
-          ),
-        [WS_METHODS.skillsReadDocument]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.skillsReadDocument,
-            scientSkillManagement.readDocument(input.releaseKey),
-            { "rpc.aggregate": "skills" },
-          ),
-        [WS_METHODS.skillsSetProjectPreference]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.skillsSetProjectPreference,
-            Effect.gen(function* () {
-              const projectRoot = yield* resolveScientSkillProjectRoot({
-                projectId: input.projectId,
-              });
-              if (!projectRoot) {
-                return yield* skillContextError(
-                  "setProjectPreference",
-                  "That project has no workspace.",
-                );
-              }
-              return yield* scientSkillManagement.setProjectPreference({
-                projectRoot,
-                name: input.name,
-                active: input.active,
-                invocationPolicy: input.invocationPolicy,
-              });
-            }),
-            { "rpc.aggregate": "skills" },
-          ),
-        [WS_METHODS.skillsSetUserActivation]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.skillsSetUserActivation,
-            scientSkillManagement.setUserActivation(input),
-            { "rpc.aggregate": "skills" },
           ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(
@@ -3401,6 +2788,26 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "cloud" },
           ),
+        // SCIENT-FORK:START — Scient provider connection, runtime, custom model and skill handlers.
+        ...makeProviderConnectionRpcHandlers({
+          observeRpcEffect,
+          providerConnectionManager,
+          providerRuntimeManager,
+        }),
+        ...makeCustomModelRpcHandlers({
+          observeRpcEffect,
+          serverSettings,
+          providerInstances,
+          config,
+        }),
+        ...makeSkillRpcHandlers({
+          observeRpcEffect,
+          threadManagement,
+          projectService,
+          scientSkillManagement,
+          providerRegistry,
+        }),
+        // SCIENT-FORK:END
       });
 
       const handlers2 = WsRepositoryRpcGroup.of({
@@ -3894,146 +3301,19 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
-        [WS_METHODS.analysisInspectRuntimes]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisInspectRuntimes, analysis.inspectRuntimes(input), {
-            "rpc.aggregate": "analysis",
-          }),
+        // SCIENT-FORK:START — runtime inspection belongs to the analysis handlers.
+        ...makeAnalysisRuntimeInspectionHandlers({ observeRpcEffect, analysis }),
+        // SCIENT-FORK:END
       });
 
-      const handlers3 = WsScientificRpcGroup.of({
-        [WS_METHODS.analysisConfigureRuntime]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisConfigureRuntime, analysis.configureRuntime(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.analysisVerifyRuntime]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisVerifyRuntime, analysis.verifyRuntime(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.analysisStartRun]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisStartRun, analysis.startRun(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.analysisCancelRun]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisCancelRun, analysis.cancelRun(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.analysisListRuns]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisListRuns, analysis.listRuns(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.analysisGetRun]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisGetRun, analysis.getRun(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.analysisStorageSummary]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisStorageSummary, analysis.storageSummary(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.analysisCleanupRun]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisCleanupRun, analysis.cleanupRun(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.analysisCleanupProject]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisCleanupProject, analysis.cleanupProject(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.analysisPromoteRun]: (input) =>
-          observeRpcEffect(WS_METHODS.analysisPromoteRun, analysis.promoteRun(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.subscribeAnalysisRuns]: (input) =>
-          observeRpcStreamEffect(WS_METHODS.subscribeAnalysisRuns, analysis.subscribeRuns(input), {
-            "rpc.aggregate": "analysis",
-          }),
-        [WS_METHODS.computeInspectRuntimes]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.computeInspectRuntimes,
-            computeGateway.inspectRuntimes(input),
-            { "rpc.aggregate": "compute" },
-          ),
-        [WS_METHODS.computeRuntimeInventory]: () =>
-          observeRpcEffect(WS_METHODS.computeRuntimeInventory, computeGateway.runtimeInventory(), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeVerifyRuntime]: (input) =>
-          observeRpcEffect(WS_METHODS.computeVerifyRuntime, computeGateway.verifyRuntime(input), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeManagedRuntimeStatus]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.computeManagedRuntimeStatus,
-            computeGateway.managedRuntimeStatus(input),
-            { "rpc.aggregate": "compute" },
-          ),
-        [WS_METHODS.computeManageRuntime]: (input) =>
-          observeRpcEffect(WS_METHODS.computeManageRuntime, computeGateway.manageRuntime(input), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeCancelManagedRuntime]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.computeCancelManagedRuntime,
-            computeGateway.cancelManagedRuntime(input),
-            { "rpc.aggregate": "compute" },
-          ),
-        [WS_METHODS.computeStartSession]: (input) =>
-          observeRpcEffect(WS_METHODS.computeStartSession, computeGateway.startSession(input), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeListSessions]: (input) =>
-          observeRpcEffect(WS_METHODS.computeListSessions, computeGateway.listSessions(input), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeGetSession]: (input) =>
-          observeRpcEffect(WS_METHODS.computeGetSession, computeGateway.getSession(input), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeRestartSession]: (input) =>
-          observeRpcEffect(WS_METHODS.computeRestartSession, computeGateway.restartSession(input), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeStopSession]: (input) =>
-          observeRpcEffect(WS_METHODS.computeStopSession, computeGateway.stopSession(input), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeSubmitExecution]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.computeSubmitExecution,
-            computeGateway.submitExecution(input),
-            { "rpc.aggregate": "compute" },
-          ),
-        [WS_METHODS.computeCancelExecution]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.computeCancelExecution,
-            computeGateway.cancelExecution(input),
-            { "rpc.aggregate": "compute" },
-          ),
-        [WS_METHODS.computeInterruptSession]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.computeInterruptSession,
-            computeGateway.interruptSession(input),
-            { "rpc.aggregate": "compute" },
-          ),
-        [WS_METHODS.computeListExecutions]: (input) =>
-          observeRpcEffect(WS_METHODS.computeListExecutions, computeGateway.listExecutions(input), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeListOutputs]: (input) =>
-          observeRpcEffect(WS_METHODS.computeListOutputs, computeGateway.listOutputs(input), {
-            "rpc.aggregate": "compute",
-          }),
-        [WS_METHODS.computeInspectVariables]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.computeInspectVariables,
-            computeGateway.inspectVariables(input),
-            { "rpc.aggregate": "compute" },
-          ),
-        [WS_METHODS.subscribeComputeSessions]: (input) =>
-          observeRpcStreamEffect(
-            WS_METHODS.subscribeComputeSessions,
-            computeGateway.subscribeSessions(input),
-            { "rpc.aggregate": "compute" },
-          ),
+      // SCIENT-FORK:START — the analysis and compute handlers live in scient/analysis.
+      const handlers3 = makeScientificRpcHandlers({
+        observeRpcEffect,
+        observeRpcStreamEffect,
+        analysis,
+        computeGateway,
       });
+      // SCIENT-FORK:END
 
       const handlers4 = WsWorkspaceRpcGroup.of({
         [WS_METHODS.shellOpenInEditor]: (input) =>
@@ -4055,57 +3335,14 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
-        [WS_METHODS.filesystemPrepareFileOpen]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.filesystemPrepareFileOpen,
-            prepareEnvironmentFileOpen(input),
-            { "rpc.aggregate": "workspace" },
-          ),
-        [WS_METHODS.filesystemResolveFileLink]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.filesystemResolveFileLink,
-            resolveEnvironmentFileLink(input),
-            { "rpc.aggregate": "workspace" },
-          ),
-        [WS_METHODS.filesystemSubscribeFileChanges]: (input) =>
-          observeRpcStream(WS_METHODS.filesystemSubscribeFileChanges, watchEnvironmentFile(input), {
-            "rpc.aggregate": "workspace",
-          }),
-        [WS_METHODS.documentsPublishBrowserPdfExport]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.documentsPublishBrowserPdfExport,
-            publishBrowserPdfExport(generatedDocuments, input),
-            { "rpc.aggregate": "documents" },
-          ),
-        [WS_METHODS.documentsPrepareMarkdownPdf]: (input) =>
-          observeRpcEffect(WS_METHODS.documentsPrepareMarkdownPdf, prepareMarkdownPdf(input), {
-            "rpc.aggregate": "documents",
-          }),
-        [WS_METHODS.documentsPrepareConversationPdf]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.documentsPrepareConversationPdf,
-            prepareConversationPdf(input).pipe(
-              Effect.provideService(ConversationExportService, conversationExports),
-            ),
-            { "rpc.aggregate": "documents" },
-          ),
-        [WS_METHODS.documentsPublishDocumentPdf]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.documentsPublishDocumentPdf,
-            publishCapturedDocumentPdf(input).pipe(
-              Effect.provideService(
-                GeneratedDocumentStore.GeneratedDocumentStore,
-                generatedDocuments,
-              ),
-            ),
-            { "rpc.aggregate": "documents" },
-          ),
-        [WS_METHODS.documentsReleaseDocumentPdf]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.documentsReleaseDocumentPdf,
-            removeDocumentCapture(input.captureId),
-            { "rpc.aggregate": "documents" },
-          ),
+        // SCIENT-FORK:START — Scient file opening and document PDF handlers.
+        ...makeFileOpeningRpcHandlers({ observeRpcEffect, observeRpcStream }),
+        ...makeDocumentPdfRpcHandlers({
+          observeRpcEffect,
+          generatedDocuments,
+          conversationExports,
+        }),
+        // SCIENT-FORK:END
         [WS_METHODS.attachmentsCreateUploadUrl]: (input) =>
           observeRpcEffect(WS_METHODS.attachmentsCreateUploadUrl, issueAttachmentUploadUrl(input), {
             "rpc.aggregate": "workspace",
@@ -4131,71 +3368,14 @@ const makeWsRpcLayer = (
             WS_METHODS.assetsCreateUrl,
             Effect.gen(function* () {
               const path = yield* Path.Path;
-              if (input.resource._tag === "analysis-artifact") {
-                const analysisArtifact = yield* analysis.resolveArtifact(input.resource).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new AssetAnalysisArtifactResolutionError({
-                        resource: input.resource,
-                        cause,
-                      }),
-                  ),
+              // SCIENT-FORK:START — analysis, compute and generated-document assets.
+              if (isScientAssetResource(input.resource)) {
+                return yield* issueScientAssetUrl(
+                  { resource: input.resource },
+                  { analysis, compute, generatedDocuments },
                 );
-                if (analysisArtifact === null) {
-                  return yield* new AssetAnalysisArtifactNotFoundError({
-                    resource: input.resource,
-                  });
-                }
-                return yield* issueAssetUrl({ resource: input.resource, analysisArtifact });
               }
-              if (input.resource._tag === "compute-output") {
-                const computeOutput = yield* compute.resolveOutputResource(input.resource).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new AssetComputeOutputResolutionError({
-                        resource: input.resource,
-                        cause,
-                      }),
-                  ),
-                );
-                // An image whose bytes are gone or no longer hash to what was
-                // asked for is not an image: a session's transcript outlives
-                // the files it points at, so this is an ordinary outcome
-                // rather than a fault.
-                if (computeOutput === null) {
-                  return yield* new AssetComputeOutputNotFoundError({
-                    resource: input.resource,
-                  });
-                }
-                return yield* issueAssetUrl({ resource: input.resource, computeOutput });
-              }
-              if (input.resource._tag === "generated-document") {
-                const retained = yield* generatedDocuments
-                  .resolveRevisionForAsset(input.resource)
-                  .pipe(
-                    Effect.mapError((cause) => {
-                      if (cause.reason === "authority-mismatch") {
-                        return new AssetGeneratedDocumentAuthorityMismatchError({
-                          resource: input.resource,
-                        });
-                      }
-                      if (cause.reason === "missing-revision") {
-                        return new AssetGeneratedDocumentNotFoundError({
-                          resource: input.resource,
-                        });
-                      }
-                      return new AssetGeneratedDocumentResolutionError({
-                        resource: input.resource,
-                        cause,
-                      });
-                    }),
-                  );
-                return yield* issueAssetUrl({
-                  resource: input.resource,
-                  generatedDocument: retained.document,
-                  generatedDocumentExpiresAtEpochMs: retained.expiresAtEpochMs,
-                });
-              }
+              // SCIENT-FORK:END
               // An absolute media path can be linked from a thread on another environment.
               if (
                 input.resource._tag === "attachment" ||
@@ -4659,7 +3839,7 @@ const makeWsRpcLayer = (
                 // still pairs up and reaches the client.
                 Stream.concat(
                   Stream.fromEffect(providerRegistry.getProviders),
-                  providerRegistry.streamChanges,
+                  coalesceProviderStatusUpdates(providerRegistry.streamChanges),
                 ),
                 usageLimitSources.streamChanges.pipe(
                   // Quota updates already have their own stream. Republish the model
@@ -4689,7 +3869,6 @@ const makeWsRpcLayer = (
                   type: "providerStatuses" as const,
                   payload: { providers },
                 })),
-                Stream.debounce(Duration.millis(PROVIDER_STATUS_DEBOUNCE_MS)),
               );
               // The only source of published themes: the stream emits the
               // current set before any change, so the snapshot carrying it too
@@ -4840,15 +4019,10 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
-    const analysis = yield* AnalysisService.AnalysisService;
-    const compute = yield* ComputeSessionService.ComputeSessionService;
-    const runtimePreferences = yield* ScientificRuntimePreferences;
-    const conversationExports = yield* ConversationExportService;
+    // SCIENT-FORK:START — server-lifetime Scient services each connection's handlers use.
+    const scientWsServices = yield* captureScientWsServices;
+    // SCIENT-FORK:END
     const sql = yield* SqlClient.SqlClient;
-    const providerConnectionManager = yield* ProviderConnectionManager.ProviderConnectionManager;
-    const providerLifecycleCoordinator =
-      yield* ProviderLifecycleCoordinator.ProviderLifecycleCoordinator;
-    const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -4900,38 +4074,16 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               previewAutomationBroker,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
-              Layer.provide(
-                ProviderMaintenanceRunner.layer.pipe(
-                  Layer.provide(
-                    Layer.succeed(
-                      ProviderLifecycleCoordinator.ProviderLifecycleCoordinator,
-                      providerLifecycleCoordinator,
-                    ),
-                  ),
-                ),
-              ),
-              Layer.provide(
-                Layer.mergeAll(
-                  Layer.succeed(
-                    ProviderConnectionManager.ProviderConnectionManager,
-                    providerConnectionManager,
-                  ),
-                  Layer.succeed(
-                    ProviderRuntimeManager.ProviderRuntimeManager,
-                    providerRuntimeManager,
-                  ),
-                ),
-              ),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
               Layer.provide(AgentSessionScanner.layer),
+              Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
-              Layer.provide(Layer.succeed(AnalysisService.AnalysisService, analysis)),
-              Layer.provide(Layer.succeed(ComputeSessionService.ComputeSessionService, compute)),
-              Layer.provide(Layer.succeed(ScientificRuntimePreferences, runtimePreferences)),
-              Layer.provide(Layer.succeed(ConversationExportService, conversationExports)),
+              // SCIENT-FORK:START — also serves the provider maintenance runner above.
+              Layer.provide(scientWsServices),
+              // SCIENT-FORK:END
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

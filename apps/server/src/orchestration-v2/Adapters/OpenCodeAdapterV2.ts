@@ -1,3 +1,4 @@
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import type {
   Event as OpenCodeEvent,
   Message as OpenCodeMessage,
@@ -71,6 +72,8 @@ import { makeProviderFailure } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
+// SCIENT-FORK: shared native start receipt rule.
+import { turnStartErrorKeepingReceipt } from "../scient-provider/NativeTurnReceipts.ts";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -285,7 +288,7 @@ interface ActiveOpenCodeTurn {
   readonly parts: Map<string, Exclude<OpenCodePart, ToolPart>>;
   readonly partIdsByMessage: Map<string, Set<string>>;
   readonly toolNamesByCallId: Map<string, string>;
-  readonly providerTurn: OrchestrationV2ProviderTurn;
+  providerTurn: OrchestrationV2ProviderTurn;
   nextItemOrdinal: number;
   nativeUserMessageId: string | null;
   admissionMessageId: string | null;
@@ -1003,6 +1006,7 @@ export function makeOpenCodeAdapterV2(
         };
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
         let nativeStreamFailure: OrchestrationV2ProviderFailure | null = null;
+        const turnStartPermit = yield* Semaphore.make(1);
         const threads = new Map<string, OpenCodeThreadState>();
         const commandReceipts = new Map<string, Deferred.Deferred<void>>();
         const commandControllers = new Map<string, Set<AbortController>>();
@@ -1196,6 +1200,25 @@ export function makeOpenCodeAdapterV2(
             providerTurn,
           });
         };
+
+        const markTurnAccepted = Effect.fnUntraced(function* (
+          state: OpenCodeThreadState,
+          turn: ActiveOpenCodeTurn,
+        ) {
+          if (
+            !turn.isRoot ||
+            state.activeTurn !== turn ||
+            turn.finalized ||
+            turn.providerTurn.acceptedAt !== undefined
+          )
+            return;
+          turn.providerTurn = {
+            ...turn.providerTurn,
+            nativeAcceptance: "accepted",
+            acceptedAt: yield* DateTime.now,
+          };
+          yield* emitProviderTurn(state, turn, "running", null);
+        });
 
         const emitTextPart = Effect.fnUntraced(function* (
           state: OpenCodeThreadState,
@@ -2415,6 +2438,7 @@ export function makeOpenCodeAdapterV2(
           if (turn !== null && matchesAdmission) turn.usage.promptMessageIds.add(message.id);
           if (turn !== null && matchesAdmission && turn.nativeUserMessageId === null) {
             turn.nativeUserMessageId = message.id;
+            if (turn.admissionMessageId === message.id) yield* markTurnAccepted(state, turn);
             yield* emitProviderTurn(state, turn, "running", null);
           }
           if (turn !== null && matchesAdmission && turn.admissionPending) {
@@ -2925,11 +2949,16 @@ export function makeOpenCodeAdapterV2(
               )).find((entry) => entry.name === match[1])
             : undefined;
           if (!command) {
+            turn.providerTurn = { ...turn.providerTurn, nativeAcceptance: "unknown" };
+            yield* emitProviderTurn(state, turn, "running", null);
             return yield* sdkCall("session.promptAsync", payload, (signal) =>
               client.session.promptAsync(payload, {
                 signal: AbortSignal.any([signal, abortController.signal]),
               }),
-            ).pipe(Effect.asVoid);
+            ).pipe(
+              Effect.tap(() => markTurnAccepted(state, turn)),
+              Effect.asVoid,
+            );
           }
           const receipt = Deferred.makeUnsafe<void>();
           commandReceipts.set(payload.messageID, receipt);
@@ -2950,11 +2979,14 @@ export function makeOpenCodeAdapterV2(
             ...(payload.variant ? { variant: payload.variant } : {}),
             parts: payload.parts?.filter((part) => part.type === "file") ?? [],
           };
+          turn.providerTurn = { ...turn.providerTurn, nativeAcceptance: "unknown" };
+          yield* emitProviderTurn(state, turn, "running", null);
           const request = yield* sdkCall("session.command", commandPayload, (signal) =>
             client.session.command(commandPayload, {
               signal: AbortSignal.any([signal, abortController.signal]),
             }),
           ).pipe(
+            Effect.tap(() => markTurnAccepted(state, turn)),
             Effect.asVoid,
             Effect.tapError((cause) =>
               abortController.signal.aborted ||
@@ -3110,6 +3142,32 @@ export function makeOpenCodeAdapterV2(
                   `OpenCode model '${turnInput.modelSelection.model}' must use provider/model format`,
                 );
               }
+              // Native conversations persist their original rules across process
+              // replacement. Install this turn's captured authority before prompting.
+              const permission = openCodePermissionRules(turnInput.runtimePolicy);
+              yield* sdkCall("session.update", { sessionID: sessionId, permission }, (signal) =>
+                client.session.update({ sessionID: sessionId, permission }, { signal }),
+              );
+              const confirmed = unwrapData(
+                "session.get",
+                yield* sdkCall("session.get", { sessionID: sessionId }, (signal) =>
+                  client.session.get({ sessionID: sessionId }, { signal }),
+                ),
+              );
+              const effectivePermission = confirmed.permission;
+              if (
+                confirmed.id !== sessionId ||
+                effectivePermission === undefined ||
+                effectivePermission.length !== permission.length ||
+                !permission.every((rule, index) => {
+                  const effective = effectivePermission[index];
+                  return effective !== undefined && permissionRuleEquals(rule, effective);
+                })
+              ) {
+                return yield* protocolError(
+                  "OpenCode did not confirm this turn's permission rules.",
+                );
+              }
               const isCompaction =
                 turnInput.message.text.trim() === "/compact" &&
                 turnInput.message.attachments.length === 0;
@@ -3128,6 +3186,7 @@ export function makeOpenCodeAdapterV2(
                 nativeTurnRef: providerRef(syntheticNativeTurnId, "weak"),
                 ordinal: turnInput.providerTurnOrdinal,
                 status: "running",
+                nativeAcceptance: "pending",
                 startedAt,
                 completedAt: null,
               };
@@ -3195,6 +3254,8 @@ export function makeOpenCodeAdapterV2(
               });
               yield* updateProviderSession("running", null);
               if (isCompaction) {
+                turn.providerTurn = { ...turn.providerTurn, nativeAcceptance: "unknown" };
+                yield* emitProviderTurn(state, turn, "running", null);
                 yield* sdkCall(
                   "session.summarize",
                   { sessionID: sessionId, ...parsedModel, auto: false },
@@ -3204,6 +3265,7 @@ export function makeOpenCodeAdapterV2(
                       { signal: AbortSignal.any([signal, admissionAbortController!.signal]) },
                     ),
                 ).pipe(
+                  Effect.tap(() => markTurnAccepted(state, turn)),
                   Effect.tap(() =>
                     turn.interrupted || turn.finalized || nativeStreamFailure !== null
                       ? Effect.void
@@ -3218,10 +3280,22 @@ export function makeOpenCodeAdapterV2(
                     }),
                   ),
                   Effect.ensuring(Deferred.succeed(admissionSettled, undefined)),
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapter.ProviderAdapterTurnStartError({
+                        driver: OPENCODE_PROVIDER,
+                        threadId: turnInput.threadId,
+                        providerThreadId: turnInput.providerThread.id,
+                        runId: turnInput.runId,
+                        providerTurn: turn.providerTurn,
+                        cause,
+                      }),
+                  ),
                 );
                 return;
               }
               const systemPrompt = [
+                buildScientAwareness(hasT3Mcp ? mcpSession?.capabilities : undefined),
                 orchestrationSystemPrompt,
                 buildRuntimeInstructions({
                   harness: "OpenCode",
@@ -3261,6 +3335,17 @@ export function makeOpenCodeAdapterV2(
                 Effect.catch((cause) =>
                   admissionAbortController!.signal.aborted ? Effect.void : Effect.fail(cause),
                 ),
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: OPENCODE_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      providerTurn: turn.providerTurn,
+                      cause,
+                    }),
+                ),
                 Effect.ensuring(
                   Effect.all([
                     Deferred.succeed(admissionSettled, undefined).pipe(Effect.ignore),
@@ -3279,16 +3364,8 @@ export function makeOpenCodeAdapterV2(
                 }
               }
             }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterTurnStartError({
-                    driver: OPENCODE_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
-              ),
+              turnStartPermit.withPermit,
+              Effect.mapError(turnStartErrorKeepingReceipt(OPENCODE_PROVIDER, turnInput)),
             ),
           steerTurn: (steerInput) =>
             Effect.gen(function* () {

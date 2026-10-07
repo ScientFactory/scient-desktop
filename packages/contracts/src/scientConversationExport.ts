@@ -1,3 +1,4 @@
+import { ProviderCitationPresentation } from "./providerCitationPresentation.ts";
 import * as Schema from "effect/Schema";
 import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
@@ -209,6 +210,7 @@ export type ConversationInlineReference = typeof ConversationInlineReference.Typ
  * markers and range selection refer to.
  */
 export const ConversationMessage = Schema.Struct({
+  citationPresentation: Schema.optional(ProviderCitationPresentation),
   n: PositiveInt,
   id: MessageId,
   role: ConversationMessageRole,

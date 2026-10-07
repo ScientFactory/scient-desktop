@@ -325,16 +325,6 @@ export const replaceActiveMcpSkillScope = (
     ? activeMcpSessionRegistry.replaceSkillScope(threadId, skillScope)
     : Effect.void;
 
-export const revokeActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
-  activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeThread(threadId) : Effect.void;
-
-// SCIENT-FORK:START — restored to exported. Upstream made this module-private when it deleted
-// its only consumer; the fork's provider/Layers/ProviderService.ts still calls it from
-// runStopAll, so "stop all" would silently fail to revoke MCP credentials.
-export const revokeAllActiveMcpCredentials = (): Effect.Effect<void> =>
-  activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeAll : Effect.void;
-// SCIENT-FORK:END
-
 /** Exposed for tests. */
 export const __testing = {
   make: makeWithOptions,

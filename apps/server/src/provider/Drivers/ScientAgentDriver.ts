@@ -23,7 +23,6 @@ import { ProviderDriverError } from "../Errors.ts";
 import { makeOmpAdapterV2 } from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
 import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
 import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
-import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
 import {
   checkOmpProviderStatus,
   makePendingOmpProvider,
@@ -164,21 +163,6 @@ export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentD
           },
         };
       };
-      const adapter = yield* makeOmpAdapter({
-        target: scientAgentTarget,
-        binaryPath: launchConfig.binaryPath,
-        providerInstanceId: instanceId,
-        stateDir: serverConfig.stateDir,
-        attachmentsDir: serverConfig.attachmentsDir,
-        environment: processEnv,
-        makeProcess: makeRpcClient,
-        // The resume identity: a cursor written under another root is refused.
-        homePath: root,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-      );
       const orchestrationAdapter = makeOmpAdapterV2({
         target: scientAgentTarget,
         instanceId,
@@ -191,6 +175,7 @@ export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentD
         crypto: yield* Crypto.Crypto,
         serverConfig,
         makeProcess: makeRpcClient,
+        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         idAllocator: yield* IdAllocatorV2,
         continuations: yield* ProviderContinuationRequests,
       });
@@ -282,7 +267,6 @@ export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentD
         enabled,
         snapshot,
         snapshotForCwd: checkProvider,
-        adapter,
         orchestrationAdapter,
         textGeneration,
         connectionActions,

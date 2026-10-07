@@ -123,8 +123,9 @@ trailing `<terminal_context>` form is parsed only when reading messages sent by 
 The composer sends `message.text` as canonical prose with reference links and
 `message.context.records` built from the draft (`buildMessageContext` in
 `apps/web/src/lib/composerContextRecords.ts`). Expired terminal excerpts are dropped from both.
-The server projects provider text at turn start (`ProviderCommandReactor`), so the persisted
-message stays readable and the provider receives markers plus one envelope.
+V2 `ProviderTurnStartService` projects provider text at turn start with
+`projectComposerContextForProvider`, so the persisted message stays readable and the provider
+receives markers plus one envelope. Immediate and queued runs use the same native service.
 
 Review comments and preview annotations enter the draft through store mutators. A mounted composer
 registers a context insertion handler so panel-originated references land at its current or
@@ -151,9 +152,11 @@ written before the metadata was added retain their legacy details and neutral pu
 
 Image and file records use the draft attachment's local id as `contextId` and carry an
 `attachmentId` binding. The composer sends the upload's pending id (or the local id on the
-data-URL path, via the optional `id` on `UploadChatImageAttachment`); the server's `Normalizer`
-rewrites every image and file record to the persisted id it assigns, so the stored message binds
-records to real resources. Optimistic rows bind to local ids and are replaced by the server copy.
+data-URL path, via the optional `id` on `UploadChatImageAttachment`).
+[`ThreadMessageIntake`](../../apps/server/src/orchestration-v2/ThreadMessageIntake.ts) uses
+[`AttachmentClaims`](../../apps/server/src/orchestration-v2/AttachmentClaims.ts) to claim or persist
+attachments, then remaps image/file context bindings from submitted IDs to the resulting
+server-owned IDs. Optimistic rows bind to local IDs and are replaced by the server copy.
 
 In the composer, attaching a file or image inserts a chip at the caret (appended when the editor
 cannot take input). Files exist only as chips: a file whose last chip is deleted is removed and
@@ -197,10 +200,13 @@ A preview annotation's context id is derived from `annotation-<id>` so it stays 
 screenshot image, whose attachment id is the annotation id; the record links the two through
 `screenshotContextId`.
 
-`projection_thread_messages.context_json` persists records, so a restart or projection reload
-keeps chips resolvable. Prompt stash entries carry `records` for terminal excerpts, review
-comments, and preview annotations; stashing moves them out of the draft and restoring imports
-them back through the same importer the paste path uses.
+V2 `message.updated` events retain structured `context` in the message payload.
+[`ProjectionStore`](../../apps/server/src/orchestration-v2/ProjectionStore.ts) persists that payload
+in `orchestration_v2_projection_messages.payload_json`, so a restart or projection reload keeps
+chips resolvable. `projection_thread_messages.context_json` belongs to intentional V1 hydration,
+not current message persistence. Prompt stash entries carry `records` for terminal excerpts,
+review comments, and preview annotations; stashing moves them out of the draft and restoring
+imports them back through the same importer the paste path uses.
 
 Context produced by other panels reaches the caret through `setContextInsertionHandler`: a
 mounted composer registers an inserter for its draft and the store falls back to appending.

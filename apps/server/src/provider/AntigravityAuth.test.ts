@@ -103,11 +103,10 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
               yield* Deferred.await(discovered);
               return started;
             }),
-          request: (method) =>
-            Effect.sync(() => {
-              events.push(method);
-              return {};
-            }),
+          logout: Effect.sync(() => {
+            events.push("logout");
+            return {};
+          }),
         } satisfies AntigravityAuthRuntime;
       }),
     onAuthenticated: () =>

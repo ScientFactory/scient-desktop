@@ -34,7 +34,24 @@ const decodeManifest = Schema.decodeUnknownSync(Schema.fromJsonString(PackageMan
 
 describe("shouldBundleCliDependency", () => {
   it("bundles ordinary runtime dependencies", () => {
-    for (const id of ["effect", "@effect/platform", "hono", "@t3tools/shared/hostProcess"]) {
+    for (const id of [
+      "effect",
+      "@effect/platform",
+      "hono",
+      "@t3tools/shared/hostProcess",
+      "zod",
+      "zod/v3",
+      "zod/v4",
+      "zod/v4-mini",
+      "@bufbuild/protobuf",
+      "@connectrpc/connect",
+      "@connectrpc/connect-node",
+      "@connectrpc/connect-web",
+      "@statsig/js-client",
+      "@statsig/client-core",
+      "undici",
+      "@fastify/busboy",
+    ]) {
       assert.strictEqual(shouldBundleCliDependency(id), true, id);
     }
   });
@@ -187,7 +204,7 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
     120_000,
   );
 
-  it.effect("keeps every runtime dependency of an external package external too", () =>
+  it.effect("keeps native loader dependency families external too", () =>
     Effect.gen(function* () {
       const installed = yield* readInstalledPackages;
       const violations: string[] = [];
@@ -196,7 +213,12 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
       // prefixes like "@yuuang/" and "@ff-labs/" are covered too. Seeding from
       // the prefix strings themselves would skip every scoped entry, since a
       // prefix is not a package name.
-      const queue = [...installed.keys()].filter(isRuntimeExternal);
+      // Cursor's computed imports use its installed JS dependency tree, proved
+      // by the isolated packaged-SDK probe. Those names must also remain
+      // bundleable when imported by a different provider in the server graph.
+      const queue = [...installed.keys()].filter(
+        (name) => isRuntimeExternal(name) && !name.startsWith("@cursor/sdk"),
+      );
 
       for (const name of queue) {
         if (seen.has(name)) continue;

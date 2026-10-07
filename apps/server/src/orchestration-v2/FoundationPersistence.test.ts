@@ -204,6 +204,83 @@ it.effect("rebuilds event history one bounded page at a time", () =>
   }).pipe(Effect.provide(TestLayer)),
 );
 
+it.effect("rolls back rebuild when final turn-item positions are not unique", () =>
+  Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const eventStore = yield* EventStore.EventStoreV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:invalid-final-positions");
+    yield* eventSink.write({
+      events: [
+        threadCreatedEvent({
+          id: "invalid-positions:thread",
+          thread: makeThread(threadId, now),
+          now,
+        }),
+      ],
+    });
+    const items = ["first", "second"].map((id) => ({
+      id: TurnItemId.make(`invalid-positions:${id}`),
+      threadId,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      type: "reasoning" as const,
+      title: null,
+      status: "completed" as const,
+      text: id,
+      streaming: false,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    }));
+    yield* eventSink.write({
+      events: items.map((item) => ({
+        id: EventId.make(`invalid-positions:create:${item.id}`),
+        type: "turn-item.updated" as const,
+        threadId,
+        occurredAt: now,
+        payload: item,
+      })),
+    });
+    const before = yield* projections.getThreadProjection(threadId);
+    const positionsBefore =
+      yield* sql`SELECT * FROM orchestration_v2_turn_item_positions WHERE thread_id = ${threadId} ORDER BY ordinal`;
+    const metadataBefore = yield* sql`SELECT * FROM orchestration_v2_projection_metadata`;
+    const second = before.turnItems.find((item) => item.id === "invalid-positions:second");
+    if (second === undefined) return assert.fail("Missing second item");
+    // A raw malformed durable event models data that bypassed sink allocation.
+    yield* eventStore.append({
+      events: [
+        {
+          id: EventId.make("invalid-positions:duplicate"),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload: { ...second, ordinal: 1 },
+        },
+      ],
+    });
+    assert.equal((yield* Effect.exit(maintenance.rebuild))._tag, "Failure");
+    assert.deepEqual(yield* projections.getThreadProjection(threadId), before);
+    assert.deepEqual(
+      yield* sql`SELECT * FROM orchestration_v2_turn_item_positions WHERE thread_id = ${threadId} ORDER BY ordinal`,
+      positionsBefore,
+    );
+    assert.deepEqual(
+      yield* sql`SELECT * FROM orchestration_v2_projection_metadata`,
+      metadataBefore,
+    );
+  }).pipe(Effect.provide(TestLayer)),
+);
+
 it.effect("verifies thread membership using only the thread-created partial index", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

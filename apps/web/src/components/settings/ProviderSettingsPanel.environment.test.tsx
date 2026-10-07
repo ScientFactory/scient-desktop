@@ -249,9 +249,28 @@ describe("EnvironmentProviderSettings routing", () => {
       .mockResolvedValue({ _tag: "Success", value: { accepted: true } });
   });
 
-  it("shows default and enabled providers while hiding untouched disabled provider slots", () => {
+  it("keeps supported provider settings visible even when their default instance is disabled", () => {
+    atoms.providers = [
+      {
+        ...provider(),
+        instanceId: ProviderInstanceId.make("cursor"),
+        driver: ProviderDriverKind.make("cursor"),
+        enabled: false,
+      },
+    ];
     const panel = renderPanel();
-    for (const driver of ["codex", "claudeAgent", "antigravity", "scient"] as const) {
+    for (const driver of [
+      "codex",
+      "claudeAgent",
+      "antigravity",
+      "scient",
+      "cursor",
+      "grok",
+      "droid",
+      "pi",
+      "omp",
+      "opencode",
+    ] as const) {
       expect(
         visitElements(
           panel,
@@ -259,14 +278,34 @@ describe("EnvironmentProviderSettings routing", () => {
         ),
       ).not.toBeNull();
     }
-    for (const driver of ["cursor", "grok", "droid", "pi", "omp", "opencode"] as const) {
-      expect(
-        visitElements(
-          panel,
-          (element) => element.props.instanceId === driver && element.props.mode === "list",
-        ),
-      ).toBeNull();
-    }
+    expect(settingsState.mutateProviderInstance).not.toHaveBeenCalled();
+    expect(settingsState.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("opens and enables an untouched disabled provider through its exact environment instance", async () => {
+    let panel = renderPanel();
+    const row = visitElements(
+      panel,
+      (element) => element.props.instanceId === "droid" && element.props.mode === "list",
+    );
+    if (!row) throw new Error("Disabled Droid settings row was not rendered");
+    (row.props.onSelect as () => void)();
+    panel = renderPanel();
+    const editor = visitElements(
+      panel,
+      (element) => element.props.instanceId === "droid" && element.props.mode === "editor",
+    );
+    if (!editor) throw new Error("Droid settings editor was not rendered");
+    expect(settingsState.mutateProviderInstance).not.toHaveBeenCalled();
+    const { enabled: _enabled, ...config } = DEFAULT_UNIFIED_SETTINGS.providers.droid;
+    const next = { driver: ProviderDriverKind.make("droid"), enabled: true, config };
+    (editor.props.onUpdate as (instance: typeof next) => void)(next);
+    await flushPromises();
+    expect(settingsState.mutateProviderInstance).toHaveBeenCalledExactlyOnceWith(
+      { operation: "upsert", instanceId: ProviderInstanceId.make("droid"), instance: next },
+      { providers: DEFAULT_UNIFIED_SETTINGS.providers },
+    );
+    expect(settingsState.mutationEnvironmentIds).toEqual([environmentId, environmentId]);
   });
 
   it("keeps explicitly configured providers visible when disabled", () => {

@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -14,7 +15,6 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { makeAgySession } from "../../provider/antigravity/AgySession.ts";
 import type { ServerConfig } from "../../config.ts";
-import { ANTIGRAVITY_WORKSPACE_TOOL_INSTRUCTIONS } from "../../provider/Layers/LegacyAntigravityAdapter.ts";
 import { AcpProviderCapabilitiesV2 } from "./AcpAdapterV2.ts";
 import {
   makeNativeSessionAdapterV2,
@@ -23,6 +23,8 @@ import {
   type NativeSession,
   type NativeSessionAdapterV2Options,
 } from "./NativeSessionAdapterV2.ts";
+
+const encodeNativeOutput = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export interface LegacyAntigravityAdapterV2Options extends Pick<
   NativeSessionAdapterV2Options,
@@ -76,6 +78,10 @@ export function makeLegacyAntigravityAdapterV2(options: LegacyAntigravityAdapter
           }),
         );
         const cwd = input.runtimePolicy.cwd ?? options.serverConfig.cwd;
+        const attachmentStagingDir = yield* options.fileSystem.makeTempDirectoryScoped({
+          prefix: "scient-antigravity-attachments-",
+        });
+        yield* options.fileSystem.chmod(attachmentStagingDir, 0o700);
         let conversationId = input.initialNativeThreadId;
         const effort = getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort");
         const launch = (nativeId: string | undefined) =>
@@ -89,7 +95,7 @@ export function makeLegacyAntigravityAdapterV2(options: LegacyAntigravityAdapter
               : { model: input.modelSelection.model }),
             ...(effort === undefined ? {} : { effort }),
             ...(nativeId === undefined ? {} : { conversationId: nativeId }),
-            addDirs: [options.serverConfig.attachmentsDir],
+            addDirs: [attachmentStagingDir],
             onUnexpectedExit: (error) =>
               onUpdate({ type: "terminal", status: "failed", detail: error.detail, broken: true }),
           }).pipe(
@@ -102,7 +108,7 @@ export function makeLegacyAntigravityAdapterV2(options: LegacyAntigravityAdapter
           nativeId: conversationId ?? `${input.threadId}:agy:${input.providerSessionId}`,
           nativeThreadKnown: conversationId !== undefined,
           interruptBreaksSession: true,
-          send: (turnInput) =>
+          send: (turnInput, nativeTurnId) =>
             Effect.gen(function* () {
               const attachmentLines: string[] = [];
               for (const attachment of turnInput.message.attachments) {
@@ -134,45 +140,65 @@ export function makeLegacyAntigravityAdapterV2(options: LegacyAntigravityAdapter
                     detail:
                       "Antigravity attachment escaped its directory or exceeded its size limit.",
                   });
-                attachmentLines.push(`[Attachment saved at ${real}]`);
+                const staged = options.path.join(attachmentStagingDir, options.path.basename(real));
+                yield* options.fileSystem.copyFile(real, staged);
+                yield* options.fileSystem.chmod(staged, 0o600);
+                attachmentLines.push(
+                  `[Attached ${attachment.type} "${attachment.name}" is available at: ${staged}]`,
+                );
               }
-              const text = `${turnInput.message.text}\n\n${ANTIGRAVITY_WORKSPACE_TOOL_INSTRUCTIONS}\n${attachmentLines.join("\n")}`;
+              const text = [turnInput.message.text, ...attachmentLines]
+                .filter(Boolean)
+                .join("\n\n");
+              yield* onUpdate({ type: "offered", nativeTurnId });
               yield* session
                 .prompt({
                   text,
-                  onEvent: (event) => {
-                    switch (event._tag) {
-                      case "AssistantText":
-                        return onUpdate({ type: "text", id: "assistant", delta: event.text });
-                      case "ToolCall":
-                        return onUpdate({
-                          type: "tool",
-                          id: event.id,
-                          name: event.name,
-                          status: "running",
-                          input: event.input,
-                        });
-                      case "ToolCallUpdate":
-                        return onUpdate({
-                          type: "tool",
-                          id: event.id,
-                          name: event.name,
-                          status: event.status,
-                          ...(event.output === undefined
-                            ? {}
-                            : {
-                                output:
-                                  typeof event.output === "string"
-                                    ? event.output
-                                    : JSON.stringify(event.output),
-                              }),
-                        });
-                    }
-                  },
+                  onEvent: (event) =>
+                    onUpdate({ type: "accepted", nativeTurnId }).pipe(
+                      Effect.andThen(
+                        Effect.suspend(() => {
+                          switch (event._tag) {
+                            case "AssistantText":
+                              return onUpdate({ type: "text", id: "assistant", delta: event.text });
+                            case "ToolCall":
+                              return onUpdate({
+                                type: "tool",
+                                id: event.id,
+                                name: event.name,
+                                status: "running",
+                                input: event.input,
+                              });
+                            case "ToolCallUpdate":
+                              return Effect.gen(function* () {
+                                const output =
+                                  event.output === undefined
+                                    ? undefined
+                                    : typeof event.output === "string"
+                                      ? event.output
+                                      : yield* encodeNativeOutput(event.output).pipe(Effect.orDie);
+                                yield* onUpdate({
+                                  type: "tool",
+                                  id: event.id,
+                                  name: event.name,
+                                  status: event.status,
+                                  ...(output === undefined
+                                    ? {}
+                                    : {
+                                        output,
+                                      }),
+                                });
+                              });
+                          }
+                        }),
+                      ),
+                    ),
                 })
                 .pipe(
                   Effect.flatMap((result) =>
                     Effect.gen(function* () {
+                      if (result.status === "success")
+                        yield* onUpdate({ type: "accepted", nativeTurnId });
                       conversationId = result.conversationId;
                       yield* onUpdate({ type: "native-thread", id: result.conversationId });
                       yield* onUpdate({

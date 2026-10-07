@@ -39,24 +39,33 @@ export * from "./vcs.ts";
 export * from "./sourceControl.ts";
 export * from "./projectClone.ts";
 export * from "./pullRequest.ts";
-// SCIENT-ORCHESTRATION:START — the V1 orchestration contract stays exported
-// until the engine port removes its consumers. Its attachment and screenshot
-// schemas now come from chatAttachment.ts, which is exported below.
-export * from "./orchestration.ts";
+// SCIENT-ORCHESTRATION:START — historical data keeps its canonical codecs
+// after the V1 execution facade retires.
+export * from "./legacy/orchestrationEvent.ts";
+export { ScientConversationDispatchResult as DispatchResult } from "./scientConversationFork.ts";
 export * from "./scientConversationOrigin.ts";
 export * from "./scientConversationFork.ts";
-// SCIENT-FORK:START — the V1 dispatch failure carries the fork disposition and
-// the V1 thread-search match carries a nullable project id, neither of which
-// the V2 counterparts declare. These explicit exports resolve the ambiguity in
-// favour of the V1 contract, which is the one the V1 server and client speak.
-export { OrchestrationDispatchCommandError } from "./orchestration.ts";
+export * from "./scientConversationView.ts";
+// SCIENT-FORK: retained snapshot/view schemas have a dedicated canonical owner.
+export * from "./scientOrchestrationSnapshot.ts";
+export * from "./scientQuestionAnswer.ts";
+// SCIENT-FORK:START — explicit exports select Scient's compatibility variants.
+// Dispatch failures retain the fork disposition. Public/MCP search retains
+// nullable project ids; modern RPC uses the non-null threadSearch.ts variant.
 export {
   OrchestrationSearchThreadsResult,
   OrchestrationThreadSearchMatch,
-} from "./orchestration.ts";
+} from "./scientThreadSearch.ts";
 // SCIENT-FORK:END
 // SCIENT-ORCHESTRATION:END
 export * from "./orchestrationDispatch.ts";
+// SCIENT-FORK: current wire names stay independent of the legacy barrel.
+export { ORCHESTRATION_WS_METHODS } from "./scientOrchestrationRpcMethods.ts";
+// SCIENT-FORK: retained SQL approval codecs stay independent of the legacy barrel.
+export {
+  ProjectionPendingApprovalStatus,
+  ProjectionPendingApprovalDecision,
+} from "./scientApprovalProjection.ts";
 export * from "./orchestrationProject.ts";
 export * from "./orchestrationV2.ts";
 export * from "./applicationEvent.ts";
@@ -113,3 +122,5 @@ export * from "./modelReasoning.ts";
 
 export * from "./scientAnswerAttention.ts";
 export * from "./worktreeSetup.ts";
+
+export * from "./providerCitationPresentation.ts";

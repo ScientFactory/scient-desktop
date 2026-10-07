@@ -150,27 +150,18 @@ export const layer: Layer.Layer<
               .pipe(Stream.runCollect);
             for (const stored of page) {
               yield* projectionStore.apply(stored.event);
-              if (stored.event.type === "turn-item.updated") {
-                yield* sql`
-                INSERT INTO orchestration_v2_turn_item_positions (
-                  thread_id,
-                  turn_item_id,
-                  ordinal
-                )
-                VALUES (
-                  ${stored.event.threadId},
-                  ${stored.event.payload.id},
-                  ${stored.event.payload.ordinal}
-                )
-                ON CONFLICT(thread_id, turn_item_id) DO UPDATE SET
-                  ordinal = excluded.ordinal
-                `;
-              }
               lastSequence = stored.sequence;
             }
             if (page.length < pageSize) break;
             yield* Effect.yieldNow;
           }
+          // Historical repairs can move a group of items across old positions.
+          // Only the final projected positions must be unique; intermediate
+          // event states are not allocation authority during replay.
+          yield* sql`
+            INSERT INTO orchestration_v2_turn_item_positions (thread_id, turn_item_id, ordinal)
+            SELECT thread_id, turn_item_id, ordinal FROM orchestration_v2_projection_turn_items
+          `;
           const now = DateTime.formatIso(yield* DateTime.now);
           yield* sql`
             INSERT INTO orchestration_v2_projection_metadata (
@@ -236,7 +227,7 @@ export const layer: Layer.Layer<
      * Scan newest first to retain the newest state for each entity.
      * Page every event, including non-candidates: filtering before LIMIT could
      * still scan the entire history when superseded events are sparse.
-     * turn-item.updated stays intact because replay assigns positions on first write.
+     * turn-item.updated stays intact to preserve the observed timeline updates.
      */
     const compactEventStore = Effect.gen(function* () {
       const bounds = yield* sql<{

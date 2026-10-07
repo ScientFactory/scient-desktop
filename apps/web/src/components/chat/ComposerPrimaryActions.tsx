@@ -1,12 +1,5 @@
 import { memo, type MouseEventHandler, type PointerEventHandler } from "react";
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  ChevronLeftIcon,
-  CornerUpRightIcon,
-  ListPlusIcon,
-  PlayIcon,
-} from "lucide-react";
+import { ChevronDownIcon, ChevronLeftIcon, PlayIcon } from "lucide-react";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { useShortcutModifierState } from "../../shortcutModifierState";
@@ -55,7 +48,6 @@ interface ComposerPrimaryActionsProps {
    * on mobile viewports. */
   showSendWhileRunning?: boolean;
 
-  isEditingQueuedMessage?: boolean;
   onSubmitMessage?: MouseEventHandler<HTMLButtonElement>;
   onResume?: () => void;
   onPreviousPendingQuestion: () => void;
@@ -109,7 +101,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   preserveComposerFocusOnPointerDown = false,
   showSendWhileRunning = false,
 
-  isEditingQueuedMessage = false,
   onSubmitMessage,
   onResume,
   onPreviousPendingQuestion,
@@ -122,7 +113,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const shortcutModifiers = useShortcutModifierState();
   const isQueuing =
-    !isEditingQueuedMessage &&
     resolveComposerDispatchMode({
       running: isRunning,
       activeTurnDefault: followUpBehavior,
@@ -141,7 +131,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <button
             type="button"
             className={cn(
-              "flex cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-control-highlight transition-all duration-150 hover:bg-destructive hover:scale-105 active:inset-shadow-control-pressed active:shadow-none [&_svg]:pointer-events-none",
+              "flex cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-2xs inset-shadow-white/16 transition-all duration-150 hover:bg-destructive hover:scale-105 active:inset-shadow-black/8 active:shadow-none [&_svg]:pointer-events-none",
               // SCIENT-FORK: one shared circle size for every stop state, matching
               // the recording send button (icon-sm); the 12×12 square is unchanged
               // (DF-027).
@@ -264,22 +254,20 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     );
   }
 
-  if (canInterrupt && !hasSendableContent && !isEditingQueuedMessage) {
+  if (canInterrupt && !hasSendableContent) {
     return renderStopGenerationButton();
   }
 
-  const showResume = canResume && !hasSendableContent && !isEditingQueuedMessage;
-  // SCIENT-FORK: submitting a running thread queues the message, so the label
-  // follows the real disposition. Upstream's "Steer message" / "Submit message"
-  // wording was dropped in favour of this fork's queue/send pair; resume and
-  // queued-edit keep upstream's labels.
+  const showResume = canResume && !hasSendableContent;
+  // Follow the captured dispatch choice while retaining MAIN's shared arrow.
+  // Extracted queue edits use ordinary submission; held queues expose Resume.
   const submitLabel = showResume
     ? "Resume thread"
-    : isEditingQueuedMessage
-      ? "Update queued message"
-      : isRunning
+    : isRunning
+      ? isQueuing
         ? "Queue message"
-        : "Send message";
+        : "Steer message"
+      : "Send message";
   const submitStatus = isEnvironmentUnavailable
     ? "Environment disconnected"
     : (sendDisabledReason ??
@@ -288,13 +276,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         : isPreparingWorktree
           ? "Preparing worktree"
           : isSendBusy
-            ? isEditingQueuedMessage
-              ? "Updating queued message"
-              : "Submitting message"
+            ? "Submitting message"
             : null));
   const submitTooltip =
     submitStatus ??
-    (isRunning && !isEditingQueuedMessage
+    (isRunning
       ? `Click to ${followUpBehavior}, Ctrl/⌘-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
       : submitLabel);
 
@@ -302,7 +288,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     <button
       type={showResume ? "button" : "submit"}
       className={cn(
-        "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-control-highlight hover:scale-105 active:inset-shadow-control-pressed active:shadow-none disabled:pointer-events-none disabled:opacity-64 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8 [&_svg]:pointer-events-none",
+        "relative isolate flex size-8 sm:size-7 items-center justify-center overflow-hidden rounded-full shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-2xs enabled:inset-shadow-white/16 hover:scale-105 active:inset-shadow-black/8 active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 [&_svg]:pointer-events-none",
         stageBackdropVariant
           ? "bg-transparent text-white enabled:shadow-black/24 enabled:hover:brightness-110"
           : "bg-message-action text-message-action-foreground enabled:shadow-message-action/24 hover:bg-message-action-hover",
@@ -327,12 +313,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         <Spinner size="sm" aria-hidden="true" />
       ) : showResume ? (
         <PlayIcon className="size-4 fill-current" aria-hidden="true" />
-      ) : isEditingQueuedMessage ? (
-        <CheckIcon className="size-4" aria-hidden="true" />
-      ) : isQueuing ? (
-        <ListPlusIcon className="size-4" aria-hidden="true" />
-      ) : isRunning ? (
-        <CornerUpRightIcon className="size-4" aria-hidden="true" />
       ) : (
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
           <path

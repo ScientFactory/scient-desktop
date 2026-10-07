@@ -33,22 +33,23 @@ export function historicalSubagentsToRuntime(
       item.type !== "dynamic_tool" ||
       item.runId !== null ||
       item.nodeId !== null ||
-      item.nativeItemRef !== null ||
-      !item.id.startsWith("migration:v1:history:activity:")
+      item.nativeItemRef !== null
     )
       return;
     const decoded = decodeImportedActivity(item.input);
     if (Option.isNone(decoded)) return;
     const record = decoded.value;
     if (
-      item.id !== `migration:v1:history:activity:${record.activityId}` ||
+      (item.inheritedFrom?.itemId ?? item.id) !==
+        `migration:v1:history:activity:${record.activityId}` ||
       !record.kind.startsWith("task.")
     )
       return;
-    const identity = `${sourceThreadId}:${record.activityId}`;
+    const originThreadId = item.inheritedFrom?.threadId ?? sourceThreadId;
+    const identity = `${originThreadId}:${record.activityId}`;
     if (seen.has(identity)) return;
     seen.add(identity);
-    const prefix = `historical:${sourceThreadId}:`;
+    const prefix = `historical:${originThreadId}:`;
     const payload: Record<string, unknown> = {
       ...record.payload,
       agentKind:

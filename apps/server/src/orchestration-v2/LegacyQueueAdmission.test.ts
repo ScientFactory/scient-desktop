@@ -33,7 +33,7 @@ import {
 } from "./ProviderAdapterRegistry.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { cutOverLegacyQueue, cutOverLegacyQueues } from "./legacy/LegacyQueueCutover.ts";
-import { readQueue, writeQueue } from "../scient/threadQueue/Ledger.ts";
+import { readQueue, writeQueue } from "./legacy/LegacyQueueLedger.ts";
 import { layer as legacyImporterLayer } from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
@@ -47,10 +47,7 @@ import {
   CommandReceiptStoreReadError,
   layer as commandReceiptStoreLayer,
 } from "./CommandReceiptStore.ts";
-import {
-  makeOrchestratorV2ReplayLayerWithRegistry,
-  makeReplayServerConfig,
-} from "./testkit/ProviderReplayHarness.ts";
+import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "test-model" };
@@ -82,14 +79,9 @@ const recoveryLayer = threadManagementLayer.pipe(
   Layer.provideMerge(
     legacyImporterLayer.pipe(
       Layer.provideMerge(
-        Layer.mergeAll(
-          testLayer,
-          SqlitePersistenceMemory,
-          Layer.effect(
-            ServerConfig.ServerConfig,
-            makeReplayServerConfig("legacy-claim-recovery").pipe(Effect.orDie),
-          ),
-        ).pipe(Layer.provideMerge(NodeServices.layer)),
+        Layer.mergeAll(testLayer, SqlitePersistenceMemory).pipe(
+          Layer.provideMerge(NodeServices.layer),
+        ),
       ),
     ),
   ),
@@ -497,14 +489,9 @@ it.effect(
       Effect.provide(
         Layer.mergeAll(legacyImporterLayer, threadManagementLayer).pipe(
           Layer.provideMerge(
-            Layer.mergeAll(
-              testLayer,
-              SqlitePersistenceMemory,
-              Layer.effect(
-                ServerConfig.ServerConfig,
-                makeReplayServerConfig("legacy-compat-api").pipe(Effect.orDie),
-              ),
-            ).pipe(Layer.provideMerge(NodeServices.layer)),
+            Layer.mergeAll(testLayer, SqlitePersistenceMemory).pipe(
+              Layer.provideMerge(NodeServices.layer),
+            ),
           ),
         ),
       ),
@@ -629,14 +616,9 @@ it.effect(
       Effect.provide(
         legacyImporterLayer.pipe(
           Layer.provideMerge(
-            Layer.mergeAll(
-              testLayer,
-              SqlitePersistenceMemory,
-              Layer.effect(
-                ServerConfig.ServerConfig,
-                makeReplayServerConfig("legacy-cutover-files").pipe(Effect.orDie),
-              ),
-            ).pipe(Layer.provideMerge(NodeServices.layer)),
+            Layer.mergeAll(testLayer, SqlitePersistenceMemory).pipe(
+              Layer.provideMerge(NodeServices.layer),
+            ),
           ),
         ),
       ),
@@ -719,14 +701,9 @@ for (const pendingState of ["changed", "removed"] as const) {
       Effect.provide(
         legacyImporterLayer.pipe(
           Layer.provideMerge(
-            Layer.mergeAll(
-              testLayer,
-              SqlitePersistenceMemory,
-              Layer.effect(
-                ServerConfig.ServerConfig,
-                makeReplayServerConfig(`accepted-upload-${pendingState}`).pipe(Effect.orDie),
-              ),
-            ).pipe(Layer.provideMerge(NodeServices.layer)),
+            Layer.mergeAll(testLayer, SqlitePersistenceMemory).pipe(
+              Layer.provideMerge(NodeServices.layer),
+            ),
           ),
         ),
       ),
@@ -836,14 +813,9 @@ it.effect(
       Effect.provide(
         legacyImporterLayer.pipe(
           Layer.provideMerge(
-            Layer.mergeAll(
-              testLayer,
-              SqlitePersistenceMemory,
-              Layer.effect(
-                ServerConfig.ServerConfig,
-                makeReplayServerConfig("legacy-cutover-json").pipe(Effect.orDie),
-              ),
-            ).pipe(Layer.provideMerge(NodeServices.layer)),
+            Layer.mergeAll(testLayer, SqlitePersistenceMemory).pipe(
+              Layer.provideMerge(NodeServices.layer),
+            ),
           ),
         ),
       ),
@@ -981,7 +953,8 @@ for (const scenario of ["active", "renamed", "completed", "foreign-project"] as 
           createdAt: now,
         });
         const read = () => orchestrator.getThreadProjection(threadId);
-        assert.equal((yield* read()).thread.title, "Original title");
+        const admitted = yield* read();
+        assert.equal(admitted.thread.title, "Original title");
         assert.equal(
           (yield* orchestrator.getThreadProjection(sourceThreadId)).plans[0]?.status,
           scenario === "completed" ? "completed" : "active",
@@ -1006,7 +979,17 @@ for (const scenario of ["active", "renamed", "completed", "foreign-project"] as 
         });
         const after = yield* read();
         const canDeliver = scenario === "active" || scenario === "renamed";
-        assert.equal(after.runs[0]?.status, canDeliver ? "starting" : "failed");
+        assert.equal(after.runs[0]?.status, canDeliver ? "starting" : "queued");
+        if (!canDeliver) {
+          assert.equal(after.runs[0]?.queueHeld, true);
+          assert.equal(after.runs[0]?.queuePosition, admitted.runs[0]?.queuePosition);
+          assert.deepEqual(after.messages, admitted.messages);
+          assert.ok(
+            after.turnItems.some(
+              (item) => item.type === "error" && item.failure.code === "queued_start_failed",
+            ),
+          );
+        }
         assert.equal(
           after.thread.title,
           scenario === "active"
@@ -1017,7 +1000,7 @@ for (const scenario of ["active", "renamed", "completed", "foreign-project"] as 
         );
         assert.equal(
           (yield* orchestrator.getThreadProjection(sourceThreadId)).plans[0]?.status,
-          canDeliver || scenario === "completed" ? "completed" : "active",
+          scenario === "completed" ? "completed" : "active",
         );
         const effectCount = (effectType: string) =>
           sql<{
@@ -1137,14 +1120,9 @@ it.effect(
       Effect.provide(
         legacyImporterLayer.pipe(
           Layer.provideMerge(
-            Layer.mergeAll(
-              testLayer,
-              SqlitePersistenceMemory,
-              Layer.effect(
-                ServerConfig.ServerConfig,
-                makeReplayServerConfig("corrupt-queue-cutover").pipe(Effect.orDie),
-              ),
-            ).pipe(Layer.provideMerge(NodeServices.layer)),
+            Layer.mergeAll(testLayer, SqlitePersistenceMemory).pipe(
+              Layer.provideMerge(NodeServices.layer),
+            ),
           ),
         ),
       ),
@@ -1245,14 +1223,9 @@ it.effect("refuses staged message identities owned by another conversation", () 
     Effect.provide(
       legacyImporterLayer.pipe(
         Layer.provideMerge(
-          Layer.mergeAll(
-            testLayer,
-            SqlitePersistenceMemory,
-            Layer.effect(
-              ServerConfig.ServerConfig,
-              makeReplayServerConfig("queue-message-owner").pipe(Effect.orDie),
-            ),
-          ).pipe(Layer.provideMerge(NodeServices.layer)),
+          Layer.mergeAll(testLayer, SqlitePersistenceMemory).pipe(
+            Layer.provideMerge(NodeServices.layer),
+          ),
         ),
       ),
     ),

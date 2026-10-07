@@ -23,6 +23,10 @@ import { openMediaFile } from "./assets/MediaFile.ts";
 import { ORCHESTRATION_PROTOCOL_HEADER, THREAD_SNAPSHOT_FORMAT_HEADER } from "@t3tools/contracts";
 
 import * as ServerConfig from "./config.ts";
+import {
+  observeInitialStaticHtmlAssertion,
+  observeInitialStaticHtmlBody,
+} from "./testUtils/ScientHttpInitialResponseObservation.test-support.ts";
 
 import {
   assetResponseHeaders,
@@ -165,7 +169,11 @@ it.layer(
       yield* fs.utimes(indexPath, modifiedAt, modifiedAt);
       const request = yield* makeStaticRequest(staticDir);
       const initial = yield* request("/");
-      expect(yield* initial.text).toBe("<html>old build</html>");
+      // SCIENT-FORK: failure-only initial-response evidence; preserve the original strict assertion.
+      const initialBody = yield* observeInitialStaticHtmlBody(initial, initial.text);
+      observeInitialStaticHtmlAssertion(initial, initialBody, () => {
+        expect(initialBody).toBe("<html>old build</html>");
+      });
       const previousEtag = initial.headers["etag"] ?? '"previous-html"';
       const nextHtml = "<html>new build</html>";
       yield* fs.writeFileString(indexPath, nextHtml);

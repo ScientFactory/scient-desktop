@@ -34,10 +34,6 @@ import type { ProviderAdapterV2Shape } from "../../orchestration-v2/ProviderAdap
 import * as ServerSettings from "../../serverSettings.ts";
 import type { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
-// SCIENT-FORK:START — v1 adapter factory; the upstream v2 rewrite dropped its use.
-import { makeOpenCodeAdapter } from "../Layers/OpenCodeAdapter.ts";
-import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
-// SCIENT-FORK:END
 import { readOpenCodeGoUsageLimits } from "../Layers/openCodeUsageLimits.ts";
 import {
   checkOpenCodeProviderStatus,
@@ -186,9 +182,6 @@ export type OpenCodeDriverEnv =
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | OpenCodeRuntime.OpenCodeRuntime
-  // SCIENT-FORK:START — needed by the restored v1 `makeOpenCodeAdapter` call.
-  | ProviderEventLoggers.ProviderEventLoggers
-  // SCIENT-FORK:END
   | Path.Path
   | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService;
@@ -223,16 +216,6 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
-      // SCIENT-FORK:START — the fork's live `Layers/ProviderService.ts` drives turns
-      // through the v1 `ProviderAdapterShape`, so every instance must expose one
-      // alongside `orchestrationAdapter` (see `ProviderDriver.ts`).
-      const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      const adapter = yield* makeOpenCodeAdapter(effectiveConfig, {
-        instanceId,
-        environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      });
-      // SCIENT-FORK:END
       const runtimeProbe = yield* makeOpenCodeRuntimeProbe(
         probeOpenCodeRuntime(effectiveConfig, processEnv).pipe(
           Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -557,9 +540,6 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
               }),
         orchestrationAdapter,
         textGeneration,
-        // SCIENT-FORK:START — v1 adapter for the fork's turn engine.
-        adapter,
-        // SCIENT-FORK:END
       } satisfies ProviderInstance;
     }),
 };

@@ -27,6 +27,11 @@ const [Start, Projection, Run, Sessions, Policy, Id, Sink, Handoff, Git, Project
     app("project/ProjectService"),
     app("provider/Services/ProviderAuthService"),
   ]);
+const Settings = await app("serverSettings");
+const Config = await app("config");
+const NodeServices = await import(
+  NodeURL.pathToFileURL(require.resolve("@effect/platform-node/NodeServices"))
+);
 let current;
 let fullReads = 0;
 const liveRuns = [];
@@ -43,6 +48,10 @@ const session = {
   compactThread: () => Effect.void,
 };
 const dependencies = Layer.mergeAll(
+  Config.layerTest(root, { prefix: "mandatory-input-memory-" }).pipe(
+    Layer.provide(NodeServices.layer),
+  ),
+  Settings.layerTest(),
   Layer.mock(Handoff.ContextHandoffServiceV2)({}),
   Id.layer,
   FileSystem.layerNoop({}),

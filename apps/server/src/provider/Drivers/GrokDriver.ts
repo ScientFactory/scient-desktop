@@ -20,10 +20,6 @@ import {
   withGrokSessionShutdown,
 } from "../../scient/providerLifecycle/GrokConnectionActions.ts";
 import { makeGrokManagedRuntimeResolution } from "../../scient/providerLifecycle/GrokManagedRuntimeActions.ts";
-import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
-// SCIENT-FORK:START — v1 adapter factory; see the construction site below.
-import { makeGrokAdapter } from "../Layers/GrokAdapter.ts";
-// SCIENT-FORK:END
 import * as ServerSettings from "../../serverSettings.ts";
 import { makeGrokTextGeneration } from "../../textGeneration/GrokTextGeneration.ts";
 import {
@@ -31,6 +27,7 @@ import {
   type GrokAdapterV2DriverEnv,
 } from "../../orchestration-v2/Adapters/GrokAdapterV2.ts";
 import { ProviderDriverError } from "../Errors.ts";
+import { makeNativeSessionShutdown } from "../NativeSessionShutdown.ts";
 import {
   buildInitialGrokProviderSnapshot,
   checkGrokProviderStatus,
@@ -96,7 +93,6 @@ export type GrokDriverEnv =
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
-  | ProviderEventLoggers.ProviderEventLoggers
   | ServerConfig
   | ServerSettings.ServerSettingsService;
 
@@ -142,7 +138,6 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       const path = yield* Path.Path;
       const serverSettings = yield* ServerSettingsService;
       const { cwd } = yield* ServerConfig;
-      const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
       const serverConfig = yield* ServerConfig;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
@@ -191,38 +186,31 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
           Effect.provideService(Path.Path, path),
         ),
       );
-      // SCIENT-FORK:START — v1 adapter. Upstream deleted `makeGrokAdapter`'s
-      // construction here when it moved Grok to `GrokAdapterV2`, but the fork's
-      // live `Layers/ProviderService.ts` still drives turns through the v1
-      // `ProviderAdapterShape` (see `ProviderDriver.ts`). Restored.
-      const adapter = yield* makeGrokAdapter(effectiveConfig, {
-        environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-        instanceId,
-      });
-      // SCIENT-FORK:END
-      const orchestrationAdapter = yield* GrokAdapterV2Driver.create({
-        instanceId,
-        displayName,
-        accentColor,
-        environment,
-        enabled,
-        config,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
-              instanceId,
-              detail: "Failed to build Grok orchestration adapter.",
-              cause,
-            }),
+      const nativeSessions = yield* makeNativeSessionShutdown(
+        yield* GrokAdapterV2Driver.create({
+          instanceId,
+          displayName,
+          accentColor,
+          environment,
+          enabled,
+          config: effectiveConfig,
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderDriverError({
+                driver: DRIVER_KIND,
+                instanceId,
+                detail: "Failed to build Grok orchestration adapter.",
+                cause,
+              }),
+          ),
         ),
       );
+      const orchestrationAdapter = nativeSessions.adapter;
       const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
       const connectionActions = withGrokSessionShutdown(
         yield* makeGrokConnectionActions(effectiveConfig, processEnv, spawner),
-        adapter.stopAll(),
+        nativeSessions.closeSessions,
       );
 
       const checkProvider = checkGrokProviderStatus(effectiveConfig, processEnv, cwd).pipe(
@@ -324,7 +312,6 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         snapshot,
         snapshotForCwd,
         skillActions,
-        adapter,
 
         orchestrationAdapter,
         textGeneration,

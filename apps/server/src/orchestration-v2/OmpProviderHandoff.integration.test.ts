@@ -37,6 +37,7 @@ import { makeOmpScriptedWire } from "../provider/omp/OmpCaptureReplay.testFixtur
 import { makeOmpRedaction } from "../provider/omp/OmpRpcProcess.ts";
 import { ompTarget } from "../provider/omp/OmpTarget.ts";
 import { scientAgentTarget } from "../provider/scient/ScientAgentTarget.ts";
+import { prepareScientSkillTurn } from "../scient/skills/ScientSkillInvocation.ts";
 import { makeOmpAdapterV2 } from "./Adapters/OmpAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -438,7 +439,14 @@ for (const target of [ompTarget, scientAgentTarget]) {
               assert.equal(freshOrdinal, 2);
               assert.equal(promptSessions[1], oldThread.nativeThreadRef?.nativeId);
               assert.equal(delivered.contextHandoffs.length, 0);
-              assert.equal(prompts[1], "Current queued request");
+              assert.equal(
+                prompts[1],
+                prepareScientSkillTurn("Current queued request", [], new Map(), {
+                  skillLoadToolName: "scient_skill_load",
+                  skillListToolName: "scient_skills_list",
+                  includeCatalogMarker: true,
+                }).input,
+              );
             } else {
               assert.equal(switches.length, 0);
               assert.equal(freshOrdinal, 2);

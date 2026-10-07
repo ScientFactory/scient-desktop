@@ -1,0 +1,52 @@
+/* Visual-card utilities are quiet; chart exploration keeps its own toolbar. */
+.scient-visual-utility-controls {
+  column-gap: 0;
+}
+
+.scient-visual-utility-controls button:not([data-scient-toolbar-move]) {
+  isolation: isolate;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  box-shadow: none;
+  --control-icon-color: color-mix(in oklab, var(--muted-foreground) 80%, transparent);
+  color: var(--control-icon-color);
+}
+
+.scient-visual-utility-controls button:not([data-scient-toolbar-move])::before {
+  inset: 2px;
+  z-index: -1;
+  border-radius: inherit;
+}
+
+[data-scient-image-controls]
+  .scient-visual-utility-controls
+  button:not([data-scient-toolbar-move]) {
+  width: calc(1.75rem - 2px);
+  height: calc(1.75rem - 2px);
+}
+
+[data-scient-image-controls]
+  .scient-visual-utility-controls
+  button:not([data-scient-toolbar-move])::before {
+  inset: 1px;
+}
+
+.scient-visual-utility-controls button:not([data-scient-toolbar-move]):hover,
+.scient-visual-utility-controls button:not([data-scient-toolbar-move])[data-popup-open] {
+  --control-icon-color: var(--foreground);
+  color: var(--control-icon-color);
+}
+
+.scient-visual-utility-controls button:not([data-scient-toolbar-move]):hover::before,
+.scient-visual-utility-controls button:not([data-scient-toolbar-move])[data-popup-open]::before {
+  background: color-mix(in oklab, var(--foreground) 6%, transparent);
+}
+
+.scient-visual-utility-controls button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}

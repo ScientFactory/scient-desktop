@@ -3,13 +3,14 @@ import {
   MessageId,
   OrchestrationThreadActivity,
   TurnId,
-  type OrchestrationMessage,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import type { ConversationSnapshotThread } from "@scientfactory/conversation";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
+import { readHistoricalSystemMessage } from "../../orchestration-v2/legacy/HistoricalSystemMessage.ts";
 
 const historicalActivity = Schema.Struct({
   kind: Schema.String,
@@ -24,7 +25,7 @@ export function conversationSnapshotProjection(
   projection: OrchestrationV2ThreadProjection,
   workspaceRoot: string | null,
 ): ConversationSnapshotThread {
-  const messages: OrchestrationMessage[] = [];
+  const messages: ConversationSnapshotThread["messages"][number][] = [];
   const activities: OrchestrationThreadActivity[] = [];
   const proposedPlans: ConversationSnapshotThread["proposedPlans"][number][] = [];
   const messageById = new Map(projection.messages.map((message) => [message.id, message]));
@@ -62,6 +63,9 @@ export function conversationSnapshotProjection(
           role: item.type === "user_message" ? "user" : "assistant",
           turnId,
           text: item.text,
+          ...(item.type === "assistant_message" && item.citationPresentation !== undefined
+            ? { citationPresentation: item.citationPresentation }
+            : {}),
           streaming: item.type === "assistant_message" && item.streaming,
           attachments: item.attachments ?? message?.attachments ?? [],
           ...(item.type === "user_message" && item.context !== undefined
@@ -107,8 +111,22 @@ export function conversationSnapshotProjection(
           updatedAt,
         });
         break;
-      case "dynamic_tool":
-        if (isHistoricalActivity(item.input)) {
+      case "dynamic_tool": {
+        const system = readHistoricalSystemMessage(item);
+        if (Option.isSome(system)) {
+          const record = system.value;
+          messages.push({
+            id: record.messageId,
+            role: "system",
+            turnId,
+            text: record.text,
+            attachments: record.attachments ?? [],
+            ...(record.context === null ? {} : { context: record.context }),
+            streaming: false,
+            createdAt,
+            updatedAt,
+          });
+        } else if (isHistoricalActivity(item.input)) {
           activity(item.input.kind, item.input.summary, item.input.payload, item.input.tone);
         } else {
           activity(
@@ -130,6 +148,7 @@ export function conversationSnapshotProjection(
           );
         }
         break;
+      }
       case "command_execution":
         activity(
           "tool.completed",

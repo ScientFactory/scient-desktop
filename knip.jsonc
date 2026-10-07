@@ -20,6 +20,9 @@
         "qualify-managed-runtime-catalog.ts",
         "mobile-native-client.ts",
         "setup-worktree.ts",
+        // Documented advisory inventory CLI and its independent Node regressions.
+        "scient-divergence-inventory.mjs",
+        "scient-divergence-inventory.node-test.mjs",
       ],
     },
     "apps/server": {
@@ -35,6 +38,8 @@
         "scripts/compute-recipes.ts",
         "scripts/publish-compute-recipe.ts",
         "scripts/agy-stream-mock.ts",
+        // GrokNativeSelection chooses this peer through a dynamic generation branch.
+        "scripts/grok-v1-mock-agent.ts",
         // Invoked inside the native-qualification workflow's repetition loop.
         "scripts/qualify-antigravity-acp-catalog.ts",
         // Spawned by scripts/qualify-managed-runtime-catalog.ts for RPC qualification.
@@ -93,6 +98,8 @@
       // also a test entry point.
       "entry": [
         "scripts/warm-dep-cache.ts",
+        // Explicit standalone connected extracted-intent qualification configuration.
+        "extractedIntentSend.vitest.config.ts",
         // The standalone PDF print page is loaded by scient-document.html.
         "src/scient/documentPage/main.tsx",
         "src/scient/diagrams/mermaidRecovery.fixtures.ts",

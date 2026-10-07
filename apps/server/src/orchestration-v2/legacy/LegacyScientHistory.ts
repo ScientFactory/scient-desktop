@@ -1,9 +1,11 @@
 import {
   EventId,
   NodeId,
-  OrchestrationV2TurnItemJson,
   PlanId,
+  RuntimeRequestId,
+  UserInputAttachmentAnswerPayload,
   TurnItemId,
+  TurnId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2TurnItem,
   type ThreadId,
@@ -13,10 +15,13 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { EventSinkV2Shape } from "../EventSink.ts";
+import { readInheritedTurnIds } from "./LegacyConversationOriginReader.ts";
+import { decodeTurnItemRow } from "../scient-fork/projectionRowJson.ts";
 
 interface HistoryRow {
   readonly item_id: string;
-  readonly source: "message" | "system" | "activity" | "approval" | "plan";
+  readonly turn_id: string | null;
+  readonly source: "message" | "reasoning" | "system" | "activity" | "answer" | "approval" | "plan";
   readonly created_at: string;
   readonly updated_at: string;
   readonly ordinal: number;
@@ -51,13 +56,24 @@ const SystemMessage = Schema.Struct({
   attachments: Schema.NullOr(Schema.fromJsonString(Schema.Unknown)),
   context: Schema.NullOr(Schema.fromJsonString(Schema.Unknown)),
 });
+const Reasoning = Schema.Struct({
+  text: Schema.String,
+  isStreaming: Schema.Literals([0, 1]),
+});
+class LegacyHistoryPositionError extends Schema.TaggedError<LegacyHistoryPositionError>()(
+  "LegacyHistoryPositionError",
+  { threadId: Schema.String },
+) {
+  override get message(): string {
+    return "Historical items exceed the reserved transcript position range.";
+  }
+}
 const decodeActivity = Schema.decodeUnknownEffect(Schema.fromJsonString(Activity));
+const decodeAnswer = Schema.decodeUnknownEffect(UserInputAttachmentAnswerPayload);
 const decodeApproval = Schema.decodeUnknownEffect(Schema.fromJsonString(Approval));
 const decodePlan = Schema.decodeUnknownEffect(Schema.fromJsonString(Plan));
 const decodeSystem = Schema.decodeUnknownEffect(Schema.fromJsonString(SystemMessage));
-const decodeTurnItem = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2TurnItemJson),
-);
+const decodeReasoning = Schema.decodeUnknownEffect(Schema.fromJsonString(Reasoning));
 const toolIdentity = Schema.decodeUnknownOption(Schema.Struct({ toolName: Schema.String }));
 
 /** Reserve one chronological prefix for all legacy facts before any new run is admitted. */
@@ -67,45 +83,92 @@ export const prepareLegacyHistory = Effect.fn("LegacyScientHistory.prepare")(fun
   includeArtifactDetails = false,
 ) {
   const includeDetails = includeArtifactDetails ? 1 : 0;
-  const rows = yield* sql<HistoryRow>`
+  const chronologicalRows = yield* sql<HistoryRow>`
     WITH history AS (
-      SELECT 'migration:v1:turn-item:' || message_id AS item_id, 'message' AS source,
+      SELECT 'migration:v1:turn-item:' || message_id AS item_id, turn_id, 'message' AS source,
         created_at, updated_at, 0 AS source_order, 0 AS ordering, '{}' AS record_json
       FROM projection_thread_messages WHERE thread_id = ${threadId} AND role IN ('user', 'assistant')
       UNION ALL
-      SELECT 'migration:v1:history:system:' || message_id, 'system', created_at, updated_at, 1, 0,
+      SELECT 'migration:v1:history:reasoning:' || message_id, turn_id, 'reasoning', created_at, updated_at, 0, 0,
+        CASE WHEN ${includeDetails} = 1 THEN json_object('text', text, 'isStreaming', is_streaming)
+        ELSE '{}' END
+      FROM projection_thread_messages WHERE thread_id = ${threadId} AND role = 'reasoning'
+      UNION ALL
+      SELECT 'migration:v1:history:system:' || message_id, turn_id, 'system', created_at, updated_at, 1, 0,
         CASE WHEN ${includeDetails} = 1 THEN
           json_object('messageId', message_id, 'text', text, 'attachments', attachments_json, 'context', context_json)
         ELSE '{}' END
       FROM projection_thread_messages WHERE thread_id = ${threadId} AND role = 'system'
       UNION ALL
-      SELECT 'migration:v1:history:activity:' || activity_id, 'activity', created_at, created_at, 2, COALESCE(sequence, 0),
+      SELECT 'migration:v1:history:activity:' || activity_id, turn_id, 'activity', created_at, created_at, 2, COALESCE(sequence, 0),
         CASE WHEN ${includeDetails} = 1 THEN
           json_object('activityId', activity_id, 'turnId', turn_id, 'tone', tone, 'kind', kind,
             'summary', summary, 'sequence', sequence, 'payload', payload_json)
         ELSE '{}' END
       FROM projection_thread_activities WHERE thread_id = ${threadId}
       UNION ALL
-      SELECT 'migration:v1:history:approval:' || request_id, 'approval', created_at, COALESCE(resolved_at, created_at), 3, 0,
+      SELECT 'migration:v1:history:answer:' || activity_id, turn_id, 'answer', created_at, created_at, 2, COALESCE(sequence, 0),
+        CASE WHEN ${includeDetails} = 1 THEN
+          json_object('activityId', activity_id, 'turnId', turn_id, 'tone', tone, 'kind', kind,
+            'summary', summary, 'sequence', sequence, 'payload', payload_json)
+        ELSE '{}' END
+      FROM projection_thread_activities WHERE thread_id = ${threadId} AND kind = 'user-input.answer-submitted'
+      UNION ALL
+      SELECT 'migration:v1:history:approval:' || request_id, turn_id, 'approval', created_at, COALESCE(resolved_at, created_at), 3, 0,
         CASE WHEN ${includeDetails} = 1 THEN
           json_object('requestId', request_id, 'turnId', turn_id, 'status', status, 'decision', decision, 'resolvedAt', resolved_at)
         ELSE '{}' END
       FROM projection_pending_approvals WHERE thread_id = ${threadId}
       UNION ALL
-      SELECT 'migration:v1:history:plan:' || plan_id, 'plan', created_at, updated_at, 4, 0,
+      SELECT 'migration:v1:history:plan:' || plan_id, turn_id, 'plan', created_at, updated_at, 4, 0,
         CASE WHEN ${includeDetails} = 1 THEN
           json_object('planId', plan_id, 'turnId', turn_id, 'markdown', plan_markdown, 'implementedAt', implemented_at)
         ELSE '{}' END
       FROM projection_thread_proposed_plans WHERE thread_id = ${threadId}
     )
-    SELECT item_id, source, created_at, updated_at, record_json,
+    SELECT item_id, turn_id, source, created_at, updated_at, record_json,
       ROW_NUMBER() OVER (ORDER BY created_at, source_order, ordering, item_id) AS ordinal
     FROM history ORDER BY ordinal
   `;
+  // Copied turns have a durable order even when copied message timestamps tie.
+  // Keep the entire inherited prefix ahead of later local history; a refork must
+  // never borrow an unanswered request from after its selected answer.
+  const inheritedOrder = new Map(
+    [...(yield* readInheritedTurnIds(sql, threadId))].map((turnId, index) => [turnId, index]),
+  );
+  const rows = chronologicalRows
+    .toSorted((left, right) => {
+      const leftTurn = inheritedOrder.get(left.turn_id ?? "");
+      const rightTurn = inheritedOrder.get(right.turn_id ?? "");
+      if (leftTurn !== undefined || rightTurn !== undefined) {
+        const difference = (leftTurn ?? Infinity) - (rightTurn ?? Infinity);
+        if (difference !== 0) return difference;
+      }
+      return left.ordinal - right.ordinal;
+    })
+    .map((row, index) => ({ ...row, ordinal: index + 1 }));
   // Reassign only the legacy prefix atomically: old message-only positions can
   // occupy the new artifact slots, and the ordinal index is unique per thread.
   yield* sql`DELETE FROM orchestration_v2_turn_item_positions WHERE thread_id = ${threadId}
     AND (turn_item_id LIKE 'migration:v1:turn-item:%' OR turn_item_id LIKE 'migration:v1:history:%')`;
+  // Completed imports may already have native runless notices after the old
+  // prefix. Move only the colliding suffix, preserving its order and payloads.
+  const suffix = yield* sql<{ turn_item_id: string; ordinal: number }>`
+    SELECT turn_item_id, ordinal FROM orchestration_v2_turn_item_positions
+    WHERE thread_id = ${threadId} AND ordinal < 1000000 ORDER BY ordinal`;
+  let previousOrdinal = rows.length;
+  const moved = suffix.flatMap((position) => {
+    const ordinal = Math.max(position.ordinal, previousOrdinal + 1);
+    previousOrdinal = ordinal;
+    return ordinal === position.ordinal ? [] : [{ ...position, ordinal }];
+  });
+  if (previousOrdinal >= 1000000) {
+    return yield* new LegacyHistoryPositionError({ threadId });
+  }
+  for (const position of moved.toReversed()) {
+    yield* sql`UPDATE orchestration_v2_turn_item_positions SET ordinal = ${position.ordinal}
+      WHERE thread_id = ${threadId} AND turn_item_id = ${position.turn_item_id}`;
+  }
   for (const row of rows) {
     yield* sql`INSERT INTO orchestration_v2_turn_item_positions (thread_id, turn_item_id, ordinal)
       VALUES (${threadId}, ${row.item_id}, ${row.ordinal})`;
@@ -126,34 +189,54 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
       (row) => row.event_id,
     ),
   );
+  for (const row of yield* sql<{ turn_item_id: string }>`
+    SELECT turn_item_id FROM orchestration_v2_projection_turn_items
+    WHERE thread_id = ${threadId} AND turn_item_id LIKE 'migration:v1:history:answer:%'`) {
+    existing.add(row.turn_item_id);
+  }
   let events: OrchestrationV2DomainEvent[] = [];
   const existingPlans = new Set(
     (yield* sql<{ plan_id: string }>`SELECT plan_id FROM orchestration_v2_projection_plans
       WHERE thread_id = ${threadId}`).map((row) => row.plan_id),
   );
-  const messages = yield* sql<{ payload_json: string; ordinal: number }>`
+  const positionedItems = yield* sql<{ payload_json: string; ordinal: number }>`
     SELECT items.payload_json, positions.ordinal
     FROM orchestration_v2_projection_turn_items AS items
     JOIN orchestration_v2_turn_item_positions AS positions
       ON positions.thread_id = items.thread_id AND positions.turn_item_id = items.turn_item_id
     WHERE items.thread_id = ${threadId}
-      AND items.turn_item_id LIKE 'migration:v1:turn-item:%'
-      AND items.ordinal <> positions.ordinal
+      AND positions.ordinal < 1000000
+    ORDER BY positions.ordinal DESC
   `;
-  for (const message of messages) {
-    const item = yield* decodeTurnItem(message.payload_json);
+  const historicalTurns = new Map(
+    rows.flatMap((row) =>
+      row.turn_id === null ? [] : [[row.item_id, TurnId.make(row.turn_id)] as const],
+    ),
+  );
+  for (const positioned of positionedItems) {
+    const item = yield* decodeTurnItemRow(positioned.payload_json);
+    const historyTurnId = item.historyTurnId ?? historicalTurns.get(item.id);
+    if (item.ordinal === positioned.ordinal && historyTurnId === item.historyTurnId) continue;
     events.push({
-      id: EventId.make(`migration:v1:history:position:${item.id}:${message.ordinal}`),
+      id: EventId.make(`migration:v1:history:position:${item.id}:${positioned.ordinal}`),
       type: "turn-item.updated",
       threadId,
       occurredAt: item.updatedAt,
-      payload: { ...item, ordinal: message.ordinal },
+      payload: {
+        ...item,
+        ordinal: positioned.ordinal,
+        ...(historyTurnId === undefined ? {} : { historyTurnId }),
+      },
     });
     if (events.length === 100) {
-      yield* eventSink.write({ events });
+      yield* eventSink.write({ events, guardTurnItemPositionRepairs: true });
       events = [];
       yield* Effect.yieldNow;
     }
+  }
+  if (events.length > 0) {
+    yield* eventSink.write({ events, guardTurnItemPositionRepairs: true });
+    events = [];
   }
   for (const row of rows) {
     if (row.source === "message") continue;
@@ -163,6 +246,7 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
       id: TurnItemId.make(row.item_id),
       threadId,
       runId: null,
+      ...(row.turn_id === null ? {} : { historyTurnId: TurnId.make(row.turn_id) }),
       nodeId: null,
       providerThreadId: null,
       providerTurnId: null,
@@ -176,6 +260,18 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
     };
     let item: OrchestrationV2TurnItem;
     switch (row.source) {
+      case "reasoning": {
+        const record = yield* decodeReasoning(row.record_json);
+        item = {
+          ...base,
+          type: "reasoning",
+          title: null,
+          text: record.text,
+          streaming: false,
+          status: record.isStreaming === 1 ? "interrupted" : "completed",
+        };
+        break;
+      }
       case "activity": {
         const record = yield* decodeActivity(row.record_json);
         const identity = toolIdentity(record.payload);
@@ -193,6 +289,31 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
           "output" in record.payload
             ? { output: record.payload.output }
             : {}),
+        };
+        break;
+      }
+      case "answer": {
+        const record = yield* decodeActivity(row.record_json);
+        const payload = record.payload;
+        const answer = yield* decodeAnswer(
+          typeof payload === "object" && payload !== null
+            ? { attachmentsByQuestionId: {}, ...payload }
+            : payload,
+        );
+        // A separate historical fact preserves the original work-log audit and
+        // never adopts a pending request, native callback, node or run.
+        item = {
+          ...base,
+          type: "user_input_request",
+          title: "Historical submitted answer",
+          requestId: RuntimeRequestId.make(`migration:v1:answer:${record.activityId}`),
+          questions: Object.keys(answer.answers).map((id) => ({
+            id,
+            header: "Question",
+            question: answer.questionTextById?.[id]?.trim() || id,
+            options: [],
+          })),
+          questionAnswer: answer,
         };
         break;
       }
@@ -220,7 +341,7 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
             }>`SELECT payload_json FROM orchestration_v2_projection_turn_items
               WHERE thread_id = ${threadId} AND turn_item_id = ${row.item_id}`
           : [];
-        const previous = prior[0] ? yield* decodeTurnItem(prior[0].payload_json) : undefined;
+        const previous = prior[0] ? yield* decodeTurnItemRow(prior[0].payload_json) : undefined;
         const markdown = previous?.type === "proposed_plan" ? previous.markdown : record.markdown;
         item = {
           ...base,
@@ -302,10 +423,10 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
         payload: item,
       });
     if (events.length >= 100) {
-      yield* eventSink.write({ events });
+      yield* eventSink.write({ events, guardLegacyQuestionInsertions: true });
       events = [];
       yield* Effect.yieldNow;
     }
   }
-  if (events.length > 0) yield* eventSink.write({ events });
+  if (events.length > 0) yield* eventSink.write({ events, guardLegacyQuestionInsertions: true });
 });

@@ -2,7 +2,7 @@ import type { ScientThreadQueueEnqueueRequest } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { QueueError, type QueueDocument } from "./Ledger.ts";
+import { QueueError, type QueueDocument } from "../../orchestration-v2/legacy/LegacyQueueLedger.ts";
 
 export const enqueueQueue = Effect.fn("ScientQueue.enqueue")(function* (
   payload: ScientThreadQueueEnqueueRequest,

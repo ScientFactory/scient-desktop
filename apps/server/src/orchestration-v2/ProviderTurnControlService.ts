@@ -1,4 +1,3 @@
-import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   MessageId,
   ProviderSessionId,
@@ -13,8 +12,16 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { prepareScientV2SkillTurn } from "../scient/skills/ScientV2SkillTurn.ts";
+import {
+  prepareScientV2SkillScopeForSteer,
+  validateScientV2SteerInput,
+} from "../scient/skills/ScientV2SkillTurn.ts";
 import { ScientSkillSessionPlanner } from "../scient/skills/ScientSkillSession.ts";
+import { ServerConfig } from "../config.ts";
+import {
+  makeInterruptPendingStart,
+  type InterruptPendingStart,
+} from "./scient-fork/PendingStartInterrupt.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
@@ -42,7 +49,14 @@ export class ProviderTurnControlError extends Schema.TaggedError<ProviderTurnCon
 
 const isProviderTurnControlError = Schema.is(ProviderTurnControlError);
 
+// SCIENT-FORK:START — pending-start interrupt lives in scient-fork.
+export { ProviderRunInterruptError } from "./scient-fork/PendingStartInterrupt.ts";
+// SCIENT-FORK:END
+
 export interface ProviderTurnControlServiceV2Shape {
+  // SCIENT-FORK:START — interrupt a run whose native start receipt is pending.
+  readonly interruptPendingStart: InterruptPendingStart;
+  // SCIENT-FORK:END
   readonly interrupt: (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
@@ -74,13 +88,14 @@ export class ProviderTurnControlServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnControlServiceV2,
   never,
-  ProjectionStore.ProjectionStoreV2 | ProviderSessionManager.ProviderSessionManagerV2
+  ServerConfig | ProjectionStore.ProjectionStoreV2 | ProviderSessionManager.ProviderSessionManagerV2
 > = Layer.effect(
   ProviderTurnControlServiceV2,
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const skillPlanner = yield* ScientSkillSessionPlanner;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const serverConfig = yield* ServerConfig;
 
     const load = (input: {
       readonly threadId: ThreadId;
@@ -171,35 +186,40 @@ export const layer: Layer.Layer<
         return { context, providerThread: interruptProviderThread, providerTurn, session };
       });
 
-    return ProviderTurnControlServiceV2.of({
-      interrupt: (input) =>
-        Effect.gen(function* () {
-          const loaded = yield* load({ ...input, operation: "interrupt" });
-          const session = Option.isSome(loaded.session)
-            ? loaded.session
-            : yield* sessions.get(input.providerSessionId);
-          if (Option.isNone(session)) return;
-          // A settled turn reaches its adapter too: only the adapter knows
-          // whether it still runs work for the thread, and each one either
-          // stops it or reports there is nothing left to stop. Background work
-          // the projection still shows is settled by the orchestrator after.
-          yield* session.value.interruptTurn({
-            providerThread: loaded.providerThread,
-            providerTurnId: loaded.providerTurn.id,
-            requestRuntimeRestart: true,
-          });
-        }).pipe(
-          Effect.mapError((cause) =>
-            isProviderTurnControlError(cause)
-              ? cause
-              : new ProviderTurnControlError({
-                  threadId: input.threadId,
-                  operation: "interrupt",
-                  providerTurnId: input.providerTurnId,
-                  cause,
-                }),
-          ),
+    const interrupt: ProviderTurnControlServiceV2Shape["interrupt"] = (input) =>
+      Effect.gen(function* () {
+        const loaded = yield* load({ ...input, operation: "interrupt" });
+        const session = Option.isSome(loaded.session)
+          ? loaded.session
+          : yield* sessions.get(input.providerSessionId);
+        if (Option.isNone(session)) return;
+        // A settled turn reaches its adapter too: only the adapter knows
+        // whether it still runs work for the thread, and each one either
+        // stops it or reports there is nothing left to stop. Background work
+        // the projection still shows is settled by the orchestrator after.
+        yield* session.value.interruptTurn({
+          providerThread: loaded.providerThread,
+          providerTurnId: loaded.providerTurn.id,
+          requestRuntimeRestart: true,
+        });
+      }).pipe(
+        Effect.mapError((cause) =>
+          isProviderTurnControlError(cause)
+            ? cause
+            : new ProviderTurnControlError({
+                threadId: input.threadId,
+                operation: "interrupt",
+                providerTurnId: input.providerTurnId,
+                cause,
+              }),
         ),
+      );
+
+    return ProviderTurnControlServiceV2.of({
+      interrupt,
+      // SCIENT-FORK:START — interrupt a run whose native start receipt is pending.
+      interruptPendingStart: makeInterruptPendingStart({ projections, interrupt }),
+      // SCIENT-FORK:END
       interruptAndAwaitTerminal: (input) =>
         Effect.gen(function* () {
           const loaded = yield* load({ ...input, operation: "restart" });
@@ -296,18 +316,55 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
-          const text = yield* prepareScientV2SkillTurn({
+          // SCIENT-FORK:START — skill scope and current-input check before the recheck.
+          const prepared = yield* prepareScientV2SkillScopeForSteer({
             threadId: input.threadId,
-            driver: loaded.session.value.driver,
-            mcpSessionInjection: loaded.session.value.mcpSessionInjection === true,
-            projectRoot: loaded.session.value.providerSession.cwd ?? undefined,
-            text: projectComposerContextForProvider({
-              text: message.text,
-              records: message.context?.records ?? [],
-            }),
-            selectedScientSkillNames: message.selectedScientSkillNames ?? [],
-          }).pipe(Effect.provideService(ScientSkillSessionPlanner, skillPlanner));
-          yield* loaded.session.value
+            session: loaded.session.value,
+            message,
+            skillPlanner,
+          });
+          let text = prepared.text;
+          yield* validateScientV2SteerInput({
+            prepared,
+            attachments: message.attachments,
+            attachmentsDir: serverConfig.attachmentsDir,
+            useFallback: (fallback) => {
+              text = fallback;
+            },
+          });
+          // SCIENT-FORK:END
+          const current = yield* load({ ...input, operation: "steer" });
+          if (
+            Option.isNone(current.session) ||
+            current.session.value !== loaded.session.value ||
+            current.context.run?.id !== run.id ||
+            current.context.run.activeAttemptId !== run.activeAttemptId ||
+            current.providerTurn.runAttemptId !== loaded.providerTurn.runAttemptId ||
+            current.context.attempt?.id !== loaded.context.attempt?.id
+          )
+            return yield* new ProviderTurnControlError({
+              threadId: input.threadId,
+              operation: "steer",
+              providerTurnId: input.providerTurnId,
+              cause: "The recorded steering execution changed during input preparation.",
+            });
+          if (ownership !== undefined) {
+            const projection = yield* projections.getThreadRecords(input.threadId, ["runs"], {
+              runIds: [ownership.parentRunId],
+            });
+            const cohort = projection.runs.find(
+              (candidate) => candidate.id === ownership.parentRunId,
+            )?.delegatedCompletion;
+            if (
+              cohort?.disposition !== "open" ||
+              cohort.delivery?.messageId !== input.messageId ||
+              cohort.delivery.generation !== ownership.generation ||
+              cohort.delivery.taskIds.length === 0
+            )
+              return;
+          }
+          yield* prepared.publish;
+          yield* current.session.value
             .steerTurn({
               threadId: input.threadId,
               runId: run.id,

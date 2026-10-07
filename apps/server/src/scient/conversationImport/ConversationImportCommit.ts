@@ -21,7 +21,7 @@ import { CommandReceiptStoreV2 } from "../../orchestration-v2/CommandReceiptStor
 import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
 import { ThreadCommandExecutor } from "../../orchestration-v2/ThreadCommandExecutor.ts";
-import type { ThreadConversationImportCommand } from "./conversationImportPlan.ts";
+import type { PortableConversationImportPlan } from "./conversationImportPlan.ts";
 
 const decodeQuestionAnswer = Schema.decodeUnknownSync(UserInputAttachmentAnswerPayload);
 
@@ -33,7 +33,7 @@ export class ConversationImportCommitError extends Schema.TaggedError<Conversati
 const isCommitError = Schema.is(ConversationImportCommitError);
 
 /** Convert the portable import plan into inert, locally owned V2 history. */
-export function conversationImportEvents(command: ThreadConversationImportCommand) {
+export function conversationImportEvents(command: PortableConversationImportPlan) {
   const now = DateTime.makeUnsafe(command.createdAt);
   const thread: OrchestrationV2AppThread = {
     id: command.threadId,
@@ -69,7 +69,7 @@ export function conversationImportEvents(command: ThreadConversationImportComman
     type: "thread.created",
     payload: thread,
   });
-  const records = [
+  const unordered = [
     ...command.messages.map((message) => ({
       type: "message" as const,
       message,
@@ -88,7 +88,29 @@ export function conversationImportEvents(command: ThreadConversationImportComman
       createdAt: plan.createdAt,
       id: plan.id,
     })),
-  ].toSorted((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  ];
+  const records =
+    command.historyOrder === undefined
+      ? unordered.toSorted(
+          (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+        )
+      : (() => {
+          const byKey = new Map(unordered.map((record) => [`${record.type}:${record.id}`, record]));
+          if (command.historyOrder.length !== unordered.length)
+            throw new ConversationImportCommitError({
+              message: "The import history order is incomplete.",
+            });
+          return command.historyOrder.map((ref) => {
+            const key = `${ref.type}:${ref.id}`;
+            const record = byKey.get(key);
+            if (record === undefined)
+              throw new ConversationImportCommitError({
+                message: "The import history order is invalid.",
+              });
+            byKey.delete(key);
+            return record;
+          });
+        })();
   for (const [ordinal, record] of records.entries()) {
     const itemId = TurnItemId.make(`${command.commandId}:item:${record.id}`);
     const time = DateTime.makeUnsafe(record.createdAt);
@@ -126,6 +148,9 @@ export function conversationImportEvents(command: ThreadConversationImportComman
               creationSource: "server" as const,
               role: message.role,
               text: message.text,
+              ...(message.role === "assistant" && message.citationPresentation !== undefined
+                ? { citationPresentation: message.citationPresentation }
+                : {}),
               attachments: message.attachments ?? [],
               streaming: false,
               createdAt: time,
@@ -159,6 +184,9 @@ export function conversationImportEvents(command: ThreadConversationImportComman
                     updatedAt,
                     completedAt: updatedAt,
                     type: "assistant_message",
+                    ...(message.citationPresentation === undefined
+                      ? {}
+                      : { citationPresentation: message.citationPresentation }),
                     messageId: message.messageId,
                     text: message.text,
                     attachments: message.attachments ?? [],
@@ -297,7 +325,7 @@ export class ConversationImportCommit extends Context.Service<
   ConversationImportCommit,
   {
     readonly dispatch: (
-      command: ThreadConversationImportCommand,
+      command: PortableConversationImportPlan,
     ) => Effect.Effect<void, ConversationImportCommitError>;
   }
 >()("t3/scient/conversationImport/ConversationImportCommit") {}
@@ -311,7 +339,7 @@ export const layer = Layer.effect(
     const projections = yield* ProjectionStoreV2;
     const executor = yield* ThreadCommandExecutor;
     const dispatch = Effect.fn("ConversationImportCommit.dispatch")(
-      function* (command: ThreadConversationImportCommand) {
+      function* (command: PortableConversationImportPlan) {
         const existing = yield* receipts.getByCommandId(command.commandId);
         if (Option.isSome(existing)) {
           if (
@@ -344,12 +372,22 @@ export const layer = Layer.effect(
           });
           return yield* new ConversationImportCommitError({ message });
         }
+        const events = yield* Effect.try({
+          try: () => conversationImportEvents(command),
+          catch: (cause) =>
+            isCommitError(cause)
+              ? cause
+              : new ConversationImportCommitError({
+                  message: "The import history could not be prepared.",
+                  cause,
+                }),
+        });
         yield* sink.commitCommand({
           commandId: command.commandId,
           threadId: command.threadId,
           commandType: command.type,
           acceptedAt: yield* DateTime.now,
-          events: conversationImportEvents(command),
+          events,
           effects: [],
         });
       },

@@ -10,6 +10,7 @@ import {
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as EffectAcpErrors from "effect-acp/errors";
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { xAiRateLimitedErrorCode } from "../../provider/acp/XAiAcpExtension.ts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
@@ -353,7 +354,14 @@ describe("Grok launch permission mode", () => {
           runtimePolicy,
         })
         .pipe(Effect.scoped, Effect.ignore);
-      return launches;
+      return launches.map((args) => {
+        assert.equal(args[0], "--rules");
+        assert.include(
+          args[1] ?? "",
+          "You are in Scient, a project workspace for code and science.",
+        );
+        return args;
+      });
     }).pipe(
       // Keep the launch argv unwrapped by the Linux cgroup shim.
       Effect.provideService(HostProcessPlatform, "darwin"),
@@ -378,7 +386,9 @@ describe("Grok launch permission mode", () => {
   ] as const) {
     it.effect(`launches ${runtimeMode} threads with ${args.join(" ")}`, () =>
       Effect.gen(function* () {
-        assert.deepEqual(yield* launchArgs(policy(runtimeMode)), [args]);
+        assert.deepEqual(yield* launchArgs(policy(runtimeMode)), [
+          ["--rules", buildScientAwareness(), ...args],
+        ]);
       }),
     );
   }
@@ -440,14 +450,16 @@ describe("Grok launch permission mode", () => {
       );
       assert.equal(resolved.runtimeMode, "approval-required");
       assert.deepEqual(yield* launchArgs(resolved), [
-        ["--permission-mode", "default", "agent", "stdio"],
+        ["--rules", buildScientAwareness(), "--permission-mode", "default", "agent", "stdio"],
       ]);
     }),
   );
 
   it.effect("launches asking when an explicit approval or sandbox policy governs the thread", () =>
     Effect.gen(function* () {
-      const asking = [["--permission-mode", "default", "agent", "stdio"]];
+      const asking = [
+        ["--rules", buildScientAwareness(), "--permission-mode", "default", "agent", "stdio"],
+      ];
       assert.deepEqual(
         yield* launchArgs(
           policy("full-access", {

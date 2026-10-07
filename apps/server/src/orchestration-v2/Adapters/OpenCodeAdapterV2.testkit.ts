@@ -12,6 +12,7 @@ import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLogger
 import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import type { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
 import {
   makeReplayServerConfig,
   type OrchestratorV2ProviderReplayHarness,
@@ -21,6 +22,7 @@ import {
   OPENCODE_PROVIDER,
   OPENCODE_SDK_PROTOCOL,
   OpenCodeAdapterV2Driver,
+  openCodePermissionRules,
 } from "./OpenCodeAdapterV2.ts";
 
 const OPENCODE_SDK_REPLAY_PROTOCOL = OPENCODE_SDK_PROTOCOL;
@@ -110,6 +112,76 @@ function replayValueMatches(expected: unknown, actual: unknown): boolean {
 
 function frameRecord(frame: unknown): Record<string, unknown> | null {
   return typeof frame === "object" && frame !== null ? (frame as Record<string, unknown>) : null;
+}
+
+/** The recorded peer predates per-turn permission confirmation. Add explicit
+ * synthetic frames from the scenario's declared policy; never infer authority
+ * from the request under test or relax the recorded prompt/event matcher.
+ */
+export function materializeOpenCodeReplayPermissions(
+  transcript: ProviderReplayTranscript,
+  runtimePolicy: ProviderAdapterV2RuntimePolicy,
+): ProviderReplayTranscript {
+  const permission = openCodePermissionRules(runtimePolicy);
+  const sessions = new Map<string, Record<string, unknown>>();
+  const entries: ProviderReplayEntry[] = [];
+  for (const entry of transcript.entries) {
+    const frame = entry.type === "runtime_exit" ? null : frameRecord(entry.frame);
+    const data = frameRecord(frame?.data);
+    if (
+      entry.type === "emit_inbound" &&
+      frame?.type === "sdk.response" &&
+      data !== null &&
+      typeof data.id === "string" &&
+      ["session.create", "session.get", "session.fork"].includes(String(frame.operation))
+    ) {
+      sessions.set(data.id, data);
+    }
+    if (entry.type === "expect_outbound" && frame?.type === "session.promptAsync") {
+      const input = frameRecord(frame.input);
+      const sessionId = input?.sessionID;
+      const nativeSession = typeof sessionId === "string" ? sessions.get(sessionId) : undefined;
+      if (nativeSession === undefined) {
+        throw new Error(
+          "Recorded OpenCode prompt has no owned session metadata for permission confirmation.",
+        );
+      }
+      const label = `${entry.label ?? "prompt"}.synthetic-permission`;
+      const confirmed = { ...nativeSession, permission };
+      entries.push(
+        {
+          type: "expect_outbound",
+          label: `${label}.update`,
+          frame: { type: "session.update", input: { sessionID: sessionId, permission } },
+        },
+        {
+          type: "emit_inbound",
+          label: `${label}.update.response`,
+          frame: { type: "sdk.response", operation: "session.update", data: confirmed },
+        },
+        {
+          type: "expect_outbound",
+          label: `${label}.get`,
+          frame: { type: "session.get", input: { sessionID: sessionId } },
+        },
+        {
+          type: "emit_inbound",
+          label: `${label}.get.response`,
+          frame: { type: "sdk.response", operation: "session.get", data: confirmed },
+        },
+      );
+    }
+    entries.push(entry);
+  }
+  return {
+    ...transcript,
+    entries,
+    metadata: {
+      ...transcript.metadata,
+      alignmentPermissionAdaptation:
+        "Synthetic per-turn update/get frames use explicit scenario policy; recorded prompts/native events retained.",
+    },
+  };
 }
 
 function materializeMessageIds(value: unknown, messageIds: ReadonlyMap<string, string>): unknown {

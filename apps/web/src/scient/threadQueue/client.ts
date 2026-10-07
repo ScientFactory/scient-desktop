@@ -8,6 +8,7 @@ import {
 } from "@t3tools/client-runtime/state/scient-thread-queue";
 import type {
   ChatAttachment,
+  RunId,
   EnvironmentId,
   ScientThreadQueueControlRequest,
   ScientThreadQueueEnqueueRequest,
@@ -16,6 +17,10 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 
+import { CommandId } from "@t3tools/contracts";
+import { nativeQueueExtractionError } from "./nativeQueueExtractionError";
+import { threadEnvironment } from "../../state/threads";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { resolveAssetUrl } from "../../assets/assetUrls";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { assetEnvironment } from "../../state/assets";
@@ -119,4 +124,28 @@ export async function readQueuedAttachmentFile(
   const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`Could not restore attachment: ${attachment.name}`);
   return new File([await response.blob()], attachment.name, { type: attachment.mimeType });
+}
+
+export async function extractNativeQueuedRun(
+  environmentId: EnvironmentId,
+  input: { threadId: ThreadId; runId: RunId; expectedUpdatedAt: string; editToken: string },
+) {
+  const commandId = CommandId.make(`client:queue-extract:${input.editToken}`);
+  const result = await runAtomCommand(
+    appAtomRegistry,
+    threadEnvironment.cancelQueuedRun,
+    {
+      environmentId,
+      input: {
+        threadId: input.threadId,
+        runId: input.runId,
+        expectedUpdatedAt: input.expectedUpdatedAt,
+        commandId,
+      },
+    },
+    { reportFailure: false, reportDefect: false },
+  );
+  if (result._tag === "Failure")
+    throw nativeQueueExtractionError(squashAtomCommandFailure(result), commandId);
+  return result.value;
 }

@@ -27,6 +27,7 @@ import {
 } from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { dispatchCommand } from "./ThreadMessageIntake.ts";
+import { attachmentHasReservations } from "./AttachmentFileUse.ts";
 
 const intakeTestLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-question-intake-",
@@ -325,6 +326,7 @@ it.effect("retains claimed copies when dispatch failure may have been accepted",
       entry.startsWith("thread-ambiguous-"),
     );
     expect(threadFiles).toHaveLength(1);
+    expect(yield* attachmentHasReservations(threadFiles[0]!.slice(0, -4))).toBe(true);
     expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
   }).pipe(Effect.provide(intakeTestLayer)),
 );
@@ -617,6 +619,11 @@ it.effect("retains claimed copies referenced by a fresh recorded answer", () =>
         entry.startsWith("thread-fresh-answer-"),
       ),
     ).toHaveLength(2);
+    for (const name of NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
+      entry.startsWith("thread-fresh-answer-"),
+    )) {
+      expect(yield* attachmentHasReservations(name.slice(0, -4))).toBe(false);
+    }
   }).pipe(Effect.provide(intakeTestLayer)),
 );
 
@@ -771,4 +778,37 @@ it.effect("applies the image budget across all questions before dispatch", () =>
     if (result._tag === "Failure") expect(String(result.cause)).toContain("80 MiB");
     expect(captured).toEqual([]);
   }).pipe(Effect.provide(intakeTestLayer)),
+);
+
+it.effect(
+  "rejects historical thread files as question uploads without dispatching or deleting them",
+  () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const id = ChatAttachmentId.make("other-thread-00000000-0000-4000-8000-000000000001-txt");
+      const attachment = {
+        type: "file" as const,
+        id,
+        name: "report.txt",
+        mimeType: "text/plain",
+        sizeBytes: 6,
+      };
+      const path = resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment });
+      expect(path).not.toBeNull();
+      NodeFS.writeFileSync(path!, "report");
+      const captured: OrchestrationV2ServerCommand[] = [];
+      const result = yield* Effect.result(
+        dispatchCommand({
+          type: "runtime-request.respond",
+          commandId: CommandId.make("historical-question-upload"),
+          threadId: ThreadId.make("question-thread"),
+          requestId: RuntimeRequestId.make("question"),
+          answers: { q: "" },
+          attachmentsByQuestionId: { q: [attachment] },
+        }).pipe(Effect.provide(failingDispatch(captured))),
+      );
+      expect(result._tag).toBe("Failure");
+      expect(captured).toEqual([]);
+      expect(NodeFS.readFileSync(path!, "utf8")).toBe("report");
+    }).pipe(Effect.provide(intakeTestLayer)),
 );

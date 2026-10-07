@@ -23,9 +23,17 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
 import * as Orchestrator from "../Orchestrator.ts";
+import { rootScopeWorkspaceMatches } from "../CheckpointService.ts";
 import type { ProviderReplayGate } from "./ProviderReplayGate.testkit.ts";
 
 export type OrchestratorV2ScenarioStep =
+  | {
+      /** Resolve the recorded root ordinal against this replay's captured workspace. */
+      readonly type: "rollback_root_checkpoint";
+      readonly command: Extract<OrchestrationV2Command, { readonly type: "checkpoint.rollback" }>;
+      readonly ordinal: number;
+      readonly cwd: string;
+    }
   | {
       readonly type: "dispatch";
       readonly command: OrchestrationV2Command;
@@ -203,8 +211,82 @@ function scenarioSteps(
 
 function scenarioCommands(scenario: OrchestratorV2Scenario): ReadonlyArray<OrchestrationV2Command> {
   return scenarioSteps(scenario).flatMap((step) =>
-    step.type === "dispatch" ? [step.command] : [],
+    step.type === "dispatch" || step.type === "rollback_root_checkpoint" ? [step.command] : [],
   );
+}
+
+/** No first-match fallback: a replay rollback requires one actual owned ready checkpoint. */
+export function resolveReplayRootCheckpoint(input: {
+  readonly projection: {
+    readonly runs: ReadonlyArray<
+      Pick<
+        OrchestrationV2ThreadProjection["runs"][number],
+        "id" | "threadId" | "ordinal" | "rootNodeId"
+      >
+    >;
+    readonly nodes: ReadonlyArray<
+      Pick<
+        OrchestrationV2ThreadProjection["nodes"][number],
+        "id" | "threadId" | "runId" | "kind" | "checkpointScopeId"
+      >
+    >;
+    readonly checkpointScopes: OrchestrationV2ThreadProjection["checkpointScopes"];
+    readonly checkpoints: ReadonlyArray<
+      Pick<
+        OrchestrationV2ThreadProjection["checkpoints"][number],
+        | "id"
+        | "threadId"
+        | "runId"
+        | "nodeId"
+        | "scopeId"
+        | "appRunOrdinal"
+        | "ordinalWithinScope"
+        | "status"
+      >
+    >;
+  };
+  readonly threadId: ThreadId;
+  readonly ordinal: number;
+  readonly cwd: string;
+}) {
+  const runs = input.projection.runs.filter(
+    (run) => run.threadId === input.threadId && run.ordinal === input.ordinal,
+  );
+  if (runs.length !== 1)
+    throw new Error("Replay rollback requires one owned run at its recorded ordinal.");
+  const run = runs[0]!;
+  const nodes = input.projection.nodes.filter(
+    (node) =>
+      node.id === run.rootNodeId &&
+      node.threadId === input.threadId &&
+      node.runId === run.id &&
+      node.kind === "root_turn",
+  );
+  if (nodes.length !== 1) throw new Error("Replay rollback requires the run's actual root node.");
+  const scopes = input.projection.checkpointScopes.filter(
+    (scope) =>
+      scope.id === nodes[0]!.checkpointScopeId &&
+      scope.threadId === input.threadId &&
+      scope.kind === "root_run" &&
+      scope.parentScopeId === null &&
+      scope.cwd === input.cwd &&
+      rootScopeWorkspaceMatches(scope),
+  );
+  if (scopes.length !== 1)
+    throw new Error("Replay rollback requires one root scope in its captured workspace.");
+  const checkpoints = input.projection.checkpoints.filter(
+    (checkpoint) =>
+      checkpoint.threadId === input.threadId &&
+      checkpoint.runId === run.id &&
+      checkpoint.nodeId === nodes[0]!.id &&
+      checkpoint.scopeId === scopes[0]!.id &&
+      checkpoint.appRunOrdinal === input.ordinal &&
+      checkpoint.ordinalWithinScope === input.ordinal &&
+      checkpoint.status === "ready",
+  );
+  if (checkpoints.length !== 1)
+    throw new Error("Replay rollback requires one ready root checkpoint at its recorded ordinal.");
+  return checkpoints[0]!;
 }
 
 const findPendingRuntimeRequest = (projection: OrchestrationV2ThreadProjection) =>
@@ -308,6 +390,26 @@ export function runOrchestratorV2Scenario(
           const request = findPendingRuntimeRequest(projection);
           if (request !== undefined) {
             return request;
+          }
+          // A strict replay failure can settle the latest run before its
+          // recorded request arrives. Retain legitimate background request
+          // delivery, and preserve the replay failure during scope cleanup.
+          const latestRun = projection.runs.toSorted(
+            (left, right) => right.ordinal - left.ordinal,
+          )[0];
+          if (
+            !hasActiveRun(projection) &&
+            latestRun !== undefined &&
+            ["failed", "cancelled", "interrupted"].includes(latestRun.status) &&
+            !projection.providerThreads.some(
+              (thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0,
+            )
+          ) {
+            const runState = projection.runs.map((run) => `${run.id}:${run.status}`).join(",");
+            return yield* new OrchestratorV2ScenarioStepError({
+              scenario: scenario.name,
+              step: `respond_to_next_runtime_request:${threadId}:terminal_without_request:runs=${runState}:providerTurns=${projection.providerTurns.length}`,
+            });
           }
           if (scenarioWaitExhausted(attemptsRemaining, deadlineAt)) {
             const runState = projection.runs.map((run) => `${run.id}:${run.status}`).join(",");
@@ -608,15 +710,23 @@ export function runOrchestratorV2Scenario(
 
       const releaseReplayGate = Effect.fn("scenario.releaseReplayGate")(function* (label: string) {
         const gate = options.replayGate;
-        const reached =
-          gate === undefined ? false : yield* Effect.promise(() => gate.waitForReached(label));
-        if (!reached) {
+        if (gate === undefined) {
           return yield* new OrchestratorV2ScenarioStepError({
             scenario: scenario.name,
             step: `release_replay_gate:${label}:not_configured`,
           });
         }
-        gate?.release(label);
+        const reached = yield* Effect.promise(() => gate.waitForReached(label)).pipe(
+          Effect.timeoutOption(Duration.millis(SCENARIO_WAIT_DEADLINE_MS)),
+          Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+        );
+        if (Option.isNone(reached) || !reached.value) {
+          return yield* new OrchestratorV2ScenarioStepError({
+            scenario: scenario.name,
+            step: `release_replay_gate:${label}:${Option.isNone(reached) ? "not_reached_within_deadline" : "not_configured"}`,
+          });
+        }
+        gate.release(label);
       });
 
       for (const step of scenarioSteps(scenario)) {
@@ -637,6 +747,30 @@ export function runOrchestratorV2Scenario(
                 Effect.forkScoped,
               ),
             );
+            break;
+          }
+          case "rollback_root_checkpoint": {
+            const projection = yield* orchestrator.getThreadProjection(step.command.threadId);
+            const checkpoint = yield* Effect.try({
+              try: () =>
+                resolveReplayRootCheckpoint({
+                  projection,
+                  threadId: step.command.threadId,
+                  ordinal: step.ordinal,
+                  cwd: step.cwd,
+                }),
+              catch: () =>
+                new OrchestratorV2ScenarioStepError({
+                  scenario: scenario.name,
+                  step: `rollback_root_checkpoint:${step.ordinal}:${step.cwd}:identity_not_ready_or_unique`,
+                }),
+            });
+            const result = yield* orchestrator.dispatch({
+              ...step.command,
+              scopeId: checkpoint.scopeId,
+              checkpointId: checkpoint.id,
+            });
+            storedEventGroups.push(result.storedEvents);
             break;
           }
           case "advance_clock":

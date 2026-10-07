@@ -1,5 +1,6 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -11,7 +12,21 @@ export interface ProviderTextDeltaUpdate {
   readonly completed: boolean;
 }
 
+export interface ProviderTextDeltaSnapshot {
+  readonly watermark: number;
+  readonly items: ReadonlyArray<ProviderTextDeltaUpdate>;
+}
 export interface ProviderTextDeltaCoalescer {
+  readonly withSnapshot: <A, E, R>(
+    turnId: string,
+    use: (snapshot: ProviderTextDeltaSnapshot) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
+  readonly withWatermark: <A, E, R>(
+    turnId: string,
+    watermark: number,
+    use: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<Option.Option<A>, E, R>;
+
   readonly append: (input: {
     readonly turnId: string;
     readonly itemId: string;
@@ -44,6 +59,7 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
   }): Effect.fn.Return<ProviderTextDeltaCoalescer, never, Scope.Scope> {
     const buffered = yield* Ref.make(new Map<string, BufferedProviderText>());
     const flushScheduled = yield* Ref.make(false);
+    const watermarks = new Map<string, number>();
     const flushLock = yield* Semaphore.make(1);
     const coalescerScope = yield* Effect.scope;
 
@@ -97,6 +113,33 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
     });
 
     return {
+      withSnapshot: (turnId, use) =>
+        flushLock.withPermit(
+          Effect.gen(function* () {
+            const current = yield* Ref.get(buffered);
+            const snapshot = {
+              watermark: watermarks.get(turnId) ?? 0,
+              items: Array.from(current.values())
+                .filter((item) => item.turnId === turnId)
+                .map((item) => ({
+                  turnId,
+                  itemId: item.itemId,
+                  text: item.text,
+                  completed: false,
+                })),
+            };
+            // Snapshot enqueue leaves the ordinary drain responsible for dirty delivery.
+            return yield* use(snapshot);
+          }),
+        ),
+      withWatermark: (turnId, watermark, use) =>
+        flushLock.withPermit(
+          Effect.suspend(() =>
+            (watermarks.get(turnId) ?? 0) === watermark
+              ? Effect.map(use, Option.some)
+              : Effect.succeed(Option.none()),
+          ),
+        ),
       append: ({ turnId, itemId, delta }) =>
         delta.length === 0
           ? Effect.void
@@ -116,6 +159,7 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
                       });
                       return next;
                     });
+                    watermarks.set(turnId, (watermarks.get(turnId) ?? 0) + 1);
                     return yield* Ref.modify(flushScheduled, (scheduled) => [!scheduled, true]);
                   }),
                 );
@@ -137,6 +181,8 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
             if (emitEmpty || text.length > 0) {
               yield* input.emit({ turnId, itemId, text, completed: true });
             }
+            // Genuine item completion changes the capture cutoff even without a delta.
+            watermarks.set(turnId, (watermarks.get(turnId) ?? 0) + 1);
             yield* Ref.update(buffered, (current) => {
               const next = new Map(current);
               next.delete(key);
@@ -150,7 +196,7 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
           predicate: (message) => message.turnId === turnId,
           completed: true,
           onlyDirty: false,
-        }),
+        }).pipe(Effect.tap(() => Effect.sync(() => watermarks.delete(turnId)))),
     };
   },
 );

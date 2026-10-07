@@ -9,10 +9,42 @@ import {
 } from "@t3tools/client-runtime/state/attachments";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
+import type { PersistedComposerImageAttachment } from "../../composerDraftStore";
+import { composerFileDedupKey, composerImageDedupKey } from "../../composerDraftStore";
 import { isHeicImageFile } from "../../lib/imageCompression";
 import { isVideoAttachment } from "../../types";
 
 type ComposerAttachmentFileKind = "image" | "file";
+
+/** Live and serialized images describe the same draft attachment, not two copies. */
+export function composerDraftAttachmentFacts(draft: {
+  readonly images: ReadonlyArray<ComposerImageAttachment>;
+  readonly files: ReadonlyArray<ComposerFileAttachment>;
+  readonly persistedAttachments: ReadonlyArray<PersistedComposerImageAttachment>;
+}) {
+  const images = new Map(
+    draft.persistedAttachments.map(
+      ({ id, name, mimeType, sizeBytes }) => [id, { id, name, mimeType, sizeBytes }] as const,
+    ),
+  );
+  for (const image of draft.images) images.set(image.id, image);
+  return [
+    ...Array.from(images.values(), (image) => ({
+      id: image.id,
+      type: "image" as const,
+      mimeType: image.mimeType,
+      sizeBytes: image.sizeBytes,
+      dedupKey: composerImageDedupKey(image),
+    })),
+    ...draft.files.map((file) => ({
+      id: file.id,
+      type: file.type,
+      mimeType: file.mimeType,
+      sizeBytes: file.sizeBytes,
+      dedupKey: composerFileDedupKey(file),
+    })),
+  ];
+}
 
 interface FileAttachmentCapabilityState {
   readonly attachmentUploadsCapabilityKnown: boolean;

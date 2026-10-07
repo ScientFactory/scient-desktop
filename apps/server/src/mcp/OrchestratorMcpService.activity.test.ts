@@ -20,6 +20,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import { ProviderSessionManagerV2 } from "../orchestration-v2/ProviderSessionManager.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-orchestrator-detail");
 const projectId = ProjectId.make("project-mcp-orchestrator-detail");
@@ -120,6 +121,12 @@ it("readThread prefers activity-run status over a newer cancelled queued run", a
 
   const layer = OrchestratorMcpService.layer.pipe(
     Layer.provide(
+      Layer.mock(ProviderSessionManagerV2)({
+        resolveMcpInvocationPolicy: () =>
+          Effect.die("Read-only fixture cannot grant mutation authority."),
+      }),
+    ),
+    Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
@@ -172,6 +179,12 @@ it("readThread prefers waiting activity status over a newer cancelled queued run
   } as unknown as OrchestrationV2ThreadProjection;
 
   const layer = OrchestratorMcpService.layer.pipe(
+    Layer.provide(
+      Layer.mock(ProviderSessionManagerV2)({
+        resolveMcpInvocationPolicy: () =>
+          Effect.die("Read-only fixture cannot grant mutation authority."),
+      }),
+    ),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
@@ -282,6 +295,12 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
   } as unknown as OrchestrationV2ThreadProjection;
 
   const layer = OrchestratorMcpService.layer.pipe(
+    Layer.provide(
+      Layer.mock(ProviderSessionManagerV2)({
+        resolveMcpInvocationPolicy: () =>
+          Effect.die("Read-only fixture cannot grant mutation authority."),
+      }),
+    ),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
@@ -401,6 +420,12 @@ it("readThread reaches a thread the user attached as context, but not one an age
     }) as unknown as OrchestrationV2ThreadProjection;
 
   const layer = OrchestratorMcpService.layer.pipe(
+    Layer.provide(
+      Layer.mock(ProviderSessionManagerV2)({
+        resolveMcpInvocationPolicy: () =>
+          Effect.die("Read-only fixture cannot grant mutation authority."),
+      }),
+    ),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({

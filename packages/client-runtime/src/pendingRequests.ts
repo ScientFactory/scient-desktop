@@ -48,7 +48,7 @@ const decodeQuestion = Schema.decodeUnknownOption(
 );
 
 /** Older activities use native request types instead of a request kind. */
-export function requestKindFromRequestType(requestType: unknown): ProviderRequestKind | null {
+function requestKindFromRequestType(requestType: unknown): ProviderRequestKind | null {
   switch (requestType) {
     case "command_execution_approval":
     case "exec_command_approval":
@@ -216,20 +216,4 @@ export function derivePendingRequests(activities: ReadonlyArray<OrchestrationThr
     approvals: [...approvals.values()].map(withResponseError).sort(byCreatedAt),
     userInputs: [...userInputs.values()].map(withResponseError).sort(byCreatedAt),
   };
-}
-
-/** Resolved requests keep old failed attempts out of chat after a successful retry. */
-export function deriveRequestIssueOwnerIds(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
-): ReadonlySet<string> {
-  const requests = derivePendingRequests(activities);
-  const ids = new Set<string>(
-    [...requests.approvals, ...requests.userInputs].map((request) => request.requestId),
-  );
-  for (const activity of activities) {
-    if (activity.kind !== "approval.resolved" && activity.kind !== "user-input.resolved") continue;
-    const payload = activity.payload;
-    if (Predicate.isObject(payload) && isRequestId(payload.requestId)) ids.add(payload.requestId);
-  }
-  return ids;
 }

@@ -63,10 +63,12 @@ On web and desktop, a message sent during a running turn appears in the queue
 above the composer. The server keeps its order across navigation and restarts,
 then sends it after the current turn finishes successfully. Use **Steer** on a
 queued message to send it into the running turn, or edit, reorder, or delete it
-from the queue. Stopping a turn preserves queued messages until later work
-finishes successfully. When the thread is idle after a failed or stopped turn,
-**Send** on the first waiting message starts that message directly; the other
-messages keep their order. Reorder first if you want to send a different one.
+from the queue. **Stop**, interruptions, and failed starts hold the remaining
+queue until you choose **Resume**. A later successful answer does not release
+that hold. When the thread is idle, **Send** on the first waiting message starts
+only that message; the other messages stay held in order. Reorder first if you
+want to send a different one. Once resumed, the queue sends each message after
+the preceding answer finishes successfully.
 
 In **Settings → General → Follow-up behavior**, choose **Queue** to keep this
 behavior or **Steer** to send new messages immediately. **Send shortcut**
@@ -90,6 +92,12 @@ Mobile has the same choice under **Settings → Follow-ups**. While a turn is
 running the send button shows which action it will take. Long-press it to use the
 other action for a single message, or hold `Cmd` while sending from a hardware
 keyboard. The button only offers Steer when the running agent supports it.
+
+On mobile, open the queue sheet and choose **Edit** on a waiting message to load it into the
+composer without removing it from the server queue. Keep or remove its existing attachments and
+add new ones as needed. Sending from this edit mode saves the replacement in place; it does not
+send a new message. **Cancel** leaves the queued message unchanged and returns to your ordinary
+draft. If saving fails, the edit stays in the composer so you can resolve the error or retry.
 
 ## Queue messages offline on mobile
 
@@ -324,7 +332,7 @@ exist only as chips: deleting a file's last chip removes the file from the messa
 Copy text that holds chips and paste it into another draft, in the same thread or another one,
 and the chips come along with what they point to. Images and files are fetched again from the
 environment they came from; while that happens the chip shows a dashed outline, and if it cannot
-complete T3 Code tells you and leaves the chip for you to remove or replace. A chip whose
+complete Scient tells you and leaves the chip for you to remove or replace. A chip whose
 context is no longer available shows the same dashed outline; hover it for what to do.
 
 Copying a message with the copy button, or copying text out of it, gives other apps readable
@@ -594,16 +602,17 @@ or joins the end of the queue when work is still running or other messages are
 waiting. Finishing a turn or starting another queued message does not submit
 your draft automatically. **Stash** saves it for later through the usual menu.
 
-**Stop** leaves queued messages in place. When you send another message, that
-answer runs first; the queue waits until it finishes successfully, then advances
-one message at a time. Restarting work or the server does not send queued messages
-by itself. A failed answer also leaves the remaining queue waiting for later
-successful work. You can instead click **Send** on the first waiting message;
-the rest of the queue continues after its answer succeeds. No extra **Retry**
-is needed after that answer finishes.
+**Stop**, interruptions, and failed starts leave the remaining queue held.
+You can send another ordinary message, but its successful answer does not release
+the queue. **Resume** releases it to advance automatically, one message at a time,
+after each successful answer. Restarting work or the server does not release a
+held queue. You can instead click **Send** on the first waiting message to send
+only that row; the rest stays held until you choose **Resume**. Reorder while idle
+to choose a different head.
 
-**Retry** is for a queue delivery error; it cannot bypass a running answer or
-release messages waiting after Stop. Ordinary **Send** is accepted as a new turn
+**Retry** is for a queued message whose provider failed to start; the message stays
+queued. It cannot bypass a running answer or silently release the held tail.
+Ordinary **Send** is accepted as a new turn
 or a queued message, including while the previous answer's checkpoint is settling.
 This completion race does not require sending again.
 

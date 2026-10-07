@@ -33,6 +33,28 @@ message) are fine next to the service; the capability itself is the method.
   ),
 ```
 
+## Orchestration V2 ownership
+
+Live conversation work belongs in `apps/server/src/orchestration-v2/`. Transports call
+`ThreadManagementService`, `ThreadLaunchService`, `ConversationForkService`, or another existing
+capability owner. `Orchestrator` plans commands under per-thread serialization; `EventSink` commits
+facts, projections, command receipts, and effects together. Provider execution and durable workspace
+provisioning run through the `EffectOutbox` and `EffectWorker` service executor after commit.
+Admission also performs source validation and attachment filesystem reads; Scient boundary forks
+capture or copy the frozen Git checkpoint before committing fork intent. External process calls run
+outside the EventSink SQL transaction.
+
+Extend the relevant V2 service and its production layer in `runtimeLayer.ts`. Provider protocol
+work belongs in `Adapters/*AdapterV2.ts`, with session residency in `ProviderSessionManager` and
+output normalization in `ProviderEventIngestor`. The live adapter SPI is
+[`orchestration-v2/ProviderAdapter.ts`](../../apps/server/src/orchestration-v2/ProviderAdapter.ts);
+read operations use `ProjectionStore`, not the retired V1 Query tag. Legacy import services only
+translate saved facts into V2. The V1 `OrchestrationEngine`, `ProviderService`, decider/projector
+pipeline, and execution reactors are retired; their obsolete tests cannot prove a live V2 behavior.
+Retained reader coverage qualifies import/recovery, not provider execution. Canonical saved-data
+contracts and immutable migrations remain in use. See
+[the architecture overview](./overview.md) for the current command and execution flow.
+
 ## Shape of a service module
 
 One module per service, in this order: imports, errors and schemas, the `Context.Service` tag with

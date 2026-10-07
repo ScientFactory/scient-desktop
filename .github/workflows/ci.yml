@@ -103,19 +103,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends build-essential
           command -v cc
 
-      - uses: ./.github/actions/setup-apt-mirrors
-
-      # The desktop tests compile the browser secret helper. The install runs in
-      # the background while Vite+ installs; the step before the tests waits for it.
-      - name: Start installing browser secret helper build libraries
-        run: |
-          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
-          (
-            set +e
-            sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
-            echo "$?" > "$RUNNER_TEMP/apt-status"
-          ) > "$RUNNER_TEMP/apt.log" 2>&1 < /dev/null &
-
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
         with:

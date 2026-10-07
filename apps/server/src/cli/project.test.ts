@@ -1,3 +1,4 @@
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration uses temporary Node paths.
@@ -96,6 +97,9 @@ const readProjects = (baseDir: string) =>
   Effect.gen(function* () {
     const config = yield* makeConfig(baseDir);
     const layer = ProjectServiceLayerLive.pipe(
+      Layer.provide(
+        Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ discard: () => Effect.void }),
+      ),
       Layer.provideMerge(ProjectEnrichmentService.layer),
       Layer.provideMerge(RepositoryIdentityResolver.layer),
       Layer.provideMerge(ProjectFaviconResolver.layer),

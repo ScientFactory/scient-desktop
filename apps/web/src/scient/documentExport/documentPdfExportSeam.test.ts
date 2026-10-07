@@ -18,7 +18,10 @@ describe("document PDF export seams", () => {
   });
 
   it("keeps capture, validation, and publication out of the inherited server files", () => {
-    const ws = read("../../../../server/src/ws.ts");
+    const ws = [
+      read("../../../../server/src/ws.ts"),
+      read("../../../../server/src/scient/documentExport/DocumentPdfRpcHandlers.ts"),
+    ].join("\n");
     expect(ws).toContain("prepareMarkdownPdf(input)");
     expect(ws).toContain("publishCapturedDocumentPdf(input)");
     expect(ws).not.toMatch(/scientDocumentReadinessRejection|writeDocumentCapture|DocumentBundle/u);

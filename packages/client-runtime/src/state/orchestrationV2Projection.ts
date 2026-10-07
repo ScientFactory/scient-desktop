@@ -94,6 +94,22 @@ function shouldDropMissingPartialTurnItem(
   if (projection.visibleTurnItems.some((row) => row.sourceItemId === item.id)) {
     return false;
   }
+  // Stable positions can arrive after a later sibling. Preserve the loaded
+  // part of this run without pulling earlier, still-unloaded history into it.
+  if (
+    item.runId !== null &&
+    item.threadId === projection.thread.id &&
+    projection.visibleTurnItems.some(
+      (row) =>
+        row.visibility === "local" &&
+        row.sourceThreadId === item.threadId &&
+        row.item.threadId === item.threadId &&
+        row.item.runId === item.runId &&
+        row.item.ordinal <= item.ordinal,
+    )
+  ) {
+    return false;
+  }
   if (
     latestLocalTurnOrdinal !== null &&
     latestLocalTurnOrdinal !== undefined &&

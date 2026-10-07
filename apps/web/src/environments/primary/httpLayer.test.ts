@@ -1,5 +1,5 @@
 import type { DesktopBridge } from "@t3tools/contracts";
-import { afterEach, describe, expect, it, vi } from "@effect/vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { HttpClient } from "effect/unstable/http";
 
@@ -7,10 +7,16 @@ import { __resetDesktopPrimaryAuthForTests } from "./desktopAuth";
 import { makePrimaryEnvironmentHttpLayer } from "./httpLayer";
 
 describe("primary environment HTTP layer", { concurrent: false }, () => {
+  beforeEach(() => {
+    vi.stubEnv("VITE_HTTP_URL", "");
+    vi.stubEnv("VITE_WS_URL", "");
+  });
+
   afterEach(() => {
     __resetDesktopPrimaryAuthForTests();
     Reflect.deleteProperty(globalThis, "window");
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it.effect("uses cookie credentials for browser primary environments", () => {

@@ -284,6 +284,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
             }),
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+          closeInstance: () => Effect.void,
           release: ({ providerSessionId, reason }) =>
             Effect.gen(function* () {
               assert.isTrue(gateClosed);

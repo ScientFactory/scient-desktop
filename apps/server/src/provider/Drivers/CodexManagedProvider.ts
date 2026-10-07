@@ -9,7 +9,6 @@ import { chatGptModels } from "../CodexChatGptModels.ts";
 import { makeCodexManagedRuntime } from "../CodexManagedRuntime.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { createCodexAdapterV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
-import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
 import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
@@ -238,11 +237,6 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),
     resolveRuntime,
   );
-  const adapter = yield* makeCodexAdapter(config, {
-    instanceId,
-    models: snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),
-    resolveRuntime: runtime.resolve,
-  });
   const protect = <A>(operation: string, effect: Effect.Effect<A, TextGenerationError>) =>
     runtime.auth.controller.withAccess!(effect).pipe(
       Effect.scoped,
@@ -272,7 +266,6 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     accentColor,
     enabled,
     snapshot,
-    adapter,
     orchestrationAdapter,
     textGeneration,
     auth: runtime.auth.controller,

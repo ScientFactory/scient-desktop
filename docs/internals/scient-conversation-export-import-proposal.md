@@ -1,5 +1,7 @@
 # Scient conversation export, document conversion, and portable import proposal
 
+Historical record; implementation paths and checks describe its dated snapshot, not current V2 architecture.
+
 > **Status: ACCEPTED FOR IMPLEMENTATION (2026-09-28).** The owner approved starting implementation.
 > Details may still be refined during implementation; the owner's decisions are listed in
 > [Decisions](#decisions). Nothing here describes released behavior yet.

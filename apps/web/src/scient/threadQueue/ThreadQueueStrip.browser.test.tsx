@@ -131,3 +131,80 @@ it.each([false, true])("preserves original payloads for row actions (busy: %s)",
   }
   expect(JSON.stringify(items)).toBe(before);
 });
+
+it.each([
+  { width: 320, hasTail: false },
+  { width: 800, hasTail: false },
+  { width: 320, hasTail: true },
+  { width: 800, hasTail: true },
+])(
+  "keeps Cancel reachable after extraction at $width px (tail=$hasTail)",
+  async ({ width, hasTail }) => {
+    host = document.createElement("div");
+    host.style.width = `${width}px`;
+    document.body.append(host);
+    root = createRoot(host);
+    const callbacks = {
+      onEdit: vi.fn(),
+      onDelete: vi.fn(),
+      onSteer: vi.fn(),
+      onSend: vi.fn(),
+      onReorder: vi.fn(),
+      onResume: vi.fn(),
+    };
+    const onCancelEdit = vi.fn();
+    const head = items[0]!;
+    const before = hasTail ? [head, items[1]!] : [head];
+    const after = hasTail ? [items[1]!] : [];
+    const render = (
+      queueItems: ReadonlyArray<ScientThreadQueueItem>,
+      editingItemId: string | null,
+    ) =>
+      flushSync(() =>
+        root!.render(
+          <ThreadQueueStrip
+            items={queueItems}
+            error={null}
+            threadBusy={false}
+            supportsExplicitSend
+            awaitingCompletion
+            paused={false}
+            dispatchingItemId={null}
+            retryable={false}
+            held
+            editingItemId={editingItemId}
+            onCancelEdit={onCancelEdit}
+            {...callbacks}
+          />,
+        ),
+      );
+    render(before, head.queueItemId);
+    expect(host.querySelectorAll('[aria-label="Cancel editing queued message"]')).toHaveLength(1);
+    render(after, head.queueItemId);
+    expect(host.querySelector(`[data-testid="thread-queue-row-${head.queueItemId}"]`)).toBeNull();
+    const controls = host.querySelectorAll<HTMLButtonElement>(
+      '[aria-label="Cancel editing queued message"]',
+    );
+    expect(controls).toHaveLength(1);
+    expect(host.querySelectorAll('[data-testid^="thread-queue-row-"]')).toHaveLength(
+      hasTail ? 1 : 0,
+    );
+    const cancel = controls[0]!;
+    expect(cancel.disabled).toBe(false);
+    const bounds = cancel.getBoundingClientRect();
+    const strip = host.querySelector<HTMLElement>('[data-testid="thread-queue-strip"]')!;
+    expect(bounds.width).toBeGreaterThan(0);
+    expect(bounds.height).toBeGreaterThan(0);
+    expect(bounds.left).toBeGreaterThanOrEqual(strip.getBoundingClientRect().left);
+    expect(bounds.right).toBeLessThanOrEqual(strip.getBoundingClientRect().right);
+    await userEvent.click(cancel);
+    expect(onCancelEdit).toHaveBeenCalledTimes(1);
+    for (const callback of Object.values(callbacks)) expect(callback).not.toHaveBeenCalled();
+    render(after, null);
+    expect(host.querySelector('[aria-label="Cancel editing queued message"]')).toBeNull();
+    expect(host.querySelectorAll('[data-testid^="thread-queue-row-"]')).toHaveLength(
+      hasTail ? 1 : 0,
+    );
+    if (!hasTail) expect(host.querySelector('[data-testid="thread-queue-strip"]')).toBeNull();
+  },
+);

@@ -28,9 +28,9 @@ export function preferences(settings: ServerSettings) {
     },
   };
 }
-const access = (writable = false) =>
+const access = () =>
   Effect.gen(function* () {
-    const context = yield* writable ? readMutationCaller() : readCaller();
+    const context = yield* readCaller();
     const environment = yield* Environment.ServerEnvironment;
     const descriptor = yield* environment.getDescriptor;
     if (descriptor.environmentId !== context.scope.environmentId)
@@ -60,11 +60,13 @@ export const EnvironmentHandlersLive = EnvironmentToolkit.toLayer({
       return yield* executor.withLock(
         scope.threadId,
         Effect.gen(function* () {
-          const { caller, settings } = yield* access(true);
+          const context = yield* readMutationCaller();
+          const { caller, policy } = context;
+          const { settings } = yield* access();
           if (
             caller.archivedAt !== null ||
-            caller.runtimeMode !== "full-access" ||
-            caller.interactionMode !== "default"
+            policy.runtimeMode !== "full-access" ||
+            policy.interactionMode !== "default"
           )
             return yield* new OrchestratorMcpFailure({
               code: "capability_denied",
