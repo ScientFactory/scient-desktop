@@ -203,15 +203,38 @@ export const cutOverLegacyQueue = Effect.fn("LegacyQueueCutover.thread")(functio
   return imported;
 });
 
-/** Scan both copied SQL documents and read-only JSON compatibility sources. */
+/**
+ * Scan both copied SQL documents and read-only JSON compatibility sources.
+ * A migrated document never reads its JSON source again, and one with no
+ * items has nothing left to admit, so a finished cutover is skipped without
+ * hydrating transcripts or parsing source files on every boot.
+ */
 export const cutOverLegacyQueues = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const config = yield* ServerConfig;
   const rows = yield* sql<{
     thread_id: string;
-  }>`SELECT thread_id FROM scient_thread_queue ORDER BY thread_id`;
-  const files = yield* Effect.tryPromise(() => discoverLegacyQueueThreads(config.stateDir));
-  const threadIds = new Set([...rows.map((row) => ThreadId.make(row.thread_id)), ...files]);
+    migrated: number;
+    finished: number;
+  }>`SELECT thread_id,
+      CASE WHEN json_valid(document)
+        THEN json_extract(document, '$.migrated') IS 1 ELSE 0 END AS migrated,
+      CASE WHEN json_valid(document)
+        THEN json_extract(document, '$.migrated') IS 1
+          AND json_type(document, '$.items') = 'array'
+          AND json_array_length(document, '$.items') = 0
+        ELSE 0 END AS finished
+    FROM scient_thread_queue ORDER BY thread_id`;
+  const migrated = new Set(
+    rows.flatMap((row) => (row.migrated === 1 ? [ThreadId.make(row.thread_id)] : [])),
+  );
+  const files = yield* Effect.tryPromise(() =>
+    discoverLegacyQueueThreads(config.stateDir, migrated),
+  );
+  const threadIds = new Set([
+    ...rows.flatMap((row) => (row.finished === 1 ? [] : [ThreadId.make(row.thread_id)])),
+    ...files,
+  ]);
   let imported = 0;
   for (const threadId of threadIds) {
     imported += yield* cutOverLegacyQueue(threadId).pipe(

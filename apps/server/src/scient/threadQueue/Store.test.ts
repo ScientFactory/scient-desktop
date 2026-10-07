@@ -42,6 +42,14 @@ describe("legacy queue migration reader", () => {
     );
     expect(await NodeFSP.readFile(f.path, "utf8")).toBe(f.raw);
   });
+  it("skips the source files of migrated threads under either name", async () => {
+    const f = await fixture();
+    const other = new Set([ThreadId.make("another-thread")]);
+    expect(await discoverLegacyQueueThreads(f.stateDir, other)).toEqual([threadId]);
+    expect(await discoverLegacyQueueThreads(f.stateDir, new Set([threadId]))).toEqual([]);
+    await NodeFSP.rename(f.path, NodePath.join(NodePath.dirname(f.path), `${threadId}.json`));
+    expect(await discoverLegacyQueueThreads(f.stateDir, new Set([threadId]))).toEqual([]);
+  });
   it("reads older safe thread-name files", async () => {
     const f = await fixture();
     await NodeFSP.rename(f.path, NodePath.join(NodePath.dirname(f.path), `${threadId}.json`));

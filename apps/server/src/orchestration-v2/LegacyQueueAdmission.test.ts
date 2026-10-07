@@ -34,7 +34,10 @@ import {
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { cutOverLegacyQueue, cutOverLegacyQueues } from "./legacy/LegacyQueueCutover.ts";
 import { readQueue, writeQueue } from "./legacy/LegacyQueueLedger.ts";
-import { layer as legacyImporterLayer } from "./legacy/LegacyV1ThreadImporter.ts";
+import {
+  layer as legacyImporterLayer,
+  LegacyV1ThreadImporter,
+} from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import { legacyQueueFilePath } from "../scient/threadQueue/Store.ts";
@@ -1127,6 +1130,97 @@ it.effect(
         ),
       ),
     ),
+);
+
+it.effect("a finished cutover skips its threads on the next boot; pending work still retries", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const config = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    const importer = yield* LegacyV1ThreadImporter;
+    const finishedId = ThreadId.make("a-finished-json-queue");
+    const pendingId = ThreadId.make("b-pending-sql-queue");
+    for (const threadId of [finishedId, pendingId]) {
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${threadId}`),
+        threadId,
+        projectId: ProjectId.make("receipt-project"),
+        title: "Cutover",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+    }
+    // The pending queue cannot be admitted: its destination is deleted.
+    yield* orchestrator.dispatch({
+      type: "thread.delete",
+      commandId: CommandId.make("delete-pending-queue"),
+      threadId: pendingId,
+    });
+    yield* writeQueue(pendingId, {
+      ...(yield* readQueue(pendingId)),
+      migrated: true,
+      items: [
+        {
+          queueItemId: "qitem_pending",
+          threadId: pendingId,
+          text: "Still pending",
+          attachments: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    yield* fs.makeDirectory(config.stateDir + "/scient/thread-queue", { recursive: true });
+    yield* fs.writeFileString(
+      legacyQueueFilePath(config.stateDir, finishedId),
+      encodeQueueSource({
+        formatVersion: 1,
+        threadId: finishedId,
+        items: [
+          {
+            queueItemId: "qitem_finished",
+            text: "Admitted once",
+            attachments: [],
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      }),
+    );
+    const hydrated: ThreadId[] = [];
+    const boot = cutOverLegacyQueues.pipe(
+      Effect.provideService(LegacyV1ThreadImporter, {
+        ...importer,
+        ensureTranscript: (threadId) =>
+          Effect.sync(() => hydrated.push(threadId)).pipe(
+            Effect.andThen(importer.ensureTranscript(threadId)),
+          ),
+      }),
+    );
+    assert.equal(yield* boot, 1);
+    assert.deepEqual(hydrated.toSorted(), [finishedId, pendingId]);
+    hydrated.length = 0;
+    assert.equal(yield* boot, 0);
+    assert.deepEqual(hydrated, [pendingId]);
+    assert.equal((yield* orchestrator.getThreadProjection(finishedId)).runs.length, 1);
+    assert.equal((yield* readQueue(pendingId)).items.length, 1);
+  }).pipe(
+    Effect.provide(
+      legacyImporterLayer.pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(testLayer, SqlitePersistenceMemory).pipe(
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    ),
+  ),
 );
 
 it.effect("refuses staged message identities owned by another conversation", () =>
