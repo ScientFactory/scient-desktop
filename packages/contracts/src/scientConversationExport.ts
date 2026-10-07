@@ -393,7 +393,7 @@ export const ConversationSnapshotWarning = Schema.Union([
     messageN: Schema.NullOr(PositiveInt),
   }),
   Schema.TaggedStruct("records-skipped", {
-    kind: Schema.Literals(["activity", "question-answer", "context"]),
+    kind: Schema.Literals(["activity", "question-answer", "context", "rendered-output"]),
     count: PositiveInt,
   }),
 ]);

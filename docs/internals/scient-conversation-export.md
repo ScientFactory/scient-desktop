@@ -58,6 +58,14 @@ of the canonical content and excludes them, so two captures of the same state ha
   its sender's export left out (`scientExportOmissions`: cut lines and characters per text, and how
   many changed files and plan steps were dropped); the projection keeps that text as it is and those
   counts, so exporting an imported conversation again keeps its "and N more" notices.
+- **Standalone visual replies.** Native HTML renders and MCP app views are
+  tool-output attachments, separate from message and question attachments.
+  Conversation exports retain their selected text/history but do not bundle
+  their HTML bytes or restore interactive views. Export warns about these
+  omitted visual outputs even when work log is off; the `.scic` snapshot keeps
+  that omission for later import. Preserve the pages separately when needed.
+  Static artifact portability is a follow-up; import must never regrant MCP
+  application authority.
 - **Warnings** agree with the facts: one `attachment-unavailable` warning per attachment whose file
   was missing, carrying its name and its snapshot message number (`null` for an answer attachment),
   and none for available attachments.

@@ -450,6 +450,108 @@ describe("ConversationExportService", () => {
     }).pipe(Effect.provide(TestLayer)),
   );
 
+  it.effect(
+    "warns and records standalone visual omissions without restoring interactive authority",
+    () =>
+      Effect.gen(function* () {
+        yield* seedThread({ pairs: 1, activitiesPerTurn: 3 });
+        const projection = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadProjection(
+          THREAD,
+        );
+        const tools = projection.turnItems.filter((item) => item.type === "dynamic_tool");
+        assert.equal(tools.length, 3);
+        const htmlAttachment = {
+          type: "file" as const,
+          id: "thread-1-00000000-0000-4000-8000-000000000042",
+          name: "render.html",
+          mimeType: "text/html",
+          sizeBytes: 30,
+        };
+        yield* storeAttachment(
+          htmlAttachment,
+          new TextEncoder().encode("<h1>Visual artifact bytes</h1>"),
+        );
+        const html = {
+          htmlRender: { attachmentId: htmlAttachment.id, title: "Report", height: 320 },
+        };
+        const outputs = [
+          { toolName: "mcp__scient__html_render", output: html, status: "completed" as const },
+          {
+            toolName: "charts.chart",
+            output: {
+              t3McpApp: {
+                attachmentId: "native-app-page",
+                server: "charts",
+                tool: "chart",
+                resourceUri: "ui://chart",
+              },
+            },
+            status: "completed" as const,
+          },
+          { toolName: "mcp__scient__html_render", output: html, status: "failed" as const },
+        ];
+        yield* (yield* EventSink.EventSinkV2).write({
+          events: tools.map((item, index) => ({
+            id: EventId.make(`visual-export:${index}`),
+            type: "turn-item.updated" as const,
+            threadId: THREAD,
+            occurredAt: item.updatedAt,
+            payload: { ...item, input: {}, ...outputs[index]! },
+          })),
+        });
+        const snapshots = yield* ConversationSnapshotService.ConversationSnapshotService;
+        const selection = { workLog: false, reasoning: false, throughMessageId: null };
+        const capture = yield* snapshots.capture({ threadId: THREAD, selection });
+        assert.deepEqual(capture.snapshot.warnings, [
+          { _tag: "records-skipped", kind: "rendered-output", count: 2 },
+        ]);
+        assert.deepEqual(capture.snapshot.workLog, []);
+        assert.equal(capture.attachmentFiles.size, 0);
+        const withWork = yield* snapshots.capture({
+          threadId: THREAD,
+          selection: { ...selection, workLog: true },
+        });
+        assert.deepEqual(withWork.snapshot.warnings, capture.snapshot.warnings);
+        const prompt = projection.messages.find((message) => message.role === "user");
+        assert.isDefined(prompt);
+        const ranged = yield* snapshots.capture({
+          threadId: THREAD,
+          selection: { ...selection, throughMessageId: prompt!.id },
+        });
+        assert.deepEqual(ranged.snapshot.warnings, []);
+        const service = yield* ConversationExportService.ConversationExportService;
+        const archive = yield* service.produce(request({ format: "scic" }));
+        assert.equal(archive.output._tag, "file");
+        if (archive.output._tag !== "file") return assert.fail("Expected SCIC file");
+        assert.isTrue(
+          archive.warnings.some(
+            (warning) =>
+              warning.code === "attachment-unsupported" &&
+              warning.message.includes("HTML bytes") &&
+              warning.message.includes("not included"),
+          ),
+        );
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const stage = yield* fs.makeTempDirectoryScoped({ prefix: "scient-visual-omission-" });
+        const attachmentStage = path.join(stage, "attachments");
+        yield* fs.makeDirectory(attachmentStage);
+        const bytes = yield* fs.readFile(archive.output.path);
+        const imported = yield* readScicPackage({
+          importId: yield* decodeImportId("cimp_0f8e7d6c-5b4a-4938-8271-605f4e3d2c1b"),
+          packagePath: archive.output.path,
+          packageBytes: bytes.byteLength,
+          packageSha256: yield* decodePackageDigest(
+            `sha256:${NodeCrypto.createHash("sha256").update(bytes).digest("hex")}`,
+          ),
+          attachmentsDirectory: attachmentStage,
+        });
+        assert.deepEqual(imported.snapshot.warnings, capture.snapshot.warnings);
+        assert.equal(imported.attachments.length, 0);
+        assert.equal(imported.snapshot.messages.length, 2);
+      }).pipe(Effect.provide(TestLayer)),
+  );
+
   it.effect("is content-identical for the same snapshot except export value and time", () =>
     Effect.gen(function* () {
       yield* seedThread({ pairs: 4, activitiesPerTurn: 2 });
