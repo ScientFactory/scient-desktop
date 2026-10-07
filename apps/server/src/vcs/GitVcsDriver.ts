@@ -507,6 +507,11 @@ const gitCommand = (
   args: ReadonlyArray<string>,
   options?: {
     readonly stdin?: string;
+    // SCIENT-FORK:START — binary stdin and stdout consumers for checkpoint capture.
+    readonly stdinBytes?: Uint8Array;
+    readonly onStdoutChunk?: VcsProcess.VcsProcessInput["onStdoutChunk"];
+    readonly onStdoutChunkEffect?: VcsProcess.VcsProcessInput["onStdoutChunkEffect"];
+    // SCIENT-FORK:END
     readonly env?: NodeJS.ProcessEnv;
     readonly allowNonZeroExit?: boolean;
     readonly timeoutMs?: number;
@@ -522,6 +527,13 @@ const gitCommand = (
     cwd,
     spawnCwd: globalThis.process.cwd(),
     ...(options?.stdin !== undefined ? { stdin: options.stdin } : {}),
+    // SCIENT-FORK:START — binary stdin and stdout consumers for checkpoint capture.
+    ...(options?.stdinBytes !== undefined ? { stdinBytes: options.stdinBytes } : {}),
+    ...(options?.onStdoutChunk !== undefined ? { onStdoutChunk: options.onStdoutChunk } : {}),
+    ...(options?.onStdoutChunkEffect !== undefined
+      ? { onStdoutChunkEffect: options.onStdoutChunkEffect }
+      : {}),
+    // SCIENT-FORK:END
     ...(options?.env !== undefined ? { env: options.env } : {}),
     ...(options?.allowNonZeroExit !== undefined
       ? { allowNonZeroExit: options.allowNonZeroExit }
@@ -564,6 +576,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const execute: VcsDriver.VcsDriver["Service"]["execute"] = (input) =>
     gitCommand(vcsProcess, input.operation, input.cwd, input.args, {
       ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+      // SCIENT-FORK:START — binary stdin and stdout consumers for checkpoint capture.
+      ...(input.stdinBytes !== undefined ? { stdinBytes: input.stdinBytes } : {}),
+      ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
+      ...(input.onStdoutChunkEffect !== undefined
+        ? { onStdoutChunkEffect: input.onStdoutChunkEffect }
+        : {}),
+      // SCIENT-FORK:END
       ...(input.env !== undefined ? { env: input.env } : {}),
       ...(input.allowNonZeroExit !== undefined ? { allowNonZeroExit: input.allowNonZeroExit } : {}),
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
@@ -807,7 +826,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     });
 
   // SCIENT-FORK:START — checkpoint size limits live in ScientCheckpointCapture.
-  const checkCheckpointSize = makeCheckpointSizeCheck({ execute, path });
+  const checkCheckpointSize = makeCheckpointSizeCheck({ execute });
   // SCIENT-FORK:END
 
   // Git renames loose objects and refs into place without fsync by default, so
@@ -1103,16 +1122,15 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         // SCIENT-FORK:START — publish the staged commit into the user's repository.
         yield* publishStagedCheckpoint({
           execute,
-          vcsProcess,
           fileSystem,
           path,
+          gitCommonDir,
+          objectFormat,
           operation,
           cwd: input.cwd,
-          gitCommonDir,
           stagingRepo,
           stagedEnv,
           cleanGitEnv,
-          objectFormat,
           durableWrite,
           commitOid,
           checkpointRef: input.checkpointRef,

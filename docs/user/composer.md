@@ -542,6 +542,15 @@ completed fork point; choose an earlier completed response or a sent user
 message instead. `/fork` and the provider picker's Fork action resolve the
 latest completed response on the server.
 
+A fork of a running response with **New worktree** off shares the current files;
+it does not capture another workspace snapshot. Its first send records its own
+starting file history, including changes made between forking and sending.
+Rewind uses that saved starting point, never the repository's latest commit.
+Restoring files into a folder shared with another live conversation remains guarded.
+With **New worktree** on, Scient captures the current files before admitting the fork.
+If that capture exceeds the snapshot limits, fork locally or reduce the files included
+in Git's workspace snapshot. Scient does not change your ignore rules automatically.
+
 Errors appear inside the fork dialog. **Retry** resumes the same attempt,
 including its original title and workspace choice. Losing the connection does
 not discard the staged draft or create another conversation. This recovery

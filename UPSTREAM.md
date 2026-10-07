@@ -652,6 +652,9 @@ selection of submitted question-answer activities and independent file ownership
 T3's question submission path remains unchanged. Preserve the read-authorized
 `orchestration.getForkOptions` RPC and its `threadForkRecovery` capability,
 typed fork dispositions on dispatch errors, and the pre-send readiness gate.
+Running local forks skip file capture; new-worktree captures retain exact attempt/ref/OID
+ownership through rejection and restart. Checkpoint enumeration remains bounded and streamed,
+and publication transfers only new staged objects while preserving connectivity and fsync.
 Client retries retain one operation identity and draft across navigation and
 transport failures. Thread routes must wait for authoritative detail rather
 than infer deletion from an absent sidebar entry. See the

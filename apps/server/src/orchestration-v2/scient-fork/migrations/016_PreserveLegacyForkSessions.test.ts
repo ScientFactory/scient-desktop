@@ -16,6 +16,7 @@ it.effect(
       yield* sql`ALTER TABLE scient_context_handoffs DROP COLUMN continuity_basis`;
       yield* sql`ALTER TABLE scient_context_handoffs DROP COLUMN legacy_revert_sequence`;
       yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id >= 16`;
+      yield* sql`DROP TABLE scient_fork_checkpoint_ownership`;
       for (const [thread, status, rebind, cursor, instance] of [
         ["completed", "inline", 1, '{"threadId":"saved"}', "codex-main"],
         ["ambiguous", "pending", 0, '{"threadId":"saved"}', "codex-main"],
