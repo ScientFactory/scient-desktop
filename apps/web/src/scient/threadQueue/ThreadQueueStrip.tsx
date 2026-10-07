@@ -19,9 +19,20 @@ import { composerCitationsToPlainText } from "@t3tools/shared/composerCitations"
 import { CornerDownRight, GripVertical, Paperclip, Pencil, Trash2 } from "lucide-react";
 import { useCallback } from "react";
 
+import { useDelayedStatus } from "~/hooks/useDelayedStatus";
 import { cn } from "~/lib/utils";
 
 import { Button } from "../../components/ui/button";
+
+/** Most admissions settle well before this, so their row never says "Queuing…". */
+export const QUEUE_ADMISSION_STATUS_DELAY_MS = 700;
+
+export interface PendingQueueMessage {
+  readonly id: string;
+  readonly text: string;
+  readonly attachmentCount: number;
+  readonly accepted: boolean;
+}
 
 export interface QueueStripItem {
   readonly queueItemId: string;
@@ -51,9 +62,19 @@ function SortableQueueRow(props: {
   });
 }
 
+/** Keeps a control's space so the row does not shift when the control appears. */
+function GripPlaceholder() {
+  return (
+    <span aria-hidden="true" className="invisible shrink-0">
+      <GripVertical className="size-3" />
+    </span>
+  );
+}
+
 function QueueRow<I extends QueueStripItem>(props: {
   readonly item: I;
   readonly canReorder: boolean;
+  readonly gripSlot: boolean;
   readonly threadBusy: boolean;
   readonly dispatching: boolean;
   readonly canSend: boolean;
@@ -97,6 +118,7 @@ function QueueRow<I extends QueueStripItem>(props: {
               <GripVertical className="size-3" aria-hidden="true" />
             </button>
           )}
+          {!props.canReorder && props.gripSlot && <GripPlaceholder />}
           {props.item.attachments.length > 0 && (
             <span
               className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground"
@@ -195,15 +217,79 @@ function QueueRow<I extends QueueStripItem>(props: {
   );
 }
 
+/**
+ * A follow-up the server has not listed yet. It takes the queued row's shape,
+ * with inert placeholders for that row's controls, so nothing moves when the
+ * real row replaces it. "Queuing…" appears only if admission is slow.
+ */
+function PendingQueueRow(props: {
+  readonly message: PendingQueueMessage;
+  readonly gripSlot: boolean;
+  readonly steerSlot: boolean;
+}) {
+  const { message } = props;
+  const status = useDelayedStatus(message.id, message.accepted ? null : "Queuing…", {
+    showDelayMs: QUEUE_ADMISSION_STATUS_DELAY_MS,
+  });
+  return (
+    <div
+      className="flex min-w-0 items-center gap-1.5 border-t border-border/60 px-2.5 py-1.5 first:border-t-0"
+      data-testid={`thread-queue-pending-${message.id}`}
+    >
+      {props.gripSlot && <GripPlaceholder />}
+      {message.attachmentCount > 0 && (
+        <span
+          className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground"
+          role="img"
+          aria-label={`${message.attachmentCount} ${message.attachmentCount === 1 ? "attachment" : "attachments"}`}
+        >
+          <Paperclip className="size-3" aria-hidden="true" />
+          {message.attachmentCount}
+        </span>
+      )}
+      <span dir="auto" className="min-w-0 flex-1 truncate text-sm text-foreground">
+        {composerCitationsToPlainText(message.text)}
+      </span>
+      {status !== null && (
+        <span role="status" className="shrink-0 text-xs text-muted-foreground">
+          {status}
+        </span>
+      )}
+      {props.steerSlot && (
+        <Button
+          render={<span aria-hidden="true" />}
+          size="micro"
+          variant="ghost-muted"
+          className="invisible"
+        >
+          <CornerDownRight className="size-3.5" />
+          <span className="text-xs leading-none">Steer</span>
+        </Button>
+      )}
+      <Button
+        render={<span aria-hidden="true" />}
+        size="icon-micro"
+        variant="ghost-muted"
+        className="invisible size-5"
+      >
+        <Pencil className="size-3.5" />
+      </Button>
+      <Button
+        render={<span aria-hidden="true" />}
+        size="icon-micro"
+        variant="ghost-muted"
+        className="invisible size-5"
+      >
+        <Trash2 className="size-3.5" />
+      </Button>
+    </div>
+  );
+}
+
 /** A compact composer extension for messages waiting behind the active turn. */
 export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueItem>(props: {
   readonly items: ReadonlyArray<I>;
-  readonly pendingMessages?: ReadonlyArray<{
-    readonly id: string;
-    readonly text: string;
-    readonly attachmentCount: number;
-    readonly accepted: boolean;
-  }>;
+  readonly pendingMessages?: ReadonlyArray<PendingQueueMessage>;
   readonly canReorder?: boolean;
   readonly canSteer?: boolean;
   readonly editingItemId?: string | null;
@@ -244,6 +330,8 @@ export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueIte
   );
 
   const pendingMessages = props.pendingMessages ?? [];
+  // Once a pending follow-up becomes a queued row, every row gets a grip; reserve it now.
+  const gripSlot = props.items.length + pendingMessages.length > 1 && props.canReorder !== false;
   // Native extraction removes the queued run while its recovered draft remains editable.
   const detachedEdit =
     props.editingItemId != null &&
@@ -330,6 +418,7 @@ export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueIte
                     key={item.queueItemId}
                     item={item}
                     canReorder={props.items.length > 1 && props.canReorder !== false}
+                    gripSlot={gripSlot}
                     canSteer={props.canSteer !== false}
                     editing={props.editingItemId === item.queueItemId}
                     {...(props.onCancelEdit === undefined
@@ -371,28 +460,12 @@ export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueIte
             </DndContext>
           )}
           {pendingMessages.map((message) => (
-            <div
+            <PendingQueueRow
               key={message.id}
-              className="flex min-w-0 items-center gap-1.5 border-t border-border/60 px-2.5 py-1.5 first:border-t-0"
-              data-testid={`thread-queue-pending-${message.id}`}
-            >
-              {message.attachmentCount > 0 && (
-                <span
-                  className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground"
-                  role="img"
-                  aria-label={`${message.attachmentCount} ${message.attachmentCount === 1 ? "attachment" : "attachments"}`}
-                >
-                  <Paperclip className="size-3" aria-hidden="true" />
-                  {message.attachmentCount}
-                </span>
-              )}
-              <span dir="auto" className="min-w-0 flex-1 truncate text-sm text-foreground">
-                {composerCitationsToPlainText(message.text)}
-              </span>
-              <span role="status" className="shrink-0 text-xs text-muted-foreground">
-                {message.accepted ? "Queued" : "Queuing…"}
-              </span>
-            </div>
+              message={message}
+              gripSlot={gripSlot}
+              steerSlot={props.threadBusy && props.canSteer !== false}
+            />
           ))}
         </div>
       )}

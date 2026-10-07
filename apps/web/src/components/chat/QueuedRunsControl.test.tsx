@@ -231,9 +231,41 @@ it("retains ordinary admission previews until receipt/projection while exposing 
     />,
   );
   expect(html).toContain("Pending admission");
-  expect(html).toContain("Queuing…");
-  expect(html).toContain(">Queued</span>");
+  expect(html).toContain("Accepted queue admission");
+  expect(html).not.toContain("Queuing…");
+  expect(html).not.toContain("Queued<");
   expect(html).not.toContain('aria-label="Edit queued message"');
+});
+
+it("reserves the grip on both rows while a pending follow-up is about to become the second", () => {
+  state.projection = { projection: { messages: [] } };
+  state.workflow = {
+    queuedRuns: [
+      { run: { id: "queued-one", userMessageId: "queued-message" }, text: "One", attachments: [] },
+    ],
+    activeRun: { id: "busy" },
+    canPromoteToSteer: true,
+    canReorder: false,
+  };
+  const html = renderToStaticMarkup(
+    <QueuedRunsControl
+      environmentId={"env" as never}
+      threadId={"thread" as never}
+      editingRunId={null}
+      onEditQueuedRun={() => undefined}
+      onCancelEdit={() => undefined}
+      optimisticMessages={[
+        {
+          id: "follow-up" as never,
+          text: "Follow-up",
+          attachments: [],
+          queueAdmission: { accepted: true },
+        },
+      ]}
+    />,
+  );
+  expect(html).not.toContain('aria-label="Reorder queued message"');
+  expect(html.match(/<span aria-hidden="true" class="invisible shrink-0">/g)).toHaveLength(2);
 });
 
 it("shows a held failed-start recovery notice and Retry without dropping the native row", () => {

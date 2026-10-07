@@ -133,8 +133,11 @@ describe("native queue MAIN presentation", () => {
         retryable={false}
       />,
     );
-    expect(pending).toContain("Queuing…");
-    expect(pending).toContain(">Queued</span>");
+    // "Queuing…" waits for a slow admission; an accepted row never says "Queued".
+    expect(pending).toContain('data-testid="thread-queue-pending-pending"');
+    expect(pending).toContain('data-testid="thread-queue-pending-accepted"');
+    expect(pending).not.toContain("Queuing…");
+    expect(pending).not.toContain("Queued<");
     expect(pending).not.toContain('aria-label="Edit queued message"');
     const error = renderToStaticMarkup(
       <ThreadQueueStrip

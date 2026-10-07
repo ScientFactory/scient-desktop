@@ -179,7 +179,9 @@ export function QueuedRunsControl({
       awaitingCompletion={workflow?.isHeld === true}
       paused={false}
       held={workflow?.isHeld === true}
-      canReorder={workflow?.canReorder === true && busyId === null}
+      // The strip enables dragging only with two queued rows, and reserves the
+      // grip while a pending follow-up is about to become the second row.
+      canReorder={busyId === null}
       canSteer={workflow?.canPromoteToSteer === true}
       dispatchingItemId={busyId}
       editingItemId={props.editingRunId}
