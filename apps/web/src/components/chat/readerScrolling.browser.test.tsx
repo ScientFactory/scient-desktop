@@ -545,16 +545,18 @@ it("scrolls continuously with the line-by-line reveal, never ahead of it", async
   await expect.poll(toEnd, { timeout: 4000 }).toBeLessThanOrEqual(1);
 });
 
-it("yields to the reader scrolling down mid-follow, then finishes at the end", async () => {
+it("yields to the reader scrolling down mid-follow, then carries on to where the follow rests", async () => {
   const key = "geometry:follow-yield";
-  const { node, extra, toEnd, rows } = await sendLaterPrompt(key, true);
+  const { node, extra, promptTextTop, toEnd, rows } = await sendLaterPrompt(key, true);
   render(key, rows(0), extra);
   await expect.poll(toEnd).toBeLessThanOrEqual(1);
-  // A long answer arriving, so the follow is busy for a while.
+  // A long answer arriving, so the follow is busy for a while. Its own id: the
+  // reveal remembers how far each message was revealed, and an earlier test
+  // left message 11 revealed, which would show this one at once.
   const answer = {
-    ...entry(11),
+    ...entry(13),
     message: {
-      ...entry(11).message,
+      ...entry(13).message,
       role: "assistant" as const,
       streaming: true,
       text: Array.from({ length: 6 }, () => "A paragraph that wraps. ".repeat(12)).join("\n\n"),
@@ -587,8 +589,17 @@ it("yields to the reader scrolling down mid-follow, then finishes at the end", a
   // Their scroll is never written over while it is in motion…
   expect(followWrites).toBe(0);
   delete (node as { scrollTop?: number }).scrollTop;
-  // …and once it stops, the follow carries on to the end.
-  await expect.poll(toEnd, { timeout: 6000 }).toBeLessThanOrEqual(1);
+  // …and once it stops, the follow carries on from where they left it. This
+  // answer is taller than the reading area, so the follow rests where the
+  // prompt's text reaches the top margin, with the rest of the answer below
+  // (it reaches the end only in passing, while the answer's lines appear).
+  expect(promptTextTop()).toBeGreaterThan(CHAT_TIMELINE_ANCHOR_OFFSET + 1);
+  await expect
+    .poll(promptTextTop, { timeout: 6000 })
+    .toBeLessThanOrEqual(CHAT_TIMELINE_ANCHOR_OFFSET + 1);
+  await frames(12);
+  expect(promptTextTop()).toBeGreaterThanOrEqual(CHAT_TIMELINE_ANCHOR_OFFSET - 1);
+  expect(toEnd()).toBeGreaterThan(1);
 });
 
 it("brings a reader who left while following back to where the follow would be now", async () => {
@@ -740,6 +751,16 @@ it("counts new answers below the reader once while streaming, then clears them o
   }
   await expect.poll(() => onUnreadBelowChange.mock.lastCall?.[0]).toBe(1);
   await listRef.current!.scrollToEnd({ animated: false });
+  // A streaming answer shows nothing until its first lines appear (after a
+  // short wait): an answer not yet seen is not read. Once they show at the
+  // end, it is.
+  const revealFront = () =>
+    Number.parseFloat(
+      host!
+        .querySelector<HTMLElement>('[data-message-id="message-20"] .chat-markdown')
+        ?.style.getPropertyValue("--reveal-front") || "0",
+    );
+  await expect.poll(revealFront, { timeout: 3000 }).toBeGreaterThan(0);
   await expect.poll(() => onUnreadBelowChange.mock.lastCall?.[0]).toBe(0);
   await listRef.current!.scrollToOffset({ offset: 250, animated: false });
   render(
