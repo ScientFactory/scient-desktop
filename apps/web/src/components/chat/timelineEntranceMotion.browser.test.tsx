@@ -4,8 +4,10 @@ import type { LegendListRef } from "@legendapp/list/react";
 import { createRef } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { MessagesTimeline } from "./MessagesTimeline";
+import { motionClock } from "./motionClock";
+import { streamingTextAppearing } from "./useStreamingBlockEntrance";
 
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
@@ -87,12 +89,35 @@ function render(
     ),
   );
 }
+// The answer reveal reads `motionClock`; every frame here advances it by 16ms.
+const realNow = motionClock.now;
+let clock = 0;
+beforeEach(() => {
+  clock = 0;
+  motionClock.now = () => clock;
+});
 afterEach(() => {
   root?.unmount();
   host?.remove();
   root = undefined;
   host = undefined;
+  motionClock.now = realNow;
 });
+/** Plays `ms` of motion, a 16ms frame at a time. */
+async function play(ms: number) {
+  for (let elapsed = 0; elapsed < ms; elapsed += 16) {
+    clock += 16;
+    await frames(1);
+  }
+}
+/** Plays frames until `done` holds (at most `ms` of motion). */
+async function playUntil(done: () => boolean, ms = 6000) {
+  for (let elapsed = 0; elapsed < ms && !done(); elapsed += 16) {
+    clock += 16;
+    await frames(1);
+  }
+  expect(done()).toBe(true);
+}
 
 const animationsOf = (element: Element | null | undefined) =>
   element
@@ -154,34 +179,43 @@ it("reveals a streaming answer line by line after a short wait, once, and nothin
     host!.querySelector<HTMLElement>('[data-message-role="assistant"] .chat-markdown');
   const front = () => Number.parseFloat(text()?.style.getPropertyValue("--reveal-front") || "0");
   render("motion:stream", [prompt, answer("First paragraph.\n\nSecond paragraph.", true)], working);
-  await expect.poll(() => text()?.classList.contains("streamed-reveal")).toBe(true);
+  await playUntil(() => text()?.classList.contains("streamed-reveal") === true);
   // The first lines wait a moment, so the next paragraphs are in hand.
-  await new Promise((resolve) => setTimeout(resolve, 600));
+  await play(800);
   expect(front()).toBe(0);
   // Then the lines appear at a steady pace.
-  await expect.poll(front, { timeout: 3000 }).toBeGreaterThan(10);
+  await playUntil(() => front() > 10, 1000);
   const reached = front();
   // Remounted mid-reveal (a thread switch and back): it continues, no replay.
   render("motion:elsewhere-stream", [entry(70, "Elsewhere")]);
-  await frames(4);
+  await play(64);
   render("motion:stream", [prompt, answer("First paragraph.\n\nSecond paragraph.", true)], working);
-  await expect.poll(() => text()?.classList.contains("streamed-reveal")).toBe(true);
+  await playUntil(() => text()?.classList.contains("streamed-reveal") === true);
   expect(front()).toBeGreaterThanOrEqual(reached);
   // Once the answer is done, the reveal finishes and the mask goes.
   render("motion:stream", [prompt, answer("First paragraph.\n\nSecond paragraph.", false)], {
     isWorking: false,
     activeTurnInProgress: false,
   });
-  await expect
-    .poll(() => text()?.classList.contains("streamed-reveal"), { timeout: 4000 })
-    .toBe(false);
+  await playUntil(() => text()?.classList.contains("streamed-reveal") === false);
   // A finished answer that was never revealed here simply shows.
   render("motion:finished", [prompt, answer("Already done.", false)], {
     isWorking: false,
     activeTurnInProgress: false,
   });
-  await frames(4);
+  await play(64);
   expect(text()?.classList.contains("streamed-reveal")).toBe(false);
+});
+
+it("drops an answer's appearing state when its row unmounts mid-reveal", async () => {
+  const prompt = entry(1, "Question");
+  const answer = reply(43, "First paragraph.\n\nSecond paragraph.", true);
+  render("motion:appearing", [prompt, answer], working);
+  await playUntil(() => streamingTextAppearing(answer.message.id));
+  // Another thread: the row unmounts while its lines are still appearing.
+  render("motion:appearing-elsewhere", [entry(71, "Elsewhere")]);
+  await play(32);
+  expect(streamingTextAppearing(answer.message.id)).toBe(false);
 });
 
 it("closes a finished turn's working header gradually, so the answer slides up", async () => {
@@ -191,22 +225,62 @@ it("closes a finished turn's working header gradually, so the answer slides up",
   const answerTop = () =>
     host!.querySelector('[data-message-role="assistant"]')!.getBoundingClientRect().top;
   const header = () => host!.querySelector('[data-timeline-row-kind="working"]');
+  const exit = () =>
+    header()
+      ?.querySelector(".border-b")
+      ?.getAnimations()
+      .find(
+        (animation) =>
+          !(animation instanceof CSSTransition) && !(animation instanceof CSSAnimation),
+      );
   await expect.poll(() => header()).not.toBeNull();
   await frames(8);
   const before = answerTop();
   render("motion:exit", [prompt, answer(false)], { isWorking: false, activeTurnInProgress: false });
-  // Mid-exit: still in place, the answer part of the way up.
-  await new Promise((resolve) => setTimeout(resolve, 140));
-  await frames(2);
+  // Held halfway through its exit: still in place, the answer part of the way up.
+  const animation = exit()!;
+  animation.pause();
+  animation.currentTime = 160;
+  await frames(4);
   expect(header()).not.toBeNull();
   const midway = answerTop();
   expect(midway).toBeLessThan(before - 2);
-  // Then it is gone, and the answer rests where it would without it.
+  // Its end removes it, and the answer rests where it would without it.
+  animation.finish();
   await expect.poll(() => header()).toBeNull();
   await frames(6);
   const after = answerTop();
   expect(midway).toBeGreaterThan(after + 2);
   expect(before - after).toBeGreaterThan(20);
+});
+
+it("cancels a header's exit when the next run's header takes its place", async () => {
+  const prompt = entry(1, "Question");
+  render("motion:exit-reuse", [prompt, reply(2, "The answer.", true)], working);
+  const header = () => host!.querySelector<HTMLElement>('[data-timeline-row-kind="working"]');
+  const root = () => header()?.querySelector<HTMLElement>(".border-b");
+  await expect.poll(() => header()).not.toBeNull();
+  await frames(8);
+  const height = root()!.getBoundingClientRect().height;
+  render("motion:exit-reuse", [prompt, reply(2, "The answer.", false)], {
+    isWorking: false,
+    activeTurnInProgress: false,
+  });
+  const animation = root()!.getAnimations().at(-1)!;
+  animation.pause();
+  animation.currentTime = 200;
+  // Another send starts within the exit: the same row is a running header again.
+  const next = entry(3, "Next question");
+  render("motion:exit-reuse", [prompt, reply(2, "The answer.", false), next], working);
+  await frames(4);
+  expect(animation.playState).toBe("idle");
+  expect(
+    root()!
+      .getAnimations()
+      .filter((item) => !(item instanceof CSSTransition)),
+  ).toHaveLength(0);
+  expect(Math.abs(root()!.getBoundingClientRect().height - height)).toBeLessThanOrEqual(1);
+  expect(getComputedStyle(root()!).opacity).toBe("1");
 });
 
 it("hides Thinking while the answer's lines appear, and brings it back when the agent moves on", async () => {
@@ -216,13 +290,12 @@ it("hides Thinking while the answer's lines appear, and brings it back when the 
   const thinking = () =>
     host!.querySelector('[data-timeline-row-kind="thinking"] > div > div') as HTMLElement | null;
   render("motion:thinking", [prompt, answer], working);
-  await expect.poll(() => thinking()).not.toBeNull();
+  await playUntil(() => thinking() !== null);
   // During the short wait before any line shows, Thinking still shows the work.
+  await play(480);
   expect(thinking()!.classList.contains("opacity-0")).toBe(false);
   // Once the lines appear, it steps aside.
-  await expect
-    .poll(() => thinking()?.classList.contains("opacity-0"), { timeout: 3000 })
-    .toBe(true);
+  await playUntil(() => thinking()?.classList.contains("opacity-0") === true, 1000);
   // The agent goes back to work after the text (a tool step): its live activity
   // shows again (here the running tool takes the activity row's place).
   const tool = {
@@ -240,13 +313,11 @@ it("hides Thinking while the answer's lines appear, and brings it back when the 
     },
   };
   render("motion:thinking", [prompt, answer, tool], working);
-  await expect
-    .poll(() => {
-      const live = host!.querySelector('[data-timeline-row-kind="work-live"]');
-      const visibleThinking = thinking() && !thinking()!.classList.contains("opacity-0");
-      return Boolean(live) || Boolean(visibleThinking);
-    })
-    .toBe(true);
+  await playUntil(() => {
+    const live = host!.querySelector('[data-timeline-row-kind="work-live"]');
+    const visibleThinking = thinking() && !thinking()!.classList.contains("opacity-0");
+    return Boolean(live) || Boolean(visibleThinking);
+  });
 });
 
 it("crosses the blank space between paragraphs without pausing", async () => {
@@ -256,18 +327,19 @@ it("crosses the blank space between paragraphs without pausing", async () => {
   render("motion:gaps", [prompt, answer], working);
   const root = () =>
     host!.querySelector<HTMLElement>('[data-message-role="assistant"] .chat-markdown');
-  await expect.poll(() => root()?.classList.contains("streamed-reveal")).toBe(true);
+  await playUntil(() => root()?.classList.contains("streamed-reveal") === true);
   const paragraphs = Array.from(root()!.querySelectorAll("p"));
   const top = root()!.getBoundingClientRect().top;
   const gapStart = paragraphs[0]!.getBoundingClientRect().bottom - top;
   const gapEnd = paragraphs[1]!.getBoundingClientRect().top - top;
   const lineHeight = Number.parseFloat(getComputedStyle(root()!).lineHeight);
   const front = () => Number.parseFloat(root()!.style.getPropertyValue("--reveal-front") || "0");
-  await expect.poll(() => front() >= gapStart, { timeout: 4000 }).toBe(true);
-  const entered = performance.now();
-  await expect.poll(() => front() >= gapEnd, { timeout: 4000 }).toBe(true);
-  const crossed = performance.now() - entered;
-  // At the line pace the gap would take (gap / 4 lines a second); it takes far less.
+  await playUntil(() => front() >= gapStart);
+  const entered = clock;
+  await playUntil(() => front() >= gapEnd);
+  // In motion time: at the line pace the gap would take (gap / 4 lines a
+  // second); it takes far less.
+  const crossed = clock - entered;
   const atLinePace = ((gapEnd - gapStart) / lineHeight) * 250;
   expect(crossed).toBeLessThan(Math.max(80, atLinePace / 2));
 });
