@@ -18,6 +18,14 @@ import {
   updateThreadQueueItem,
 } from "./client";
 
+const QUEUE_POLL_MS = 1_000;
+const QUEUE_POLL_MAX_MS = 30_000;
+
+/** Healthy polls run every second; each consecutive failure doubles the wait, up to 30 s. */
+export function threadQueuePollDelayMs(consecutiveFailures: number): number {
+  return Math.min(QUEUE_POLL_MS * 2 ** consecutiveFailures, QUEUE_POLL_MAX_MS);
+}
+
 /** A view of server-owned delivery. No render or navigation can dispatch a turn. */
 export function useThreadQueue(input: {
   readonly environmentId: EnvironmentId | null;
@@ -44,6 +52,7 @@ export function useThreadQueue(input: {
   const reorderSequence = useRef(0);
   const reorderTail = useRef<Promise<unknown>>(Promise.resolve());
   const refreshInFlight = useRef<string | null>(null);
+  const pollFailures = useRef<{ key: string; count: number }>({ key, count: 0 });
   const revisionRef = useRef<{ key: string; revision: number | undefined }>({
     key,
     revision: undefined,
@@ -93,7 +102,12 @@ export function useThreadQueue(input: {
           revisionRef.current.key === key ? revisionRef.current.revision : undefined,
         ),
       );
+      pollFailures.current = { key, count: 0 };
     } catch (cause) {
+      pollFailures.current = {
+        key,
+        count: pollFailures.current.key === key ? pollFailures.current.count + 1 : 1,
+      };
       fail(cause);
     } finally {
       if (refreshInFlight.current === key) refreshInFlight.current = null;
@@ -101,9 +115,21 @@ export function useThreadQueue(input: {
   }, [environmentId, threadId, key, accept, fail]);
   useEffect(() => {
     if (!connected || (state.key === key && state.snapshot?.nativeQueue === true)) return;
-    void refresh();
-    const timer = setInterval(() => void refresh(), 1000);
-    return () => clearInterval(timer);
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      const startedAt = Date.now();
+      await refresh();
+      if (stopped) return;
+      const failures = pollFailures.current.key === key ? pollFailures.current.count : 0;
+      const wait = threadQueuePollDelayMs(failures) - (Date.now() - startedAt);
+      timer = setTimeout(() => void poll(), Math.max(0, wait));
+    };
+    void poll();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
   }, [connected, refresh, key, state.key, state.snapshot?.nativeQueue]);
   const scope = () => {
     if (!environmentId || !threadId) throw new Error("No active thread for the queue.");
