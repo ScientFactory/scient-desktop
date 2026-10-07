@@ -11,7 +11,7 @@ explicitly unverified. The closing receipt below distinguishes these boundaries.
 
 **Republished 2026-10-07 on checkable history.** The required provenance check
 rejected the original pull request's history; the qualified tree now lands on
-`codex/t3-sync-ca7df394ed-20261007`. See
+`codex/t3-sync-ca7df394ed-20261007` as #466, superseding #465. See
 [republication](#republication-on-checkable-history--2026-10-07).
 
 The earlier source qualification checkpoint
