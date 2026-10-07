@@ -410,26 +410,31 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
   Object.assign(locks, { withLock: observeWithLock });
   const orchestrator = Context.get(services, OrchestratorV2);
   const rawWorker = Context.get(services, OrchestrationEffectWorkerV2);
+  // Outbox deadlines are wall-clock (Date.now) instants, but timers run on the event
+  // loop's monotonic clock and can wake before the deadline (libuv/libuv#4773), so a
+  // drain after one sleep may claim nothing. Re-read the deadline until it has passed.
+  // Returns false when no pending effect remains to wait for.
+  const awaitClaimable = Effect.gen(function* () {
+    while (true) {
+      const deadline = yield* rawWorker.nextClaimableAt;
+      if (Option.isNone(deadline)) return false;
+      const wait =
+        DateTime.toEpochMillis(deadline.value) - DateTime.toEpochMillis(yield* DateTime.now);
+      if (wait <= 0) return true;
+      yield* Effect.sleep(wait);
+    }
+  });
   const worker = {
     ...rawWorker,
     drain: (maxEffects = 12) =>
       Effect.gen(function* () {
-        const deadline = yield* rawWorker.nextClaimableAt;
-        if (Option.isSome(deadline)) {
-          const wait =
-            DateTime.toEpochMillis(deadline.value) - DateTime.toEpochMillis(yield* DateTime.now);
-          if (wait > 0) yield* Effect.sleep(wait);
-        }
+        yield* awaitClaimable;
         let drained = yield* rawWorker.drain(maxEffects);
         // An admitted cancel may settle natively before its canonical turn update is ingested.
         for (let remaining = maxEffects; remaining > 0; remaining--) {
           const p = yield* Context.get(services, OrchestratorV2).getThreadProjection(threadId);
           if (!p.runs.some((run) => run.heldDroidSteer?.phase === "pre_admission")) break;
-          const next = yield* rawWorker.nextClaimableAt;
-          if (Option.isNone(next)) break;
-          const wait =
-            DateTime.toEpochMillis(next.value) - DateTime.toEpochMillis(yield* DateTime.now);
-          if (wait > 0) yield* Effect.sleep(wait);
+          if (!(yield* awaitClaimable)) break;
           drained += yield* rawWorker.drain(maxEffects);
         }
         return drained;
