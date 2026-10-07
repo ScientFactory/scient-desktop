@@ -646,12 +646,15 @@ when it finishes without writing an answer.
 
 Sending at the bottom (by that same rule) gently reveals your message and its
 answer. The first message retains its existing placement
-near the top. Movement stops when your sent message's first line reaches the top
+near the top. After a later message, the view follows everything the agent
+produces (thinking, tool steps and text) at a calm pace, staying at the bottom.
+Movement stops when your sent message's first line reaches the top
 of the reading area; only the bubble's padding may pass above it. It then stays there
 while the rest grows below the screen. When progress notes, reasoning or tool
 activity push the message the agent is writing below the screen, the reveal
 continues just far enough to show that message's first lines, never its end. A
 queued message that is sent while you are at the bottom is revealed the same way.
+Messages sent from another window are not followed.
 If you were reading earlier content, sending leaves that position alone.
 Scrolling back up cancels both pending placement and limited answer following,
 including during an upload; clicking, selecting text, or scrolling down does not.
@@ -669,7 +672,9 @@ The count tracks reading within the current app window session; opening older
 history does not mark it newly unread.
 
 Returning to a thread, or reloading the same window, restores the message you
-were reading and its position in the view. If a temporary working indicator has
+were reading and its position in the view. If you left while the view was still
+following your message's response, you come back to where it would be now, and
+it keeps following while the agent works. If a temporary working indicator has
 become an answer, restoration uses that turn's content. Older history loads when
 needed to find the saved message; if a few pages do not contain it, the nearest
 message or the end is used instead. A thread with no saved reading position

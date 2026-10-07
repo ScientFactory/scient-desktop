@@ -2,7 +2,6 @@ import * as DateTime from "effect/DateTime";
 import {
   canApplySendAnchor,
   savedPositionIsAtEnd,
-  shouldRevealArrivedPrompt,
   readerAtReadingEnd,
 } from "./chat/readerScrollPolicy";
 import { useAcknowledgeAnswer } from "../scient/answerAttention/useAcknowledgeAnswer";
@@ -219,6 +218,11 @@ import {
   timelineContentOverflowsViewport,
   type TimelineScrollMode,
 } from "./chat/timelineScrollAnchoring";
+// SCIENT-FORK:START — the send follow, its working row and the draft composer's motion.
+import { useQueuedDeliveryFollow, useResponseFollow } from "./chat/responseFollow";
+import { useDraftHeroMotion } from "./chat/timelineEntranceMotion";
+import { useTimelineWorking } from "./chat/timelineWorkingState";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — fork command, baseline and dialog wiring.
 import {
   ScientChatForkDialog,
@@ -984,6 +988,10 @@ function useLocalDispatchState(input: {
     beginLocalDispatch,
     resetLocalDispatch,
     localDispatchStartedAt: activeLocalDispatch?.startedAt ?? null,
+    // SCIENT-FORK:START — the timeline's working row waits for the prompt being sent.
+    /** The thread's latest user message when the active dispatch began. */
+    localDispatchLatestUserMessageId: activeLocalDispatch?.latestUserMessageId ?? null,
+    // SCIENT-FORK:END
     isPreparingWorktree: activeLocalDispatch?.preparingWorktree ?? false,
     isSendBusy: activeLocalDispatch !== null,
     backgroundSubmissionPending: activeLocalDispatch?.submissionIntent === "background",
@@ -3675,6 +3683,9 @@ function ChatViewContent(props: ChatViewProps) {
     beginLocalDispatch,
     resetLocalDispatch,
     localDispatchStartedAt,
+    // SCIENT-FORK:START — the timeline's working row waits for the prompt being sent.
+    localDispatchLatestUserMessageId,
+    // SCIENT-FORK:END
     isPreparingWorktree: isLocallyPreparingWorktree,
     isSendBusy,
     backgroundSubmissionPending,
@@ -3790,6 +3801,23 @@ function ChatViewContent(props: ChatViewProps) {
   const activeWorkStartedAt =
     deriveActiveWorkStartedAt(activeActivityRun, activeRuntime, localDispatchStartedAt) ??
     runlessWorkStartedAt;
+  // SCIENT-FORK:START — the timeline's working row waits for the prompt being sent, and stays
+  // while its run starts (chat/timelineWorkingState.ts).
+  const timelineWorking = useTimelineWorking({
+    threadWorking: isWorking,
+    onlySendBusy:
+      isSendBusy &&
+      phase !== "running" &&
+      !isConnecting &&
+      !isCompacting &&
+      !awaitingBootstrapTurn &&
+      !isForkingThread &&
+      !isRevertingCheckpoint &&
+      !isPreparingWorktree,
+    dispatchBaselineUserMessageId: localDispatchLatestUserMessageId,
+    projection: serverProjection,
+    optimisticMessages: optimisticUserMessages,
+  }); // SCIENT-FORK:END
   // Server-side workspace preparation: unlike the local-dispatch flag this
   // survives reloads and shows on remote viewers of the same thread.
   useEffect(() => {
@@ -4147,10 +4175,15 @@ function ChatViewContent(props: ChatViewProps) {
     backgroundSubmissionPending,
     hasWorktreeSetupCard: worktreeSetup !== null,
   });
+  // SCIENT-FORK:START — the draft composer's move always animates, unless motion is reduced.
+  const draftHeroMotion = useDraftHeroMotion();
+  // SCIENT-FORK:END
   const draftHeroTransition = useDraftHeroLayoutTransition(
     isDraftHeroState,
-    panelAnimationsActive,
-    panelAnimationDurationMs,
+    // SCIENT-FORK:START — not the opt-in panel animation setting (chat/timelineEntranceMotion.ts).
+    draftHeroMotion.animate,
+    draftHeroMotion.durationMs,
+    // SCIENT-FORK:END
   );
   const captureDraftHeroComposerRect = draftHeroTransition.captureComposerRect;
   // SCIENT-FORK:START — the composer's fork command.
@@ -6108,7 +6141,17 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const timelineScrollModeRef = useRef<TimelineScrollMode>("free-scrolling");
   const [timelinePositioningPending, setTimelinePositioningPending] = useState(false);
-  const [readingFollowPromptId, setReadingFollowPromptId] = useState<MessageId | null>(null);
+  // SCIENT-FORK:START — one owner for the send follow: which prompt's response is followed,
+  // settled by that prompt's own V2 run (chat/responseFollow.ts).
+  const responseFollow = useResponseFollow({
+    threadKey: routeThreadKey,
+    runs: serverProjection?.runs,
+    messages: timelineMessages,
+    loaded: !isServerThread || serverProjection !== null,
+  });
+  const { start: startResponseFollow, clear: clearResponseFollow } = responseFollow;
+  const followSentPrompt = responseFollow.followSent;
+  // SCIENT-FORK:END
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
   const programmaticScrollPendingRef = useRef(false);
   const anchorUserScrollGenerationRef = useRef(0);
@@ -6148,7 +6191,7 @@ function ChatViewContent(props: ChatViewProps) {
     timelineScrollModeRef.current = "free-scrolling";
     liveFollowUserScrollGenerationRef.current = null;
     setTimelineLiveFollowEnabled(false);
-    setReadingFollowPromptId(null);
+    clearResponseFollow();
     setTimelinePositioningPending(false);
     programmaticScrollPendingRef.current = false;
     positionedTimelineAnchorRef.current = null;
@@ -6183,7 +6226,7 @@ function ChatViewContent(props: ChatViewProps) {
         scrollNode.scrollTop = currentScrollTop;
       }
     }
-  }, []);
+  }, [clearResponseFollow]);
   const cancelTimelinePositioningRef = useRef(cancelTimelinePositioning);
   useEffect(() => {
     cancelTimelinePositioningRef.current = cancelTimelinePositioning;
@@ -6259,12 +6302,8 @@ function ChatViewContent(props: ChatViewProps) {
     }),
     [isDraftHeroState, routeThreadKey, timelineMessages, activeLatestRun, readerAtEndNow],
   );
-  // Prompts this window sent frame themselves; a queued prompt the server
-  // delivered gets the same reveal when the reader is at the end.
-  const locallySentPromptIdsRef = useRef(new Set<string>());
   const frameSubmittedMessage = useCallback(
     (messageId: MessageId, snapshot: ReturnType<typeof captureSendReadingPosition>) => {
-      locallySentPromptIdsRef.current.add(messageId);
       if (
         !canApplySendAnchor({
           ...snapshot,
@@ -6274,45 +6313,47 @@ function ChatViewContent(props: ChatViewProps) {
       )
         return;
       if (!snapshot.firstMessage) {
-        // One bounded controller reveals the prompt and then its answer. Retain
-        // existing tail space until it can disappear without clamping the viewport.
+        // One bounded controller reveals the prompt and follows its whole response
+        // to the end. Retain existing tail space until it can disappear without
+        // clamping the viewport.
         cancelTimelinePositioning();
-        setReadingFollowPromptId(messageId);
+        // SCIENT-FORK:START — a later prompt's whole response is followed to the end.
+        followSentPrompt(messageId, snapshot.firstMessage);
+        // SCIENT-FORK:END
         return;
       }
       cancelPositionRestoreRef.current?.();
-      setReadingFollowPromptId(messageId);
+      // SCIENT-FORK:START — the first prompt keeps its placement; its answer is revealed.
+      followSentPrompt(messageId, snapshot.firstMessage);
+      // SCIENT-FORK:END
       timelineScrollModeRef.current = "anchoring-new-turn";
       setTimelinePositioningPending(true);
       positionedTimelineAnchorRef.current = null;
       setTimelineAnchor({ threadKey: activeThreadKey, messageId });
     },
-    [activeThreadKey, cancelTimelinePositioning],
+    [activeThreadKey, cancelTimelinePositioning, followSentPrompt],
   );
-  const latestPromptId = useMemo(
-    () => timelineMessages.findLast((message) => message.role === "user")?.id ?? null,
+  // SCIENT-FORK:START — a queued prompt the server delivers while the reader is at the end
+  // gets the same follow as a send (chat/responseFollow.ts).
+  const latestPrompt = useMemo(
+    () => timelineMessages.findLast((message) => message.role === "user") ?? null,
     [timelineMessages],
   );
-  const latestPromptRef = useRef<{ threadKey: string | null; id: string | null } | null>(null);
-  // Runs before the timeline measures the new row, so the reader's end state
-  // is still the one from before the prompt arrived.
-  useLayoutEffect(() => {
-    const previous = latestPromptRef.current;
-    latestPromptRef.current = { threadKey: routeThreadKey, id: latestPromptId };
-    if (
-      !latestPromptId ||
-      !shouldRevealArrivedPrompt({
-        previous,
-        threadKey: routeThreadKey,
-        latestPromptId,
-        sentHere: locallySentPromptIdsRef.current.has(latestPromptId),
-        readerAtEnd: isAtEndRef.current,
-      })
-    )
-      return;
-    cancelTimelinePositioning();
-    setReadingFollowPromptId(latestPromptId as MessageId);
-  }, [routeThreadKey, latestPromptId, cancelTimelinePositioning]);
+  const readerWasAtEnd = useCallback(() => isAtEndRef.current, []);
+  const followDeliveredPrompt = useCallback(
+    (promptId: MessageId) => {
+      cancelTimelinePositioning();
+      startResponseFollow(promptId, true);
+    },
+    [cancelTimelinePositioning, startResponseFollow],
+  );
+  useQueuedDeliveryFollow({
+    threadKey: routeThreadKey,
+    latestPrompt,
+    readerAtEnd: readerWasAtEnd,
+    follow: followDeliveredPrompt,
+  });
+  // SCIENT-FORK:END
   useEffect(() => {
     let removeListeners: (() => void) | null = null;
     let frame: number | null = null;
@@ -6647,7 +6688,7 @@ function ChatViewContent(props: ChatViewProps) {
       ? anchorUserScrollGenerationRef.current
       : null;
     setTimelineLiveFollowEnabled(followEnd);
-    setReadingFollowPromptId(null);
+    clearResponseFollow();
     setTimelinePositioningPending(false);
     programmaticScrollPendingRef.current = false;
     positionedTimelineAnchorRef.current = null;
@@ -6656,7 +6697,7 @@ function ChatViewContent(props: ChatViewProps) {
     return () => {
       anchorUserScrollGenerationRef.current += 1;
     };
-  }, [routeThreadKey, resetEndControlForThread]);
+  }, [routeThreadKey, resetEndControlForThread, clearResponseFollow]);
 
   useEffect(() => {
     if (!activeThread?.id || terminalUiState.terminalOpen) return;
@@ -11344,7 +11385,9 @@ function ChatViewContent(props: ChatViewProps) {
                       ...(activeProject ? { onRunShellCommand: runShellCommand } : {}),
                     }
                   : {})}
-                isWorking={!paintOnlyDisplayedTimeline && isWorking}
+                // SCIENT-FORK:START — the working row waits for the sent prompt and its run's start.
+                isWorking={!paintOnlyDisplayedTimeline && timelineWorking}
+                // SCIENT-FORK:END
                 runlessWorkActive={runlessWorkStartedAt !== null}
                 activeTurnInProgress={
                   !paintOnlyDisplayedTimeline && (isWorking || !latestRunSettled)
@@ -11431,7 +11474,10 @@ function ChatViewContent(props: ChatViewProps) {
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}
                 contentInsetEndAdjustment={composerTimelineInset}
                 timelinePositioningPending={timelinePositioningPending}
-                readingFollowPromptId={readingFollowPromptId}
+                readingFollowPromptId={responseFollow.promptId}
+                // SCIENT-FORK:START — the send follow's lifecycle (chat/responseFollow.ts).
+                responseFollow={responseFollow.timeline}
+                // SCIENT-FORK:END
                 onReleaseUnusedAnchor={releaseUnusedTimelineAnchor}
                 onIsAtEndChange={onIsAtEndChange}
                 onUnreadBelowChange={setUnreadBelowCount}
