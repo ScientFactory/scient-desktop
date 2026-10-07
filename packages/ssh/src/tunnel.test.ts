@@ -832,7 +832,9 @@ describe("archive runner script", () => {
 
   // A fake "executable" that answers --version, packed the way the release
   // workflow packs the real archive: one top-level directory named after the
-  // stem, checksummed in SHA256SUMS.
+  // stem, checksummed in SHA256SUMS. When an installer validates it in its
+  // staging directory, it checks the lock holds that live installer's numeric
+  // pid and appends one line per installation to $HOME/install-owner.
   const makeMirror = Effect.fn("makeMirror")(function* (root: string) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fs = yield* FileSystem.FileSystem;
@@ -847,13 +849,14 @@ describe("archive runner script", () => {
       `${stage}/t3`,
       [
         "#!/bin/sh",
-        `lock="$HOME/.t3/runtime/versions/.${archiveVersion}.install.lock"`,
-        'if [ -f "$lock/pid" ]; then',
-        '  owner="$(cat "$lock/pid")"',
-        '  case "$owner" in ""|*[!0-9]*) echo "Invalid installer PID: $owner" >&2; exit 1 ;; esac',
-        '  kill -0 "$owner" || exit 1',
-        '  printf "%s\\n" "$owner" > "$HOME/install-owner"',
-        "fi",
+        'case "$0" in',
+        "  */.staging-*)",
+        `    owner="$(cat "$HOME/.t3/runtime/versions/.${archiveVersion}.install.lock/pid" 2>/dev/null || true)"`,
+        '    case "$owner" in ""|*[!0-9]*) echo "Invalid installer PID: $owner" >&2; exit 1 ;; esac',
+        '    kill -0 "$owner" || exit 1',
+        '    printf "%s\\n" "$owner" >> "$HOME/install-owner"',
+        "    ;;",
+        "esac",
         `echo t3 v${archiveVersion}`,
         "",
       ].join("\n"),
@@ -883,6 +886,9 @@ describe("archive runner script", () => {
         );
         const home = `${root}/home`;
         yield* fs.makeDirectory(home, { recursive: true });
+        const installOwners = fs
+          .readFileString(`${home}/install-owner`)
+          .pipe(Effect.map((text) => text.trim().split("\n")));
 
         const results = yield* Effect.all(
           [runRunner(home, runner), runRunner(home, runner), runRunner(home, runner)],
@@ -892,7 +898,9 @@ describe("archive runner script", () => {
           assert.equal(result.exitCode, 0, result.stderr);
           assert.include(result.stdout, `t3 v${archiveVersion}`);
         }
-        assert.match((yield* fs.readFileString(`${home}/install-owner`)).trim(), /^[0-9]+$/);
+        const racedOwners = yield* installOwners;
+        assert.lengthOf(racedOwners, 1, "concurrent launches installed more than once");
+        assert.match(racedOwners[0] ?? "", /^[0-9]+$/);
         const versionsDir = `${home}/.t3/runtime/versions`;
         assert.deepEqual(yield* fs.readDirectory(versionsDir), [archiveVersion]);
         assert.equal(
@@ -908,11 +916,13 @@ describe("archive runner script", () => {
         yield* fs.writeFileString(`${lock}/pid`, "999999\n");
         const afterDead = yield* runRunner(home, runner);
         assert.equal(afterDead.exitCode, 0, afterDead.stderr);
+        assert.lengthOf(yield* installOwners, 2);
 
         yield* fs.remove(`${versionsDir}/${archiveVersion}`, { recursive: true });
         yield* fs.makeDirectory(lock);
         const afterUnowned = yield* runRunner(home, runner);
         assert.equal(afterUnowned.exitCode, 0, afterUnowned.stderr);
+        assert.lengthOf(yield* installOwners, 3);
         assert.isFalse(yield* fs.exists(lock));
       }).pipe(Effect.provide(NodeServices.layer)),
     60_000,
