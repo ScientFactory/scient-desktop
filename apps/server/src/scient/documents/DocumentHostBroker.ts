@@ -13,7 +13,7 @@ import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as PreviewBroker from "../../mcp/PreviewAutomationBroker.ts";
 
-export const documentHostOperations = [
+const documentHostOperations = [
   "documentPdfRender",
   "documentPagePdfRender",
   "documentPdfPresent",

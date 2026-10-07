@@ -217,27 +217,6 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
   return { ...context, projection };
 });
 
-export const readWritableThread = Effect.fn("mcp.readWritableThread")(function* <
-  K extends ProjectionRecordField = never,
->(threadId?: ThreadId, fields: ReadonlyArray<K> = []) {
-  const context = yield* readThread(threadId, fields);
-  yield* assertLiveCaller(context);
-  const threadScope = yield* McpInvocationContext.requireThreadScope(
-    context.scope,
-    "Scient thread mutation",
-  );
-  const policy = yield* requireInvocationPolicy(threadScope);
-  yield* OrchestrationMcp.resolveRuntimeMode(
-    policy.runtimeMode,
-    context.projection.thread.runtimeMode,
-  );
-  yield* OrchestrationMcp.resolveInteractionMode(
-    policy.interactionMode,
-    context.projection.thread.interactionMode,
-  );
-  return { ...context, policy };
-});
-
 export const newCommandId = Effect.fn("mcp.newCommandId")(function* () {
   const crypto = yield* Crypto.Crypto;
   return CommandId.make(`mcp:${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`);

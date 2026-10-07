@@ -944,7 +944,7 @@ export type CodexGoalCommand =
  * `resume` control the current goal, a bare `/goal` shows it, and any other
  * text becomes the new objective. Returns null for every other message.
  */
-export function parseCodexGoalCommand(text: string): CodexGoalCommand | null {
+function parseCodexGoalCommand(text: string): CodexGoalCommand | null {
   const match = /^\/goal(?:\s+([\s\S]*))?$/u.exec(text.trim());
   if (match === null) return null;
   const argument = (match[1] ?? "").trim();
