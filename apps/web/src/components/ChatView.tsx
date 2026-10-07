@@ -3800,21 +3800,35 @@ function ChatViewContent(props: ChatViewProps) {
   // The timeline's working row waits for the prompt being sent (see
   // resolveTimelineWorking); V2 keeps the dispatch busy until its run reports
   // running, so the row does not drop out while the run starts.
-  const timelineWorking = resolveTimelineWorking({
-    isWorking,
-    onlySendBusy:
-      isSendBusy &&
-      phase !== "running" &&
-      !isConnecting &&
-      !isCompacting &&
-      !awaitingBootstrapTurn &&
-      !isForkingThread &&
-      !isRevertingCheckpoint &&
-      !isPreparingWorktree,
-    dispatchBaselineUserMessageId: localDispatchLatestUserMessageId,
-    latestUserMessageId: latestServerUserMessageId,
-    optimisticPromptShown: optimisticUserMessages.some((message) => !message.queueAdmission),
-  });
+  const onlySendBusy =
+    isSendBusy &&
+    phase !== "running" &&
+    !isConnecting &&
+    !isCompacting &&
+    !awaitingBootstrapTurn &&
+    !isForkingThread &&
+    !isRevertingCheckpoint &&
+    !isPreparingWorktree;
+  const optimisticPromptShown = optimisticUserMessages.some((message) => !message.queueAdmission);
+  // Memoized so React Compiler does not treat the inputs as passed to a call
+  // that may mutate them, which would de-optimize unrelated memos.
+  const timelineWorking = useMemo(
+    () =>
+      resolveTimelineWorking({
+        isWorking,
+        onlySendBusy,
+        dispatchBaselineUserMessageId: localDispatchLatestUserMessageId,
+        latestUserMessageId: latestServerUserMessageId,
+        optimisticPromptShown,
+      }),
+    [
+      isWorking,
+      onlySendBusy,
+      localDispatchLatestUserMessageId,
+      latestServerUserMessageId,
+      optimisticPromptShown,
+    ],
+  );
   // Server-side workspace preparation: unlike the local-dispatch flag this
   // survives reloads and shows on remote viewers of the same thread.
   useEffect(() => {
