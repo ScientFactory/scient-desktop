@@ -1373,6 +1373,53 @@ describe("deriveMessagesTimelineRows", () => {
     });
   });
 
+  it("labels Scient Agent tool rows by the call, never by the tool's output", () => {
+    const fixture = makeStreamingTimelineFixture();
+    const source = fixture.visibleTurnItems.find((row) => row.item.type === "dynamic_tool")!;
+    if (source.item.type !== "dynamic_tool") throw new Error("Expected tool fixture");
+    const skillsOutput = '{"skills":[{"name":"html-pdf-authoring","description":"Author PDFs"}]}';
+    // Native session adapters title a tool row with its name and retain its output.
+    const tool = (
+      id: string,
+      toolName: string,
+      input: Record<string, unknown>,
+      output: string,
+    ): OrchestrationV2ProjectedTurnItem["item"] => ({
+      ...source.item,
+      type: "dynamic_tool",
+      id: TurnItemId.make(id),
+      status: "completed",
+      title: toolName,
+      toolName,
+      input,
+      output,
+    });
+    const items = [
+      tool("skills", "scient_skills_list", {}, skillsOutput),
+      tool("load", "scient_skill_load", { name: "html-pdf-authoring" }, "# HTML PDF authoring"),
+      tool("search", "grep", { pattern: "TODO", path: "src" }, "src/app.ts:1: TODO"),
+    ];
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: items.map((item, position) => ({
+        ...source,
+        item,
+        position,
+        sourceItemId: item.id,
+      })),
+      optimisticMessages: [],
+    });
+    const labels = entries.flatMap((entry) =>
+      entry.kind === "work" ? [workEntryDisplayLabel(entry.entry, undefined)] : [],
+    );
+    expect(labels).toEqual([
+      "Checked available skills",
+      "Used Html Pdf Authoring",
+      expect.stringContaining("TODO"),
+    ]);
+    expect(labels.join("\n")).not.toContain("src/app.ts:1");
+    expect(labels.join("\n")).not.toContain('{"skills"');
+  });
+
   it.each(["waiting", "completed"] as const)(
     "groups approval and user-input requests with commands without expanding them when %s",
     (status) => {

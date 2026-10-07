@@ -1,4 +1,5 @@
 import type { T3McpToolSummaryAction } from "@t3tools/shared/t3McpToolPresentation";
+import { scientMcpToolSummaryLabel } from "@t3tools/shared/scientMcpToolPresentation";
 
 export interface T3ToolSummaryCall {
   readonly input: unknown;
@@ -388,6 +389,8 @@ export function summarizeT3ToolCalls(
     case "capabilities":
       label = phrase("Checked", "check", `orchestration capabilities ${times}`);
       break;
+    default:
+      label = scientMcpToolSummaryLabel(action, phrase, times);
   }
   return { label, failedCount };
 }

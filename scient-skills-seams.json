@@ -22,6 +22,8 @@
     "apps/web/src/routes/settings.skills.tsx",
     "apps/web/src/scient/rightPanel/ScientRightPanelContent.tsx",
     "apps/web/src/scient/threadQueue/composerSnapshot.ts",
+    "packages/client-runtime/src/work-log/scientMcpToolPresentation.test.ts",
+    "packages/shared/src/scientMcpToolPresentation.ts",
     "packages/contracts/src/scientSkillSelection.ts",
     "packages/contracts/src/scientSkills.ts",
     "packages/contracts/src/scientThreadQueue.ts",
@@ -267,7 +269,17 @@
     {
       "path": "packages/shared/src/t3McpToolPresentation.ts",
       "anchor": "export function resolveT3McpToolName",
-      "purpose": "Resolve exact known MCP tool identities through provider prefixes without changing the generic tool inventory (t3McpToolPresentation.test.ts and session-logic.test.ts)."
+      "purpose": "Resolve exact known MCP tool identities through provider prefixes (t3McpToolPresentation.test.ts and session-logic.test.ts), and spread Scient's own tools (SCIENT_MCP_TOOLS, ScientMcpToolSummaryAction) into the shared inventory so every provider names them (scientMcpToolPresentation.test.ts)."
+    },
+    {
+      "path": "packages/client-runtime/src/work-log/presentation.ts",
+      "anchor": "scientMcpToolTarget(definition, input)",
+      "purpose": "Name the skill a Scient skill tool loads or reads from the call's input (scientMcpToolPresentation.test.ts)."
+    },
+    {
+      "path": "packages/client-runtime/src/t3ToolSummary.ts",
+      "anchor": "scientMcpToolSummaryLabel(action, phrase, times)",
+      "purpose": "Summarize collapsed groups of Scient's own tools by family (scientMcpToolPresentation.test.ts)."
     },
     {
       "path": "apps/mobile/src/state/use-thread-composer-state.ts",
