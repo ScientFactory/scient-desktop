@@ -39,6 +39,30 @@ async function runChild(source, deadlines = {}) {
   return result;
 }
 
+function processHasExited(pid) {
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    if (error.code === "ESRCH") return true;
+    throw error;
+  }
+  // An orphan that already exited stays a zombie until its new parent reaps it.
+  try {
+    const stat = NodeFS.readFileSync(`/proc/${pid}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z");
+  } catch {
+    return false;
+  }
+}
+
+async function waitForProcessExit(pid, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!processHasExited(pid)) {
+    if (Date.now() > deadline) assert.fail(`process ${pid} is still running`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 afterEach(() => {
   for (const root of roots.splice(0)) NodeFS.rmSync(root, { recursive: true, force: true });
 });
@@ -204,7 +228,7 @@ describe("actual desktop smoke child lifecycle", () => {
           if (closed) await closed;
           if (pending) await pending;
           if (Number.isInteger(descendantPid) && descendantPid > 0) {
-            assert.throws(() => process.kill(descendantPid, 0), /ESRCH/);
+            await waitForProcessExit(descendantPid);
           }
         } finally {
           if (server.listening) {
