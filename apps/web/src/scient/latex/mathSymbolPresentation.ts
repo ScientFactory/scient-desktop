@@ -1,5 +1,18 @@
 import { convertLatexToMarkup, validateLatex } from "mathlive";
 import { MATH_SYMBOLS, type MathSymbol } from "./mathSymbols";
+import glyphAtlas from "./mathSymbolGlyphs.json";
+import {
+  mathSymbolIllustration,
+  mathSymbolVisualPreview,
+  type MathSymbolIllustration,
+} from "./mathSymbolIllustrations";
+
+export interface MathSymbolOutline {
+  viewBox: string;
+  body: string;
+}
+
+const glyphs: Readonly<Record<string, MathSymbolOutline & { latex: string }>> = glyphAtlas;
 
 let macros: Record<string, { def: string; expand: false }> | undefined;
 
@@ -18,31 +31,49 @@ export function mathSymbolMacros() {
   return macros;
 }
 
-const previews = new Map<string, { markup: string; sourceOnly: boolean }>();
+const previews = new WeakMap<
+  MathSymbol,
+  {
+    markup: string;
+    sourceOnly: boolean;
+    illustration: MathSymbolIllustration | null;
+    outline: MathSymbolOutline | null;
+  }
+>();
 
 export function mathSymbolPreview(symbol: MathSymbol) {
-  const cached = previews.get(symbol.id);
+  const cached = previews.get(symbol);
   if (cached) return cached;
   const extraMacros = mathSymbolMacros();
-  const unsupported = validateLatex(symbol.preview).some(
-    (error) =>
-      error.code === "unknown-command" && !extraMacros[(error.arg ?? "").replace(/^\\/u, "")],
-  );
+  const latex = mathSymbolVisualPreview(symbol);
+  const cannotRender = (source: string) =>
+    validateLatex(source).some(
+      (error) =>
+        error.code === "unknown-command" && !extraMacros[(error.arg ?? "").replace(/^\\/u, "")],
+    );
+  const unsupported = cannotRender(latex);
+  const layoutIllustration = mathSymbolIllustration(symbol);
+  const glyph = glyphs[symbol.id];
   const result = {
     // convertLatexToMarkup's macros option replaces the default dictionary;
     // passing only our extras breaks built-ins such as varDelta and implies.
     // Expand only our display aliases, then let the normal renderer retain all
     // of its default commands. This affects thumbnails, never document source.
-    markup: unsupported
-      ? ""
-      : convertLatexToMarkup(
-          symbol.preview.replace(/\\[A-Za-z]+/gu, (command) => {
-            const macro = extraMacros[command.slice(1)];
-            return macro ? `{${macro.def}}` : command;
-          }),
-        ),
-    sourceOnly: unsupported,
+    markup:
+      unsupported || layoutIllustration
+        ? ""
+        : convertLatexToMarkup(
+            latex.replace(/\\[A-Za-z]+/gu, (command) => {
+              const macro = extraMacros[command.slice(1)];
+              return macro ? `{${macro.def}}` : command;
+            }),
+          ),
+    sourceOnly: latex === symbol.preview ? unsupported : cannotRender(symbol.preview),
+    illustration: layoutIllustration,
+    // Bundled TeX outlines cover package glyphs absent from the screen renderer.
+    // Check the recipe so an edited document macro cannot reuse an unrelated icon.
+    outline: unsupported && glyph?.latex === latex ? glyph : null,
   };
-  previews.set(symbol.id, result);
+  previews.set(symbol, result);
   return result;
 }

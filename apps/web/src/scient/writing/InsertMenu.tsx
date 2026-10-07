@@ -74,12 +74,7 @@ export function InsertMenuContent(props: {
         onInsert={({ rows, columns }) => run(() => onInsertTable(rows, columns))}
       />
     );
-  return (
-    <>
-      {props.unavailableReason && <p className="scient-menu-note">{props.unavailableReason}</p>}
-      {props.layout((id) => renderAction(id), table)}
-    </>
-  );
+  return props.layout((id) => renderAction(id), table);
 }
 
 /** The Insert button and its menu, shared by the document editors. */

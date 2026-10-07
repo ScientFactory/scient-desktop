@@ -1,5 +1,6 @@
 import type { Node as DocumentNode } from "@tiptap/pm/model";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Plugin, PluginKey, type EditorState, type Transaction } from "@tiptap/pm/state";
+import { isOrdinaryTyping } from "./visualTyping";
 import {
   compiledBibliographyItems,
   type CompiledBibliographyItem,
@@ -8,7 +9,11 @@ import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import { latexCounterLabel } from "./latexDocumentStructure";
 import { projectMathNumbering } from "./latexMathNumbering";
 import { latexWithoutComments } from "./latexPackages";
-import { latexRomanNumber } from "./latexVisualDocument";
+import {
+  latexRomanNumber,
+  latexVisualFloatHasCaption,
+  serializeLatexVisualBlock,
+} from "./latexVisualDocument";
 import { algorithmLineLayout } from "./latexAlgorithm";
 import {
   latexEnvironmentDeclarations,
@@ -82,6 +87,76 @@ interface EquationReferences {
 export const latexEquationReferencesKey = new PluginKey<EquationReferences>(
   "latexEquationReferences",
 );
+
+const referenceLayouts = new WeakMap<EquationReferences, EquationReferences>();
+
+export function latexReferencePresentation(state: EditorState) {
+  const references = latexEquationReferencesKey.getState(state);
+  return references && (referenceLayouts.get(references) ?? references);
+}
+
+/** Moving a target with typed text does not change its numbering or visual presentation. */
+export function latexReferenceLayoutChanged(before: EditorState, after: EditorState): boolean {
+  return latexReferencePresentation(before) !== latexReferencePresentation(after);
+}
+
+function mapReferences(previous: EquationReferences, transaction: Transaction): EquationReferences {
+  const position = (value: number) => transaction.mapping.map(value);
+  const headingTitles = new Map<number, string>();
+  for (const [index, step] of transaction.steps.entries()) {
+    if (!("from" in step) || typeof step.from !== "number") continue;
+    const parent = transaction.docs[index]!.resolve(step.from);
+    if (parent.parent.type.name !== "heading") continue;
+    const mapped = transaction.mapping.slice(index).map(parent.before());
+    const heading = transaction.doc.nodeAt(mapped);
+    if (heading?.type.name === "heading") headingTitles.set(mapped, referenceHeadingTitle(heading));
+  }
+  const keyed = <T>(values: Map<number, T>) =>
+    new Map([...values].map(([key, value]) => [position(key), value]));
+  const targets = (values: Map<string, EquationTarget>) =>
+    new Map(
+      [...values].map(([key, value]) => {
+        const mapped = position(value.position);
+        return [key, mapped === value.position ? value : { ...value, position: mapped }];
+      }),
+    );
+  const entries = <T extends { position: number }>(values: T[]) =>
+    values.map((value) => {
+      const mapped = position(value.position);
+      return mapped === value.position ? value : { ...value, position: mapped };
+    });
+  const next = {
+    ...previous,
+    headings: keyed(previous.headings),
+    equations: keyed(previous.equations),
+    statements: keyed(previous.statements),
+    tables: keyed(previous.tables),
+    figures: keyed(previous.figures),
+    algorithms: keyed(previous.algorithms),
+    algorithmLines: keyed(previous.algorithmLines),
+    footnotes: keyed(previous.footnotes),
+    bibliographies: keyed(previous.bibliographies),
+    labels: targets(previous.labels),
+    anchors: targets(previous.anchors),
+    citations: targets(previous.citations),
+    contents: entries(previous.contents).map((entry) => {
+      const title = headingTitles.get(entry.position);
+      return title !== undefined && title !== entry.title ? { ...entry, title } : entry;
+    }),
+    floatContents: entries(previous.floatContents),
+  };
+  referenceLayouts.set(next, referenceLayouts.get(previous) ?? previous);
+  return next;
+}
+
+function referenceHeadingTitle(node: DocumentNode): string {
+  let title = "";
+  node.forEach((child) => {
+    title +=
+      child.text ?? String(child.attrs.linkText ?? child.attrs.tex ?? child.attrs.argument ?? "");
+  });
+  return title;
+}
 
 const highlights = new WeakMap<
   EditorView,
@@ -289,14 +364,6 @@ function equationReferences(
     targetSourceId?: unknown;
   }[] = [];
   const duplicateAnchors = new Set<string>();
-  const inlineTitle = (node: DocumentNode) => {
-    let title = "";
-    node.forEach((child) => {
-      title +=
-        child.text ?? String(child.attrs.linkText ?? child.attrs.tex ?? child.attrs.argument ?? "");
-    });
-    return title;
-  };
   doc.descendants((node, position) => {
     if (node.type.name === "latexRichPreview" && node.attrs.kind === "documentCommand") {
       if (node.attrs.environment === "appendix") {
@@ -419,7 +486,7 @@ function equationReferences(
         headingsReliable && node.attrs.unnumbered !== true && (level <= 3 || level === 6)
           ? local
           : null;
-      const title = inlineTitle(node);
+      const title = referenceHeadingTitle(node);
       result.headings.set(position, { number, chapterName: appendix ? "Appendix" : "Chapter" });
       if (node.attrs.referenceLabel)
         addLabel(String(node.attrs.referenceLabel), {
@@ -469,10 +536,15 @@ function equationReferences(
       ["figure", "figureLayout"].includes(String(node.attrs.kind))
     ) {
       const meta = node.attrs.sourceMeta;
-      const raw = latexWithoutComments(String(node.attrs.raw ?? ""));
+      const raw = latexWithoutComments(
+        node.attrs.kind === "figure" && node.attrs.editable === true
+          ? (serializeLatexVisualBlock(node.toJSON()) ?? String(node.attrs.raw ?? ""))
+          : String(node.attrs.raw ?? ""),
+      );
       const captioned =
-        meta?.captionRange != null ||
-        (node.attrs.kind === "figure" && String(node.attrs.caption ?? "") !== "");
+        node.attrs.kind === "figureLayout"
+          ? meta?.captionRange != null
+          : latexVisualFloatHasCaption({ attrs: node.attrs });
       if (captioned) figureCounter++;
       if (/\\caption\s*\*/u.test(raw)) figuresReliable = false;
       const number = captioned && figuresReliable ? `${chapterPrefix()}${figureCounter}` : null;
@@ -481,6 +553,7 @@ function equationReferences(
       const labelAt = raw.indexOf("\\label");
       if (
         label &&
+        node.attrs.captionRemoved !== true &&
         ((node.attrs.kind === "figure" && captionAt >= 0 && labelAt > captionAt) ||
           (meta?.captionRange && meta?.labelRange?.from > meta.captionRange.from))
       )
@@ -523,9 +596,7 @@ function equationReferences(
     }
     if (node.type.name === "latexRichPreview" && node.attrs.kind === "table") {
       const raw = latexWithoutComments(String(node.attrs.raw ?? ""));
-      const hasCaption =
-        /\\caption\b/u.test(raw) ||
-        (node.attrs.sourceMeta?.hasFloat === true && String(node.attrs.caption ?? "") !== "");
+      const hasCaption = latexVisualFloatHasCaption({ attrs: node.attrs });
       const captions = [...raw.matchAll(/\\caption\b/gu)];
       const numbered =
         hasCaption &&
@@ -550,6 +621,7 @@ function equationReferences(
       // A label before its caption binds an earlier TeX counter, not this table.
       if (
         label &&
+        node.attrs.captionRemoved !== true &&
         (node.attrs.tableCanonical === true ||
           captionAt === undefined ||
           labelAt < 0 ||
@@ -699,10 +771,22 @@ export function latexEquationReferences(
     key: latexEquationReferencesKey,
     state: {
       init: (_config, state) => equationReferences(state.doc, source(), bibliography()),
-      apply: (transaction, previous, _oldState, state) =>
-        transaction.docChanged || transaction.getMeta(latexEquationReferencesKey)
-          ? equationReferences(state.doc, source(), bibliography())
-          : previous,
+      apply: (transaction, previous, _oldState, state) => {
+        if (transaction.getMeta(latexEquationReferencesKey))
+          return equationReferences(state.doc, source(), bibliography());
+        if (!transaction.docChanged) return previous;
+        // Text edits preserve numbering and labels; heading edits update only their titles.
+        if (isOrdinaryTyping(transaction)) {
+          const mapped = mapReferences(previous, transaction);
+          if (decoratedDocument === transaction.before && decoratedReferences === previous) {
+            headingDecorations = headingDecorations.map(transaction.mapping, transaction.doc);
+            decoratedDocument = transaction.doc;
+            decoratedReferences = mapped;
+          }
+          return mapped;
+        }
+        return equationReferences(state.doc, source(), bibliography());
+      },
     },
     view: (view) => ({ destroy: () => clearHighlight(view) }),
     props: {

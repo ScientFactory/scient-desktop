@@ -12,8 +12,13 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { TextSelection } from "@tiptap/pm/state";
 import { LatexDraftContext, restoredLatexFieldDraft } from "./LatexTextField";
-import { latexTableInlineContent, serializeLatexVisualBlock } from "./latexVisualDocument";
+import {
+  latexTableInlineContent,
+  serializeLatexVisualBlock,
+  latexVisualNodeSignature,
+} from "./latexVisualDocument";
 import { LatexWritingKeys } from "./latexWritingKeys";
+import { LatexStructuredSelection } from "./latexStructuredSelection";
 import {
   activateLatexEditingTarget,
   clearLatexEditingTarget,
@@ -55,6 +60,15 @@ export function LatexInlineField(props: {
     shouldRerenderOnTransaction: false,
     extensions: [
       LatexWritingKeys,
+      LatexStructuredSelection.configure({
+        source: (node) => {
+          const document = inlineDocument(current.current.source);
+          return latexVisualNodeSignature(document.content[0]!) ===
+            latexVisualNodeSignature(node.toJSON())
+            ? current.current.source
+            : null;
+        },
+      }),
       StarterKit.configure({
         document: false,
         undoRedo: false,
@@ -116,7 +130,7 @@ export function LatexInlineField(props: {
           current.current.onTab(1);
           return true;
         }
-        if (!command && !event.shiftKey && view.state.selection.empty) {
+        if (!command && !event.altKey && !event.shiftKey && view.state.selection.empty) {
           const { $from } = view.state.selection;
           if (event.key === "ArrowLeft" && $from.parentOffset === 0) {
             current.current.onTab(-1);
@@ -176,14 +190,18 @@ export function LatexInlineField(props: {
       // React node views must update after the enclosing document's commit.
       queueMicrotask(() => {
         if (cancelled || editor.isDestroyed || pending.current !== null) return;
-        const position = editor.state.selection.from;
+        const { from, to, anchor, head } = editor.state.selection;
+        const marks = editor.state.storedMarks;
         editor.commands.setContent(inlineDocument(props.source), { emitUpdate: false });
         editor.view.dispatch(
-          editor.state.tr.setSelection(
-            TextSelection.near(
-              editor.state.doc.resolve(Math.min(position, editor.state.doc.content.size)),
-            ),
-          ),
+          editor.state.tr
+            .setSelection(
+              TextSelection.between(
+                editor.state.doc.resolve(Math.min(anchor, editor.state.doc.content.size - 1)),
+                editor.state.doc.resolve(Math.min(head, editor.state.doc.content.size - 1)),
+              ),
+            )
+            .setStoredMarks(from === to ? marks : null),
         );
         acknowledged.current = props.source;
       });
@@ -238,8 +256,9 @@ export function LatexInlineField(props: {
       data-table-cell-width={props.width}
       data-empty={!latexTableInlineContent(props.source)?.length || undefined}
       style={props.style}
-      onFocusCapture={() => {
-        if (editor) activateLatexEditingTarget(props.owner, editor);
+      onFocusCapture={(event) => {
+        if (editor && event.currentTarget.contains(event.target))
+          activateLatexEditingTarget(props.owner, editor);
       }}
     >
       <LatexInlineOwnerContext value={props.owner}>

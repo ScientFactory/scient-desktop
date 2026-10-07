@@ -1,3 +1,5 @@
+import { LATEX_DIRECTION_MARKS, latexDirectionMark } from "./latexLanguage";
+
 /** Text styles understood by both the source adapter and the editable canvas. */
 export const LATEX_TEXT_SIZES = [
   "tiny",
@@ -24,6 +26,7 @@ export const LATEX_INLINE_MARKS: Readonly<Record<string, string>> = {
   textsl: "latexSlanted",
   textup: "latexUpright",
   textmd: "latexMedium",
+  ...Object.fromEntries(LATEX_DIRECTION_MARKS.map(({ command, name }) => [command, name])),
 };
 
 export const LATEX_TEXT_DECLARATIONS: Readonly<Record<string, string>> = {
@@ -50,6 +53,7 @@ export const LATEX_CANVAS_TEXT_MARKS = [
 ];
 
 function markGroup(mark: string): string {
+  if (latexDirectionMark(mark)) return "direction";
   if (mark.startsWith("latexSize_")) return "size";
   if (["code", "latexRoman", "latexSans"].includes(mark)) return "family";
   if (["italic", "latexSlanted", "latexUpright", "latexSmallCaps"].includes(mark)) return "shape";

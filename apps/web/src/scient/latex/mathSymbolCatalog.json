@@ -337,11 +337,13 @@
   },
   {
     "category": "latex_dots",
-    "command": "\\ldots"
+    "command": "\\ldots",
+    "glyph": "…"
   },
   {
     "category": "latex_dots",
-    "command": "\\cdots"
+    "command": "\\cdots",
+    "glyph": "⋯"
   },
   {
     "category": "latex_dots",
@@ -349,11 +351,13 @@
   },
   {
     "category": "latex_dots",
-    "command": "\\ddots"
+    "command": "\\ddots",
+    "glyph": "⋱"
   },
   {
     "category": "latex_dots",
     "command": "\\iddots",
+    "glyph": "⋰",
     "packages": ["mathdots"]
   },
   {
@@ -1906,6 +1910,7 @@
   {
     "category": "latex_ams_misc",
     "command": "\\CheckedBox",
+    "glyph": "☑",
     "packages": ["wasysym"]
   },
   {
@@ -2176,11 +2181,13 @@
   {
     "category": "latex_ams_misc",
     "command": "\\LEFTcircle",
+    "glyph": "◐",
     "packages": ["wasysym"]
   },
   {
     "category": "latex_ams_misc",
     "command": "\\RIGHTcircle",
+    "glyph": "◑",
     "packages": ["wasysym"]
   },
   {
@@ -2532,6 +2539,7 @@
   {
     "category": "latex_ams_misc",
     "command": "\\APLinv",
+    "glyph": "⌹",
     "packages": ["wasysym"]
   },
   {
@@ -2863,11 +2871,13 @@
   {
     "category": "latex_ams_arrows",
     "command": "\\leftarrowtriangle",
+    "glyph": "⇽",
     "packages": ["stmaryrd"]
   },
   {
     "category": "latex_ams_arrows",
     "command": "\\rightarrowtriangle",
+    "glyph": "⇾",
     "packages": ["stmaryrd"]
   },
   {
@@ -3387,6 +3397,7 @@
   {
     "category": "latex_ams_rel",
     "command": "\\sslash",
+    "glyph": "⫽",
     "packages": ["stmaryrd"]
   },
   {
@@ -3402,6 +3413,7 @@
   {
     "category": "latex_ams_rel",
     "command": "\\merge",
+    "glyph": "⩕",
     "packages": ["stmaryrd"]
   },
   {
@@ -3423,16 +3435,19 @@
   {
     "category": "latex_ams_rel",
     "command": "\\interleave",
+    "glyph": "⦀",
     "packages": ["stmaryrd"]
   },
   {
     "category": "latex_ams_rel",
     "command": "\\leftslice",
+    "glyph": "⪦",
     "packages": ["stmaryrd"]
   },
   {
     "category": "latex_ams_rel",
     "command": "\\rightslice",
+    "glyph": "⪧",
     "packages": ["stmaryrd"]
   },
   {
@@ -3443,11 +3458,13 @@
   {
     "category": "latex_ams_rel",
     "command": "\\talloblong",
+    "glyph": "⫾",
     "packages": ["stmaryrd"]
   },
   {
     "category": "latex_ams_rel",
     "command": "\\fatsemi",
+    "glyph": "⨟",
     "packages": ["stmaryrd"]
   },
   {
@@ -3477,6 +3494,7 @@
   {
     "category": "latex_ams_rel",
     "command": "\\dblcolon",
+    "glyph": "∷",
     "packages": ["mathtools"]
   },
   {
@@ -3971,31 +3989,37 @@
   {
     "category": "latex_ams_ops",
     "command": "\\boxast",
+    "glyph": "⧆",
     "packages": ["stmaryrd"]
   },
   {
     "category": "latex_ams_ops",
     "command": "\\boxbar",
+    "glyph": "◫",
     "packages": ["stmaryrd"]
   },
   {
     "category": "latex_ams_ops",
     "command": "\\boxslash",
+    "glyph": "⧄",
     "packages": ["stmaryrd"]
   },
   {
     "category": "latex_ams_ops",
     "command": "\\boxbslash",
+    "glyph": "⧅",
     "packages": ["stmaryrd"]
   },
   {
     "category": "latex_ams_ops",
     "command": "\\boxcircle",
+    "glyph": "⧇",
     "packages": ["stmaryrd"]
   },
   {
     "category": "latex_ams_ops",
     "command": "\\boxbox",
+    "glyph": "⧈",
     "packages": ["stmaryrd"]
   },
   {
@@ -4100,6 +4124,7 @@
   {
     "category": "latex_ams_ops",
     "command": "\\bigsqcap",
+    "glyph": "⨅",
     "packages": ["stmaryrd"]
   },
   {
@@ -4115,6 +4140,7 @@
   {
     "category": "latex_ams_ops",
     "command": "\\biginterleave",
+    "glyph": "⫼",
     "packages": ["stmaryrd"]
   },
   {
@@ -4211,11 +4237,13 @@
   {
     "category": "latex_ams_ops",
     "command": "\\varobar",
+    "glyph": "⦶",
     "packages": ["stmaryrd"]
   },
   {
     "category": "latex_ams_ops",
     "command": "\\varodot",
+    "glyph": "⦿",
     "packages": ["stmaryrd"]
   },
   {
@@ -4226,11 +4254,13 @@
   {
     "category": "latex_ams_ops",
     "command": "\\varobslash",
+    "glyph": "⦸",
     "packages": ["stmaryrd"]
   },
   {
     "category": "latex_ams_ops",
     "command": "\\varocircle",
+    "glyph": "⦾",
     "packages": ["stmaryrd"]
   },
   {
@@ -4256,11 +4286,13 @@
   {
     "category": "latex_ams_ops",
     "command": "\\varolessthan",
+    "glyph": "⧀",
     "packages": ["stmaryrd"]
   },
   {
     "category": "latex_ams_ops",
     "command": "\\varogreaterthan",
+    "glyph": "⧁",
     "packages": ["stmaryrd"]
   },
   {
@@ -4297,11 +4329,13 @@
   {
     "category": "latex_delim",
     "command": "\\llbracket",
+    "glyph": "⟦",
     "packages": ["stmaryrd"]
   },
   {
     "category": "latex_delim",
     "command": "\\rrbracket",
+    "glyph": "⟧",
     "packages": ["stmaryrd"]
   },
   {
@@ -4327,21 +4361,25 @@
   {
     "category": "latex_delim",
     "command": "\\Lbag",
+    "glyph": "⟅",
     "packages": ["stmaryrd"]
   },
   {
     "category": "latex_delim",
     "command": "\\Rbag",
+    "glyph": "⟆",
     "packages": ["stmaryrd"]
   },
   {
     "category": "latex_delim",
     "command": "\\llparenthesis",
+    "glyph": "⦇",
     "packages": ["stmaryrd"]
   },
   {
     "category": "latex_delim",
     "command": "\\rrparenthesis",
+    "glyph": "⦈",
     "packages": ["stmaryrd"]
   },
   {
@@ -4352,6 +4390,7 @@
   {
     "category": "latex_delim",
     "command": "\\bindnasrepma",
+    "glyph": "⅋",
     "packages": ["stmaryrd"]
   }
 ]

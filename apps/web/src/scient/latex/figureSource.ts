@@ -1,6 +1,6 @@
 import { escapeDocumentText } from "../documents/documentTemplates";
 
-function relativeAsset(documentPath: string, assetPath: string) {
+export function relativeLatexImagePath(documentPath: string, assetPath: string) {
   const parent = documentPath.replaceAll("\\", "/").split("/").slice(0, -1);
   const target = assetPath.replaceAll("\\", "/").split("/");
   while (parent.length && target.length && parent[0] === target[0]) {
@@ -32,6 +32,6 @@ export function latexFigureSource(input: {
     suffix = 2;
   while (labels.has(label)) label = `fig:${slug}-${suffix++}`;
   const caption = escapeDocumentText(input.caption ?? "");
-  const path = relativeAsset(input.documentPath, input.assetPath);
+  const path = relativeLatexImagePath(input.documentPath, input.assetPath);
   return `\\begin{figure}[htbp]\n\\centering\n\\includegraphics[width=${(input.width ?? 80) / 100}\\textwidth]{${path}}${caption ? `\n\\caption{${caption}}\n\\label{${label}}` : ""}\n\\end{figure}`;
 }

@@ -1,4 +1,7 @@
 import type { JSONContent } from "@tiptap/core";
+import { latexDirectionMark } from "./latexLanguage";
+import { latexSourceArgument, latexSourceCommands } from "./latexSourceSyntax";
+import { latexTableColumns } from "./latexTableAuthoring";
 import { parseLatexTikz } from "./latexTikz";
 import { parseLatexAlgorithm, algorithmLineSource } from "./latexAlgorithm";
 import {
@@ -51,6 +54,7 @@ import {
   projectMathNumbering,
   singleMathReferenceLabel,
   withMathReferenceLabel,
+  withMathNumbering,
 } from "./latexMathNumbering";
 import { MATH_SYMBOLS, newMathSymbolPackages } from "./mathSymbols";
 import {
@@ -59,6 +63,7 @@ import {
   latexPackageInventory,
   newLatexCommandPackages,
   latexCommands,
+  latexWithoutComments,
 } from "./latexPackages";
 import {
   latexLengthInches,
@@ -557,7 +562,7 @@ interface InlineGroup {
 
 function inlineGroup(source: string, at: number, marks: readonly string[]): InlineGroup | null {
   const rest = source.slice(at);
-  const command = /^\\([A-Za-z]+)[\t\r\n ]*\{/u.exec(rest);
+  const command = /^\\(foreignlanguage\{(?:english|hebrew)\}|[A-Za-z]+)[\t\r\n ]*\{/u.exec(rest);
   const mark = command ? LATEX_INLINE_MARKS[command[1]!] : undefined;
   if (rest[0] !== "{" && mark === undefined) return null;
   const opening = mark === undefined ? at : at + command![0].length - 1;
@@ -649,7 +654,12 @@ function withoutVisualComments(source: string): string {
 }
 
 /** Retain hidden comments even when replacing or deleting their surrounding content. */
-function preserveSourceComments(original: string, replacement: string, eol: string): string {
+function preserveSourceComments(
+  original: string,
+  replacement: string,
+  eol: string,
+  following: string,
+): string {
   if (!original.includes("%") && !replacement.includes("%")) return replacement;
   const existing = new Map<string, number>();
   const replacementRanges = latexCommentRanges(replacement);
@@ -659,7 +669,11 @@ function preserveSourceComments(original: string, replacement: string, eol: stri
   }
   let result = replacement;
   // A retained final comment must not swallow the following source or new text.
-  if (replacementRanges.at(-1)?.to === replacement.length && !replacement.endsWith("\n"))
+  if (
+    replacementRanges.at(-1)?.to === replacement.length &&
+    !replacement.endsWith("\n") &&
+    !/^\r?\n/u.test(following)
+  )
     result += eol;
   for (const range of latexCommentRanges(original)) {
     const comment = original.slice(range.from, range.to).replace(/\r?\n$/u, "");
@@ -809,7 +823,13 @@ function parseInline(
       nodes.push(
         ...content.map((node) => ({
           ...node,
-          marks: [{ type: "latexColor", attrs: colored.attrs }, ...(node.marks ?? [])],
+          marks: [
+            {
+              type: colored.attrs.command === "textcolor" ? "latexColor" : "latexBackground",
+              attrs: colored.attrs,
+            },
+            ...(node.marks ?? []),
+          ],
         })),
       );
       at = colored.body.end;
@@ -1010,12 +1030,25 @@ function serializeNumberedMath(
   source: string,
 ): string | null {
   const original = parseLatexVisualMathSource(source, true);
+  if (!original?.numberingSource) return null;
   if (
-    !original?.numberingSource ||
     original.environment !== (attributes.environment ?? undefined) ||
     (original.wrapper ?? "bracket") !== (attributes.wrapper ?? "bracket")
-  )
-    return null;
+  ) {
+    // The compact Numbered control may change a single equation's wrapper,
+    // including one with a label. Tags and per-row metadata stay protected.
+    const switched = withMathNumbering(source, attributes.environment === "equation");
+    if (switched === null) return null;
+    const parsed = parseLatexVisualMathSource(switched, true);
+    if (
+      !parsed ||
+      parsed.environment !== (attributes.environment ?? undefined) ||
+      (parsed.wrapper ?? "bracket") !== (attributes.wrapper ?? "bracket") ||
+      JSON.stringify(parsed.numbering ?? null) !== JSON.stringify(attributes.numbering ?? null)
+    )
+      return null;
+    return patchNumberedMathSource(switched, attributes.tex);
+  }
   if (JSON.stringify(original.numbering ?? null) !== JSON.stringify(attributes.numbering ?? null)) {
     // Only the single outer reference label may change here. Row metadata and
     // all other numbering commands still have to match the original source.
@@ -1152,6 +1185,18 @@ function nextBlockEnd(body: string, from: number): number {
       if (end < 0) return body.length;
       index = end - 1;
       continue;
+    }
+    // Inline formulas are one paragraph atom. Their environments, row breaks
+    // and spacing commands must not become document-level block boundaries.
+    if (
+      body.startsWith("\\(", index) ||
+      (body[index] === "$" && body[index - 1] !== "$" && body[index + 1] !== "$")
+    ) {
+      const math = inlinePiece(body, index, []);
+      if (math?.node?.type === "latexInlineMath") {
+        index = math.end - 1;
+        continue;
+      }
     }
     if (depth === 0 && index > from) {
       if (
@@ -1790,6 +1835,15 @@ function tableAlignments(columnSpec: string, width: number): TableAlignment[] {
   return Array.from({ length: width }, (_, index) => alignments[index] ?? "left");
 }
 
+/** Live caption edits take precedence over the preserved source snapshot. */
+export function latexVisualFloatHasCaption(node: JSONContent) {
+  return (
+    node.attrs?.captionRemoved !== true &&
+    (String(node.attrs?.caption ?? "") !== "" ||
+      /\\caption\b/u.test(latexWithoutComments(String(node.attrs?.raw ?? ""))))
+  );
+}
+
 /** Read presentation from the preserved table source; never serialize it as edits. */
 export function latexVisualTablePresentation(source: string) {
   const body = tabularBody(source);
@@ -2019,6 +2073,9 @@ export interface LatexTableCellLayout {
   left: boolean;
   right: boolean;
   background: string | null;
+  ruleColor?: string;
+  topColor?: string;
+  bottomColor?: string;
 }
 
 export function latexTableSelectionBounds(
@@ -2058,37 +2115,22 @@ export function latexTableSelectionBounds(
   return { firstRow, lastRow, firstColumn, lastColumn };
 }
 
-function tableRowColor(value: string): string | null {
-  const colors: Record<string, readonly number[]> = {
-    black: [0, 0, 0],
-    white: [255, 255, 255],
-    red: [255, 0, 0],
-    green: [0, 255, 0],
-    blue: [0, 0, 255],
-    cyan: [0, 255, 255],
-    magenta: [255, 0, 255],
-    yellow: [255, 255, 0],
-    gray: [128, 128, 128],
-  };
-  const match = /^([a-z]+)(?:!(\d{1,3})(?:!([a-z]+))?)?$/u.exec(value.trim());
-  if (!match) return null;
-  const first = colors[match[1]!];
-  const second = colors[match[3] ?? "white"];
-  const proportion = match[2] === undefined ? 1 : Number(match[2]) / 100;
-  if (!first || !second || proportion > 1) return null;
-  return `rgb(${first.map((channel, index) => Math.round(channel * proportion + second[index]! * (1 - proportion))).join(", ")})`;
-}
-
 /** Literal spans, colors and rules keep their source; only cell bodies are editable. */
 function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
-  if (!["tabular", "longtable"].includes(body.environment) || !/^[\s|lcr]+$/u.test(body.columnSpec))
-    return null;
-  const spec = body.columnSpec.replace(/\s/gu, "");
-  if (spec.includes("||")) return null;
-  const columns = [...spec.matchAll(/[lcr]/gu)];
+  const columns = latexTableColumns(body.columnSpec);
+  if (!columns || body.columnSpec.includes("||")) return null;
   const width = columns.length;
   const slices = splitTable(body.source, "row");
-  const count = slices.filter((slice) => slice.to < body.source.length).length;
+  const count = slices.filter(
+    (slice) =>
+      slice.to < body.source.length ||
+      slice.source
+        .replace(
+          /\\(?:hline|toprule|midrule|bottomrule)\b|\\cline\{\d+-\d+\}|\\arrayrulecolor\{[^{}]+\}/gu,
+          "",
+        )
+        .trim(),
+  ).length;
   if (!width || width > 20 || !count || count > 100) return null;
   const layout: (LatexTableCellLayout | null)[][] = Array.from({ length: count }, () =>
     Array.from({ length: width }, () => null),
@@ -2102,12 +2144,14 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
   );
   const rules = Array.from({ length: count + 1 }, () => Array.from({ length: width }, () => false));
   const colors: (string | null)[] = Array.from({ length: count }, () => null);
+  let ruleColor = "currentColor";
+  const ruleColors = Array.from({ length: count + 1 }, () => ruleColor);
   for (const [rowIndex, slice] of slices.entries()) {
     let prefix = 0;
     while (true) {
       const whitespace = /^\s*/u.exec(slice.source.slice(prefix))![0];
       prefix += whitespace.length;
-      const command = /^\\(hline|toprule|midrule|bottomrule|cline|rowcolor)\b/u.exec(
+      const command = /^\\(hline|toprule|midrule|bottomrule|cline|rowcolor|arrayrulecolor)\b/u.exec(
         slice.source.slice(prefix),
       );
       if (!command) break;
@@ -2130,13 +2174,18 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
             return null;
           for (let column = Number(range[1]) - 1; column < Number(range[2]); column++)
             rules[rowIndex]![column] = true;
+        } else if (command[1] === "arrayrulecolor") {
+          const color = latexColorCss(argument.source);
+          if (!color) return null;
+          ruleColor = color;
         } else {
-          const color = tableRowColor(argument.source);
+          const color = latexColorCss(argument.source);
           if (!color || rowIndex === count || colors[rowIndex]) return null;
           colors[rowIndex] = color;
         }
       }
     }
+    ruleColors[rowIndex] = ruleColor;
     if (rowIndex === count) {
       if (slice.source.slice(prefix).trim()) return null;
       continue;
@@ -2156,9 +2205,14 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
       let to = raw.length;
       let colSpan = 1;
       let rowSpan = 1;
-      let alignment = columns[column]![0];
-      let left = spec[columns[column]!.index! - 1] === "|";
-      let right = spec[columns[column]!.index! + 1] === "|";
+      let alignment =
+        columns[column]!.alignment === "center"
+          ? "c"
+          : columns[column]!.alignment === "right"
+            ? "r"
+            : "l";
+      let left = columns[column]!.left;
+      let right = columns[column]!.right;
       if (/^\\multicolumn\b/u.test(raw)) {
         const span = requiredArgument(raw, "\\multicolumn".length);
         const format = span && requiredArgument(raw, span.next);
@@ -2200,6 +2254,16 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
       }
       if (colSpan < 1 || column + colSpan > width || rowSpan < 1 || rowIndex + rowSpan > count)
         return null;
+      let background =
+        colors[rowIndex] ??
+        (columns[column]!.background ? latexColorCss(columns[column]!.background) : null);
+      const cellColor = /^\s*\\cellcolor\b/u.exec(raw.slice(from, to));
+      if (cellColor) {
+        const color = requiredArgument(raw, from + cellColor[0].length);
+        if (!color || !latexColorCss(color.source)) return null;
+        background = latexColorCss(color.source);
+        from = color.next;
+      }
       const editable = editableTableCell(raw.slice(from, to), from, true);
       if (!editable) return null;
       const geometry: LatexTableCellLayout = {
@@ -2212,7 +2276,8 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
         bottom: false,
         left,
         right,
-        background: null,
+        background,
+        ruleColor,
       };
       for (let r = rowIndex; r < rowIndex + rowSpan; r++) {
         for (let c = column; c < column + colSpan; c++) {
@@ -2251,7 +2316,8 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
           return null;
       cell.top = top.every(Boolean);
       cell.bottom = bottom.every(Boolean);
-      cell.background = colors[rowIndex]!;
+      cell.topColor = ruleColors[rowIndex]!;
+      cell.bottomColor = ruleColors[rowIndex + cell.rowSpan]!;
     }
   }
   return {
@@ -2296,7 +2362,7 @@ function parseLongTablePreview(
       .replace(/\\thetable\s*(?:\{\})?/gu, "SCIENTTABLENUMBER")
       .replace(/\\(?:tiny|scriptsize|footnotesize|small|normalsize)\b\s*/gu, "");
     if (
-      !splitTable(rendered, "row").some((row) =>
+      !splitTable(rendered.replace(/\\arrayrulecolor\{[^{}]+\}/gu, ""), "row").some((row) =>
         row.source.replace(TABLE_RULE_PREFIX, "").replace(TABLE_RULE_SUFFIX, "").trim(),
       )
     )
@@ -2352,7 +2418,9 @@ function parseTablePreview(
   if (body === null || body.source.length > 100_000) return null;
   if (body.environment === "longtable" && !preparedBody)
     return parseLongTablePreview(source, body, setup);
-  const needsSpans = /\\(?:multicolumn|multirow|rowcolor|cline)\b/u.test(body.source);
+  const needsSpans =
+    /\\(?:multicolumn|multirow|rowcolor|cellcolor|cline|arrayrulecolor)\b/u.test(body.source) ||
+    /\\columncolor\b/u.test(body.columnSpec);
   const spanned = needsSpans ? parseSpannedTable(body) : null;
   if (needsSpans && !spanned) return null;
   const parsedRows =
@@ -2495,11 +2563,8 @@ interface OptionalArgumentRange {
 }
 
 function optionalArgumentRange(source: string, cursor: number): OptionalArgumentRange | null {
-  while (/\s/u.test(source[cursor] ?? "")) cursor++;
-  if (source[cursor] !== "[") return null;
-  const close = source.indexOf("]", cursor + 1);
-  if (close < 0 || source.slice(cursor + 1, close).includes("[")) return null;
-  return { source: source.slice(cursor + 1, close), from: cursor + 1, to: close, end: close + 1 };
+  const value = latexSourceArgument(source, cursor, "[", "]");
+  return value ? { source: value.value, from: value.from, to: value.to, end: value.end } : null;
 }
 
 function commandFullRange(
@@ -3019,6 +3084,7 @@ function parseFigurePreview(source: string): JSONContent | null {
       figureOptions: options,
       figurePlacement: opening[2] ?? "",
       figureAlignment: alignment,
+      figureCaptionPosition: captionRange && captionRange.from < include.index ? "above" : "below",
       figureStarred: environment.endsWith("*"),
       editable,
       sourceMeta: editable
@@ -3271,6 +3337,13 @@ function patchPageLayoutStructure(
   setup: LatexVisualSetup,
   rootSource: string | null,
 ): string | null {
+  // Property commands reproject an explicitly changed wrapper before dispatch.
+  // Accept its retained source only when it represents the entire requested node.
+  const proposed = String(next.attrs?.raw ?? "");
+  if (proposed && proposed !== raw) {
+    const parsed = classifyBlock(proposed, 0, setup);
+    if (parsed && roundTripSignature(parsed) === roundTripSignature(next)) return proposed;
+  }
   if (next.attrs?.layout?.kind === "algorithm") {
     const algorithm = parseLatexAlgorithm(raw);
     const original = algorithm && algorithmContent(algorithm);
@@ -3364,10 +3437,19 @@ function patchPageLayoutStructure(
     return result;
   }
   const opening = latexPageLayoutOpening(raw);
+  const replacement =
+    opening?.layout.kind === "direction"
+      ? latexPageLayoutOpening(String(next.attrs?.raw ?? ""))
+      : null;
+  const renameDirection =
+    replacement?.layout.kind === "direction" &&
+    next.attrs?.environment === replacement.environment &&
+    JSON.stringify(next.attrs.layout) === JSON.stringify(replacement.layout);
   if (
     !opening ||
-    next.attrs?.environment !== opening.environment ||
-    JSON.stringify(next.attrs.layout) !== JSON.stringify(opening.layout)
+    (!renameDirection &&
+      (next.attrs?.environment !== opening.environment ||
+        JSON.stringify(next.attrs.layout) !== JSON.stringify(opening.layout)))
   )
     return null;
   const end = matchingEnvironmentEnd(raw, 0);
@@ -3380,7 +3462,12 @@ function patchPageLayoutStructure(
     { type: "doc", content: next.content ?? [] },
     { rootSource, allowRootUpdates: false },
   );
-  return changed ? raw.slice(0, opening.from) + changed.source + raw.slice(to) : null;
+  if (!changed) return null;
+  return renameDirection
+    ? String(next.attrs!.raw).slice(0, replacement.from) +
+        changed.source +
+        `\\end{${replacement.environment}}`
+    : raw.slice(0, opening.from) + changed.source + raw.slice(to);
 }
 
 function parseScientificStructure(
@@ -3531,7 +3618,7 @@ export function projectLatexVisualDocument(
     const supportedColors = (node: JSONContent): boolean =>
       (node.marks ?? []).every(
         (mark) =>
-          mark.type !== "latexColor" ||
+          !["latexColor", "latexBackground"].includes(mark.type) ||
           (latexColorCss(String(mark.attrs?.color ?? ""), setup.colors) !== null &&
             (mark.attrs?.command !== "fcolorbox" ||
               latexColorCss(String(mark.attrs?.background ?? ""), setup.colors) !== null)),
@@ -3745,21 +3832,48 @@ export function latexInlineCommandSource(
 }
 
 function serializeInline(nodes: readonly JSONContent[] | undefined): string {
-  // One color box must stay one TeX box when its text contains multiple marks.
-  if (nodes?.some((node) => node.marks?.some((mark) => mark.type === "latexColor"))) {
+  // A bilingual phrase must remain one bidi isolate even when it contains bold text or math.
+  const direction = nodes
+    ?.flatMap((node) => node.marks ?? [])
+    .find((mark) => latexDirectionMark(mark.type));
+  if (nodes && direction) {
     let result = "";
     for (let at = 0; at < nodes.length;) {
-      const color = nodes[at]!.marks?.find((mark) => mark.type === "latexColor");
+      const marked = nodes[at]!.marks?.some((mark) => mark.type === direction.type) ?? false;
+      let end = at + 1;
+      while (
+        end < nodes.length &&
+        (nodes[end]!.marks?.some((mark) => mark.type === direction.type) ?? false) === marked
+      )
+        end++;
+      const content = nodes.slice(at, end).map((node) => ({
+        ...node,
+        marks: (node.marks ?? []).filter((mark) => mark.type !== direction.type),
+      }));
+      const inner = serializeInline(content);
+      result += marked ? latexTextMarkSource(direction.type, inner) : inner;
+      at = end;
+    }
+    return result;
+  }
+  // One color box must stay one TeX box when its text contains multiple marks.
+  const colorType = ["latexColor", "latexBackground"].find((type) =>
+    nodes?.some((node) => node.marks?.some((mark) => mark.type === type)),
+  );
+  if (colorType && nodes) {
+    let result = "";
+    for (let at = 0; at < nodes.length;) {
+      const color = nodes[at]!.marks?.find((mark) => mark.type === colorType);
       const signature = JSON.stringify(color);
       let end = at + 1;
       while (
         end < nodes.length &&
-        JSON.stringify(nodes[end]!.marks?.find((mark) => mark.type === "latexColor")) === signature
+        JSON.stringify(nodes[end]!.marks?.find((mark) => mark.type === colorType)) === signature
       )
         end++;
       const content = nodes.slice(at, end).map((node) => {
         if (!color) return node;
-        const index = node.marks!.findIndex((mark) => mark.type === "latexColor");
+        const index = node.marks!.findIndex((mark) => mark.type === colorType);
         return { ...node, marks: node.marks!.filter((_, at) => at !== index) };
       });
       const inner = serializeInline(content);
@@ -3805,10 +3919,9 @@ function serializeInline(nodes: readonly JSONContent[] | undefined): string {
         value = escapeText(node.text ?? "");
       } else return "";
       for (const mark of (node.marks ?? []).toReversed())
-        value =
-          mark.type === "latexColor"
-            ? (latexColorMarkSource(mark.attrs, value) ?? "")
-            : latexTextMarkSource(mark.type, value);
+        value = ["latexColor", "latexBackground"].includes(mark.type)
+          ? (latexColorMarkSource(mark.attrs, value) ?? "")
+          : latexTextMarkSource(mark.type, value);
       return value;
     })
     .join("");
@@ -3973,6 +4086,103 @@ export function latexVisualTableCellsClipboard(
   return `\\begin{tabular}{${alignments}}\n${cells.map((row) => `${row.join(" & ")} \\\\`).join("\n")}\n\\end{tabular}`;
 }
 
+/** Edit metadata against its original ranges without rebuilding the table grid. */
+function tableMetadataPatches(node: JSONContent, source: string) {
+  const meta = node.attrs?.sourceMeta;
+  const caption = node.attrs?.caption;
+  const label = safeLatexLabel(node.attrs?.label ?? "");
+  if (!meta || typeof caption !== "string" || label === null) return null;
+  const removeCaption = node.attrs?.captionRemoved === true;
+  const patches: { from: number; to: number; value: string; outsideExpansion?: boolean }[] = [];
+  const commandRange = (name: string, range: { from: number; to: number }) => {
+    for (const command of latexSourceCommands(source)) {
+      if (command.name !== name) continue;
+      const argument = latexSourceArgument(source, command.to);
+      if (argument?.from === range.from && argument.to === range.to)
+        return { from: command.from, to: argument.end };
+    }
+    return null;
+  };
+  let removedCaption: { from: number; to: number } | null = null;
+  let removedLabel: { from: number; to: number } | null = null;
+  for (const [name, range, value] of [
+    ["caption", meta.captionRange, caption],
+    ["label", meta.labelRange, label],
+  ] as const) {
+    if (range === null) continue;
+    if (
+      !range ||
+      !Number.isInteger(range.from) ||
+      !Number.isInteger(range.to) ||
+      range.from < 0 ||
+      range.to < range.from ||
+      range.to > source.length ||
+      typeof range.original !== "string"
+    )
+      return null;
+    if (removeCaption || (name === "label" && value === "" && range.original !== "")) {
+      const command = commandRange(name, range);
+      if (!command) return null;
+      patches.push({ ...command, value: "", outsideExpansion: true });
+      if (name === "caption") removedCaption = command;
+      else removedLabel = command;
+    } else if (value !== range.original) {
+      patches.push({
+        from: range.from,
+        to: range.to,
+        value: name === "caption" ? escapeText(value) : value,
+      });
+    }
+  }
+  if (removedCaption && meta.longtable) {
+    // A longtable caption owns a row terminator; removing only its text leaves
+    // an empty row in the first-page header.
+    let after = removedCaption.to;
+    if (
+      removedLabel &&
+      removedLabel.from >= after &&
+      /^(?:\s|%[^\r\n]*(?:\r?\n|$))*$/u.test(source.slice(after, removedLabel.from))
+    )
+      after = removedLabel.to;
+    const trivia = /^(?:\s|%[^\r\n]*(?:\r?\n|$))*/u.exec(source.slice(after))![0];
+    const from = after + trivia.length;
+    const separator = /^(?:\\\\\*?|\\tabularnewline\b)/u.exec(source.slice(from));
+    if (separator) {
+      const option = latexSourceArgument(source, from + separator[0].length, "[", "]");
+      patches.push({
+        from,
+        to: option?.end ?? from + separator[0].length,
+        value: "",
+        outsideExpansion: true,
+      });
+    }
+  }
+  if (removeCaption) return patches;
+  const addCaption =
+    meta.captionRange === null && caption !== "" && !commandArgumentRange(source, "caption");
+  const addLabel =
+    meta.labelRange === null && label !== "" && !commandArgumentRange(source, "label");
+  if (!addCaption && !addLabel) return patches;
+  if (!meta.hasFloat && !meta.longtable) return null;
+  const eol = source.includes("\r\n") ? "\r\n" : "\n";
+  if (addCaption) {
+    const at = meta.longtable ? meta.bodyFrom : meta.outerInsertAt;
+    if (!Number.isInteger(at) || at < 0 || at > source.length) return null;
+    const reference = addLabel ? `\\label{${label}}` : "";
+    patches.push({
+      from: at,
+      to: at,
+      value: `${eol}\\caption{${escapeText(caption)}}${reference}${meta.longtable ? "\\\\" : ""}${eol}`,
+      outsideExpansion: true,
+    });
+  } else if (addLabel) {
+    const at = meta.captionRange?.to + 1;
+    if (!Number.isInteger(at) || at < 0 || at > source.length) return null;
+    patches.push({ from: at, to: at, value: `\\label{${label}}`, outsideExpansion: true });
+  }
+  return patches;
+}
+
 function preservedTableCells(node: JSONContent, rows: string[][]): string[][] {
   const originals = node.attrs?.sourceMeta?.originalCells;
   return rows.map((row, rowIndex) =>
@@ -4092,12 +4302,16 @@ function serializeFigurePreview(node: JSONContent): string | null {
         : "\\centering";
   const options = figureOptionsWithWidth(originalOptions, width);
   const eol = String(node.attrs?.raw ?? "").includes("\r\n") ? "\r\n" : "\n";
+  const metadata = [
+    ...(latexVisualFloatHasCaption(node) ? [`\\caption{${escapeText(caption)}}`] : []),
+    ...(node.attrs?.captionRemoved !== true && label ? [`\\label{${label}}`] : []),
+  ];
   return [
     `\\begin{${environment}}${placement ? `[${placement}]` : ""}`,
     alignment,
+    ...(node.attrs?.figureCaptionPosition === "above" ? metadata : []),
     `\\includegraphics${options ? `[${options}]` : ""}{${path}}`,
-    ...(caption ? [`\\caption{${escapeText(caption)}}`] : []),
-    ...(label ? [`\\label{${label}}`] : []),
+    ...(node.attrs?.figureCaptionPosition !== "above" ? metadata : []),
     `\\end{${environment}}`,
   ].join(eol);
 }
@@ -4412,7 +4626,8 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
         return null;
       for (const [key, value] of Object.entries(meta.originalAttributes ?? {}))
         if (JSON.stringify(node.attrs[key]) !== JSON.stringify(value)) return null;
-      const patches: { from: number; to: number; value: string }[] = [];
+      const patches = tableMetadataPatches(node, meta.virtualRaw);
+      if (patches === null) return null;
       for (const [rowIndex, row] of rows.entries()) {
         if (row.length !== ranges[rowIndex]?.length) return null;
         for (const [cellIndex, value] of row.entries()) {
@@ -4435,24 +4650,6 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
               ),
             });
         }
-      }
-      for (const [rangeKey, value] of [
-        ["captionRange", node.attrs.caption],
-        ["labelRange", node.attrs.label],
-      ] as const) {
-        const range = sourceMeta[rangeKey];
-        if (!range) {
-          if (value) return null;
-          continue;
-        }
-        if (typeof value !== "string") return null;
-        if (value === range.original) continue;
-        if (rangeKey === "labelRange" && safeLatexLabel(value) === null) return null;
-        patches.push({
-          from: range.from,
-          to: range.to,
-          value: rangeKey === "labelRange" ? value : escapeText(value),
-        });
       }
       return physicalLongTablePatches(raw, meta.virtualRaw, meta.expansions, patches);
     }
@@ -4512,20 +4709,14 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
       const environment =
         kind === "stretch" ? "tabularx" : kind === "long" ? "longtable" : "tabular";
       const columnSpec = canonicalTableColumnSpec(alignments, kind, style);
-      const caption = typeof node.attrs.caption === "string" ? node.attrs.caption : "";
-      const label = safeLatexLabel(node.attrs.label ?? "");
-      if (label === null) return null;
-      let insertedMetadata = "";
-      if (sourceMeta.hasFloat && sourceMeta.captionRange === null && caption)
-        insertedMetadata += `\\caption{${escapeText(caption)}}${eol}`;
-      if (sourceMeta.hasFloat && sourceMeta.labelRange === null && label)
-        insertedMetadata += `\\label{${label}}${eol}`;
       const opening =
-        insertedMetadata +
-        (kind === "stretch"
+        kind === "stretch"
           ? `\\begin{${environment}}{\\textwidth}{${columnSpec}}`
-          : `\\begin{${environment}}{${columnSpec}}`);
+          : `\\begin{${environment}}{${columnSpec}}`;
+      const metadata = tableMetadataPatches(node, raw);
+      if (metadata === null) return null;
       const replacements: { from: number; to: number; value: string }[] = [
+        ...metadata,
         { from: sourceMeta.openingFrom, to: sourceMeta.openingTo, value: opening },
         {
           from: sourceMeta.bodyFrom,
@@ -4544,28 +4735,7 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
           value: `\\end{${environment}}`,
         },
       ];
-      for (const [rangeName, value] of [
-        ["captionRange", caption],
-        ["labelRange", label],
-      ] as const) {
-        const range = sourceMeta[rangeName];
-        if (range === null) continue;
-        if (
-          !range ||
-          typeof range !== "object" ||
-          !("from" in range) ||
-          !("to" in range) ||
-          typeof range.from !== "number" ||
-          typeof range.to !== "number"
-        )
-          return null;
-        replacements.push({
-          from: range.from,
-          to: range.to,
-          value: rangeName === "labelRange" ? value : escapeText(value),
-        });
-      }
-      replacements.sort((left, right) => right.from - left.from);
+      replacements.sort((left, right) => right.from - left.from || right.to - left.to);
       let serialized = raw;
       for (const replacement of replacements) {
         if (
@@ -4596,7 +4766,8 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
       sourceMeta.insertAt > raw.length
     )
       return null;
-    const replacements: { from: number; to: number; value: string }[] = [];
+    const replacements = tableMetadataPatches(node, raw);
+    if (replacements === null) return null;
     for (const [rowIndex, row] of rows.slice(0, ranges.length).entries()) {
       const rowRanges = ranges[rowIndex];
       if (!Array.isArray(row) || !Array.isArray(rowRanges) || row.length !== rowRanges.length)
@@ -4633,57 +4804,6 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
           value: needsRuleSeparator && escaped ? ` ${escaped}` : escaped,
         });
       }
-    }
-    const caption = node.attrs.caption;
-    const captionRange = sourceMeta.captionRange;
-    if (captionRange !== null) {
-      if (
-        !captionRange ||
-        typeof captionRange !== "object" ||
-        !("from" in captionRange) ||
-        !("to" in captionRange) ||
-        !("original" in captionRange) ||
-        typeof captionRange.from !== "number" ||
-        typeof captionRange.to !== "number" ||
-        typeof captionRange.original !== "string" ||
-        typeof caption !== "string" ||
-        captionRange.from < 0 ||
-        captionRange.to < captionRange.from ||
-        captionRange.to > raw.length
-      )
-        return null;
-      if (caption !== captionRange.original)
-        replacements.push({
-          from: captionRange.from,
-          to: captionRange.to,
-          value: escapeText(caption),
-        });
-    }
-    const label = safeLatexLabel(node.attrs.label ?? "");
-    if (label === null) return null;
-    const labelRange = "labelRange" in sourceMeta ? sourceMeta.labelRange : null;
-    if (labelRange !== null) {
-      if (
-        !labelRange ||
-        typeof labelRange !== "object" ||
-        !("from" in labelRange) ||
-        !("to" in labelRange) ||
-        !("original" in labelRange) ||
-        typeof labelRange.from !== "number" ||
-        typeof labelRange.to !== "number" ||
-        typeof labelRange.original !== "string" ||
-        typeof label !== "string" ||
-        labelRange.from < 0 ||
-        labelRange.to < labelRange.from ||
-        labelRange.to > raw.length
-      )
-        return null;
-      if (label !== labelRange.original)
-        replacements.push({
-          from: labelRange.from,
-          to: labelRange.to,
-          value: label,
-        });
     }
     const width = Array.isArray(rows[0]) ? rows[0].length : 0;
     const addedRows = rows.slice(ranges.length);
@@ -4780,6 +4900,7 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
                   key === "figureOptions" ||
                   key === "figurePlacement" ||
                   key === "figureAlignment" ||
+                  key === "figureCaptionPosition" ||
                   key === "figureStarred")) ||
               (!["scientific", "simple", "spacing", "toc", "documentCommand"].includes(
                 String(node.attrs?.kind),
@@ -4806,7 +4927,10 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
         )
           return false;
         if (
-          (key === "unnumbered" || key === "resume" || key === "latexNoIndent") &&
+          (key === "unnumbered" ||
+            key === "resume" ||
+            key === "latexNoIndent" ||
+            key === "captionRemoved") &&
           value === false
         )
           return false;
@@ -4845,7 +4969,16 @@ const nodeSignatures = new WeakMap<JSONContent, string>();
 export function latexVisualNodeSignature(node: JSONContent): string {
   const cached = nodeSignatures.get(node);
   if (cached !== undefined) return cached;
-  const signature = JSON.stringify(comparableNode(node));
+  // Retained source also owns properties which do not change visible text:
+  // colors, spans, caption position, listing options and citation notes.
+  // Ordinary field edits keep that snapshot; explicit property operations replace it.
+  const retained = (value: JSONContent): unknown => [
+    ["latexRichPreview", "latexScientific", "latexInlineCommand"].includes(value.type ?? "")
+      ? (value.attrs?.raw ?? null)
+      : null,
+    value.content?.map(retained) ?? [],
+  ];
+  const signature = JSON.stringify([comparableNode(node), retained(node)]);
   nodeSignatures.set(node, signature);
   return signature;
 }
@@ -4887,19 +5020,25 @@ function roundTripSignature(node: JSONContent): string {
             attrs: Object.fromEntries(
               Object.entries(value.attrs).map(([key, item]) => [
                 key,
-                ["title", "author", "date", "caption", "body"].includes(key) &&
-                typeof item === "string"
-                  ? key === "author" && value.attrs?.authorEnabled === false
-                    ? ""
-                    : value.attrs?.kind === "simple" &&
-                        ["verbatim", "verbatim*", "alltt", "lstlisting"].includes(
-                          String(value.attrs.environment),
-                        )
-                      ? value.attrs?.sourceMeta?.literal === true && key === "body"
-                        ? item.replace(/\r\n/gu, "\n")
-                        : item
-                      : prose(item).trim()
-                  : item,
+                key === "captionRemoved"
+                  ? false
+                  : key === "figureCaptionPosition" &&
+                      value.attrs?.kind === "figure" &&
+                      !latexVisualFloatHasCaption(value)
+                    ? "below"
+                    : ["title", "author", "date", "caption", "body"].includes(key) &&
+                        typeof item === "string"
+                      ? key === "author" && value.attrs?.authorEnabled === false
+                        ? ""
+                        : value.attrs?.kind === "simple" &&
+                            ["verbatim", "verbatim*", "alltt", "lstlisting"].includes(
+                              String(value.attrs.environment),
+                            )
+                          ? value.attrs?.sourceMeta?.literal === true && key === "body"
+                            ? item.replace(/\r\n/gu, "\n")
+                            : item
+                          : prose(item).trim()
+                      : item,
               ]),
             ),
           }
@@ -4908,6 +5047,9 @@ function roundTripSignature(node: JSONContent): string {
         ? {
             attrs: {
               ...value.attrs,
+              // Removal is an editing intent; its source representation is
+              // the absence of a caption, not a serialized attribute.
+              captionRemoved: false,
               // The live cell keeps exactly what was typed. Compare the
               // reparsed TeX using its whitespace semantics, just like prose.
               ...(Array.isArray(value.attrs.rows)
@@ -4984,7 +5126,7 @@ function roundTripSignature(node: JSONContent): string {
         : {}),
     };
   };
-  const signature = latexVisualNodeSignature(normalize(node));
+  const signature = JSON.stringify(comparableNode(normalize(node)));
   roundTripSignatures.set(node, signature);
   return signature;
 }
@@ -5076,13 +5218,21 @@ function requiredObjectPackages(nodes: readonly JSONContent[]): Set<string> {
       packages.add("algorithm");
       packages.add("algpseudocode");
     }
-    if (node.attrs?.layout?.kind === "colorBox") packages.add("tcolorbox");
-    if (node.marks?.some((mark) => mark.type === "latexColor")) packages.add("xcolor");
+    if (node.attrs?.layout?.kind === "colorBox") {
+      packages.add("tcolorbox");
+      packages.add("xcolor");
+    }
+    if (node.attrs?.layout?.kind === "colorBox" && node.attrs.layout.breakable)
+      packages.add("tcolorbox-breakable");
+    if (node.attrs?.layout?.kind === "columns") packages.add("multicol");
+    if (node.marks?.some((mark) => ["latexColor", "latexBackground"].includes(mark.type)))
+      packages.add("xcolor");
     if (node.attrs?.kind === "figure") {
       packages.add("graphicx");
       if (String(node.attrs.figurePlacement ?? "").includes("H")) packages.add("float");
     }
     if (node.attrs?.kind === "table") {
+      if (/\\begin\{table\*?\}\[[^\]]*H/u.test(String(node.attrs.raw ?? ""))) packages.add("float");
       if (node.attrs.tableStyle === "booktabs") packages.add("booktabs");
       if (node.attrs.tableKind === "stretch") packages.add("tabularx");
       if (node.attrs.tableKind === "long") packages.add("longtable");
@@ -5208,6 +5358,56 @@ interface InlineSourceUnit {
   to: number;
   marks: readonly string[];
   wrappers: readonly string[];
+}
+
+export interface LatexInlineEditingScope {
+  readonly from: number;
+  readonly to: number;
+  readonly mark: string;
+  readonly depth: number;
+}
+
+/** Read authored wrapper boundaries without adding editor metadata to the source. */
+export function latexInlineEditingScopes(
+  source: string,
+): readonly LatexInlineEditingScope[] | null {
+  const read = (
+    text: string,
+    marks: readonly string[],
+    scoped: boolean,
+    depth: number,
+  ): { size: number; scopes: LatexInlineEditingScope[] } | null => {
+    let size = 0;
+    let currentMarks = marks;
+    const scopes: LatexInlineEditingScope[] = [];
+    for (let at = 0; at < text.length;) {
+      const piece = inlinePiece(text, at, currentMarks, scoped);
+      if (!piece) return null;
+      if (piece.declaration) currentMarks = withLatexTextMark(currentMarks, piece.declaration);
+      else if (piece.group) {
+        const group = piece.group;
+        const children = read(text.slice(group.from, group.to), group.marks, true, depth + 1);
+        if (!children) return null;
+        const command = /^\\([A-Za-z]+)/u.exec(group.prefix)?.[1];
+        const mark = command
+          ? LATEX_INLINE_MARKS[command]
+          : group.marks.find((name) => !currentMarks.includes(name));
+        if (mark) scopes.push({ from: size, to: size + children.size, mark, depth });
+        scopes.push(
+          ...children.scopes.map((scope) => ({
+            ...scope,
+            from: size + scope.from,
+            to: size + scope.to,
+          })),
+        );
+        size += children.size;
+      } else if (piece.node)
+        size += piece.node.type === "text" ? (piece.node.text?.length ?? 0) : 1;
+      at = piece.end;
+    }
+    return { size, scopes };
+  };
+  return read(source, [], false, 0)?.scopes ?? null;
 }
 
 /** A source map for supported inline content, including TeX whitespace and aliases. */
@@ -5429,6 +5629,7 @@ function minimallyPatchedBlock(block: LatexVisualSourceBlock, next: JSONContent)
           block.source.slice(start, end),
           inserted,
           block.source.includes("\r\n") ? "\r\n" : "\n",
+          block.source.slice(end),
         );
         const candidate = before + delimiter + preserved + block.source.slice(end);
         const reparsed = classifyBlock(candidate, 0);
@@ -5724,7 +5925,11 @@ export function applyLatexVisualDocumentChange(
       }
       if (node.type === "latexScientific" && node.attrs?.layout)
         return patchPageLayoutStructure(
-          previousBlock?.source ?? String(node.attrs.raw ?? ""),
+          previousBlock?.node.type === "latexScientific" &&
+            previousBlock.node.attrs?.sourceId === node.attrs.sourceId &&
+            previousBlock.node.attrs?.layout?.kind === node.attrs.layout.kind
+            ? previousBlock.source
+            : String(node.attrs.raw ?? ""),
           node,
           setup,
           source.includes("\\begin{document}") ? source : (context?.rootSource ?? null),
@@ -5823,7 +6028,7 @@ export function applyLatexVisualDocumentChange(
       if (after && to === after.from) replacement += gap;
     } else if (before && after && from === before.to && to === after.from) replacement = gap;
   }
-  replacement = preserveSourceComments(source.slice(from, to), replacement, eol);
+  replacement = preserveSourceComments(source.slice(from, to), replacement, eol, source.slice(to));
   if (replacement && from > 0 && source[from - 1] !== "\n") {
     const precedingLine = source.slice(source.lastIndexOf("\n", from - 1) + 1, from);
     if (
@@ -5878,7 +6083,7 @@ export function applyLatexVisualDocumentChange(
     oldChanged.length === 1 &&
     newChanged.length === 1 &&
     changedSource === source.slice(0, from) + replacement + source.slice(to) &&
-    !["heading", "bulletList", "orderedList"].includes(newChanged[0]!.type ?? "") &&
+    !["bulletList", "orderedList"].includes(newChanged[0]!.type ?? "") &&
     !["title", "toc"].includes(String(newChanged[0]!.attrs?.kind))
   ) {
     const parsed = projectLatexVisualDocument(

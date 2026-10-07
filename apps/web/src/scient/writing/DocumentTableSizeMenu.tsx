@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -184,6 +185,7 @@ export function DocumentGridSizeMenu({
   readonly onCustomSize?: (() => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
+  const ownerId = useId();
   const [activeSize, setActiveSize] = useState<ScientMarkdownTableDimensions>(
     DEFAULT_SCIENT_MARKDOWN_TABLE_DIMENSIONS,
   );
@@ -418,7 +420,7 @@ export function DocumentGridSizeMenu({
         setVisibleSize(INITIAL_TABLE_SIZE_PICKER_DIMENSIONS);
       }}
     >
-      <MenuSubTrigger disabled={disabled}>
+      <MenuSubTrigger id={ownerId} disabled={disabled}>
         {icon}
         <span>{label}</span>
       </MenuSubTrigger>
@@ -429,6 +431,7 @@ export function DocumentGridSizeMenu({
         }
         data-keybinding-capture=""
         data-dock-command-scope={commandScope}
+        data-writing-menu-owner={ownerId}
         side={placement.locked && placement.side ? placement.side : "inline-end"}
       >
         {options}

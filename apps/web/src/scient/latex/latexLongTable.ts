@@ -119,7 +119,7 @@ export function physicalLongTablePatches(
   raw: string,
   virtual: string,
   expansions: NonNullable<ReturnType<typeof expandLongTableRows>>["expansions"],
-  patches: { from: number; to: number; value: string }[],
+  patches: { from: number; to: number; value: string; outsideExpansion?: boolean }[],
 ) {
   const physical: typeof patches = [];
   const grouped = new Map<number, typeof patches>();
@@ -143,7 +143,8 @@ export function physicalLongTablePatches(
     )
       return null;
     const index = expansions.findIndex(
-      (entry) => patch.from >= entry.virtualFrom && patch.to <= entry.virtualTo,
+      (entry) =>
+        !patch.outsideExpansion && patch.from >= entry.virtualFrom && patch.to <= entry.virtualTo,
     );
     if (index >= 0) {
       const list = grouped.get(index) ?? [];
@@ -167,7 +168,7 @@ export function physicalLongTablePatches(
   }
   let result = raw,
     boundary = raw.length;
-  for (const patch of physical.sort((a, b) => b.from - a.from)) {
+  for (const patch of physical.sort((a, b) => b.from - a.from || b.to - a.to)) {
     if (patch.from < 0 || patch.to > boundary || patch.to < patch.from) return null;
     result = result.slice(0, patch.from) + patch.value + result.slice(patch.to);
     boundary = patch.from;

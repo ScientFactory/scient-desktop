@@ -1,4 +1,6 @@
 /** Dimensions are kept in TeX points or inches until the presentation boundary. */
+import { latexDocumentLanguage, latexLanguageFont } from "./latexLanguage";
+
 export const TEX_POINTS_PER_INCH = 72.27;
 export const CSS_PIXELS_PER_INCH = 96;
 
@@ -307,6 +309,11 @@ export function latexVisualLayoutProfile(source: string): LatexVisualLayoutProfi
     fontFamily = '"KaTeX_SansSerif", "Arial", sans-serif';
   if (topLevel(/\\renewcommand\s*\{\\familydefault\}\s*\{\\ttdefault\}/gu).length > 0)
     fontFamily = '"KaTeX_Typewriter", monospace';
+  const language = latexDocumentLanguage(source);
+  fontFamily = latexLanguageFont(
+    language.main === "hebrew" ? language.hebrewFont : language.mainFont,
+    fontFamily,
+  );
   const lists = {} as Record<LatexVisualListKind, LatexVisualListLayout>;
   const listSettings = topLevel(/\\setlist\s*(?:\[([^\]]*)\])?\s*\{([^{}]*)\}/gu);
   for (const kind of ["itemize", "enumerate", "description"] as const) {

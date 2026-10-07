@@ -1,7 +1,6 @@
 import { MATH_COMMANDS } from "../math/input/catalog";
-import { commandKeys, type KeyboardPreferences } from "../keyboard/preferences";
+import type { SurfaceBinding } from "../keyboard/preferences";
 import { labelKeys } from "../keyboard/keys";
-import { MATH_TYPING_SHORTCUTS } from "./mathTypingShortcuts";
 import type { MathSymbol } from "./mathSymbols";
 
 const structureCommands: Record<string, string> = {
@@ -35,7 +34,7 @@ const canonicalCommand = (tex: string) => {
 /** Read effective bindings, including user overrides and disabled bindings. */
 export function mathSymbolShortcuts(
   symbol: MathSymbol,
-  preferences: KeyboardPreferences,
+  bindings: readonly SurfaceBinding[],
 ): string[] {
   const command = structureCommands[symbol.label];
   const ids =
@@ -46,12 +45,8 @@ export function mathSymbolShortcuts(
             entry.completion &&
             canonicalCommand(`\\${entry.completion}`) === canonicalCommand(symbol.command),
         ).map((entry) => entry.id);
-  const hints = ids.flatMap((id) => commandKeys(id).map((keys) => labelKeys(keys)));
-  if (symbol.action) hints.push(symbol.action === "moveToSuperscript" ? "Type ^" : "Type _");
-  if (preferences.automaticOperators) {
-    for (const [keys, tex] of Object.entries(MATH_TYPING_SHORTCUTS)) {
-      if (canonicalCommand(tex) === canonicalCommand(symbol.command)) hints.push(`Type ${keys}`);
-    }
-  }
+  const hints = bindings
+    .filter((binding) => ids.includes(binding.command))
+    .map((binding) => labelKeys(binding.keys));
   return [...new Set(hints)];
 }

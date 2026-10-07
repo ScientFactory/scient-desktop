@@ -1,6 +1,30 @@
 # Visual editor: architecture and implementation plan
 
-**Status:** Proposed direction, updated 2026-10-03 after reviewing the merged editor and local Visual improvements. This document plans future work; it does not claim the workflows below are implemented or qualified. Current implementation details remain in [Source-derived writing canvas](../../docs/internals/scient-latex-visual.md).
+**Status:** Contextual authoring controls are partly implemented in the working tree, updated 2026-10-06. Menu extensions are future work recorded in [Editing-command placement](../design/editing-commands-placement.md#functionality-to-add-placement-pending). The coverage below separates current controls from the remaining architectural roadmap. Current implementation details remain in [Source-derived writing canvas](scient-latex-visual.md).
+
+## Implemented authoring controls
+
+The existing menus and footer now expose these bounded workflows:
+
+- Table cell/row/column/table background and text colors, rule color, alternating
+  backgrounds, merge/split, partial rules, widths/wrapping, supported grid moves,
+  caption placement, multipage conversion, repeated headers and continuation text.
+- Box appearance and page breaking, column counts, panel ratios/dimensions,
+  pseudocode structure and listing options for existing objects.
+- Same-file label renaming through the heading footer and citation forms, notes
+  and entry ordering through contextual citation controls.
+
+The shared object-source adapter, range patcher and source-carrying document step
+keep these edits in the existing persistence and undo path. Capability checks
+retain source when an operation cannot preserve the imported structure.
+
+This does not finish every architecture item below. Remaining work includes
+coordinated multi-file key/label/definition rename, arbitrary declaration scopes,
+named-argument text templates, reviewed generated-content materialization,
+paragraph/display-math and decimal-column table adapters, independently editable
+longtable band models, richer short-title/caption and exam-class workflows, and
+compiler-exact float/pagination behavior. New TikZ, PGFPlots and Beamer authoring
+remain outside scope.
 
 ## 1. Recommendation
 
@@ -73,7 +97,7 @@ All additions below are proposals inside the existing menu hierarchy.
 | **Document → References**                               | Search, add, edit, remove and inspect bibliography entries. Include a labeled-target view for usage and rename operations, rather than another permanent panel button.                                                                                                |
 | **Document → Document settings**                        | Keep the existing compact, tab-free settings card. Extend the existing **Packages and macros** summary with **Manage…**, opening a nonmodal panel for packages, commands and environments. Advanced style/header/numbering settings use disclosure or a linked panel. |
 | **Document / existing outline**                         | Title/authors, front matter, appendices, document-wide numbering, chapter navigation, review, find/replace and export. Keep project files in the existing file browser.                                                                                               |
-| **Contextual footer**                                   | Properties and structural actions for the current object: Table, Equation, Algorithm, Box, Figure, Columns, Citation, etc. One compact object menu when space is limited.                                                                                             |
+| **Contextual footer**                                   | Properties and structural actions for the current object: Table, Equation, Algorithm, Box, Figure, Columns, Citation, etc. One named object control at every pane width, opening a nonmodal inspector with progressive disclosure.                                    |
 
 Use one auxiliary panel host for larger workflows, reusing the existing References pattern. Opening another mode must retain pending drafts and their owning document; it must not silently retarget or discard them. Small forms use anchored popovers. Editing controls should not put a modal backdrop over the document.
 
@@ -324,7 +348,7 @@ Multiple paragraphs and rich cells will require a qualified schema/adapter exten
 
 **Math:** keep one command catalog for top menu, footer, palette and shortcuts. Include accents, braces with editable labels, annotated arrows, matrices, cases, alignment, text in math and supported document macros. Reuse the current blue empty-slot guides. Qualification covers editing all argument slots, changing environment shape, labels/tags, copy/paste and undo. Imported per-row metadata remains protected until each structural operation can preserve it.
 
-Show actual configured keyboard shortcuts and supported typing shortcuts beside picker entries. A template must expose all editable slots, including annotation labels. Add units and numeric-formatting macros through an explicit adapter when requested; visual similarity to ordinary text does not establish equivalent source semantics.
+Show actual configured keyboard shortcuts beside picker entries. Command completion starts with a backslash; do not install automatic replacements for bare words or punctuation. Users add document macros explicitly. A template must expose all editable slots, including annotation labels. Add units and numeric-formatting macros through an explicit adapter when requested; visual similarity to ordinary text does not establish equivalent source semantics.
 
 **Statements:** theorem, lemma, definition, remark, proof and supported custom environments share rich editable children. Properties expose optional title, label, theorem style, shared/reset counters and numbering. Definition-level changes belong in the macro/environment manager. Proof-end markers are semantic decorations, including an explicit supported placement command where appropriate.
 

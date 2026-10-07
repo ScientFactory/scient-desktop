@@ -12,6 +12,7 @@ import { algorithmKeywords } from "./latexAlgorithm";
 import { LatexObjectToolbar } from "./LatexObjectToolbar";
 import { LatexTextField } from "./LatexTextField";
 import { latexEquationReferencesKey } from "./latexEquationReferences";
+import { LatexAlgorithmControls } from "./LatexAlgorithmControls";
 
 export function LatexAlgorithmView({
   node,
@@ -58,43 +59,12 @@ export function LatexAlgorithmView({
         data-latex-text-style={node.attrs.layout.fontSize ?? undefined}
       />
       <LatexObjectToolbar editor={editor} root={root} selected={selected} label="Algorithm tools">
-        <details className="scient-latex-context-menu">
-          <summary>Algorithm options</summary>
-          <div className="scient-latex-context-menu-panel">
-            <button
-              type="button"
-              disabled={!editable}
-              onClick={() => {
-                const position = getPos();
-                if (typeof position !== "number") return;
-                const selection = editor.state.selection.$from;
-                let after = position + node.nodeSize - 1;
-                for (let depth = selection.depth; depth > 0; depth--)
-                  if (
-                    selection.pos > position &&
-                    selection.pos < position + node.nodeSize &&
-                    selection.node(depth).type.name === "latexAlgorithmLine"
-                  ) {
-                    after = selection.after(depth);
-                    break;
-                  }
-                editor
-                  .chain()
-                  .focus()
-                  .insertContentAt(after, {
-                    type: "latexAlgorithmLine",
-                    attrs: { command: "State" },
-                  })
-                  .run();
-              }}
-            >
-              Add step
-            </button>
-            <button type="button" disabled={!editable} onClick={deleteNode}>
-              Delete algorithm
-            </button>
-          </div>
-        </details>
+        <LatexAlgorithmControls node={node} editor={editor} getPos={getPos} />
+        <div className="scient-latex-context-menu-panel">
+          <button type="button" disabled={!editable} onClick={deleteNode}>
+            Delete algorithm
+          </button>
+        </div>
       </LatexObjectToolbar>
     </NodeViewWrapper>
   );

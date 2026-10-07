@@ -1,7 +1,7 @@
 import { Button } from "~/components/ui/button";
 import { LatexSelect } from "./LatexSelect";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import {
   Dialog,
   DialogPopup,
@@ -38,6 +38,18 @@ export function LatexReferenceDialog(props: {
   const [selected, setSelected] = useState<string[]>([]);
   const [form, setForm] = useState("automatic");
   const pendingInsert = useRef<{ command: string; key: string } | null>(null);
+  const previouslyOpen = useRef(props.open);
+  const finish = useEffectEvent(() => {
+    const insertion = pendingInsert.current;
+    pendingInsert.current = null;
+    if (insertion) props.onInsert(insertion.command, insertion.key);
+    else props.onCancel?.();
+  });
+  useEffect(() => {
+    const closing = previouslyOpen.current && !props.open;
+    previouslyOpen.current = props.open;
+    if (closing) finish();
+  }, [props.open]);
   const setup = withoutComments(props.setupSource ?? props.source);
   const biblatex = /\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\s*\{[^{}]*\bbiblatex\b/u.test(
     setup,
@@ -142,18 +154,9 @@ export function LatexReferenceDialog(props: {
           : (selectedChoice?.command ?? "ref");
   const keys = selected.join(",");
   return (
-    <Dialog
-      open={props.open}
-      onOpenChange={props.onOpenChange}
-      onOpenChangeComplete={(open) => {
-        if (open) return;
-        const insertion = pendingInsert.current;
-        pendingInsert.current = null;
-        if (insertion) props.onInsert(insertion.command, insertion.key);
-        else props.onCancel?.();
-      }}
-    >
+    <Dialog modal={false} open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup
+        showBackdrop={false}
         className="w-[min(560px,calc(100vw-32px))]"
         padding="none"
         gap="none"

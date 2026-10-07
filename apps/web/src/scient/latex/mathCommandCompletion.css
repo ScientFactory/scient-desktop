@@ -1,0 +1,38 @@
+.scient-latex-command-completion {
+  position: fixed;
+  z-index: 100;
+  box-sizing: border-box;
+  width: min(280px, calc(100vw - 16px));
+  max-height: min(240px, calc(100vh - 16px));
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 4px 14px #00000026;
+  text-align: left;
+  direction: ltr;
+}
+.scient-latex-command-completion button {
+  display: block;
+  width: 100%;
+  min-height: 26px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: 11px/1.3 var(--font-mono);
+  cursor: pointer;
+}
+.scient-latex-command-completion button:is(:hover, [aria-selected="true"]) {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+body:has(.scient-latex-mathfield math-field[data-environment-completion]:focus-within)
+  #mathlive-suggestion-popover {
+  display: none;
+}

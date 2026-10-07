@@ -1,8 +1,14 @@
-import { MATH_TYPING_SHORTCUTS } from "./mathTypingShortcuts";
 import { attachShortcutHost } from "../keyboard/host";
 import { getKeyboardPreferences, subscribeKeyboardPreferences } from "../keyboard/preferences";
 import { mathCommand } from "../math/input/catalog";
 import { MathfieldElement, type MacroDictionary } from "mathlive";
+import {
+  mathTextFormatActive,
+  mathTextFormattingInput,
+  mathTextFormattingSource,
+  toggleMathTextFormat,
+  type MathTextFormat,
+} from "./mathTextFormatting";
 import {
   forwardRef,
   useContext,
@@ -20,8 +26,16 @@ import { editableMathMacros, installMathMacroEditing } from "./mathMacroEditing"
 import { mathSymbolMacros } from "./mathSymbolPresentation";
 import { LatexDocumentMathContext } from "./LatexDocumentMathContext";
 import { mathLiveFontDeclarations } from "./mathLiveFontDeclarations";
+import { installMathCommandCompletion } from "./mathLiveCommandCompletion";
+import { installLatexMathViewport, type MathViewportState } from "./latexMathViewport";
+import { installMathSelectionSession } from "./mathSelectionSession";
+import { latexSelectionCommand, runLatexSelectionCommand } from "./latexSelectionSession";
 import {
   createMathSelectionGeometry,
+  mathArrayContext,
+  mathStructureCommandReason,
+  type MathArrayContext,
+  type MathStructureCommand,
   restoreMathFieldValue,
   clearMathRectangle,
   unwrapEmptyMathCell,
@@ -33,6 +47,9 @@ import {
   mathSelectionAtOffset,
   mathSelectionPoint,
   mathSelectionEndpoints,
+  mathSelectionWrapReason,
+  moveMathSlot,
+  mathVerticalTarget,
   resolveMathDragSelection,
   selectMathRectangle,
   type MathCellSelection,
@@ -47,11 +64,14 @@ MathfieldElement.soundsDirectory = null;
 MathfieldElement.computeEngine = null;
 
 export interface LatexMathFieldHandle {
+  readonly scrollTo: (offset: number) => void;
   readonly focus: () => void;
   readonly flush: () => boolean;
   readonly clearSelection: () => void;
   readonly cancelPointerSelection: () => void;
   readonly insert: (latex: string) => void;
+  readonly toggleTextFormat: (format: MathTextFormat) => boolean;
+  readonly textFormatActive: (format: MathTextFormat) => boolean;
   readonly command: (
     command:
       | "moveToSuperscript"
@@ -72,8 +92,13 @@ export const LatexMathField = forwardRef<
     readonly draftKey?: string;
     readonly disabled: boolean;
     readonly display: boolean;
+    readonly editing?: boolean;
+    readonly onViewportChange?: (state: MathViewportState) => void;
     readonly onChange: (value: string) => { readonly accepted: boolean; readonly value: string };
     readonly onFocus: () => void;
+    readonly onContextChange?: (context: MathArrayContext | null) => void;
+    readonly onFormattingChange?: (state: string) => void;
+    readonly structureDisabledReason?: string | null | undefined;
     readonly onExit: (direction: -1 | 1) => void;
     readonly onExtendOutside: (direction: -1 | 1) => boolean;
     readonly onUndo: (redo: boolean) => boolean;
@@ -89,8 +114,13 @@ export const LatexMathField = forwardRef<
     draftKey,
     disabled,
     display,
+    editing,
+    onViewportChange,
     onChange,
     onFocus,
+    onContextChange,
+    onFormattingChange,
+    structureDisabledReason,
     onExit,
     onExtendOutside,
     onUndo,
@@ -104,6 +134,14 @@ export const LatexMathField = forwardRef<
 ) {
   const host = useRef<HTMLSpanElement>(null);
   const field = useRef<MathfieldElement | null>(null);
+  const viewport = useRef<ReturnType<typeof installLatexMathViewport> | null>(null);
+  const viewportChanged = useRef(onViewportChange);
+  const viewportEditing = useRef(editing);
+  useLayoutEffect(() => {
+    viewportChanged.current = onViewportChange;
+    viewportEditing.current = editing;
+    viewport.current?.setEditing(Boolean(display && editing && !disabled));
+  }, [display, editing, disabled, onViewportChange]);
   const documentMacros = useContext(LatexDocumentMathContext);
   const initialMacros = useRef(documentMacros);
   const currentConfiguration = useRef({ value, display, disabled });
@@ -125,6 +163,10 @@ export const LatexMathField = forwardRef<
   const draftId = useId();
   const change = useRef(onChange);
   const focus = useRef(onFocus);
+  const contextChange = useRef(onContextChange);
+  const formatChange = useRef(onFormattingChange);
+  const refreshFormatting = useRef<() => void>(() => {});
+  const structureRestriction = useRef(structureDisabledReason);
   const exit = useRef(onExit);
   const extendOutside = useRef(onExtendOutside);
   const undo = useRef(onUndo);
@@ -136,6 +178,9 @@ export const LatexMathField = forwardRef<
   useLayoutEffect(() => {
     change.current = onChange;
     focus.current = onFocus;
+    contextChange.current = onContextChange;
+    formatChange.current = onFormattingChange;
+    structureRestriction.current = structureDisabledReason;
     exit.current = onExit;
     extendOutside.current = onExtendOutside;
     undo.current = onUndo;
@@ -147,6 +192,9 @@ export const LatexMathField = forwardRef<
   }, [
     onChange,
     onFocus,
+    onContextChange,
+    onFormattingChange,
+    structureDisabledReason,
     onExit,
     onExtendOutside,
     onUndo,
@@ -159,23 +207,34 @@ export const LatexMathField = forwardRef<
   useImperativeHandle(
     forwardedRef,
     () => ({
+      scrollTo: (offset) => viewport.current?.scrollTo(offset),
       focus: () => field.current?.focus(),
       flush: () => flush.current(),
       clearSelection: () => clearSelection.current(),
       cancelPointerSelection: () => cancelPointerSelection.current(),
+      toggleTextFormat: (format) => {
+        const math = field.current;
+        if (!math || math.readOnly || math.mode === "latex") return false;
+        toggleMathTextFormat(math, format);
+        refreshFormatting.current();
+        math.focus();
+        return flush.current();
+      },
+      textFormatActive: (format) => {
+        const math = field.current;
+        return Boolean(math && math.mode !== "latex" && mathTextFormatActive(math, format));
+      },
       command: (command) => {
         const math = field.current;
         if (!math || math.readOnly) return false;
         if (["addRowAfter", "removeRow", "addColumnAfter", "removeColumn"].includes(command)) {
-          const cell = mathSelectionAtOffset(math, math.position).path.at(-1);
-          if (!cell) return false;
-          const column = command.includes("Column");
-          if (column && ["cases", "aligned", "gathered"].includes(cell.array.environmentName ?? ""))
+          const reason =
+            structureRestriction.current ??
+            mathStructureCommandReason(mathArrayContext(math), command as MathStructureCommand);
+          if (reason) {
+            shortcutHint.current(reason);
             return false;
-          if (command === "removeRow" && (cell.array.rowCount ?? 0) <= 1) return false;
-          if (command === "removeColumn" && (cell.array.colCount ?? 0) <= 1) return false;
-          if (command === "addRowAfter" && (cell.array.rowCount ?? 0) >= 20) return false;
-          if (command === "addColumnAfter" && (cell.array.colCount ?? 0) >= 20) return false;
+          }
         }
         math.focus();
         if ((command === "undo" || command === "redo") && undo.current(command === "redo"))
@@ -185,12 +244,20 @@ export const LatexMathField = forwardRef<
       insert: (latex) => {
         const math = field.current;
         if (!math || math.readOnly) return;
-        math.insert(mathLiveFontDeclarations(latex), {
-          focus: true,
-          format: "latex",
-          insertionMode: "replaceSelection",
-          selectionMode: "placeholder",
-        });
+        const reason = latex.includes("#0") ? mathSelectionWrapReason(math) : null;
+        if (reason) {
+          shortcutHint.current(reason);
+          return;
+        }
+        math.insert(
+          mathLiveFontDeclarations(mathTextFormattingInput(latex, initialMacros.current)),
+          {
+            focus: true,
+            format: "latex",
+            insertionMode: "replaceSelection",
+            selectionMode: "placeholder",
+          },
+        );
       },
     }),
     [],
@@ -202,7 +269,22 @@ export const LatexMathField = forwardRef<
     let dispose: (() => void) | undefined;
     const initialize = () => {
       const math = new MathfieldElement();
+      math.id = `scient-latex-math-${draftId}`;
       host.current?.append(math);
+      const mathViewport = installLatexMathViewport(math, container, (state) =>
+        viewportChanged.current?.(state),
+      );
+      viewport.current = mathViewport;
+      mathViewport.setEditing(
+        Boolean(
+          currentConfiguration.current.display &&
+          viewportEditing.current &&
+          !currentConfiguration.current.disabled,
+        ),
+      );
+      const commandCompletion = installMathCommandCompletion(math, (command) =>
+        Object.hasOwn(initialMacros.current, command.slice(1)),
+      );
       const removeEditingGuides = installMathEditingGuides(math);
       const macroEditing = installMathMacroEditing(math);
       // Use native caret placement and command completion inside the formula.
@@ -217,12 +299,30 @@ export const LatexMathField = forwardRef<
       math.mathVirtualKeyboardPolicy = "manual";
       math.popoverPolicy = "auto";
       math.environmentPopoverPolicy = "off";
+      math.menuItems = [];
+      let formattingState = "";
+      refreshFormatting.current = () => {
+        const next =
+          math.mode === "latex"
+            ? "latex"
+            : (["bold", "italic", "monospace"] as const)
+                .map((format) => Number(mathTextFormatActive(math, format)))
+                .join("");
+        if (next === formattingState) return;
+        formattingState = next;
+        formatChange.current?.(next);
+      };
       baseMacros.current = { ...math.macros, ...mathSymbolMacros() };
       math.macros = { ...baseMacros.current, ...editableMathMacros(initialMacros.current) };
       appliedMacroSignature.current = JSON.stringify(initialMacros.current);
       lastAcknowledged.current = currentConfiguration.current.value;
       const recovered = restoredLatexFieldDraft(journalKey.current, lastAcknowledged.current);
-      math.setValue(mathLiveFontDeclarations(recovered), { silenceNotifications: true });
+      math.setValue(
+        mathLiveFontDeclarations(mathTextFormattingInput(recovered, initialMacros.current)),
+        {
+          silenceNotifications: true,
+        },
+      );
       macroEditing.refresh();
       const firstCell = firstMathCell(math);
       if (firstCell) math.position = firstCell.cell[0];
@@ -230,20 +330,42 @@ export const LatexMathField = forwardRef<
       reportDraft(draftId, dirty.current);
       math.smartFence = true;
       math.smartSuperscript = true;
-      // Slots are caret targets, never sample content in the document.
-      math.placeholderSymbol = "\u25A2";
+      // Plain typing stays literal. Commands start with a backslash; macros
+      // come from the document, and keyboard actions from explicit bindings.
+      math.inlineShortcuts = {};
       const applyPreferences = () => {
         const preferences = getKeyboardPreferences().preferences;
-        math.inlineShortcuts = preferences.automaticOperators ? MATH_TYPING_SHORTCUTS : {};
         math.popoverPolicy = preferences.completion === "off" ? "off" : "auto";
+        commandCompletion.refresh();
       };
       applyPreferences();
       const unsubscribe = subscribeKeyboardPreferences(applyPreferences);
-      const detachShortcuts = attachShortcutHost(host.current!, "math", {
+      const detachShortcuts = attachShortcutHost(host.current!, ["math", "latex"], {
         capture: true,
         feedback: (text) => shortcutHint.current(text),
-        accepts: () => !math.readOnly && math.mode !== "latex",
+        accepts: (_event, id) =>
+          !math.readOnly &&
+          math.mode !== "latex" &&
+          (!id?.startsWith("latex.") ||
+            Boolean(id && latexSelectionCommand(id)) ||
+            ["latex.bold", "latex.italic", "latex.inlineCode"].includes(id)),
         execute: (id) => {
+          const selectionCommand = latexSelectionCommand(id);
+          if (selectionCommand) return runLatexSelectionCommand(math, selectionCommand);
+          const textFormat =
+            id === "latex.bold"
+              ? "bold"
+              : id === "latex.italic"
+                ? "italic"
+                : id === "latex.inlineCode"
+                  ? "monospace"
+                  : null;
+          if (textFormat) {
+            toggleMathTextFormat(math, textFormat);
+            refreshFormatting.current();
+            math.focus();
+            return flush.current();
+          }
           if (id === "math.inline" || id === "math.display" || id === "math.palette")
             return shortcut.current(id);
           if (id === "math.superscript") return math.executeCommand("moveToSuperscript");
@@ -317,7 +439,10 @@ export const LatexMathField = forwardRef<
         }
         // Editable slots belong to MathLive, not to the compiled LaTeX source.
         // Keep the live field intact when the parent acknowledges this projection.
-        const source = math.getValue("latex-without-placeholders");
+        const source = mathTextFormattingSource(
+          math.getValue("latex-without-placeholders"),
+          Boolean(initialMacros.current.mathbfit),
+        );
         const previousAcknowledged = lastAcknowledged.current;
         const result = change.current(source);
         lastAcknowledged.current = result.value;
@@ -330,7 +455,11 @@ export const LatexMathField = forwardRef<
         return result.accepted;
       };
       flush.current = publish;
+      const revealCaret = () => mathViewport.revealCaret();
       const input = () => {
+        verticalIntent = null;
+        refreshFormatting.current();
+        revealCaret();
         dirty.current = true;
         reportDraft(draftId, true);
         clearTimeout(publishTimer);
@@ -339,14 +468,25 @@ export const LatexMathField = forwardRef<
           cancelPublish = afterEditorPaint(publish);
         }, 180);
       };
+      const contextMenu = (event: Event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      };
       const modeChange = () => {
         // MathLive changes mode before inserting the completed command.
         queueMicrotask(input);
       };
       const focused = () => {
-        if (!math.readOnly) focus.current();
+        if (!math.readOnly) {
+          mathViewport.setEditing(currentConfiguration.current.display);
+          revealCaret();
+          focus.current();
+          refreshFormatting.current();
+          contextChange.current?.(mathArrayContext(math));
+        }
       };
       const blurred = () => {
+        if (viewportEditing.current === undefined) mathViewport.setEditing(false);
         if (math.readOnly) return;
         // Preserve what was actually typed when leaving an unfinished command;
         // never accept a ghost suggestion just because focus moved elsewhere.
@@ -357,6 +497,19 @@ export const LatexMathField = forwardRef<
       };
       let rectangle: MathRectangleSelection | null = null;
       let applyingSelection = false;
+      const selectionSession = installMathSelectionSession(math, {
+        rectangle: () => rectangle,
+        apply: (selection, selectedCells) => {
+          applyingSelection = true;
+          rectangle = selectedCells;
+          if (selectedCells) selectMathRectangle(math, selectedCells);
+          else math.selection = selection;
+          applyingSelection = false;
+        },
+        exit: (direction) => {
+          if (publish()) exit.current(direction);
+        },
+      });
       clearSelection.current = () => {
         if (math.selectionIsCollapsed && !rectangle) return;
         rectangle = null;
@@ -389,6 +542,9 @@ export const LatexMathField = forwardRef<
       } | null = null;
       let pointerResult: MathfieldElement["selection"] | null = null;
       const selectionChanged = () => {
+        refreshFormatting.current();
+        revealCaret();
+        contextChange.current?.(mathArrayContext(math));
         if (applyingSelection || pointerSelection) return;
         const endpoints = mathSelectionEndpoints(math);
         if (!endpoints || math.selectionIsCollapsed) {
@@ -416,9 +572,18 @@ export const LatexMathField = forwardRef<
         applyingSelection = false;
       };
       let extendingVertically = false;
+      let verticalIntent: number | null = null;
       const keydown = (event: KeyboardEvent) => {
         if (math.readOnly || event.isComposing || event.defaultPrevented) return;
+        if (commandCompletion.handleKeyDown(event)) return;
         const modifier = event.ctrlKey || event.metaKey;
+        if (
+          (event.key !== "ArrowUp" && event.key !== "ArrowDown") ||
+          modifier ||
+          event.altKey ||
+          event.shiftKey
+        )
+          verticalIntent = null;
         if (modifier && !event.altKey) {
           const key = event.key.toLowerCase();
           const redo = key === "y" || (key === "z" && event.shiftKey);
@@ -442,6 +607,30 @@ export const LatexMathField = forwardRef<
           // Enter accepts a command and arrows select suggestions. They must
           // reach MathLive before any document-level navigation can take over.
           return;
+        }
+        if (event.key === "Tab" && !modifier && !event.altKey) {
+          rectangle = null;
+          event.preventDefault();
+          event.stopPropagation();
+          if (!moveMathSlot(math, event.shiftKey ? -1 : 1) && publish())
+            exit.current(event.shiftKey ? -1 : 1);
+          return;
+        }
+        if (
+          !modifier &&
+          !event.altKey &&
+          !event.shiftKey &&
+          math.selectionIsCollapsed &&
+          (event.key === "ArrowUp" || event.key === "ArrowDown")
+        ) {
+          const target = mathVerticalTarget(math, event.key === "ArrowUp" ? -1 : 1, verticalIntent);
+          if (target) {
+            verticalIntent = target.intent;
+            event.preventDefault();
+            event.stopPropagation();
+            math.position = target.position;
+            return;
+          }
         }
         if (!modifier && !event.altKey && (event.key === "Backspace" || event.key === "Delete")) {
           const selectedCells = rectangle;
@@ -575,7 +764,14 @@ export const LatexMathField = forwardRef<
           event.shiftKey &&
           getKeyboardPreferences().preferences.matrixEnter
         ) {
-          if (math.executeCommand("addRowAfter")) {
+          const reason =
+            structureRestriction.current ??
+            mathStructureCommandReason(mathArrayContext(math), "addRowAfter");
+          if (reason) {
+            shortcutHint.current(reason);
+            event.preventDefault();
+            event.stopPropagation();
+          } else if (math.executeCommand("addRowAfter")) {
             event.preventDefault();
             event.stopPropagation();
             return;
@@ -679,6 +875,7 @@ export const LatexMathField = forwardRef<
       };
       cancelPointerSelection.current = () => stopPointerSelection();
       const pointerDown = (event: PointerEvent) => {
+        verticalIntent = null;
         if (math.readOnly || event.button !== 0) return;
         stopPointerSelection();
         const now = performance.now();
@@ -740,7 +937,9 @@ export const LatexMathField = forwardRef<
           (math.selectionIsCollapsed
             ? math.getValue("latex-without-placeholders")
             : math.getValue(math.selection, "latex-without-placeholders"));
-        const source = copyFormat.current(tex);
+        const source = copyFormat.current(
+          mathTextFormattingSource(tex, Boolean(initialMacros.current.mathbfit)),
+        );
         event.clipboardData.setData("text/plain", source);
         event.clipboardData.setData("application/x-latex", source);
         event.preventDefault();
@@ -766,14 +965,18 @@ export const LatexMathField = forwardRef<
         if (parsed === null) return;
         event.preventDefault();
         event.stopImmediatePropagation();
-        math.insert(mathLiveFontDeclarations(parsed), {
-          format: "latex",
-          insertionMode: "replaceSelection",
-          selectionMode: "after",
-          focus: true,
-        });
+        math.insert(
+          mathLiveFontDeclarations(mathTextFormattingInput(parsed, initialMacros.current)),
+          {
+            format: "latex",
+            insertionMode: "replaceSelection",
+            selectionMode: "after",
+            focus: true,
+          },
+        );
       };
       math.addEventListener("input", input);
+      math.addEventListener("contextmenu", contextMenu, true);
       math.addEventListener("mode-change", modeChange);
       math.addEventListener("focus", focused);
       math.addEventListener("blur", blurred);
@@ -784,22 +987,35 @@ export const LatexMathField = forwardRef<
       math.addEventListener("copy", copied, true);
       math.addEventListener("cut", cut, true);
       math.addEventListener("paste", pasted, true);
+      const resetVerticalIntent = () => {
+        verticalIntent = null;
+      };
+      document.addEventListener("pointerdown", resetVerticalIntent, true);
+      window.addEventListener("resize", resetVerticalIntent);
       window.addEventListener("pagehide", publish);
       field.current = math;
       return () => {
+        selectionSession.dispose();
+        document.removeEventListener("pointerdown", resetVerticalIntent, true);
+        window.removeEventListener("resize", resetVerticalIntent);
+        commandCompletion.dispose();
         removeEditingGuides();
         stopPointerSelection();
         cancelPointerSelection.current = () => {};
         clearTimeout(publishTimer);
         cancelPublish?.();
+        mathViewport.dispose();
+        viewport.current = null;
         journal();
         macroEditing.dispose();
         reportDraft(draftId, false);
         flush.current = () => true;
         clearSelection.current = () => {};
+        refreshFormatting.current = () => {};
         detachShortcuts();
         unsubscribe();
         math.removeEventListener("input", input);
+        math.removeEventListener("contextmenu", contextMenu, true);
         math.removeEventListener("mode-change", modeChange);
         math.removeEventListener("focus", focused);
         math.removeEventListener("blur", blurred);
@@ -860,7 +1076,10 @@ export const LatexMathField = forwardRef<
       const selection = field.current.selection;
       cancelPointerSelection.current();
       clearSelection.current();
-      restoreMathFieldValue(field.current, mathLiveFontDeclarations(value));
+      restoreMathFieldValue(
+        field.current,
+        mathLiveFontDeclarations(mathTextFormattingInput(value, initialMacros.current)),
+      );
       field.current.resetUndo();
       const end = field.current.lastOffset;
       field.current.selection = {

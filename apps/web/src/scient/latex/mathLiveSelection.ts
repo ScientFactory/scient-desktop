@@ -1,13 +1,17 @@
-import type { MathfieldElement } from "mathlive";
+import type { MathfieldElement, Style } from "mathlive";
 
 interface MathAtom {
   readonly id?: string;
   readonly type?: string;
+  readonly style?: Readonly<Record<string, string | number | undefined>>;
+  readonly command?: string;
+  readonly skipBoundary?: boolean;
   readonly isRoot?: boolean;
   readonly environmentName?: string;
   readonly parent?: MathAtom | null;
   readonly parentBranch?: unknown;
   readonly leftSibling?: MathAtom | null;
+  readonly rightSibling?: MathAtom | null;
   readonly rowCount?: number;
   readonly colCount?: number;
   readonly getCell?: (row: number, column: number) => readonly MathAtom[] | undefined;
@@ -176,7 +180,11 @@ export function unwrapEmptyMathCell(math: MathfieldElement): boolean {
         contents.push(...(target.getCell?.(row, column) ?? []));
   }
   for (const branch of target.branches ?? []) contents.push(...(target.branch?.(branch) ?? []));
-  const remaining = contents.filter((atom) => atom.type !== "first" && atom.type !== "placeholder");
+  // Matrix templates use {} for blank cells. Those anonymous groups are
+  // empty slots, not expressions to move into the surrounding formula.
+  // Inspect atoms instead of stripping braces from serialized source: macro
+  // arguments, nested structures and script bases must retain their meaning.
+  const remaining = contents.filter((atom) => !emptyMathSlot(atom));
   const before = target.leftSibling;
   return mutateMath(math, (current) => {
     if (remaining.length) parent.addChildrenAfter?.(remaining, target);
@@ -185,12 +193,60 @@ export function unwrapEmptyMathCell(math: MathfieldElement): boolean {
   });
 }
 
+function emptyMathSlot(atom: MathAtom): boolean {
+  if (atom.type === "first" || atom.type === "placeholder") return true;
+  if (atom.type !== "group" || atom.command || !atom.skipBoundary) return false;
+  if (atom.rightSibling?.type === "subsup") return false;
+  return (atom.branches ?? []).every((branch) =>
+    (atom.branch?.(branch) ?? []).every(emptyMathSlot),
+  );
+}
+
 export interface MathCellSelection {
   readonly array: MathAtom;
   readonly row: number;
   readonly column: number;
   readonly cell: readonly [number, number];
   readonly environment: readonly [number, number];
+}
+
+export type MathStructureCommand = "addRowAfter" | "removeRow" | "addColumnAfter" | "removeColumn";
+
+export interface MathArrayContext {
+  readonly environment: string;
+  readonly row: number;
+  readonly column: number;
+  readonly rows: number;
+  readonly columns: number;
+}
+
+/** The caret's actual array controls availability, including nested matrices. */
+export function mathArrayContext(math: MathfieldElement): MathArrayContext | null {
+  const cell = mathSelectionAtOffset(math, math.position).path.at(-1);
+  return cell
+    ? {
+        environment: cell.array.environmentName ?? "array",
+        row: cell.row,
+        column: cell.column,
+        rows: cell.array.rowCount ?? 0,
+        columns: cell.array.colCount ?? 0,
+      }
+    : null;
+}
+
+export function mathStructureCommandReason(
+  context: MathArrayContext | null,
+  command: MathStructureCommand,
+): string | null {
+  if (!context) return "Place the caret in a matrix, cases or aligned equation cell.";
+  if (command.includes("Column") && ["cases", "aligned", "gathered"].includes(context.environment))
+    return "This structure has a fixed number of columns.";
+  if (command === "removeRow" && context.rows <= 1) return "Keep at least one row.";
+  if (command === "removeColumn" && context.columns <= 1) return "Keep at least one column.";
+  if (command === "addRowAfter" && context.rows >= 20) return "This editor supports up to 20 rows.";
+  if (command === "addColumnAfter" && context.columns >= 20)
+    return "This editor supports up to 20 columns.";
+  return null;
 }
 
 export interface MathRectangleSelection {
@@ -242,9 +298,335 @@ function mathModel(math: MathfieldElement): MathModel | null {
   return model;
 }
 
+function isMathFormattingScope(atom: MathAtom): boolean {
+  return (
+    atom.type === "group" &&
+    (atom.skipBoundary === true ||
+      /^\\(?:text|math)(?:bf|it|tt|rm|sf|sc|sl|up)?$/u.test(atom.command ?? ""))
+  );
+}
+
+export interface MathEditingScope {
+  readonly label: string;
+  readonly kind: "cell" | "slot" | "structure" | "format" | "equation";
+  readonly range: readonly [number, number];
+  readonly exit: readonly [number, number];
+  readonly leaveStyle?: Style;
+}
+const mathScopeLabels: Readonly<Record<string, string>> = {
+  genfrac: "Fraction",
+  surd: "Root",
+  leftright: "Brackets",
+  subsup: "Scripts",
+  textbf: "Bold",
+  mathbf: "Bold",
+  textit: "Italic",
+  mathit: "Italic",
+  texttt: "Monospace",
+  mathtt: "Monospace",
+  text: "Text",
+};
+
+/** Innermost first; formatting participates in explicit scope commands only. */
+export function mathEditingScopes(math: MathfieldElement): MathEditingScope[] {
+  const model = mathModel(math);
+  if (!model) return [];
+  const result: MathEditingScope[] = [];
+  let atom = model.at(math.position);
+  const branch = atom?.parentBranch;
+  const siblings = Array.isArray(branch)
+    ? atom.parent?.getCell?.(branch[0], branch[1])
+    : atom.parent?.branch?.(branch);
+  // MathLive represents font commands as styled runs, not always group atoms.
+  const formats: {
+    label: string;
+    active: boolean;
+    matches: (style: MathAtom["style"]) => boolean;
+    leaveStyle: Style;
+  }[] = [
+    {
+      label: "Bold",
+      active:
+        math.queryStyle({ fontSeries: "b" }) === "all" ||
+        math.queryStyle({ variantStyle: "bold" }) === "all" ||
+        math.queryStyle({ variantStyle: "bolditalic" }) === "all",
+      matches: (style) =>
+        style?.fontSeries === "b" || String(style?.variantStyle ?? "").includes("bold"),
+      leaveStyle:
+        math.mode === "text"
+          ? { fontSeries: "m" }
+          : {
+              variantStyle:
+                math.queryStyle({ variantStyle: "bolditalic" }) === "all" ? "italic" : "up",
+            },
+    },
+    {
+      label: "Italic",
+      active:
+        math.queryStyle({ fontShape: "it" }) === "all" ||
+        math.queryStyle({ variantStyle: "italic" }) === "all" ||
+        math.queryStyle({ variantStyle: "bolditalic" }) === "all",
+      matches: (style) =>
+        style?.fontShape === "it" || String(style?.variantStyle ?? "").includes("italic"),
+      leaveStyle:
+        math.mode === "text"
+          ? { fontShape: "n" }
+          : {
+              variantStyle:
+                math.queryStyle({ variantStyle: "bolditalic" }) === "all" ? "bold" : "up",
+            },
+    },
+    {
+      label: "Monospace",
+      active:
+        math.queryStyle({ fontFamily: "monospace" }) === "all" ||
+        math.queryStyle({ variant: "monospace" }) === "all",
+      matches: (style) => style?.fontFamily === "monospace" || style?.variant === "monospace",
+      leaveStyle: math.mode === "text" ? { fontFamily: "roman" } : { variant: "main" },
+    },
+  ];
+  for (const format of formats) {
+    if (!format.active || !siblings) continue;
+    let index = siblings.indexOf(atom);
+    if (index < 0) continue;
+    if (!format.matches(atom.style) && format.matches(siblings[index + 1]?.style)) index++;
+    if (!format.matches(siblings[index]?.style)) continue;
+    let start = index,
+      end = index;
+    while (start > 0 && format.matches(siblings[start - 1]?.style)) start--;
+    while (end + 1 < siblings.length && format.matches(siblings[end + 1]?.style)) end++;
+    const before = siblings[start]!.leftSibling ?? siblings[start]!;
+    const range: [number, number] = [model.offsetOf(before), model.offsetOf(siblings[end]!)];
+    result.push({
+      label: format.label,
+      kind: "format",
+      range,
+      exit: range,
+      leaveStyle: format.leaveStyle,
+    });
+  }
+  result.sort((a, b) => a.range[1] - a.range[0] - (b.range[1] - b.range[0]));
+  while (atom?.parent && !atom.parent.isRoot) {
+    const owner = atom.parent,
+      branch = atom.parentBranch;
+    const before = owner.leftSibling ? model.offsetOf(owner.leftSibling) : 0;
+    const after = model.offsetOf(owner);
+    if (owner.type === "array" && Array.isArray(branch)) {
+      const cell = arrayCell(model, owner, branch[0], branch[1]);
+      if (cell) {
+        const columns = owner.colCount ?? 0,
+          rows = owner.rowCount ?? 0;
+        const index = cell.row * columns + cell.column;
+        const previous =
+          index > 0
+            ? arrayCell(model, owner, Math.floor((index - 1) / columns), (index - 1) % columns)
+            : null;
+        const next =
+          index + 1 < rows * columns
+            ? arrayCell(model, owner, Math.floor((index + 1) / columns), (index + 1) % columns)
+            : null;
+        result.push({
+          label: `Cell (${cell.row + 1}, ${cell.column + 1})`,
+          kind: "cell",
+          range: cell.cell,
+          exit: [previous?.cell[1] ?? cell.environment[0], next?.cell[0] ?? cell.environment[1]],
+        });
+        result.push({
+          label: /cases/u.test(owner.environmentName ?? "") ? "Cases" : "Matrix",
+          kind: "structure",
+          range: cell.environment,
+          exit: cell.environment,
+        });
+      }
+    } else {
+      const contents = owner.branch?.(branch);
+      const command = owner.command?.replace(/^\\/u, "");
+      const label =
+        mathScopeLabels[command ?? ""] ?? mathScopeLabels[owner.type ?? ""] ?? command ?? "Group";
+      if (contents?.length && after >= before) {
+        const range: [number, number] = [
+          model.offsetOf(contents[0]!),
+          model.offsetOf(contents.at(-1)!),
+        ];
+        const whole: [number, number] = [before, after];
+        if (isMathFormattingScope(owner)) {
+          if (command && !result.some((scope) => scope.label === label && scope.kind === "format"))
+            result.push({ label, kind: "format", range, exit: whole });
+        } else {
+          const slotLabel =
+            branch === "above"
+              ? owner.type === "genfrac"
+                ? "Numerator"
+                : "Above"
+              : branch === "below"
+                ? owner.type === "genfrac"
+                  ? "Denominator"
+                  : "Below"
+                : branch === "superscript"
+                  ? "Superscript"
+                  : branch === "subscript"
+                    ? "Subscript"
+                    : branch === "body"
+                      ? "Body"
+                      : String(branch);
+          result.push({ label: slotLabel, kind: "slot", range, exit: whole });
+          result.push({ label, kind: "structure", range: whole, exit: whole });
+        }
+      }
+    }
+    atom = owner;
+  }
+  result.push({
+    label: "Equation",
+    kind: "equation",
+    range: [0, math.lastOffset],
+    exit: [0, math.lastOffset],
+  });
+  return result;
+}
+
+export function mathScopeRects(
+  math: MathfieldElement,
+  range: readonly [number, number],
+): DOMRect[] {
+  const cell = mathCellPathAt(math, range[0]).at(-1);
+  if (cell && cell.cell[0] === range[0] && cell.cell[1] === range[1]) {
+    const rect = mathRenderedCellBounds(math, cell);
+    if (rect) return [rect];
+  }
+  const bounds = math.shadowRoot
+    ?.querySelector(".ML__caret,.ML__text-caret")
+    ?.getBoundingClientRect();
+  const rectangles: DOMRect[] = [];
+  for (let offset = range[0]; offset <= range[1]; offset++) {
+    const rect = math.getElementInfo(offset)?.bounds;
+    if (rect?.height) rectangles.push(rect);
+  }
+  if (!rectangles.length) return bounds ? [bounds] : [];
+  const left = Math.min(...rectangles.map((rect) => rect.left)),
+    top = Math.min(...rectangles.map((rect) => rect.top));
+  const right = Math.max(...rectangles.map((rect) => rect.right)),
+    bottom = Math.max(...rectangles.map((rect) => rect.bottom));
+  return [new DOMRect(left, top, Math.max(4, right - left), bottom - top)];
+}
+
+/** Tab visits structural slots, including blank cells, without stopping on styling. */
+export function moveMathSlot(math: MathfieldElement, direction: -1 | 1): boolean {
+  const model = mathModel(math);
+  if (!model) return false;
+  let atom = model.at(math.position);
+  while (atom?.parent && !atom.parent.isRoot) {
+    const owner = atom.parent;
+    const branch = atom.parentBranch;
+    if (isMathFormattingScope(owner)) {
+      atom = owner;
+      continue;
+    }
+    if (owner.type === "array" && Array.isArray(branch)) {
+      const columns = owner.colCount ?? 0,
+        rows = owner.rowCount ?? 0;
+      const index = branch[0] * columns + branch[1] + direction;
+      if (index >= 0 && index < rows * columns) {
+        const cell = arrayCell(model, owner, Math.floor(index / columns), index % columns);
+        if (cell) {
+          math.position = cell.cell[direction < 0 ? 1 : 0];
+          return true;
+        }
+      }
+    } else {
+      // Library branch order is the structural serialization order.
+      const branches = (owner.branches ?? []).filter((name) => owner.branch?.(name)?.length);
+      const next = branches[branches.indexOf(branch) + direction];
+      const contents = next === undefined ? null : owner.branch?.(next);
+      if (contents?.length) {
+        math.position = model.offsetOf(contents[direction < 0 ? contents.length - 1 : 0]!);
+        return true;
+      }
+    }
+    const edge = direction < 0 ? owner.leftSibling : owner;
+    if (edge) {
+      math.position = Math.max(0, model.offsetOf(edge));
+      return true;
+    }
+    atom = owner;
+  }
+  return false;
+}
+
+/** Repeated vertical moves retain the starting x even through short/empty rows. */
+export function mathVerticalTarget(
+  math: MathfieldElement,
+  direction: -1 | 1,
+  intent: number | null,
+): { position: number; intent: number } | null {
+  const model = mathModel(math);
+  if (!model) return null;
+  const caret = math.shadowRoot
+    ?.querySelector(".ML__caret,.ML__text-caret")
+    ?.getBoundingClientRect();
+  const x = intent ?? caret?.left ?? math.getElementInfo(math.position)?.bounds?.right;
+  if (x === undefined) return null;
+  const nearest = (range: readonly [number, number]) => {
+    let position = range[0],
+      distance = Infinity;
+    for (let offset = range[0]; offset <= range[1]; offset++) {
+      const bounds = math.getElementInfo(offset)?.bounds;
+      if (!bounds) continue;
+      const dx = Math.abs(x - (offset === range[0] ? bounds.left : bounds.right));
+      if (dx < distance) {
+        position = offset;
+        distance = dx;
+      }
+    }
+    return { position, intent: x };
+  };
+  let atom = model.at(math.position);
+  while (atom?.parent && !atom.parent.isRoot) {
+    const owner = atom.parent,
+      branch = atom.parentBranch;
+    if (owner.type === "array" && Array.isArray(branch)) {
+      const cell = arrayCell(model, owner, branch[0] + direction, branch[1]);
+      if (cell) return nearest(cell.cell);
+    } else if ((branch === "above" && direction > 0) || (branch === "below" && direction < 0)) {
+      const contents = owner.branch?.(direction < 0 ? "above" : "below");
+      if (contents?.length)
+        return nearest([model.offsetOf(contents[0]!), model.offsetOf(contents.at(-1)!)]);
+    }
+    atom = owner;
+  }
+  return null;
+}
+
 export function mathSelectionEndpoints(math: MathfieldElement): readonly [number, number] | null {
   const model = mathModel(math);
   return model ? [model.anchor, model.position] : null;
+}
+
+export function mathSelectionRevision(math: MathfieldElement): object | null {
+  return mathModel(math)?.at(0) ?? null;
+}
+
+/** A wrapper can contain a whole array or one cell's expression, never partial cells. */
+export function mathSelectionWrapReason(math: MathfieldElement): string | null {
+  if (math.selectionIsCollapsed) return null;
+  const ranges = math.selection.ranges;
+  if (ranges.length !== 1)
+    return "Select an expression within one math cell, or select the complete matrix.";
+  const [from, to] = ranges[0]!;
+  const start = mathCellPathAt(math, Math.min(from, to));
+  const end = mathCellPathAt(math, Math.max(from, to));
+  return start.length !== end.length ||
+    start.some((cell, index) => {
+      const other = end[index];
+      return (
+        !other ||
+        cell.array !== other.array ||
+        cell.row !== other.row ||
+        cell.column !== other.column
+      );
+    })
+    ? "Select an expression within one math cell, or select the complete matrix."
+    : null;
 }
 
 /** Start a newly mounted structured formula at its first editable cell. */
@@ -347,17 +729,17 @@ function mathHorizontalCellBoundary(
   const isEdgeColumn = (cell: MathCellSelection) =>
     cell.column === (direction === -1 ? 0 : (cell.array.colCount ?? 0) - 1);
   const path = mathCellPathAt(math, offset);
-  const exact = [...path]
-    .reverse()
-    .find((cell) => isEdgeColumn(cell) && offset === cell.cell[edge]);
+  const innermost = path.at(-1);
+  const exact =
+    innermost && isEdgeColumn(innermost) && offset === innermost.cell[edge] ? innermost : null;
   if (exact) return exact;
   const caret = math.shadowRoot?.querySelector(".ML__caret, .ML__text-caret");
   if (!caret) return null;
   const bounds = caret.getBoundingClientRect();
   const x = direction === -1 ? bounds.right : bounds.left;
   const y = bounds.top + bounds.height / 2;
-  const cell = [...mathSelectionPoint(math, x, y).path].reverse().find(isEdgeColumn);
-  if (!cell) return null;
+  const cell = mathSelectionPoint(math, x, y).path.at(-1);
+  if (!cell || !isEdgeColumn(cell) || (innermost && cell.array !== innermost.array)) return null;
   const start = direction === -1 ? cell.cell[0] + 1 : cell.cell[1];
   for (let index = start; index > cell.cell[0] && index <= cell.cell[1]; index -= direction) {
     const atomBounds = math.getElementInfo(index)?.bounds;
@@ -429,7 +811,9 @@ function mathCellBounds(
     right = Math.max(right, bounds.right);
     bottom = Math.max(bottom, bounds.bottom);
   }
-  const bounds = left === Infinity ? null : new DOMRect(left, top, right - left, bottom - top);
+  const rendered = mathRenderedCellBounds(math, cell);
+  const bounds =
+    rendered ?? (left === Infinity ? null : new DOMRect(left, top, right - left, bottom - top));
   if (geometry) {
     let cells = geometry.cells.get(cell.array);
     if (!cells) {
@@ -439,6 +823,21 @@ function mathCellBounds(
     cells.set(key, bounds);
   }
   return bounds;
+}
+
+/** Include the reserved hit box of an empty cell, rather than its zero-width sentinel. */
+function mathRenderedCellBounds(math: MathfieldElement, cell: MathCellSelection): DOMRect | null {
+  if (!cell.array.id) return null;
+  const wrapper = math.shadowRoot?.querySelector(`[data-atom-id="${CSS.escape(cell.array.id)}"]`);
+  const table = wrapper?.matches(".ML__mtable") ? wrapper : wrapper?.querySelector(".ML__mtable");
+  if (!table) return null;
+  const column = [...table.children].filter((element) =>
+    element.matches(".col-align-l,.col-align-c,.col-align-r"),
+  )[cell.column];
+  const rendered = [
+    ...(column?.querySelectorAll<HTMLElement>("[data-scient-math-cell]") ?? []),
+  ].filter((element) => element.closest(".ML__mtable") === table)[cell.row];
+  return rendered?.getBoundingClientRect() ?? null;
 }
 
 function nearestCell(
@@ -628,6 +1027,8 @@ function includeCrossedMathBranches(
     point: MathSelectionPoint,
   ) => {
     for (const scope of path) {
+      // Formatting boundaries do not make ordinary character selection atomic.
+      if (isMathFormattingScope(scope.owner)) continue;
       const sameSlot = other.some(
         (candidate) => candidate.owner === scope.owner && candidate.branch === scope.branch,
       );

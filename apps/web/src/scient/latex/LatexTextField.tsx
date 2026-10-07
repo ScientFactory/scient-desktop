@@ -9,6 +9,7 @@ import {
   type ComponentPropsWithoutRef,
 } from "react";
 import { afterEditorPaint } from "./afterEditorPaint";
+import { installLatexTextSelectionSession } from "./latexTextSelectionSession";
 
 export const LatexDraftContext = createContext({
   reportDraft: (_id: string, _pending: boolean) => {},
@@ -22,7 +23,8 @@ export function replaceLatexFieldDraft(field: HTMLElement, value: string): void 
 
 type Props = Omit<ComponentPropsWithoutRef<"textarea">, "value" | "onChange"> & {
   value: string;
-  onValueChange: (value: string) => void;
+  onValueChange: (value: string, fieldId?: string) => void;
+  commitOn?: "idle" | "blur";
   /** Scoped to a document and field; only unacknowledged input is journaled here. */
   draftKey?: string | undefined;
 };
@@ -51,6 +53,7 @@ export function LatexTextField({
   value,
   onValueChange,
   draftKey,
+  commitOn = "idle",
   onBlur,
   onCompositionStart,
   onCompositionEnd,
@@ -81,13 +84,19 @@ export function LatexTextField({
       entry.base !== owner.current.value
     )
       return;
-    publish.current(entry.text);
+    if (commitOn === "blur") publish.current(entry.text, id);
+    else publish.current(entry.text);
   };
   const schedule = () => {
     clearTimeout(publishTimer.current);
-    publishTimer.current = setTimeout(publishPending, 180);
+    if (commitOn === "idle") publishTimer.current = setTimeout(publishPending, 180);
   };
   const field = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const element = field.current;
+    if (!element?.closest(".scient-latex-visual-document")) return;
+    return installLatexTextSelectionSession(element);
+  }, []);
   const id = useId();
   const { reportDraft, undo } = useContext(LatexDraftContext);
   useEffect(() => {
@@ -211,6 +220,12 @@ export function LatexTextField({
       data-empty={draft.trim() === "" || undefined}
       data-local-draft={draft !== value || undefined}
       onKeyDown={(event) => {
+        if (commitOn === "blur" && event.key === "Enter" && !event.nativeEvent.isComposing) {
+          event.preventDefault();
+          event.stopPropagation();
+          publishPending();
+          return;
+        }
         const key = event.key.toLowerCase();
         if (
           !event.nativeEvent.isComposing &&

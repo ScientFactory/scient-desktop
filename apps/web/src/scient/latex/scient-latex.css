@@ -380,7 +380,7 @@
   font-size: 10px;
   line-height: 1.45;
 }
-.scient-latex-document-navigation nav button {
+.scient-latex-document-navigation nav[aria-label="Document outline"] button {
   display: block;
   width: 100%;
   overflow: hidden;
@@ -394,10 +394,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.scient-latex-document-navigation nav button:hover {
+.scient-latex-document-navigation nav[aria-label="Document outline"] button:hover {
   background: var(--accent);
 }
-.scient-latex-document-navigation nav button[aria-current="page"] {
+.scient-latex-document-navigation nav[aria-label="Document outline"] button[aria-current="page"] {
   background: var(--accent);
   color: var(--accent-foreground);
 }
@@ -628,6 +628,13 @@
 .scient-latex-visual-paper > div:has(> .tiptap) {
   position: relative;
   z-index: 1;
+}
+.scient-latex-visual-paper > .tiptap,
+.scient-latex-visual-paper > div:has(> .tiptap) {
+  /* Overfull ink may enter the margins, but cannot widen the paper/canvas.
+     Clip the content layer only; page-sheet shadows remain outside it. */
+  overflow-x: clip;
+  overflow-y: visible;
 }
 
 .scient-latex-visual-document {
@@ -1085,6 +1092,9 @@ tr[data-latex-longtable-band] {
 }
 .scient-latex-mathfield math-field::part(content) {
   padding: 0;
+  /* MathLive's hidden overflow assumes its default ink padding. Our compact
+     fields must allow italic overhangs, delimiters and annotations to paint. */
+  overflow: visible;
 }
 .scient-latex-mathfield math-field::part(virtual-keyboard-toggle),
 .scient-latex-mathfield math-field::part(menu-toggle) {
@@ -1092,6 +1102,30 @@ tr[data-latex-longtable-band] {
 }
 .scient-latex-visual-display-math math-field {
   font-size: 1em;
+  max-width: none;
+}
+.scient-latex-visual-display-math > .scient-latex-mathfield {
+  display: block;
+  max-width: calc(100% + 0.4em);
+  direction: ltr;
+  overflow: visible;
+  /* This space is identical in reading/editing modes, including annotations. */
+  padding: 0.2em;
+  margin: -0.2em;
+}
+.scient-latex-visual-display-math > .scient-latex-mathfield[data-math-wide] {
+  /* TeX starts overfull display boxes at the text boundary. */
+  text-align: left;
+}
+.scient-latex-visual-display-math > .scient-latex-mathfield[data-math-viewport-active] {
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* The footer owns the scroll control; a native bar must not add height. */
+  scrollbar-width: none;
+}
+.scient-latex-mathfield[data-math-viewport-active]::-webkit-scrollbar {
+  display: none;
+  height: 0;
 }
 /* MathLive mounts this panel under body. Scope its compact appearance to the
    focused Scient formula and override the library's injected default styles. */
@@ -1274,7 +1308,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   font: inherit;
 }
 .scient-latex-context-toolbar
-  button:not([data-latex-number-toggle]):not([data-slot="select-trigger"]):hover {
+  button:not([data-latex-number-toggle]):not([data-slot="select-trigger"]):hover:not(:disabled) {
   background: var(--accent);
   color: var(--accent-foreground);
 }
@@ -1290,184 +1324,13 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   background: var(--accent);
   color: var(--accent-foreground);
 }
-.scient-latex-symbol-palette {
-  display: inline-flex;
-  align-items: center;
-  flex: none;
-  min-width: 0;
-}
 .scient-latex-context-toolbar
-  > button:not([data-latex-number-toggle]):not([data-slot="select-trigger"]),
-.scient-latex-symbol-palette > .scient-latex-symbol-palette-trigger {
+  > button:not([data-latex-number-toggle]):not([data-slot="select-trigger"]) {
   box-sizing: border-box;
   height: 24px;
   padding: 2px 6px;
   font: inherit;
   white-space: nowrap;
-}
-.scient-latex-symbol-palette > .scient-latex-symbol-palette-trigger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  width: auto;
-}
-.scient-latex-symbol-palette-trigger > svg {
-  width: 12px;
-  height: 12px;
-}
-.scient-latex-symbol-palette button[aria-pressed="true"],
-.scient-latex-symbol-palette button[aria-expanded="true"] {
-  background: var(--accent);
-  color: var(--accent-foreground);
-  border-color: var(--border);
-}
-.scient-latex-symbol-palette-panel {
-  position: absolute;
-  z-index: 2;
-  bottom: calc(100% + 8px);
-  left: 0;
-  display: flex;
-  flex-direction: column;
-  width: min(560px, calc(100cqw - 24px));
-  max-height: min(430px, calc(100dvh - 180px));
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--popover);
-  color: var(--popover-foreground);
-  box-shadow: 0 8px 28px #00000026;
-  overflow: hidden;
-  font: 12px/1.4 var(--font-sans);
-}
-.scient-latex-symbol-palette-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px;
-  border-bottom: 1px solid var(--border);
-}
-.scient-latex-symbol-palette-header input {
-  flex: 1;
-  min-width: 0;
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--background);
-  color: var(--foreground);
-  font: inherit;
-}
-.scient-latex-symbol-palette input:focus-visible,
-.scient-latex-symbol-palette button:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: -2px;
-}
-.scient-latex-symbol-palette-body {
-  display: grid;
-  grid-template-columns: minmax(105px, 28%) minmax(0, 1fr);
-  min-height: 0;
-  height: 270px;
-}
-.scient-latex-symbol-palette-categories {
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  padding: 5px;
-  border-right: 1px solid var(--border);
-}
-.scient-latex-symbol-palette-categories > button {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  width: 100%;
-  min-height: 28px;
-  border-radius: 4px;
-  padding: 4px;
-  font: 11px/1.3 var(--font-sans);
-  text-align: left;
-}
-.scient-latex-symbol-palette-categories > button > span {
-  width: 20px;
-  flex: none;
-  text-align: center;
-  font:
-    15px/1.2 "Cambria Math",
-    serif;
-}
-.scient-latex-symbol-palette-results {
-  min-width: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  padding: 7px;
-}
-.scient-latex-symbol-palette-count {
-  display: flex;
-  justify-content: space-between;
-  gap: 6px;
-  margin-bottom: 6px;
-  color: var(--muted-foreground);
-  font-size: 11px;
-}
-.scient-latex-symbol-palette-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(32px, 1fr));
-  gap: 3px;
-}
-.scient-latex-symbol-palette-grid > button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-  height: 32px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--background);
-  color: var(--foreground);
-  font-size: 14px;
-  overflow: hidden;
-}
-.scient-latex-symbol-palette-grid > button[data-active] {
-  border-color: var(--ring);
-  background: var(--accent);
-  color: var(--accent-foreground);
-}
-.scient-latex-symbol-palette-command {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font: 10px/1.2 var(--font-mono);
-}
-.scient-latex-symbol-palette-detail {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-height: 64px;
-  padding: 6px 10px;
-  border-top: 1px solid var(--border);
-}
-.scient-latex-symbol-palette-detail > div {
-  display: grid;
-  min-width: 0;
-}
-.scient-latex-symbol-palette-detail strong,
-.scient-latex-symbol-palette-detail code {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-}
-.scient-latex-symbol-palette-detail code {
-  font-family: var(--font-mono);
-}
-.scient-latex-symbol-palette-detail small,
-.scient-latex-symbol-palette-empty {
-  color: var(--muted-foreground);
-  font-size: 10px;
-}
-.scient-latex-symbol-palette-empty {
-  padding: 12px 4px;
 }
 
 .scient-latex-visual-command {
@@ -1691,27 +1554,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   padding-right: 6px;
   margin-right: 3px;
   border-right: 1px solid var(--border);
-}
-.scient-latex-title-author-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 24px;
-  padding: 2px 5px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-.scient-latex-title-author-toggle:hover {
-  background: var(--accent);
-}
-.scient-latex-title-author-toggle input {
-  width: 12px;
-  height: 12px;
-  margin: 0;
-  accent-color: var(--primary);
-}
-.scient-latex-title-bar > select {
-  width: 118px;
 }
 .scient-latex-abstract-preview {
   margin: 1.5em 3em;
@@ -2023,10 +1865,10 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   margin-top: 0.75em;
 }
 .scient-latex-toc-preview li[data-level="2"] {
-  padding-left: 1.5em;
+  padding-inline-start: 1.5em;
 }
 .scient-latex-toc-preview li[data-level="3"] {
-  padding-left: 3.8em;
+  padding-inline-start: 3.8em;
   font-size: inherit;
 }
 .scient-latex-toc-preview li[data-level="2"] > button {
@@ -2124,7 +1966,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   border: 0;
 }
 .scient-latex-toc-preview:not([data-list-kind="contents"]) li {
-  padding-left: 1.5em;
+  padding-inline-start: 1.5em;
 }
 .scient-latex-toc-preview:not([data-list-kind="contents"]) li > button {
   grid-template-columns: 2.3em minmax(0, 1fr) 1.55em;
@@ -2155,7 +1997,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
   .scient-latex-toc-preview[data-list-kind="contents"]
   li[data-level="1"] {
-  padding-left: 1.5em;
+  padding-inline-start: 1.5em;
 }
 .scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
   .scient-latex-toc-preview[data-list-kind="contents"]
@@ -2173,12 +2015,12 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
   .scient-latex-toc-preview
   li[data-level="2"] {
-  padding-left: 3.8em;
+  padding-inline-start: 3.8em;
 }
 .scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
   .scient-latex-toc-preview
   li[data-level="3"] {
-  padding-left: 7em;
+  padding-inline-start: 7em;
 }
 .scient-latex-page-break {
   position: relative;
@@ -2683,7 +2525,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   outline: none;
 }
 .scient-latex-color-box-body {
-  padding: 3mm 5mm;
+  padding: var(--scient-box-padding, 3mm) var(--scient-box-padding, 5mm);
 }
 .scient-latex-color-box-body > :first-child {
   margin-top: 0;
@@ -3399,15 +3241,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
     order: -1;
   }
 }
-/* Selection tools keep the room their own button needs beside the line. */
-.scient-latex-visual-recovery
-  ~ .scient-latex-context-tools[data-compact]:has(.scient-latex-context-toolbar),
-.scient-document-footer[data-recovery]
-  .scient-document-footer-options:has(
-    .scient-latex-context-tools[data-compact] .scient-latex-context-toolbar
-  ) {
-  flex: 1 0 auto;
-}
 /* An open search bar sits just above the footer: the comparison opens above it. */
 .scient-document-controls:has(> .scient-pdf-searchbar)
   + .scient-latex-reader-footer
@@ -3696,81 +3529,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-reader-footer .scient-pdf-toolbar {
   border-bottom: 0;
 }
-/* Standalone readers place contextual editing between zoom and Search;
-   hosted readers use the shared footer below. */
-.scient-latex-context-tools {
-  flex: 1;
-  min-width: 0;
-  padding-inline: 6px;
-}
-.scient-latex-context-tools > button {
-  display: none;
-  max-width: 100%;
-}
-.scient-latex-context-tools > button > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.scient-latex-context-tools > .scient-latex-context-tools-slot {
-  border-inline-start: 1px solid var(--border);
-  padding-inline-start: 6px;
-}
-.scient-latex-context-tools .scient-latex-context-label,
-.scient-latex-context-tools .scient-latex-shortcut-hint {
-  display: none;
-}
-.scient-latex-context-tools .scient-latex-heading-reference {
-  font-size: 0;
-  gap: 0;
-}
-.scient-latex-context-tools .scient-latex-heading-reference > textarea {
-  width: 120px;
-}
-.scient-latex-context-tools .scient-latex-context-toolbar,
-.scient-latex-context-tools .scient-latex-symbol-palette {
-  position: static;
-}
-.scient-latex-reader-footer .scient-pdf-toolbar {
-  position: relative;
-}
-.scient-latex-reader-footer > .scient-latex-symbol-palette > .scient-latex-symbol-palette-panel,
-.scient-latex-context-tools
-  :is(
-    .scient-latex-context-menu-panel,
-    .scient-latex-symbol-palette-panel,
-    .scient-latex-math-source-popover
-  ) {
-  left: auto;
-  right: 8px;
-  max-width: calc(100% - 16px);
-}
-.scient-latex-context-tools[data-compact]:has(.scient-latex-context-toolbar) > button {
-  display: inline-flex;
-}
-.scient-latex-context-tools[data-compact] > .scient-latex-context-tools-slot {
-  position: absolute;
-  z-index: 60;
-  right: 8px;
-  bottom: calc(100% + 4px);
-  width: max-content;
-  max-width: calc(100% - 16px);
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--popover);
-  color: var(--popover-foreground);
-  box-shadow: 0 8px 24px #0002;
-}
-.scient-latex-context-tools[data-compact]:not([data-open]) > .scient-latex-context-tools-slot {
-  visibility: hidden;
-  pointer-events: none;
-}
-.scient-latex-context-tools[data-compact] .scient-latex-context-toolbar {
-  height: auto;
-  min-height: 24px;
-  flex-wrap: wrap;
-}
 
 .scient-latex-footer-draft {
   flex: none;
@@ -3847,12 +3605,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   padding: 0;
   background: none;
 }
-/* The footer now holds only the selected object's options. */
-.scient-document-footer .scient-latex-context-tools > .scient-latex-context-tools-slot {
-  border-inline-start: 0;
-  padding-inline-start: 0;
-}
-
 /* Pilot: build messages float over the document instead of pushing it down. */
 .scient-latex-diagnostics-anchor {
   position: relative;
@@ -3948,82 +3700,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 .scient-document-footer .scient-latex-context-tools > button {
   height: 22px;
-}
-/* Object options in the compact footer: one quiet line, nothing boxed at rest.
-   These rules reach the strip's own controls only, never the panels a control
-   opens (figure options, the equation's source, the symbol palette). */
-.scient-document-footer .scient-latex-context-toolbar {
-  height: 24px;
-  color: var(--muted-foreground);
-}
-/* A caption above a control would not fit the line; the control names itself. */
-.scient-document-footer .scient-latex-context-toolbar > label {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  font-size: 0;
-}
-.scient-document-footer .scient-latex-context-toolbar > label > * {
-  font-size: 11px;
-}
-.scient-document-footer .scient-latex-context-toolbar > .scient-latex-select,
-.scient-document-footer .scient-latex-context-toolbar > label > .scient-latex-select {
-  width: auto;
-}
-.scient-document-footer
-  .scient-latex-context-toolbar
-  > :is(.scient-latex-select, label, div)
-  [data-slot="select-trigger"]:not(
-    :is(
-        .scient-latex-context-menu-panel,
-        .scient-latex-math-source-popover,
-        .scient-latex-symbol-palette-panel
-      )
-      *
-  ),
-.scient-document-footer .scient-latex-context-toolbar [data-latex-number-toggle] {
-  height: 22px;
-  min-height: 0;
-  border-color: transparent;
-  border-radius: 4px;
-  background: transparent;
-  box-shadow: none;
-  padding-inline: 6px;
-  color: inherit;
-  font-size: 11px;
-}
-.scient-document-footer
-  .scient-latex-context-toolbar
-  > :is(.scient-latex-select, label, div)
-  [data-slot="select-trigger"]:not(
-    :is(
-        .scient-latex-context-menu-panel,
-        .scient-latex-math-source-popover,
-        .scient-latex-symbol-palette-panel
-      )
-      *
-  )::before,
-.scient-document-footer .scient-latex-context-toolbar [data-latex-number-toggle]::before {
-  display: none;
-}
-.scient-document-footer
-  .scient-latex-context-toolbar
-  > :is(.scient-latex-select, label, div)
-  [data-slot="select-trigger"]:not(
-    :is(
-        .scient-latex-context-menu-panel,
-        .scient-latex-math-source-popover,
-        .scient-latex-symbol-palette-panel
-      )
-      *
-  ):hover,
-.scient-document-footer .scient-latex-context-toolbar [data-latex-number-toggle]:hover {
-  background: var(--accent);
-  color: var(--accent-foreground);
-}
-.scient-document-footer .scient-latex-context-toolbar > label > :is(input, textarea) {
-  height: 22px;
-  min-height: 0;
 }
 
 /* Build messages: the mark sits on the first line of its message. */
@@ -4189,4 +3865,46 @@ body:has(.scient-latex-mathfield math-field:focus-within)
    the row there is nothing to list, so the button is not shown. */
 .scient-latex-toolbar[data-more-when-full][data-fit=""] .scient-pdf-action-more {
   display: none;
+}
+.scient-latex-selection-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 30;
+}
+
+.scient-latex-selection-overlay > span {
+  position: absolute;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.scient-latex-scope-outline {
+  outline: 1px solid rgba(86, 120, 162, 0.38);
+  outline-offset: 2px;
+}
+
+.scient-latex-retained-selection {
+  background: rgba(110, 128, 152, 0.24);
+}
+
+.scient-latex-cell-selection {
+  background: rgba(74, 131, 203, 0.17);
+}
+
+.scient-latex-selection-scope {
+  min-width: 0;
+  max-width: min(45vw, 38rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--secondary-label);
+  font-size: 11px;
+  flex-shrink: 1;
+}
+
+@media print {
+  .scient-latex-selection-overlay {
+    display: none !important;
+  }
 }

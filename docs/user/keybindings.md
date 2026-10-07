@@ -48,7 +48,7 @@ Clipboard, select-all, save, and native undo keys cannot be reassigned to author
 actions. OS, browser, and native menu reservations cannot be overridden here.
 
 Open **Math input behavior and preset** for the supported LyX-style sequences,
-a minimal palette-only authoring preset, command completion, automatic operators,
+a minimal palette-only authoring preset, backslash command completion,
 matrix Enter behavior, and sequence timeout. The timeout also applies to Markdown
 and PDF shortcut sequences. These settings do not alter TeX layout.
 See [math authoring](./math-in-chat.md#authoring-math).

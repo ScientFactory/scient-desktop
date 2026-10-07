@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -85,7 +86,12 @@ export function DockButton(props: {
             {...(props.preserveIconWeight ? { "data-preserve-icon-weight": "true" } : {})}
             disabled={props.disabled}
             onMouseDown={(event) => event.preventDefault()}
-            onClick={props.onClick}
+            onClick={(event) => {
+              event.currentTarget.dispatchEvent(
+                new CustomEvent("scient-writing-restore-selection", { bubbles: true }),
+              );
+              props.onClick();
+            }}
           >
             {props.icon}
           </button>
@@ -101,8 +107,8 @@ export function DockButton(props: {
 const DockCommandContext = createContext<((action: () => void) => void) | null>(null);
 
 // Menu primitives finish focus handling after onClick. Defer editing commands
-// to the menu's close-complete lifecycle, so typing and nested editors receive
-// focus once, after the menu relinquishes it. No timer or global menu override.
+// until the closed state commits, so typing and nested editors receive focus
+// after the menu relinquishes it, even when animation frames are suspended.
 export function DockCommandItem({
   onClick,
   ...props
@@ -176,29 +182,46 @@ export function DockMenu(props: {
   readonly groupLabel?: string;
   readonly children: ReactNode;
 }) {
+  const ownerId = useId();
+  const [open, setOpen] = useState(false);
   const closedByCommand = useRef(false);
+  const cancelled = useRef(false);
   const pendingCommand = useRef<(() => void) | null>(null);
   const queueCommand = useCallback((action: () => void) => {
     pendingCommand.current = action;
   }, []);
+  useEffect(() => {
+    if (open) return;
+    const command = pendingCommand.current;
+    pendingCommand.current = null;
+    if (command || cancelled.current) {
+      document.getElementById(ownerId)?.dispatchEvent(
+        new CustomEvent("scient-writing-restore-selection", {
+          bubbles: true,
+          detail: command ? "selection" : "focus",
+        }),
+      );
+      cancelled.current = false;
+    }
+    command?.();
+  }, [open, ownerId]);
   return (
     <DockCommandContext value={queueCommand}>
       <Menu
+        open={open}
         onOpenChange={(open, details) => {
           if (open) closedByCommand.current = false;
           else if (details.reason === "item-press") closedByCommand.current = true;
-        }}
-        onOpenChangeComplete={(open) => {
-          if (open) return;
-          const command = pendingCommand.current;
-          pendingCommand.current = null;
-          command?.();
+          cancelled.current = !open && details.reason === "escape-key";
+          setOpen(open);
         }}
       >
         <Tooltip>
           <TooltipTrigger
+            id={ownerId}
             render={
               <MenuTrigger
+                id={ownerId}
                 disabled={props.disabled}
                 render={
                   <button
@@ -222,6 +245,7 @@ export function DockMenu(props: {
           className={cn("w-44", props.popupClassName)}
           data-keybinding-capture=""
           data-dock-command-scope={props.commandScope}
+          data-writing-menu-owner={ownerId}
           // Commands own focus (editor, nested editor, or a picker). Escape and
           // other dismissals retain the menu's standard accessible focus return.
           finalFocus={() => !closedByCommand.current}

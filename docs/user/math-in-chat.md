@@ -63,9 +63,8 @@ These are supported LyX-style math sequences, not an implementation of every LyX
 
 Inside an equation, typing a recognized command such as `\alpha` then Space or
 Tab completes it. The completion setting can restrict this to Tab or turn it off.
-Optional automatic operators turn `->`, `<=`, `>=`, `!=`, and `+-` into
-math notation. Ordinary prose, code, comments, and literal math text arguments
-are not operator-completion targets.
+Plain words and punctuation pairs are not automatically expanded. Start a command
+with `\`, choose a symbol, or use an assigned keyboard shortcut.
 
 The matrix picker supports up to 20 rows and columns, with two columns for cases
 and aligned expressions. Tab and Shift+Tab navigate supported cells; Enter can add

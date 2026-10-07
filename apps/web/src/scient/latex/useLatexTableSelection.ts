@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import type { Editor } from "@tiptap/core";
-import { NodeSelection } from "@tiptap/pm/state";
-import { latexSelectEventOwner } from "./latexContextEvents";
+import { NodeSelection, Selection } from "@tiptap/pm/state";
+import { registerLatexSelection } from "./latexSelectionSession";
+import { latexContainerScope } from "./latexStructuredSelection";
+import { isLatexEditingMenuEvent } from "./latexContextEvents";
 import { captureLatexObjectDrag, latexObjectSelectionAtPointer } from "./latexObjectSelection";
 import { clearLatexEditingTarget } from "./latexEditingTarget";
 
@@ -59,6 +61,7 @@ export function useLatexTableSelection(props: {
     if (next) root?.setAttribute("data-table-selection", next.whole ? "whole" : "cells");
     else root?.removeAttribute("data-table-selection");
     setSelection(next);
+    root?.dispatchEvent(new CustomEvent("scient-latex-selection-change", { bubbles: true }));
   };
   const storeRef = useRef(store);
   storeRef.current = store;
@@ -116,6 +119,80 @@ export function useLatexTableSelection(props: {
     if (!root) return;
     let drag: { anchor: LatexTableCell; active: boolean; outside: boolean } | null = null;
     let releaseDrag: (() => void) | null = null;
+    const scopeHistory: LatexTableSelection[] = [];
+    const selectedCells = (range: LatexTableSelection) =>
+      [...root.querySelectorAll<HTMLElement>("[data-table-cell]")]
+        .filter((field) => {
+          const [row, column] = (field.dataset.tableCell ?? "").split("-").map(Number);
+          return (
+            field.closest("[data-table-selection]") === root &&
+            tableSelectionContains(range, row!, column!)
+          );
+        })
+        .map((field) => (field.closest("td,th") ?? field).getBoundingClientRect());
+    const session = registerLatexSelection({
+      element: root,
+      capture: () => {
+        const range = selected.current;
+        if (!range) return null;
+        const node = current.current.editor.state.doc.nodeAt(current.current.getPos() ?? -1);
+        return {
+          path: [
+            ...latexContainerScope(root),
+            "Table",
+            range.whole
+              ? "Whole table"
+              : `Cells (${range.anchor.row + 1}, ${range.anchor.column + 1})\u2013(${range.head.row + 1}, ${range.head.column + 1})`,
+          ],
+          scopes: () => [
+            root.querySelector("table")?.getBoundingClientRect() ?? root.getBoundingClientRect(),
+          ],
+          selection: () => selectedCells(range),
+          restore: (focus) => {
+            if (
+              !root.isConnected ||
+              current.current.editor.state.doc.nodeAt(current.current.getPos() ?? -1) !== node
+            )
+              return false;
+            storeRef.current(range);
+            if (focus) root.focus({ preventScroll: true });
+            return true;
+          },
+        };
+      },
+      command: (command) => {
+        const state = current.current;
+        if (command === "selectionExpand") {
+          if (selected.current?.whole) return false;
+          if (selected.current) {
+            scopeHistory.push(selected.current);
+            select(wholeTable());
+          } else select({ anchor: state.activeCell, head: state.activeCell, whole: false });
+        } else if (command === "selectionShrink") {
+          const previous = scopeHistory.pop();
+          if (!previous) return false;
+          select(previous);
+        } else {
+          scopeHistory.length = 0;
+          storeRef.current(null);
+          const position = state.getPos();
+          if (typeof position !== "number") return false;
+          const after = command === "leaveParentAfter";
+          const node = state.editor.state.doc.nodeAt(position);
+          state.editor.view.dispatch(
+            state.editor.state.tr.setSelection(
+              Selection.near(
+                state.editor.state.doc.resolve(after ? position + (node?.nodeSize ?? 0) : position),
+                after ? 1 : -1,
+              ),
+            ),
+          );
+          state.editor.view.focus();
+        }
+        session.refresh();
+        return true;
+      },
+    });
     const wholeTable = (): LatexTableSelection => ({
       anchor: { row: 0, column: 0 },
       head: { row: current.current.rowCount - 1, column: current.current.columnCount - 1 },
@@ -200,6 +277,7 @@ export function useLatexTableSelection(props: {
       if (endedOutside && !current.current.editor.isDestroyed) current.current.editor.view.focus();
     };
     const pointerDown = (event: PointerEvent) => {
+      scopeHistory.length = 0;
       if (event.button !== 0) return;
       stopDrag();
       const cell = cellAt(event.target);
@@ -235,8 +313,7 @@ export function useLatexTableSelection(props: {
       if (
         event.target instanceof Element &&
         !root.contains(event.target) &&
-        !event.target.closest(".scient-latex-context-tools") &&
-        !latexSelectEventOwner(event)?.closest(".scient-latex-context-tools")
+        !isLatexEditingMenuEvent(event, root)
       )
         storeRef.current(null);
     };
@@ -359,6 +436,7 @@ export function useLatexTableSelection(props: {
     props.editor.on("focus", synchronize);
     synchronize();
     return () => {
+      session.dispose();
       stopDrag();
       root.removeEventListener("pointerdown", pointerDown, true);
       root.removeEventListener("focusin", focused);

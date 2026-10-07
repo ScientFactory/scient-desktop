@@ -1410,10 +1410,11 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       className="scient-latex-surface"
       data-latex-layout={mode}
       dir="ltr"
-      onInputCapture={(event) => {
+      onInput={(event) => {
+        // Let controlled fields retain native input before refreshing the surface.
+        // A capture-phase refresh can restore their previous value before onChange.
         // A one-line field in the chrome (search, page number) is not an edit
-        // of the document. Re-rendering here, between the key going in and the
-        // field reading it, also resets that field and swallows the key.
+        // of the document.
         if (event.target instanceof HTMLInputElement) return;
         setLastEditAt(Date.now());
       }}

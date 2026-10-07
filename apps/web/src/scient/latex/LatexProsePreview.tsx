@@ -1,9 +1,14 @@
 import { useLayoutEffect, useRef } from "react";
 import type { Editor } from "@tiptap/core";
 import { useEditorState } from "@tiptap/react";
-import { latexEquationReferencesKey, navigateToEquation } from "./latexEquationReferences";
+import {
+  latexEquationReferencesKey,
+  latexReferencePresentation,
+  navigateToEquation,
+} from "./latexEquationReferences";
 import { projectLatexVisualDocument } from "./latexVisualDocument";
 import { LATEX_CANVAS_TEXT_MARKS } from "./latexTextFormatting";
+import { latexDirectionMark } from "./latexLanguage";
 
 /** Small read-only prose projections share the source parser and never inject HTML. */
 export function appendLatexProsePreview(element: HTMLElement, source: string, editor?: Editor) {
@@ -42,7 +47,8 @@ export function appendLatexProsePreview(element: HTMLElement, source: string, ed
       reference.disabled = !target;
       reference.onclick = (event) => {
         event.stopPropagation();
-        if (target) navigateToEquation(editor.view, target);
+        const current = latexEquationReferencesKey.getState(editor.state)?.labels.get(key);
+        if (current) navigateToEquation(editor.view, current);
       };
       child = reference;
     }
@@ -53,6 +59,12 @@ export function appendLatexProsePreview(element: HTMLElement, source: string, ed
       const wrapper = document.createElement(tag ?? "span");
       const style = LATEX_CANVAS_TEXT_MARKS.find((item) => item.name === mark.type)?.style;
       if (style) wrapper.dataset.latexTextStyle = style;
+      const direction = latexDirectionMark(mark.type);
+      if (direction) {
+        wrapper.dataset.latexDirectionMark = direction.name;
+        wrapper.dir = direction.direction;
+        if (direction.language) wrapper.lang = direction.language === "hebrew" ? "he" : "en";
+      }
       wrapper.append(child);
       child = wrapper;
     }
@@ -65,8 +77,7 @@ export function LatexProsePreview({ source, editor }: { source: string; editor?:
   const element = useRef<HTMLSpanElement>(null);
   const references = useEditorState({
     editor: editor ?? null,
-    selector: ({ editor: current }) =>
-      current ? latexEquationReferencesKey.getState(current.state)?.labels : null,
+    selector: ({ editor: current }) => (current ? latexReferencePresentation(current.state) : null),
   });
   useLayoutEffect(() => {
     if (element.current) appendLatexProsePreview(element.current, source, editor);

@@ -189,6 +189,17 @@ export function singleMathReferenceLabel(source: string): string | null {
   );
 }
 
+/** Toggle a single equation's wrapper while retaining its body and outer label. */
+export function withMathNumbering(source: string, numbered: boolean): string | null {
+  const equation = singleEquation(source);
+  if (!equation || equation.row.commands.some((command) => command !== equation.label)) return null;
+  const currentlyNumbered = equation.head === "\\begin{equation}";
+  if (currentlyNumbered === numbered) return source;
+  const head = numbered ? "\\begin{equation}" : "\\[";
+  const tail = numbered ? "\\end{equation}" : "\\]";
+  return head + source.slice(equation.head.length, -equation.tail.length) + tail;
+}
+
 /** Change just the single outer label, preserving tags, spacing, and the math. */
 export function withMathReferenceLabel(source: string, label: string): string | null {
   const equation = singleEquation(source);

@@ -298,17 +298,6 @@ export function AuthoringKeybindingsSettings({
                   <div className="border-t border-border/40 sm:border-t-0 sm:border-l sm:pl-3">
                     <SettingsRow
                       className={MATH_OPTION_ROW_CLASS}
-                      title="Automatic operators"
-                      control={
-                        <Switch
-                          aria-label="Automatic math operators"
-                          checked={snapshot.preferences.automaticOperators}
-                          onCheckedChange={(checked) => update({ automaticOperators: checked })}
-                        />
-                      }
-                    />
-                    <SettingsRow
-                      className={MATH_OPTION_ROW_CLASS}
                       title="Shift+Enter adds a matrix row"
                       control={
                         <Switch

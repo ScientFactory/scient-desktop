@@ -8,15 +8,18 @@ const commandPackages: Readonly<Record<string, readonly string[]>> = {
   providecolor: ["xcolor"],
   colorlet: ["xcolor"],
   pagecolor: ["xcolor"],
-  rowcolor: ["colortbl"],
+  rowcolor: ["xcolor", "colortbl"],
   multirow: ["multirow"],
-  columncolor: ["colortbl"],
-  cellcolor: ["colortbl"],
+  columncolor: ["xcolor", "colortbl"],
+  cellcolor: ["xcolor", "colortbl"],
+  arrayrulecolor: ["xcolor", "colortbl"],
   cancel: ["cancel"],
   bcancel: ["cancel"],
   xcancel: ["cancel"],
   cancelto: ["cancel"],
   text: ["amsmath"],
+  boldsymbol: ["amsmath"],
+  bm: ["bm"],
   dfrac: ["amsmath"],
   tfrac: ["amsmath"],
   binom: ["amsmath"],
@@ -60,6 +63,7 @@ const providedPackages: Readonly<Record<string, readonly string[]>> = {
   colortbl: ["array", "color"],
   xcolor: ["color"],
   hyperref: ["url"],
+  algorithm: ["float"],
 };
 
 // Preserve offsets so declarations can be inserted without rewriting the preamble.
@@ -92,9 +96,30 @@ export function newLatexCommandPackages(previous: string, next: string): Set<str
   return packages;
 }
 
+/** Locate the real document boundary without scanning or copying its body. */
+export function latexPreambleEnd(source: string): number {
+  const tokens = /\\([A-Za-z]+|[^\r\n])|[{}%]/gu;
+  const document = /(?:\s|%[^\r\n]*(?:\r?\n|$))*\{document\}/uy;
+  let depth = 0;
+  for (let token = tokens.exec(source); token; token = tokens.exec(source)) {
+    if (token[0] === "%") {
+      const newline = source.indexOf("\n", tokens.lastIndex);
+      if (newline < 0) break;
+      tokens.lastIndex = newline + 1;
+    } else if (token[0] === "{") depth++;
+    else if (token[0] === "}") depth--;
+    else if (depth === 0 && token[1] === "begin") {
+      document.lastIndex = tokens.lastIndex;
+      if (document.test(source)) return token.index;
+    }
+  }
+  return source.length;
+}
+
 export function latexPackageInventory(source: string) {
-  const clean = latexWithoutComments(source);
+  const clean = latexWithoutComments(source.slice(0, latexPreambleEnd(source)));
   let end = clean.length;
+  let directionBoundary: number | null = null;
   const declarations: { name: string; from: number; options: string }[] = [];
   let depth = 0;
   // Consume control symbols as well, so escaped braces and \\usepackage are literal.
@@ -108,6 +133,17 @@ export function latexPackageInventory(source: string) {
     ) {
       end = token.index;
       break;
+    } else if (
+      depth === 0 &&
+      ["setdefaultlanguage", "setmainlanguage", "setotherlanguage", "setotherlanguages"].includes(
+        token[1]!,
+      )
+    ) {
+      const args = /^\s*(?:\[[^\]]*\]\s*)?\{([^{}]+)\}/u.exec(
+        clean.slice(token.index + token[0].length),
+      );
+      if (args?.[1]?.split(",").some((language) => language.trim() === "hebrew"))
+        directionBoundary ??= token.index;
     } else if (depth === 0 && ["usepackage", "RequirePackage"].includes(token[1]!)) {
       const args = /^\s*(?:\[([^\]]*)\]\s*)?\{([^{}]+)\}/u.exec(
         clean.slice(token.index + token[0].length),
@@ -126,7 +162,7 @@ export function latexPackageInventory(source: string) {
   )
     loaded.add("colortbl");
   for (const name of loaded) providedPackages[name]?.forEach((provided) => loaded.add(provided));
-  return { preamble: clean.slice(0, end), end, declarations, loaded };
+  return { preamble: clean.slice(0, end), end, declarations, loaded, directionBoundary };
 }
 
 /** Only add missing declarations; keep user options and never remove packages on undo. */
@@ -135,12 +171,23 @@ export function ensureLatexPackages(
   required: Iterable<string>,
   eol: string,
 ): string {
-  const { end, declarations, loaded } = latexPackageInventory(source);
+  const { end, declarations, loaded, directionBoundary } = latexPackageInventory(source);
   const wanted = new Set(required);
+  const breakable = wanted.delete("tcolorbox-breakable");
+  if (breakable) wanted.add("tcolorbox");
   // A newly requested provider also satisfies its dependencies in this same edit.
   for (const name of wanted) providedPackages[name]?.forEach((provided) => loaded.add(provided));
   const missing = [...wanted].filter((name) => !loaded.has(name));
-  if (!missing.length) return source;
+  const needsBreakable =
+    breakable &&
+    !declarations.some(
+      ({ name, options }) =>
+        name === "tcolorbox" && /(?:^|,)\s*(?:most|many|breakable)\s*(?:,|$)/u.test(options),
+    ) &&
+    !/\\tcbuselibrary\s*\{[^{}]*\bbreakable\b[^{}]*\}/u.test(
+      latexWithoutComments(source.slice(0, end)),
+    );
+  if (!missing.length && !needsBreakable) return source;
   const order = [
     "amsmath",
     "amssymb",
@@ -162,12 +209,20 @@ export function ensureLatexPackages(
       (declaration) =>
         (name !== "cleveref" && declaration.name === "cleveref") ||
         (!["hyperref", "cleveref"].includes(name) && declaration.name === "hyperref") ||
+        // bidi patches existing packages as Hebrew is enabled. Later insertions
+        // must precede that point as well as ordinary dependency ordering.
+        ["bidi", "xepersian"].includes(declaration.name) ||
         (declaration.name === "esint" && ["amsmath", "mathtools"].includes(name)),
     );
-    const at = Math.min(end, ...before.map(({ from }) => from));
+    const at = Math.min(end, directionBoundary ?? end, ...before.map(({ from }) => from));
     const lines = insertions.get(at) ?? [];
     lines.push(`\\usepackage${name === "wasysym" ? "[nointegrals]" : ""}{${name}}${eol}`);
     insertions.set(at, lines);
+  }
+  if (needsBreakable) {
+    const lines = insertions.get(end) ?? [];
+    lines.push(`\\tcbuselibrary{breakable}${eol}`);
+    insertions.set(end, lines);
   }
   let next = source;
   for (const [at, lines] of [...insertions].sort(([a], [b]) => b - a)) {

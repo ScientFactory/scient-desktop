@@ -1,7 +1,7 @@
 import type { Node, Slice } from "@tiptap/pm/model";
 import { ReplaceStep, type Mappable } from "@tiptap/pm/transform";
 
-/** The title command changes body structure and preamble in one local undo event.
+/** Explicit document operations change body structure and preamble in one undo event.
  * History lives only in this editor session; recovery persists the accepted source.
  */
 export class LatexTitleStep extends ReplaceStep {

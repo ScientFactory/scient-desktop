@@ -14,6 +14,14 @@ export interface MathSymbol {
   action?: "moveToSuperscript" | "moveToSubscript";
 }
 
+/** Catalog aliases keep their IDs; the picker shows the LaTeX it actually inserts. */
+export function mathSymbolCommand(symbol: MathSymbol): string {
+  const insertedCommand = /^\\[A-Za-z]+/u.exec(symbol.latex)?.[0];
+  return /^\\[A-Za-z]+$/u.test(symbol.command) && insertedCommand !== symbol.command
+    ? symbol.latex.replace(/#[0-9?]/gu, "")
+    : symbol.command;
+}
+
 // Command membership and Unicode/package facts were checked against LyX's
 // lib/ui/stdtoolbars.inc and lib/symbols (2026-09-24). The UI, insertion templates
 // and search vocabulary here are Scient's. No LyX icons or implementation code.
@@ -111,6 +119,32 @@ const names: Record<string, string> = {
   stackrelthree: "Annotations above and below",
   xleftarrow: "Left arrow with labels",
   xrightarrow: "Right arrow with labels",
+  xleftrightarrow: "Two-way arrow with labels",
+  xLeftarrow: "Double left arrow with labels",
+  xRightarrow: "Double right arrow with labels",
+  xLeftrightarrow: "Double two-way arrow with labels",
+  xhookleftarrow: "Hook left arrow with labels",
+  xhookrightarrow: "Hook right arrow with labels",
+  xmapsto: "Maps to arrow with labels",
+  xleftrightharpoons: "Left right harpoons with labels",
+  xrightleftharpoons: "Right left harpoons with labels",
+  cancel: "Strike through",
+  bcancel: "Reverse strike through",
+  xcancel: "Cross out",
+  cancelto: "Cancel to a value",
+  widehat: "Wide hat accent",
+  widetilde: "Wide tilde accent",
+  tilde: "Tilde accent",
+  liminf: "Limit inferior",
+  limsup: "Limit superior",
+  ln: "Natural logarithm",
+  log: "Logarithm",
+  sin: "Sine",
+  cos: "Cosine",
+  tan: "Tangent",
+  exp: "Exponential",
+  det: "Determinant operator",
+  Pr: "Probability",
   mathbb: "Blackboard bold",
   mathds: "Double stroke",
   mathcal: "Calligraphic",
@@ -128,13 +162,43 @@ const names: Record<string, string> = {
   vdots: "Vertical dots",
   ddots: "Diagonal dots",
   iddots: "Ascending diagonal dots",
+  dots: "Automatic dots ellipsis",
+  operatorname: "Custom function operator name",
+  pmod: "Parenthesized modulo congruence",
+  mod: "Modulo",
+  mathnormal: "Normal math alphabet",
+  langle: "Left angle bracket",
+  rangle: "Right angle bracket",
+  lbrace: "Left brace",
+  rbrace: "Right brace",
+  lvert: "Left absolute value bar",
+  rvert: "Right absolute value bar",
+  lVert: "Left norm bar",
+  rVert: "Right norm bar",
+  backslash: "Backslash",
   quad: "Em space",
   qquad: "Double em space",
+  enspace: "Half em space",
+  " ": "Word space",
   ",": "Thin space",
   ":": "Medium space",
   ";": "Thick space",
   "!": "Negative thin space",
 };
+
+const labeledArrows = [
+  "xleftarrow",
+  "xrightarrow",
+  "xleftrightarrow",
+  "xLeftarrow",
+  "xRightarrow",
+  "xLeftrightarrow",
+  "xhookleftarrow",
+  "xhookrightarrow",
+  "xmapsto",
+  "xleftrightharpoons",
+  "xrightleftharpoons",
+] as const;
 
 // #0 wraps the selected expression; an empty selection becomes an editable slot.
 const templates: Record<string, string> = {
@@ -145,7 +209,7 @@ const templates: Record<string, string> = {
   cfracleft: "\\cfrac[l]{#0}{}",
   cfracright: "\\cfrac[r]{#0}{}",
   sqrt: "\\sqrt{#0}",
-  root: "\\sqrt[]{#0}",
+  root: "\\sqrt[#?]{#0}",
   binom: "\\binom{#0}{}",
   tbinom: "\\tbinom{#0}{}",
   dbinom: "\\dbinom{#0}{}",
@@ -160,15 +224,21 @@ const templates: Record<string, string> = {
   underbrace: "\\underbrace{#0}_{#?}",
   overset: "\\overset{#?}{#0}",
   underset: "\\underset{#?}{#0}",
-  stackrel: "\\stackrel{}{#0}",
-  stackrelthree: "\\overset{}{\\underset{}{#0}}",
-  cancelto: "\\cancelto{}{#0}",
+  stackrel: "\\stackrel{#?}{#0}",
+  stackrelthree: "\\overset{#?}{\\underset{#?}{#0}}",
+  cancelto: "\\cancelto{#?}{#0}",
+  cancel: "\\cancel{#0}",
+  bcancel: "\\bcancel{#0}",
+  xcancel: "\\xcancel{#0}",
   sideset: "\\sideset{_{}^{}}{_{}^{}}{#0}",
   sidesetl: "\\sideset{_{}^{}}{}{#0}",
   sidesetr: "\\sideset{}{_{}^{}}{#0}",
   sidesetn: "\\sideset{}{}{#0}",
-  xleftarrow: "\\xleftarrow[#?]{#0}",
-  xrightarrow: "\\xrightarrow[#?]{#0}",
+  ...Object.fromEntries(labeledArrows.map((name) => [name, `\\${name}[#?]{#0}`])),
+  operatorname: "\\operatorname{#0}",
+  pmod: "\\pmod{#0}",
+  mod: "\\mod{#0}",
+  mathnormal: "\\mathnormal{#0}",
   not: "\\not{#0}",
   mathcircumflex: "\\text{\\textasciicircum}",
   mathdollar: "\\text{\\$}",
@@ -210,6 +280,43 @@ const packageOverrides: Record<string, string[]> = {
   textdegree: [],
   xleftarrow: ["amsmath"],
   xrightarrow: ["amsmath"],
+  xleftrightarrow: ["mathtools"],
+  operatorname: ["amsmath"],
+  pmod: ["amsmath"],
+  mod: ["amsmath"],
+  dots: ["amsmath"],
+  mathnormal: [],
+};
+
+const previewsByCommand: Record<string, string> = {
+  root: "\\sqrt[n]{x}",
+  underbrace: "\\underbrace{x}_{a}",
+  overbrace: "\\overbrace{x}^{a}",
+  overset: "\\overset{a}{x}",
+  underset: "\\underset{a}{x}",
+  stackrel: "\\stackrel{a}{=}",
+  stackrelthree: "\\overset{a}{\\underset{b}{x}}",
+  ...Object.fromEntries(labeledArrows.map((name) => [name, `\\${name}{a}`])),
+  operatorname: "\\operatorname{f}",
+  pmod: "\\pmod{n}",
+  mod: "\\mod{n}",
+  textdegree: "{}^{\\circ}",
+};
+const namedSymbols: Record<string, string> = {
+  "+": "Addition plus",
+  "-": "Subtraction minus",
+  "/": "Division slash",
+  "!": "Factorial",
+  "=": "Equal",
+  "<": "Less than",
+  ">": "Greater than",
+  "\\mathbb N": "Natural numbers",
+  "\\mathbb Z": "Integers",
+  "\\mathbb Q": "Rational numbers",
+  "\\mathbb R": "Real numbers",
+  "\\mathbb C": "Complex numbers",
+  "\\mathbb H": "Quaternions",
+  "\\mathcal O": "Big O",
 };
 
 function fromCatalog(row: (typeof catalog)[number]): MathSymbol {
@@ -230,12 +337,20 @@ function fromCatalog(row: (typeof catalog)[number]): MathSymbol {
     packageOverrides[name] ??
     row.packages ??
     (["frac-square", "latex_deco", "font"].includes(row.category) ? ["amsmath"] : []);
-  const label = simple ? (names[name] ?? name) : row.command.replaceAll("\\", "");
+  const label =
+    namedSymbols[row.command] ??
+    (simple
+      ? (names[name] ??
+        (row.category === "latex_greek"
+          ? `${/^[A-Z]/u.test(name) ? "Capital " : ""}${name.replace(/^var/u, "")} ${name.startsWith("var") ? "variant" : ""}`.trim()
+          : name))
+      : row.command.replaceAll("\\", ""));
   const categoryLabel = MATH_SYMBOL_CATEGORIES.find(([id]) => id === row.category)?.[1] ?? "";
   return {
     id: `${row.category}:${row.command}`,
     category:
-      /^(?:overbrace|underbrace|overset|underset|stackrel|stackrelthree|xleftarrow|xrightarrow)$/u.test(
+      labeledArrows.some((arrow) => arrow === name) ||
+      /^(?:overbrace|underbrace|overset|underset|stackrel|stackrelthree|cancel|bcancel|xcancel|cancelto)$/u.test(
         name,
       )
         ? "annotations"
@@ -243,19 +358,22 @@ function fromCatalog(row: (typeof catalog)[number]): MathSymbol {
     command: row.command,
     label,
     latex,
-    preview: latex
-      .replaceAll("#0", row.category === "font" ? "A" : "x")
-      .replaceAll("#?", "\\square")
-      .replaceAll("{}", "{\\square}"),
+    preview:
+      previewsByCommand[name] ??
+      latex
+        .replaceAll("#0", row.category === "font" ? "A" : "x")
+        .replaceAll("#?", "a")
+        .replaceAll("{}", "{a}"),
     ...(row.glyph === undefined ? {} : { glyph: row.glyph }),
     packages,
     search: `${label} ${row.command} ${row.glyph ?? ""} ${categoryLabel}`.toLowerCase(),
   };
 }
 
-const structures: [string, string, string][] = [
-  ["Text in math", "\\text{#0}", "\\text{words}"],
+const structures: [string, string, string, string[]?][] = [
+  ["Text in math", "\\text{#0}", "\\text{x}"],
   ["Boxed expression", "\\boxed{#0}", "\\boxed{x}"],
+  ["Evaluate at", "\\left.#0\\right|_{#?}^{#?}", "\\left.x\\right|_a^b"],
   ["Superscript", "{#0}^{}", "x^2"],
   ["Subscript", "{#0}_{}", "x_i"],
   ["Parentheses", "\\left(#0\\right)", "(x)"],
@@ -266,6 +384,16 @@ const structures: [string, string, string][] = [
   ["Angle brackets", "\\left\\langle#0\\right\\rangle", "\\langle x\\rangle"],
   ["Floor", "\\left\\lfloor#0\\right\\rfloor", "\\lfloor x\\rfloor"],
   ["Ceiling", "\\left\\lceil#0\\right\\rceil", "\\lceil x\\rceil"],
+  [
+    "Double brackets",
+    "\\left\\llbracket#0\\right\\rrbracket",
+    "\\llbracket x\\rrbracket",
+    ["stmaryrd"],
+  ],
+  ["Bra", "\\left\\langle#0\\right|", "\\langle x|"],
+  ["Ket", "\\left|#0\\right\\rangle", "|x\\rangle"],
+  ["Inner product", "\\left\\langle#0\\middle|#?\\right\\rangle", "\\langle x|y\\rangle"],
+  ["Set builder", "\\left\\{#0\\middle|#?\\right\\}", "\\{x|y\\}"],
   ["Matrix", "\\begin{matrix}#0 & \\\\ & \\end{matrix}", "\\begin{matrix}a&b\\\\c&d\\end{matrix}"],
   [
     "Bracket matrix",
@@ -282,23 +410,81 @@ const structures: [string, string, string][] = [
     "\\begin{vmatrix}#0 & \\\\ & \\end{vmatrix}",
     "\\begin{vmatrix}a&b\\\\c&d\\end{vmatrix}",
   ],
-  ["Cases", "\\begin{cases}#0 & \\\\ & \\end{cases}", "\\begin{cases}a&x<0\\\\b&x>0\\end{cases}"],
+  [
+    "Brace matrix",
+    "\\begin{Bmatrix}#0 & \\\\ & \\end{Bmatrix}",
+    "\\begin{Bmatrix}a&b\\\\c&d\\end{Bmatrix}",
+  ],
+  [
+    "Double bar matrix",
+    "\\begin{Vmatrix}#0 & \\\\ & \\end{Vmatrix}",
+    "\\begin{Vmatrix}a&b\\\\c&d\\end{Vmatrix}",
+  ],
+  [
+    "Small matrix",
+    "\\begin{smallmatrix}#0 & \\\\ & \\end{smallmatrix}",
+    "\\begin{smallmatrix}a&b\\\\c&d\\end{smallmatrix}",
+  ],
+  ["Cases", "\\begin{cases}#0 & \\\\ & \\end{cases}", "\\begin{cases}x\\\\y\\end{cases}"],
   [
     "Aligned equations",
     "\\begin{aligned}#0 & \\\\ & \\end{aligned}",
-    "\\begin{aligned}a&=b\\\\c&=d\\end{aligned}",
+    "\\begin{aligned}&x\\\\&y\\end{aligned}",
   ],
 ];
 
+// Selected gaps from LyX, LibreOffice Math and MathLive; retain standard TeX
+// spellings rather than copying editor-specific aliases or compound examples.
+const additions = [
+  ...["+", "-", "/", "!"].map((command) => fromCatalog({ category: "latex_bop", command })),
+  ...["=", "<", ">"].map((command) => fromCatalog({ category: "latex_brel", command })),
+  ...["langle", "rangle", "lbrace", "rbrace", "lvert", "rvert", "lVert", "rVert", "backslash"].map(
+    (name) => fromCatalog({ category: "latex_delim", command: `\\${name}`, packages: [] }),
+  ),
+  fromCatalog({ category: "latex_dots", command: "\\dots" }),
+  fromCatalog({ category: "font", command: "\\mathnormal" }),
+  ...["\\enspace", "\\ "].map((command) =>
+    fromCatalog({ category: "space", command, packages: [] }),
+  ),
+  ...["operatorname", "pmod", "mod"].map((name) =>
+    fromCatalog({ category: "functions", command: `\\${name}` }),
+  ),
+  ...labeledArrows
+    .filter((name) => !catalog.some((symbol) => symbol.command === `\\${name}`))
+    .map((name) =>
+      fromCatalog({ category: "latex_deco", command: `\\${name}`, packages: ["mathtools"] }),
+    ),
+  ...[
+    ["arccot", "Inverse cotangent"],
+    ["arsinh", "Inverse hyperbolic sine arcsinh"],
+    ["arcosh", "Inverse hyperbolic cosine arccosh"],
+    ["artanh", "Inverse hyperbolic tangent arctanh"],
+    ["arcoth", "Inverse hyperbolic cotangent arccoth"],
+    ["sgn", "Sign signum"],
+    ["lcm", "Least common multiple"],
+    ["rank", "Matrix rank"],
+    ["tr", "Matrix trace"],
+  ].map(([name, label]): MathSymbol => ({
+    id: `functions:operatorname:${name}`,
+    category: "functions",
+    label: label!,
+    command: `\\operatorname{${name}}`,
+    latex: `\\operatorname{${name}}`,
+    preview: `\\operatorname{${name}}`,
+    packages: ["amsmath"],
+    search: `${name} ${label} function operator`.toLowerCase(),
+  })),
+];
+
 export const MATH_SYMBOLS: readonly MathSymbol[] = [
-  ...structures.map(([label, latex, preview]): MathSymbol => ({
+  ...structures.map(([label, latex, preview, packages]): MathSymbol => ({
     id: `structures:${label}`,
     category: "structures",
     label,
-    command: latex.replaceAll("#0", ""),
+    command: latex.replace(/#[0-9?]/gu, ""),
     latex,
     preview,
-    packages: ["amsmath"],
+    packages: packages ?? ["amsmath"],
     search: `${label} ${latex}`.toLowerCase(),
     ...(label === "Superscript"
       ? { action: "moveToSuperscript" as const }
@@ -307,6 +493,7 @@ export const MATH_SYMBOLS: readonly MathSymbol[] = [
         : {}),
   })),
   ...catalog.map(fromCatalog),
+  ...additions,
 ];
 
 const packagesByCommand = new Map<string, Set<string>>();

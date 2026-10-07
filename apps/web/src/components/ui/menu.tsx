@@ -3,11 +3,15 @@
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
 import type * as React from "react";
+import { createContext, useContext } from "react";
 
 import { cn } from "~/lib/utils";
 import { buttonVariants } from "./button";
 
 const Menu = MenuPrimitive.Root;
+
+// Portal descendants retain the editing surface that owns their root popup.
+const MenuOwnerContext = createContext<string | undefined>(undefined);
 
 function MenuTrigger({ className, children, ...props }: MenuPrimitive.Trigger.Props) {
   return (
@@ -28,6 +32,7 @@ function MenuPopup({
   collisionAvoidance,
   keepMounted = false,
   padding = "default",
+  "data-writing-menu-owner": explicitOwner,
   ...props
 }: MenuPrimitive.Popup.Props & {
   align?: MenuPrimitive.Positioner.Props["align"];
@@ -38,7 +43,10 @@ function MenuPopup({
   collisionAvoidance?: MenuPrimitive.Positioner.Props["collisionAvoidance"];
   keepMounted?: boolean;
   padding?: "default" | "compact";
+  "data-writing-menu-owner"?: string;
 }) {
+  const inheritedOwner = useContext(MenuOwnerContext);
+  const owner = explicitOwner ?? inheritedOwner;
   return (
     <MenuPrimitive.Portal keepMounted={keepMounted}>
       <MenuPrimitive.Positioner
@@ -63,6 +71,7 @@ function MenuPopup({
             className,
           )}
           data-slot="menu-popup"
+          data-writing-menu-owner={owner}
           {...props}
         >
           <div
@@ -72,7 +81,7 @@ function MenuPopup({
             )}
             data-padding={padding}
           >
-            {children}
+            <MenuOwnerContext value={owner}>{children}</MenuOwnerContext>
           </div>
         </MenuPrimitive.Popup>
       </MenuPrimitive.Positioner>

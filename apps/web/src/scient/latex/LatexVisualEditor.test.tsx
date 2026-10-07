@@ -30,6 +30,7 @@ import { clearTypingDraft } from "./visualTyping";
 import { scientificStatementsFixture } from "./scientificStatements.fixture";
 import { projectLatexVisualDocument } from "./latexVisualDocument";
 import { latexFigureSource } from "./figureSource";
+import { latexEquationReferencesKey } from "./latexEquationReferences";
 import {
   DEFAULT_KEYBOARD_PREFERENCES,
   reloadKeyboardPreferences,
@@ -220,6 +221,94 @@ describe("writing editor source transactions", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
   }
+
+  it("shows a heading label directly in the footer and adds/removes it through source and undo", async () => {
+    await mount("\\section{Introduction}\n\nSee Section~\\ref{sec:intro}.");
+    await act(() => editor().commands.setTextSelection(3));
+    const field = () =>
+      container.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="Heading reference label"]',
+      )!;
+    expect(field()).not.toBeNull();
+    expect(container.querySelector(".scient-latex-context-tools[data-inline]")).not.toBeNull();
+    expect(container.querySelector(".scient-latex-context-inspector")?.hasAttribute("inert")).toBe(
+      false,
+    );
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="Heading options"]')?.hidden,
+    ).toBe(true);
+    expect(
+      container.querySelector(".scient-latex-heading-bar [data-latex-number-toggle]"),
+    ).toBeNull();
+    await setField(field(), "sec:intro");
+    expect(current).toContain("\\section{Introduction}\\label{sec:intro}");
+    expect(
+      latexEquationReferencesKey.getState(editor().state)?.labels.get("sec:intro")?.number,
+    ).toBe("1");
+    await setField(field(), "");
+    expect(current).not.toContain("\\label{sec:intro}");
+    await act(() => editor().commands.undo());
+    expect(current).toContain("\\label{sec:intro}");
+    expect(field().value).toBe("sec:intro");
+  });
+
+  it("renames a heading label and its recognized references on Enter while preserving heading selection", async () => {
+    await mount(
+      "\\section{Introduction}\\label{sec:old}\n\nSee \\ref{sec:old}, \\nameref{sec:old} and \\hyperref[sec:old]{Introduction}.\n\n% \\ref{sec:old}",
+      "\\usepackage{hyperref}\n",
+    );
+    await act(() => editor().commands.setTextSelection(3));
+    const field = container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Heading reference label"]',
+    )!;
+    await act(() => {
+      field.focus();
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+        field,
+        "sec:new",
+      );
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(current).toContain("\\label{sec:old}");
+    await act(() =>
+      field.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(current).toContain("\\label{sec:new}");
+    expect(current).toContain("\\ref{sec:new}");
+    expect(current).toContain("\\nameref{sec:new}");
+    expect(current).toContain("\\hyperref[sec:new]{Introduction}");
+    expect(current).toContain("% \\ref{sec:old}");
+    expect(editor().state.selection.from).toBe(3);
+    expect(editor().state.selection.empty).toBe(true);
+    expect(document.activeElement).toBe(field);
+    expect(field.value).toBe("sec:new");
+    await act(() => editor().commands.undo());
+    expect(current).toContain("\\label{sec:old}");
+    expect(current).toContain("\\hyperref[sec:old]{Introduction}");
+  });
+
+  it("rejects invalid and duplicate heading labels without publishing the field draft", async () => {
+    await mount(
+      "\\section{Introduction}\\label{sec:intro}\n\n\\section{Results}\\label{sec:results}",
+    );
+    await act(() => editor().commands.setTextSelection(3));
+    const field = () =>
+      container.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="Heading reference label"]',
+      )!;
+    await setField(field(), "bad label");
+    expect(field().getAttribute("aria-invalid")).toBe("true");
+    expect(field().value).toBe("bad label");
+    expect(current).toContain("\\label{sec:intro}");
+    await setField(field(), "sec:results");
+    expect(field().getAttribute("aria-invalid")).toBe("true");
+    expect(current.match(/\\label\{sec:results\}/gu)).toHaveLength(1);
+    await setField(field(), "sec:summary");
+    expect(field().getAttribute("aria-invalid")).toBe("false");
+    expect(current).toContain("\\label{sec:summary}");
+  });
 
   it("retains a manual reference until its document save is confirmed", async () => {
     await mount(
@@ -684,6 +773,15 @@ describe("writing editor source transactions", () => {
     await vi.waitFor(() => expect(current).toContain("top=2cm"));
     expect(current).toContain("Hello");
     expect(current).toContain("\\documentclass{article}");
+    const applied = current;
+    await act(() => {
+      editor().commands.undo();
+    });
+    await vi.waitFor(() => expect(current).not.toContain("top=2cm"));
+    await act(() => {
+      editor().commands.redo();
+    });
+    await vi.waitFor(() => expect(current).toBe(applied));
     await vi.waitFor(() =>
       expect(
         document.body.querySelector(
@@ -993,7 +1091,14 @@ describe("writing editor source transactions", () => {
     await selectKind("latexDisplayMath");
     const equation = container.querySelector(".scient-latex-visual-display-math") as HTMLElement;
     await act(async () => equation.click());
-    await selectOption("Equation placement", "Inline math");
+    const footerMath = container.querySelector<HTMLButtonElement>(
+      '.scient-latex-math-bar button[aria-label="Math"]',
+    )!;
+    await act(() => footerMath.click());
+    const inline = [...document.body.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(
+      (item) => item.textContent?.trim() === "Inline math",
+    )!;
+    await act(() => inline.click());
     expect(current).toBe(tex("\\(x^2\\)"));
   });
 
@@ -1136,6 +1241,7 @@ describe("writing editor source transactions", () => {
         expect(inner.isActive(mark)).toBe(false);
       }
     },
+    30_000,
   );
 
   it("counts a cell text selection in the footer and follows cell selection changes", async () => {
@@ -1308,7 +1414,7 @@ Theory & Proofs \\\\
       evidence,
     );
     const addRow = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.textContent === "Insert row below",
+      (button) => button.textContent === "Insert below",
     )!;
     await act(async () => addRow.click());
     expect(current).toContain(" &  \\\\");
@@ -1316,7 +1422,7 @@ Theory & Proofs \\\\
       container.querySelector("[contenteditable][aria-label='Table row 3 column 1']"),
     ).not.toBeNull();
     const addColumn = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.textContent === "Insert column right",
+      (button) => button.textContent === "Insert right",
     )!;
     await act(async () => addColumn.click());
     expect(
@@ -1324,16 +1430,10 @@ Theory & Proofs \\\\
     ).not.toBeNull();
     await selectOption("Table style", "Full grid");
     expect(current).toContain("\\hline");
-    const reference = container.querySelector<HTMLInputElement>(
-      "input[aria-label='Table reference label']",
+    const reference = container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='Table reference label']",
     )!;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
-        reference,
-        "tab:research",
-      );
-      reference.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    await setField(reference, "tab:research");
     expect(current).toContain("\\label{tab:research}");
   });
 

@@ -29,11 +29,16 @@ describe("pending LaTeX field ownership", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
-  const render = (value = "Original", key = "field-a") =>
+  const render = (value = "Original", key = "field-a", commitOn: "idle" | "blur" = "idle") =>
     act(() =>
       root.render(
         <LatexDraftContext value={{ reportDraft, undo: () => {} }}>
-          <LatexTextField value={value} draftKey={key} onValueChange={publish} />
+          <LatexTextField
+            value={value}
+            draftKey={key}
+            onValueChange={publish}
+            commitOn={commitOn}
+          />
         </LatexDraftContext>,
       ),
     );
@@ -49,6 +54,24 @@ describe("pending LaTeX field ownership", () => {
       expect(pending.size).toBe(isPending ? 1 : 0);
     });
   const tick = () => act(() => vi.advanceTimersByTime(300));
+
+  it("holds explicit field edits until Enter or blur and clears the acknowledged draft", async () => {
+    await render("Original", "field-a", "blur");
+    await type("Renamed");
+    await tick();
+    expect(publish).not.toHaveBeenCalled();
+    await act(() =>
+      field().dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(publish).toHaveBeenLastCalledWith("Renamed", expect.any(String));
+    await render("Renamed", "field-a", "blur");
+    expect(pending.size).toBe(0);
+    await type("Another");
+    await act(() => field().blur());
+    expect(publish).toHaveBeenLastCalledWith("Another", expect.any(String));
+  });
 
   it("keeps the original base when an outside value arrives before publication", async () => {
     await render();

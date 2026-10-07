@@ -17,6 +17,10 @@ export const WRITING_COMMANDS = [
   ["pagebreak", "Page break", ["alt+i p"]],
   ["outline", "Document outline", ["alt+o o"]],
   ["shortcuts", "Shortcuts and reference", ["alt+o k"]],
+  ["selectionExpand", "Expand selection", ["alt+shift+arrowup"]],
+  ["selectionShrink", "Shrink selection", ["alt+shift+arrowdown"]],
+  ["leaveParentBefore", "Leave parent before", ["mod+alt+arrowleft"]],
+  ["leaveParentAfter", "Leave parent after", ["mod+alt+arrowright"]],
 ] as const;
 
 export const TABLE_COMMANDS = [

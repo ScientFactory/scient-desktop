@@ -31,6 +31,19 @@ PDF generation requires an installed TeX toolchain and the packages used by your
 document. Install those packages before working offline; no hosted compiler or AI
 service is required for the writing workflow.
 
+## Hebrew and mixed-language documents
+
+Visual reads the existing English/Hebrew language and font declarations from
+Babel or Polyglossia in the document root. Hebrew documents use right-to-left
+flow; formulas and source fields retain left-to-right entry. Supported English,
+Hebrew, LTR and RTL environments and inline language switches remain editable,
+including `\textenglish`, `\texthebrew`, `\LR`, `\RL` and
+`\foreignlanguage`. Existing language wrappers survive supported edits.
+Document fonts and standard abstract, contents and caption labels follow the
+root's language setup. Custom or unsupported setups remain accessible in Source;
+the compiled PDF is authoritative. Language, compiler and font configuration
+is edited in Source; no new language or direction menu is required.
+
 ## Write visually, verify with TeX
 
 Write is a source-derived writing canvas, not an editable PDF. You can start
@@ -55,13 +68,14 @@ The writing toolbar stays fixed at the top on one row. When the pane narrows,
 **Document > Document settings** opens one card with every document setting.
 **Document** also holds Find and replace and Export. **Outline** is a tab
 in the sidebar, which opens from the header row. Selected-object options appear
-on the left of the footer; narrow panes use an object-named menu.
+on the left of the footer as one named control, such as **Equation** or **Table**.
+Open it for a compact options panel above the footer. It works the same way in
+wide and narrow panes, with no modal backdrop.
 **Document > Title & authors** offers Edit title, Edit authors and Edit date when
 the document shows a title; editing jumps to the corresponding on-paper field.
 When it shows none, the only item is **Add a title**: a title block is never
-added silently. Date modes in
-the footer are Automatic (the compilation date), Custom and Hidden.
-Title, author, and date remain editable on paper.
+added silently. Title, author, and date remain editable on paper; the title block
+has no contextual footer. Title actions stay under **Document > Title & authors**.
 
 **Lists** offers Bullet list, Numbered list and No list. Description lists already in a document still show and can be edited. The
 current type is highlighted, and each row shows its shortcut: Ctrl/Cmd+Shift+8
@@ -99,9 +113,16 @@ at a time, so a very long document takes a few seconds, and each paragraph is
 its own undo step. It stops if you type or undo while it is working. Text
 inside figures, tables and other objects is not searched.
 
-A thin footer stays under the document. On the left it shows the options of the
-selected object, such as a table, figure, equation or statement. On the right it
-shows where the caret is, for example "Section" or "Table · row 3, column 2",
+A thin footer stays under the document. On the left, one control opens the
+current object's options. Extra structural choices are grouped inside that panel.
+Click outside or press Escape to close it; closing keeps unfinished fields intact.
+Headings show a compact **Label** field directly in the footer instead of an
+options panel. Enter a unique reference key and press Enter or leave the field
+to apply it. Invalid or duplicate keys stay as drafts. Renaming a key in a
+single-file document updates its recognized cross-references in one undoable
+change; included files require a coordinated rename. Clearing the field removes
+the heading's label. Heading numbering stays in **Text > Paragraph style**.
+On the right it shows where the caret is, for example "Section" or "Table · row 3, column 2",
 and the word count:
 "1,284 words", or "12 of 1,284 words" while text is selected. The count is an
 estimate from the source; math, code, comments, commands and reference keys are
@@ -116,10 +137,16 @@ selecting the whole block. Contents entries still navigate to their targets.
 Clicking a statement heading such as Definition or Proof places the caret in
 its editable body. Object fields keep their own caret, with options in the footer.
 
+For a citation, the footer shows its entries and offers search to add another
+entry or remove one from a multiple citation. **Edit reference** opens the
+existing References panel. Cross-reference options let you choose a labeled
+target. Reference-label fields retain invalid input with an explanation until
+it is corrected. Statement type choices use declarations already in the document.
+
 Math normally stays rendered in the document. Click a symbol to place the caret
-directly there; drag to select part of a formula. The contextual bar opens at the
-bottom of the document workspace. Centered equations have a single editing
-surface, without an outer selection box. New
+directly there; drag to select part of a formula. **Equation** opens the display
+formula's options in the footer; inline math shows its controls directly. Centered equations have
+a single editing surface, without an outer selection box. New
 equations start empty and focus the math cursor immediately. Alt+= inserts inline
 math; Ctrl/Cmd+Shift+M (or Alt+Shift+=) inserts a display equation. Outside command
 entry, Enter or Escape returns to text; a paragraph is added after a display equation only when
@@ -130,26 +157,38 @@ empty cells rather than example expressions. Empty math slots appear as subtle
 dots while the formula is focused and disappear when it is inactive. They are
 caret targets and are never written into the compiled source.
 
-The **Math** menu offers six choices:
+The **Math** menu offers seven choices:
 
-| Option               | Behavior                                                                                                 |
-| -------------------- | -------------------------------------------------------------------------------------------------------- |
-| Inline math          | Insert math within a sentence, or move the active equation inline.                                       |
-| Display math         | Insert math on its own line, or move the active inline formula onto its own line.                        |
-| Aligned equations    | Start two rows aligned at a relation; an existing formula becomes the first row.                         |
-| Matrix               | Choose brackets using the compact selector above the table-style size grid, then click a size to insert. |
-| Cases                | Insert a two-row piecewise expression with expression and condition columns.                             |
-| Symbols & structures | Search for symbols or insert fractions, roots, accents, and other structures.                            |
+| Option            | Behavior                                                                                                    |
+| ----------------- | ----------------------------------------------------------------------------------------------------------- |
+| Inline math       | Insert math within a sentence, or move the active equation inline.                                          |
+| Display math      | Insert math on its own line, or move the active inline formula onto its own line.                           |
+| Aligned equations | Start two rows aligned at a relation; an existing formula becomes the first row.                            |
+| Brackets          | Choose left/right brackets, matching and size, then Insert to wrap a math selection or start an empty pair. |
+| Matrix            | Choose brackets using the compact selector above the table-style size grid, then click a size to insert.    |
+| Cases             | Insert a two-row piecewise expression with expression and condition columns.                                |
+| Symbols           | Search for symbols or insert fractions, roots, accents, and other structures.                               |
 
 The current inline/display placement has a checkmark. Placement changes retain
 existing math; converting inline math to display math retains the surrounding text
 as paragraphs. Matrix and symbol pickers change nothing until an item is inserted.
-Symbols & structures opens above the footer at the same corner whether opened
+Symbols opens above the footer at the same corner whether opened
 from Math or the footer, with no centered dialog.
 Inside math, insertion uses the current math selection/caret. Outside math,
-matrices and cases start display math; symbols start inline math.
-Text formatting controls are disabled while math has focus, and toolbar Undo/Redo
-uses the formula's editing history.
+matrices and cases start display math; brackets and symbols start inline math.
+**Brackets** opens a compact submenu. **Match** starts on: choosing the left
+bracket sets its complementary right bracket, whose dropdown is disabled.
+Switch Match off to choose each side independently, including **None** for an
+invisible side. **Size** offers Auto, Normal, `\big`, `\Big`, `\bigg`, and `\Bigg`.
+Changing these choices does not edit the formula. **Insert** wraps the current
+math selection or creates an empty pair at its cursor. Cross-cell selections
+must be narrowed to one expression or expanded to the complete matrix.
+Inside math, **Text > Formatting** offers bold, italic and monospace; these
+apply to selected math or the next characters typed at the caret. Use the same
+configured bold, italic and inline-code shortcuts (inline code becomes monospace).
+Paragraph styles and alignment remain unavailable in a formula.
+Math has no right-click menu; use Text, Math and the contextual footer.
+Toolbar Undo/Redo uses the formula's editing history.
 
 Type `\` followed by a command name directly in a formula to see local command
 suggestions with symbol previews. Up/Down changes the suggestion; Enter or Tab
@@ -157,17 +196,27 @@ inserts it and moves into its editable slot when applicable. In-progress command
 suggestions remain local until accepted, so ghost completions are not saved into
 the document. Clicking a suggestion keeps you inside the formula.
 
-The existing bottom bar holds **Math**, **Numbered**, **Reference label**,
-**Symbols & structures**, and **Edit LaTeX**. Aligned equations use a **Numbering**
-menu with **None**, **Whole block**, and **Each row**. **Rows & columns** edits the
-structure at the math cursor; cases and aligned equations keep their two-column
-structure. The footer keeps its height when entering or leaving math.
-The footer's **Math** menu has the same six actions as the top menu, including
-placement, aligned equations, and the matrix size picker.
+Inline math shows **Edit LaTeX** directly in the compact footer. When the caret
+is inside a matrix, cases or aligned cell, **Rows & columns** appears beside it.
+The top **Math** menu provides placement, brackets, matrices, cases and Symbols.
+There is no separate Inline math options popup or duplicate symbol button.
 
-Imported equation labels, tags, and suppressed numbers remain protected. Their
+Display math and equations share a compact footer with **Edit LaTeX** and a
+**Numbered** toggle. **Label** appears only when numbering is on; its small field
+commits on Enter or blur and rejects invalid or duplicate labels. Turning numbering
+on converts an ordinary display into an equation; turning it off retains any
+existing outer label for later reuse. Existing align/gather blocks keep their row
+numbering scope. **Rows & columns** opens its small menu only when the caret is in
+a matrix, cases or aligned cell. Fixed column counts, minimum sizes and imported
+row metadata restrict its actions. The source editor opens above the footer.
+Symbols, brackets and insertion actions stay in the top **Math** menu; there is
+no overall Equation options popup or duplicate Math/Symbols control. Wide formulas
+still pan with horizontal scrolling or Shift-wheel while editing.
+
+Imported tags, suppressed numbers and per-row labels remain protected. Their
 placement, numbering, and outer row structure are changed in Source. A single
-outer reference label can be edited directly; per-row labels remain in Source.
+outer reference label can be edited directly and survives numbering changes;
+it does not prevent editing a nested matrix's rows or columns.
 **Edit LaTeX** edits the formula body, leaving its outer wrapper and metadata intact.
 
 Supported numbered equations show their number at the right edge. A reference
@@ -182,17 +231,20 @@ the compiled PDF remains authoritative. Table references also show the derived
 caption number and navigate to their labelled table. The label must exist in the
 document; an unlabelled nonfloating table does not create a reference target.
 
-**Symbols & structures** groups Common, Braces & annotations, Greek letters, Operators & relations,
-Arrows, Sums/integrals/limits, Brackets & accents, Functions & math alphabets, and
-More symbols. Search spans all categories. Hover or focus a tile to see its name
-and command, plus assigned keyboard shortcuts and enabled typing shortcuts.
-These follow your shortcut settings. Arrow keys browse the grid; Enter inserts, and Escape returns to the
-formula. Recent symbols and starred favorites are saved locally on this device.
+**Symbols** groups Common, Structures, Labels, Greek, Operators, Sets,
+Relations, Arrows, Calculus, Accents, Brackets, Functions, Alphabets, Spacing and
+More. The Macros category appears when the document declares supported math
+macros. Search accepts names, LaTeX commands, Unicode and common descriptions.
+Tiles are equal squares with minimal mathematical previews; layout-only commands
+use small diagrams, and package symbols can use bundled TeX glyph outlines.
+Hover or focus a tile to see its command and your effective keyboard shortcuts.
+Arrow keys browse the grid; Enter inserts, and Escape returns to the formula.
+Recent symbols and starred favorites are saved locally on this device.
 A fraction, root, accent, or paired delimiter wraps the selected math; without a
 selection, entry slots are blank.
 
 For an annotated brace, select an expression and choose **Underbrace with label**
-or **Overbrace with label** in Common or Braces & annotations. Fill the empty
+or **Overbrace with label** in Common or Labels. Fill the empty
 slots using Tab to move between them. Choose **Text in math** inside a label to
 type ordinary words, such as “terms.” This group also offers annotations above
 or below an expression and arrows with labels on both sides. **Boxed expression**
@@ -201,6 +253,13 @@ When extending a selection out of an inner math slot, its enclosing structure
 is included first. For example, dragging from an underbrace label into the
 surrounding equation selects the brace, expression, and label together. Dragging
 within the label selects its text; an ordinary click places the caret.
+
+Plain typing is not expanded into commands. Start a command with `\`.
+Inside Visual math, argument braces are paired while typing a command. Accepting
+an argument command such as `\text` with Tab enters its editable argument. Type
+`\begin{bmat` to choose `bmatrix`; Up/Down select and Tab or Enter accepts. The
+matching end and editable cells are inserted together. Existing argument text is
+preserved. These completions follow the Math command completion setting.
 
 The palette is bundled locally and needs no network. Known package requirements
 are added to the document root's preamble, including when editing an included
@@ -212,9 +271,10 @@ Menu color names not provided by `xcolor` receive a definition when used.
 The root's active `usepackage` and `RequirePackage` declarations are checked,
 including comma-separated package lists and known package dependencies. Commented
 declarations do not count. Existing declarations and their options are retained; the
-packages must be available in the local TeX installation. Commands without a
-browser glyph remain labeled LaTeX entries and render through their package in
-the compiled PDF. The editor never replaces them with a different source symbol.
+packages must be available in the local TeX installation. Bundled TeX outlines cover many package symbols that the browser math renderer
+cannot draw. Other unsupported commands retain a source fallback; the compiled
+PDF renders them through their package. A preview never substitutes a different
+symbol into document source.
 
 Choose **Edit LaTeX** to edit just the formula body in a compact box above the
 footer. Supported edits update the equation and document as you type; there are
@@ -411,17 +471,27 @@ canvas. In a supported table, click anywhere inside a cell, including its blank
 space, to start editing. Clicking existing text keeps native caret placement and
 selection. Type directly in cells
 and use Tab to move through the grid; Tab from the last cell adds a row. The
-footer offers **Row**, **Column**, and **Table** menus. These add, remove, and
-reorder rows or columns, align the selected column, toggle a header, and change
-between simple, booktabs, and full-grid styles or content/page width. Use the
-Table menu to add or edit captions and reference labels when the table has a
-float wrapper. Existing caption text also remains editable on the page. The
-footer follows the active cell without changing the table's appearance or the
+footer offers **Rows & columns**, **Cells**, **Appearance**, and **Caption**
+directly. Rows & columns inserts, deletes and moves rows or columns;
+Cells merges or splits cells. Appearance uses standard menus for rules, widths,
+headers, column settings, borders and layout. Dimensions and longtable continuation
+use compact forms in submenus. Table color controls are deferred; existing source
+colors are preserved.
+Caption adds a caption or focuses the existing caption on the paper. Floating
+tables and longtables support caption and label edits independently of grid
+restrictions, preserving merged cells, rules and continuation bands. Captioned
+tables also show a compact **Label** field, committed on Enter or blur, with
+invalid and duplicate keys rejected. Selection stays active while using the
+menus. Imported structures retain their edit protections.
+Clearing a caption removes its command, table number and reference label. You
+can add a caption again, and label fields remain editable after committing.
+The footer follows the active cell without changing the table's appearance or the
 footer's height. The writing toolbar's Table picker inserts
 a chosen grid size and style.
 
 Imported captions appear above or below the table in source order and show their
-derived table number when supported. A header rule does not make text bold;
+derived table number when supported. Enabling **Header row** makes the first row
+bold in Visual as well as the saved LaTeX. An imported header rule alone does not make text bold;
 explicit cell formatting is retained. In mixed-width tabularx tables, ordinary
 columns fit their contents while flexible X columns take the remaining width and
 wrap their text. Visual approximates table and caption spacing; custom package
@@ -460,7 +530,7 @@ Text → Formatting and configured writing shortcuts work inside cells, and cell
 edits share document undo. Tab moves between cells; mixed prose/math cells
 participate in the same rectangle clear and copy operations as text cells.
 Other structural cell content, such as unsupported nested commands,
-stays protected; selecting it shows **Protected table — edit in Source** in the footer.
+stays protected; incompatible footer actions are disabled.
 Other unsupported structures, including
 custom macros, appear as protected source blocks.
 The visual editor does not silently normalize or discard them. A visual edit
@@ -483,7 +553,7 @@ independently. More complex TeX programs remain available in Source.
 
 Standard `algorithm` / `algpseudocode` blocks show their caption, line numbers,
 indentation, keywords and comments. Edit prose, formulas, comments and captions
-directly on paper. Press Enter in a step, or use **Algorithm options → Add step**
+directly on paper. Press Enter in a step, or use **Algorithm → Add step**
 in the footer, to add a statement. Existing algorithm references navigate to the
 numbered float. Unknown pseudocode commands stay available in Source.
 
@@ -503,12 +573,12 @@ the loop is preserved. Undo restores the previous document.
 ### Selecting table and math cells
 
 Drag across table cells, Shift+click another cell, or use Shift+Arrow at a cell
-boundary to select a rectangular area. Row and Column footer menus also offer
+boundary to select a rectangular area. The table's Rows and Columns groups also offer
 Select row and Select column. Delete or Backspace clears all selected cells;
 the table structure stays in place. Ctrl/Cmd+C copies the selected cells as a
 LaTeX table fragment, and Ctrl/Cmd+X copies and clears them.
 
-Clicking a table border focuses the active cell. Use Table > Select table to
+Clicking a table border focuses the active cell. Use the table's keyboard selection to
 select the whole table. Ctrl/Cmd+A inside a cell
 first selects its text; pressing it again selects the table. Copy then includes
 the full table with its caption and settings. Delete, Backspace or Cut removes
@@ -569,8 +639,13 @@ Figures use real `figure` and `\includegraphics` source and add `graphicx` when
 needed. Imports are saved only after choosing Insert (PNG/JPEG, up to 20 MB).
 An empty caption does not add a caption or reference label. PDF images can be
 selected but do not have a raster preview in the picker. Deleting a figure does
-not delete its image file. Use the footer for image path, width, placement,
-alignment and reference label; edit captions on paper.
+not delete its image file. Standard image figures show **Replace**, **Appearance**,
+**Caption**, and a compact **Label** field for captioned figures directly in the
+footer. Replace chooses a project image or imports a PNG/JPEG while preserving
+the caption and settings. Appearance groups width, alignment, caption position
+and page placement. Caption adds or focuses its text on paper; clearing it
+removes the caption command, figure number and label, and both can be added again.
+Labels commit on Enter or blur and reject invalid or duplicate keys.
 
 Imported figures can also display editable framed text, literal rotations, and
 side-by-side `subfigure` panels. A one-argument preamble command wrapping a
@@ -683,6 +758,42 @@ Unapplied **Edit LaTeX** text is recovered separately, including incomplete LaTe
 **View** and **Copy** let you retrieve it without replacing a whole document.
 Cancel discards only that editing interaction; Apply clears its recovery copy only
 after the accepted source has been stored in the recovery journal.
+
+## Configure objects
+
+Click inside an object, then open its named control in the footer. Text, captions,
+titles and cell contents stay editable on the paper. The inspector groups less
+frequent properties under disclosures and remains outside the document layout.
+Escape closes it; opening a select or symbol picker keeps the active object.
+
+For a table, **Color** applies named colors or mixtures to selected cells, rows,
+columns or the whole table. Background and text colors are independent. Rule color
+and alternating row backgrounds live in the same section. **Cell spans & rules**
+merges a rectangle while retaining its text, splits an existing span, and changes
+rules above or below the selection. Column width and wrapping are separate from
+alignment. Supported literal grids retain colors when rows or columns are added,
+removed or moved. An operation that cannot preserve existing spans or custom
+column modifiers explains why it is unavailable.
+
+Table placement controls move a caption above or below and convert a supported
+ordinary table to a nonfloating multipage table. Longtables offer repeated header
+rows and continuation text. Applying a repeated header copies the chosen first
+header rows; apply it again after changing their text to refresh the continuation
+header. Custom or macro-generated table structures retain their existing editing
+limits. Inline math and formatting remain available inside cells; paragraph or
+display-math cells still need Source.
+
+Boxes expose colors, padding, border, corners and page breaking. Columns expose
+their count; side-by-side panels expose ratios, spacing and individual dimensions.
+Algorithm controls add, wrap, move or remove steps, and can remove a wrapper while
+keeping its body. Code controls change language, frame, line numbering, caption
+position and highlighting colors while preserving the literal code. Existing objects
+keep their supported editing controls.
+
+Citation controls in the footer edit entry order, notes and supported citation
+forms, or open a record in **Document > References**. Bibliography records stay
+in their existing `.bib` or manual `\bibitem` source. Coordinated key/label
+renaming across multiple files remains a Source workflow.
 
 ## Edit LaTeX source
 
@@ -891,3 +1002,25 @@ and citation numbers in Visual. Use Document ? References to edit the original
 `.bib` entries, then rebuild the PDF to refresh the bibliography. No generated
 `.bbl` file needs to be copied into the project. Older builds need one rebuild
 to supply this presentation data. Visual does not run BibTeX itself.
+
+### Selection and editing scope
+
+The footer shows where the caret is inside nested structures and formatting.
+Faint outlines show the active scope; selection stays visible with a muted fill
+while you use menus and submenus. Menu commands apply to the retained selection.
+Escape from the root menu returns to the original editor.
+
+Ordinary arrows move smoothly through text. In math, Tab and Shift+Tab visit
+structural slots, including empty matrix cells. Repeated Up/Down movements retain
+the cursor's horizontal position. Drag within a slot to select characters, or
+across matrix/table cells to select a rectangle, including empty cells.
+
+| Action                                   | Default shortcut      |
+| ---------------------------------------- | --------------------- |
+| Expand selection to the enclosing scope  | Alt+Shift+Up          |
+| Restore the previous smaller selection   | Alt+Shift+Down        |
+| Leave the nearest parent before/after it | Ctrl+Alt+Left / Right |
+
+Use Cmd instead of Ctrl on macOS. The bindings are configurable in Keyboard
+shortcuts. Leaving a formatting scope changes subsequent typing without changing
+existing characters; surrounding styles stay active.

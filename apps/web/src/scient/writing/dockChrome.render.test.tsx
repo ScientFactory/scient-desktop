@@ -309,6 +309,29 @@ describe("DockOverflowRow", () => {
     expect(tableAction).toHaveBeenCalledOnce();
   });
 
+  it("runs a closed menu command even when animation frames are suspended", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const host = document.createElement("div");
+    const destination = document.createElement("input");
+    document.body.append(host, destination);
+    const root = createRoot(host);
+    roots.push(root);
+    const command = vi.fn(() => destination.focus());
+    await act(() =>
+      root.render(
+        <DockMenu label="Insert" icon={<span>+</span>}>
+          <MenuItem onClick={command}>Open editor</MenuItem>
+        </DockMenu>,
+      ),
+    );
+    await act(() => host.querySelector<HTMLButtonElement>("button")!.click());
+    const frame = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1);
+    await act(() => document.body.querySelector<HTMLElement>("[role='menuitem']")!.click());
+    expect(command).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(destination);
+    frame.mockRestore();
+  });
+
   it.each(["click", "Enter"])(
     "lets the command choose its focus destination after %s activation",
     async (activation) => {

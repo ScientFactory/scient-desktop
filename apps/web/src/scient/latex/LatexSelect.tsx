@@ -1,4 +1,5 @@
 import { useId, type ReactNode } from "react";
+import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import {
   Select,
   SelectItem,
@@ -17,8 +18,39 @@ export function LatexSelect(props: {
   disabled?: boolean;
   title?: string | undefined;
   size?: "default" | "compact" | "sm";
+  width?: "default" | "options";
 }) {
   const ownerId = useId();
+  const trigger = (
+    <SelectTrigger
+      aria-label={props["aria-label"]}
+      aria-description={props.title}
+      size={props.size ?? "default"}
+      variant={props.size === "compact" ? "ghost" : "default"}
+      width={props.width === "options" ? "content" : "default"}
+    >
+      {props.width === "options" ? (
+        <span className="grid min-w-0 flex-1 text-left">
+          <span className="col-start-1 row-start-1">
+            <SelectValue />
+          </span>
+          {/* Reserve the widest option without measurement effects or resize on selection. */}
+          <span
+            aria-hidden="true"
+            className="invisible pointer-events-none col-start-1 row-start-1 grid"
+          >
+            {props.options.map((option) => (
+              <span key={option.value} className="col-start-1 row-start-1 whitespace-nowrap">
+                {option.label}
+              </span>
+            ))}
+          </span>
+        </span>
+      ) : (
+        <SelectValue />
+      )}
+    </SelectTrigger>
+  );
   return (
     <span
       id={ownerId}
@@ -30,20 +62,26 @@ export function LatexSelect(props: {
         items={props.options}
         disabled={props.disabled}
         onValueChange={(value) => {
-          if (value !== null) props.onValueChange(value);
+          if (value !== null) {
+            document
+              .getElementById(ownerId)
+              ?.dispatchEvent(
+                new CustomEvent("scient-writing-restore-selection", { bubbles: true }),
+              );
+            props.onValueChange(value);
+          }
         }}
         onOpenChangeComplete={(open) => {
           if (!open) props.onClosed?.();
         }}
       >
-        <SelectTrigger
-          aria-label={props["aria-label"]}
-          title={props.title}
-          size={props.size ?? "default"}
-          variant={props.size === "compact" ? "ghost" : "default"}
-        >
-          <SelectValue />
-        </SelectTrigger>
+        {props.title ? (
+          <ScientTooltip content={props.title}>
+            <span>{trigger}</span>
+          </ScientTooltip>
+        ) : (
+          trigger
+        )}
         <SelectPopup
           alignItemWithTrigger={false}
           data-dock-command-scope="latex"

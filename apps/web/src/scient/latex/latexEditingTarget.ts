@@ -1,5 +1,8 @@
 import type { Editor } from "@tiptap/core";
-import { createContext, useCallback, useSyncExternalStore } from "react";
+import { createContext, useCallback, useRef, useSyncExternalStore } from "react";
+import type { Transaction } from "@tiptap/pm/state";
+import { createEditorBackgroundTask } from "./editorBackgroundTask";
+import { isOrdinaryTyping } from "./visualTyping";
 
 export const LatexInlineOwnerContext = createContext<Editor | null>(null);
 
@@ -46,21 +49,43 @@ function useLatexEditingTarget(owner: Editor | null): Editor | null {
 }
 
 /** Read the new target immediately, even before it emits its next transaction. */
-export function useLatexEditingState(owner: Editor | null) {
+export function useLatexEditingState(owner: Editor | null, deferTyping = false) {
   const editor = useLatexEditingTarget(owner);
+  const observed = useRef({ editor, state: editor?.state ?? null, editable: editor?.isEditable });
+  if (observed.current.editor !== editor)
+    observed.current = { editor, state: editor?.state ?? null, editable: editor?.isEditable };
   const subscribe = useCallback(
     (listener: () => void) => {
       if (!editor) return () => {};
-      editor.on("transaction", listener);
-      editor.on("update", listener);
+      const task = createEditorBackgroundTask();
+      const publish = () => {
+        observed.current = { editor, state: editor.state, editable: editor.isEditable };
+        listener();
+      };
+      const transaction = ({ transaction }: { transaction: Transaction }) => {
+        if (deferTyping && isOrdinaryTyping(transaction)) task.schedule(publish);
+        else {
+          task.cancel();
+          publish();
+        }
+      };
+      const update = () => {
+        if (!deferTyping || observed.current.editable !== editor.isEditable) publish();
+      };
+      editor.on("transaction", transaction);
+      editor.on("update", update);
       return () => {
-        editor.off("transaction", listener);
-        editor.off("update", listener);
+        task.cancel();
+        editor.off("transaction", transaction);
+        editor.off("update", update);
       };
     },
-    [editor],
+    [editor, deferTyping],
   );
-  const snapshot = useCallback(() => editor?.state ?? null, [editor]);
+  const snapshot = useCallback(
+    () => (deferTyping ? observed.current.state : (editor?.state ?? null)),
+    [editor, deferTyping],
+  );
   const state = useSyncExternalStore(subscribe, snapshot, snapshot);
   return { editor, state };
 }

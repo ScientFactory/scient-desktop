@@ -7,7 +7,11 @@ import { latexParagraphSpacing, type ParagraphSpacingCache } from "./latexParagr
 import { latexCounterLabel } from "./latexDocumentStructure";
 import { latexInlineColumnBreakPositions } from "./latexColumnBreaks";
 import { appendLatexProsePreview } from "./LatexProsePreview";
-import { latexEquationReferencesKey, navigateToFootnote } from "./latexEquationReferences";
+import {
+  latexEquationReferencesKey,
+  latexReferenceLayoutChanged,
+  navigateToFootnote,
+} from "./latexEquationReferences";
 import {
   planLatexVisualPagination,
   type LatexVisualPaginationBlock,
@@ -355,7 +359,9 @@ function measureDocument(
         node.attrs.kind === "title");
     if (
       node.type.name === "latexScientific" &&
-      (!node.attrs.layout || (node.attrs.layout.kind === "colorBox" && node.attrs.layout.breakable))
+      (!node.attrs.layout ||
+        node.attrs.layout.kind === "direction" ||
+        (node.attrs.layout.kind === "colorBox" && node.attrs.layout.breakable))
     ) {
       const firstUnit = units.length;
       const heading = dom.querySelector<HTMLElement>(
@@ -980,11 +986,11 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
           const after = latexPaginationKey.getState(view.state);
           if (previous.doc !== view.state.doc) {
             refreshObservedBlocks = true;
+            if (latexReferenceLayoutChanged(previous, view.state)) lineCache = new WeakMap();
             schedule();
           } else if (
             before?.revision !== after?.revision ||
-            latexEquationReferencesKey.getState(previous) !==
-              latexEquationReferencesKey.getState(view.state)
+            latexReferenceLayoutChanged(previous, view.state)
           ) {
             lineCache = new WeakMap();
             schedule();

@@ -1,4 +1,5 @@
 import { latexWithoutComments } from "./latexPackages";
+import { latexColorCss, latexDocumentColors } from "./latexColorBoxes";
 
 /** Literal contents never enter the prose, structure or package-command grammar. */
 export function inlineLatexLiteral(source: string, from = 0) {
@@ -193,7 +194,7 @@ function color(value: string) {
     ? `rgb(${first.map((channel, index) => Math.round(channel * fraction + second[index]! * (1 - fraction))).join(", ")})`
     : null;
 }
-function textStyle(value: string) {
+function textStyle(value: string, colors: Record<string, string>) {
   const result = {
     size: "inherit",
     color: "inherit",
@@ -204,7 +205,7 @@ function textStyle(value: string) {
   const rest = value.replace(
     /\\color\s*\{([^{}]+)\}|\\(ttfamily|rmfamily|sffamily|tiny|scriptsize|footnotesize|small|normalsize|large|Large|bfseries|mdseries|itshape|upshape)/gu,
     (_token, name: string | undefined, command: string | undefined) => {
-      if (name) result.color = color(name) ?? "";
+      if (name) result.color = color(name) ?? latexColorCss(name, colors) ?? "";
       else if (command === "bfseries" || command === "mdseries")
         result.bold = command === "bfseries";
       else if (command === "itshape" || command === "upshape")
@@ -242,11 +243,12 @@ export function latexListingPresentation(preamble: string, local: Map<string, { 
     "captionpos",
   ]);
   if ([...options.keys()].some((key) => !supported.has(key))) return null;
-  const basic = textStyle(options.get("basicstyle") ?? ""),
-    keyword = textStyle(options.get("keywordstyle") ?? "\\bfseries"),
-    comment = textStyle(options.get("commentstyle") ?? "\\itshape"),
-    string = textStyle(options.get("stringstyle") ?? ""),
-    number = textStyle(options.get("numberstyle") ?? "");
+  const colors = latexDocumentColors(preamble);
+  const basic = textStyle(options.get("basicstyle") ?? "", colors),
+    keyword = textStyle(options.get("keywordstyle") ?? "\\bfseries", colors),
+    comment = textStyle(options.get("commentstyle") ?? "\\itshape", colors),
+    string = textStyle(options.get("stringstyle") ?? "", colors),
+    number = textStyle(options.get("numberstyle") ?? "", colors);
   const numbers = options.get("numbers") ?? "none",
     frame = options.get("frame") ?? "none",
     captionPosition = options.get("captionpos") ?? "t";

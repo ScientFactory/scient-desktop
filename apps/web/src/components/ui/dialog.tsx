@@ -91,6 +91,7 @@ function DialogPopup({
       ) : null}
       <DialogViewport
         className={cn(
+          !showBackdrop && "pointer-events-none",
           bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12",
           variant === "media" &&
             "z-[60] grid-rows-1 place-items-center px-4 py-6 [-webkit-app-region:no-drag]",
@@ -98,6 +99,7 @@ function DialogPopup({
       >
         <DialogPrimitive.Popup
           className={cn(
+            !showBackdrop && "pointer-events-auto",
             variant === "media" ? DIALOG_MEDIA_POPUP_CLASS : DIALOG_POPUP_CLASS,
             "row-start-2 text-popover-foreground",
             variant === "default" && "max-h-full max-w-lg",

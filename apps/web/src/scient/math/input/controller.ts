@@ -357,30 +357,6 @@ export class MathInputController {
         current.snapshot.selection,
         event.key === "Enter" ? "addRow" : event.shiftKey ? "previous" : "next",
       );
-    if (
-      !edit &&
-      preferences.automaticOperators &&
-      !literal &&
-      event.key.length === 1 &&
-      current.snapshot.selection.from === current.snapshot.selection.to
-    ) {
-      const { source, selection } = current.snapshot;
-      const pair =
-        source.slice(Math.max(current.region.from, selection.from - 1), selection.from) + event.key;
-      const natural: Readonly<Record<string, string>> = {
-        "->": "to",
-        "<=": "leq",
-        ">=": "geq",
-        "!=": "neq",
-        "+-": "pm",
-      };
-      const symbol = natural[pair];
-      if (symbol && source[selection.from - 2] !== "\\")
-        edit = commandEdit(mathCommand(`math.symbol.${symbol}`)!, source, {
-          from: selection.from - 1,
-          to: selection.to,
-        });
-    }
     if (!edit) return false;
     // Hold-to-repeat must not add structural edits such as matrix rows.
     if (!event.repeat && !this.commit(edit, false)) return false;

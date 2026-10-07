@@ -1,3 +1,5 @@
+import { latexLayoutLength } from "./latexPageLayouts";
+import { latexSourceCommands, latexSourceArgument } from "./latexSourceSyntax";
 /** Literal xcolor expressions and a bounded tcolorbox adapter; no TeX execution. */
 const basic: Record<string, string> = {
   black: "#000000",
@@ -24,10 +26,42 @@ const basic: Record<string, string> = {
 export function latexDocumentColors(source: string): Record<string, string> {
   const colors = { ...basic };
   const preamble = source.split("\\begin{document}")[0]!.replace(/(?<!\\)%[^\r\n]*/gu, "");
-  for (const match of preamble.matchAll(
-    /\\definecolor\s*\{([A-Za-z][A-Za-z0-9-]*)\}\s*\{(HTML|rgb|RGB|gray)\}\s*\{([^{}]+)\}/gu,
-  )) {
-    const [, name, model, value] = match;
+  let conditional = 0,
+    through = 0;
+  for (const command of latexSourceCommands(preamble)) {
+    if (command.depth !== 0 || command.from < through) continue;
+    if (command.name === "newif") {
+      through = command.to + (/^\s*\\\w+/u.exec(preamble.slice(command.to))?.[0].length ?? 0);
+      continue;
+    }
+    if (command.name.startsWith("if")) {
+      conditional++;
+      continue;
+    }
+    if (command.name === "fi") {
+      conditional = Math.max(0, conditional - 1);
+      continue;
+    }
+    if (conditional || !["definecolor", "providecolor", "colorlet"].includes(command.name))
+      continue;
+    const named = latexSourceArgument(preamble, command.to);
+    const mode = named && latexSourceArgument(preamble, named.end);
+    if (!named || !mode || !/^[A-Za-z][A-Za-z0-9-]*$/u.test(named.value)) continue;
+    const name = named.value;
+    if (command.name === "providecolor" && colors[name]) continue;
+    if (command.name === "colorlet") {
+      const value = latexColorCss(mode.value, colors);
+      if (value)
+        colors[name] = value.replace(
+          /var\(--scient-color-([A-Za-z0-9-]+)\)/gu,
+          (_match, name: string) => colors[name]!,
+        );
+      continue;
+    }
+    const literal = latexSourceArgument(preamble, mode.end);
+    if (!literal || !["HTML", "rgb", "RGB", "gray"].includes(mode.value)) continue;
+    const model = mode.value,
+      value = literal.value;
     if (model === "HTML" && /^[a-fA-F0-9]{6}$/u.test(value!.trim()))
       colors[name!] = `#${value!.trim()}`;
     else if (model !== "HTML") {
@@ -126,6 +160,10 @@ export function latexColorBoxOpening(source: string) {
     colframe: "black!75",
     coltitle: "white",
     breakable: false,
+    padding: "3mm",
+    borderWidth: "0.5mm",
+    radius: "1mm",
+    boldTitle: false,
   };
   let title = "";
   let titleRange: { from: number; to: number } | null = null;
@@ -153,7 +191,9 @@ export function latexColorBoxOpening(source: string) {
         layout.breakable = true;
         continue;
       }
-      const key = /^(title|colback|colframe|coltitle)\s*=\s*/u.exec(text);
+      const key = /^(title|colback|colframe|coltitle|boxsep|boxrule|arc|fonttitle)\s*=\s*/u.exec(
+        text,
+      );
       if (!key) return null;
       let value = text.slice(key[0].length).trim();
       const valueAt = entry.from + source.slice(entry.from, entry.to).indexOf(text) + key[0].length;
@@ -168,6 +208,15 @@ export function latexColorBoxOpening(source: string) {
         titleRange = grouped
           ? { from: grouped.from, to: grouped.to }
           : { from: valueAt, to: valueAt + value.length };
+      } else if (["boxsep", "boxrule", "arc"].includes(key[1]!)) {
+        const length = latexLayoutLength(value);
+        if (!length || length.endsWith("%")) return null;
+        if (key[1] === "boxsep") layout.padding = length;
+        if (key[1] === "boxrule") layout.borderWidth = length;
+        if (key[1] === "arc") layout.radius = length;
+      } else if (key[1] === "fonttitle") {
+        if (!["\\bfseries", "\\mdseries"].includes(value)) return null;
+        layout.boldTitle = value === "\\bfseries";
       } else {
         if (!latexColorCss(value)) return null;
         layout[key[1] as "colback" | "colframe" | "coltitle"] = value;

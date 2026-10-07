@@ -23,22 +23,22 @@ that every operation preserves every supported LaTeX construct.
 
 ## Component ownership and edit flow
 
-| Layer                                    | Owner                                                                                                        | Responsibility                                                                                                                                                                                                                                               |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Document view and compilation            | `ScientLatexSurface.tsx`                                                                                     | Source/Split/Visual/PDF selection, save-before-build entry points, export availability and build diagnostics.                                                                                                                                                |
-| Project assembly                         | `LatexProjectVisualEditor.tsx`, `latexProjectVisual.ts`                                                      | Resolve the root and included files; route accepted edits to their physical file. Ambiguous boundaries can refuse edits.                                                                                                                                     |
-| Source adapter                           | `latexVisualDocument.ts`                                                                                     | Project supported source into editor nodes, retain source ranges, validate proposed changes and preserve opaque source.                                                                                                                                      |
-| Interactive canvas                       | `LatexVisualEditor.tsx` and object views                                                                     | ProseMirror/Tiptap transactions, MathLive fields, selection, menus and contextual editing.                                                                                                                                                                   |
-| Equation, statement and table references | `latexEquationReferences.ts`, `mathEquationNumbers.ts`                                                       | Derive one live number/label index for navigation; align equation tags with rendered MathLive rows without changing source or history.                                                                                                                       |
-| Math setup                               | `latexDocumentMacros.ts`, `LatexDocumentMathContext.ts`                                                      | Parse bounded literal preamble definitions once, pass the root macro dictionary to every MathLive field, preserve calls in source, and expose setup in Document settings.                                                                                    |
-| Environment declarations                 | `latexEnvironmentDeclarations.ts`                                                                            | Interpret literal theorem names, standard styles, shared/scoped counters and simple quote wrappers; preserve declarations and reject unsupported definitions.                                                                                                |
-| Literal text and code                    | `latexLiteral.ts`, `LatexLiteralCodeView.tsx`                                                                | Bound literal source and listing options, paint supported syntax and presentation, and reuse native fields for body/caption edits.                                                                                                                           |
-| Title conversion                         | `LatexTitleStep.ts`                                                                                          | Keep the source before/after a paragraph-to-title conversion in the existing undo history.                                                                                                                                                                   |
-| Writing chrome                           | `writing/dockChrome.tsx`                                                                                     | Shared button/menu styling and priority overflow. Visual opts into a permanent row and labels-before-overflow compression; other consumers retain their defaults.                                                                                            |
-| Reading controls                         | `writing/DocumentReaderControls.tsx`, `writing/readerBarHost.ts`                                             | Shared PDF/Visual sidebar, page, zoom and search controls. Format adapters supply navigation and search operations. With a `ReaderBarHost` they are drawn in the host's header row instead of a bar of their own.                                            |
-| Contextual footer                        | `writing/DocumentFooter.tsx`, `LatexContextTools.tsx`, heading/table/object toolbars                         | Shared one-line strip under the document. The selected object's options sit on the left in a stable portal destination that keeps fields mounted while switching between inline controls and a compact menu. Caret position and word count sit on the right. |
-| Shared writing pieces                    | `writing/commandNames.ts`, `writing/commandIcons.tsx`, `writing/InsertMenu.tsx`, `writing/ScientFindBar.tsx` | One name and icon per command that both editors offer, one Insert menu, and one find and replace bar. Each editor supplies its own items and carries out its own commands.                                                                                   |
-| Persistence                              | Shared document sessions and LaTeX recovery journal                                                          | One saver per physical LaTeX or `.bib` file across its session-backed views. Pending fields are settled before document save/build/export; LaTeX recovery remains comparison-first.                                                                          |
+| Layer                                    | Owner                                                                                                        | Responsibility                                                                                                                                                                                                                                             |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Document view and compilation            | `ScientLatexSurface.tsx`                                                                                     | Source/Split/Visual/PDF selection, save-before-build entry points, export availability and build diagnostics.                                                                                                                                              |
+| Project assembly                         | `LatexProjectVisualEditor.tsx`, `latexProjectVisual.ts`                                                      | Resolve the root and included files; route accepted edits to their physical file. Ambiguous boundaries can refuse edits.                                                                                                                                   |
+| Source adapter                           | `latexVisualDocument.ts`                                                                                     | Project supported source into editor nodes, retain source ranges, validate proposed changes and preserve opaque source.                                                                                                                                    |
+| Interactive canvas                       | `LatexVisualEditor.tsx` and object views                                                                     | ProseMirror/Tiptap transactions, MathLive fields, selection, menus and contextual editing.                                                                                                                                                                 |
+| Equation, statement and table references | `latexEquationReferences.ts`, `mathEquationNumbers.ts`                                                       | Derive one live number/label index for navigation; align equation tags with rendered MathLive rows without changing source or history.                                                                                                                     |
+| Math setup                               | `latexDocumentMacros.ts`, `LatexDocumentMathContext.ts`                                                      | Parse bounded literal preamble definitions once, pass the root macro dictionary to every MathLive field, preserve calls in source, and expose setup in Document settings.                                                                                  |
+| Environment declarations                 | `latexEnvironmentDeclarations.ts`                                                                            | Interpret literal theorem names, standard styles, shared/scoped counters and simple quote wrappers; preserve declarations and reject unsupported definitions.                                                                                              |
+| Literal text and code                    | `latexLiteral.ts`, `LatexLiteralCodeView.tsx`                                                                | Bound literal source and listing options, paint supported syntax and presentation, and reuse native fields for body/caption edits.                                                                                                                         |
+| Title conversion                         | `LatexTitleStep.ts`                                                                                          | Keep the source before/after a paragraph-to-title conversion in the existing undo history.                                                                                                                                                                 |
+| Writing chrome                           | `writing/dockChrome.tsx`                                                                                     | Shared button/menu styling and priority overflow. Visual opts into a permanent row and labels-before-overflow compression; other consumers retain their defaults.                                                                                          |
+| Reading controls                         | `writing/DocumentReaderControls.tsx`, `writing/readerBarHost.ts`                                             | Shared PDF/Visual sidebar, page, zoom and search controls. Format adapters supply navigation and search operations. With a `ReaderBarHost` they are drawn in the host's header row instead of a bar of their own.                                          |
+| Contextual footer                        | `writing/DocumentFooter.tsx`, `LatexContextTools.tsx`, heading/table/object toolbars                         | Shared one-line strip under the document. The selected object's options sit on the left in a stable portal destination that keeps fields mounted inside one nonmodal object inspector at every pane width. Caret position and word count sit on the right. |
+| Shared writing pieces                    | `writing/commandNames.ts`, `writing/commandIcons.tsx`, `writing/InsertMenu.tsx`, `writing/ScientFindBar.tsx` | One name and icon per command that both editors offer, one Insert menu, and one find and replace bar. Each editor supplies its own items and carries out its own commands.                                                                                 |
+| Persistence                              | Shared document sessions and LaTeX recovery journal                                                          | One saver per physical LaTeX or `.bib` file across its session-backed views. Pending fields are settled before document save/build/export; LaTeX recovery remains comparison-first.                                                                        |
 
 References and a standalone `.bib` Source tab acquire leases on the same registry
 session. Both use its current source, revision checks, pending/departure guards
@@ -72,6 +72,11 @@ compiled output.
 The source adapter and its edit mapper share one inline grammar. Supported prose
 includes bold, italic/emphasis, typewriter text, small capitals and underlining;
 roman/sans families and scoped standard size/font declarations are also editable.
+`mathTextFormatting.ts` adapts Text-menu font actions to MathLive's math and text
+slots, retaining the math selection and exporting portable LaTeX font commands.
+Math right-click menus are suppressed; Text, Math and the footer own the actions.
+Style-state notifications update the toolbar only when formatting changes.
+
 `latexTextFormatting.ts` owns the command-to-mark mapping used by the canvas and
 serializer. Imported styling stays in the text; it does not add toolbar controls.
 Standard-class font metrics supply the scoped sizes, with CSS approximating TeX
@@ -91,9 +96,10 @@ Visual choice fields use the shared themed Select primitives through
 `LatexSelect.tsx`, including matrix brackets, insertion dialogs, document settings
 and object footer choices. Their popups retain shared keyboard navigation and
 focus handling rather than using operating-system option lists. A popup carries
-the ID of its owning field: footer dismissal and table selection treat choices
-inside that popup as interactions with the same selected object, including in
-compact panes. Field drafts, disabled choices and source restrictions remain
+the ID of its owning field. Shared writing menus and matrix submenus also
+carry ownership markers; `latexContextEvents.ts` follows that chain through
+portaled submenus. Footer dismissal and table selection treat those choices as
+interactions with the same current object. Field drafts, disabled choices and source restrictions remain
 owned by each feature.
 
 ## Control map
@@ -152,7 +158,7 @@ PDF/Visual switch in the new pane's controls.
 | Text        | Shared menu categories for Paragraph style and Formatting, with editor-specific commands. Paragraph style offers Text, supported headings and Quote; Formatting includes Bold, Italic and Inline code (Ctrl/Cmd+E). Link (Ctrl/Cmd+K) lives in Insert > References and is unavailable outside ordinary text or across paragraphs (`linkUnavailableReason`). |
 | Numbered    | Inside Text > Paragraph style: update the current heading without closing the menu, or choose numbering before applying a heading to ordinary text.                                                                                                                                                                                                         |
 | Insert      | Insert tables, figures, statements, references, footnotes, bibliography, abstract, contents and page breaks where supported. Root declarations and source context can restrict insertion.                                                                                                                                                                   |
-| Math        | Inline math, Display math, Aligned equations, Matrix, Cases, and Symbols & structures.                                                                                                                                                                                                                                                                      |
+| Math        | Inline math, Display math, Aligned equations, Brackets, Matrix, Cases, and Symbols.                                                                                                                                                                                                                                                                         |
 | Lists       | Bullet list, Numbered list and No list; existing description lists remain editable. Check the current type and disable unsupported conversions. Tab and Shift+Tab indent and outdent; the menu has no indent items.                                                                                                                                         |
 | Document    | Edit title/authors/date, add a standard title block, manage References in a side panel, open Document settings, Find and replace, Export, or Keyboard shortcuts (a plain text item without an icon).                                                                                                                                                        |
 | More        | Retain lower-priority groups as the pane narrows. Contains only overflowed toolbar groups; no additional source or shortcut actions.                                                                                                                                                                                                                        |
@@ -182,21 +188,31 @@ in the footer, not in an extra row or on the document paper.
 | Recovered work                  | Offered at the start of the footer when stored work differs from the file.                                                                                                                       |
 | Heading / Part                  | Numbered button and reference label for the selected heading.                                                                                                                                    |
 | Title                           | Author visibility and automatic/custom/hidden date. Title, author and date text are edited on the paper.                                                                                         |
-| Equation                        | Placement, numbering, reference label, structure actions, Symbols & structures, and Edit LaTeX. Imported row metadata stays protected.                                                           |
+| Equation                        | Placement, numbering, reference label, structure actions, Symbols, and Edit LaTeX. Imported row metadata stays protected.                                                                        |
 | Table                           | Row and column insertion/deletion/movement, alignment, table style/width, header, caption, reference label and deletion, subject to source constraints.                                          |
 | Figure                          | Alignment, width, placement, image path, reference label and deletion. Caption text is edited on the paper.                                                                                      |
 | Statement                       | Supported theorem/proof/remark type, optional title and deletion. Supported body prose and math are edited inside the block.                                                                     |
-| Reference / footnote            | Edit the supported command argument.                                                                                                                                                             |
-| Bibliography / description list | Add/remove the selected structure's supported entries or items.                                                                                                                                  |
+| Reference / footnote            | Choose a cross-reference target from the live index; edit supported footnote text or link fields.                                                                                                |
+| Bibliography / description list | Open Document References for bibliography records; add/remove supported description items.                                                                                                       |
 | Exact-source block              | Open its source, Apply a valid replacement or Cancel the local edit.                                                                                                                             |
 | Draft indicator                 | Indicate pending field input that has not been accepted into source; it does not assert a successful save.                                                                                       |
 
 The footer is the shared `writing/DocumentFooter.tsx`: one 28px line that is
 always present, with the selected object's options on the left and the caret
 position and word count on the right. Page, zoom and search controls are not in
-it. On narrow panes the options
-use a menu named for the object, such as Equation or Table. The footer stays the
-same height and preserves the field components while resizing; selecting an
+it. Every pane width uses one trigger named for the object, such as Equation or
+Table. `LatexContextTools.tsx` opens a nonmodal inspector above the footer. Its
+portal destination stays mounted when closed or resized; a hidden inspector is
+inert. Escape restores focus to the trigger, while outside interaction closes it.
+Document and footer menus, including owned popup choices, preserve the active
+editing target and cell selection. Portaled controls do not enter the paper's
+focus handlers; choosing another position in the document ends that selection.
+Editing menus contain controls without instructional paragraphs or duplicate
+cell-position summaries. Keyboard shortcut labels and concise empty-result states
+remain in pickers. Merge is disabled for a single cell. Object action failures
+use `useLatexActionNotice` and the document's existing notice area instead of
+placing explanations in the menu; field validation remains beside its input.
+The current object takes precedence over the heading fallback. Selecting an
 object never adds controls to the paper or changes the page layout. Recovery shares the line and collapses to a comparison button
 or dot as the pane narrows. Its comparison opens above the footer. The word count comes from
 `latexWordCount.ts`: it reads the source after `\begin{document}` and leaves out
@@ -214,6 +230,21 @@ blocks, retains native field/button focus, and sends statement-heading clicks
 into the first editable paragraph. Explicit object selection, modifier clicks
 and drag selections remain distinct actions. Table border clicks enter a cell;
 the Select table command remains the whole-table selection action.
+
+Table operations are grouped by rows, columns, appearance, caption/reference
+and selection. Content edits and structural edits have separate availability;
+the source guard remains authoritative. Row/column actions confirm their
+attribute update was accepted before moving the caret. Captions are edited on
+paper rather than in a second footer field. `LatexReferenceLabelField.tsx` uses
+the existing field draft journal, retaining invalid text with a validation
+message instead of silently restoring an older label on blur.
+
+Citation controls search and change cited keys while preserving the command
+and notes. Record editing opens Document References. Cross-reference targets
+come from the live label/anchor index; unresolved imported keys stay visible.
+Statement conversion lists only available document declarations and the current
+environment. These controls do not implement project-wide key renames or new
+package/environment management from the proposal.
 Math fields release their internal node-selection anchor when editing is
 dismissed, including focus moves to Source and view changes. Dismissal does not
 focus Visual, insert a paragraph, or clear a deliberate drag/Shift selection.
@@ -421,6 +452,30 @@ keyboard interactions as PDF. Fit width is in More only while the percentage is 
 surface
 supplies its own navigation/search adapter. Visual's sidebar contains Pages and
 Outline; its pages follow the local editor page map and can differ from PDF.
+Both readers use `ReaderPageThumbnail` for page navigation. Visual previews
+snapshot only rendered blocks intersecting nearby pages, including running
+headers, footers and MathLive's formula markup. Snapshots live in inert shadow
+roots, without additional editors, selection overlays or interactive targets.
+They refresh after input settles, and disappear outside the sidebar's nearby
+viewport; opening Pages does not compile the document or change its source.
+MathLive's compact content allows glyph overflow. Display equations retain their
+natural size and placement when inactive; an overfull equation starts at the text
+boundary and can extend into the margin.
+The paper's content layer clips at its physical horizontal edges so overfull math
+cannot enlarge the canvas or change the document's outer scroll position.
+`latexMathViewport.ts` enables horizontal panning only during Visual editing.
+The same padding and natural formula height
+are retained in both modes. Native scrollbars are hidden, so entering a formula
+does not move surrounding content. The existing Equation footer inspector offers
+one Scroll range control only when the active formula is wider than its column.
+Trackpad horizontal gestures, Shift+wheel and caret following use the same viewport.
+Leaving restores the normal display; keyboard re-entry restores the saved offset
+and reveals the caret. Clicking a new symbol takes precedence over the saved offset.
+Viewport state is local to the mounted field and never enters LaTeX or history.
+Resize observation and coalesced post-paint work handle edits, zoom and column-width
+changes without continuous polling. Vertical overflow is explicitly hidden only
+in the active viewport. Formula struts retain the height of braces, limits and
+matrices; no fixed height is imposed. Page thumbnails omit active viewport state.
 PDF keeps `DocumentSearchBar`, which only finds. Visual shows the shared
 `writing/ScientFindBar.tsx` under the writing row, through
 `useLatexVisualSearch.ts`. It uses the shared document-text plugin for supported
@@ -449,6 +504,9 @@ margins. Custom classes without an explicit geometry setup require Source for th
 operation. Orientation updates class/geometry options and the Visual layout reader.
 Title help and source actions finish their dialog close before transferring focus.
 
+Shared writing menus execute queued commands after the closed state commits;
+their exit animation must not delay edits in a suspended or background renderer.
+
 ### Empty editing positions
 
 Insertion helpers leave editable content empty instead of generating sample text.
@@ -471,8 +529,11 @@ of observer attributes, focus and emptiness, so decorating a replacement render
 does not resize the formula. Markers disappear on blur without changing geometry.
 The adapter never modifies math atoms, selection history, or serialization.
 Empty-cell clicks resolve through the owning array's atom ID in the existing
-MathLive adapter. Native placeholder slots appear only in the focused formula;
-empty array cells suppress duplicate placeholder glyphs beneath their guides. Publication and copying continue to use
+MathLive adapter. Native placeholder atoms reserve invisible figure-space
+targets; the adapter marks their rendered font boxes as slots, including those
+inside accents and scripts that have no native placeholder CSS class. Only the
+dashed blue guide appears in the focused formula. Empty array cells suppress
+duplicate slot guides beneath their cell guide. Publication and copying continue to use
 `latex-without-placeholders`. Revisit the VBox selectors when upgrading MathLive.
 
 ### Source code editing
@@ -676,12 +737,25 @@ Scient supplies its own layout, labels, selection-aware insertion templates, and
 keyboard interactions. `mathSymbols.ts` also supplies source completions and
 package requirements. `mathSymbolPresentation.ts` caches local glyph previews;
 Unicode display macros retain their original LaTeX command on serialization.
-The Common and Braces & annotations groups expose labeled over/underbraces,
+The Common and Labels groups expose labeled over/underbraces,
 annotations above/below an expression, and extensible arrows with both label
 slots. Templates wrap the selected expression and supply empty editable slots;
 Tab navigates those slots. Text in math supplies ordinary words for annotations.
-Palette tooltips and details show effective keyboard bindings (including user
-overrides) and enabled typing shortcuts from the same table used by the field.
+Palette tooltips and details show commands without descriptive action names;
+those names remain searchable. They show effective keyboard bindings (including user
+overrides). MathLive's inline shortcuts are explicitly empty, and the shared math
+controller does not replace bare words or punctuation pairs. Command completion
+requires a backslash. User-declared macros and explicit keyboard bindings remain
+available; symbol previews do not create document macros.
+`mathCommandCompletion.ts` derives argument templates from the symbol catalog and
+limits environment completions to the supported formula environments.
+`mathLiveCommandCompletion.ts` reads the active MathLive command draft at the
+library boundary, excluding ghost characters. It pairs braces without replacing
+typed arguments and extends native acceptance with editable argument slots and
+matching environment ends. Its local environment list retains field focus and
+uses the existing popup ownership route. It never alters the Source editor or
+adds macro declarations. Cursor movement, blur, disabled completion, and disposal
+hide the list; scrolling positions it without scrolling the document selection.
 Simple symbol-plus-script combinations do not get additional palette entries.
 `mathMacroEditing.ts` unlocks document macros whose entire definition is a
 single `\left...#1\right...` delimiter wrapper. It adapts MathLive's per-field
@@ -690,13 +764,33 @@ macro arguments, including inserted and undo-restored atoms. The macro call is
 retained while the wrapper matches; structural wrapper edits serialize the
 expanded occurrence. Other macro shapes remain atomic. No extra argument
 metadata is injected into the rendered formula or document source.
-Commands without an editor glyph are explicit source entries. Palette preferences
-contain symbol IDs only and live in local storage. Package additions pass through
-the same source transaction and projection guard as the math edit.
+`mathSymbolPalette.ts` owns the presentation families, duplicate filtering and
+ranked command/name/Unicode search independently of catalog IDs. Supported root
+macros appear in Macros. `latexMathPalette.css` keeps all tiles at 48px square;
+Lucide category icons and minimal mathematical previews follow the shared chrome.
+`mathSymbolIllustrations.ts` and `MathSymbolIllustration.tsx` supply diagrams for
+spacing and other layout commands. `mathSymbolGlyphs.json` bundles TeX path
+outlines for package glyphs absent from MathLive, generated from retained recipes
+by `scripts/generate-math-symbol-glyphs.mjs`. `MathSymbolOutline.tsx` namespaces
+SVG references per instance. Preview recipes affect presentation only.
+Unsupported commands retain source fallback. Palette preferences contain symbol
+IDs only and live in local storage. Package additions pass through the same source
+transaction and projection guard as the math edit; effective bindings supply
+shortcut hints, including user overrides and disabled shortcuts.
 
-The Math menu separates placement, equation layout, and insertion. Its six
-entries are Inline math, Display math, Aligned equations, Matrix, Cases,
-and Symbols & structures. The first two reflect current placement. With active
+`latexLanguage.ts` reads literal root language/font declarations and maps supported
+English/Hebrew and LTR/RTL wrappers to blocks and inline marks.
+`LatexLanguageContext` shares root-derived labels with node views.
+`latexDirection.css` isolates mixed-language passages and keeps math/source flow
+left-to-right. `latexVisualDocument.ts` preserves an entire bilingual phrase as
+one source wrapper across styled runs and math. Package insertion precedes
+`bidi`, `xepersian` and declarations enabling Hebrew, retaining dependency order.
+This source-derived support is independent of the removed configuration/direction
+menu additions; unsupported setups remain source-owned.
+
+The Math menu separates placement, equation layout, and insertion. Its seven
+entries are Inline math, Display math, Aligned equations, Brackets, Matrix, Cases,
+and Symbols. The first two reflect current placement. With active
 math, the contextual footer exposes these same actions through the shared
 `LatexMathMenuItems` component, including the matrix size picker. With active
 math, the Math menu opens that field's existing footer symbol palette. Outside
@@ -710,17 +804,37 @@ Matrix insertion reuses the shared matrix source builder. `latexMathLayout.ts` p
 constructing aligned rows; numbering chooses an unnumbered outer environment,
 an equation containing aligned/gathered, or per-row align/gather numbering.
 
-Palette presentation groups the catalog into eight task-oriented categories;
+`LatexBracketsMenu` is shared by both Math menus. Its Match toggle synchronizes
+the right selector with the left and disables the right control while matched.
+Turning Match off permits mixed and invisible sides. Auto, Normal and four
+fixed sizes are local choices until the deferred Insert action runs after the
+menu closes. `mathBracketsTemplate` supplies a `#0` selection wrapper using core
+LaTeX delimiters; it does not introduce packages or macros. Outside active math,
+the template becomes an empty inline pair without exposing its selection marker
+in source. Popup ownership preserves the selected formula through nested selects.
+`mathSelectionWrapReason` rejects wrappers across partial array cells while
+allowing one cell's expression or a complete array.
+
+Palette presentation groups the catalog into its existing task-oriented categories;
 search, previews, recents, favorites, and package discovery keep using the same
 catalog. MathLive handles selection-aware insertion. Row/column controls target
-the active cell; cases/aligned/gathered do not offer column changes. New structured
-fields start at their first cell. The source adapter still owns the final edit guard.
+the actual MathLive caret's array, including a nested matrix. `mathArrayContext`
+and `mathStructureCommandReason` supply availability both to the inspector and
+to command execution, including Shift+Enter. Fixed columns, minimum dimensions,
+size limits and imported row metadata retain their restrictions. Display insertion
+checks the active editor's schema so inline-only containers do not offer a no-op.
+New structured fields start at their first cell. The source adapter still owns
+the final edit guard.
 LaTeX insertion and settings dialogs use the shared DialogHeader and DialogPanel
 spacing so fields, focus rings and action buttons stay inside the rounded edges.
 
 Math, title, and table controls share a contextual slot in the document status footer,
-which keeps a constant height. A shared activation event closes the previous
-object's controls. `LatexTitleView.tsx` keeps native text editing on the paper;
+which keeps a constant height. Activation is scoped to the Visual workspace.
+`useLatexObjectContext.ts` assigns the nearest object ownership, including nested
+editable bodies and keyboard caret movement; nested math takes precedence over
+its enclosing statement or table. Separate canvases do not share activation.
+The symbol palette portals to the footer so the inspector's scroll area cannot
+clip it; it retains the same ownership chain. `LatexTitleView.tsx` keeps native text editing on the paper;
 author visibility and date mode live in the footer. Hiding an author writes
 `\author{}` and retains the hidden name in the document's local app preferences.
 Showing it restores `\author`. No new app metadata is written into the LaTeX
@@ -826,9 +940,10 @@ basic named xcolor row mixes, hline and cline rules in ordinary l/c/r tabulars.
 Logical slots share an owner cell in source metadata. The view renders only
 owners, using their spans, alignment, rules and shading; navigation skips covered
 slots and selections expand to full merged cells. Cell edits patch only their
-inner source ranges. The serializer rejects structural normalization for these
-tables, and the footer disables structural actions while retaining content
-editing, selection, copying and deletion. Their pagination stays atomic so
+inner source ranges. The serializer rejects generic structural normalization for
+these tables; the source-owned operations below handle supported color, rule,
+merge/split and grid edits. Unsupported span reordering remains disabled while
+content editing, selection, copying and deletion stay available. Their pagination stays atomic so
 presentation gaps cannot split a rowspan. Unsupported spans, colors or cell
 bodies retain exact-source fallback.
 The shared live reference index registers captioned table labels after their
@@ -856,6 +971,48 @@ empty paragraphs, math, escaping, protected syntax and rebuild notices. Build
 service/store tests cover observational status and explicit compilation.
 Running-candidate checks and remaining qualification gaps are recorded in the
 PR handoff. Human review is required before merge.
+
+## Source-owned authoring operations
+
+The footer has one object inspector. `useLatexObjectContext` identifies the nearest
+active object, and `latexContextEvents` follows select/menu portals back to it.
+Property controls never enter measured paper flow. Large document-bound drafts
+use the existing References panel; switching modes retains the draft.
+
+`latexObjectAuthoring.ts` is the common boundary for property changes: obtain the
+current object source, apply its adapter's owned-range transformation, reproject
+with the document setup, and accept one history transaction only if the result
+remains a supported object. `latexSourceSyntax.ts` supplies balanced arguments,
+literal-aware command scanning and nonoverlapping patches. The table, layout,
+listing, box and algorithm controls use this boundary rather than rebuilding an
+object from its displayed text.
+
+`latexTableAuthoring.ts` owns grid/source ranges separately from column specs,
+spans, colors, rules, captions and longtable bands. Styling updates cell interiors;
+merges retain all selected text and refuse overlapping existing spans. Structural
+changes on unsupported grids are refused. Repeated headers are explicitly copied
+from first-header rows; they are not yet one shared editable field. Arbitrary
+decimal column dialects, paragraph/display-math cells and generated-grid structural
+changes remain outside these operations.
+
+The semantic round-trip comparison stays independent of retained source spelling.
+The edit signature additionally includes retained raw source on rich objects,
+scientific containers and inline commands, so changes to a color, citation note or
+layout option are not mistaken for a no-op.
+
+`latexLabelAuthoring.ts` plans bounded same-file label renames for the heading
+footer. Known reference arguments are updated while comments and literal content
+remain unchanged; included files and dynamic definitions stay outside its scope.
+
+These root changes reuse the source-carrying `LatexTitleStep`, ordinary publication
+checks and document history. A setup-only step must publish even when its body is
+equal, and the setup refresh must not discard that local history. External source
+adoption and parser replacement still invalidate obsolete history. The shared
+file sessions remain the persistence owner; there is no new saver or recovery
+store. Cross-file atomic rename/conversion remains a separate coordination task.
+
+Color and math inventories depend on the preamble, avoiding repeated body
+parsing for ordinary typing and cursor movement.
 
 ## Root context and source coverage
 
@@ -905,11 +1062,14 @@ native input and selection, flush on blur, and retain unacknowledged field draft
 Ordinary prose insertion, deletion, replacement and paragraph edits paint without
 calling the LaTeX adapter. `visualTyping.ts` classifies the editor steps without
 parsing or serializing source; the live immutable editor document is retained
-separately from the last synchronized source projection. `afterEditorPaint`
-(animation frame followed by a task, with a fallback for hidden windows) then
-converts, validates and publishes the latest document. Following ordinary input
-replaces the queued document without synchronously flushing earlier text. Toolbar
-refreshes and recognition of structured math typed as prose also wait until paint.
+separately from the last synchronized source projection. `editorBackgroundTask.ts`
+coalesces conversion and toolbar state during typing: a 120 ms quiet window,
+with a one-second scheduling bound during continuous input, followed by
+`afterEditorPaint` (animation frame then a task, with a hidden-window fallback).
+These delays apply to bookkeeping; native text and MathLive paint immediately.
+Following ordinary input replaces the queued document without synchronously
+flushing earlier text. Selection changes and explicit formatting remain immediate.
+Recognition of structured math typed as prose also happens after its text paints.
 Structural actions and explicit finish/reload flush outstanding typing and source
 publication to preserve revision ordering. Composition stays local until it ends.
 Package edits that would change more than one physical file are refused before
@@ -926,7 +1086,17 @@ per-character source tokenization; round-trip signatures are cached for immutabl
 nodes. Recovery storage writes happen after painting or on explicit exit.
 Pagination waits 220 ms after input and maps existing decorations while waiting;
 measurements and resize-observer refreshes run after painting, not on every input.
-It never replaces the editable DOM. Layout profiles are cached by preamble.
+It never replaces the editable DOM. Plain paragraph edits map reference positions
+without rebuilding counters, captions or citations, and retain cached layout
+measurements. Heading text edits update only their contents titles; heading
+structure and other structural edits still rebuild reference presentation.
+Reference previews redraw only when presentation changes; navigation resolves the
+current target when clicked. Immutable heading indexes and one shared caret-root
+lookup avoid document walks and repeated object activation on each keystroke.
+Shared authoring context values stay stable across toolbar-only renders.
+Preamble-only configuration is scanned without copying the document body, and
+single-heading edits use the same local round-trip validation as prose blocks.
+Layout profiles are cached by preamble.
 Physical page lookup uses binary search after checking each immutable page map's
 position order; unusual line order retains the sequential lookup. Printed page
 labels are reused while the document, page map and title-page setting are unchanged.
@@ -1235,3 +1405,28 @@ is never a save target; Document ? References edits the original `.bib` files.
 Bibliography/style commands split from adjacent prose without requiring blank
 lines, and the style command remains invisible and source-preserved. Missing or
 stale presentation requests a PDF rebuild. BibLaTeX output remains unsupported.
+
+### Shared selection ownership
+
+`latexSelectionSession.ts` coordinates document prose, nested inline editors,
+MathLive fields, native text fields, and table rectangles. Menu focus retains a
+snapshot of the active participant. Root popup ownership passes through React
+context into portaled submenus; nested selects follow their trigger ownership.
+`DockMenu` restores selection before deferred commands and restores editing focus
+after root Escape. Selection commands use the existing configurable keyboard
+catalog and route through the active participant, with parent expansion/shrink.
+
+`LatexStructuredSelection` maps retained ProseMirror bookmarks through transactions
+and exposes authored formatting ranges using `latexInlineEditingScopes` when the
+source projection matches. Otherwise it derives current mark runs. Math/table
+snapshots guard model/node identity and native text snapshots guard their value.
+Math formatting runs remain character-selectable; structural branch crossing
+keeps owner normalization. Structural Tab traversal skips formatting, and vertical
+math navigation retains an x-coordinate until horizontal movement, typing, or a
+pointer action resets it.
+
+Scope outlines and muted retained highlights are clipped, noninteractive DOM
+overlays outside the source model. Empty matrix cells use their rendered hit boxes
+for selection painting. The footer path is status feedback, not menu help. These
+changes do not add source tokens or undo entries. No live interaction tests were
+run for this implementation.

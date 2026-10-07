@@ -1,9 +1,21 @@
 import type { Editor } from "@tiptap/core";
 import { useEditorState } from "@tiptap/react";
-import { LatexTextField } from "./LatexTextField";
-import { LatexHeadingNumberButton } from "./LatexHeadingNumberButton";
+import { LatexReferenceLabelField } from "./LatexReferenceLabelField";
+import { useContext, useMemo } from "react";
+import { LatexAuthoringContext } from "./latexObjectAuthoring";
+import { latexLabelInventory } from "./latexLabelAuthoring";
 
-export function LatexHeadingToolbar({ editor, draftKey }: { editor: Editor; draftKey: string }) {
+export function LatexHeadingToolbar({
+  editor,
+  draftKey,
+  onRename,
+}: {
+  editor: Editor;
+  draftKey: string;
+  onRename: (before: string, after: string, fieldId?: string) => boolean;
+}) {
+  const { source } = useContext(LatexAuthoringContext);
+  const labels = useMemo(() => latexLabelInventory(source), [source]);
   const heading = useEditorState({
     editor,
     selector: ({ editor: current }) => {
@@ -13,7 +25,7 @@ export function LatexHeadingToolbar({ editor, draftKey }: { editor: Editor; draf
       return node?.type.name === "heading"
         ? {
             position,
-            numbered: node.attrs.unnumbered !== true,
+            sourceId: String(node.attrs.sourceId ?? position),
             referenceLabel: String(node.attrs.referenceLabel ?? ""),
           }
         : null;
@@ -34,35 +46,30 @@ export function LatexHeadingToolbar({ editor, draftKey }: { editor: Editor; draf
     <div
       role="toolbar"
       aria-label="Heading options"
+      data-context-fallback=""
+      data-context-presentation="inline"
       className="scient-latex-context-toolbar scient-latex-heading-bar"
     >
-      <span className="scient-latex-context-label">Heading</span>
-      <LatexHeadingNumberButton
-        checked={heading.numbered}
-        disabled={!editor.isEditable}
-        onCheckedChange={(checked) => updateHeading({ unnumbered: !checked })}
-      />
       <label className="scient-latex-heading-reference">
-        Reference label
-        <LatexTextField
-          key={heading.position}
-          aria-label="Heading reference label"
-          rows={1}
-          spellCheck={false}
-          draftKey={`${draftKey}:heading:${heading.position}:label`}
+        Label
+        <LatexReferenceLabelField
+          key={heading.sourceId}
+          label="Heading reference label"
+          allowEmpty
+          disabled={!editor.isEditable}
+          draftKey={`${draftKey}:heading:${heading.sourceId}:label`}
           value={heading.referenceLabel}
-          placeholder="sec:introduction"
-          onValueChange={(referenceLabel) => {
-            if (!/[{}\\%\s#$&~^]/u.test(referenceLabel))
-              updateHeading({
-                referenceLabel: referenceLabel || null,
-              });
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === "Escape") {
-              event.preventDefault();
-              editor.commands.focus(undefined, { scrollIntoView: false });
-            }
+          commitOn="blur"
+          isAvailable={(value) =>
+            !value ||
+            value === heading.referenceLabel ||
+            !labels.targets.some((target) => target.key === value)
+          }
+          onCommit={(referenceLabel, fieldId) => {
+            if (referenceLabel === heading.referenceLabel) return;
+            if (heading.referenceLabel && referenceLabel) {
+              onRename(heading.referenceLabel, referenceLabel, fieldId);
+            } else updateHeading({ referenceLabel: referenceLabel || null });
           }}
         />
       </label>

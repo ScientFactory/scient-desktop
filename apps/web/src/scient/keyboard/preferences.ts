@@ -26,6 +26,7 @@ export interface KeyboardPreferences {
   readonly overrides: Readonly<Record<string, readonly string[]>>;
   readonly mathPreset: "lyx" | "minimal";
   readonly completion: "space-tab" | "tab" | "off";
+  /** Legacy serialized option, retained for importing existing shortcut settings. */
   readonly automaticOperators: boolean;
   readonly matrixEnter: boolean;
   readonly sequenceTimeoutMs: number;
@@ -42,7 +43,7 @@ export const DEFAULT_KEYBOARD_PREFERENCES: KeyboardPreferences = {
   overrides: {},
   mathPreset: "lyx",
   completion: "space-tab",
-  automaticOperators: true,
+  automaticOperators: false,
   matrixEnter: true,
   sequenceTimeoutMs: 2500,
 };

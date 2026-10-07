@@ -6,10 +6,15 @@ import { focusMathCellGuide, mathSelectionAtOffset } from "./mathLiveSelection";
 export const mathArrayCellSelector =
   ".ML__mtable > :is(.col-align-l,.col-align-c,.col-align-r) > .ML__vlist-t > .ML__vlist-r:first-child > .ML__vlist > span > span:last-child";
 const cellSelector = mathArrayCellSelector;
+// Figure space reserves a click target with no ink, even before decoration.
+// MathLive can render placeholders as ordinary font boxes (for example in
+// accents), so its ML__placeholder class is not a reliable slot selector.
+const emptySlotCharacter = "\u2007";
 
 export function installMathEditingGuides(math: MathfieldElement): () => void {
   const root = math.shadowRoot;
   if (!root) return () => {};
+  math.placeholderSymbol = emptySlotCharacter;
   const style = document.createElement("style");
   style.textContent = `
     /* Reserve targets from the first render, before the observer decorates
@@ -19,7 +24,7 @@ export function installMathEditingGuides(math: MathfieldElement): () => void {
       box-sizing: border-box;
       position: relative;
     }
-    :host(:not([read-only]):focus-within) [data-scient-math-cell][data-empty][data-guide-active]::after {
+    :host(:not([read-only]):is(:focus-within,[data-scient-selection-held])) [data-scient-math-cell][data-empty][data-guide-active]::after {
       content: "";
       position: absolute;
       width: .75em;
@@ -31,13 +36,13 @@ export function installMathEditingGuides(math: MathfieldElement): () => void {
       border-radius: 3px;
       pointer-events: none;
     }
-    .ML__placeholder {
+    .ML__placeholder, [data-scient-math-slot] {
       color: transparent !important;
       background: transparent !important;
       box-shadow: none !important;
       position: relative;
     }
-    :host(:not([read-only]):focus-within) .ML__placeholder::after {
+    :host(:not([read-only]):is(:focus-within,[data-scient-selection-held])) :is(.ML__placeholder,[data-scient-math-slot])::after {
       content: "";
       position: absolute;
       width: .65em;
@@ -49,13 +54,13 @@ export function installMathEditingGuides(math: MathfieldElement): () => void {
       border-radius: 3px;
       pointer-events: none;
     }
-    [data-scient-math-cell][data-empty] .ML__placeholder::after {
+    [data-scient-math-cell][data-empty] :is(.ML__placeholder,[data-scient-math-slot])::after {
       display: none;
     }
     [data-scient-math-cell][data-empty] .ML__empty-line-anchor::after {
       display: none;
     }
-    @media print { [data-scient-math-cell]::after, .ML__placeholder::after { display: none !important; } }
+    @media print { [data-scient-math-cell]::after, .ML__placeholder::after, [data-scient-math-slot]::after { display: none !important; } }
   `;
   root.append(style);
   let frame = 0;
@@ -65,6 +70,17 @@ export function installMathEditingGuides(math: MathfieldElement): () => void {
       "data-scient-empty",
       !math.getValue("latex-without-placeholders").replace(/[{}\s]/gu, ""),
     );
+    const formula = root.querySelector(".ML__latex");
+    if (formula) {
+      for (const slot of formula.querySelectorAll("[data-scient-math-slot]")) {
+        if (slot.textContent !== emptySlotCharacter) slot.removeAttribute("data-scient-math-slot");
+      }
+      const texts = math.ownerDocument.createTreeWalker(formula, NodeFilter.SHOW_TEXT);
+      for (let text = texts.nextNode(); text; text = texts.nextNode()) {
+        if (text.nodeValue === emptySlotCharacter)
+          text.parentElement?.setAttribute("data-scient-math-slot", "");
+      }
+    }
     // Limit guides to the innermost array being edited, including nested cases.
     const activeId = mathSelectionAtOffset(math, math.position).path.at(-1)?.array.id;
     const activeWrapper = activeId
@@ -76,7 +92,7 @@ export function installMathEditingGuides(math: MathfieldElement): () => void {
         root.querySelector(".ML__caret,.ML__placeholder-selected")?.closest(".ML__mtable"));
     for (const cell of root.querySelectorAll<HTMLElement>(cellSelector)) {
       cell.dataset.scientMathCell = "";
-      const text = (cell.textContent ?? "").replace(/[\s\u200b\u2060\u25a2]/gu, "");
+      const text = (cell.textContent ?? "").replace(/[\s\u200b\u2060]/gu, "");
       // A rule, root, or nested structure is meaningful even without text.
       const structure = cell.querySelector("svg,.ML__mtable,.ML__sqrt,.ML__frac");
       const empty = !text && !structure;
