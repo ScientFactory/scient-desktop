@@ -24,6 +24,7 @@ const state = vi.hoisted(() => ({
   strip: null as Parameters<typeof ThreadQueueStrip>[0] | null,
 }));
 vi.mock("../../state/entities", () => ({
+  useThreadShell: () => null,
   useThreadProjection: () => ({
     projection: {
       thread: { providerInstanceId: "codex" },

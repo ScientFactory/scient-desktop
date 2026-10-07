@@ -4,12 +4,12 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
-import { canSendQueueHead, isQueueUsageLimited } from "@t3tools/shared/scientQueueHeadSend";
+import { canSendQueueHead, isQueueUsageLimitProven } from "@t3tools/shared/scientQueueHeadSend";
 import type { ChatAttachment, EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
 import { useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
-import { useThreadProjection } from "../../state/entities";
+import { useThreadProjection, useThreadShell } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ChatMessage } from "../../types";
 import { ThreadQueueStrip } from "../../scient/threadQueue/ThreadQueueStrip";
@@ -45,9 +45,11 @@ export function QueuedRunsControl({
   readonly onCancelEdit: () => void;
   readonly error?: string | null;
 }) {
-  const projection = useThreadProjection(
-    scopeThreadRef(props.environmentId, props.threadId),
-  )?.projection;
+  const threadRef = scopeThreadRef(props.environmentId, props.threadId);
+  const projection = useThreadProjection(threadRef)?.projection;
+  // SCIENT-FORK:START queue-head-send-rule
+  const shell = useThreadShell(threadRef);
+  // SCIENT-FORK:END queue-head-send-rule
   const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun);
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
@@ -70,12 +72,17 @@ export function QueuedRunsControl({
         item.failure.code === "queued_start_failed",
     ) === true;
   // SCIENT-FORK:START queue-head-send-rule — a held queue offers only what queue.resume accepts.
+  // A windowed snapshot can miss the session that lifts a usage limit, so the
+  // limit hides controls only when the server-computed shell confirms it.
   const heldProjection = workflow?.isHeld === true && projection != null ? projection : null;
-  const queueResumable = heldProjection !== null && !isQueueUsageLimited(heldProjection);
+  const usageLimited =
+    heldProjection !== null &&
+    isQueueUsageLimitProven(heldProjection, shell?.runtime?.lastErrorClass);
+  const queueResumable = heldProjection !== null && !usageLimited;
   const headSendable =
     heldProjection !== null &&
     queued[0] !== undefined &&
-    canSendQueueHead(heldProjection, queued[0].run.id);
+    canSendQueueHead(heldProjection, queued[0].run.id, usageLimited);
   // SCIENT-FORK:END queue-head-send-rule
   const items = queued.map(({ run, text, attachments }) => ({
     queueItemId: run.id,

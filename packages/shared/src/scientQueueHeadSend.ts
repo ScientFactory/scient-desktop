@@ -3,7 +3,8 @@
  *
  * The server's `queue.resume` handler refuses by this rule and stays the
  * authority. The composer's queue strip offers Send, Retry and Resume queue by
- * the same rule, so an offered action is one the server accepts.
+ * the same rule, so an offered action is one the server accepts. The client
+ * fails open: it hides a control only when its own data proves the refusal.
  */
 import type {
   OrchestrationV2Run,
@@ -92,10 +93,29 @@ export function isIdleQueueHead(projection: QueueHeadProjection, runId: RunId): 
   return queueDeliveryHead(projection)?.id === runId && !projection.runs.some(isBlockingRun);
 }
 
-/** True when the server accepts `queue.resume` for this queued run. */
+/**
+ * The usage-limit refusal as a client may apply it. A windowed thread snapshot
+ * can omit a newer session whose error supersedes the limit, so the snapshot
+ * alone cannot prove the limit. The thread shell's error class is computed by
+ * the server from every bound session. The client refuses only when both agree,
+ * and otherwise offers the control and lets the server decide.
+ */
+export function isQueueUsageLimitProven(
+  projection: QueueUsageLimitProjection,
+  shellLastErrorClass: string | null | undefined,
+): boolean {
+  return shellLastErrorClass === "usage_limit" && isQueueUsageLimited(projection);
+}
+
+/**
+ * True when the server accepts `queue.resume` for this queued run. A client
+ * passes `usageLimited` from `isQueueUsageLimitProven`; the default is the
+ * server's own check on a full projection.
+ */
 export function canSendQueueHead(
   projection: QueueUsageLimitProjection & QueueHeadProjection,
   runId: RunId,
+  usageLimited: boolean = isQueueUsageLimited(projection),
 ): boolean {
-  return !isQueueUsageLimited(projection) && isIdleQueueHead(projection, runId);
+  return !usageLimited && isIdleQueueHead(projection, runId);
 }

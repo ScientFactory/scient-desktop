@@ -7,10 +7,11 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
-import { canSendQueueHead } from "@t3tools/shared/scientQueueHeadSend";
+import { canSendQueueHead, isQueueUsageLimitProven } from "@t3tools/shared/scientQueueHeadSend";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
@@ -68,11 +69,11 @@ const createThread = (threadId: ThreadId) =>
     });
   });
 
-it.effect("refuses Send of the queue head after the usage limit, as the rule says", () =>
+/** A thread whose active run failed at the usage limit, with one queued run behind it. */
+const usageLimitedThread = (threadId: ThreadId) =>
   Effect.gen(function* () {
     const orchestrator = yield* OrchestratorV2;
     const sink = yield* EventSinkV2;
-    const threadId = ThreadId.make("queue-head-rule-usage-limit");
     yield* createThread(threadId);
     for (const index of [0, 1]) {
       yield* orchestrator.dispatch({
@@ -142,7 +143,14 @@ it.effect("refuses Send of the queue head after the usage limit, as the rule say
         },
       ],
     });
+    return queuedRun;
+  });
 
+it.effect("refuses Send of the queue head after the usage limit, as the rule says", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const threadId = ThreadId.make("queue-head-rule-usage-limit");
+    const queuedRun = yield* usageLimitedThread(threadId);
     const limited = yield* orchestrator.getThreadProjection(threadId);
     assert.isFalse(canSendQueueHead(limited, queuedRun.id));
     const refused = yield* orchestrator
@@ -156,6 +164,72 @@ it.effect("refuses Send of the queue head after the usage limit, as the rule say
     assert.include(refusalText(refused), "Continue the limited thread before resuming its queue.");
     const after = yield* orchestrator.getThreadProjection(threadId);
     assert.equal(after.runs.find((run) => run.id === queuedRun.id)?.status, "queued");
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("keeps Send on a windowed snapshot that misses the session lifting the limit", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const sink = yield* EventSinkV2;
+    const threadId = ThreadId.make("queue-head-rule-windowed-session");
+    const queuedRun = yield* usageLimitedThread(threadId);
+    // A newer session for the same provider instance ends with another error.
+    // It owns no provider thread, so a windowed snapshot leaves it out.
+    const now = yield* DateTime.now;
+    const sessionId = ProviderSessionId.make(`${threadId}:newer-session`);
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(`${threadId}:newer-session`),
+          type: "provider-session.attached",
+          threadId,
+          providerInstanceId: instanceId,
+          occurredAt: now,
+          payload: {
+            id: sessionId,
+            driver: ProviderDriverKind.make("codex"),
+            providerInstanceId: instanceId,
+            status: "error",
+            cwd: process.cwd(),
+            model: null,
+            capabilities: CodexProviderCapabilitiesV2,
+            createdAt: now,
+            updatedAt: now,
+            lastError: "The provider process exited.",
+          },
+        },
+      ],
+    });
+
+    const full = yield* orchestrator.getThreadProjection(threadId);
+    const windowed = (yield* orchestrator.getThreadSnapshotWindow(threadId, { rowLimit: 50 }))
+      .projection;
+    assert.deepEqual(
+      full.providerSessions.map((session) => session.id),
+      [sessionId],
+    );
+    assert.deepEqual(windowed.providerSessions, []);
+    assert.isTrue(canSendQueueHead(full, queuedRun.id));
+    // The snapshot alone still looks limited; the shell, built from every
+    // bound session, does not confirm it, so the client keeps Send.
+    assert.isFalse(canSendQueueHead(windowed, queuedRun.id));
+    const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+      (thread) => thread.id === threadId,
+    );
+    assert.notEqual(shell?.lastErrorClass, "usage_limit");
+    assert.isTrue(
+      canSendQueueHead(
+        windowed,
+        queuedRun.id,
+        isQueueUsageLimitProven(windowed, shell?.lastErrorClass),
+      ),
+    );
+    yield* orchestrator.dispatch({
+      type: "queue.resume",
+      threadId,
+      commandId: CommandId.make(`${threadId}:send`),
+      runId: queuedRun.id,
+    });
   }).pipe(Effect.provide(testLayer)),
 );
 

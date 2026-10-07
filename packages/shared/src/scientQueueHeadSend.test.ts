@@ -2,7 +2,12 @@ import type { RunId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { canSendQueueHead, isIdleQueueHead, queueDeliveryHead } from "./scientQueueHeadSend.ts";
+import {
+  canSendQueueHead,
+  isIdleQueueHead,
+  isQueueUsageLimitProven,
+  queueDeliveryHead,
+} from "./scientQueueHeadSend.ts";
 
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const runId = (id: string) => id as RunId;
@@ -73,6 +78,21 @@ describe("canSendQueueHead", () => {
     });
     expect(isIdleQueueHead(limited, runId("run:a"))).toBe(true);
     expect(canSendQueueHead(limited, runId("run:a"))).toBe(false);
+  });
+
+  it("lets a client refuse for the limit only when the server's shell confirms it", () => {
+    const limited = projection({
+      runs: [run("run:limited", 1, "failed"), run("run:a", 2, "queued")],
+      turnItems: [usageLimitError],
+    });
+    expect(isQueueUsageLimitProven(limited, "usage_limit")).toBe(true);
+    for (const shellClass of [null, undefined, "provider_error"]) {
+      const usageLimited = isQueueUsageLimitProven(limited, shellClass);
+      expect(usageLimited).toBe(false);
+      expect(canSendQueueHead(limited, runId("run:a"), usageLimited)).toBe(true);
+    }
+    const idle = projection({ runs: [run("run:done", 1, "completed"), run("run:a", 2, "queued")] });
+    expect(isQueueUsageLimitProven(idle, "usage_limit")).toBe(false);
   });
 
   it("allows Send when a newer session error supersedes the limit", () => {

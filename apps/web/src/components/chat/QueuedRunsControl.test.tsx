@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 const state = vi.hoisted(() => ({
   projection: null as unknown,
   workflow: null as unknown,
+  shell: null as unknown,
 }));
 
 vi.mock("@t3tools/client-runtime/environment", () => ({
@@ -26,6 +27,7 @@ vi.mock("@t3tools/client-runtime/state/thread-workflows", () => ({
 
 vi.mock("../../state/entities", () => ({
   useThreadProjection: () => state.projection,
+  useThreadShell: () => state.shell,
 }));
 
 vi.mock("../../state/threads", () => ({
@@ -554,7 +556,10 @@ describe("held queue Send follows the server's queue.resume rule", () => {
     expect(html).toContain(">Resume queue</button>");
   });
 
-  it("offers no Send or Resume queue after the usage limit stopped the thread", async () => {
+  // The client's snapshot of a thread whose last root run hit the usage limit.
+  // A newer session error that lifts the limit may be missing from a windowed
+  // snapshot, so only the server-computed shell can confirm the limit.
+  const limitedSnapshot = () => {
     const base = makeThreadProjectionFixture();
     const limited: OrchestrationV2Run = {
       id: RunId.make("rule-limited"),
@@ -573,7 +578,7 @@ describe("held queue Send follows the server's queue.resume rule", () => {
       checkpointId: null,
       contextHandoffId: null,
     };
-    const html = await heldProjection({
+    return heldProjection({
       before: [limited],
       turnItems: [
         {
@@ -601,10 +606,25 @@ describe("held queue Send follows the server's queue.resume rule", () => {
         },
       ],
     });
+  };
+
+  it("offers no Send or Resume queue when the server's shell confirms the usage limit", async () => {
+    state.shell = { runtime: { lastErrorClass: "usage_limit" } };
+    const html = await limitedSnapshot();
     expect(html).toContain("Queue held");
     expect(html.match(/data-testid="thread-queue-row-/g)).toHaveLength(2);
     expect(html).not.toContain(">Send</button>");
     expect(html).not.toContain(">Resume queue</button>");
+  });
+
+  it.each([
+    ["a newer session error lifted it", { runtime: { lastErrorClass: null } }],
+    ["no shell has arrived", null],
+  ])("keeps Send and Resume queue on a limited-looking snapshot when %s", async (_case, shell) => {
+    state.shell = shell;
+    const html = await limitedSnapshot();
+    expect(html.match(/>Send<\/button>/g)).toHaveLength(1);
+    expect(html).toContain(">Resume queue</button>");
   });
 
   it("offers no Send on the first row while a hidden delegated completion goes first", async () => {
