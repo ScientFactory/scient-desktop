@@ -293,6 +293,11 @@
       "path": "scripts/release-smoke.ts",
       "anchor": "\"packages/scient-skills/package.json\"",
       "purpose": "Include the Scient Skills workspace manifest in the isolated release-smoke fixture used to validate release version updates and lockfile regeneration; release tooling owns this check."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.testkit.ts",
+      "anchor": "prepareScientSkillTurn(",
+      "purpose": "Build Codex V2 replay prompts through Scient's skill preparation, including the complete empty skill scope marker."
     }
   ],
   "scientMounts": [
@@ -340,6 +345,16 @@
       "path": "apps/web/src/scient/skills/scientSkillUsageLabel.ts",
       "anchor": "export function scientSkillUsageLabel(",
       "purpose": "Label managed Scient skill loads in V2 dynamic-tool work-log rows through the shared provider-prefix resolver (session-logic.test.ts)."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/OmpNativeConjunctions.ts",
+      "anchor": "selectedScientSkillNames: []",
+      "purpose": "Dispatch controlled Oh My Pi conjunction fixtures with an explicit empty skill selection."
+    },
+    {
+      "path": "apps/web/src/scient/threadQueue/submission.ts",
+      "anchor": "selectedScientSkillNames: Schema.optionalKey(Schema.Array(Schema.String))",
+      "purpose": "Retain selected Scient skills in the durable queued thread-start payload."
     }
   ]
 }
