@@ -1,11 +1,9 @@
 import { TextMenu, TextMenuItems } from "../writing/TextMenu";
 import { LatexStructuredSelection } from "./latexStructuredSelection";
-import { LatexSelectionScope } from "./LatexSelectionScope";
 import { latexSelectionCommand, runLatexSelectionCommand } from "./latexSelectionSession";
 import { latexVisualNodeSignature } from "./latexVisualDocument";
 import { randomUUID } from "~/lib/utils";
 import { LatexMathMenuItems, LATEX_CASES_TEMPLATE } from "./LatexMathMenuItems";
-import { LatexSelect } from "./LatexSelect";
 import { LatexLongTableBand, type LongTableBand } from "./LatexLongTableBand";
 import { latexRunningPageStyle, latexRunningPageFields } from "./latexPageLayouts";
 import {
@@ -122,14 +120,14 @@ import {
 } from "./LatexReferencesPanel";
 import { LatexFigureInsertDialog } from "./LatexFigureInsertDialog";
 import { LatexFigureArtwork } from "./LatexFigureArtwork";
-import { LatexTikzArtwork, LatexTikzControls } from "./LatexTikzView";
+import { LatexTikzArtwork } from "./LatexTikzView";
 import { LatexColorBoxView } from "./LatexColorBoxView";
 import {
   LatexAlgorithmView,
   LatexAlgorithmLine,
   LatexAlgorithmComment,
 } from "./LatexAlgorithmView";
-import { latexColorCss, latexDocumentColors } from "./latexColorBoxes";
+import { latexColorCss, latexDocumentColors, latexColorBoxOpening } from "./latexColorBoxes";
 import { LatexObjectMathField } from "./LatexObjectMathField";
 import { LatexInlineField } from "./LatexInlineField";
 import {
@@ -160,6 +158,7 @@ import {
   type LatexListingPresentation,
 } from "./latexLiteral";
 import { useLatexTableSelection, tableSelectionContains } from "./useLatexTableSelection";
+import { installLatexTableEditingGuides } from "./latexTableEditingGuides";
 import { latexDocumentObjectSelection } from "./latexDocumentObjectSelection";
 import {
   captureLatexObjectDrag,
@@ -197,10 +196,16 @@ import {
 } from "./visualRecovery";
 import { discardTypingDraft, isOrdinaryTyping, retainTypingDraft } from "./visualTyping";
 import { LatexObjectToolbar } from "./LatexObjectToolbar";
+import { ReplacementImages } from "./LatexFigureToolbar";
+import { relativeLatexImagePath } from "./figureSource";
+import { latexProseCaretOffset } from "./latexProseCaret";
+import { LatexFooterLabel } from "./LatexFooterLabel";
+import { LatexLinkAddress } from "./LatexLinkAddress";
 import { LatexReferenceLabelField } from "./LatexReferenceLabelField";
 import { LatexCitationControls } from "./LatexCitationControls";
 import { LatexCrossReferenceControl } from "./LatexCrossReferenceControl";
-import { LatexStatementTypeControl } from "./LatexStatementTypeControl";
+import { LatexStatementToolbar } from "./LatexStatementToolbar";
+import { LatexStatementTitle } from "./LatexStatementTitle";
 import { mathStructureCommandReason, type MathArrayContext } from "./mathLiveSelection";
 import { LatexHeadingToolbar } from "./LatexHeadingToolbar";
 import { LatexHeadingNumberButton } from "./LatexHeadingNumberButton";
@@ -235,7 +240,12 @@ import { LatexBibliographyDialog } from "./LatexBibliographyDialog";
 import { LatexLinkDialog } from "./LatexLinkDialog";
 import { withoutComments } from "./latexAuthoringModel";
 import { LatexVisualSearch, useLatexVisualSearch } from "./useLatexVisualSearch";
-import { clampPdfPage, stepPdfZoom } from "../pdf/pdfReaderModel";
+import {
+  clampPdfPage,
+  stepPdfZoom,
+  pdfFitWidthScale,
+  PDF_FIT_WIDTH_PADDING,
+} from "../pdf/pdfReaderModel";
 import { useLatexPinchZoom } from "./useLatexPinchZoom";
 import { Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, FileText } from "lucide-react";
 import { mathSourceCompletions, type MathSourceCompletion } from "./latexMathCompletion";
@@ -542,6 +552,7 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
       return (
         current !== null &&
         !selection.empty &&
+        !(selection instanceof NodeSelection) &&
         selection.from <= position &&
         selection.to >= position + current.nodeSize
       );
@@ -1392,7 +1403,7 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
       contentEditable={false}
       data-selected={selected || editing || undefined}
       data-document-selected={
-        ((!editing || dragOutside) && (selected || selectedByDocument)) || undefined
+        selectedByDocument || ((!editing || dragOutside) && selected) || undefined
       }
       data-empty={!attributes.tex.trim() || undefined}
       data-equation-numbered={hasEquationNumbers || undefined}
@@ -1480,20 +1491,27 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
           if (!mathField.current?.flush()) return false;
           return redo ? editor.commands.redo() : editor.commands.undo();
         }}
-        onRemoveEmpty={() => {
-          if (!mathField.current?.flush()) return;
+        onRemoveEmpty={(direction) => {
+          if (!mathField.current?.isEmpty()) return false;
           const position = getPos();
-          if (position === undefined || !editor.isEditable) return;
+          if (position === undefined || !editor.isEditable || editor.isDestroyed) return false;
           const current = editor.state.doc.nodeAt(position);
-          if (!current || current.attrs.tex !== "") return;
+          if (!current || current.type !== node.type) return false;
           const transaction = editor.state.tr.delete(position, position + current.nodeSize);
-          transaction.setSelection(
-            Selection.near(
-              transaction.doc.resolve(Math.min(position, transaction.doc.content.size)),
-            ),
-          );
+          const boundary = Math.min(position, transaction.doc.content.size);
+          const caret =
+            Selection.findFrom(transaction.doc.resolve(boundary), direction, true) ??
+            Selection.findFrom(transaction.doc.resolve(boundary), -direction, true);
+          if (caret) transaction.setSelection(caret);
+          else {
+            transaction.insert(boundary, editor.schema.nodes.paragraph!.create());
+            transaction.setSelection(TextSelection.create(transaction.doc, boundary + 1));
+          }
           editor.view.dispatch(transaction.scrollIntoView());
+          if (!editor.state.doc.eq(transaction.doc)) return false;
+          activeMath.deactivate(activationId);
           editor.view.focus();
+          return true;
         }}
         onChange={(tex) => {
           const body = mathEnvironmentBody(tex, attributes.environment);
@@ -1548,6 +1566,8 @@ function LatexInlineCommandView({
   const editable = useEditorEditable(editor);
   const referenceEditor = useContext(LatexInlineOwnerContext) ?? editor;
   const name = String(node.attrs.name ?? "command");
+  const [textEditing, setTextEditing] = useState(false);
+  const [editingText, setEditingText] = useState<string | null>(null);
   const argument = String(node.attrs.argument ?? "");
   const citation = latexCitationParts(String(node.attrs.raw ?? ""));
   const referenceManager = useContext(LatexReferencesContext);
@@ -1612,7 +1632,6 @@ function LatexInlineCommandView({
       ? `${equationReference.title ?? "statement"} ${equationReference.number ?? argument}`
       : `equation ${equationReference?.number ?? argument}`;
   const root = useRef<HTMLSpanElement>(null);
-  const host = editor.view.dom.closest(".scient-latex-visual-workspace");
   const footnoteText = name === "footnote" ? metadataText(argument) : null;
   const linkText = String(node.attrs.linkText ?? "");
   const linkPlain = metadataText(linkText);
@@ -1628,23 +1647,6 @@ function LatexInlineCommandView({
     "hyperlink",
   ].includes(name);
   const hasLinkText = ["href", "hyperref", "hyperlink", "hypertarget"].includes(name);
-  useEffect(() => {
-    if (
-      !selected ||
-      !editable ||
-      equationReference ||
-      citationTargets ||
-      name === "footnote" ||
-      name === "verb"
-    )
-      return;
-    const frame = requestAnimationFrame(() =>
-      host
-        ?.querySelector<HTMLTextAreaElement>(`[aria-label="${name} argument"]`)
-        ?.focus({ preventScroll: true }),
-    );
-    return () => cancelAnimationFrame(frame);
-  }, [selected, editable, host, name, equationReference, citationTargets]);
   if (name === "columnbreak") {
     return (
       <NodeViewWrapper
@@ -1692,11 +1694,81 @@ function LatexInlineCommandView({
       data-equation-reference={!!equationReference || undefined}
       data-statement-label={statementLabel || undefined}
       data-prose-command={isLink || name === "footnote" || name === "hypertarget" || undefined}
+      data-footnote-editor={(name === "footnote" && textEditing) || undefined}
       data-anchor={name === "hypertarget" || undefined}
       data-citation={!!citationTargets || undefined}
       contentEditable={false}
     >
-      {citationTargets ? (
+      {textEditing && (hasLinkText || name === "footnote") ? (
+        <>
+          {name === "footnote" && <sup>{footnoteNumber ?? "*"}</sup>}
+          <span className="scient-latex-inline-text-editor">
+            {name !== "footnote" && (
+              <span className="scient-latex-inline-text-measure" aria-hidden="true">
+                {(editingText ?? linkPlain ?? linkText) || "\u200b"}
+              </span>
+            )}
+            <LatexTextField
+              onInput={(event) => setEditingText(event.currentTarget.value)}
+              aria-label={name === "footnote" ? "Footnote text" : "Link text"}
+              rows={1}
+              value={name === "footnote" ? (footnoteText ?? argument) : (linkPlain ?? linkText)}
+              disabled={
+                !editable || (name === "footnote" ? footnoteText === null : linkPlain === null)
+              }
+              onBlur={(event) => {
+                if (!event.relatedTarget && !event.currentTarget.ownerDocument.hasFocus()) return;
+                if (
+                  event.relatedTarget instanceof Element &&
+                  event.relatedTarget.closest(
+                    ".scient-latex-context-tools, [data-dock-command-scope]",
+                  )
+                )
+                  return;
+                setTextEditing(false);
+                setEditingText(null);
+              }}
+              onValueChange={(value) => {
+                const next = escapeText(value);
+                updateAttributes(
+                  name === "footnote"
+                    ? {
+                        argument: next,
+                        raw: latexInlineCommandSource(
+                          name,
+                          next,
+                          linkText,
+                          String(node.attrs.raw ?? ""),
+                        ),
+                      }
+                    : {
+                        linkText: next,
+                        raw: latexInlineCommandSource(
+                          name,
+                          argument,
+                          next,
+                          String(node.attrs.raw ?? ""),
+                        ),
+                      },
+                );
+              }}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) return;
+                if (event.key === "Escape" || (event.key === "Enter" && !event.shiftKey)) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  event.currentTarget.blur();
+                  setTextEditing(false);
+                  const position = getPos();
+                  if (typeof position === "number")
+                    editor.commands.setTextSelection(position + node.nodeSize);
+                  editor.commands.focus(undefined, { scrollIntoView: false });
+                }
+              }}
+            />
+          </span>
+        </>
+      ) : citationTargets ? (
         <span className="scient-latex-citation">
           [
           {citationTargets.map(({ key, target }, index) => (
@@ -1744,7 +1816,25 @@ function LatexInlineCommandView({
                 ? `Go to ${referenceDescription}`
                 : `Edit ${name}`
           }
-          onClick={() => {
+          onClick={(event) => {
+            if (hasLinkText && linkPlain !== null && editable && !equationReference) {
+              const offset = latexProseCaretOffset(
+                event.currentTarget,
+                event.clientX,
+                event.clientY,
+              );
+              preserveLatexCaret(editor.view);
+              setEditingText(null);
+              setTextEditing(true);
+              requestAnimationFrame(() => {
+                const field = root.current?.querySelector<HTMLTextAreaElement>(
+                  '[aria-label="Link text"]',
+                );
+                field?.focus({ preventScroll: true });
+                field?.setSelectionRange(offset, offset);
+              });
+              return;
+            }
             const position = getPos();
             if (typeof position === "number") editor.commands.setNodeSelection(position);
             if (name === "footnote" && typeof position === "number") {
@@ -1755,11 +1845,14 @@ function LatexInlineCommandView({
               navigateToEquation(referenceEditor.view, equationReference);
               return;
             }
-            requestAnimationFrame(() =>
-              host
-                ?.querySelector<HTMLTextAreaElement>(`[aria-label="${name} argument"]`)
-                ?.focus({ preventScroll: true }),
-            );
+            if (hasLinkText && linkPlain !== null && editable) {
+              setTextEditing(true);
+              requestAnimationFrame(() =>
+                root.current
+                  ?.querySelector<HTMLTextAreaElement>('[aria-label="Link text"]')
+                  ?.focus({ preventScroll: true }),
+              );
+            }
           }}
         >
           {name === "footnote" ? (
@@ -1799,40 +1892,53 @@ function LatexInlineCommandView({
         editor={editor}
         root={root}
         selected={selected}
+        inline
+        position={
+          isLink
+            ? "Link"
+            : citation
+              ? "Citation"
+              : name === "footnote"
+                ? "Footnote"
+                : name === "label"
+                  ? "Label"
+                  : "Reference"
+        }
         label={`${isLink ? "Link" : citation ? "Citation" : name === "footnote" ? "Footnote" : name === "label" ? "Reference label" : "Cross-reference"} options`}
       >
-        <span className="scient-latex-context-label">
-          {isLink
-            ? "Link"
-            : name === "footnote"
-              ? "Footnote"
-              : name === "label"
-                ? "Reference label"
-                : citation
-                  ? "Citation"
-                  : name}
-        </span>
         {hasLinkText && (
-          <label>
+          <button
+            type="button"
+            className={dockButtonClass()}
+            disabled={!editable || linkPlain === null}
+            onClick={() => {
+              setTextEditing(true);
+              requestAnimationFrame(() =>
+                root.current
+                  ?.querySelector<HTMLTextAreaElement>('[aria-label="Link text"]')
+                  ?.focus({ preventScroll: true }),
+              );
+            }}
+          >
             Text
-            <LatexTextField
-              aria-label="Link text"
-              rows={1}
-              value={linkPlain ?? linkText}
-              disabled={linkPlain === null}
-              title={
-                linkPlain === null
-                  ? "This label contains formatted LaTeX. Edit its text in Source."
-                  : undefined
-              }
-              onValueChange={(text) =>
-                updateAttributes({
-                  linkText: escapeText(text),
-                  raw: latexInlineCommandSource(name, argument, escapeText(text)),
-                })
-              }
-            />
-          </label>
+          </button>
+        )}
+        {name === "footnote" && (
+          <button
+            type="button"
+            className={dockButtonClass()}
+            disabled={!editable || footnoteText === null}
+            onClick={() => {
+              setTextEditing(true);
+              requestAnimationFrame(() =>
+                root.current
+                  ?.querySelector<HTMLTextAreaElement>('[aria-label="Footnote text"]')
+                  ?.focus({ preventScroll: true }),
+              );
+            }}
+          >
+            Edit text
+          </button>
         )}
         {citation && (
           <LatexCitationControls
@@ -1884,51 +1990,32 @@ function LatexInlineCommandView({
             }
           />
         )}
-        {!citation && !isCrossReference && (
-          <label>
-            {isExternalLink ? "Address" : name === "footnote" ? "Footnote text" : "Reference label"}
-            <LatexTextField
-              aria-label={`${name} argument`}
-              rows={1}
-              disabled={!editable || (name === "footnote" && footnoteText === null)}
-              value={isLink ? argument.replace(/\\([%#&])/gu, "$1") : (footnoteText ?? argument)}
-              title={isLink ? "Link address" : undefined}
-              onValueChange={(value) => {
-                if (isExternalLink) {
-                  if (!/^(https?:\/\/|mailto:)/iu.test(value) || /[{}\\\s]/u.test(value)) return;
-                  const next = value.replace(/[%#&]/gu, (character) => "\\" + character);
-                  updateAttributes({
-                    argument: next,
-                    raw: latexInlineCommandSource(name, next, linkText),
-                  });
-                  return;
-                }
-                const next =
-                  name === "footnote" && footnoteText !== null ? escapeText(value) : value;
-                if (name !== "footnote" && /[{}\\%\[\]]/u.test(next)) return;
-                if (name === "footnote" && footnoteText === null && /[{}%]/u.test(next)) return;
-                updateAttributes({
-                  argument: next,
-                  raw: latexInlineCommandSource(name, next, linkText, String(node.attrs.raw ?? "")),
-                });
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Escape" || (event.key === "Enter" && !event.shiftKey)) {
-                  event.preventDefault();
-                  const position = getPos();
-                  if (typeof position === "number")
-                    editor.commands.setTextSelection(position + node.nodeSize);
-                  editor.commands.focus(undefined, { scrollIntoView: false });
-                }
-              }}
-            />
-            {name === "footnote" && footnoteText === null && (
-              <span className="scient-latex-context-note">
-                This footnote contains formatted content. Edit it in Source to preserve its
-                formatting.
-              </span>
-            )}
-          </label>
+        {isExternalLink && (
+          <LatexLinkAddress
+            value={argument.replace(/\\([%#&])/gu, "$1")}
+            disabled={!editable}
+            onChange={(value) => {
+              const next = value.replace(/[%#&]/gu, (character) => "\\" + character);
+              updateAttributes({
+                argument: next,
+                raw: latexInlineCommandSource(name, next, linkText),
+              });
+            }}
+          />
+        )}
+        {(name === "label" || name === "hypertarget") && (
+          <LatexFooterLabel
+            value={argument}
+            allowEmpty={false}
+            disabled={!editable}
+            rename={name !== "hypertarget"}
+            onCommit={(value) =>
+              updateAttributes({
+                argument: value,
+                raw: latexInlineCommandSource(name, value, linkText, String(node.attrs.raw ?? "")),
+              })
+            }
+          />
         )}
       </LatexObjectToolbar>
     </NodeViewWrapper>
@@ -1948,9 +2035,10 @@ const LatexBlockSourceContext = createContext<{
   change: (draft: string) => void;
   apply: () => void;
   close: () => void;
+  remove: (position: number, original: string) => void;
 } | null>(null);
 
-function LatexRawBlockView({ node, editor, selected, getPos }: NodeViewProps) {
+function LatexRawBlockView({ node, editor, getPos }: NodeViewProps) {
   "use no memo";
   // getPos reads live ProseMirror state despite retaining the same function identity.
   const raw = String(node.attrs.raw ?? "");
@@ -1960,41 +2048,60 @@ function LatexRawBlockView({ node, editor, selected, getPos }: NodeViewProps) {
     const position = getPos();
     if (typeof position === "number") source?.open(position);
   };
-  const root = useRef<HTMLDivElement | null>(null);
+  const disabled = !editor.isEditable || !source || source.disabled;
   return (
-    <NodeViewWrapper ref={root} className="scient-latex-visual-raw" contentEditable={false}>
-      <LatexObjectToolbar
-        editor={editor}
-        root={root}
-        selected={selected || active}
-        label="LaTeX source"
-      >
-        {active ? (
-          <>
-            <button type="button" disabled={source?.disabled} onClick={() => source?.apply()}>
-              Apply LaTeX
-            </button>
-            <button type="button" onClick={() => source?.close()}>
-              Cancel
-            </button>
-          </>
-        ) : (
-          <button type="button" onClick={open}>
-            Edit LaTeX
-          </button>
-        )}
-      </LatexObjectToolbar>
+    <NodeViewWrapper className="scient-latex-visual-raw" contentEditable={false}>
       <div className="scient-latex-visual-raw-label">
-        Source only · {active ? "editing LaTeX" : "click to edit LaTeX"}
+        <span>Source only · {active ? "editing LaTeX" : "click to edit LaTeX"}</span>
+        <span className="flex shrink-0 flex-wrap items-center gap-1">
+          {active && (
+            <>
+              <Button
+                size="compact"
+                variant="ghost"
+                disabled={disabled}
+                onClick={() => source?.apply()}
+              >
+                Apply LaTeX
+              </Button>
+              <Button size="compact" variant="ghost" onClick={() => source?.close()}>
+                Cancel
+              </Button>
+            </>
+          )}
+          <Button
+            size="compact"
+            variant="ghost"
+            aria-label="Delete source block"
+            disabled={disabled}
+            onClick={() => {
+              const at = getPos();
+              if (typeof at === "number") source?.remove(at, raw);
+            }}
+          >
+            Delete
+          </Button>
+        </span>
       </div>
       {active ? (
         <textarea
           autoFocus
           aria-label="Block LaTeX source"
+          rows={Math.min(12, Math.max(1, raw.split(/\r?\n/u).length))}
           value={source?.active?.draft ?? raw}
           disabled={source?.disabled}
           onChange={(event) => source?.change(event.currentTarget.value)}
-          onKeyDown={(event) => event.stopPropagation()}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+              event.preventDefault();
+              source?.apply();
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              source?.close();
+            }
+          }}
         />
       ) : (
         <pre
@@ -2163,12 +2270,12 @@ function LatexRichPreviewView({
 }: NodeViewProps & { readonly workspace: LatexVisualWorkspace }) {
   const languageLabels = latexLanguageLabels(useContext(LatexLanguageContext));
   const editorEditable = useEditorEditable(editor);
-  const referenceManager = useContext(LatexReferencesContext);
   const generatedId = useRef(0);
   const tableRoot = useRef<HTMLElement | null>(null);
   const objectRoot = useRef<HTMLElement | null>(null);
   const [descriptionItem, setDescriptionItem] = useState(0);
   const [captionEditing, setCaptionEditing] = useState(false);
+  const [statementTitleEditing, setStatementTitleEditing] = useState(false);
   const focusObject = (event: FocusEvent<HTMLElement>) => {
     // React portals bubble through their document owner. Menu focus is not a
     // click into the paper and must not collapse a table or document selection.
@@ -2193,6 +2300,11 @@ function LatexRichPreviewView({
   const [selectedCell, setSelectedCell] = useState({ row: 0, column: 0 });
   const [objectActive, setObjectActive] = useState(false);
   const kind = String(node.attrs.kind ?? "description");
+  useEffect(() => {
+    const root = tableRoot.current;
+    if (kind !== "table" || !editorEditable || !root) return;
+    return installLatexTableEditingGuides(root);
+  }, [kind, editorEditable]);
   const setFooterPosition = useContext(LatexFooterPositionContext);
   const cellPosition =
     kind === "table" && objectActive
@@ -2241,6 +2353,19 @@ function LatexRichPreviewView({
       )
     : [];
   const caption = String(node.attrs.caption ?? "");
+  const removeEmptyCaption = () => {
+    if (!editor.isEditable || node.attrs.editable !== true || editor.isDestroyed) return;
+    updateAttributes({ caption: "", captionRemoved: true, label: "" });
+    setCaptionEditing(false);
+    const position = getPos();
+    if (typeof position !== "number") return;
+    const current = editor.state.doc.nodeAt(position);
+    if (!current || current.attrs.kind !== kind || current.attrs.captionRemoved !== true) return;
+    editor.view.dispatch(
+      editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, position)),
+    );
+    editor.view.focus();
+  };
   const tableHasCaption = latexVisualFloatHasCaption({ attrs: node.attrs });
   const tableLabel = String(node.attrs.label ?? "");
   const structureEditable = node.attrs.editable === true;
@@ -2281,21 +2406,14 @@ function LatexRichPreviewView({
     selector: ({ editor: current }) => {
       if (!current || kind !== "simple" || node.attrs.environment !== "lstlisting") return "";
       const position = getPos();
-      let ordinal = 1;
-      current.state.doc.descendants((earlier, at) => {
-        if (typeof position !== "number" || at >= position) return false;
-        if (
-          earlier.type.name === "latexRichPreview" &&
-          earlier.attrs.environment === "lstlisting" &&
-          earlier.attrs.caption !== null
-        )
-          ordinal++;
-      });
-      return String(ordinal);
+      return typeof position === "number"
+        ? (latexEquationReferencesKey.getState(current.state)?.listings.get(position)?.number ?? "")
+        : "";
     },
   });
   const tableStructureEditable = tableEditable && sourceMeta?.preserveStructure !== true;
   const authoring = useContext(LatexAuthoringContext);
+  const drawingRootPath = useContext(LatexRootContext);
   const longtable = sourceMeta?.longtable as
     | { head: LongTableBand; foot: LongTableBand; lastFoot: LongTableBand }
     | undefined;
@@ -2806,7 +2924,9 @@ function LatexRichPreviewView({
           editor={editor}
           root={objectRoot}
           selected={selected}
-          label="Part options"
+          label="Part tools"
+          position="Part"
+          inline
         >
           <PartNumberedOption
             editor={editor}
@@ -2815,17 +2935,13 @@ function LatexRichPreviewView({
             disabled={!editorEditable || !structureEditable}
             updateAttributes={updateAttributes}
           />
-          <label>
-            Reference label
-            <LatexReferenceLabelField
-              label="Part reference label"
-              value={String(node.attrs.label ?? "")}
-              disabled={!editorEditable || !structureEditable}
-              allowEmpty
-              draftKey={fieldDraft("label")}
-              onCommit={(label) => updateAttributes({ label })}
-            />
-          </label>
+          <LatexFooterLabel
+            label="Part reference label"
+            value={String(node.attrs.label ?? "")}
+            disabled={!editorEditable || !structureEditable}
+            draftKey={fieldDraft("label")}
+            onCommit={(label) => updateAttributes({ label })}
+          />
         </LatexObjectToolbar>
         {node.attrs.unnumbered === true ? null : (
           <div className="scient-latex-part-number">Part {latexRomanNumber(ordinal)}</div>
@@ -2844,18 +2960,58 @@ function LatexRichPreviewView({
   if (kind === "simple") {
     const environment = String(node.attrs.environment ?? "quotation");
     if (sourceMeta?.literal === true) {
+      const boxLayout = sourceMeta.boxLayout as
+        | NonNullable<ReturnType<typeof latexColorBoxOpening>>["layout"]
+        | null;
       return (
         <NodeViewWrapper
           ref={objectRoot}
-          className="scient-latex-simple-preview"
+          className={
+            boxLayout
+              ? "scient-latex-simple-preview scient-latex-color-box scient-latex-framed-listing"
+              : "scient-latex-simple-preview"
+          }
           data-environment={environment}
           contentEditable={false}
           onFocusCapture={focusObject}
+          style={
+            boxLayout
+              ? ({
+                  "--scient-box-background": latexColorCss(boxLayout.colback),
+                  "--scient-box-frame": latexColorCss(boxLayout.colframe),
+                  "--scient-box-title": latexColorCss(boxLayout.coltitle),
+                  "--scient-box-padding": boxLayout.padding,
+                  borderWidth: boxLayout.borderWidth,
+                  borderRadius: boxLayout.radius,
+                } as CSSProperties)
+              : undefined
+          }
         >
+          {boxLayout && node.attrs.title && (
+            <div className="scient-latex-color-box-title">
+              <LatexStatementTitle
+                editor={editor}
+                label="Box title"
+                value={String(node.attrs.title)}
+                source={escapeText(String(node.attrs.title))}
+                editing={statementTitleEditing}
+                editable={editorEditable && structureEditable}
+                draftKey={fieldDraft("title")}
+                onEditing={setStatementTitleEditing}
+                onChange={(title) => updateAttributes({ title })}
+                onExit={() =>
+                  objectRoot.current
+                    ?.querySelector<HTMLTextAreaElement>('[aria-label="Code listing"]')
+                    ?.focus({ preventScroll: true })
+                }
+              />
+            </div>
+          )}
           <LatexLiteralCodeView
             environment={environment}
             body={String(node.attrs.body ?? "")}
             caption={typeof node.attrs.caption === "string" ? node.attrs.caption : null}
+            captionEditing={environment === "lstlisting" && captionEditing}
             ordinal={listingOrdinal ?? ""}
             presentation={
               (sourceMeta.listingPresentation ?? null) as LatexListingPresentation | null
@@ -2864,7 +3020,10 @@ function LatexRichPreviewView({
             bodyDraftKey={fieldDraft("body")}
             captionDraftKey={fieldDraft("caption")}
             onBodyChange={(body) => updateAttributes({ body })}
-            onCaptionChange={(caption) => updateAttributes({ caption })}
+            onCaptionEditing={setCaptionEditing}
+            onCaptionChange={(caption) =>
+              updateAttributes({ caption: caption || null, ...(caption ? {} : { label: null }) })
+            }
             onExit={() => leaveObject(1)}
           />
           {environment === "lstlisting" && (
@@ -2873,11 +3032,25 @@ function LatexRichPreviewView({
               root={objectRoot}
               selected={selected}
               label="Code tools"
+              position="Code"
+              inline
             >
-              <LatexCodeControls node={node} editor={editor} getPos={getPos} />
-              <button type="button" disabled={!editorEditable} onClick={deleteNode}>
-                Delete code block
-              </button>
+              <LatexCodeControls
+                node={node}
+                editor={editor}
+                getPos={getPos}
+                updateAttributes={updateAttributes}
+                editable={editorEditable && structureEditable}
+                draftKey={fieldDraft("label")}
+                onCaption={() => {
+                  setCaptionEditing(true);
+                  requestAnimationFrame(() =>
+                    objectRoot.current
+                      ?.querySelector<HTMLTextAreaElement>('[aria-label="Listing caption"]')
+                      ?.focus({ preventScroll: true }),
+                  );
+                }}
+              />
             </LatexObjectToolbar>
           )}
         </NodeViewWrapper>
@@ -2925,22 +3098,6 @@ function LatexRichPreviewView({
         contentEditable={false}
         onFocusCapture={focusObject}
       >
-        <LatexObjectToolbar
-          editor={editor}
-          root={objectRoot}
-          selected={selected}
-          label="Bibliography options"
-        >
-          <button
-            type="button"
-            onClick={() =>
-              referenceManager?.open(String(bibliographyItems[descriptionItem]?.label ?? ""))
-            }
-            disabled={!referenceManager}
-          >
-            Manage references
-          </button>
-        </LatexObjectToolbar>
         <h2>{bibliographyPresentation?.title ?? "References"}</h2>
         {external && !bibliographyPresentation?.items && (
           <p>
@@ -3101,6 +3258,19 @@ function LatexRichPreviewView({
         editor.state.doc.nodeAt(position)?.attrs.items?.[index]?.[field] === value
       );
     };
+    const activePanel = Math.min(descriptionItem, panels.length - 1);
+    const panel = panels[activePanel];
+    const item = figureItems[activePanel];
+    const focusCaption = (index?: number) =>
+      requestAnimationFrame(() =>
+        objectRoot.current
+          ?.querySelector<HTMLTextAreaElement>(
+            index === undefined
+              ? '[aria-label="Figure caption"]'
+              : `[aria-label="Panel ${index + 1} caption"]`,
+          )
+          ?.focus({ preventScroll: true }),
+      );
     return (
       <NodeViewWrapper
         ref={objectRoot}
@@ -3113,67 +3283,81 @@ function LatexRichPreviewView({
           root={objectRoot}
           selected={selected}
           label="Figure tools"
+          position="Figure"
+          inline
         >
-          <span className="scient-latex-context-label">Figure</span>
-          <div className="scient-latex-context-menu-panel">
-            {sourceMeta?.labelRange ? (
-              <label>
-                Reference label
-                <LatexReferenceLabelField
-                  label="Figure reference label"
-                  allowEmpty
-                  disabled={!editable}
-                  value={tableLabel}
-                  draftKey={fieldDraft("label")}
-                  onCommit={(label) => updateAttributes({ label })}
+          {panels.length > 1 && (
+            <DockMenu icon={undefined} label="Panel" commandScope="latex">
+              <MenuRadioGroup value={String(activePanel)}>
+                {panels.map((_panel, index) => (
+                  <DockCommandRadioItem
+                    key={index}
+                    value={String(index)}
+                    size="compact"
+                    onClick={() => setDescriptionItem(index)}
+                  >
+                    Panel {index + 1}
+                  </DockCommandRadioItem>
+                ))}
+              </MenuRadioGroup>
+            </DockMenu>
+          )}
+          {panel?.path != null &&
+            item &&
+            workspace.environmentId &&
+            workspace.cwd &&
+            workspace.relativePath && (
+              <DockMenu icon={undefined} label="Replace" commandScope="latex" disabled={!editable}>
+                <ReplacementImages
+                  environmentId={workspace.environmentId}
+                  cwd={workspace.cwd}
+                  onChoose={(path) =>
+                    changeItem(
+                      activePanel,
+                      "path",
+                      relativeLatexImagePath(workspace.relativePath!, path),
+                    )
+                  }
                 />
-              </label>
-            ) : null}
-            {panels.map((panel, index) => (
-              <Fragment key={index}>
-                {panel.labelRange ? (
-                  <label>
-                    Panel {index + 1} reference label
-                    <LatexReferenceLabelField
-                      label={`Panel ${index + 1} reference label`}
-                      allowEmpty
-                      disabled={!editable}
-                      value={figureItems[index]?.label ?? ""}
-                      draftKey={fieldDraft(`panel:${index}:label`)}
-                      onCommit={(value) => changeItem(index, "label", value)}
-                    />
-                  </label>
-                ) : null}
-                {panel.path !== null ? (
-                  <label>
-                    Panel {index + 1} image path
-                    <LatexTextField
-                      aria-label={`Panel ${index + 1} image path`}
-                      rows={1}
-                      disabled={!editable}
-                      value={figureItems[index]?.path ?? ""}
-                      draftKey={fieldDraft(`panel:${index}:path`)}
-                      onValueChange={(value) => changeItem(index, "path", value)}
-                    />
-                  </label>
-                ) : null}
-              </Fragment>
-            ))}
-            <button type="button" disabled={!editable} onClick={deleteNode}>
-              Delete figure
+              </DockMenu>
+            )}
+          {Boolean(sourceMeta?.captionRange) && (
+            <button
+              type="button"
+              className={dockButtonClass()}
+              disabled={!editable}
+              onClick={() => focusCaption()}
+            >
+              Caption
             </button>
-          </div>
-          {panels.map((panel, index) =>
-            panel.tikz ? (
-              <LatexTikzControls
-                key={index}
-                panel={index}
-                source={figureItems[index]?.body ?? ""}
-                disabled={!editable}
-                draftKey={fieldDraft(`panel:${index}:drawing`)}
-                onChange={(value) => changeItem(index, "body", value)}
-              />
-            ) : null,
+          )}
+          {Boolean(sourceMeta?.labelRange) && (
+            <LatexFooterLabel
+              label="Figure reference label"
+              value={tableLabel}
+              disabled={!editable}
+              draftKey={fieldDraft("label")}
+              onCommit={(label) => updateAttributes({ label })}
+            />
+          )}
+          {panel?.captionRange && (
+            <button
+              type="button"
+              className={dockButtonClass()}
+              disabled={!editable}
+              onClick={() => focusCaption(activePanel)}
+            >
+              Panel caption
+            </button>
+          )}
+          {panel?.labelRange && item && (
+            <LatexFooterLabel
+              label="Panel reference label"
+              value={item.label}
+              disabled={!editable}
+              draftKey={fieldDraft(`panel:${activePanel}:label`)}
+              onCommit={(value) => changeItem(activePanel, "label", value)}
+            />
           )}
         </LatexObjectToolbar>
         <figure>
@@ -3189,17 +3373,20 @@ function LatexRichPreviewView({
                   key={index}
                   className="scient-latex-figure-panel"
                   data-latex-figure-panel={index}
+                  onPointerDownCapture={() => setDescriptionItem(index)}
+                  onFocusCapture={() => setDescriptionItem(index)}
                   style={{ width: panel.panelWidth ?? "100%" }}
                 >
                   <LatexFigureArtwork artwork={panel}>
                     {panel.tikz ? (
                       <LatexTikzArtwork
                         source={item.body}
-                        disabled={!editable}
-                        draftKey={fieldDraft(`panel:${index}:drawing`)}
-                        onChange={(value) => changeItem(index, "body", value)}
-                        onExit={leaveObject}
-                        onUndo={(redo) => (redo ? editor.commands.redo() : editor.commands.undo())}
+                        preamble={
+                          authoring?.source.slice(0, latexPreambleEnd(authoring.source)) ?? ""
+                        }
+                        environmentId={workspace.environmentId}
+                        cwd={workspace.cwd}
+                        relativePath={drawingRootPath ?? workspace.relativePath}
                       />
                     ) : panel.path !== null ? (
                       <LatexFigureImage
@@ -3273,6 +3460,7 @@ function LatexRichPreviewView({
             aria-label="Figure caption"
             rows={1}
             disabled={!figureEditable}
+            onRemoveEmpty={removeEmptyCaption}
             draftKey={fieldDraft("caption")}
             value={caption}
             onFocus={() => setCaptionEditing(true)}
@@ -3336,6 +3524,26 @@ function LatexRichPreviewView({
   if (kind === "scientific") {
     const scientificEditable = structureEditable && editorEditable;
     const environment = String(node.attrs.environment ?? "theorem");
+    const title = String(node.attrs.title ?? "");
+    const proof = environment === "proof";
+    const exitTitle = () => {
+      objectRoot.current
+        ?.querySelector<HTMLTextAreaElement>('textarea[aria-label="Scientific statement body"]')
+        ?.focus();
+    };
+    const titleField = (
+      <LatexStatementTitle
+        editor={editor}
+        value={title}
+        source={escapeText(title)}
+        editing={statementTitleEditing}
+        editable={scientificEditable}
+        draftKey={fieldDraft("title")}
+        onEditing={setStatementTitleEditing}
+        onChange={(title) => updateAttributes({ title, titleRemoved: title === "" })}
+        onExit={exitTitle}
+      />
+    );
     return (
       <NodeViewWrapper
         ref={objectRoot}
@@ -3344,50 +3552,36 @@ function LatexRichPreviewView({
         data-environment={environment}
         contentEditable={false}
       >
-        <LatexObjectToolbar
+        <LatexStatementToolbar
           editor={editor}
           root={objectRoot}
           selected={selected}
-          label="Statement options"
-        >
-          <LatexStatementTypeControl
-            editor={editor}
-            disabled={!scientificEditable}
-            environment={environment}
-            onChange={(environment) => updateAttributes({ environment })}
-          />
-          <div className="scient-latex-context-menu-panel">
-            <label>
-              Optional title
-              <LatexTextField
-                aria-label="Scientific statement title"
-                rows={1}
-                disabled={!scientificEditable}
-                draftKey={fieldDraft("title")}
-                value={String(node.attrs.title ?? "")}
-                onValueChange={(title) => updateAttributes({ title })}
-              />
-            </label>
-            <label>
-              Reference label
-              <LatexReferenceLabelField
-                label="Scientific statement reference label"
-                allowEmpty
-                disabled={!scientificEditable}
-                draftKey={fieldDraft("label")}
-                value={String(node.attrs.label ?? "")}
-                onCommit={(label) => updateAttributes({ label })}
-              />
-            </label>
-            <button disabled={!editorEditable} onClick={deleteNode} type="button">
-              Delete statement
-            </button>
-          </div>
-        </LatexObjectToolbar>
+          editable={scientificEditable}
+          environment={environment}
+          proof={proof}
+          hasTitle={Boolean(title)}
+          labels={[
+            { id: "label", value: String(node.attrs.label ?? ""), draftKey: fieldDraft("label") },
+          ]}
+          onType={(environment) => updateAttributes({ environment })}
+          onTitle={() => {
+            setStatementTitleEditing(true);
+            requestAnimationFrame(() => {
+              const field = objectRoot.current?.querySelector<HTMLTextAreaElement>(
+                ".scient-latex-statement-title textarea",
+              );
+              field?.focus({ preventScroll: true });
+              field?.setSelectionRange(0, 0);
+            });
+          }}
+          onLabel={(_id, label) => updateAttributes({ label })}
+        />
         <div className="scient-latex-scientific-heading">
           <strong>
-            {environment[0]!.toUpperCase() + environment.slice(1)}
-            {node.attrs.title ? ` (${String(node.attrs.title)})` : ""}.
+            {proof && (title || statementTitleEditing)
+              ? titleField
+              : environment[0]!.toUpperCase() + environment.slice(1)}
+            {!proof && (title || statementTitleEditing) ? <> ({titleField})</> : null}.
           </strong>
         </div>
         <LatexTextField
@@ -3417,6 +3611,7 @@ function LatexRichPreviewView({
           <LatexTextField
             aria-label="Table caption"
             draftKey={fieldDraft("caption")}
+            onRemoveEmpty={removeEmptyCaption}
             onFocus={() => setCaptionEditing(true)}
             onBlur={() => setCaptionEditing(false)}
             rows={1}
@@ -3476,23 +3671,24 @@ function LatexRichPreviewView({
             editor={editor}
             root={objectRoot}
             selected={selected}
-            label="Description list options"
+            label="Description list tools"
+            position="List"
+            inline
           >
-            <span className="scient-latex-context-label">Description list</span>
-            <button
+            <DockMenu
+              icon={undefined}
+              label="Items"
+              commandScope="latex"
               disabled={!editorEditable || !descriptionEditable}
-              onClick={addDescriptionItem}
-              type="button"
             >
-              Add item
-            </button>
-            <button
-              disabled={!editorEditable || !descriptionEditable || items.length <= 1}
-              onClick={() => removeDescriptionItem(Math.min(descriptionItem, items.length - 1))}
-              type="button"
-            >
-              Remove item
-            </button>
+              <DockCommandItem onClick={addDescriptionItem}>Insert item</DockCommandItem>
+              <DockCommandItem
+                disabled={items.length <= 1}
+                onClick={() => removeDescriptionItem(Math.min(descriptionItem, items.length - 1))}
+              >
+                Delete item
+              </DockCommandItem>
+            </DockMenu>
           </LatexObjectToolbar>
           <dl>
             {keyedItems.map(({ index, key, value: item }) => (
@@ -4053,6 +4249,7 @@ const LatexRichPreview = Node.create<LatexVisualWorkspace>({
       label: { default: null },
       environment: { default: null },
       title: { default: null },
+      titleRemoved: { default: false, rendered: false },
       unnumbered: { default: false },
       widestLabel: { default: null },
       author: { default: null },
@@ -4123,6 +4320,7 @@ function LatexScientificView({
   deleteNode,
 }: NodeViewProps) {
   const root = useRef<HTMLDivElement | null>(null);
+  const [titleEditing, setTitleEditing] = useState(false);
   const languageLabels = latexLanguageLabels(useContext(LatexLanguageContext));
   const documentEditing = useContext(LatexMathEditingContext);
   const editable = useEditorEditable(editor);
@@ -4172,7 +4370,6 @@ function LatexScientificView({
         selected={selected}
         getPos={getPos}
         updateAttributes={updateAttributes}
-        deleteNode={deleteNode}
         editable={editable}
         draftKey={
           documentEditing
@@ -4181,6 +4378,37 @@ function LatexScientificView({
         }
       />
     );
+  if (node.attrs.layout?.kind === "boxRegion")
+    return (
+      <NodeViewWrapper
+        className="scient-latex-box-region"
+        data-lower={environment === "tcblower" || undefined}
+        style={{ background: latexColorCss(node.attrs.layout.background) ?? undefined }}
+      >
+        <NodeViewContent
+          aria-label={environment === "tcblower" ? "Lower box content" : "Upper box content"}
+        />
+      </NodeViewWrapper>
+    );
+  if (node.attrs.layout?.kind === "basicBox") {
+    const layout = node.attrs.layout;
+    return (
+      <NodeViewWrapper
+        className="scient-latex-basic-box"
+        style={{
+          background: layout.background
+            ? (latexColorCss(layout.background) ?? undefined)
+            : undefined,
+          borderColor: latexColorCss(layout.color) ?? undefined,
+          borderWidth: layout.borderWidth,
+          padding: layout.padding,
+          width: layout.width ?? "fit-content",
+        }}
+      >
+        <NodeViewContent aria-label="Framed text" />
+      </NodeViewWrapper>
+    );
+  }
   if (node.attrs.layout?.kind === "direction") {
     const language = String(node.attrs.layout.language ?? "");
     return (
@@ -4234,11 +4462,10 @@ function LatexScientificView({
           root={root}
           selected={selected}
           label={layout.kind === "columns" ? "Columns tools" : "Panel tools"}
+          position={layout.kind === "columns" ? "Columns" : "Panel"}
+          inline
         >
           <LatexLayoutControls node={node} editor={editor} getPos={getPos} />
-          <button type="button" disabled={!editable} onClick={deleteNode}>
-            Delete layout and content
-          </button>
         </LatexObjectToolbar>
       </NodeViewWrapper>
     );
@@ -4256,6 +4483,61 @@ function LatexScientificView({
           argument: String(child.attrs.argument),
         });
     });
+  const title = String(node.attrs.title ?? "");
+  const enterStatementBody = () => {
+    const position = getPos();
+    if (typeof position === "number") enterLatexObjectBody(editor.view, position);
+  };
+  const titleField = (
+    <LatexStatementTitle
+      editor={editor}
+      value={title}
+      source={node.attrs.titleSource ?? escapeText(title)}
+      editing={titleEditing}
+      editable={editable}
+      draftKey={
+        documentEditing
+          ? `${documentEditing.draftKey}:scientific:${fieldSourceId(editor, node, getPos())}:title`
+          : undefined
+      }
+      onEditing={setTitleEditing}
+      onChange={(title) =>
+        updateAttributes({ title, titleSource: null, titleRemoved: title === "" })
+      }
+      onExit={enterStatementBody}
+    />
+  );
+  const setLabel = (id: string, value: string) => {
+    if (!editable || editor.isDestroyed) return;
+    const position = getPos();
+    if (typeof position !== "number") return;
+    const current = editor.state.doc.nodeAt(position);
+    if (current?.type.name !== "latexScientific") return;
+    const tr = editor.state.tr;
+    const existing = referenceLabels.find(
+      (label) => String(label.position - (position + 1)) === id,
+    );
+    if (existing) {
+      const labelNode = editor.state.doc.nodeAt(existing.position);
+      if (labelNode?.type.name !== "latexInlineCommand" || labelNode.attrs.name !== "label") return;
+      if (!value) tr.delete(existing.position, existing.position + labelNode.nodeSize);
+      else
+        tr.setNodeMarkup(existing.position, undefined, {
+          ...labelNode.attrs,
+          argument: value,
+          raw: `\\label{${value}}`,
+        });
+    } else if (value && id === "new") {
+      const labelNode = editor.schema.nodes.latexInlineCommand!.create({
+        name: "label",
+        argument: value,
+        raw: `\\label{${value}}`,
+      });
+      if (current.firstChild?.type.name === "paragraph") tr.insert(position + 2, labelNode);
+      else tr.insert(position + 1, editor.schema.nodes.paragraph!.create(null, labelNode));
+    } else return;
+    editor.view.dispatch(tr);
+  };
   const enterBody = (event: MouseEvent<HTMLElement>) => {
     if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
     const position = getPos();
@@ -4280,22 +4562,12 @@ function LatexScientificView({
           onClick={enterBody}
         >
           <span>
-            {statement?.proof && node.attrs.title ? (
-              <LatexProsePreview
-                source={node.attrs.titleSource ?? escapeText(String(node.attrs.title))}
-                editor={editor}
-              />
-            ) : (
-              displayTitle
-            )}
+            {statement?.proof && (title || titleEditing) ? titleField : displayTitle}
             {statement?.number ? " " + statement.number : ""}
-            {!statement?.proof && node.attrs.title && (
+            {!statement?.proof && (title || titleEditing) && (
               <span className="scient-latex-scientific-note">
                 {" ("}
-                <LatexProsePreview
-                  source={node.attrs.titleSource ?? escapeText(String(node.attrs.title))}
-                  editor={editor}
-                />
+                {titleField}
                 {")"}
               </span>
             )}
@@ -4307,68 +4579,65 @@ function LatexScientificView({
         className="scient-latex-scientific-body"
         aria-label="Scientific statement body"
       />
-      <LatexObjectToolbar
-        editor={editor}
-        root={root}
-        selected={selected}
-        label={`${displayTitle} options`}
-      >
-        <LatexStatementTypeControl
+      {!quoted ? (
+        <LatexStatementToolbar
           editor={editor}
+          root={root}
+          selected={selected}
+          editable={editable}
           environment={environment}
-          disabled={!editable || quoted}
-          onChange={(environment) => updateAttributes({ environment })}
-        />
-        <div className="scient-latex-context-menu-panel">
-          {!quoted && (
-            <label>
-              Optional title
-              <LatexTextField
-                aria-label="Scientific statement title"
-                rows={1}
-                value={String(node.attrs.title ?? "")}
-                draftKey={
-                  documentEditing
-                    ? documentEditing.draftKey +
-                      ":scientific:" +
-                      fieldSourceId(editor, node, getPos()) +
-                      ":title"
-                    : undefined
-                }
-                disabled={!editable}
-                onValueChange={(title) => updateAttributes({ title, titleSource: null })}
-              />
-            </label>
+          proof={statement?.proof === true}
+          hasTitle={Boolean(title)}
+          labels={(referenceLabels.length ? referenceLabels : [{ position: -1, argument: "" }]).map(
+            (label) => {
+              const id =
+                label.position < 0 ? "new" : String(label.position - ((position ?? 0) + 1));
+              return {
+                id,
+                value: label.argument,
+                draftKey: documentEditing
+                  ? `${documentEditing.draftKey}:scientific:${fieldSourceId(editor, node, getPos())}:label:${id}`
+                  : undefined,
+              };
+            },
           )}
-          {referenceLabels.map((label) => (
-            <label key={label.position}>
-              Reference label
-              <LatexReferenceLabelField
+          onType={(environment) => updateAttributes({ environment })}
+          onTitle={() => {
+            setTitleEditing(true);
+            requestAnimationFrame(() => {
+              const field = root.current?.querySelector<HTMLTextAreaElement>(
+                ".scient-latex-statement-title textarea",
+              );
+              field?.focus({ preventScroll: true });
+              field?.setSelectionRange(0, 0);
+            });
+          }}
+          onLabel={setLabel}
+        />
+      ) : (
+        referenceLabels.length > 0 && (
+          <LatexObjectToolbar
+            editor={editor}
+            root={root}
+            selected={selected}
+            label={`${displayTitle} tools`}
+            position={displayTitle}
+            inline
+          >
+            {referenceLabels.map((label) => (
+              <LatexFooterLabel
+                key={label.position}
                 label="Statement reference label"
-                allowEmpty
                 value={label.argument}
                 disabled={!editable}
-                onCommit={(argument) => {
-                  if (/[{}\\%\s#$&~^]/u.test(argument)) return;
-                  const current = editor.state.doc.nodeAt(label.position);
-                  if (current?.type.name !== "latexInlineCommand" || current.attrs.name !== "label")
-                    return;
-                  editor.view.dispatch(
-                    editor.state.tr.setNodeMarkup(label.position, undefined, {
-                      ...current.attrs,
-                      argument,
-                      raw: `\\label{${argument}}`,
-                    }),
-                  );
-                }}
+                onCommit={(value) =>
+                  setLabel(String(label.position - ((position ?? 0) + 1)), value)
+                }
               />
-            </label>
-          ))}
-          <button type="button" disabled={!editable} onClick={deleteNode}>
-            Delete statement
-          </button>
-        </div>
-      </LatexObjectToolbar>
+            ))}
+          </LatexObjectToolbar>
+        )
+      )}
     </NodeViewWrapper>
   );
 }
@@ -4384,6 +4653,7 @@ const LatexScientific = Node.create({
       environment: { default: "theorem" },
       title: { default: "" },
       titleSource: { default: null, rendered: false },
+      titleRemoved: { default: false, rendered: false },
       raw: { default: "", rendered: false },
       sourceId: { default: null, rendered: false },
       layout: { default: null, rendered: false },
@@ -4486,7 +4756,8 @@ const LatexColor = Mark.create({
         : command === "fcolorbox"
           ? latexColorCss(mark.attrs.background)
           : null;
-    const frame = command === "fcolorbox" ? latexColorCss(mark.attrs.color) : null;
+    const frame =
+      command === "fcolorbox" || command === "fbox" ? latexColorCss(mark.attrs.color) : null;
     return [
       "span",
       {
@@ -4495,7 +4766,7 @@ const LatexColor = Mark.create({
         style: [
           foreground && `color:${foreground}`,
           background && `background:${background};padding:3pt;white-space:nowrap`,
-          frame && `border:0.4pt solid ${frame}`,
+          frame && `border:0.4pt solid ${frame};padding:3pt;white-space:nowrap`,
         ]
           .filter(Boolean)
           .join(";"),
@@ -4514,7 +4785,11 @@ const inlineFieldExtensions = [
   LatexColor.extend({
     name: "latexBackground",
     parseHTML() {
-      return [{ tag: 'span[data-latex-color="colorbox"],span[data-latex-color="fcolorbox"]' }];
+      return [
+        {
+          tag: 'span[data-latex-color="colorbox"],span[data-latex-color="fcolorbox"],span[data-latex-color="fbox"]',
+        },
+      ];
     },
   }),
   LatexMonospace,
@@ -4544,7 +4819,11 @@ const baseExtensions = [
   LatexColor.extend({
     name: "latexBackground",
     parseHTML() {
-      return [{ tag: 'span[data-latex-color="colorbox"],span[data-latex-color="fcolorbox"]' }];
+      return [
+        {
+          tag: 'span[data-latex-color="colorbox"],span[data-latex-color="fcolorbox"],span[data-latex-color="fbox"]',
+        },
+      ];
     },
   }),
   LatexAlgorithmLine,
@@ -4767,6 +5046,9 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   // The ProseMirror plugins live for the editor's lifetime. Keep their source
   // adapter current across renderer hot updates without resetting user edits.
   const applyDocumentChange = useRef(applyLatexVisualDocumentChange);
+  const explicitSourceChange = useRef(projectLatexTitleSourceEdit);
+  explicitSourceChange.current = (source, content) =>
+    projectLatexTitleSourceEdit(source, content, props.rootSource ?? undefined);
   applyDocumentChange.current = (source, document, content) =>
     applyLatexVisualDocumentChange(source, document, content, {
       rootSource: props.rootSource ?? null,
@@ -5173,7 +5455,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                 const change =
                   titleStep instanceof LatexTitleStep
                     ? titleStep.sourceBefore === currentSource.current
-                      ? projectLatexTitleSourceEdit(
+                      ? explicitSourceChange.current(
                           titleStep.sourceAfter,
                           visualDocumentJson(transaction.doc),
                         )
@@ -5598,11 +5880,16 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     }),
     [editor, reportDraft],
   );
+  const renameLabelRef = useRef<(before: string, after: string, fieldId?: string) => boolean>(
+    () => false,
+  );
   const authoringContext = useMemo(
     () => ({
       source: props.rootSource ?? props.source,
       prepare: () => flushTypingRef.current() && flushSourceEditRef.current(),
       reportError: setNotice,
+      renameLabel: (before: string, after: string, fieldId?: string) =>
+        renameLabelRef.current(before, after, fieldId),
     }),
     [props.rootSource, props.source],
   );
@@ -6129,10 +6416,34 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   };
 
   const insertTable = (rows: number, columns: number) => {
-    const source = latexVisualTableSource(rows, columns, "plain");
+    const source = latexVisualTableSource(rows, columns, "grid");
     const table = projectLatexVisualDocument(source).content.content?.[0];
     if (!table) return;
-    if (editor && !textReadOnly) insertLatexBlock(editor, table);
+    if (!editor || textReadOnly || !insertLatexBlock(editor, table)) return;
+    const inserted = editor.state.selection;
+    if (!(inserted instanceof NodeSelection)) return;
+    const position = inserted.from;
+    // The atom remains the source-edit anchor. Move actual focus into its first
+    // cell once React has mounted the inline editor, clearing whole-table paint.
+    let attempts = 0;
+    const focusFirstCell = () => {
+      if (
+        editor.isDestroyed ||
+        editor.state.selection.from !== position ||
+        editor.state.doc.nodeAt(position)?.attrs.kind !== "table"
+      )
+        return;
+      const dom = editor.view.nodeDOM(position);
+      const field =
+        dom instanceof HTMLElement
+          ? dom.querySelector<HTMLElement>('[data-table-cell="0-0"]')
+          : null;
+      const inner = (field as (HTMLElement & { editor?: Editor }) | null)?.editor;
+      if (inner) inner.commands.focus("start");
+      else if (field) field.focus({ preventScroll: true });
+      else if (++attempts < 10) requestAnimationFrame(focusFirstCell);
+    };
+    requestAnimationFrame(focusFirstCell);
   };
   const insertReference = (command: string, key: string) => {
     if (readOnly || !key || /[{}\\%]/u.test(key) || !restoreInsertion()) return;
@@ -6258,36 +6569,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         if (source) insertVisualSource(source, true);
       },
     })),
-    {
-      id: "question",
-      label: "Question and solution",
-      description: "A numbered question followed by an editable solution",
-      group: "Assignment",
-      run: () => {
-        editor
-          ?.chain()
-          .focus()
-          .insertContent([
-            { type: "heading", attrs: { level: 1 } },
-            { type: "paragraph" },
-            {
-              type: "heading",
-              attrs: { level: 2, unnumbered: true },
-            },
-            { type: "paragraph" },
-          ])
-          .run();
-      },
-    },
-    {
-      id: "subquestions",
-      label: "Subquestions",
-      description: "Add a numbered list of parts",
-      group: "Assignment",
-      run: () => {
-        editor?.chain().focus().toggleOrderedList().run();
-      },
-    },
     {
       id: "reference",
       disabledReason: inlineInsertReason,
@@ -6522,6 +6803,30 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     editor.view.dispatch(closeHistory(editor.state.tr));
     return currentSource.current === source && flushSourceEditRef.current();
   };
+  const renameDocumentLabel = (before: string, after: string, fieldId?: string) => {
+    if (!editor || !flushTypingRef.current() || !flushSourceEditRef.current()) return false;
+    if (props.singleFileDocument === false) {
+      setNotice("Renaming this label needs coordinated edits in the included files.");
+      return false;
+    }
+    const expected = currentSource.current;
+    const result = renameLatexLabel(expected, before, after);
+    if ("error" in result) {
+      setNotice(result.error);
+      return false;
+    }
+    const { from, to } = editor.state.selection;
+    if (!commitDocumentSource(expected, result.source, fieldId)) return false;
+    editor.commands.setTextSelection({
+      from: Math.min(from, editor.state.doc.content.size),
+      to: Math.min(to, editor.state.doc.content.size),
+    });
+    setNotice(null);
+    return true;
+  };
+  useLayoutEffect(() => {
+    renameLabelRef.current = renameDocumentLabel;
+  });
   const commitTitleSource = (expected: string, source: string) => {
     if (!editor || readOnly || !flushTypingRef.current() || !flushSourceEditRef.current())
       return false;
@@ -6786,6 +7091,10 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         ? String(node.attrs.environment ?? "Statement")
         : kind[0]!.toUpperCase() + kind.slice(1);
     }
+    for (let depth = selection.$from.depth; depth > 0; depth--) {
+      const parent = selection.$from.node(depth);
+      if (parent.type.name === "latexScientific") return String(parent.attrs.environment);
+    }
     if (node.type.name === "heading") return `Heading ${String(node.attrs.level ?? 1)}`;
     if (node.type.name === "bulletList" || node.type.name === "orderedList") return "List";
     return "Body text";
@@ -6876,16 +7185,10 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
 
   const measureFitZoom = useCallback(() => {
     const scroll = visualScroll.current;
-    if (!scroll || scroll.clientWidth <= 0 || !Number.isFinite(paperWidth) || paperWidth <= 0)
-      return null;
-    const style = getComputedStyle(scroll);
-    const available =
-      scroll.clientWidth -
-      (Number.parseFloat(style.paddingLeft) || 0) -
-      (Number.parseFloat(style.paddingRight) || 0);
-    const scale = available / paperWidth;
+    if (!scroll) return null;
+    const scale = pdfFitWidthScale(scroll.clientWidth, paperWidth);
     // Hidden or temporarily collapsed panes must not replace the last usable fit.
-    if (!Number.isFinite(scale) || Math.round(scale * 100) <= 0) return null;
+    if (scale === null || Math.round(scale * 100) <= 0) return null;
     return scale;
   }, [paperWidth]);
 
@@ -7114,6 +7417,54 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     active: blockSource,
     disabled: readOnly,
     open: openBlockSource,
+    remove: (position: number, original: string) => {
+      if (!editor || readOnly || !editor.isEditable || editor.isDestroyed) return;
+      if (!flushTypingRef.current() || !flushSourceEditRef.current()) return;
+      const ownDraft = blockSource?.position === position;
+      if (
+        deferredSource.current ||
+        [...pendingFields.current].some(
+          (id) =>
+            id !== "ordinary-text" &&
+            id !== "source-publication" &&
+            !(ownDraft && id === "block-source"),
+        )
+      ) {
+        setNotice("Finish or cancel the other draft before deleting this source block.");
+        return;
+      }
+      if (position < 0 || position >= editor.state.doc.content.size) return;
+      const current = editor.state.doc.nodeAt(position);
+      const block = projection.current.blocks[editor.state.doc.resolve(position).index(0)];
+      const expected = currentSource.current;
+      if (
+        !block ||
+        block.editable ||
+        current?.type.name !== "latexRawBlock" ||
+        current.attrs.raw !== original ||
+        block.source !== original ||
+        (ownDraft && blockSource.baseSource !== expected)
+      ) {
+        setNotice("This source block changed. Reopen it before deleting it.");
+        return;
+      }
+      const next = expected.slice(0, block.from) + expected.slice(block.to);
+      const projected = projectLatexVisualDocument(next, 0, props.rootSource ?? next);
+      const content = editor.schema.nodeFromJSON(projected.content).content;
+      const before = editor.state.doc;
+      const tr = closeHistory(editor.state.tr).step(
+        new LatexTitleStep(0, before.content.size, new Slice(content, 0, 0), expected, next),
+      );
+      tr.setSelection(Selection.near(tr.doc.resolve(Math.min(position, tr.doc.content.size))));
+      editor.view.dispatch(tr);
+      if (editor.state.doc === before || !flushSourceEditRef.current()) return;
+      editor.view.dispatch(closeHistory(editor.state.tr));
+      retireRawInput();
+      reportDraft("block-source", false);
+      setBlockSource(null);
+      preserveLatexCaret(editor.view);
+      editor.commands.focus(undefined, { scrollIntoView: false });
+    },
     change: (draft: string) => {
       const changed = draft !== blockSource?.original;
       if (changed) {
@@ -7552,8 +7903,11 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     </>
   );
   const [objectPosition, setObjectPosition] = useState<string | null>(null);
+  const [activeObjectPosition, setActiveObjectPosition] = useState<string | null>(null);
   // The footer follows the caret: where it is, and how much has been written.
   const footerPosition = (() => {
+    if (activeObjectPosition)
+      return activeObjectPosition.slice(0, 1).toUpperCase() + activeObjectPosition.slice(1);
     const heading = /^Heading (\d+)$/u.exec(selectionContext);
     if (heading)
       return headingStyles.find((style) => String(style.level) === heading[1])?.label ?? "Heading";
@@ -7586,32 +7940,12 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     <ScientFindBar controller={find.controller} snapshot={find.snapshot} />
   ) : null;
   const contextTools = (
-    <LatexContextTools>
+    <LatexContextTools onPositionChange={setActiveObjectPosition}>
       {editor && !readOnly && editor.isActive("heading") ? (
         <LatexHeadingToolbar
           editor={editor}
           draftKey={props.draftKey}
-          onRename={(before, after, fieldId) => {
-            if (!flushTypingRef.current() || !flushSourceEditRef.current()) return false;
-            if (props.singleFileDocument === false) {
-              setNotice("Renaming this label needs coordinated edits in the included files.");
-              return false;
-            }
-            const expected = currentSource.current;
-            const result = renameLatexLabel(expected, before, after);
-            if ("error" in result) {
-              setNotice(result.error);
-              return false;
-            }
-            const { from, to } = editor.state.selection;
-            if (!commitDocumentSource(expected, result.source, fieldId)) return false;
-            editor.commands.setTextSelection({
-              from: Math.min(from, editor.state.doc.content.size),
-              to: Math.min(to, editor.state.doc.content.size),
-            });
-            setNotice(null);
-            return true;
-          }}
+          onRename={renameDocumentLabel}
         />
       ) : null}
       {editor && !readOnly ? <LatexListControls editor={editor} /> : null}
@@ -8026,7 +8360,15 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                           )}
                         </aside>
                       ) : null}
-                      <div className="scient-latex-visual-scroll" ref={visualScroll}>
+                      <div
+                        className="scient-latex-visual-scroll"
+                        ref={visualScroll}
+                        style={
+                          {
+                            "--scient-reader-page-inset": `${PDF_FIT_WIDTH_PADDING / 2}px`,
+                          } as CSSProperties
+                        }
+                      >
                         <div
                           className="scient-latex-page-zoom-frame"
                           style={{ width: paperWidth * zoom, height: stageHeight * zoom }}
@@ -8245,14 +8587,12 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                         }
                       >
                         {contextTools}
-                        <LatexSelectionScope workspace={workspaceRef} />
                       </DocumentFooter>
                     ) : (
                       <footer
                         className="scient-latex-reader-footer"
                         data-recovery={recovery === null ? undefined : ""}
                       >
-                        <LatexSelectionScope workspace={workspaceRef} />
                         {recovery === null ? null : (
                           <LatexVisualRecoveryBar
                             key={recovery.identity}

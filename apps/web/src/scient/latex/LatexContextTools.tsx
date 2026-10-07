@@ -5,7 +5,11 @@ import { isLatexContextEvent } from "./latexContextEvents";
 import "./latexContextTools.css";
 
 /** One object inspector. Its portal destination and unfinished fields stay mounted. */
-export function LatexContextTools(props: { children: ReactNode }) {
+export function LatexContextTools(props: {
+  children: ReactNode;
+  onPositionChange?: (position: string | null) => void;
+}) {
+  const { onPositionChange } = props;
   const root = useRef<HTMLDivElement>(null);
   const slot = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -28,6 +32,7 @@ export function LatexContextTools(props: { children: ReactNode }) {
         element.hidden = object !== null || index > 0;
       });
       const toolbar = object ?? fallback ?? null;
+      onPositionChange?.(toolbar?.getAttribute("data-context-position") ?? null);
       setInline(toolbar?.getAttribute("data-context-presentation") === "inline");
       const name =
         toolbar?.getAttribute("data-context-name") ?? toolbar?.getAttribute("aria-label");
@@ -49,7 +54,12 @@ export function LatexContextTools(props: { children: ReactNode }) {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["aria-label", "data-context-name", "data-context-presentation"],
+      attributeFilter: [
+        "aria-label",
+        "data-context-name",
+        "data-context-presentation",
+        "data-context-position",
+      ],
     });
     selectionChanged();
     const outside = (event: Event) => {
@@ -62,7 +72,7 @@ export function LatexContextTools(props: { children: ReactNode }) {
       document.removeEventListener("pointerdown", outside);
       document.removeEventListener("focusin", outside);
     };
-  }, []);
+  }, [onPositionChange]);
   const close = () => {
     trigger.current?.focus({ preventScroll: true });
     setOpen(false);

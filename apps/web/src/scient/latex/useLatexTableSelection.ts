@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import type { Editor } from "@tiptap/core";
 import { NodeSelection, Selection } from "@tiptap/pm/state";
-import { registerLatexSelection } from "./latexSelectionSession";
+import { registerLatexSelection, runLatexSelectionCommand } from "./latexSelectionSession";
 import { latexContainerScope } from "./latexStructuredSelection";
 import { isLatexEditingMenuEvent } from "./latexContextEvents";
 import { captureLatexObjectDrag, latexObjectSelectionAtPointer } from "./latexObjectSelection";
@@ -147,6 +147,7 @@ export function useLatexTableSelection(props: {
           scopes: () => [
             root.querySelector("table")?.getBoundingClientRect() ?? root.getBoundingClientRect(),
           ],
+          selectionOverlay: false,
           selection: () => selectedCells(range),
           restore: (focus) => {
             if (
@@ -161,8 +162,9 @@ export function useLatexTableSelection(props: {
         };
       },
       command: (command) => {
+        if (command === "enterScope") return false;
         const state = current.current;
-        if (command === "selectionExpand") {
+        if (command === "selectionExpand" || command === "selectionScopeExpand") {
           if (selected.current?.whole) return false;
           if (selected.current) {
             scopeHistory.push(selected.current);
@@ -356,11 +358,7 @@ export function useLatexTableSelection(props: {
         event.key.toLowerCase() === "a" &&
         (selected.current || (!field && !inlineEditor) || selectedText)
       ) {
-        select({
-          anchor: { row: 0, column: 0 },
-          head: { row: state.rowCount - 1, column: state.columnCount - 1 },
-          whole: true,
-        });
+        if (!runLatexSelectionCommand(root, "selectionScopeExpand")) return;
       } else if (
         !modifier &&
         !event.altKey &&

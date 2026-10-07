@@ -1,10 +1,15 @@
 import type { ReactNode } from "react";
 
 /** Native fields keep typing and Tab navigation while inside a document menu. */
-export function LatexContextMenuForm(props: { label: string; children: ReactNode }) {
+export function LatexContextMenuForm(props: {
+  label: string;
+  width?: "content";
+  children: ReactNode;
+}) {
   return (
     <div
       className="scient-latex-context-menu-form"
+      data-width={props.width}
       role="group"
       aria-label={props.label}
       onKeyDown={(event) => {

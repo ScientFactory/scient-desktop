@@ -9,6 +9,8 @@ export function LatexObjectToolbar(props: {
   root: RefObject<HTMLElement | null>;
   selected: boolean;
   label: string;
+  position?: string;
+  inline?: boolean;
   children: ReactNode;
 }) {
   const { active, bar } = useLatexObjectContext(props.editor, props.root, props.selected);
@@ -21,6 +23,8 @@ export function LatexObjectToolbar(props: {
       ref={bar}
       role="toolbar"
       aria-label={props.label}
+      data-context-position={props.position}
+      data-context-presentation={props.inline ? "inline" : undefined}
       className="scient-latex-context-toolbar"
       onPointerDown={(event) => event.stopPropagation()}
       onFocusCapture={(event) => event.stopPropagation()}

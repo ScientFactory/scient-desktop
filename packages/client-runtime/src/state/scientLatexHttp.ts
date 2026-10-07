@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 
 import type {
   ScientLatexBuildRequest,
+  ScientLatexArtworkRequest,
   ScientLatexCancelRequest,
   ScientLatexForwardSyncRequest,
   ScientLatexInverseSyncRequest,
@@ -17,14 +18,35 @@ import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAut
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 
 /**
- * Every LaTeX endpoint answers from server-side build state rather than waiting
- * on the compiler, so they all share the short request budget. The compile
- * itself is observed by polling the status endpoint.
+ * Ordinary build endpoints answer from server-side state rather than waiting
+ * on the compiler. Their compile is observed by polling the status endpoint;
+ * isolated artwork previews use their own longer request budget.
  */
 const REQUEST_TIMEOUT_MS = 15_000;
 /** A cold toolchain probe shells out to the engine, which can be slow on first run. */
 const TOOLCHAIN_TIMEOUT_MS = 30_000;
 const IMAGE_UPLOAD_TIMEOUT_MS = 120_000;
+
+/** Artwork waits for its isolated compile; ordinary document builds still poll. */
+export const renderEnvironmentLatexArtwork = Effect.fn(
+  "clientRuntime.state.renderEnvironmentLatexArtwork",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly request: ScientLatexArtworkRequest;
+}) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared: input.prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/artwork"),
+    timeoutMs: 180_000,
+    group: "scientLatex",
+    request: ({ client, headers }) => client.artwork({ headers, payload: input.request }),
+  });
+});
 
 export const uploadEnvironmentLatexImage = Effect.fn(
   "clientRuntime.state.uploadEnvironmentLatexImage",

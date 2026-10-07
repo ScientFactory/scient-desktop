@@ -59,6 +59,40 @@ describe("portable keyboard preferences", () => {
     expect(validateKeyboardPreferences(defaults, mac)).toEqual(defaults);
     expect(effectiveSurfaceBindings(defaults, mac).length).toBeGreaterThan(100);
   });
+  it("migrates existing preferences when adding scope selection", () => {
+    const migrated = importKeyboardPreferences(
+      JSON.stringify({
+        ...defaults,
+        writingPresetVersion: 3,
+        overrides: { "math.symbol.alpha": ["ctrl+alt+u"] },
+      }),
+      false,
+    );
+    expect(migrated.overrides["math.symbol.alpha"]).toEqual(["ctrl+alt+u"]);
+    expect(effectiveSurfaceBindings(migrated, false)).toContainEqual({
+      command: "latex.selectionScopeExpand",
+      scope: "latex",
+      keys: "mod+a",
+    });
+    expect(migrated.writingPresetVersion).toBe(defaults.writingPresetVersion);
+  });
+  it.each([false, true])(
+    "allows configuring Select All only for scope selection on mac=%s",
+    (mac) => {
+      expect(() =>
+        validateKeyboardPreferences(
+          { ...defaults, overrides: { "latex.selectionScopeExpand": ["mod+a"] } },
+          mac,
+        ),
+      ).not.toThrow();
+      expect(() =>
+        validateKeyboardPreferences(
+          { ...defaults, overrides: { "math.symbol.alpha": ["mod+a"] } },
+          mac,
+        ),
+      ).toThrow(/reserved/);
+    },
+  );
   it("distinguishes Control from Command on Mac but resolves Mod aliases", () => {
     expect(keysOverlap("ctrl+m", "mod+m", true)).toBe(false);
     expect(keysOverlap("meta+m", "mod+m", true)).toBe(true);

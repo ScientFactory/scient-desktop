@@ -110,9 +110,11 @@ function argument(source: string, at: number) {
 }
 
 export function latexInlineColor(source: string, at: number) {
-  const command = /^\\(textcolor|colorbox|fcolorbox)\b/u.exec(source.slice(at));
+  const command = /^\\(textcolor|colorbox|fcolorbox|fbox)\b/u.exec(source.slice(at));
   if (!command) return null;
   const first = argument(source, at + command[0].length);
+  if (command[1] === "fbox" && first)
+    return { body: first, attrs: { command: "fbox", color: "black", background: "" } };
   const second = first && argument(source, first.end);
   const body = command[1] === "fcolorbox" ? second && argument(source, second.end) : second;
   if (
@@ -140,6 +142,7 @@ export function latexColorMarkSource(
   const command = String(attrs?.command ?? "");
   const color = String(attrs?.color ?? "");
   const background = String(attrs?.background ?? "");
+  if (command === "fbox") return `\\fbox{${text}}`;
   if (
     !["textcolor", "colorbox", "fcolorbox"].includes(command) ||
     !latexColorCss(color) ||
@@ -164,6 +167,14 @@ export function latexColorBoxOpening(source: string) {
     borderWidth: "0.5mm",
     radius: "1mm",
     boldTitle: false,
+    shadow: false,
+    frameHidden: false,
+    borderSide: "all",
+    borderStyle: "solid",
+    borderColor: "",
+    colbacklower: "",
+    titleAfterBreak: "",
+    alignment: "left",
   };
   let title = "";
   let titleRange: { from: number; to: number } | null = null;
@@ -191,9 +202,50 @@ export function latexColorBoxOpening(source: string) {
         layout.breakable = true;
         continue;
       }
-      const key = /^(title|colback|colframe|coltitle|boxsep|boxrule|arc|fonttitle)\s*=\s*/u.exec(
-        text,
-      );
+      if (text === "enhanced" || text === "bicolor") continue;
+      if (text === "sharp corners") {
+        layout.radius = "0px";
+        continue;
+      }
+      if (text === "drop shadow") {
+        layout.shadow = true;
+        continue;
+      }
+      if (text === "frame hidden") {
+        layout.frameHidden = true;
+        continue;
+      }
+      const border = /^borderline( west)?\s*=\s*/u.exec(text);
+      if (border) {
+        const value = text.slice(border[0].length);
+        const width = argument(value, 0);
+        const offset = width && argument(value, width.end);
+        const paint = offset && argument(value, offset.end);
+        const cssWidth = width && latexLayoutLength(width.value);
+        const cssOffset = offset && latexLayoutLength(offset.value);
+        const color =
+          paint &&
+          /^([^,]+)(?:,\s*dash pattern=on ([\d.]+pt) off ([\d.]+pt))?$/u.exec(paint.value.trim());
+        if (
+          !cssWidth ||
+          cssWidth.endsWith("%") ||
+          cssOffset !== "0in" ||
+          !paint ||
+          value.slice(paint.end).trim() ||
+          !color ||
+          !latexColorCss(color[1]!)
+        )
+          return null;
+        layout.borderWidth = cssWidth;
+        layout.borderColor = color[1]!.trim();
+        layout.borderSide = border[1] ? "west" : "all";
+        layout.borderStyle = color[2] ? "dashed" : "solid";
+        continue;
+      }
+      const key =
+        /^(title after break|title|colbacklower|colback|colframe|coltitle|boxsep|boxrule|arc|fonttitle)\s*=\s*/u.exec(
+          text,
+        );
       if (!key) return null;
       let value = text.slice(key[0].length).trim();
       const valueAt = entry.from + source.slice(entry.from, entry.to).indexOf(text) + key[0].length;
@@ -202,8 +254,9 @@ export function latexColorBoxOpening(source: string) {
         if (!grouped || source.slice(grouped.end, entry.to).trim()) return null;
         value = grouped.value;
       }
-      if (key[1] === "title") {
-        if (/[\\{}%#$&_^~]/u.test(value)) return null;
+      if (key[1] === "title after break") {
+        layout.titleAfterBreak = value;
+      } else if (key[1] === "title") {
         title = value;
         titleRange = grouped
           ? { from: grouped.from, to: grouped.to }
@@ -219,12 +272,37 @@ export function latexColorBoxOpening(source: string) {
         layout.boldTitle = value === "\\bfseries";
       } else {
         if (!latexColorCss(value)) return null;
-        layout[key[1] as "colback" | "colframe" | "coltitle"] = value;
+        layout[key[1] as "colback" | "colframe" | "coltitle" | "colbacklower"] = value;
       }
     }
     from++;
   }
+  const centered = /^\s*\\centering\b\s*/u.exec(source.slice(from));
+  if (centered) {
+    from += centered[0].length;
+    layout.alignment = "center";
+  }
   return { from, to: source.length - "\\end{tcolorbox}".length, title, titleRange, layout };
+}
+
+/** The separator belongs to this box, never to a nested environment or argument. */
+export function latexColorBoxSplit(source: string) {
+  let environments = 0;
+  let split: { from: number; to: number } | null = null;
+  for (const command of latexSourceCommands(source)) {
+    if (command.depth !== 0) continue;
+    if (command.name === "begin") {
+      const environment = latexSourceArgument(source, command.to)?.value;
+      // The command scanner already skips literal bodies and their closing tokens.
+      if (!/^(?:verbatim\*?|lstlisting|tcblisting|minted|Verbatim)$/u.test(environment ?? ""))
+        environments++;
+    } else if (command.name === "end") environments--;
+    else if (command.name === "tcblower" && environments === 0) {
+      if (split) return null;
+      split = { from: command.from, to: command.to };
+    }
+  }
+  return split;
 }
 
 /** Recognize only the literal increment-and-repeat form; never evaluate arbitrary TeX. */

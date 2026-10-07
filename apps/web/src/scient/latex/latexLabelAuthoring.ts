@@ -3,12 +3,27 @@ import {
   latexSourceCommands,
   patchLatexSource,
 } from "./latexSourceSyntax";
+import { latexLiteralBlock } from "./latexLiteral";
 
 export function latexLabelInventory(source: string) {
   const targets: { key: string; from: number; to: number; uses: number; duplicate: boolean }[] = [];
   const references: { from: number; to: number; keys: string[] }[] = [];
   let incomplete = false;
   for (const command of latexSourceCommands(source)) {
+    if (command.name === "begin") {
+      const listing = latexLiteralBlock(source, command.from);
+      const label = listing?.environment === "lstlisting" ? listing.options.get("label") : null;
+      if (label) {
+        if (!/^[^{}\\%\s#$&~^,]+$/u.test(label.value)) incomplete = true;
+        targets.push({
+          key: label.value,
+          from: label.from,
+          to: label.to,
+          uses: 0,
+          duplicate: false,
+        });
+      }
+    }
     if (["input", "include", "csname", "catcode"].includes(command.name)) incomplete = true;
     const label = command.name === "label" ? arg(source, command.to) : null;
     if (label)

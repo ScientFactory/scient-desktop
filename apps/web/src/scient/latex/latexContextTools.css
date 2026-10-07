@@ -111,14 +111,6 @@
   font: inherit;
   resize: vertical;
 }
-.scient-latex-math-scroll-control input[type="range"] {
-  width: 100%;
-  min-width: 0;
-  height: 20px;
-  margin: 0;
-  accent-color: var(--muted-foreground);
-  cursor: ew-resize;
-}
 .scient-latex-context-tools[data-inspector]
   .scient-latex-context-toolbar
   :is(input, textarea):focus-visible {
@@ -127,38 +119,7 @@
 .scient-latex-context-tools[data-inspector] .scient-latex-context-toolbar [aria-invalid="true"] {
   border-color: var(--destructive);
 }
-.scient-latex-context-tools[data-inspector] .scient-latex-context-menu {
-  border-top: 1px solid var(--border);
-  padding-top: 6px;
-}
-.scient-latex-context-tools[data-inspector] .scient-latex-context-menu > summary {
-  display: flex;
-  justify-content: space-between;
-  width: 100%;
-  height: auto;
-  padding: 4px 0;
-  font-weight: 500;
-  white-space: normal;
-}
-.scient-latex-context-tools[data-inspector] .scient-latex-context-menu-panel {
-  position: static;
-  display: grid;
-  width: 100%;
-  max-width: none;
-  max-height: none;
-  padding: 6px 0 0;
-  gap: 8px;
-  overflow: visible;
-  border: 0;
-  box-shadow: none;
-  background: none;
-  font: inherit;
-}
-.scient-latex-context-tools[data-inspector] .scient-latex-context-menu-panel > label {
-  padding: 0;
-}
-.scient-latex-context-tools[data-inspector] .scient-latex-context-toolbar > button,
-.scient-latex-context-action {
+.scient-latex-context-tools[data-inspector] .scient-latex-context-toolbar > button {
   justify-self: start;
   border: 0;
   border-radius: 4px;
@@ -168,20 +129,6 @@
   text-align: start;
   font: inherit;
   cursor: pointer;
-}
-.scient-latex-context-action:hover:not(:disabled) {
-  background: var(--accent);
-  color: var(--accent-foreground);
-}
-.scient-latex-context-action:focus-visible {
-  outline: 1px solid var(--ring);
-}
-.scient-latex-context-action:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.scient-latex-context-tools[data-inspector] .scient-latex-context-action[data-destructive] {
-  color: var(--destructive);
 }
 .scient-latex-context-note,
 .scient-latex-context-tools[data-inspector] .scient-latex-context-toolbar p {
@@ -201,10 +148,6 @@
   display: block;
   white-space: normal;
 }
-.scient-latex-property-field {
-  display: grid;
-  gap: 6px;
-}
 .scient-latex-property-row {
   display: flex;
   gap: 6px;
@@ -213,22 +156,6 @@
 .scient-latex-property-row input {
   flex: 1;
   min-width: 0;
-}
-.scient-latex-color-swatches {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-.scient-latex-color-swatches button {
-  width: 18px;
-  height: 18px;
-  min-height: 18px;
-  padding: 0;
-  border: 1px solid #8888;
-  border-radius: 3px;
-}
-.scient-latex-property-field small {
-  opacity: 0.7;
 }
 .scient-latex-context-fieldset {
   border: 0;
@@ -295,7 +222,10 @@
     .scient-latex-heading-reference,
     .scient-latex-math-reference,
     .scient-latex-table-reference,
-    .scient-latex-figure-reference
+    .scient-latex-figure-reference,
+    .scient-latex-statement-reference,
+    .scient-latex-algorithm-reference,
+    .scient-latex-code-reference
   ) {
   display: flex;
   align-items: center;
@@ -307,7 +237,10 @@
     .scient-latex-heading-reference,
     .scient-latex-math-reference,
     .scient-latex-table-reference,
-    .scient-latex-figure-reference
+    .scient-latex-figure-reference,
+    .scient-latex-statement-reference,
+    .scient-latex-algorithm-reference,
+    .scient-latex-code-reference
   )
   .scient-latex-reference-label-field {
   position: relative;
@@ -321,7 +254,10 @@
     .scient-latex-heading-reference,
     .scient-latex-math-reference,
     .scient-latex-table-reference,
-    .scient-latex-figure-reference
+    .scient-latex-figure-reference,
+    .scient-latex-statement-reference,
+    .scient-latex-algorithm-reference,
+    .scient-latex-code-reference
   )
   textarea {
   height: 22px;
@@ -336,7 +272,10 @@
     .scient-latex-heading-reference,
     .scient-latex-math-reference,
     .scient-latex-table-reference,
-    .scient-latex-figure-reference
+    .scient-latex-figure-reference,
+    .scient-latex-statement-reference,
+    .scient-latex-algorithm-reference,
+    .scient-latex-code-reference
   )
   .scient-latex-reference-label-field
   > p {
@@ -357,9 +296,11 @@
 /* Compact forms share native field navigation inside document menus. Shared controls own their look. */
 .scient-latex-context-menu-form {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   width: 208px;
-  max-width: calc(100vw - 40px);
+  min-width: 0;
+  max-width: min(100%, calc(100vw - 40px));
   padding: 8px;
   font: 12px/1.45 var(--font-sans);
 }
@@ -367,6 +308,23 @@
   display: grid;
   gap: 4px;
   min-width: 0;
+}
+.scient-latex-context-menu-form[data-width="content"] {
+  width: max-content;
+}
+.scient-latex-property-row[data-width="content"] {
+  width: max-content;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+.scient-latex-length-amount {
+  width: clamp(7ch, 9ch, 12ch);
+  min-width: 0;
+  max-width: 100%;
+}
+.scient-latex-property-row[data-width="content"] > .scient-latex-select {
+  width: max-content;
+  max-width: 100%;
 }
 .scient-latex-figure-image-choices {
   max-height: min(240px, 45dvh);

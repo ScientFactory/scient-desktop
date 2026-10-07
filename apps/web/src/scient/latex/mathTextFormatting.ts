@@ -3,6 +3,50 @@ import { latexSourceArgument, latexSourceCommands } from "./latexSourceSyntax";
 
 export type MathTextFormat = "bold" | "italic" | "monospace";
 
+/** Single-argument formatting commands need an editable slot even when empty. */
+export const MATH_FORMATTING_ARGUMENTS: Readonly<Record<string, "text" | "math">> = {
+  text: "text",
+  textbf: "text",
+  textit: "text",
+  texttt: "text",
+  textrm: "text",
+  textsf: "text",
+  textmd: "text",
+  textup: "text",
+  textsl: "text",
+  textsc: "text",
+  textnormal: "text",
+  mathbf: "math",
+  mathit: "math",
+  mathrm: "math",
+  mathsf: "math",
+  mathtt: "math",
+  mathnormal: "math",
+  mathbfit: "math",
+  mathbb: "math",
+  mathcal: "math",
+  mathfrak: "math",
+  mathscr: "math",
+  boldsymbol: "math",
+  bm: "math",
+};
+
+/** Recreate vacant font slots on load; source serialization omits the placeholders. */
+function emptyFormattingInput(
+  source: string,
+  customCommands?: Readonly<Record<string, unknown>>,
+): string {
+  if (!/\\(?:text|math|boldsymbol|bm)[A-Za-z]*\s*\{\s*\}/u.test(source)) return source;
+  for (const command of latexSourceCommands(source).toReversed()) {
+    if (!Object.hasOwn(MATH_FORMATTING_ARGUMENTS, command.name) || customCommands?.[command.name])
+      continue;
+    const body = latexSourceArgument(source, command.to);
+    if (body && !body.value.trim())
+      source = source.slice(0, body.from) + "\\placeholder{}" + source.slice(body.to);
+  }
+  return source;
+}
+
 /** Prose and math use different font commands, including inside a formula's text slots. */
 export function mathTextFormatActive(math: MathfieldElement, format: MathTextFormat): boolean {
   if (math.mode === "text") {
@@ -69,6 +113,7 @@ export function mathTextFormattingInput(
   source: string,
   customCommands?: Readonly<Record<string, unknown>>,
 ): string {
+  source = emptyFormattingInput(source, customCommands);
   if (customCommands?.mathbfit || customCommands?.mathit) return source;
   if (!source.includes("\\boldsymbol") && !source.includes("\\bm")) return source;
   for (const command of latexSourceCommands(source).toReversed()) {

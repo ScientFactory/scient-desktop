@@ -1,5 +1,6 @@
 import { MATRIX_ENVIRONMENTS } from "../math/input/matrix";
 import { MATH_SYMBOLS } from "./mathSymbols";
+import { MATH_FORMATTING_ARGUMENTS } from "./mathTextFormatting";
 
 export interface MathCommandCompletion {
   readonly label: string;
@@ -16,7 +17,8 @@ const argumentTemplates = new Map(
       /#[0-9?]/u.test(symbol.latex),
   ).map((symbol) => [symbol.command, symbol.latex.replace(/#[0-9?]/gu, "#?")]),
 );
-argumentTemplates.set("\\text", "\\text{#?}");
+for (const command of Object.keys(MATH_FORMATTING_ARGUMENTS))
+  argumentTemplates.set(`\\${command}`, `\\${command}{#?}`);
 
 /** Complete only an explicit command, without replacing an argument already written. */
 export function mathArgumentCompletion(command: string): MathCommandCompletion | null {
@@ -24,7 +26,11 @@ export function mathArgumentCompletion(command: string): MathCommandCompletion |
   if (!match) return null;
   const latex = argumentTemplates.get(match[1]!);
   return latex
-    ? { label: match[1]!, latex, text: /^\\text(?:rm|sf|tt|bf|it)?$/u.test(match[1]!) }
+    ? {
+        label: match[1]!,
+        latex,
+        text: MATH_FORMATTING_ARGUMENTS[match[1]!.slice(1)] === "text",
+      }
     : null;
 }
 

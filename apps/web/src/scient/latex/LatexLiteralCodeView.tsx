@@ -41,6 +41,7 @@ export function LatexLiteralCodeView(props: {
   body: string;
   environment: string;
   caption: string | null;
+  captionEditing: boolean;
   ordinal: string;
   presentation: LatexListingPresentation | null;
   disabled: boolean;
@@ -48,6 +49,7 @@ export function LatexLiteralCodeView(props: {
   captionDraftKey?: string | undefined;
   onBodyChange: (value: string) => void;
   onCaptionChange: (value: string) => void;
+  onCaptionEditing: (editing: boolean) => void;
   onExit: () => void;
 }) {
   const [live, setLive] = useState(() => restoredLatexFieldDraft(props.bodyDraftKey, props.body));
@@ -114,16 +116,37 @@ export function LatexLiteralCodeView(props: {
           ? textStyle(settings!.string, base)
           : undefined;
   const caption =
-    props.caption === null ? null : (
+    props.caption === null && !props.captionEditing ? null : (
       <div className="scient-latex-listing-caption">
-        <span>Listing {props.ordinal}: </span>
+        {props.caption !== null && <span>Listing {props.ordinal}: </span>}
         <LatexTextField
           aria-label="Listing caption"
           rows={1}
-          value={props.caption}
+          value={props.caption ?? ""}
           disabled={props.disabled}
           draftKey={props.captionDraftKey}
           onValueChange={props.onCaptionChange}
+          onFocus={() => props.onCaptionEditing(true)}
+          onBlur={(event) => {
+            if (!event.relatedTarget && !event.currentTarget.ownerDocument.hasFocus()) return;
+            props.onCaptionEditing(false);
+          }}
+          onRemoveEmpty={() => {
+            props.onCaptionChange("");
+            props.onCaptionEditing(false);
+            host.current
+              ?.querySelector<HTMLTextAreaElement>("textarea")
+              ?.focus({ preventScroll: true });
+          }}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing || (event.key !== "Escape" && event.key !== "Enter"))
+              return;
+            event.preventDefault();
+            event.stopPropagation();
+            host.current
+              ?.querySelector<HTMLTextAreaElement>("textarea")
+              ?.focus({ preventScroll: true });
+          }}
         />
       </div>
     );
@@ -136,12 +159,15 @@ export function LatexLiteralCodeView(props: {
         data-frame={settings?.frame ?? "none"}
         data-numbers={settings?.numbers ?? "none"}
         data-wrap={settings?.breakLines === true || undefined}
-        style={{
-          ...(settings
-            ? textStyle(settings.basic)
-            : { fontFamily: '"KaTeX_Typewriter", var(--font-mono)' }),
-          tabSize: settings?.tabSize ?? 8,
-        }}
+        style={
+          {
+            ...(settings
+              ? textStyle(settings.basic)
+              : { fontFamily: '"KaTeX_Typewriter", var(--font-mono)' }),
+            tabSize: settings?.tabSize ?? 8,
+            "--scient-latex-listing-number-sep": settings?.numberSep,
+          } as CSSProperties
+        }
       >
         <div className="scient-latex-listing-highlight" aria-hidden="true">
           {lines.map(({ line, lineIndex, pieces }) => {
@@ -184,7 +210,11 @@ export function LatexLiteralCodeView(props: {
         </div>
         <LatexTextField
           className="scient-latex-listing-editor"
-          aria-label={props.environment === "lstlisting" ? "Code listing" : "Literal text"}
+          aria-label={
+            ["lstlisting", "tcblisting"].includes(props.environment)
+              ? "Code listing"
+              : "Literal text"
+          }
           rows={1}
           spellCheck={false}
           autoCapitalize="off"

@@ -16,6 +16,7 @@ interface MathAtom {
   readonly colCount?: number;
   readonly getCell?: (row: number, column: number) => readonly MathAtom[] | undefined;
   readonly setCell?: (row: number, column: number, value: readonly MathAtom[]) => void;
+  readonly addRowAfter?: (row: number) => void;
   readonly branches?: readonly unknown[];
   readonly branch?: (name: unknown) => readonly MathAtom[] | undefined;
   readonly addChildrenAfter?: (
@@ -52,6 +53,7 @@ interface MathModel {
 
 interface MathMutationController {
   readonly model?: MathModel;
+  readonly atomBoundsCache?: Map<string, unknown>;
   setValue?: (
     value: string,
     options: {
@@ -65,6 +67,12 @@ interface MathMutationController {
   snapshot?: () => void;
   stopCoalescingUndo?: () => void;
   flushInlineShortcutBuffer?: () => void;
+}
+
+/** MathLive caches screen coordinates until rendering, even when an ancestor scrolls. */
+function refreshMathGeometry(math: MathfieldElement): void {
+  const controller = (math as unknown as { _mathfield?: MathMutationController })._mathfield;
+  controller?.atomBoundsCache?.clear();
 }
 
 /** Restore authoritative source without retaining empty arrays from the old model. */
@@ -94,10 +102,13 @@ export function restoreMathFieldValue(math: MathfieldElement, value: string): vo
   controller.setValue(value, options);
 }
 
-function mutateMath(math: MathfieldElement, action: (model: MathModel) => void): boolean {
+function mutateMath(
+  math: MathfieldElement,
+  action: (model: MathModel) => void,
+  type = "deleteContentBackward",
+): boolean {
   const controller = (math as unknown as { _mathfield?: MathMutationController })._mathfield;
   const model = mathModel(math);
-  const type = "deleteContentBackward";
   if (
     math.readOnly ||
     !controller?.snapshot ||
@@ -113,6 +124,96 @@ function mutateMath(math: MathfieldElement, action: (model: MathModel) => void):
   );
   if (changed) controller.snapshot();
   return changed;
+}
+
+/** Split the caret's math flow, keeping complete nested atoms and column positions. */
+export function splitMathRow(math: MathfieldElement): string | null {
+  const model = mathModel(math);
+  if (math.readOnly || !model) return "This formula is not editable.";
+  if (math.mode === "latex") return "Finish the math command before splitting the row.";
+  let position = math.position;
+  if (!math.selectionIsCollapsed) {
+    const range = math.selection.ranges[0];
+    if (
+      math.selection.ranges.length !== 1 ||
+      !range ||
+      range[1] - range[0] !== 1 ||
+      model.at(range[1]).type !== "placeholder"
+    )
+      return "Place the caret where the math row should split.";
+    position = range[0];
+  }
+  const cursor = model.at(position);
+  const parent = cursor.parent;
+  const branch = cursor.parentBranch;
+  if (!parent) return "Place the caret inside the math row.";
+  const mode = math.mode;
+  if (parent.type === "array" && Array.isArray(branch)) {
+    const [row, column] = branch;
+    if (
+      typeof row !== "number" ||
+      typeof column !== "number" ||
+      !parent.addRowAfter ||
+      !parent.setCell ||
+      !parent.getCell
+    )
+      return "This math layout cannot split rows.";
+    if ((parent.rowCount ?? 0) >= 20) return "This editor supports up to 20 rows.";
+    const cell = parent.getCell(row, column);
+    const index = cell?.indexOf(cursor) ?? -1;
+    if (!cell || index < 0) return "Place the caret inside the math cell.";
+    const before = cell.slice(0, index + 1).filter((atom) => atom.type !== "first");
+    const tails = Array.from({ length: (parent.colCount ?? 0) - column }, (_, offset) =>
+      (offset === 0 ? cell.slice(index + 1) : (parent.getCell!(row, column + offset) ?? [])).filter(
+        (atom) => atom.type !== "first",
+      ),
+    );
+    const changed = mutateMath(
+      math,
+      (current) => {
+        parent.addRowAfter!(row);
+        for (let offset = 0; offset < tails.length; offset++) {
+          parent.setCell!(row, column + offset, offset === 0 ? before : []);
+          parent.setCell!(row + 1, column + offset, tails[offset]!);
+        }
+        const first = parent.getCell!(row + 1, column)?.[0];
+        if (first) math.position = current.offsetOf(first);
+        math.executeCommand(["switchMode", mode]);
+      },
+      "insertLineBreak",
+    );
+    return changed ? null : "The math row could not be split.";
+  }
+  // A fraction/root body remains intact: add rows within its own flow rather
+  // than extracting incomplete parts into the surrounding equation.
+  const siblings = parent.branch?.(branch);
+  if (!siblings?.length || !siblings.includes(cursor))
+    return "This math slot cannot contain multiple rows.";
+  const from = model.offsetOf(siblings[0]!);
+  const to = model.offsetOf(siblings.at(-1)!);
+  if (from < 0 || to < position || from > position) return "Place the caret inside the math row.";
+  const before = math.getValue([from, position], "latex");
+  const after = math.getValue([position, to], "latex");
+  const selection = math.selection;
+  math.selection = { ranges: [[from, to]] };
+  const inserted = math.insert(
+    `\\begin{gathered}${before || "#?"} \\\\ ${after || "#?"}\\end{gathered}`,
+    {
+      format: "latex",
+      mode: "math",
+      insertionMode: "replaceSelection",
+      selectionMode: "after",
+    },
+  );
+  if (!inserted) {
+    math.selection = selection;
+    return "The math row could not be split.";
+  }
+  const array = model.at(math.position);
+  const first = array.type === "array" ? array.getCell?.(1, 0)?.[0] : null;
+  if (first) math.position = model.offsetOf(first);
+  math.executeCommand(["switchMode", mode]);
+  return null;
 }
 
 /** Clear every selected cell without merging rows or removing the array. */
@@ -202,6 +303,15 @@ function emptyMathSlot(atom: MathAtom): boolean {
   );
 }
 
+/** Empty anonymous groups and placeholders contain no mathematical content. */
+export function mathFieldIsEmpty(math: MathfieldElement): boolean {
+  if (math.mode === "latex") return false;
+  const model = mathModel(math);
+  return model
+    ? model.atoms.every(emptyMathSlot)
+    : math.getValue("latex-without-placeholders").trim() === "";
+}
+
 export interface MathCellSelection {
   readonly array: MathAtom;
   readonly row: number;
@@ -264,6 +374,7 @@ export interface MathSelectionGeometry {
 }
 
 export function createMathSelectionGeometry(math: MathfieldElement): MathSelectionGeometry {
+  refreshMathGeometry(math);
   const model = mathModel(math);
   const scopes: MathCellSelection[] = [];
   if (model) {
@@ -306,6 +417,45 @@ function isMathFormattingScope(atom: MathAtom): boolean {
   );
 }
 
+/** Accent bodies have less vertical room than the enclosing accented expression. */
+export function mathCaretInAccentBody(math: MathfieldElement): boolean {
+  const model = mathModel(math);
+  if (!model) return false;
+  for (let atom = model.at(math.position); atom?.parent; atom = atom.parent) {
+    if (atom.parent.type === "accent" && atom.parentBranch === "body") return true;
+  }
+  return false;
+}
+
+/** Empty-slot guides belong to the nearest structural owner, excluding formatting. */
+export function mathGuideScopeId(math: MathfieldElement): string | null {
+  const model = mathModel(math);
+  if (!model) return null;
+  for (let atom = model.at(math.position); atom?.parent; atom = atom.parent) {
+    const owner = atom.parent;
+    if (owner.isRoot) return null;
+    if (!isMathFormattingScope(owner)) return owner.id ?? null;
+  }
+  return null;
+}
+function mathScriptOwner(atom: MathAtom): MathAtom | null {
+  if (atom.type === "first") return null;
+  if (atom.rightSibling?.type === "subsup") return atom.rightSibling;
+  return atom.type === "subsup" ||
+    atom.branch?.("superscript")?.length ||
+    atom.branch?.("subscript")?.length
+    ? atom
+    : null;
+}
+
+/** The outer boundary includes scripts whether MathLive attaches or detaches them. */
+function mathOwnerRange(model: MathModel, owner: MathAtom): [number, number] {
+  const base = owner.type === "subsup" ? owner.leftSibling : null;
+  const before = base && base.type !== "first" ? base.leftSibling : owner.leftSibling;
+  const after = owner.rightSibling?.type === "subsup" ? owner.rightSibling : owner;
+  return [before ? model.offsetOf(before) : 0, model.offsetOf(after)];
+}
+
 export interface MathEditingScope {
   readonly label: string;
   readonly kind: "cell" | "slot" | "structure" | "format" | "equation";
@@ -318,6 +468,8 @@ const mathScopeLabels: Readonly<Record<string, string>> = {
   surd: "Root",
   leftright: "Brackets",
   subsup: "Scripts",
+  underbrace: "Underbrace",
+  overbrace: "Overbrace",
   textbf: "Bold",
   mathbf: "Bold",
   textit: "Italic",
@@ -406,11 +558,15 @@ export function mathEditingScopes(math: MathfieldElement): MathEditingScope[] {
     });
   }
   result.sort((a, b) => a.range[1] - a.range[0] - (b.range[1] - b.range[0]));
+  const script = atom ? mathScriptOwner(atom) : null;
+  if (script) {
+    const range = mathOwnerRange(model, script);
+    result.push({ label: "Scripts", kind: "structure", range, exit: range });
+  }
   while (atom?.parent && !atom.parent.isRoot) {
     const owner = atom.parent,
       branch = atom.parentBranch;
-    const before = owner.leftSibling ? model.offsetOf(owner.leftSibling) : 0;
-    const after = model.offsetOf(owner);
+    const [before, after] = mathOwnerRange(model, owner);
     if (owner.type === "array" && Array.isArray(branch)) {
       const cell = arrayCell(model, owner, branch[0], branch[1]);
       if (cell) {
@@ -434,8 +590,8 @@ export function mathEditingScopes(math: MathfieldElement): MathEditingScope[] {
         result.push({
           label: /cases/u.test(owner.environmentName ?? "") ? "Cases" : "Matrix",
           kind: "structure",
-          range: cell.environment,
-          exit: cell.environment,
+          range: [before, after],
+          exit: [before, after],
         });
       }
     } else {
@@ -454,23 +610,30 @@ export function mathEditingScopes(math: MathfieldElement): MathEditingScope[] {
             result.push({ label, kind: "format", range, exit: whole });
         } else {
           const slotLabel =
-            branch === "above"
-              ? owner.type === "genfrac"
-                ? "Numerator"
-                : "Above"
-              : branch === "below"
+            (command === "underbrace" || command === "overbrace") &&
+            (branch === "subscript" || branch === "superscript")
+              ? "Label"
+              : branch === "above"
                 ? owner.type === "genfrac"
-                  ? "Denominator"
-                  : "Below"
-                : branch === "superscript"
-                  ? "Superscript"
-                  : branch === "subscript"
-                    ? "Subscript"
-                    : branch === "body"
-                      ? "Body"
-                      : String(branch);
+                  ? "Numerator"
+                  : "Above"
+                : branch === "below"
+                  ? owner.type === "genfrac"
+                    ? "Denominator"
+                    : "Below"
+                  : branch === "superscript"
+                    ? "Superscript"
+                    : branch === "subscript"
+                      ? "Subscript"
+                      : branch === "body"
+                        ? "Body"
+                        : String(branch);
           result.push({ label: slotLabel, kind: "slot", range, exit: whole });
           result.push({ label, kind: "structure", range: whole, exit: whole });
+          if (owner.rightSibling?.type === "subsup") {
+            const scripted = mathOwnerRange(model, owner.rightSibling);
+            result.push({ label: "Scripts", kind: "structure", range: scripted, exit: scripted });
+          }
         }
       }
     }
@@ -488,7 +651,10 @@ export function mathEditingScopes(math: MathfieldElement): MathEditingScope[] {
 export function mathScopeRects(
   math: MathfieldElement,
   range: readonly [number, number],
+  selection = false,
 ): DOMRect[] {
+  // Repaint from current screen coordinates, including retained menu selections.
+  refreshMathGeometry(math);
   const cell = mathCellPathAt(math, range[0]).at(-1);
   if (cell && cell.cell[0] === range[0] && cell.cell[1] === range[1]) {
     const rect = mathRenderedCellBounds(math, cell);
@@ -498,7 +664,7 @@ export function mathScopeRects(
     ?.querySelector(".ML__caret,.ML__text-caret")
     ?.getBoundingClientRect();
   const rectangles: DOMRect[] = [];
-  for (let offset = range[0]; offset <= range[1]; offset++) {
+  for (let offset = range[0] + (selection ? 1 : 0); offset <= range[1]; offset++) {
     const rect = math.getElementInfo(offset)?.bounds;
     if (rect?.height) rectangles.push(rect);
   }
@@ -907,6 +1073,28 @@ export function mathSelectionPoint(
   offset = math.getOffsetFromPoint(x, y, { bias: 0 }),
   geometry?: MathSelectionGeometry,
 ): MathSelectionPoint {
+  // MathLive can resolve a closing fence to the adjacent script sentinel.
+  // Use the actual delimiter hit target before resolving enclosing grid cells.
+  const delimiter = math.shadowRoot
+    ?.elementFromPoint?.(x, y)
+    ?.closest<HTMLElement>(".ML__open,.ML__close");
+  const model = mathModel(math);
+  const fence = delimiter?.dataset.atomId
+    ? model?.atoms.find((atom) => atom.id === delimiter.dataset.atomId && atom.type === "leftright")
+    : null;
+  if (fence && model && delimiter) {
+    const bounds = delimiter.getBoundingClientRect();
+    const rightHalf = x >= bounds.left + bounds.width / 2;
+    const body = fence.branch?.("body");
+    const boundary = delimiter.classList.contains("ML__close")
+      ? rightHalf
+        ? fence
+        : body?.at(-1)
+      : rightHalf
+        ? body?.[0]
+        : fence.leftSibling;
+    if (boundary) offset = model.offsetOf(boundary);
+  }
   offset = Math.max(0, Math.min(offset, math.lastOffset));
   const index = geometry ?? createMathSelectionGeometry(math);
   let nearby: MathCellSelection | null = null;
@@ -958,20 +1146,35 @@ interface MathBranchScope {
   readonly whole: readonly [number, number];
 }
 
+const scriptedExpressionBranch = Symbol("scripted-expression");
+
 /** Named branches are slots too: fraction bodies, scripts, brace/arrow labels, etc. */
 function mathBranchPath(model: MathModel, offset: number): MathBranchScope[] {
   const result: MathBranchScope[] = [];
   let atom = model.at(offset);
-  while (atom?.parent && !atom.parent.isRoot) {
+  while (atom?.parent) {
+    // A base and its script may be siblings rather than a shared model parent.
+    // Give both the same enclosing scope, including when the endpoint is the base.
+    const script = mathScriptOwner(atom);
+    if (script) {
+      const whole = mathOwnerRange(model, script);
+      if (whole[0] >= 0 && whole[1] > whole[0])
+        result.push({
+          owner: script,
+          branch: scriptedExpressionBranch,
+          content: [whole[0] + 1, whole[1]],
+          whole,
+        });
+    }
     const owner = atom.parent;
+    if (owner.isRoot) break;
     const branch = atom.parentBranch;
     const contents = owner.branch?.(branch);
     // Array branches retain their existing rectangle and visible-boundary rules.
     if (owner.type !== "array" && contents?.length && owner.leftSibling) {
       const from = model.offsetOf(contents[0]!);
       const to = model.offsetOf(contents[contents.length - 1]!);
-      const before = model.offsetOf(owner.leftSibling);
-      const after = model.offsetOf(owner);
+      const [before, after] = mathOwnerRange(model, owner);
       if (from >= 0 && to >= from && before >= 0 && after > before)
         result.push({ owner, branch, content: [from, to], whole: [before, after] });
     }

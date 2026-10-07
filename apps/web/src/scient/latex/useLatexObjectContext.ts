@@ -7,14 +7,16 @@ import {
   latexContextRoot,
 } from "./latexContextEvents";
 
-const selectionRoots = new WeakMap<EditorState, Element | null>();
+const selectionTargets = new WeakMap<EditorState, Element>();
 function selectionRoot(editor: Editor): Element | null {
-  if (selectionRoots.has(editor.state)) return selectionRoots.get(editor.state) ?? null;
-  const node = editor.view.domAtPos(editor.state.selection.from).node;
-  const target = node instanceof Element ? node : node.parentElement;
-  const root = target?.closest("[data-latex-context-root]") ?? null;
-  selectionRoots.set(editor.state, root);
-  return root;
+  let target = selectionTargets.get(editor.state);
+  if (!target || !editor.view.dom.contains(target)) {
+    const node = editor.view.domAtPos(editor.state.selection.from).node;
+    target = (node instanceof Element ? node : node.parentElement) ?? undefined;
+    if (target) selectionTargets.set(editor.state, target);
+  }
+  // Context roots can mount or change without a new ProseMirror selection.
+  return target?.closest("[data-latex-context-root]") ?? null;
 }
 
 /** The nearest editable object owns the footer, including when reached with the keyboard. */
@@ -52,8 +54,28 @@ export function useLatexObjectContext(
       if (selectionRoot(editor) === element) activate();
       else changeActive(false);
     };
+    const restore = () => {
+      if (editor.isDestroyed) return;
+      const focused = element.ownerDocument.activeElement;
+      const focusedRoot = focused?.closest("[data-latex-context-root]");
+      if (focusedRoot) {
+        if (focusedRoot === element) activate();
+        else changeActive(false);
+      } else if (focused && editor.view.dom.contains(focused)) {
+        if (selectionRoot(editor) === element) activate();
+        else changeActive(false);
+      }
+    };
     const outside = (event: Event) => {
       if (isLatexEditingMenuEvent(event, element)) return;
+      // App switching and removal of a focused field can briefly focus the page.
+      // Actual outside clicks still clear ownership through pointerdown.
+      if (event.type === "focusin" && event.target === element.ownerDocument.body) return;
+      // ProseMirror focuses its shared contenteditable, not the nested object.
+      if (event.type === "focusin" && event.target === editor.view.dom) {
+        restore();
+        return;
+      }
       if (!event.composedPath().includes(element)) changeActive(false);
     };
     const other = (event: Event) => {
@@ -63,18 +85,27 @@ export function useLatexObjectContext(
     element.addEventListener("pointerdown", entered);
     element.addEventListener("scient-latex-object-activate", entered);
     editor.on("selectionUpdate", moved);
+    editor.on("focus", restore);
     document.addEventListener("focusin", outside);
     document.addEventListener("pointerdown", outside);
+    window.addEventListener("focus", restore);
     scope.addEventListener("scient-latex-context-activate", other);
+    let mounted = true;
+    queueMicrotask(() => {
+      if (mounted) restore();
+    });
     return () => {
+      mounted = false;
       if (element.dataset.latexContextRoot === id)
         element.removeAttribute("data-latex-context-root");
       element.removeEventListener("focusin", entered);
       element.removeEventListener("pointerdown", entered);
       element.removeEventListener("scient-latex-object-activate", entered);
       editor.off("selectionUpdate", moved);
+      editor.off("focus", restore);
       document.removeEventListener("focusin", outside);
       document.removeEventListener("pointerdown", outside);
+      window.removeEventListener("focus", restore);
       scope.removeEventListener("scient-latex-context-activate", other);
     };
   }, [editor, id, root]);

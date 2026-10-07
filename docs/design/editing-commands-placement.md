@@ -111,13 +111,14 @@ secondary cards on hover, as do the other menu categories.
 
 - **LaTeX:** Figure, Table, Code block, Literal text; References; Theorems & proofs;
   Document blocks; Page break. References contains Citation, Cross-reference,
-  Link, then Footnote after a separator. Theorems & proofs also contains Question
-  and solution and Subquestions. Document blocks contains Abstract,
+  Link, then Footnote after a separator. Document blocks contains Abstract,
   Table of contents, Bibliography, Verse.
 - **Markdown:** Image, Table, Code block; References; Divider line, Line break.
   References contains Link, Wiki link, then Footnote after a separator.
-- More and Other blocks are removed from LaTeX Insert. Question and solution,
-  Subquestions remain under Theorems & proofs; Verse remains under Document blocks.
+- More and Other blocks are removed from LaTeX Insert. Per the owner's October 7
+  follow-up, Question and solution and Subquestions are removed from the menu
+  and command search; existing document content remains editable. Verse remains
+  under Document blocks.
 - Long quotation and Part move to Text › Paragraph style. Left-aligned and
   Right-aligned text move to Text › Alignment. Their source and insertion
   semantics are unchanged.
@@ -149,9 +150,8 @@ not a visual or native interaction sweep; size varies by window.
 | Export › Word                                                | Modal export/progress/install UI                          | Same modal export/progress/install UI                                                                           | Pending: nonmodal export panel or status popover. Native file-save windows are separate OS UI.                                                                                                                                                                  |
 | Matrix action through LaTeX's overflow command path          | Math palette is nonmodal                                  | Modal matrix form still wired to the overflow action; normal Math menu uses the compact grid picker             | Pending: reuse compact grid picker for overflow too.                                                                                                                                                                                                            |
 
-`LatexTableInsertDialog.tsx` also contains a modal, but has no callers in the
-current source; it is not listed as a reachable control. The normal Table
-size picker is already compact. Math symbols, normal Matrix picker, menus,
+The unused standalone Table insertion dialog has been removed; Table uses the
+compact size picker. Math symbols, normal Matrix picker, menus,
 Find, outline and inline object/footer controls do not use these modal dialogs.
 
 Source owners: `apps/web/src/scient/latex/LatexLinkDialog.tsx`,
@@ -198,7 +198,8 @@ they do not establish new owner decisions or runtime qualification.
   **Appearance**, **Caption**, and a compact **Label** for captioned tables directly.
   Remove the overall Table inspector. Structural menus retain the selected cells;
   Per the owner's follow-up, remove Select table, Select row, Select column and Clear cells from the menus
-  and defer table color controls. Appearance uses the shared menu and switch
+  and defer table color controls at that review. The October 7 author request
+  below adds table colors to the planned footer work. Appearance uses the shared menu and switch
   styles, with Rules, Width, Header row, Column, Borders and Layout; only column
   dimensions and longtable continuation need compact forms in submenus.
   Caption focuses content on the paper;
@@ -214,6 +215,84 @@ they do not establish new owner decisions or runtime qualification.
   label, and both can be added again. Labels commit on Enter/blur and reject
   invalid or duplicate keys. Imported figure panels retain their existing
   dedicated controls. Native interaction qualification remains pending.
+- Statement footer (owner approved October 7): show the statement type selector,
+  **Title**, and a compact **Label** directly, with no overall Statement popup.
+  Type uses existing document definitions. Title only activates editing at its
+  printed location on paper; clearing it removes the optional argument, and an
+  extra delete in the empty field returns the caret to the statement body.
+  The footer retains its context after title removal and app focus changes.
+  Clicking the printed title places the caret at the click; the footer's Title
+  action enters at its beginning.
+  Labels can be added, edited or removed, validate keys and duplicates, and share
+  heading label renaming for recognized references in single-file documents.
+  Proofs show only **Title**. Numbering follows the document definitions.
+  Native interaction qualification remains pending.
+- Algorithm footer (owner approved October 7): show **Steps**, **Appearance**,
+  **Caption**, and a compact **Label** for captioned floats directly, with no
+  overall Algorithm popup. Steps groups insertion, wrapping, comments, branches,
+  movement and deletion; complete structures stay paired, and menus preserve
+  the editing selection. Insert creates new content; Wrap encloses existing steps.
+  Remove wrapper is absent from the footer; Backspace/Delete on an empty opening
+  or closing line removes its structure while preserving the enclosed content.
+  The deletion command is **Delete step**. Appearance contains a **Line numbers**
+  toggle using the same shared switch as Numbered headings, keeping the menu open,
+  and float placement. Caption activates editing on paper; clearing it removes its number
+  and label, and an extra delete in an empty caption returns to the body.
+  Label shares duplicate validation and single-file reference renaming.
+  Standalone algpseudocode shows only Steps and Appearance with line numbers.
+  Native interaction qualification remains pending.
+- Code footer (owner approved October 7): show **Language**, **Appearance**,
+  **Caption**, and a compact **Label** for captioned listings directly, without
+  an overall Code popup. Language uses compact shared menu rows, with a search
+  field that fits the popup and readable language names; imported choices retain
+  their source values.
+  Appearance groups frame, wrapping, font size, tab width, line numbering and
+  caption position using the shared menu controls and heading-style switches.
+  Caption edits on paper, removes its number/label when cleared, and returns to
+  code on an extra empty delete. Listing labels share duplicate checking,
+  single-file renaming and reference navigation. Syntax color and Delete code block
+  buttons are absent. Literal verbatim blocks keep direct editing without a footer.
+  Native interaction qualification remains pending.
+- Box footer (owner approved October 7): show **Appearance** and **Title** directly,
+  without an overall Box popup. Appearance groups background, border color and
+  thickness (including no border), corners, padding and Allow page breaks using
+  shared menus and the heading-style switch. Corners offers Square/Rounded;
+  Padding offers None/Compact/Normal/Spacious. Exact radius and padding fields
+  sit under Custom, keeping the main submenus as simple choice lists. Custom
+  dimension panels fit their contents, reserve the widest unit option, and cap
+  their width to the available space; controls wrap in narrow panels.
+  Title activates editing on paper;
+  clearing it removes the title option, and an extra empty delete returns to the
+  box body. Printed-title clicks retain their clicked caret position. Ordinary
+  boxes have no Caption, Numbered, Label or Delete box controls. Imported options
+  remain intact when an unrelated property changes.
+  Native interaction qualification remains pending.
+- Source-only blocks (owner approved October 7) have no contextual footer.
+  Delete lives in the block header; explicit removal deletes only that block's
+  source and participates in document undo. Apply LaTeX and Cancel stay inside
+  the block while its source editor is open. Stale source and unrelated pending
+  drafts remain protected; ordinary selection cannot delete across these blocks.
+- Remaining footer cleanup (owner requested October 7): ordered lists expose a
+  compact **Numbering** menu with format, Start at and Continue previous. Description
+  lists expose **Items** with Insert item/Delete item. Citations use **References**,
+  **Form** and **Note**, with searchable entries and source-preserving note edits.
+  Cross-references use a searchable **Target** menu. Links expose **Text** to edit
+  plain content on paper, plus **Address** or **Target** for metadata. Footnotes expose
+  **Edit text** beside their marker; formatted content retains Source editing.
+  Part headings use the existing Numbered toggle and compact validated **Label**.
+  Columns use a count menu; minipages use **Appearance** for dimensions/alignment;
+  panel rows use **Layout** for ratios and spacing. Width changes retain imported
+  gaps, and spacing changes retain imported widths. Multi-panel figures expose
+  **Panel**, project-image **Replace**, and existing figure/panel captions and labels;
+  click/focus chooses the active panel. Per the October 7 user request, TikZ and
+  pgfplots render read-only with no **Drawing** menu or editable drawing labels;
+  their figure captions keep existing controls. Bibliographies have no
+  footer: records live in Document > References. Quotes have no object footer;
+  custom referenceable environments expose only their existing **Label** fields.
+  No duplicate object names, explanatory paragraphs, select-object or delete-object
+  buttons appear in these footers. Nested menus share selection ownership; custom
+  forms fit their contents and are capped to the available width.
+  Native interaction qualification remains pending.
 - **Math → Brackets** places Left/Right above Size/Match, with Insert below.
   Per the owner's October 6 decision, controls fit their widest option, the
   panel fits its contents within available space, and narrow layouts wrap rows.
@@ -258,6 +337,52 @@ implementing it; use compact nonmodal controls and the shared source/save/undo p
 Existing table, citation and other contextual-footer improvements are separate
 from this menu rollback and remain in the local implementation.
 
+### Author request: fonts and colors (2026-10-07)
+
+Fonts and text colors are already included in the requested capabilities above.
+Keep them explicit in the plan, with compact controls inside existing menus:
+
+- **Text formatting:** add font-family, foreground-color and highlight controls
+  for selected text and subsequent typing. Their proposed home is **Text**;
+  document-wide fonts remain in **Document settings**. Local size remains deferred.
+- **Table footer:** add colors under the existing **Appearance** menu, including
+  cell background, text and printed border/rule colors. Preserve the selected
+  cells while the menu is open and apply changes to that selection; provide a
+  clear way to reset only the chosen color override.
+- **Box footer:** keep background and border/frame colors under **Appearance**
+  in the box's contextual footer, and complete title background/text colors where
+  the box supports them. Box body text uses the shared text-formatting controls;
+  the title and body continue to edit on paper.
+
+Reuse document-defined colors and preserve imported font/color declarations and
+unrelated styling. Use the shared source/save/undo path, compact nonmodal menus,
+and no additional top-level buttons. These are requested additions and corrections;
+they do not assert that the controls are implemented or interaction-qualified.
+
+### Author request: configurable menu shortcuts (2026-10-07)
+
+Extend the existing **Document → Keyboard shortcuts** settings to cover suitable
+menu and contextual-footer commands, including commands with saved option values.
+This is requested functionality; detailed placement and implementation remain pending.
+
+- Let users assign, change and remove a shortcut, and manually edit its command
+  and saved parameters. Reuse the existing shortcuts settings instead of adding
+  shortcut buttons throughout the editor.
+- Support specific presets: for example, bind a user-chosen shortcut to apply
+  foreground color `#245A81` directly, without reopening the color picker. Allow
+  the color code and key combination to be edited independently. Distinguish
+  text color, highlight, table-cell fill and box background as separate actions.
+- Offer applicable menu actions such as font family, formatting and object
+  appearance. Use the same command, validation, selection and undo behavior as
+  choosing the corresponding menu option. A saved value must not change the
+  document's formatting until the shortcut is invoked.
+- Respect editing context: table actions require a table selection, box actions
+  require an active box, and text actions target selected text or subsequent
+  typing. Keep ordinary typing and shortcuts in unrelated inputs unaffected.
+- Show effective shortcuts beside their menu actions where applicable. Detect
+  conflicting or reserved bindings and let users resolve conflicts explicitly;
+  retain existing defaults and provide a reset option for custom bindings.
+
 ## Nested selection and navigation (2026-10-07)
 
 Local decision: use smooth ordinary cursor movement, visible editing scope, and
@@ -268,27 +393,96 @@ feedback; it adds no buttons or explanatory content to the Scient menus.
   entering a submenu, or using a nested select retains the editing surface and
   selection. Commands restore the range before acting; root-menu Escape returns
   focus to the original surface. Clicking another editing location releases it.
-- The footer shows the nesting path; faint outlines distinguish active scope from
-  selected content. Retained selection has a muted fill while menus own focus.
-  Guides remain visible during menu use and do not enter source, clipboard, or
-  printed output.
+- The footer shows the environment type, word count and contextual controls, with
+  no nesting path in any context. Gray corner marks show only the innermost editing
+  slot's contents and disappear during selection. Prose and math share Markdown's
+  text-selection fill; rectangular cell selection shares its cell highlight.
+  Retained selection has a muted fill while menus own focus. Empty and active slots
+  use the same faint gray corner markers with short strokes within the active
+  structure. An empty slot keeps its marker size and position when entered,
+  alongside the caret.
+  Guides retain stable click targets and never enter source,
+  clipboard content or printed output.
+- Ordinary table cells use no slot markers; math inside a table keeps math markers.
+  Every table edge is visible as either its printed rule or a faint dashed editing
+  guide for the missing segment, with thin strokes and short dashes that stay
+  consistent across zoom changes. Real borders are never overpainted by guides,
+  including shared edges and merged cells. New tables use a full grid and focus
+  the first cell instead of selecting the whole table.
+- Basic and styled frame contents stay editable on paper, including nested tables,
+  split box regions and framed listings. Unsupported box source remains editable
+  in place; its source field can shrink to one line without discarding text.
+- Math formatting commands such as `\textbf` and `\mathbf` complete with a
+  braced empty argument and focus its editable slot. Keyboard acceptance and
+  suggestion clicks share this behavior. Empty formatting slots are restored
+  when loading source, and placeholder tokens stay out of saved LaTeX. Custom
+  document macros retain their own definitions and completion behavior.
+- Carets use local text color and size, with one thin stroke. Inside an accent
+  body such as `\hat{...}`, the painted caret is 15% shorter with its baseline
+  preserved. This does not resize the expression. Editing carets pause while a
+  menu owns focus and remain hidden during content/cell selection.
 - Ordinary text selection can cross formatting wrappers. Crossing structural math
   branches includes their owner; crossing sibling grid cells selects a rectangle
   including empty cells. Crossing an outer cell includes its nested grid.
+- Selection highlights and slot guides follow document scrolling using current
+  screen coordinates, including while menus retain the selection. Wide display
+  math pans horizontally after entering it, through trackpad gestures or
+  Shift+wheel and caret following, without a scroll bar or range control. Its
+  highlights clip to the visible math viewport.
+- A base and its superscript/subscript share one outer selection boundary.
+  Crossing out of the base or script includes both, including when the pointer
+  leaves `\left(x\right)^2` through its base without entering the exponent.
+  Selection inside the body or exponent remains precise. Whole-structure scopes
+  include the scripts. A complete underbrace uses one connected blue highlight
+  across its body, brace and label; selecting only its label or formatted text
+  keeps the highlight within that selection.
 - Left/right movement follows the existing text engine, including Hebrew. Math
   array exits use the innermost array; repeated vertical moves retain horizontal
   intent. Tab/Shift+Tab visit structural math slots and empty cells without extra
   formatting stops.
+- Ctrl+Enter (Cmd on macOS) splits the active math flow at the caret and places
+  the caret at the start of the new row. A single-line flow becomes `gathered`;
+  existing matrices/cases/aligned rows retain their columns, moving the current
+  cell's suffix and later cells below. Nested bodies keep their surrounding
+  structure. Empty rows remain editable. This follows the existing undo/save
+  path, row-count limit and imported numbering protections, without menu changes.
 - Expand/shrink selection use Alt+Shift+Up/Down. Leave parent before/after uses
   Ctrl+Alt+Left/Right (Cmd on macOS). These are configurable in the existing
   shortcut settings. Expansion can pass from a nested editor to its containing
   table/document; shrinking returns to the prior selection. Leaving a text style
   removes that typing style while retaining other active formatting.
+- Enter formatting uses Ctrl+Alt+Down (Cmd on macOS). It keeps the caret at the
+  same text position and activates the adjacent authored span, including colored
+  text and inline frames. At a shared boundary it re-enters the span just left,
+  otherwise preferring the following span. Repeated entry visits outer then
+  inner formatting. Leave parent before/after
+  selects the outside typing context. Menu snapshots retain this formatting
+  choice together with the range. The command is configurable in the existing
+  shortcut settings; it adds no menu controls or explanations.
+- Ctrl+A (Cmd+A on macOS) selects the innermost editing scope, then each parent
+  on repeated presses, with no fixed number of levels. For an underbrace label,
+  this visits Bold → Label → Underbrace → Equation → enclosing content.
+  Distinct scopes remain separate steps even when their ranges match. Clicking,
+  moving the caret or typing starts a new sequence; menu use preserves it.
+  Document selection highlights every included formula, including the one where
+  expansion started, even when its math editor remains active.
 - Supported prose wrappers use their authored source ranges when the projection
   matches the live paragraph. Pending edits use current marked text ranges.
   Formula/table snapshots reject replaced models instead of replaying old offsets;
   prose bookmarks map through document transactions.
 
-Implementation is local and uncommitted. Static checks are recorded in the task
-report; live interaction qualification remains pending. Existing Hebrew support,
-Symbols customization, and the owner's command-placement decisions are retained.
+The three math-selection rules have real Chromium regression fixtures using
+MathLive and the complete Visual editor: bracket/script boundaries, connected
+highlighting, and repeated Ctrl+A, including menu retention and a 13-step
+sequence. Selection and movement between math/text slots leave source unchanged.
+Existing Hebrew support, Symbols customization, and the owner's command-placement
+decisions are retained.
+
+Qualification before the document-highlight correction, footer simplification
+and shared base/script boundary and caret/guide corrections:
+16 Chromium checks and 82 focused unit checks pass; the web type check passes.
+Interaction checks have not been rerun for those changes or the unified slot-marker
+and table-guide refinements. Formatting and targeted lint pass (existing warnings
+remain in the table/editor files); the latest web type check passes.
+Browser fixtures run from `apps/web` with
+`node node_modules/vitest/vitest.mjs run --config latexSelection.vitest.config.ts`.

@@ -1,7 +1,11 @@
 import type { Editor } from "@tiptap/core";
 import { useEditorState } from "@tiptap/react";
 import { latexEquationReferencesKey } from "./latexEquationReferences";
-import { LatexSelect } from "./LatexSelect";
+import { useState } from "react";
+import { Input } from "~/components/ui/input";
+import { MenuRadioGroup } from "~/components/ui/menu";
+import { DockMenu, DockCommandRadioItem } from "../writing/dockChrome";
+import { LatexContextMenuForm } from "./LatexContextMenuForm";
 
 /** Retarget a reference without changing its command or display text. */
 export function LatexCrossReferenceControl(props: {
@@ -11,6 +15,7 @@ export function LatexCrossReferenceControl(props: {
   disabled: boolean;
   onChange: (value: string) => void;
 }) {
+  const [query, setQuery] = useState("");
   const targets = useEditorState({
     editor: props.editor,
     selector: ({ editor }) => {
@@ -33,25 +38,36 @@ export function LatexCrossReferenceControl(props: {
   const options = targets ?? [];
   const unresolved = !options.some((option) => option.value === props.value);
   return (
-    <label>
-      Target
-      <LatexSelect
-        aria-label="Cross-reference target"
-        value={props.value}
-        disabled={props.disabled}
-        options={
-          unresolved
-            ? [
-                {
-                  value: props.value,
-                  label: props.value ? `${props.value} · Unresolved` : "Choose a target",
-                },
-                ...options,
-              ]
-            : options
-        }
-        onValueChange={props.onChange}
-      />
-    </label>
+    <DockMenu icon={undefined} label="Target" commandScope="latex" disabled={props.disabled}>
+      <LatexContextMenuForm label="Find reference target">
+        <Input
+          size="compact"
+          type="search"
+          aria-label="Find reference target"
+          placeholder="Search targets"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      </LatexContextMenuForm>
+      <MenuRadioGroup value={props.value}>
+        {unresolved && props.value && (
+          <DockCommandRadioItem value={props.value} disabled size="compact" onClick={() => {}}>
+            {props.value}
+          </DockCommandRadioItem>
+        )}
+        {options
+          .filter((option) => option.label.toLowerCase().includes(query.trim().toLowerCase()))
+          .map((option) => (
+            <DockCommandRadioItem
+              key={option.value}
+              value={option.value}
+              size="compact"
+              onClick={() => props.onChange(option.value)}
+            >
+              <span className="truncate">{option.label}</span>
+            </DockCommandRadioItem>
+          ))}
+      </MenuRadioGroup>
+    </DockMenu>
   );
 }

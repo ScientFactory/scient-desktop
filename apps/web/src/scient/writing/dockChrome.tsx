@@ -185,6 +185,7 @@ export function DockMenu(props: {
   const ownerId = useId();
   const [open, setOpen] = useState(false);
   const closedByCommand = useRef(false);
+  const closedByEscape = useRef(false);
   const cancelled = useRef(false);
   const pendingCommand = useRef<(() => void) | null>(null);
   const queueCommand = useCallback((action: () => void) => {
@@ -194,14 +195,13 @@ export function DockMenu(props: {
     if (open) return;
     const command = pendingCommand.current;
     pendingCommand.current = null;
-    if (command || cancelled.current) {
+    if (command) {
       document.getElementById(ownerId)?.dispatchEvent(
         new CustomEvent("scient-writing-restore-selection", {
           bubbles: true,
-          detail: command ? "selection" : "focus",
+          detail: "selection",
         }),
       );
-      cancelled.current = false;
     }
     command?.();
   }, [open, ownerId]);
@@ -209,10 +209,23 @@ export function DockMenu(props: {
     <DockCommandContext value={queueCommand}>
       <Menu
         open={open}
+        onOpenChangeComplete={(open) => {
+          if (open || !cancelled.current) return;
+          cancelled.current = false;
+          document.getElementById(ownerId)?.dispatchEvent(
+            new CustomEvent("scient-writing-restore-selection", {
+              bubbles: true,
+              detail: "focus",
+            }),
+          );
+        }}
         onOpenChange={(open, details) => {
           if (open) closedByCommand.current = false;
           else if (details.reason === "item-press") closedByCommand.current = true;
           cancelled.current = !open && details.reason === "escape-key";
+          closedByEscape.current =
+            cancelled.current &&
+            Boolean(document.getElementById(ownerId)?.closest(".scient-latex-visual-workspace"));
           setOpen(open);
         }}
       >
@@ -246,9 +259,9 @@ export function DockMenu(props: {
           data-keybinding-capture=""
           data-dock-command-scope={props.commandScope}
           data-writing-menu-owner={ownerId}
-          // Commands own focus (editor, nested editor, or a picker). Escape and
-          // other dismissals retain the menu's standard accessible focus return.
-          finalFocus={() => !closedByCommand.current}
+          // Commands own focus. LaTeX Escape restores the editing surface after
+          // the popup has released focus; other dismissals use the trigger.
+          finalFocus={() => !closedByCommand.current && !closedByEscape.current}
         >
           {props.groupLabel ? (
             <MenuGroup>

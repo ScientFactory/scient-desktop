@@ -111,25 +111,27 @@ export function algorithmLineLayout(names: readonly string[], interval: number) 
 export function parseLatexAlgorithm(source: string) {
   if (source.length > 100000) return null;
   const opening = /^\\begin\{algorithm\}(?:\[([htbpH!]+)\])?\s*/u.exec(source);
-  if (!opening || !source.endsWith("\\end{algorithm}")) return null;
-  let at = opening[0].length;
-  let caption: ReturnType<typeof argument> = null,
-    label: ReturnType<typeof argument> = null;
-  for (;;) {
-    const command = /^\\(caption|label)\b/u.exec(source.slice(at));
-    if (!command) break;
-    const value = argument(source, at + command[0].length);
-    if (!value) return null;
-    if (command[1] === "caption") {
-      if (caption) return null;
-      caption = value;
-    } else {
-      if (!caption || label || /[{}\\%\s#$&~^]/u.test(value.value)) return null;
-      label = value;
+  if (!opening && !source.startsWith("\\begin{algorithmic}")) return null;
+  if (opening && !source.endsWith("\\end{algorithm}")) return null;
+  let at = opening?.[0].length ?? 0;
+  let caption: (NonNullable<ReturnType<typeof argument>> & { commandFrom: number }) | null = null,
+    label: (NonNullable<ReturnType<typeof argument>> & { commandFrom: number }) | null = null;
+  if (opening)
+    for (;;) {
+      const command = /^\\(caption|label)\b/u.exec(source.slice(at));
+      if (!command) break;
+      const value = argument(source, at + command[0].length);
+      if (!value) return null;
+      if (command[1] === "caption") {
+        if (caption) return null;
+        caption = { ...value, commandFrom: at };
+      } else {
+        if (!caption || label || /[{}\\%\s#$&~^]/u.test(value.value)) return null;
+        label = { ...value, commandFrom: at };
+      }
+      at = value.end;
+      while (/\s/u.test(source[at] ?? "")) at++;
     }
-    at = value.end;
-    while (/\s/u.test(source[at] ?? "")) at++;
-  }
   const fontSize =
     /^\\(tiny|scriptsize|footnotesize|small|normalsize|large|Large|LARGE|huge|Huge)\b\s*/u.exec(
       source.slice(at),
@@ -141,7 +143,12 @@ export function parseLatexAlgorithm(source: string) {
   if (interval > 100) return null;
   const from = at + inner[0].length;
   const to = source.indexOf("\\end{algorithmic}", from);
-  if (to < from || !/^\s*\\end\{algorithm\}$/u.test(source.slice(to + "\\end{algorithmic}".length)))
+  if (
+    to < from ||
+    !(opening ? /^\s*\\end\{algorithm\}$/u : /^\s*$/u).test(
+      source.slice(to + "\\end{algorithmic}".length),
+    )
+  )
     return null;
   const body = source.slice(from, to);
   const starts = commands(
@@ -191,14 +198,18 @@ export function parseLatexAlgorithm(source: string) {
   return {
     from,
     to,
+    openingTo: opening?.[0].trimEnd().length ?? 0,
+    innerFrom: at,
+    innerOpeningTo: from,
     rows,
     caption,
     label,
     layout: {
       kind: "algorithm",
+      ...(!opening ? { floating: false } : {}),
       fontSize: fontSize?.[1] ?? null,
       interval,
-      placement: opening[1] ?? "",
+      placement: opening?.[1] ?? "",
       captioned: caption !== null,
       label: label?.value ?? "",
     },

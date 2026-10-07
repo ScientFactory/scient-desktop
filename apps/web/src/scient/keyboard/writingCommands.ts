@@ -18,7 +18,9 @@ export const WRITING_COMMANDS = [
   ["outline", "Document outline", ["alt+o o"]],
   ["shortcuts", "Shortcuts and reference", ["alt+o k"]],
   ["selectionExpand", "Expand selection", ["alt+shift+arrowup"]],
+  ["selectionScopeExpand", "Select current scope, then parent", ["mod+a"]],
   ["selectionShrink", "Shrink selection", ["alt+shift+arrowdown"]],
+  ["enterScope", "Enter formatting scope", ["mod+alt+arrowdown"]],
   ["leaveParentBefore", "Leave parent before", ["mod+alt+arrowleft"]],
   ["leaveParentAfter", "Leave parent after", ["mod+alt+arrowright"]],
 ] as const;

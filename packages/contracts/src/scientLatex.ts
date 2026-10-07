@@ -207,6 +207,23 @@ export const ScientLatexBuildRequest = Schema.Struct({
 });
 export type ScientLatexBuildRequest = typeof ScientLatexBuildRequest.Type;
 
+export const ScientLatexArtworkRequest = Schema.Struct({
+  workspaceRoot: PathString,
+  relativePath: PathString,
+  preamble: Schema.String.check(Schema.isMaxLength(200_000)),
+  source: Schema.String.check(Schema.isMaxLength(100_000)),
+  widthInches: Schema.Number.check(Schema.isBetween({ minimum: 0.1, maximum: 30 })),
+});
+export type ScientLatexArtworkRequest = typeof ScientLatexArtworkRequest.Type;
+
+export const ScientLatexArtworkResult = Schema.Union([
+  Schema.TaggedStruct("ready", {
+    pdfBase64: Schema.String.check(Schema.isMaxLength(8_000_000)),
+  }),
+  Schema.TaggedStruct("unavailable", { message: Schema.String }),
+]);
+export type ScientLatexArtworkResult = typeof ScientLatexArtworkResult.Type;
+
 export const ScientLatexStatusRequest = Schema.Struct({
   workspaceRoot: PathString,
   relativePath: PathString,

@@ -1,6 +1,5 @@
-import { normalizePdfZoom, type PdfZoomMode } from "./pdfReaderModel";
+import { normalizePdfZoom, pdfFitWidthScale, type PdfZoomMode } from "./pdfReaderModel";
 
-const PDF_VIEWER_HORIZONTAL_PADDING = 40;
 const PDF_ZOOM_BOUNDARY_TOLERANCE = 0.005;
 const ADAPTIVE_ZOOM_VALUES = new Set(["auto", "page-fit", "page-height", "page-width"]);
 
@@ -62,8 +61,8 @@ function fitWidthScale(target: PdfResponsiveZoomTarget, containerWidth: number):
   }
   // Matches PDF.js's page-width calculation for the reader's default vertical
   // scroll mode and visible page borders. Keep this with the runtime config.
-  const availableWidth = Math.max(0, containerWidth - PDF_VIEWER_HORIZONTAL_PADDING);
-  return normalizePdfZoom((availableWidth / pageView.width) * pageView.scale);
+  const scale = pdfFitWidthScale(containerWidth, pageView.width / pageView.scale);
+  return scale === null ? null : normalizePdfZoom(scale);
 }
 
 export function createPdfResponsiveZoomController(): PdfResponsiveZoomController {

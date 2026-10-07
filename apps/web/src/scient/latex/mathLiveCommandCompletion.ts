@@ -81,7 +81,7 @@ export function installMathCommandCompletion(
     math.removeAttribute("aria-activedescendant");
     math.removeAttribute("aria-controls");
   };
-  const accept = (completion: MathCommandCompletion) => {
+  const accept = (completion: MathCommandCompletion, focus = true) => {
     if (math.readOnly || preferences().completion === "off" || !commandDraft(math)) return;
     hide();
     // Reject the raw command before inserting; surrounding formula atoms stay intact.
@@ -94,11 +94,11 @@ export function installMathCommandCompletion(
         format: "latex",
         mode: "math",
         selectionMode: "placeholder",
-        focus: true,
+        focus,
       });
       if (completion.text) math.executeCommand(["switchMode", "text"]);
     }
-    math.focus();
+    if (focus) math.focus();
     refresh();
   };
   const position = () => {
@@ -236,11 +236,42 @@ export function installMathCommandCompletion(
     }
     return false;
   };
+  const completeTyped = () => {
+    const draft = commandDraft(math);
+    const completion = draft && mathArgumentCompletion(draft.typed);
+    if (
+      math.readOnly ||
+      preferences().completion === "off" ||
+      !completion ||
+      hasDocumentMacro(completion.label)
+    )
+      return false;
+    accept(completion, false);
+    return true;
+  };
+  // MathLive's native suggestion clicks bypass the keyboard completion adapter.
+  const suggested = (event: MouseEvent) => {
+    if (!(event.target instanceof Element) || !math.hasFocus() || !commandDraft(math)) return;
+    const option = event.target.closest<HTMLElement>("#mathlive-suggestion-popover [data-command]");
+    const completion = option && mathArgumentCompletion(option.dataset.command ?? "");
+    if (
+      math.readOnly ||
+      preferences().completion === "off" ||
+      !completion ||
+      hasDocumentMacro(completion.label)
+    )
+      return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    accept(completion);
+  };
+  document.addEventListener("click", suggested, true);
   for (const name of ["input", "selection-change", "mode-change", "focus"])
     math.addEventListener(name, schedule);
   math.addEventListener("blur", hide);
   return {
     handleKeyDown,
+    completeTyped,
     refresh: schedule,
     dispose() {
       disposed = true;
@@ -249,6 +280,7 @@ export function installMathCommandCompletion(
       for (const name of ["input", "selection-change", "mode-change", "focus"])
         math.removeEventListener(name, schedule);
       math.removeEventListener("blur", hide);
+      document.removeEventListener("click", suggested, true);
     },
   };
 }

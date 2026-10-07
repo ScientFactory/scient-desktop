@@ -10,6 +10,7 @@ interface Scope {
   from: number;
   to: number;
   mark?: Mark;
+  depth?: number;
   before?: number;
   after?: number;
 }
@@ -24,6 +25,8 @@ const labels: Readonly<Record<string, string>> = {
   latexSlanted: "Slanted",
   latexUpright: "Upright",
   latexMedium: "Medium",
+  latexColor: "Colored text",
+  latexBackground: "Text box",
 };
 
 export function latexContainerScope(element: HTMLElement): string[] {
@@ -38,16 +41,18 @@ export function latexContainerScope(element: HTMLElement): string[] {
   return cells;
 }
 
-function proseScopes(view: EditorView, source: string | null): Scope[] {
-  const { selection, storedMarks } = view.state;
+function inlineScopes(view: EditorView, source: string | null): Scope[] {
+  const { selection } = view.state;
   const { $head } = selection;
+  if (!$head.parent.isTextblock) return [];
   const scopes: Scope[] = [];
-  const marks = storedMarks ?? $head.marks();
+  const marks: Mark[] = [];
+  $head.parent.forEach((node) => {
+    for (const mark of node.marks) if (!mark.isInSet(marks)) marks.push(mark);
+  });
   const offset = $head.start();
   // Marks stay character ranges: crossing them never promotes ordinary selection.
   for (const mark of marks) {
-    let from = $head.pos,
-      to = $head.pos;
     const runs: { from: number; to: number }[] = [];
     $head.parent.forEach((node, position) => {
       if (mark.isInSet(node.marks)) {
@@ -56,35 +61,33 @@ function proseScopes(view: EditorView, source: string | null): Scope[] {
         else runs.push({ from: offset + position, to: offset + position + node.nodeSize });
       }
     });
-    const run = runs.find((range) => range.from <= $head.pos && range.to >= $head.pos);
-    if (!run) continue;
-    ({ from, to } = run);
-    scopes.push({
-      label: labels[mark.type.name] ?? mark.type.name.replace(/^latex/u, ""),
-      from,
-      to,
-      mark,
-    });
+    scopes.push(
+      ...runs.map((run) => ({
+        label: labels[mark.type.name] ?? mark.type.name.replace(/^latex/u, ""),
+        ...run,
+        mark,
+      })),
+    );
   }
-  scopes.sort((a, b) => a.to - a.from - (b.to - b.from));
   const authored = source === null ? null : latexInlineEditingScopes(source);
   if (authored?.length) {
-    const exact = authored
-      .filter((scope) => scope.from + offset <= $head.pos && scope.to + offset >= $head.pos)
-      .sort((a, b) => a.to - a.from - (b.to - b.from) || b.depth - a.depth)
-      .flatMap((scope) => {
-        const mark = marks.find((mark) => mark.type.name === scope.mark);
-        return mark
-          ? [
-              {
-                label: labels[scope.mark] ?? scope.mark.replace(/^latex/u, ""),
-                from: offset + scope.from,
-                to: offset + scope.to,
-                mark,
-              },
-            ]
-          : [];
-      });
+    const exact = authored.flatMap((scope) => {
+      const mark = marks.find(
+        (mark) =>
+          mark.type.name === scope.mark && (!scope.attrs || mark.eq(mark.type.create(scope.attrs))),
+      );
+      return mark
+        ? [
+            {
+              label: labels[scope.mark] ?? scope.mark.replace(/^latex/u, ""),
+              from: offset + scope.from,
+              to: offset + scope.to,
+              mark,
+              depth: scope.depth,
+            },
+          ]
+        : [];
+    });
     const exactMarks = new Set(exact.map((scope) => scope.mark.type.name));
     scopes.splice(
       0,
@@ -93,6 +96,18 @@ function proseScopes(view: EditorView, source: string | null): Scope[] {
       ...scopes.filter((scope) => !exactMarks.has(scope.mark!.type.name)),
     );
   }
+  return scopes.sort(
+    (a, b) => a.to - a.from - (b.to - b.from) || (b.depth ?? -1) - (a.depth ?? -1),
+  );
+}
+
+function proseScopes(view: EditorView, source: string | null): Scope[] {
+  const { selection, storedMarks } = view.state;
+  const { $head } = selection;
+  const marks = storedMarks ?? $head.marks();
+  const scopes = inlineScopes(view, source).filter(
+    (scope) => scope.from <= $head.pos && scope.to >= $head.pos && scope.mark!.isInSet(marks),
+  );
   for (let depth = $head.depth; depth > 0; depth--) {
     const node = $head.node(depth);
     scopes.push({
@@ -141,14 +156,37 @@ export const LatexStructuredSelection = Extension.create<{
     let bookmark: SelectionBookmark | null = null;
     let applying = false;
     let capturedMarks: readonly Mark[] | null = null;
-    const history: { bookmark: SelectionBookmark; marks: readonly Mark[] | null }[] = [];
+    let scopeIndex = 0;
+    let scopeCandidates: Scope[] | null = null;
+    let exitedScope: Scope | null = null;
+    const history: {
+      bookmark: SelectionBookmark;
+      marks: readonly Mark[] | null;
+      scopeIndex: number;
+    }[] = [];
     return [
       new Plugin({
+        props: {
+          handleDOMEvents: {
+            pointerdown: () => {
+              history.length = 0;
+              scopeIndex = 0;
+              scopeCandidates = null;
+              exitedScope = null;
+              return false;
+            },
+          },
+        },
         state: {
           init: () => null,
           apply(tr) {
             if (bookmark) bookmark = bookmark.map(tr.mapping);
-            if (tr.docChanged || (tr.selectionSet && !applying)) history.length = 0;
+            if (tr.docChanged || (tr.selectionSet && !applying)) {
+              history.length = 0;
+              scopeIndex = 0;
+              scopeCandidates = null;
+              exitedScope = null;
+            }
             return null;
           },
         },
@@ -167,11 +205,14 @@ export const LatexStructuredSelection = Extension.create<{
                     .toReversed()
                     .map((scope) => scope.label),
                 ],
-                scopes: () =>
-                  scopes
-                    .filter((scope) => scope.mark)
-                    .slice(0, 2)
-                    .flatMap((scope) => rangeRects(view, scope.from, scope.to)),
+                scopes: () => {
+                  if (view.dom.closest('td,th,.scient-latex-rich-preview[data-kind="table"]'))
+                    return [];
+                  const format = scopes.find((scope) => scope.mark);
+                  if (format) return rangeRects(view, format.from, format.to);
+                  const slot = view.dom.closest(".scient-latex-inline-field");
+                  return slot ? [slot.getBoundingClientRect()] : [];
+                },
                 selection: () => {
                   const selection = bookmark?.resolve(view.state.doc);
                   return selection && !selection.empty
@@ -197,14 +238,58 @@ export const LatexStructuredSelection = Extension.create<{
               const { selection, storedMarks } = view.state;
               const scopes = proseScopes(view, source(view.state.selection.$head.parent));
               let tr = view.state.tr;
-              if (command === "selectionShrink") {
+              if (command === "enterScope") {
+                if (!selection.empty || !selection.$head.parent.isTextblock) return false;
+                const marks = storedMarks ?? selection.$head.marks();
+                const candidates = inlineScopes(view, source(selection.$head.parent));
+                // At a shared boundary, enter the following span before the previous one.
+                // Equal ranges retain authored outer-to-inner ordering.
+                const available = candidates
+                  .filter(
+                    (scope) =>
+                      scope.from <= selection.head &&
+                      scope.to >= selection.head &&
+                      !scope.mark!.isInSet(marks),
+                  )
+                  .sort(
+                    (a, b) =>
+                      Number(b.to > selection.head) - Number(a.to > selection.head) ||
+                      b.to - b.from - (a.to - a.from) ||
+                      (a.depth ?? -1) - (b.depth ?? -1),
+                  );
+                const next =
+                  available.find(
+                    (scope) =>
+                      exitedScope?.mark?.eq(scope.mark!) &&
+                      scope.from === exitedScope.from &&
+                      scope.to === exitedScope.to,
+                  ) ?? available[0];
+                if (!next) return false;
+                const surrounding = marks.filter((mark) => {
+                  const ranges = candidates.filter((scope) => scope.mark!.eq(mark));
+                  return (
+                    !ranges.length ||
+                    ranges.some((scope) => scope.from <= next.from && scope.to >= next.to)
+                  );
+                });
+                tr = tr.setStoredMarks(next.mark!.addToSet(surrounding));
+                history.length = 0;
+                scopeIndex = 0;
+                scopeCandidates = null;
+                exitedScope = null;
+              } else if (command === "selectionShrink") {
                 const previous = history.pop();
                 if (!previous) return false;
+                scopeIndex = previous.scopeIndex;
                 tr = tr
                   .setSelection(previous.bookmark.resolve(tr.doc))
                   .setStoredMarks(previous.marks);
-              } else if (command === "selectionExpand") {
-                if (selection.empty && selection.$from.parent.isTextblock) {
+              } else if (command === "selectionExpand" || command === "selectionScopeExpand") {
+                if (
+                  command === "selectionExpand" &&
+                  selection.empty &&
+                  selection.$from.parent.isTextblock
+                ) {
                   const text = selection.$from.parent.textBetween(
                     0,
                     selection.$from.parent.content.size,
@@ -223,14 +308,22 @@ export const LatexStructuredSelection = Extension.create<{
                     }
                   }
                 }
-                const scope = scopes.find(
-                  (scope) =>
+                if (command === "selectionScopeExpand" && !scopeCandidates)
+                  scopeCandidates = scopes;
+                const candidates = command === "selectionScopeExpand" ? scopeCandidates! : scopes;
+                const next = candidates.findIndex(
+                  (scope, index) =>
+                    (command !== "selectionScopeExpand" || index >= scopeIndex) &&
                     scope.from <= selection.from &&
                     scope.to >= selection.to &&
-                    (scope.from < selection.from || scope.to > selection.to),
+                    (command === "selectionScopeExpand" ||
+                      scope.from < selection.from ||
+                      scope.to > selection.to),
                 );
+                const scope = candidates[next];
                 if (!scope) return false;
-                history.push({ bookmark: selection.getBookmark(), marks: storedMarks });
+                history.push({ bookmark: selection.getBookmark(), marks: storedMarks, scopeIndex });
+                scopeIndex = next + 1;
                 tr = tr.setSelection(
                   scope.label === "Document"
                     ? new AllSelection(tr.doc)
@@ -239,6 +332,7 @@ export const LatexStructuredSelection = Extension.create<{
               } else {
                 const scope = scopes.find((scope) => scope.label !== "Document");
                 if (!scope) return false;
+                exitedScope = scope.mark ? scope : null;
                 const after = command === "leaveParentAfter";
                 tr = tr.setSelection(
                   TextSelection.near(
@@ -255,6 +349,8 @@ export const LatexStructuredSelection = Extension.create<{
                     ),
                   );
                 history.length = 0;
+                scopeIndex = 0;
+                scopeCandidates = null;
               }
               applying = true;
               view.dispatch(tr.scrollIntoView());

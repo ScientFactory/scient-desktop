@@ -71,11 +71,11 @@ function FigureWidth(props: { value: string; onChange: (width: string) => void }
   );
 }
 
-function ReplacementImages(props: {
+export function ReplacementImages(props: {
   environmentId: EnvironmentId;
   cwd: string;
   onChoose: (path: string) => void;
-  onImport: () => void;
+  onImport?: () => void;
 }) {
   const files = useProjectEntriesQuery(props.environmentId, props.cwd);
   const [query, setQuery] = useState("");
@@ -109,7 +109,7 @@ function ReplacementImages(props: {
         ))}
       </div>
       <MenuSeparator />
-      <DockCommandItem onClick={props.onImport}>Import image…</DockCommandItem>
+      {props.onImport && <DockCommandItem onClick={props.onImport}>Import image…</DockCommandItem>}
     </>
   );
 }

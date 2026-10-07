@@ -76,8 +76,6 @@ function latexInsertLayout(actions: readonly LatexInsertAction[]): InsertMenuLay
             {STATEMENTS.slice(5, 8).map(item)}
             <MenuSeparator />
             {item("proof")}
-            <MenuSeparator />
-            {["question", "subquestions"].map(item)}
           </MenuSubPopup>
         </MenuSub>
         <MenuSub>

@@ -11,9 +11,10 @@ export function LatexLengthField(props: {
   automatic?: boolean;
   disabled?: boolean;
   size?: "sm";
+  width?: "content";
 }) {
   const match =
-    /^(\d+(?:\.\d*)?|\.\d+)(mm|cm|in|pt|em|\\(?:linewidth|textwidth|columnwidth))$/u.exec(
+    /^(\d+(?:\.\d*)?|\.\d+)(mm|cm|in|pt|em|ex|\\(?:linewidth|textwidth|columnwidth))$/u.exec(
       props.value,
     );
   const unit = match?.[2] ?? "mm";
@@ -22,42 +23,52 @@ export function LatexLengthField(props: {
     : "";
   const make = (value: string, nextUnit: string) =>
     value === "" ? "" : `${nextUnit.startsWith("\\") ? Number(value) / 100 : value}${nextUnit}`;
+  const amountField =
+    props.size === "sm" ? (
+      <Input
+        size="compact"
+        type="number"
+        aria-label={props.label}
+        value={amount}
+        min={0}
+        step="any"
+        placeholder={props.automatic ? "Automatic" : undefined}
+        disabled={props.disabled}
+        onChange={(event) => props.onChange(make(event.target.value, unit))}
+      />
+    ) : (
+      <input
+        type="number"
+        aria-label={props.label}
+        value={amount}
+        min={0}
+        step="any"
+        placeholder={props.automatic ? "Automatic" : undefined}
+        disabled={props.disabled}
+        onChange={(event) => props.onChange(make(event.target.value, unit))}
+      />
+    );
   return (
     <label>
       {props.label}
-      <span className="scient-latex-property-row">
-        {props.size === "sm" ? (
-          <Input
-            size="compact"
-            type="number"
-            aria-label={props.label}
-            value={amount}
-            min={0}
-            step="any"
-            placeholder={props.automatic ? "Automatic" : undefined}
-            disabled={props.disabled}
-            onChange={(event) => props.onChange(make(event.target.value, unit))}
-          />
+      <span className="scient-latex-property-row" data-width={props.width}>
+        {props.width === "content" ? (
+          <span className="scient-latex-length-amount">{amountField}</span>
         ) : (
-          <input
-            type="number"
-            aria-label={props.label}
-            value={amount}
-            min={0}
-            step="any"
-            placeholder={props.automatic ? "Automatic" : undefined}
-            disabled={props.disabled}
-            onChange={(event) => props.onChange(make(event.target.value, unit))}
-          />
+          amountField
         )}
         <LatexSelect
           size={props.size ?? "default"}
           aria-label={`${props.label} unit`}
           value={unit}
           disabled={props.disabled === true}
+          width={props.width === "content" ? "options" : "default"}
           onValueChange={(value) => props.onChange(make(amount, value))}
           options={[
-            ...["mm", "cm", "in", "pt", "em"].map((value) => ({ value, label: value })),
+            ...["mm", "cm", "in", "pt", "em", ...(unit === "ex" ? ["ex"] : [])].map((value) => ({
+              value,
+              label: value,
+            })),
             ...(props.relative
               ? (props.relativeTo ?? ["linewidth"]).map((basis) => ({
                   value: `\\${basis}`,

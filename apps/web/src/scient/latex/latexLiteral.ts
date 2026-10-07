@@ -1,5 +1,5 @@
 import { latexWithoutComments } from "./latexPackages";
-import { latexColorCss, latexDocumentColors } from "./latexColorBoxes";
+import { latexColorCss, latexDocumentColors, latexColorBoxOpening } from "./latexColorBoxes";
 
 /** Literal contents never enter the prose, structure or package-command grammar. */
 export function inlineLatexLiteral(source: string, from = 0) {
@@ -56,17 +56,23 @@ function group(source: string, from: number, open = "{", close = "}") {
   return null;
 }
 
-function literalOptions(source: string, from = 0, to = source.length) {
+function literalOptions(source: string, from = 0, to = source.length, allowFlags = false) {
   const clean = latexWithoutComments(source);
   const entries = new Map<string, { value: string; from: number; to: number }>();
   let cursor = from;
   while (cursor < to) {
     while (/[\s,]/u.test(clean[cursor] ?? "") && cursor < to) cursor++;
     if (cursor === to) break;
-    const key = /^[A-Za-z]+\s*=/u.exec(clean.slice(cursor, to));
+    const key = (allowFlags ? /^[A-Za-z][A-Za-z ]*\s*(?:=|(?=,|$))/u : /^[A-Za-z]+\s*=/u).exec(
+      clean.slice(cursor, to),
+    );
     if (!key) return null;
     const name = key[0].split("=")[0]!.trim();
     cursor += key[0].length;
+    if (!key[0].includes("=")) {
+      entries.set(name, { value: "true", from: cursor, to: cursor });
+      continue;
+    }
     while (/\s/u.test(clean[cursor] ?? "") && cursor < to) cursor++;
     const start = cursor;
     let depth = 0;
@@ -89,11 +95,41 @@ function literalOptions(source: string, from = 0, to = source.length) {
 }
 
 export function latexLiteralBlock(source: string, from = 0) {
-  const opening = /^\\begin\{(verbatim\*?|lstlisting)\}/u.exec(source.slice(from));
+  const opening = /^\\begin\{(verbatim\*?|lstlisting|tcblisting)\}/u.exec(source.slice(from));
   if (!opening) return null;
   const environment = opening[1]!;
   let bodyFrom = from + opening[0].length;
   let options = new Map<string, { value: string; from: number; to: number }>();
+  let box: ReturnType<typeof latexColorBoxOpening> = null;
+  let boxTitle: { value: string; from: number; to: number } | undefined;
+  if (environment === "tcblisting") {
+    const gap = /^\s*/u.exec(source.slice(bodyFrom))![0];
+    const openingOptions = group(source, bodyFrom + gap.length);
+    const parsed =
+      openingOptions && literalOptions(source, openingOptions.from, openingOptions.to, true);
+    if (
+      !parsed ||
+      !openingOptions ||
+      parsed.get("listing only")?.value !== "true" ||
+      (parsed.get("listing engine")?.value ?? "listings") !== "listings"
+    )
+      return null;
+    const listing = parsed.get("listing options");
+    const listingOptions = listing
+      ? literalOptions(source, listing.from, listing.to)
+      : new Map<string, { value: string; from: number; to: number }>();
+    if (!listingOptions) return null;
+    options = listingOptions;
+    const frame = [...parsed].filter(
+      ([key]) => !["listing only", "listing engine", "listing options"].includes(key),
+    );
+    box = latexColorBoxOpening(
+      `\\begin{tcolorbox}[${frame.map(([key, entry]) => `${key}={${entry.value}}`).join(",")}]\\end{tcolorbox}`,
+    );
+    if (!box) return null;
+    boxTitle = parsed.get("title");
+    bodyFrom = openingOptions.end;
+  }
   if (environment === "lstlisting") {
     const gap = /^[\t ]*/u.exec(source.slice(bodyFrom))![0];
     const optional = group(source, bodyFrom + gap.length, "[", "]");
@@ -118,7 +154,7 @@ export function latexLiteralBlock(source: string, from = 0) {
         bodyTo--;
         if (source[bodyTo - 1] === "\r") bodyTo--;
       }
-      return { environment, bodyFrom, bodyTo, end: at + closing.length, options };
+      return { environment, bodyFrom, bodyTo, end: at + closing.length, options, box, boxTitle };
     }
     if (newline < 0) break;
     cursor = newline + 1;
@@ -241,6 +277,7 @@ export function latexListingPresentation(preamble: string, local: Map<string, { 
     "numberblanklines",
     "tabsize",
     "captionpos",
+    "numbersep",
   ]);
   if ([...options.keys()].some((key) => !supported.has(key))) return null;
   const colors = latexDocumentColors(preamble);
@@ -265,6 +302,10 @@ export function latexListingPresentation(preamble: string, local: Map<string, { 
   const firstNumber = integer("firstnumber", 1),
     step = integer("stepnumber", 1),
     tabSize = integer("tabsize", 8);
+  const numberSep = options.has("numbersep")
+    ? /^(\d+(?:\.\d+)?)pt$/u.exec(options.get("numbersep")!)
+    : null;
+  if (options.has("numbersep") && !numberSep) return null;
   if (
     !basic ||
     !keyword ||
@@ -296,6 +337,7 @@ export function latexListingPresentation(preamble: string, local: Map<string, { 
     firstNumber,
     step,
     tabSize,
+    numberSep: numberSep ? `${(Number(numberSep[1]) * 96) / 72.27}px` : undefined,
     breakLines: bool("breaklines", false),
     showStringSpaces: bool("showstringspaces", true),
     numberBlankLines: bool("numberblanklines", true),

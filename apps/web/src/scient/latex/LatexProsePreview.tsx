@@ -43,6 +43,7 @@ export function appendLatexProsePreview(element: HTMLElement, source: string, ed
       reference.className = "scient-latex-inline-command";
       const number = target?.number ?? "?";
       reference.textContent = node.attrs?.name === "eqref" ? `(${number})` : number;
+      reference.dataset.latexProseText = `[${key}]`;
       reference.setAttribute("aria-label", `Go to reference ${key}`);
       reference.disabled = !target;
       reference.onclick = (event) => {

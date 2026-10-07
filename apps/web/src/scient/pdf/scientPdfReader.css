@@ -134,6 +134,7 @@
   position: absolute;
   inset: 0;
   overflow: auto;
+  scrollbar-gutter: stable;
   background: color-mix(in srgb, var(--muted) 70%, var(--background));
   outline: none;
 }

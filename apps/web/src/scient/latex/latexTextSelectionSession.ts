@@ -79,7 +79,10 @@ export function installLatexTextSelectionSession(field: HTMLTextAreaElement): ()
       const value = field.value;
       return {
         path: [...latexContainerScope(field), field.getAttribute("aria-label") ?? "Text"],
-        scopes: () => [field.getBoundingClientRect()],
+        scopes: () =>
+          field.closest('td,th,.scient-latex-rich-preview[data-kind="table"]')
+            ? []
+            : [field.getBoundingClientRect()],
         selection: () => textRects(field, start, end),
         restore: (focus) => {
           if (!field.isConnected || field.value !== value) return false;
@@ -100,14 +103,19 @@ export function installLatexTextSelectionSession(field: HTMLTextAreaElement): ()
         const previous = history.pop();
         if (!previous) return false;
         ({ start, end, direction } = previous);
-      } else if (command === "selectionExpand") {
-        if (field.selectionStart === 0 && field.selectionEnd === end) return false;
+      } else if (command === "selectionExpand" || command === "selectionScopeExpand") {
+        if (
+          field.selectionStart === 0 &&
+          field.selectionEnd === end &&
+          (command !== "selectionScopeExpand" || history.length > 0)
+        )
+          return false;
         history.push({
           start: field.selectionStart,
           end: field.selectionEnd,
           direction: field.selectionDirection,
         });
-        if (field.selectionStart === field.selectionEnd) {
+        if (command === "selectionExpand" && field.selectionStart === field.selectionEnd) {
           const word = [...field.value.matchAll(/[\p{L}\p{N}_]+/gu)].find(
             (match) =>
               match.index <= field.selectionStart &&
@@ -131,6 +139,11 @@ export function installLatexTextSelectionSession(field: HTMLTextAreaElement): ()
     if (!applying) history.length = 0;
     session.refresh();
   };
+  const keydown = (event: KeyboardEvent) => {
+    if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key))
+      history.length = 0;
+  };
+  field.addEventListener("keydown", keydown);
   field.addEventListener("input", changed);
   field.addEventListener("pointerdown", changed);
   field.addEventListener("keyup", session.refresh);
@@ -147,6 +160,7 @@ export function installLatexTextSelectionSession(field: HTMLTextAreaElement): ()
   return () => {
     detach();
     session.dispose();
+    field.removeEventListener("keydown", keydown);
     field.removeEventListener("input", changed);
     field.removeEventListener("pointerdown", changed);
     field.removeEventListener("keyup", session.refresh);

@@ -99,6 +99,9 @@ Nested bulleted and numbered lists remain editable with ordinary enumitem labels
 such as `label=\alph*)`, including bold or italic item text. Supported decimal,
 alphabetic and Roman labels, `start` and `resume` options keep their source
 spelling during content edits. Custom label macros retain exact-source fallback.
+The list footer has a **Numbering** menu for the format, starting number and
+continuing a previous list. Description lists have an **Items** menu for inserting
+or deleting the current item.
 
 PDF, Visual and Split use one header row. From the left it holds build status,
 search and the view switch; sidebar, page and zoom controls follow, with the
@@ -149,13 +152,21 @@ formula's options in the footer; inline math shows its controls directly. Center
 a single editing surface, without an outer selection box. New
 equations start empty and focus the math cursor immediately. Alt+= inserts inline
 math; Ctrl/Cmd+Shift+M (or Alt+Shift+=) inserts a display equation. Outside command
-entry, Enter or Escape returns to text; a paragraph is added after a display equation only when
+entry, plain Enter or Escape returns to text; a paragraph is added after a display equation only when
 needed. Tab and arrow keys navigate inside math and return to text at its boundary.
 Backspace or Delete in a completely empty equation removes it. Clicking outside
 math dismisses its controls. Matrices, cases, and aligned calculations start with
 empty cells rather than example expressions. Empty math slots appear as subtle
 dots while the formula is focused and disappear when it is inactive. They are
 caret targets and are never written into the compiled source.
+
+Ctrl+Enter (Cmd+Enter on macOS) splits math at the caret: the preceding content
+stays on the current row and the following content moves to a new row below.
+The caret starts that new row. A single-line formula becomes a two-row `gathered`
+layout. In matrices, cases and aligned equations, column positions are retained;
+cells to the right of the split also move to the new row. Inside a fraction,
+root or other nested body, the split stays within that body. Start/end splits
+leave an empty row ready for typing. Imported row labels/tags remain protected.
 
 The **Math** menu offers seven choices:
 
@@ -211,7 +222,9 @@ a matrix, cases or aligned cell. Fixed column counts, minimum sizes and imported
 row metadata restrict its actions. The source editor opens above the footer.
 Symbols, brackets and insertion actions stay in the top **Math** menu; there is
 no overall Equation options popup or duplicate Math/Symbols control. Wide formulas
-still pan with horizontal scrolling or Shift-wheel while editing.
+pan with horizontal trackpad gestures or Shift-wheel after clicking into them,
+without a scroll bar. Moving the caret follows the part being edited. Selection
+highlights stay attached to their contents during vertical and horizontal scrolling.
 
 Imported tags, suppressed numbers and per-row labels remain protected. Their
 placement, numbering, and outer row structure are changed in Source. A single
@@ -256,7 +269,10 @@ within the label selects its text; an ordinary click places the caret.
 
 Plain typing is not expanded into commands. Start a command with `\`.
 Inside Visual math, argument braces are paired while typing a command. Accepting
-an argument command such as `\text` with Tab enters its editable argument. Type
+an argument command such as `\text`, `\textbf`, `\textit` or `\mathbf` with
+Tab or Enter supplies braces and enters an empty editable slot. Choosing a
+suggestion does the same. Existing empty formatting arguments regain their
+slots when reopened; placeholder markers never enter saved LaTeX. Type
 `\begin{bmat` to choose `bmatrix`; Up/Down select and Tab or Enter accepts. The
 matching end and editable cells are inserted together. Existing argument text is
 preserved. These completions follow the Math command completion setting.
@@ -305,13 +321,22 @@ Theorem bodies use the same root macro setup, including commands such as `\R`
 and `\norm{x}`. Literal `\newtheorem` declarations supply statement names,
 shared counters and section/chapter numbering. The standard `plain`, `definition`
 and `remark` theorem styles control prose and heading styling. Statement labels
-stay out of printed prose and can be edited in the statement's footer options;
-resolved `\ref` links show the statement number and navigate to it.
+stay out of printed prose. The compact statement footer shows its type, **Title**,
+and **Label**. Type uses definitions already present in the document. Label
+supports adding, changing and removing a key; recognized references are updated
+when renaming a unique label in a single-file document. Resolved `\ref` links
+show the statement number and navigate to it.
 Statement and proof headings share the first line with their prose. Default
 amsthm proofs show the end-of-proof square on the right; it is display-only and
 is never added to your source. Custom proof/QED definitions remain source-owned.
 The optional proof title replaces “Proof”, while optional theorem titles appear
 in parentheses. Spacing and quote indentation follow the standard layout.
+**Title** activates editing at the beginning of that printed heading on the paper.
+Clicking the printed title instead places the caret where you click. The footer
+keeps the statement context when returning from another app or removing its title.
+Clearing its
+text removes the optional title; another Backspace or Delete in an empty title
+returns the caret to the statement body. Proofs show only **Title** in their footer.
 Simple zero-argument `\newenvironment` quote wrappers, such as a `note` containing
 `\begin{quote}\textbf{Note.}` and ending with `\end{quote}`, render editable
 content while preserving the custom environment name. More complex definitions
@@ -380,8 +405,9 @@ across sheets, headings stay with following text when space allows, and tall
 supported tables continue at row boundaries. Description lists and the contents
 list can also continue between entries. These are live editor page breaks;
 the compiler still determines final PDF pagination. Clicking the zoom percentage
-fits the page to the available workspace, and the page number in the header row
-shows the visible page. Choose **Outline** to open document navigation.
+fits the page to the available workspace using the same zoom percentage as PDF
+for the same paper size, pane width and navigation state. The page number in the
+header row shows the visible page. Choose **Outline** to open document navigation.
 Table tools appear in the existing footer; selecting a table does not add
 controls, labels, or empty caption fields to the paper.
 The canvas also reads common `\geometry{...}` overrides, landscape paper, and
@@ -430,6 +456,15 @@ font size, syntax colors, frames, wrapping and line numbers. Captions appear as
 uses the editor's existing language parsers; no external highlighter is launched.
 Unsupported listing styles retain exact-source fallback. Visual approximates
 the listing layout; the compiled PDF remains authoritative.
+
+The code footer shows **Language**, **Appearance**, **Caption**, and a compact
+**Label** for captioned listings. Language has search and retains the imported
+language. Appearance groups frames, wrapping, font size, tab width, line numbering
+and caption position. Its switches match heading numbering. Caption adds or
+focuses editing on paper; clearing it removes the listing number and label, and
+another Backspace/Delete in the empty caption returns to the code. Labels use
+the shared duplicate checks and single-file reference renaming; references navigate
+to the listing. Literal `verbatim` blocks remain editable without listing controls.
 
 `multicols` regions render editable text in the requested columns, including
 explicit `\columnbreak` commands and page footnotes. Supported `minipage` widths
@@ -487,7 +522,11 @@ Clearing a caption removes its command, table number and reference label. You
 can add a caption again, and label fields remain editable after committing.
 The footer follows the active cell without changing the table's appearance or the
 footer's height. The writing toolbar's Table picker inserts
-a chosen grid size and style.
+the chosen size with full grid borders and puts the caret in the first cell.
+Every cell edge shows either the table's real border or a faint dashed editing
+guide where a border is missing. Guides stay thin with short dashes at every zoom
+level. Real borders keep their appearance. Editing
+guides are absent from the source and PDF.
 
 Imported captions appear above or below the table in source order and show their
 derived table number when supported. Enabling **Header row** makes the first row
@@ -535,9 +574,13 @@ Other unsupported structures, including
 custom macros, appear as protected source blocks.
 The visual editor does not silently normalize or discard them. A visual edit
 cannot delete across a protected preview or source block, or across an included
-file boundary. Click a source-only block or use **Edit LaTeX** to edit its exact
-source in place; **Apply LaTeX** checks that the document has not changed underneath
-the draft. **Source** opens the file that owns the block.
+file boundary. Source-only blocks have no contextual footer. Click their source
+to edit it in place; **Apply LaTeX** and **Cancel** appear inside the block while
+editing. Ctrl/Cmd+Enter applies and Escape cancels. Apply checks that the document
+has not changed underneath the draft. **Delete** in the block header explicitly
+removes that block, including its open draft, and supports document undo.
+Drag the source field's resize handle to show as little as one line;
+longer content remains scrollable while editing. **Source** opens the file that owns the block.
 
 ### Repeated document content
 
@@ -553,17 +596,41 @@ independently. More complex TeX programs remain available in Source.
 
 Standard `algorithm` / `algpseudocode` blocks show their caption, line numbers,
 indentation, keywords and comments. Edit prose, formulas, comments and captions
-directly on paper. Press Enter in a step, or use **Algorithm → Add step**
-in the footer, to add a statement. Existing algorithm references navigate to the
-numbered float. Unknown pseudocode commands stay available in Source.
+directly on paper. Press Enter in a step, or use **Steps → Insert** in the footer,
+to add a step, return, input/output, condition or loop. Insert creates new content;
+Wrap encloses existing steps. Steps also groups comments, branches, movement and
+Delete step; opening and closing lines stay paired. Backspace or Delete on an empty
+opening or closing line removes its wrapper while retaining the contents, including
+conditions and comments. Appearance contains a Line numbers toggle and placement.
+Turning line numbers on numbers every line. Caption focuses its text
+on paper; clearing it removes the algorithm number and reference label, and
+another delete in the empty field returns the caret to the body. Captioned floats
+show a compact Label field with duplicate checking and single-file reference
+renaming. Existing algorithm references navigate to the numbered float.
+Standalone `algorithmic` blocks show Steps and Appearance with line-number settings,
+without float placement, captions or labels. Unknown pseudocode commands stay
+available in Source.
 
 ### Colored text and boxes
 
 Colored text and inline color boxes are editable on paper, including literal
 custom colors and percentage mixtures. Supported `tcolorbox` blocks show their
-colored title, frame and background with editable prose, math and lists inside.
+colored title, frame and background with editable prose, math, lists and tables inside.
+Plain `\fbox` phrases, local `\fboxsep`/`\fboxrule` groups and framed paragraph
+boxes are also editable. Literal styles include square or rounded corners, shadows,
+dashed frames, a left accent strip, and separate upper/lower regions. Framed
+`tcblisting` blocks using `listings` show editable code with syntax colors and line
+numbers. Visual approximates these decorations; the compiled PDF remains authoritative.
 Breakable boxes can continue onto later Visual pages; exact splitting remains
 the compiler's responsibility.
+
+The box footer shows **Appearance** and **Title**. Appearance groups background,
+border color and thickness, square/rounded corners, padding and **Allow page breaks**.
+Corners and Padding use choice lists; **Custom** opens their exact dimension fields.
+Title adds or focuses the title on paper. Clearing the title removes its source
+option; another Backspace/Delete in the empty field returns to the box body.
+Click an existing title to edit at that position. Imported title and color settings
+stay intact when changing another property.
 
 Simple counter loops used to generate repeated paragraphs are displayed without
 showing their code. Editing a generated paragraph expands that loop into ordinary
@@ -600,11 +667,15 @@ Newly inserted elements start without sample text: table cells, table captions,
 figure captions, title text and inserted headings are blank. Existing document
 text and explicitly chosen templates retain their content.
 
-While editing a table, description list or other structured block, empty fields
-show small, faint dashed guides. Math arrays show guides only in the array being
-edited, including nested cases and matrices. The markers are spaced apart and
-disappear when focus leaves the environment; hovering alone does not show them.
-Filled cells and ordinary empty paragraphs have no guide boxes. Click a blank
+While editing a description list or other structured block, empty fields
+show small, faint gray corner markers. Math slots show the same corner markers
+within the nearest structure being edited, including nested cases and matrices.
+An empty slot keeps the same marker size and position when you enter it; the caret
+appears alongside it. Ordinary table cells show dashed guides for missing borders,
+alongside any existing printed rules. Slot markers appear only for math inside a cell.
+Markers disappear when editing leaves the environment; opening a menu retains
+them, and hovering alone does not show them.
+Only the innermost occupied slot is marked; ordinary empty paragraphs have no guide boxes. Click a blank
 cell or use the existing keyboard navigation to enter content. Click targets and
 document layout stay the same when guides appear or disappear.
 
@@ -646,20 +717,28 @@ the caption and settings. Appearance groups width, alignment, caption position
 and page placement. Caption adds or focuses its text on paper; clearing it
 removes the caption command, figure number and label, and both can be added again.
 Labels commit on Enter or blur and reject invalid or duplicate keys.
+Backspace or Delete in an already-empty caption closes its editing area and
+returns focus to the figure; the same behavior returns to a table from its caption.
+In empty inline or display math, another deletion removes the math object and
+places the caret in surrounding text. Empty nested cells first remove their
+nearest wrapper while preserving any remaining contents.
 
 Imported figures can also display editable framed text, literal rotations, and
 side-by-side `subfigure` panels. A one-argument preamble command wrapping a
 centered, fixed-height `parbox` in `\fbox` is recognized from its definition;
 editing its text keeps the original command call. Panel and figure captions
-are editable on paper. Widths, rotation angles, framing and macro definitions
+are editable on paper. **Panel** selects which panel the compact footer controls;
+clicking or focusing a panel also chooses it. **Replace** chooses a project image,
+**Caption** / **Panel caption** focus existing printed captions, and compact
+**Label** fields validate reference keys. Widths, rotation angles, framing and macro definitions
 remain in Source. Unsupported artwork stays available as exact source.
 
-Simple TikZ figures with numeric line paths, arrow axes, endpoint labels, filled
-circles and literal coordinate-pair loops are rendered in Visual. Edit labels
-and captions on paper. Select the figure and open **Drawing** in its contextual
-footer to edit an element's coordinates or the drawing's explicit scale. These
-edits preserve the surrounding TikZ commands; unfamiliar commands or options
-remain in Source.
+TikZ pictures and pgfplots render as read-only drawings in Visual using the
+document's LaTeX preamble, including packages, libraries and style definitions.
+Figure captions remain editable on paper. Drawing labels, coordinates and plot
+settings have no Visual editing controls; change them in Source. Rendering needs
+a working LaTeX toolchain. A drawing that fails to compile shows a diagnostic
+instead of silently disappearing, and its original source is preserved.
 
 For standard figure counters, captions show their number and subcaptions show
 their panel letter. `\ref` navigates to labelled figures or panels; `\subref`
@@ -676,7 +755,11 @@ For a standard manual `thebibliography`, Visual displays a References heading
 and bracketed entry labels, preserving supported emphasis and punctuation.
 Ordinary `\cite` commands display linked labels, including multiple keys and a
 plain optional note. Click a citation number to visit its entry. Citation keys
-remain editable in the footer. Package-specific citation styles remain compiler-owned.
+remain editable through the footer's **References** menu; search to add entries,
+reorder them, or remove a key from a multi-entry citation. **Form** offers styles
+supported by the document's packages; **Note** edits a plain prefix/page note.
+Cross-references have a searchable **Target** menu. Package-specific citation styles
+remain compiler-owned. Bibliographies have no separate footer.
 Open **Document > References** to search, add, edit and remove entries in a side
 panel. It reads explicitly linked `.bib` files and existing `\bibitem` lists;
 choose a destination when the document uses more than one. It preserves the
@@ -723,7 +806,9 @@ Abstract and Table of contents select an existing block in the open file instead
 of adding another one.
 
 Links use `\href` and the document's hyperlink setup. Click an existing link to
-edit its address and plain label in the footer; formatted labels keep their exact
+edit its plain label on paper. **Text** activates the same editor, and **Address**
+opens a compact field with Apply; incomplete addresses remain local drafts.
+Formatted labels keep their exact
 LaTeX and are edited in Source. Imported `\hyperref[label]{text}` and
 `\hyperlink{name}{text}` navigate to a labelled section or other supported target,
 including a literal `\hypertarget{name}{text}`. Section references display their
@@ -733,8 +818,10 @@ commands keep their original source syntax. Links read as ordinary document text
 Standard footnotes show a numbered superscript and their text beneath a short
 rule at the bottom of the corresponding Visual page. Click the superscript to
 navigate to its note; click the note to return to its marker. Either action
-selects the same footer editor without moving focus into it. Footnotes containing formatting retain their
-LaTeX; plain note text can be edited directly in the footer. Prose formatting such
+makes **Edit text** available in the footer. It opens a plain-text editor beside
+the marker without shifting the paragraph. Enter or Escape finishes editing and
+returns to surrounding text. Footnotes containing formatting retain their
+LaTeX and stay editable in Source. Prose formatting such
 as emphasis is shown in the note. Custom counters and unsupported note bodies
 remain approximate or show exact source; PDF pagination remains authoritative.
 
@@ -1005,10 +1092,15 @@ to supply this presentation data. Visual does not run BibTeX itself.
 
 ### Selection and editing scope
 
-The footer shows where the caret is inside nested structures and formatting.
-Faint outlines show the active scope; selection stays visible with a muted fill
+The footer shows the environment type, word count and contextual controls,
+without a path through nested structures or formatting.
+Gray corner marks show only the innermost editing slot and disappear when content
+is selected. The caret matches the local text color and size; inside accent bodies
+such as `\hat{...}` it is slightly shorter, without moving the expression.
+Selection stays visible with a muted fill
 while you use menus and submenus. Menu commands apply to the retained selection.
-Escape from the root menu returns to the original editor.
+The editing caret pauses during menu use. Escape from the root menu returns to
+the original editor.
 
 Ordinary arrows move smoothly through text. In math, Tab and Shift+Tab visit
 structural slots, including empty matrix cells. Repeated Up/Down movements retain
@@ -1017,10 +1109,42 @@ across matrix/table cells to select a rectangle, including empty cells.
 
 | Action                                   | Default shortcut      |
 | ---------------------------------------- | --------------------- |
+| Select current scope, then each parent   | Ctrl+A repeatedly     |
 | Expand selection to the enclosing scope  | Alt+Shift+Up          |
 | Restore the previous smaller selection   | Alt+Shift+Down        |
+| Enter formatting at the caret            | Ctrl+Alt+Down         |
 | Leave the nearest parent before/after it | Ctrl+Alt+Left / Right |
 
 Use Cmd instead of Ctrl on macOS. The bindings are configurable in Keyboard
 shortcuts. Leaving a formatting scope changes subsequent typing without changing
-existing characters; surrounding styles stay active.
+existing characters; surrounding styles stay active. At either end of colored
+or formatted text, Ctrl+Alt+Down enters that span without moving the caret, so
+typing extends it. Ctrl+Alt+Left/Right leaves before/after the active scope, so
+typing uses the surrounding style. At a boundary shared by two spans, entering
+returns to the span just left; otherwise it prefers the following span. Repeated
+entry visits nested formatting from outer to inner. Menu use retains the chosen
+typing style as well as the selection.
+
+Repeated Ctrl+A starts with the innermost scope and climbs through every parent.
+For `\underbrace{1+\cdots+1}_{n\ \textbf{times}}`, this selects bold text,
+the label, the whole underbrace, then the equation and enclosing content. Opening
+menus preserves both the selection and this sequence. Clicking, moving the caret
+or typing starts again from the current scope.
+
+Selecting across the closing bracket and exponent of `\left(x\right)^2` includes
+the complete `(x)^2`. Extending selection out of its base into surrounding math
+also includes the exponent; bases and their superscripts/subscripts share one
+outer selection boundary. Selection inside the body or exponent stays precise.
+A complete underbrace
+has one connected blue selection across its body, brace and label. Selecting only
+the label or its bold text highlights just that part.
+
+### Compact layout controls
+
+Columns have a **Columns** count menu. Individual minipages expose **Appearance**
+with Dimensions, Alignment and Content alignment; fixed height enables content
+alignment. Side-by-side panel rows expose **Layout** with width ratios and spacing.
+Spacing edits preserve panel widths; width edits preserve their original gaps.
+Imported mixed width units stay editable per panel instead of guessing ratios.
+Part headings retain Numbered and a compact Label field. Quotes have no separate
+footer; other supported referenceable environments expose their existing labels.

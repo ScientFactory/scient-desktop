@@ -1,17 +1,17 @@
 import { useContext, useRef, useState, type CSSProperties } from "react";
 import { NodeViewContent, NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import { LatexObjectToolbar } from "./LatexObjectToolbar";
-import { LatexTextField } from "./LatexTextField";
+import { LatexStatementTitle } from "./LatexStatementTitle";
+import { LatexBoxControls } from "./LatexBoxControls";
 import { latexColorCss, latexColorBoxOpening } from "./latexColorBoxes";
-import { LatexColorControl } from "./LatexColorControl";
-import { LatexContextSection } from "./LatexContextAction";
 import {
   LatexAuthoringContext,
   editLatexObjectSource,
   useLatexActionNotice,
 } from "./latexObjectAuthoring";
 import { setLatexEnvironmentOption } from "./latexObjectProperties";
-import { LatexLengthField } from "./LatexLengthField";
+import { enterLatexObjectBody } from "./latexObjectCaret";
+import { escapeText } from "./latexVisualDocument";
 
 export function LatexColorBoxView({
   node,
@@ -19,144 +19,110 @@ export function LatexColorBoxView({
   selected,
   getPos,
   updateAttributes,
-  deleteNode,
   editable,
   draftKey,
-}: Pick<
-  NodeViewProps,
-  "node" | "editor" | "selected" | "getPos" | "updateAttributes" | "deleteNode"
-> & {
+}: Pick<NodeViewProps, "node" | "editor" | "selected" | "getPos" | "updateAttributes"> & {
   editable: boolean;
   draftKey?: string | undefined;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const layout = node.attrs.layout;
   const context = useContext(LatexAuthoringContext);
-  const setError = useLatexActionNotice();
-  const [padding, setPadding] = useState(String(layout.padding ?? "3mm"));
-  const [border, setBorder] = useState(String(layout.borderWidth ?? "0.5mm"));
-  const [radius, setRadius] = useState(String(layout.radius ?? "1mm"));
+  const report = useLatexActionNotice();
+  const [titleEditing, setTitleEditing] = useState(false);
+  const title = String(node.attrs.title ?? "");
+  const hasTitle = Boolean(
+    title || (!node.attrs.titleRemoved && latexColorBoxOpening(String(node.attrs.raw))?.titleRange),
+  );
   const option = (name: string, value: string | null) => {
-    if (context.prepare())
-      setError(
-        editLatexObjectSource(editor, getPos(), context.source, (source) =>
-          setLatexEnvironmentOption(source, "tcolorbox", name, value),
-        ),
-      );
+    if (!editable || !editor.isEditable || !context.prepare()) return;
+    report(
+      editLatexObjectSource(editor, getPos(), context.source, (source) =>
+        setLatexEnvironmentOption(source, "tcolorbox", name, value),
+      ),
+    );
+  };
+  const enterBody = () => {
+    const at = getPos();
+    if (typeof at === "number") enterLatexObjectBody(editor.view, at);
   };
   return (
     <NodeViewWrapper
       ref={root}
       className="scient-latex-color-box"
       data-breakable={layout.breakable || undefined}
+      data-split={node.firstChild?.attrs.layout?.kind === "boxRegion" || undefined}
       style={
         {
           "--scient-box-background": latexColorCss(layout.colback),
           "--scient-box-frame": latexColorCss(layout.colframe),
           "--scient-box-title": latexColorCss(layout.coltitle),
           "--scient-box-padding": layout.padding,
-          borderWidth: layout.borderWidth,
+          borderWidth: layout.frameHidden && !layout.borderColor ? "0px" : layout.borderWidth,
+          borderStyle: layout.borderStyle,
+          ...(layout.borderSide === "west"
+            ? { borderTopWidth: 0, borderRightWidth: 0, borderBottomWidth: 0 }
+            : {}),
+          borderColor: latexColorCss(layout.borderColor || layout.colframe),
           borderRadius: layout.radius,
+          boxShadow: layout.shadow ? "1mm 1mm 1mm #00000040" : undefined,
+          textAlign: layout.alignment,
         } as CSSProperties
       }
     >
-      {(node.attrs.title !== "" || latexColorBoxOpening(String(node.attrs.raw))?.titleRange) && (
+      {(hasTitle || titleEditing) && (
         <div
           className="scient-latex-color-box-title"
           contentEditable={false}
           style={{ fontWeight: layout.boldTitle ? 700 : 400 }}
         >
-          <LatexTextField
-            aria-label="Box title"
-            value={String(node.attrs.title)}
-            rows={1}
-            disabled={!editable}
-            draftKey={draftKey && `${draftKey}:title`}
-            onValueChange={(title) => updateAttributes({ title })}
+          <LatexStatementTitle
+            editor={editor}
+            label="Box title"
+            value={title}
+            source={node.attrs.titleSource ?? escapeText(title)}
+            editing={titleEditing}
+            editable={editable}
+            draftKey={draftKey && draftKey + ":title"}
+            onEditing={setTitleEditing}
+            onChange={(title) =>
+              updateAttributes({ title, titleSource: null, titleRemoved: title === "" })
+            }
+            onExit={enterBody}
           />
         </div>
       )}
       <NodeViewContent className="scient-latex-color-box-body" aria-label="Box content" />
-      <LatexObjectToolbar editor={editor} root={root} selected={selected} label="Box tools">
-        <LatexContextSection title="Title & color">
-          {!node.attrs.title && (
-            <button type="button" disabled={!editable} onClick={() => option("title", "{}")}>
-              Add title field
-            </button>
-          )}
-          <LatexColorControl
-            label="Box background"
-            value={layout.colback}
-            disabled={!editable}
-            onApply={(value) => option("colback", value || null)}
-          />
-          <LatexColorControl
-            label="Box border"
-            value={layout.colframe}
-            disabled={!editable}
-            onApply={(value) => option("colframe", value || null)}
-          />
-          <LatexColorControl
-            label="Box title color"
-            value={layout.coltitle}
-            disabled={!editable}
-            onApply={(value) => option("coltitle", value || null)}
-          />
-          <label>
-            <input
-              type="checkbox"
-              checked={layout.boldTitle === true}
-              disabled={!editable}
-              onChange={(event) =>
-                option("fonttitle", event.target.checked ? "\\bfseries" : "\\mdseries")
-              }
-            />
-            Bold title
-          </label>
-        </LatexContextSection>
-        <LatexContextSection title="Spacing & page breaking">
-          <LatexLengthField
-            label="Box padding"
-            value={padding}
-            onChange={setPadding}
-            disabled={!editable}
-          />
-          <button type="button" disabled={!editable} onClick={() => option("boxsep", padding)}>
-            Apply padding
-          </button>
-          <LatexLengthField
-            label="Box border width"
-            value={border}
-            onChange={setBorder}
-            disabled={!editable}
-          />
-          <button type="button" disabled={!editable} onClick={() => option("boxrule", border)}>
-            Apply border
-          </button>
-          <LatexLengthField
-            label="Corner radius"
-            value={radius}
-            onChange={setRadius}
-            disabled={!editable}
-          />
-          <button type="button" disabled={!editable} onClick={() => option("arc", radius)}>
-            Apply corners
-          </button>
-          <label>
-            <input
-              type="checkbox"
-              checked={layout.breakable}
-              disabled={!editable}
-              onChange={(event) => option("breakable", event.target.checked ? "" : null)}
-            />
-            Allow page breaks
-          </label>
-        </LatexContextSection>
-        <div className="scient-latex-context-menu-panel">
-          <button type="button" disabled={!editable} onClick={deleteNode}>
-            Delete box
-          </button>
-        </div>
+      <LatexObjectToolbar
+        editor={editor}
+        root={root}
+        selected={selected}
+        label="Box tools"
+        position="Box"
+        inline
+      >
+        <LatexBoxControls
+          editable={editable}
+          hasTitle={hasTitle}
+          background={layout.colback}
+          border={layout.colframe}
+          borderWidth={layout.borderWidth}
+          radius={layout.radius}
+          padding={layout.padding}
+          breakable={layout.breakable}
+          onOption={option}
+          onTitle={() => {
+            if (!editable) return;
+            setTitleEditing(true);
+            requestAnimationFrame(() => {
+              const field = root.current?.querySelector<HTMLTextAreaElement>(
+                '[aria-label="Box title"]',
+              );
+              field?.focus({ preventScroll: true });
+              field?.setSelectionRange(0, 0);
+            });
+          }}
+        />
       </LatexObjectToolbar>
     </NodeViewWrapper>
   );

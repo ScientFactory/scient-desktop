@@ -448,9 +448,12 @@ Detailed list numbering and appearance controls in the footer remain deferred.
 PDF and Visual both render `DocumentReaderControls`, hosted in the document
 header. Visual's controls use the same page input validation, five-percent
 zoom steps, 25–500% manual range, percentage button that fits the width, and
-keyboard interactions as PDF. Fit width is in More only while the percentage is hidden. Each
-surface
-supplies its own navigation/search adapter. Visual's sidebar contains Pages and
+keyboard interactions as PDF. Fit width is in More only while the percentage is
+hidden. Each uses `pdfFitWidthScale` with the same 40 CSS-pixel total page inset and a stable
+scrollbar gutter. Visual's physical page width is inches times 96; PDF's page view
+uses the same CSS-pixel baseline. Navigation sidebars use matching widths and
+breakpoints, so matching paper and pane geometry produce matching fit percentages.
+Each surface supplies its own navigation/search adapter. Visual's sidebar contains Pages and
 Outline; its pages follow the local editor page map and can differ from PDF.
 Both readers use `ReaderPageThumbnail` for page navigation. Visual previews
 snapshot only rendered blocks intersecting nearby pages, including running
@@ -466,9 +469,10 @@ cannot enlarge the canvas or change the document's outer scroll position.
 `latexMathViewport.ts` enables horizontal panning only during Visual editing.
 The same padding and natural formula height
 are retained in both modes. Native scrollbars are hidden, so entering a formula
-does not move surrounding content. The existing Equation footer inspector offers
-one Scroll range control only when the active formula is wider than its column.
-Trackpad horizontal gestures, Shift+wheel and caret following use the same viewport.
+does not move surrounding content. The formula host retains its intrinsic width
+so overflow remains measurable. Trackpad horizontal gestures, Shift+wheel and
+caret following use the same viewport, without a Scroll range control. Wheel
+capture lets this viewport handle panning before MathLive's inner content.
 Leaving restores the normal display; keyboard re-entry restores the saved offset
 and reveals the caret. Clicking a new symbol takes precedence over the saved offset.
 Viewport state is local to the mounted field and never enters LaTeX or history.
@@ -511,28 +515,44 @@ their exit animation must not delay edits in a suspended or background renderer.
 
 Insertion helpers leave editable content empty instead of generating sample text.
 `LatexTextField` marks emptiness from its local draft, so guides update immediately
-while typing or composing. Description fields mark the same state. Small dashed
-background markers appear only in empty controls within the focused environment;
-hover, filled cells and ordinary empty paragraphs do not reveal guides. Tables
-retain minimum cell targets independently of markers and printed rules.
+while typing or composing. Description fields mark the same state. The shared
+selection overlay paints the same gray corners for active and empty controls
+within the active environment. Empty controls keep identical measurements when
+entered. Hover and ordinary empty paragraphs do not reveal guides. Ordinary table
+cells have no slot markers. `latexTableEditingGuides` measures rendered cell and
+table borders, including CSS presets and longtable bands. A noninteractive SVG
+layer fills only missing edge segments, subtracting real rules on adjacent cells
+and merging duplicate guides. This handles partial rules and merged cells without
+overpainting actual borders. Non-scaling strokes keep the thin, short-dashed guides
+consistent at every zoom. Bounded mutation/resize observers refresh geometry,
+including page-stage transform changes that do not trigger a layout resize;
+the guide's own changes are ignored. Real rules and cell dimensions remain
+unchanged. Print and page previews omit the layer. New tables use the
+grid preset and focus their first inline cell after mounting.
 Empty caption editors do not create source caption commands until edited.
 Caption markers follow the centered text position within the caption field.
 
 `mathEditingGuides` decorates MathLive 0.108's rendered array cell boxes inside
 its shadow root. Its bounded DOM observer and focus/selection listeners schedule
 updates when rendering or the active environment changes. The current array's
-atom ID limits dashed markers to its own empty cells, including when arrays are
-nested. Absolutely positioned pseudo-elements use the existing VBox strut to
-align with the row baseline. No inline guide nodes are inserted. Minimum cell
+atom ID limits faint gray markers to its own empty cells, including when arrays are
+nested. `mathEditingGuideRects` measures compact empty-cell rectangles from the
+existing VBox strut and local font size. Active and empty slots use the same
+overlay renderer, without extra outline padding or duplicate current-slot marks.
+Occupied guides exclude the starting caret anchor so an accent's body marker
+fits its contents instead of including the enclosing accent or neighboring atom.
+No inline guide nodes are inserted. Minimum cell
 targets apply through the structural selector from the first render, independent
 of observer attributes, focus and emptiness, so decorating a replacement render
-does not resize the formula. Markers disappear on blur without changing geometry.
+does not resize the formula. Markers disappear when editing leaves the structure,
+while menu ownership retains them. The active empty slot keeps its marker beside
+the caret. Content/cell selection suppresses guides.
 The adapter never modifies math atoms, selection history, or serialization.
 Empty-cell clicks resolve through the owning array's atom ID in the existing
 MathLive adapter. Native placeholder atoms reserve invisible figure-space
 targets; the adapter marks their rendered font boxes as slots, including those
 inside accents and scripts that have no native placeholder CSS class. Only the
-dashed blue guide appears in the focused formula. Empty array cells suppress
+faint gray guide appears in the active structure. Empty array cells suppress
 duplicate slot guides beneath their cell guide. Publication and copying continue to use
 `latex-without-placeholders`. Revisit the VBox selectors when upgrading MathLive.
 
@@ -866,14 +886,33 @@ One resolver handles pointer and keyboard selection: movement within a cell
 selects a range, movement across cells selects their row/column rectangle,
 and crossing the visible outer boundary of a nested array selects that array
 as a whole before continuing in the outer scope. Gaps inside an array resolve
-to the nearest cell. MathLive supplies symbol offsets and rendering;
-the scope boxes are used only for hit testing and are never drawn on the paper.
+to the nearest cell. MathLive supplies symbol offsets and rendering. Selection
+and scope overlays sit outside the editable document, are clipped to its viewport,
+and never enter source or printed output.
 Named math branches use the same selection resolver: dragging or extending a
 selection out of a fraction slot, script, brace body/label, arrow label, or other
 nested branch includes its entire owning structure. An underbrace's expression
 and annotation therefore select together before the range continues into nearby
 math. Within one branch, character selection stays precise; reversing a pointer
 drag back into it restores that precision. Plain clicks still place a caret.
+Base/script expressions have a shared outer scope even when MathLive stores the
+script as a sibling. Selection endpoints on either the base or script participate
+in that scope; leaving either side selects the complete expression. Owner ranges
+and whole-structure outlines include trailing scripts, while selection within a
+body or script slot stays local.
+Delimiter hit targets resolve closing brackets before adjacent script sentinels.
+Complete expressions use one connected selection rectangle; matrix rectangles
+retain separate cell boxes, including empty cells. MathLive's native fragmented
+selection fills are suppressed while Scient paints this overlay.
+Ctrl/Cmd+A uses `latex.selectionScopeExpand`, selecting the innermost scope and
+then each parent. Its ladder retains distinct owners with equal ranges, continues
+through containing editors and tables, and survives menu snapshots. Caret moves,
+clicks and input reset it. Escape restores editor focus after the popup releases
+focus. Math/text mode changes caused by navigation do not mark the source dirty;
+leaving LaTeX command mode still schedules completed input publication.
+The focused selection fixtures qualify these paths in real Chromium, including
+the complete Visual editor; `apps/web/latexSelection.vitest.config.ts` runs them
+without app startup or real profile data.
 The MathLive adapter clears selected cells through one deferred content edit,
 retaining array dimensions. Deleting in an empty cell unwraps its nearest
 structure and moves the remaining atoms into the parent in row/branch order.
@@ -1326,13 +1365,20 @@ The reference index maintains an independent algorithm counter and clickable
 labels. Unsupported pseudocode commands retain the source fallback. The float
 stays together in Visual; placement remains a TeX approximation.
 
-Literal `textcolor`, `colorbox` and `fcolorbox` use an attributed inline mark;
+Literal `textcolor`, `colorbox`, `fcolorbox` and `fbox` use an attributed inline mark;
 serialization retains the color expression. Document-scoped CSS variables resolve
 basic xcolor names and literal `definecolor` declarations (HTML, rgb, RGB, gray),
 including chained percentage mixtures. Unknown colors retain source fallback.
 The `tcolorbox` adapter uses the existing structured block node, with an editable
 title and native prose/math/list children. It accepts literal title, colback,
-colframe, coltitle and breakable options. Breakable boxes participate in nested
+colframe, coltitle and breakable options, plus bounded corner, shadow, dashed-frame
+and west-border styles. The upper and lower regions use structured children;
+edits retain their `\tcblower` separator. Basic local frame groups and framed
+paragraph boxes retain their argument boundaries and length declarations.
+`tcblisting` with the listings engine uses the existing literal code editor and
+patches its code/title ranges without rewriting the frame options. Source-only
+fields have fixed sizing and a one-line minimum, with scrollable content.
+Breakable boxes participate in nested
 pagination; the CSS frame and continuation are an approximation of TeX output.
 
 A bounded literal newcount/advance/ifnum loop can project up to 100 repetitions.
@@ -1355,15 +1401,23 @@ Display equations stay unavailable inside inline-only table cells.
 
 Abstract bodies use the same structured paragraph and math editing as scientific
 environments, including Enter and inline/display math insertion. Empty MathLive
-slots use the shared blue dashed guides while editing, including fraction and
+slots use the shared faint gray guides while editing, including fraction and
 root slots; guides do not appear in copied source or printed output.
 
-Figures accept a bounded TikZ adapter for numeric line paths, endpoint labels,
-filled circles and literal coordinate-pair `foreach` point lists. SVG renders the
-geometry; labels and captions use the existing on-page editors. The figure footer
-edits coordinates and explicit scale values by patching their original source
-ranges. Unknown commands/options reject the whole adapter; arbitrary TikZ is not
-evaluated. Stroke widths and node text stay unscaled while coordinates scale.
+Complete `tikzpicture` blocks, including pgfplots axes, render as read-only
+artwork in figures or on their own. Recognition scans environment boundaries,
+without interpreting drawing commands. Caption edits cannot patch the drawing.
+The authenticated artwork endpoint calls `LatexTikzPreview`, which compiles the
+picture with the root document's preamble and current panel linewidth. The
+`preview` package crops the PDF; the existing PDF.js runtime paints it at paper
+scale. Each run uses a scoped temporary directory, the shared toolchain and
+managed package installer, no shell escape, a concurrency limit, cancellation
+of its process tree, and bounded output and time. Project inputs are resolved
+through the validated document directory. Preview compilation leaves project
+files and ordinary document build status unchanged. Compiler failures display
+a diagnostic while keeping source intact. Document-body macro definitions,
+cross-picture references and externalization are not provided by this isolated
+preview. There are no drawing-editing controls in Visual.
 
 Standard report/book structure uses the existing rich-preview nodes for literal
 document controls (`title`, `author`, `date`, `pagenumbering`, `appendix`) and
@@ -1416,17 +1470,57 @@ context into portaled submenus; nested selects follow their trigger ownership.
 after root Escape. Selection commands use the existing configurable keyboard
 catalog and route through the active participant, with parent expansion/shrink.
 
+Overlay painting measures current screen coordinates on captured scroll and resize
+events. Math range geometry clears MathLive's render-time atom bounds cache before
+measuring, so scrolling without an edit cannot reuse old screen coordinates.
+Retained menu snapshots also measure when painted. The overlay intersects the
+document viewport with an active math viewport, keeping panned highlights inside
+the visible formula area.
+
 `LatexStructuredSelection` maps retained ProseMirror bookmarks through transactions
 and exposes authored formatting ranges using `latexInlineEditingScopes` when the
-source projection matches. Otherwise it derives current mark runs. Math/table
+source projection matches, including attributed color/frame wrappers. Otherwise
+it derives current mark runs. Enter formatting operates on stored marks at a
+collapsed caret, with authored outer-to-inner ordering and preference for the
+following span at a shared boundary, unless re-entering the scope just left.
+Leaving removes the active scope's mark;
+menu snapshots retain stored marks as well as the bookmark. Entry stays local to
+the prose participant instead of bubbling out of math or table selections. Math/table
 snapshots guard model/node identity and native text snapshots guard their value.
 Math formatting runs remain character-selectable; structural branch crossing
 keeps owner normalization. Structural Tab traversal skips formatting, and vertical
 math navigation retains an x-coordinate until horizontal movement, typing, or a
 pointer action resets it.
 
-Scope outlines and muted retained highlights are clipped, noninteractive DOM
+`splitMathRow` handles Ctrl/Cmd+Enter before document-exit handling. Existing
+array rows split by moving their atoms, preserving the current column and all
+following columns, through one undo-aware `insertLineBreak` mutation. A single
+flow or nested body becomes a two-row `gathered` through MathLive's insertion
+API; its surrounding fraction/root/formatting stays intact. The caret starts
+the second row and keeps its text/math mode. Nonempty selections and protected
+imported row numbering are rejected without deleting selected content.
+
+`mathCommandCompletion` uses the bounded formatting-command inventory in
+`mathTextFormatting` to create braced placeholder arguments. Keyboard acceptance,
+native suggestion clicks and completion on blur share the argument insertion
+path. Blur accepts only the typed command and does not reclaim focus.
+`mathTextFormattingInput` restores placeholders in empty formatting arguments
+on load; the existing `latex-without-placeholders` save/clipboard projection
+retains the formatting braces without exporting the editing slots. Document
+macros overriding these commands bypass this adaptation.
+
+Scope corner marks and muted retained highlights are clipped, noninteractive DOM
 overlays outside the source model. Empty matrix cells use their rendered hit boxes
-for selection painting. The footer path is status feedback, not menu help. These
-changes do not add source tokens or undo entries. No live interaction tests were
-run for this implementation.
+for selection painting. The footer shows only the environment type, word count
+and contextual controls; nested scope paths are not rendered. These
+changes do not add source tokens or undo entries. Only the innermost slot is
+marked; content selections suppress these marks. Text/prose and math selections
+use Markdown's primary-color mix at 22%; rectangular table/math cell selections
+use its 14% mix. The overlay inherits the document's computed selection variables
+so placement outside the document cannot change the theme or menu-held color.
+`mathEditingGuides` gives the
+native caret a thin stroke in local text color. Its em-based size follows the
+rendered math style; inside accent bodies a baseline-anchored paint transform
+shortens it by 15% without changing layout. Selection and menu retention suppress
+the editing caret. Page-preview snapshots strip guide state. These visual changes
+have not been qualified with live interaction tests.

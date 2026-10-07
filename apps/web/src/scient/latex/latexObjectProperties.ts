@@ -4,6 +4,7 @@ import {
   patchLatexSource,
 } from "./latexSourceSyntax";
 import { latexLayoutLength, latexMinipageSeparator } from "./latexPageLayouts";
+import { latexWithoutComments } from "./latexPackages";
 
 /** Replace one literal key, retaining all other options and the body verbatim. */
 export function setLatexEnvironmentOption(
@@ -16,25 +17,35 @@ export function setLatexEnvironmentOption(
   if (!source.startsWith(opening)) return { error: "This environment has a custom opening." };
   const options = arg(source, opening.length, "[", "]");
   const raw = options?.value ?? "";
+  const clean = latexWithoutComments(raw);
   const pieces: string[] = [];
+  const keys: string[] = [];
+  const comments: string[] = [];
   let start = 0,
     depth = 0;
   for (let at = 0; at <= raw.length; at++) {
-    if (raw[at] === "\\") at++;
-    else if (raw[at] === "{") depth++;
-    else if (raw[at] === "}") depth--;
-    else if ((!depth && raw[at] === ",") || at === raw.length) {
-      pieces.push(raw.slice(start, at));
+    if (clean[at] === "\\") at++;
+    else if (clean[at] === "{") depth++;
+    else if (clean[at] === "}") depth--;
+    else if ((!depth && clean[at] === ",") || at === raw.length) {
+      const piece = raw.slice(start, at);
+      const visible = clean.slice(start, at);
+      pieces.push(piece);
+      keys.push(visible.trim().split(/\s*=/u)[0] ?? "");
+      comments.push(
+        [...piece.matchAll(/\\(?:[A-Za-z]+|[^\r\n])|%[^\r\n]*/gu)]
+          .filter((match) => match[0].startsWith("%"))
+          .map((match) => match[0] + (raw.includes("\r\n") ? "\r\n" : "\n"))
+          .join(""),
+      );
       start = at + 1;
     }
   }
-  const indexes = pieces.flatMap((part, index) =>
-    part.trim().split(/\s*=/u)[0] === key ? [index] : [],
-  );
+  const indexes = keys.flatMap((name, index) => (name === key ? [index] : []));
   if (indexes.length > 1)
     return { error: "This option is repeated. Resolve its source before changing it." };
   const entry = value === null ? "" : value === "" ? key : `${key}=${value}`;
-  if (indexes[0] !== undefined) pieces[indexes[0]] = entry;
+  if (indexes[0] !== undefined) pieces[indexes[0]] = comments[indexes[0]] + entry;
   else if (entry) pieces.push(entry);
   const next = pieces.filter((part) => part.trim()).join(",");
   const from = options?.open ?? opening.length;
@@ -67,20 +78,55 @@ export function setLatexLayoutOpening(
   if (!source.startsWith(opening))
     return { error: "Select an individual panel to edit its dimensions." };
   let at = opening.length;
+  const optionalArguments: NonNullable<ReturnType<typeof arg>>[] = [];
   for (let index = 0; index < 3; index++) {
     const optional = arg(source, at, "[", "]");
     if (!optional) break;
+    optionalArguments.push(optional);
     at = optional.end;
   }
   const width = arg(source, at);
   if (!width) return { error: "This panel has a custom width." };
   if (
-    !/^(?:\d+(?:\.\d+)?|\.\d+)(?:mm|cm|in|pt|em|\\linewidth)$/u.test(options.width ?? "") ||
+    !/^(?:\d+(?:\.\d+)?|\.\d+)(?:mm|cm|in|pt|em|ex|\\(?:linewidth|textwidth|columnwidth))$/u.test(
+      (options.width ?? "").trim(),
+    ) ||
     !/^[tcb]$/u.test(options.alignment ?? "")
   )
     return { error: "Choose an alignment and a width such as 0.46\\linewidth or 60mm." };
-  if (options.height && !/^(?:\d+(?:\.\d+)?|\.\d+)(?:mm|cm|in|pt|em)$/u.test(options.height))
+  if (
+    options.height &&
+    !/^(?:\d+(?:\.\d+)?|\.\d+)(?:mm|cm|in|pt|em|ex)$/u.test(options.height.trim())
+  )
     return { error: "Use a fixed height such as 30mm, or leave it empty." };
+  if (options.height && !/^[tcbs]$/u.test(options.innerAlignment ?? "t"))
+    return { error: "Choose a supported content alignment." };
+  if (Boolean(options.height) === optionalArguments.length > 1) {
+    const patches = [{ from: width.from, to: width.to, value: options.width! }];
+    if (optionalArguments[0])
+      patches.push({
+        from: optionalArguments[0].from,
+        to: optionalArguments[0].to,
+        value: options.alignment!,
+      });
+    else
+      patches.push({ from: opening.length, to: opening.length, value: `[${options.alignment}]` });
+    if (options.height) {
+      const height = optionalArguments[1]!;
+      patches.push({ from: height.from, to: height.to, value: options.height });
+      const inner = optionalArguments[2];
+      if (inner)
+        patches.push({ from: inner.from, to: inner.to, value: options.innerAlignment ?? "t" });
+      else
+        patches.push({
+          from: height.end,
+          to: height.end,
+          value: `[${options.innerAlignment ?? "t"}]`,
+        });
+    }
+    const next = patchLatexSource(source, patches);
+    return next === null ? { error: "The panel arguments overlap." } : { source: next };
+  }
   return {
     source: `${opening}[${options.alignment}]${options.height ? `[${options.height}][${options.innerAlignment ?? "t"}]` : ""}{${options.width}}${source.slice(width.end)}`,
   };
@@ -90,6 +136,8 @@ export function setLatexPanelRow(
   source: string,
   ratios: readonly number[],
   gap: string,
+  preserveWidths = false,
+  preserveGaps = false,
 ): { source: string } | { error: string } {
   if (
     ratios.length < 2 ||
@@ -97,7 +145,11 @@ export function setLatexPanelRow(
     ratios.some((value) => !Number.isFinite(value) || value <= 0)
   )
     return { error: "Use two to six positive panel ratios." };
-  if (gap !== "auto" && (!latexLayoutLength(gap) || latexLayoutLength(gap)!.endsWith("%")))
+  if (
+    !preserveGaps &&
+    gap !== "auto" &&
+    (!latexLayoutLength(gap) || latexLayoutLength(gap)!.endsWith("%"))
+  )
     return { error: "Choose an automatic gap or a fixed spacing." };
   const panels: { from: number; to: number; width: NonNullable<ReturnType<typeof arg>> }[] = [];
   let depth = 0,
@@ -127,19 +179,22 @@ export function setLatexPanelRow(
   const total = ratios.reduce((sum, value) => sum + value, 0);
   const size = (i: number) => `${Number(((0.92 * ratios[i]!) / total).toFixed(5))}\\linewidth`;
   const separator = gap === "auto" ? "\\hfill\n" : `\\hspace{${gap}}\n`;
-  panels.forEach((panel, i) => {
-    patches.push({ from: panel.width.from, to: panel.width.to, value: size(i) });
-  });
-  for (let i = 1; i < panels.length; i++) {
-    const from = panels[i - 1]!.to,
-      to = panels[i]!.from;
-    const between = source.slice(from, to);
-    if (!latexMinipageSeparator(source.slice(from)))
-      return { error: "The space between these panels contains custom layout source." };
-    const comments = [...between.matchAll(/%[^\r\n]*(?:\r?\n|$)/gu)]
-      .map((match) => match[0])
-      .join("");
-    patches.push({ from, to, value: separator + comments });
+  if (!preserveWidths)
+    panels.forEach((panel, i) => {
+      patches.push({ from: panel.width.from, to: panel.width.to, value: size(i) });
+    });
+  if (!preserveGaps) {
+    for (let i = 1; i < panels.length; i++) {
+      const from = panels[i - 1]!.to,
+        to = panels[i]!.from;
+      const between = source.slice(from, to);
+      if (!latexMinipageSeparator(source.slice(from)))
+        return { error: "The space between these panels contains custom layout source." };
+      const comments = [...between.matchAll(/%[^\r\n]*(?:\r?\n|$)/gu)]
+        .map((match) => match[0])
+        .join("");
+      patches.push({ from, to, value: separator + comments });
+    }
   }
   if (ratios.length > panels.length)
     patches.push({

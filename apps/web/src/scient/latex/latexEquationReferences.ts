@@ -15,6 +15,7 @@ import {
   serializeLatexVisualBlock,
 } from "./latexVisualDocument";
 import { algorithmLineLayout } from "./latexAlgorithm";
+import { activeLatexSource } from "./latexLiteral";
 import {
   latexEnvironmentDeclarations,
   type LatexEnvironmentDeclaration,
@@ -35,6 +36,7 @@ interface EquationTarget {
     | "table"
     | "figure"
     | "algorithm"
+    | "listing"
     | "heading"
     | "anchor"
     | "bibliography";
@@ -70,6 +72,7 @@ interface EquationReferences {
   tables: Map<number, { number: string | null }>;
   figures: Map<number, { number: string | null; panels: (string | null)[] }>;
   algorithms: Map<number, { number: string | null }>;
+  listings: Map<number, { number: string | null }>;
   algorithmLines: Map<number, { indent: number; number: string }>;
   anchors: Map<string, EquationTarget>;
   contents: { position: number; level: number; number: string | null; title: string }[];
@@ -133,6 +136,7 @@ function mapReferences(previous: EquationReferences, transaction: Transaction): 
     tables: keyed(previous.tables),
     figures: keyed(previous.figures),
     algorithms: keyed(previous.algorithms),
+    listings: keyed(previous.listings),
     algorithmLines: keyed(previous.algorithmLines),
     footnotes: keyed(previous.footnotes),
     bibliographies: keyed(previous.bibliographies),
@@ -174,17 +178,19 @@ function clearHighlight(view: EditorView) {
 export function navigateToEquation(view: EditorView, target: EquationTarget): void {
   const node = view.nodeDOM(target.position);
   const selector =
-    target.kind === "algorithm"
-      ? ".scient-latex-algorithm"
-      : target.kind === "statement"
-        ? ".scient-latex-scientific-structure"
-        : target.kind === "table"
-          ? '.scient-latex-rich-preview[data-kind="table"]'
-          : target.kind === "figure"
-            ? ".scient-latex-figure-preview"
-            : target.kind === "bibliography"
-              ? ".scient-latex-bibliography-preview"
-              : ".scient-latex-visual-display-math";
+    target.kind === "listing"
+      ? '.scient-latex-simple-preview[data-environment="lstlisting"]'
+      : target.kind === "algorithm"
+        ? ".scient-latex-algorithm"
+        : target.kind === "statement"
+          ? ".scient-latex-scientific-structure"
+          : target.kind === "table"
+            ? '.scient-latex-rich-preview[data-kind="table"]'
+            : target.kind === "figure"
+              ? ".scient-latex-figure-preview"
+              : target.kind === "bibliography"
+                ? ".scient-latex-bibliography-preview"
+                : ".scient-latex-visual-display-math";
   const direct = target.kind === "heading" || target.kind === "anchor";
   const equation =
     node instanceof HTMLElement
@@ -241,7 +247,7 @@ function equationReferences(
   source: string,
   compiled: CompiledBibliographyItem[] | null,
 ): EquationReferences {
-  const clean = latexWithoutComments(source);
+  const clean = latexWithoutComments(activeLatexSource(source));
   const begin = clean.indexOf("\\begin{document}");
   const preamble = begin < 0 ? "" : clean.slice(0, begin);
   const documentClass = /\\documentclass\s*(?:\[[^\]]*\])?\s*\{([^{}]+)\}/u.exec(preamble)?.[1];
@@ -273,6 +279,7 @@ function equationReferences(
     tables: new Map(),
     figures: new Map(),
     algorithms: new Map(),
+    listings: new Map(),
     algorithmLines: new Map(),
     anchors: new Map(),
     contents: [],
@@ -319,6 +326,13 @@ function equationReferences(
   let tableCounter = 0;
   let figureCounter = 0;
   let algorithmCounter = 0;
+  let listingCounter = 0;
+  let listingsReliable =
+    !!documentClass &&
+    ["article", "book", "report"].includes(documentClass) &&
+    !/\\(?:setcounter|addtocounter|counterwithin|counterwithout|numberwithin|catcode|includeonly)\b|\\(?:renewcommand|def|gdef|xdef)\s*\*?\s*\{?\\thelstlisting\b|numberbychapter\s*=|\\lstlistingname\b/u.test(
+      clean,
+    );
   let algorithmsReliable =
     !/\\(?:setcounter|addtocounter|counterwithin|counterwithout|numberwithin|catcode)\b|\\(?:renewcommand|def|gdef|xdef)\s*\*?\s*\{?\\thealgorithm\b|\\usepackage\s*\[[^\]]*\]\s*\{algorithm\}/u.test(
       clean,
@@ -466,6 +480,7 @@ function equationReferences(
         if (documentClass !== "article") footnote = 0;
         if (documentClass !== "article") tableCounter = 0;
         if (documentClass !== "article") figureCounter = 0;
+        if (documentClass !== "article") listingCounter = 0;
         if (scope !== null) counter = 0;
       } else if (node.attrs.unnumbered !== true && level === 1) {
         section++;
@@ -506,9 +521,27 @@ function equationReferences(
       tablesReliable = false;
       figuresReliable = false;
       algorithmsReliable = false;
+      listingsReliable = false;
       headingsReliable = false;
       footnotesReliable = false;
       return false;
+    }
+    if (node.type.name === "latexRichPreview" && node.attrs.environment === "lstlisting") {
+      const captioned = node.attrs.caption !== null;
+      if (captioned) listingCounter++;
+      const number =
+        captioned && listingsReliable
+          ? `${chapter > 0 ? chapterPrefix() : ""}${listingCounter}`
+          : null;
+      result.listings.set(position, { number });
+      if (captioned && node.attrs.label)
+        addLabel(String(node.attrs.label), {
+          position,
+          row: 0,
+          number,
+          kind: "listing",
+          title: "Listing",
+        });
     }
     if (node.type.name === "latexScientific" && node.attrs.layout?.kind === "algorithm") {
       if (node.attrs.layout.captioned) algorithmCounter++;

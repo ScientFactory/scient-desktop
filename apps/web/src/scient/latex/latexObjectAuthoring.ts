@@ -7,6 +7,7 @@ export const LatexAuthoringContext = createContext<{
   source: string;
   prepare: () => boolean;
   reportError?: (message: string | null) => void;
+  renameLabel?: (before: string, after: string, fieldId?: string) => boolean;
 }>({
   source: "",
   prepare: () => true,

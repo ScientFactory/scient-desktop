@@ -1,6 +1,11 @@
 import type { Editor } from "@tiptap/core";
 import { useEditorState } from "@tiptap/react";
-import { LatexSelect } from "./LatexSelect";
+import { useState } from "react";
+import { Input } from "~/components/ui/input";
+import { MenuRadioGroup, MenuSeparator, MenuCheckboxItem } from "~/components/ui/menu";
+import { DockMenu, DockCommandItem, DockCommandRadioItem } from "../writing/dockChrome";
+import { LatexFooterSubmenu } from "./LatexFooterSubmenu";
+import { LatexContextMenuForm } from "./LatexContextMenuForm";
 import { parseLatexListOptions } from "./latexListOptions";
 import { useLatexActionNotice } from "./latexObjectAuthoring";
 
@@ -21,10 +26,14 @@ export function LatexListControls({ editor }: { editor: Editor }) {
   const parsed = parseLatexListOptions(String(list.node.attrs.latexListOptions ?? ""));
   const update = (changes: { start?: number; resume?: boolean; label?: string }) => {
     if (!parsed || !editor.isEditable) return;
+    const current = editor.state.doc.nodeAt(list.position);
+    if (current?.type.name !== "orderedList") return;
+    const currentOptions = parseLatexListOptions(String(current.attrs.latexListOptions ?? ""));
+    if (!currentOptions) return;
     const next = {
-      ...parsed,
-      start: Number(list.node.attrs.start ?? parsed.start),
-      resume: list.node.attrs.resume === true,
+      ...currentOptions,
+      start: Number(current.attrs.start ?? currentOptions.start),
+      resume: current.attrs.resume === true,
       ...changes,
     };
     if (!Number.isSafeInteger(next.start) || next.start < 1) {
@@ -39,7 +48,7 @@ export function LatexListControls({ editor }: { editor: Editor }) {
       .join(",");
     editor.view.dispatch(
       editor.state.tr.setNodeMarkup(list.position, undefined, {
-        ...list.node.attrs,
+        ...current.attrs,
         start: next.start,
         resume: next.resume,
         latexListOptions: options || null,
@@ -52,46 +61,74 @@ export function LatexListControls({ editor }: { editor: Editor }) {
       role="toolbar"
       aria-label="List options"
       data-context-fallback=""
+      data-context-presentation="inline"
+      data-context-position="List"
       className="scient-latex-context-toolbar"
     >
-      <label>
-        Numbering
-        <LatexSelect
-          aria-label="List numbering format"
-          disabled={!parsed || !editor.isEditable}
-          value={parsed?.label ?? ""}
-          onValueChange={(label) => update({ label })}
-          options={[
+      <DockMenu
+        icon={undefined}
+        label="Numbering"
+        commandScope="latex"
+        disabled={!parsed || !editor.isEditable}
+      >
+        <MenuRadioGroup value={parsed?.label ?? ""}>
+          {[
             { value: "", label: "Document default" },
             { value: "\\arabic*.", label: "1. 2. 3." },
             { value: "\\alph*)", label: "a) b) c)" },
             { value: "\\Alph*.", label: "A. B. C." },
             { value: "\\roman*.", label: "i. ii. iii." },
+            { value: "\\Roman*.", label: "I. II. III." },
             { value: "(\\arabic*)", label: "(1) (2) (3)" },
-          ]}
-        />
-      </label>
-      <label>
-        Start at
-        <input
-          aria-label="List start number"
-          type="number"
-          min={1}
-          defaultValue={Number(list.node.attrs.start ?? 1)}
-          key={list.position}
-          disabled={!parsed || !editor.isEditable}
-          onBlur={(event) => update({ start: Number(event.target.value), resume: false })}
-        />
-      </label>
-      <label>
-        <input
-          type="checkbox"
+          ].map(({ value, label }) => (
+            <DockCommandRadioItem
+              key={value}
+              value={value}
+              size="compact"
+              onClick={() => update({ label: value })}
+            >
+              {label}
+            </DockCommandRadioItem>
+          ))}
+        </MenuRadioGroup>
+        <MenuSeparator />
+        <LatexFooterSubmenu label="Start at">
+          <ListStartNumber
+            key={`${list.position}:${list.node.attrs.start}`}
+            value={Number(list.node.attrs.start ?? 1)}
+            onChange={(start) => update({ start, resume: false })}
+          />
+        </LatexFooterSubmenu>
+        <MenuCheckboxItem
+          variant="switch"
           checked={list.node.attrs.resume === true}
-          disabled={!parsed || !editor.isEditable}
-          onChange={(event) => update({ resume: event.target.checked })}
-        />
-        Continue previous list
-      </label>
+          closeOnClick={false}
+          onCheckedChange={(resume) => update({ resume })}
+        >
+          Continue previous
+        </MenuCheckboxItem>
+      </DockMenu>
     </div>
+  );
+}
+
+function ListStartNumber(props: { value: number; onChange: (value: number) => void }) {
+  const [draft, setDraft] = useState(String(props.value));
+  const valid = /^\d+$/u.test(draft) && Number.isSafeInteger(Number(draft)) && Number(draft) > 0;
+  return (
+    <LatexContextMenuForm label="List start number" width="content">
+      <Input
+        size="compact"
+        type="number"
+        min={1}
+        aria-label="List start number"
+        value={draft}
+        aria-invalid={!valid}
+        onChange={(event) => setDraft(event.target.value)}
+      />
+      <DockCommandItem disabled={!valid} onClick={() => props.onChange(Number(draft))}>
+        Apply
+      </DockCommandItem>
+    </LatexContextMenuForm>
   );
 }

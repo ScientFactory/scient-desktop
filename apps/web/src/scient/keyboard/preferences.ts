@@ -17,11 +17,12 @@ const LEGACY_KEY = "scient.mathInputBindings.v1";
  * 2: Inline code (mod+e) and Link (mod+k) in the LaTeX editor.
  * 3: the Markdown editor's keys for Text, the first three headings and the
  *    two lists, beside the key sequences.
+ * 4: Select the current LaTeX editing scope, then each parent (mod+a).
  */
-const WRITING_PRESET_VERSION = 3;
+const WRITING_PRESET_VERSION = 4;
 export interface KeyboardPreferences {
   readonly version: 1;
-  readonly writingPresetVersion?: 1 | 2 | 3;
+  readonly writingPresetVersion?: 1 | 2 | 3 | 4;
   readonly customMath?: readonly CustomMathCommand[];
   readonly overrides: Readonly<Record<string, readonly string[]>>;
   readonly mathPreset: "lyx" | "minimal";
@@ -128,7 +129,10 @@ export function validateKeyboardPreferences(
     overrides[command] = keys.map((key) => {
       if (typeof key !== "string") throw new Error("Shortcut keys must be text.");
       validateKeys(key);
-      if (reservedEditingKeys(key, mac))
+      if (
+        reservedEditingKeys(key, mac) &&
+        !(command === "latex.selectionScopeExpand" && keysOverlap(key, "mod+a", mac))
+      )
         throw new Error(
           "This shortcut is reserved for native editing, clipboard, save, or undo. Choose another shortcut.",
         );

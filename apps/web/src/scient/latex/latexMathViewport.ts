@@ -1,24 +1,14 @@
 import type { MathfieldElement } from "mathlive";
 import { afterEditorPaint } from "./afterEditorPaint";
 
-export interface MathViewportState {
-  offset: number;
-  max: number;
-}
-
 /** Display math keeps its natural layout; panning belongs only to the live edit. */
-export function installLatexMathViewport(
-  math: MathfieldElement,
-  viewport: HTMLElement,
-  changed: (state: MathViewportState) => void,
-) {
+export function installLatexMathViewport(math: MathfieldElement, viewport: HTMLElement) {
   // Inline fields and embedded math editors never own a display viewport.
   // Avoid document listeners and size observers for those frequent cases.
   if (!viewport.parentElement?.classList.contains("scient-latex-visual-display-math")) {
     return {
       setEditing: (_editing: boolean) => {},
       revealCaret: () => {},
-      scrollTo: (_offset: number) => {},
       dispose: () => {},
     };
   }
@@ -28,21 +18,15 @@ export function installLatexMathViewport(
   let caretPending = false;
   let pointerDown = false;
   let cancelUpdate: (() => void) | undefined;
-  let previous: MathViewportState = { offset: 0, max: 0 };
+  let maxScroll = 0;
   const isDisplay = () =>
     viewport.parentElement?.classList.contains("scient-latex-visual-display-math") === true;
-  const publish = (max: number) => {
-    const offset = max > 0 ? Math.max(0, Math.min(max, viewport.scrollLeft)) : 0;
-    if (previous.max === max && previous.offset === offset) return;
-    previous = { offset, max };
-    changed(previous);
-  };
   const update = () => {
     cancelUpdate = undefined;
     if (!isDisplay() || viewport.clientWidth === 0) {
       viewport.removeAttribute("data-math-viewport-active");
       viewport.removeAttribute("data-math-wide");
-      publish(0);
+      maxScroll = 0;
       return;
     }
     const style = getComputedStyle(viewport);
@@ -51,6 +35,7 @@ export function installLatexMathViewport(
     viewport.toggleAttribute("data-math-wide", wide);
     viewport.toggleAttribute("data-math-viewport-active", editing && wide);
     const max = editing && wide ? Math.max(0, viewport.scrollWidth - viewport.clientWidth) : 0;
+    maxScroll = max;
     if (restorePending) {
       if (max > 0) viewport.scrollLeft = Math.min(max, rememberedOffset);
       restorePending = false;
@@ -77,7 +62,6 @@ export function installLatexMathViewport(
       }
     }
     if (editing && max > 0) rememberedOffset = viewport.scrollLeft;
-    publish(max);
   };
   const schedule = () => {
     if (!cancelUpdate) cancelUpdate = afterEditorPaint(update);
@@ -88,7 +72,7 @@ export function installLatexMathViewport(
       rememberedOffset = viewport.scrollLeft;
       viewport.removeAttribute("data-math-viewport-active");
       viewport.scrollLeft = 0;
-      publish(0);
+      maxScroll = 0;
     }
     editing = next;
     // Clicking a new symbol must retain the clicked position. Restore a saved
@@ -103,13 +87,20 @@ export function installLatexMathViewport(
     schedule();
   };
   const wheel = (event: WheelEvent) => {
-    if (!editing || !previous.max || event.ctrlKey || event.metaKey) return;
+    if (!editing || event.ctrlKey || event.metaKey) return;
     const delta = event.deltaX || (event.shiftKey ? event.deltaY : 0);
     if (!delta) return;
+    // Measure before the first gesture, even if focus/resize paint is pending.
+    cancelUpdate?.();
+    update();
+    if (!maxScroll) return;
     const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport.clientWidth : 1;
-    const offset = Math.max(0, Math.min(previous.max, viewport.scrollLeft + delta * unit));
+    const offset = Math.max(0, Math.min(maxScroll, viewport.scrollLeft + delta * unit));
     if (offset === viewport.scrollLeft) return;
     event.preventDefault();
+    // The outer viewport owns panning; MathLive otherwise scrolls its own
+    // content first and stops the event before it reaches this viewport.
+    event.stopPropagation();
     viewport.scrollLeft = offset;
     schedule();
   };
@@ -125,7 +116,7 @@ export function installLatexMathViewport(
   resize.observe(viewport);
   resize.observe(math);
   viewport.addEventListener("scroll", schedule);
-  viewport.addEventListener("wheel", wheel, { passive: false });
+  viewport.addEventListener("wheel", wheel, { passive: false, capture: true });
   math.addEventListener("pointerdown", pointerStarted, true);
   math.ownerDocument.addEventListener("pointerup", pointerFinished, true);
   math.ownerDocument.addEventListener("pointercancel", pointerFinished, true);
@@ -133,16 +124,11 @@ export function installLatexMathViewport(
   return {
     setEditing,
     revealCaret,
-    scrollTo: (offset: number) => {
-      if (!editing || !previous.max || !Number.isFinite(offset)) return;
-      viewport.scrollLeft = Math.max(0, Math.min(previous.max, offset));
-      schedule();
-    },
     dispose: () => {
       cancelUpdate?.();
       resize.disconnect();
       viewport.removeEventListener("scroll", schedule);
-      viewport.removeEventListener("wheel", wheel);
+      viewport.removeEventListener("wheel", wheel, true);
       math.removeEventListener("pointerdown", pointerStarted, true);
       math.ownerDocument.removeEventListener("pointerup", pointerFinished, true);
       math.ownerDocument.removeEventListener("pointercancel", pointerFinished, true);

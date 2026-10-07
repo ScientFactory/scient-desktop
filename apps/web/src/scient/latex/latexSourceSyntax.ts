@@ -71,7 +71,7 @@ export function latexSourceCommands(source: string) {
       }
       if (name === "begin") {
         const env = latexSourceArgument(source, end);
-        if (env && /^(?:verbatim\*?|lstlisting|minted|Verbatim)$/u.test(env.value)) {
+        if (env && /^(?:verbatim\*?|lstlisting|tcblisting|minted|Verbatim)$/u.test(env.value)) {
           result.push({ name, from: at, to: end, depth });
           const closing = `\\end{${env.value}}`;
           const close = source.indexOf(closing, env.end);

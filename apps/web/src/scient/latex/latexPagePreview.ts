@@ -39,6 +39,18 @@ function snapshotNode(source: Node): Node {
     "data-latex-context-root",
     "data-reference-highlight",
     "data-math-viewport-active",
+    "data-scient-active-slot",
+    "data-scient-selection-active",
+    "data-scient-selection-held",
+    "data-scient-editing-guides",
+    "data-scient-accent-body",
+    "data-guide-active",
+    "data-guide-current",
+    "data-guide-top",
+    "data-guide-bottom",
+    "data-guide-left",
+    "data-guide-right",
+    "data-table-guides",
   ])
     clone.removeAttribute(attribute);
   clone.classList.remove(
@@ -51,7 +63,7 @@ function snapshotNode(source: Node): Node {
     if (
       child instanceof Element &&
       child.matches(
-        "script,style,.ML__caret,.ML__text-caret,.ML__selection,.scient-latex-longtable-measurements",
+        "script,style,.ML__caret,.ML__text-caret,.ML__selection,.scient-latex-longtable-measurements,.scient-latex-table-guides",
       )
     )
       continue;

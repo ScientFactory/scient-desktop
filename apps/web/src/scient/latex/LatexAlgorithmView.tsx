@@ -1,4 +1,4 @@
-import { useRef, type CSSProperties } from "react";
+import { useRef, useState, type CSSProperties } from "react";
 import { Node as TiptapNode } from "@tiptap/core";
 import { splitBlockAs } from "@tiptap/pm/commands";
 import {
@@ -13,6 +13,8 @@ import { LatexObjectToolbar } from "./LatexObjectToolbar";
 import { LatexTextField } from "./LatexTextField";
 import { latexEquationReferencesKey } from "./latexEquationReferences";
 import { LatexAlgorithmControls } from "./LatexAlgorithmControls";
+import { enterLatexObjectBody } from "./latexObjectCaret";
+import { deleteEmptyAlgorithmStructure } from "./latexAlgorithmCommands";
 
 export function LatexAlgorithmView({
   node,
@@ -20,7 +22,6 @@ export function LatexAlgorithmView({
   selected,
   getPos,
   updateAttributes,
-  deleteNode,
   editable,
   draftKey,
 }: Pick<
@@ -28,6 +29,18 @@ export function LatexAlgorithmView({
   "node" | "editor" | "selected" | "getPos" | "updateAttributes" | "deleteNode"
 > & { editable: boolean; draftKey?: string | undefined }) {
   const root = useRef<HTMLDivElement>(null);
+  const [captionEditing, setCaptionEditing] = useState(false);
+  const floating = node.attrs.layout.floating !== false;
+  const captioned = node.attrs.layout.captioned === true;
+  const caption = (title: string) =>
+    updateAttributes({
+      title,
+      layout: {
+        ...node.attrs.layout,
+        captioned: title !== "",
+        ...(title === "" ? { label: "" } : {}),
+      },
+    });
   const number = useEditorState({
     editor,
     selector: ({ editor }) => {
@@ -39,17 +52,29 @@ export function LatexAlgorithmView({
     },
   });
   return (
-    <NodeViewWrapper ref={root} className="scient-latex-algorithm">
-      {node.attrs.layout.captioned && (
+    <NodeViewWrapper
+      ref={root}
+      className="scient-latex-algorithm"
+      data-floating={floating || undefined}
+    >
+      {floating && (captioned || captionEditing) && (
         <div className="scient-latex-algorithm-caption" contentEditable={false}>
-          <strong>Algorithm{number ? ` ${number}` : ""}</strong>
+          {captioned && <strong>Algorithm{number ? ` ${number}` : ""}</strong>}
           <LatexTextField
             aria-label="Algorithm caption"
             rows={1}
             value={String(node.attrs.title)}
             draftKey={draftKey && `${draftKey}:caption`}
             disabled={!editable}
-            onValueChange={(title) => updateAttributes({ title })}
+            onFocus={() => setCaptionEditing(true)}
+            onBlur={() => setCaptionEditing(false)}
+            onValueChange={caption}
+            onRemoveEmpty={() => {
+              caption("");
+              setCaptionEditing(false);
+              const at = getPos();
+              if (typeof at === "number") enterLatexObjectBody(editor.view, at);
+            }}
           />
         </div>
       )}
@@ -58,13 +83,29 @@ export function LatexAlgorithmView({
         aria-label="Pseudocode"
         data-latex-text-style={node.attrs.layout.fontSize ?? undefined}
       />
-      <LatexObjectToolbar editor={editor} root={root} selected={selected} label="Algorithm tools">
-        <LatexAlgorithmControls node={node} editor={editor} getPos={getPos} />
-        <div className="scient-latex-context-menu-panel">
-          <button type="button" disabled={!editable} onClick={deleteNode}>
-            Delete algorithm
-          </button>
-        </div>
+      <LatexObjectToolbar
+        editor={editor}
+        root={root}
+        selected={selected}
+        label="Algorithm tools"
+        inline
+      >
+        <LatexAlgorithmControls
+          node={node}
+          editor={editor}
+          getPos={getPos}
+          updateAttributes={updateAttributes}
+          editable={editable}
+          draftKey={draftKey}
+          onCaption={() => {
+            setCaptionEditing(true);
+            requestAnimationFrame(() =>
+              root.current
+                ?.querySelector<HTMLTextAreaElement>('textarea[aria-label="Algorithm caption"]')
+                ?.focus({ preventScroll: true }),
+            );
+          }}
+        />
       </LatexObjectToolbar>
     </NodeViewWrapper>
   );
@@ -118,6 +159,8 @@ export const LatexAlgorithmLine = TiptapNode.create({
   },
   addKeyboardShortcuts() {
     return {
+      Backspace: () => deleteEmptyAlgorithmStructure(this.editor),
+      Delete: () => deleteEmptyAlgorithmStructure(this.editor),
       Enter: () => {
         if (this.editor.state.selection.$from.parent.type.name !== this.name) return false;
         return splitBlockAs(() => ({ type: this.type, attrs: { command: "State" } }))(

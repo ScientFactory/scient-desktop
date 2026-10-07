@@ -25,6 +25,8 @@ type Props = Omit<ComponentPropsWithoutRef<"textarea">, "value" | "onChange"> & 
   value: string;
   onValueChange: (value: string, fieldId?: string) => void;
   commitOn?: "idle" | "blur";
+  /** An extra delete press in an empty field returns to its owning object. */
+  onRemoveEmpty?: (direction: -1 | 1) => void;
   /** Scoped to a document and field; only unacknowledged input is journaled here. */
   draftKey?: string | undefined;
 };
@@ -58,6 +60,7 @@ export function LatexTextField({
   onCompositionStart,
   onCompositionEnd,
   onKeyDown,
+  onRemoveEmpty,
   ...props
 }: Props) {
   const [draft, setDraft] = useState(() => restoredLatexFieldDraft(draftKey, value));
@@ -220,6 +223,24 @@ export function LatexTextField({
       data-empty={draft.trim() === "" || undefined}
       data-local-draft={draft !== value || undefined}
       onKeyDown={(event) => {
+        if (
+          onRemoveEmpty &&
+          !props.disabled &&
+          !event.nativeEvent.isComposing &&
+          !composing.current &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey &&
+          !event.shiftKey &&
+          (event.key === "Backspace" || event.key === "Delete") &&
+          event.currentTarget.value.trim() === ""
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          replaceLatexFieldDraft(event.currentTarget, "");
+          onRemoveEmpty(event.key === "Backspace" ? -1 : 1);
+          return;
+        }
         if (commitOn === "blur" && event.key === "Enter" && !event.nativeEvent.isComposing) {
           event.preventDefault();
           event.stopPropagation();

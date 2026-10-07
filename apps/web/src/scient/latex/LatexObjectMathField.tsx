@@ -47,8 +47,10 @@ export function LatexObjectMathField(props: {
         onFocus={props.onFocus}
         onExit={props.onExit}
         onUndo={props.onUndo}
-        onRemoveEmpty={() => {
-          props.onChange("");
+        onRemoveEmpty={(direction) => {
+          if (!props.onChange("")) return false;
+          props.onExit(direction);
+          return true;
         }}
         onExtendOutside={() => false}
         onShortcut={() => false}
