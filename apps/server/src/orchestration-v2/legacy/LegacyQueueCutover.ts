@@ -7,7 +7,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { persistChatAttachments } from "../../AttachmentPersistence.ts";
 import { ServerConfig } from "../../config.ts";
-import { QueueError, readQueue, writeQueue } from "./LegacyQueueLedger.ts";
+import { QueueError, readableQueueDocument, readQueue, writeQueue } from "./LegacyQueueLedger.ts";
 import { importLegacyQueue } from "../../scient/threadQueue/migration.ts";
 import { discoverLegacyQueueThreads } from "../../scient/threadQueue/Store.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
@@ -214,27 +214,25 @@ export const cutOverLegacyQueues = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const rows = yield* sql<{
     thread_id: string;
-    migrated: number;
-    finished: number;
-  }>`SELECT thread_id,
-      CASE WHEN json_valid(document)
-        THEN json_extract(document, '$.migrated') IS 1 ELSE 0 END AS migrated,
-      CASE WHEN json_valid(document)
-        THEN json_extract(document, '$.migrated') IS 1
-          AND json_type(document, '$.items') = 'array'
-          AND json_array_length(document, '$.items') = 0
-        ELSE 0 END AS finished
-    FROM scient_thread_queue ORDER BY thread_id`;
-  const migrated = new Set(
-    rows.flatMap((row) => (row.migrated === 1 ? [ThreadId.make(row.thread_id)] : [])),
-  );
+    document: string;
+  }>`SELECT thread_id, document FROM scient_thread_queue ORDER BY thread_id`;
+  // Only a schema-valid migrated document is evidence. Anything unreadable
+  // stays on the retry path and reports its warning, as before.
+  const migrated = new Set<ThreadId>();
+  const pending: ThreadId[] = [];
+  for (const row of rows) {
+    const threadId = ThreadId.make(row.thread_id);
+    const document = readableQueueDocument(row.document);
+    if (Option.isSome(document) && document.value.migrated) {
+      migrated.add(threadId);
+      if (document.value.items.length === 0) continue;
+    }
+    pending.push(threadId);
+  }
   const files = yield* Effect.tryPromise(() =>
     discoverLegacyQueueThreads(config.stateDir, migrated),
   );
-  const threadIds = new Set([
-    ...rows.flatMap((row) => (row.finished === 1 ? [] : [ThreadId.make(row.thread_id)])),
-    ...files,
-  ]);
+  const threadIds = new Set([...pending, ...files]);
   let imported = 0;
   for (const threadId of threadIds) {
     imported += yield* cutOverLegacyQueue(threadId).pipe(

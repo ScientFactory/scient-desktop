@@ -1223,6 +1223,65 @@ it.effect("a finished cutover skips its threads on the next boot; pending work s
   ),
 );
 
+it.effect("schema-invalid migrated documents stay on the cutover retry path", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const sql = yield* SqlClient.SqlClient;
+    const importer = yield* LegacyV1ThreadImporter;
+    const documents = {
+      "numeric-migrated-flag":
+        '{"revision":1,"migrated":1,"items":[],"blocked":false,"turnId":null,"paused":null}',
+      "missing-ledger-fields": '{"migrated":true,"items":[]}',
+    };
+    for (const [name, document] of Object.entries(documents)) {
+      const threadId = ThreadId.make(name);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${threadId}`),
+        threadId,
+        projectId: ProjectId.make("receipt-project"),
+        title: "Damaged ledger",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* sql`INSERT INTO scient_thread_queue (thread_id, document, revision) VALUES (${threadId}, ${document}, 1)`;
+    }
+    const hydrated: ThreadId[] = [];
+    const imported = yield* cutOverLegacyQueues.pipe(
+      Effect.provideService(LegacyV1ThreadImporter, {
+        ...importer,
+        ensureTranscript: (threadId) =>
+          Effect.sync(() => hydrated.push(threadId)).pipe(
+            Effect.andThen(importer.ensureTranscript(threadId)),
+          ),
+      }),
+    );
+    assert.equal(imported, 0);
+    assert.deepEqual(hydrated.toSorted(), Object.keys(documents).toSorted());
+    for (const [name, document] of Object.entries(documents)) {
+      const [row] = yield* sql<{
+        document: string;
+      }>`SELECT document FROM scient_thread_queue WHERE thread_id = ${name}`;
+      assert.equal(row?.document, document);
+    }
+  }).pipe(
+    Effect.provide(
+      legacyImporterLayer.pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(testLayer, SqlitePersistenceMemory).pipe(
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    ),
+  ),
+);
+
 it.effect("refuses staged message identities owned by another conversation", () =>
   Effect.gen(function* () {
     const orchestrator = yield* OrchestratorV2;
