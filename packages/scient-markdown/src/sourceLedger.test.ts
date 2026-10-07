@@ -344,6 +344,18 @@ describe("nested block kinds", () => {
     expect(unpaired.blocks[0]?.nestedBlockKinds).toEqual(["html", "paragraph"]);
   });
 
+  it("reports inline HTML inside a quote or list, but not in a top-level paragraph", () => {
+    const ledger = createMarkdownSourceLedger(
+      "> Keep <!-- note --> here\n\n- Item *with <b>bold</b>*\n\nPlain <!-- note --> text.\n",
+    );
+
+    expect(ledger.blocks.map((block) => block.nestedBlockKinds)).toEqual([
+      ["paragraph", "html"],
+      ["listItem", "paragraph", "html"],
+      [],
+    ]);
+  });
+
   it("names the block a top-level direction region encloses", () => {
     const ledger = createMarkdownSourceLedger('<div dir="auto">\n\n## Title\n\n</div>\n');
 

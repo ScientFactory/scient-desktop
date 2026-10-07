@@ -746,9 +746,9 @@ Preservation is range-based, not a claim that a semantic editor never serializes
 - A block is projected as rich content only when its parsed form keeps every source construct.
   Headings may hold inline math, citations, wiki links, and footnote references. A block the
   parser would drop or partly empty opens as an exact-source raw island instead, as does a quote
-  or list holding nested source-only syntax (reference definitions, HTML comments, display math,
-  footnote definitions), a heading whose inline atom spans lines, and a malformed or nested
-  text-direction wrapper.
+  or list holding nested source-only syntax (reference definitions, HTML blocks or inline HTML
+  such as comments, display math, footnote definitions), a heading whose inline atom or link
+  title spans lines, and a malformed or nested text-direction wrapper.
 - A structurally changed block is serialized from the edited ProseMirror node; normalization is
   confined to that changed block.
 - Unsupported syntax is retained as an owned raw node and reuses its original source while

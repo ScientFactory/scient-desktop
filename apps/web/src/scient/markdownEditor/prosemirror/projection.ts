@@ -131,17 +131,20 @@ const SOURCE_ONLY_NESTED_KINDS = new Set([
   "yaml",
 ]);
 
-// A heading is one line in Markdown. An atom whose source spans lines (a
-// multi-line equation or citation) cannot be written back into it, at the
-// top level or inside a quote or list.
+// A heading is one line in Markdown. An atom or mark whose source spans lines
+// (a multi-line equation, citation or link title) cannot be written back into
+// it, at the top level or inside a quote or list.
 function headingsAreOneLine(node: ProseMirrorNode): boolean {
   let oneLine = true;
+  const checkAttrs = (attrs: ProseMirrorNode["attrs"]) => {
+    for (const value of Object.values(attrs)) {
+      if (typeof value === "string" && /[\r\n]/u.test(value)) oneLine = false;
+    }
+  };
   const check = (heading: ProseMirrorNode) =>
     heading.forEach((child) => {
-      if (!child.isAtom) return;
-      for (const value of Object.values(child.attrs)) {
-        if (typeof value === "string" && /[\r\n]/u.test(value)) oneLine = false;
-      }
+      checkAttrs(child.attrs);
+      for (const mark of child.marks) checkAttrs(mark.attrs);
     });
   if (node.type.name === "heading") check(node);
   node.descendants((descendant) => {
