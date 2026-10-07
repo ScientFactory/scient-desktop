@@ -17,6 +17,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   threadCreated,
@@ -31,6 +33,7 @@ import { makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as Settings from "../../serverSettings.ts";
 import * as StorageCleanup from "../../storageCleanup.ts";
+import { presentQueuedRunsAsBusy } from "./QueuedRunWorktreeRetention.ts";
 import { TerminalManager } from "../../terminal/Manager.ts";
 import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
 
@@ -226,4 +229,33 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
       }).pipe(Effect.provide(testLayer), Effect.scoped),
     );
   }
+
+  it.effect("finds queued runs through the recovery index instead of scanning run history", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const queries: string[] = [];
+      const tracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (endTime, exit) => {
+            end(endTime, exit);
+            const query = span.attributes.get("db.query.text");
+            if (typeof query === "string") queries.push(query);
+          };
+          return span;
+        },
+      });
+      yield* presentQueuedRunsAsBusy(sql, [{ id: THREAD_ID, status: "failed" }]).pipe(
+        Effect.withTracer(tracer),
+      );
+      assert.lengthOf(queries, 1);
+      const plan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${queries[0]}`,
+      );
+      const details = plan.map((row) => row.detail).join("\n");
+      assert.match(details, /SEARCH .*orchestration_v2_projection_runs_recovery_idx/);
+      assert.notMatch(details, /SCAN/);
+    }).pipe(Effect.provide(testLayer)),
+  );
 });

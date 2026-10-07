@@ -14,8 +14,12 @@ export const presentQueuedRunsAsBusy = Effect.fn("StorageCleanup.presentQueuedRu
     threads: ReadonlyArray<Thread>,
   ) {
     if (threads.length === 0) return threads;
+    // The repeated IN list matches the recovery partial index, so SQLite
+    // searches the few unfinished runs instead of scanning run history.
     const rows = yield* sql<{ readonly thread_id: string }>`
-      SELECT DISTINCT thread_id FROM orchestration_v2_projection_runs WHERE status = 'queued'
+      SELECT DISTINCT thread_id FROM orchestration_v2_projection_runs
+      WHERE status = 'queued'
+        AND status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
     `;
     if (rows.length === 0) return threads;
     const queued = new Set(rows.map((row) => row.thread_id));
