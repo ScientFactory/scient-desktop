@@ -1,3 +1,5 @@
+import { SCIENT_MCP_TOOLS, type ScientMcpToolSummaryAction } from "./scientMcpToolPresentation.ts";
+
 export type T3McpToolLogo = "scient";
 
 export interface T3McpToolPresentation {
@@ -56,7 +58,8 @@ export type T3McpToolSummaryAction =
   | "unlink-pr"
   | "list-prs"
   | "browser"
-  | "device";
+  | "device"
+  | ScientMcpToolSummaryAction;
 
 export interface T3McpToolDefinition {
   readonly displayName: string;
@@ -276,6 +279,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "attachment-discard",
   ),
   t3_thread_send_attachments: tool(["Send", "Sending", "Sent", "attachments"], "attachment-send"),
+  ...SCIENT_MCP_TOOLS,
 };
 
 /**
