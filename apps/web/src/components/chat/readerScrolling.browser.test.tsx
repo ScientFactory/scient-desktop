@@ -97,11 +97,17 @@ it("holds a measured viewport through repeated appended rows and completion", as
   let entries = Array.from({ length: 20 }, (_, i) => entry(i));
   render("geometry:stream", entries);
   await expect.poll(() => listRef.current?.getScrollableNode()?.scrollTop ?? 0).toBeGreaterThan(0);
+  // Opening a thread holds the end until its rows stop growing; a position is
+  // saved only once that is done. Only then is the reader moved up, or the
+  // opening's own settling would take them back to the end.
+  await expect.poll(() => readTimelinePosition("geometry:stream")).toBeDefined();
   await frames();
   const node = listRef.current!.getScrollableNode()!;
   await listRef.current!.scrollToOffset({ offset: 300, animated: false });
   await frames();
   const original = node.scrollTop;
+  // The reader really is away from the end, reading at 300.
+  expect(Math.abs(original - 300)).toBeLessThanOrEqual(1);
   for (let i = 20; i < 45; i++) {
     entries = [...entries, entry(i)];
     render("geometry:stream", entries, { isWorking: true });
