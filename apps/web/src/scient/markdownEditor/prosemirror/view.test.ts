@@ -47,10 +47,10 @@ describe("ScientMarkdownEditorView", () => {
       revision: "r0",
       ariaLabel: "Document",
       mode: "write",
-      initialPendingWriteback: pending!,
       onUserSourceChange,
       onWritebackRefusal,
     });
+    second.restorePendingWriteback(pending!);
     mounted.push(second);
     const nextHost = document.createElement("div");
     document.body.append(nextHost);

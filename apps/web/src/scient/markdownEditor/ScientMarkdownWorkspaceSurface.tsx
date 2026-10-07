@@ -116,11 +116,10 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
   const canEditPendingInput = useSyncExternalStore(props.persistence.subscribe, () =>
     props.persistence.canEditPendingInput(pendingEditorOwner),
   );
-  const retainedWriteback = (canEditPendingInput ? retainedInput?.payload : undefined) as
-    | ScientMarkdownPendingWriteback
-    | undefined;
+  // Only the surface that claims retained input restores it (below); two
+  // surfaces mounting together may both see it unowned during render.
   const [pendingWriteback, setPendingWriteback] = useState<ScientMarkdownPendingWriteback | null>(
-    retainedWriteback ?? null,
+    null,
   );
   const controllerRef = useRef<ScientMarkdownEditorView | null>(null);
   const shortcutHost = useRef<HTMLDivElement>(null);
@@ -144,7 +143,6 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
         revision: persistenceSnapshot.baselineRevision,
         authoritativeSource: persistenceSnapshot.baselineSource,
         mode: "write",
-        ...(retainedWriteback ? { initialPendingWriteback: retainedWriteback } : {}),
         onWritebackRefusal: (pending) => {
           const accepted = bindingsRef.current.persistence.retainPendingInput(
             pending ? { message: pending.message, payload: pending } : null,
@@ -293,7 +291,7 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
         if (controller.session.pendingWriteback !== pending)
           controller.restorePendingWriteback(pending);
         if (activeViewRef.current) setPendingWriteback(pending);
-      } else if (!input && activeViewRef.current) setPendingWriteback(null);
+      } else if (activeViewRef.current) setPendingWriteback(null);
       const snapshot = lease.getSnapshot();
       controller.setMode(snapshot.editingBlocked || !canEdit ? "read" : "write");
     };
@@ -450,7 +448,7 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
             undo it before editing here.
           </div>
         ) : null}
-        {pendingWriteback ? (
+        {pendingWriteback && canEditPendingInput ? (
           <div role="status" className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
             <span>
               {pendingWriteback.message} Your input remains open here. Correct it or undo the

@@ -761,10 +761,12 @@ Preservation is range-based, not a claim that a semantic editor never serializes
 - If rich write-back is refused, the live editor keeps the input, selection and undo history while
   the accepted source remains unchanged. A nonmodal notice offers Undo and copying lossless
   recovery data. The file-session registry retains the interaction across view remounts and defers
-  outside-source adoption, publication and departure until it is corrected or undone. Competing
-  views cannot overwrite that interaction. This pending interaction is held in memory, not in the
-  acknowledged source checkpoint; it does not survive an application restart. The notice states
-  that boundary. Resolving it resumes verification of current disk source before another write.
+  outside-source adoption, publication and departure until it is corrected or undone. Exactly one
+  view owns that interaction and shows its notice, Undo and recovery data; competing views, even
+  ones mounted at the same moment, stay read-only and cannot overwrite it. This pending interaction
+  is held in memory, not in the acknowledged source checkpoint; it does not survive an application
+  restart. The notice states that boundary. Resolving it resumes verification of current disk
+  source before another write.
 - Unsupported syntax is retained as an owned raw node and reuses its original source while
   unchanged.
 - Invalid mappings, including Unicode boundary hazards, fall back to changed-block serialization

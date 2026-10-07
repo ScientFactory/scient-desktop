@@ -305,6 +305,108 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     secondLease.release();
   });
 
+  it("gives ownerless pending input to only one of two rich surfaces mounting together", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const source = "# Result [@smith]\n\nTail\n";
+    const registry = new MarkdownPersistenceRegistry({
+      createTransport: () => ({
+        write: async () => ({ revision: "r1" }),
+        read: async () => ({ source, revision: "r0" }),
+        classifyFailure: () => "terminal",
+        subscribe: () => () => {},
+        project: () => {},
+      }),
+    });
+    const target = {
+      environmentId: EnvironmentId.make("pending-race"),
+      cwd: "/synthetic",
+      relativePath: "paper.md",
+    };
+    const originLease = registry.acquire(target, {
+      relativePath: "paper.md",
+      contents: source,
+      revision: "r0",
+      byteLength: source.length,
+      truncated: false,
+    })!;
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const originHost = document.createElement("div");
+    document.body.append(originHost);
+    const originRoot = createRoot(originHost);
+    roots.push(originRoot);
+    await act(() =>
+      originRoot.render(
+        <ProductionScientMarkdownWorkspaceSurface persistence={originLease} ariaLabel="Origin" />,
+      ),
+    );
+    const origin = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).at(-1)!;
+    let position = -1;
+    origin.view!.state.doc.descendants((node, from) => {
+      if (node.type.name === "citation") position = from;
+    });
+    await act(() =>
+      origin.view!.dispatch(
+        origin.view!.state.tr.setNodeAttribute(position, "source", "@smith\n@jones"),
+      ),
+    );
+    const firstLease = registry.acquire(target, null)!;
+    const secondLease = registry.acquire(target, null)!;
+    // The retained input outlives its view, leaving it without an owner.
+    await act(() => originRoot.render(null));
+    originLease.release();
+    expect(firstLease.getPendingInput()).not.toBeNull();
+
+    // One root renders both surfaces before either commits its claim.
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    await act(() =>
+      root.render(
+        <>
+          <div data-surface="first">
+            <ProductionScientMarkdownWorkspaceSurface persistence={firstLease} ariaLabel="First" />
+          </div>
+          <div data-surface="second">
+            <ProductionScientMarkdownWorkspaceSurface
+              persistence={secondLease}
+              ariaLabel="Second"
+            />
+          </div>
+        </>,
+      ),
+    );
+    const firstHost = host.querySelector<HTMLElement>('[data-surface="first"]')!;
+    const secondHost = host.querySelector<HTMLElement>('[data-surface="second"]')!;
+    const controllers = mount.mock.instances as unknown as ScientMarkdownEditorView[];
+    const first = controllers.find((item) => firstHost.contains(item.view?.dom ?? null))!;
+    const second = controllers.find((item) => secondHost.contains(item.view?.dom ?? null))!;
+    const surfaces = [
+      { host: firstHost, controller: first },
+      { host: secondHost, controller: second },
+    ];
+    const owner = surfaces.find(({ host }) =>
+      host.textContent?.includes("Your input remains open here"),
+    )!;
+    const other = surfaces.find((surface) => surface !== owner)!;
+    expect(owner.controller.session.state.doc.nodeAt(position)?.attrs.source).toBe(
+      "@smith\n@jones",
+    );
+    expect(other.host.textContent).toContain("unfinished input in another open editor");
+    expect(other.host.textContent).not.toContain("Your input remains open here");
+    expect(other.host.textContent).not.toContain("Copy recovery data");
+    expect(other.controller.session.pendingWriteback).toBeNull();
+    expect(other.controller.view!.editable).toBe(false);
+
+    await act(() => owner.controller.executeKeyboardCommand("markdown.undo"));
+    expect(firstLease.getPendingInput()).toBeNull();
+    expect(other.controller.view!.editable).toBe(true);
+    expect(other.controller.session.state.doc.nodeAt(position)?.attrs.source).toBe("@smith");
+    expect(other.host.textContent).not.toContain("unfinished input in another open editor");
+    firstLease.release();
+    secondLease.release();
+  });
+
   it("invalidates only the external presentation domain that changed", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const refresh = vi.spyOn(ScientMarkdownEditorView.prototype, "refreshExternalPresentation");

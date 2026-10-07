@@ -169,6 +169,26 @@ describe("Markdown write-back acceptance and retained input", () => {
     expect(onUserSourceChange).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "# Result $x^2$\n\nFollowing paragraph.\n",
+    "> ## Result $x^2$\n>\n> Quoted body.\n",
+    "- ## Result $x^2$\n\n  Item body.\n",
+  ])("refuses a line break in heading math and Undo recovers it: %j", (source) => {
+    const { session, onUserSourceChange } = author(source);
+    editAttribute(session, "inline_math", "tex", "x^2\n+y");
+    expect(session.pendingWriteback).not.toBeNull();
+    expect(session.session.draftSource).toBe(source);
+
+    expect(
+      undo(session.state, (transaction) => session.applyTransaction(transaction, "user")),
+    ).toBe(true);
+    expect(session.pendingWriteback).toBeNull();
+    expect(session.state.doc.nodeAt(positionOf(session, "inline_math"))?.attrs.tex).toBe("x^2");
+    expect(session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+    expectReopensFaithfully(session);
+  });
+
   it("holds subsequent prose with refused input and publishes both after correction", () => {
     const source = "Text [@smith] end.\n\nFollowing paragraph.\n";
     const { session, onUserSourceChange } = author(source);

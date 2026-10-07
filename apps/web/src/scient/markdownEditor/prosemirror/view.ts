@@ -105,7 +105,6 @@ export interface ScientMarkdownEditorViewOptions {
   readonly mode?: MarkdownDocumentMode;
   readonly ariaLabel: string;
   readonly onUserSourceChange?: (source: string, intent: MarkdownSaveIntent | null) => void;
-  readonly initialPendingWriteback?: ScientMarkdownPendingWriteback;
   readonly onWritebackRefusal?: (pending: ScientMarkdownPendingWriteback | null) => void;
   readonly onLocalHeadingOpened?: () => void;
   readonly onOpenLink?: ScientMarkdownLinkOpenHandler;
@@ -352,8 +351,6 @@ export class ScientMarkdownEditorView {
   constructor(private readonly options: ScientMarkdownEditorViewOptions) {
     this.mode = options.mode ?? "read";
     this.session = new ScientProseMirrorSession(options);
-    if (options.initialPendingWriteback)
-      this.session.restorePendingWriteback(options.initialPendingWriteback);
     this.snapshot = this.createSnapshot();
   }
 
