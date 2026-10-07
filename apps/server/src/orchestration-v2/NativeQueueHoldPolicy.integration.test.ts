@@ -27,7 +27,7 @@ import { ServerConfig } from "../config.ts";
 import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import * as DateTime from "effect/DateTime";
 import * as Clock from "effect/Clock";
-import { EventSinkV2 } from "./EventSink.ts";
+import { EventSinkV2, EventSinkWriteError } from "./EventSink.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
 import { OrchestrationEffectWorkerV2, runDaemonWithOptions } from "./EffectWorker.ts";
@@ -243,6 +243,7 @@ const withNativeQueue = <A, E, R>(
       store: ProjectionStore.ProjectionStoreV2Shape,
     ) => ProjectionStore.ProjectionStoreV2Shape;
     readonly providerEnabled?: (instanceId: ProviderInstanceId) => boolean;
+    readonly decorateEventSink?: (sink: EventSinkV2["Service"]) => EventSinkV2["Service"];
   } = {},
 ) =>
   Effect.scoped(
@@ -525,6 +526,9 @@ const withNativeQueue = <A, E, R>(
           ...(options.decorateProjectionStore === undefined
             ? {}
             : { decorateProjectionStore: options.decorateProjectionStore }),
+          ...(options.decorateEventSink === undefined
+            ? {}
+            : { decorateEventSink: options.decorateEventSink }),
         },
       ).pipe(
         Layer.provideMerge(options.mcpSessionRegistryLayer ?? McpSessionRegistryTestkit.layer),
@@ -2582,6 +2586,112 @@ it.live(
       },
     ),
 );
+
+for (const failing of ["read", "commit"] as const) {
+  it.live(
+    `a transient ${failing} failure while settling an uncapturable checkpoint still completes the run once`,
+    () => {
+      // The capture's precondition always fails, so every attempt ends in the
+      // last-attempt settlement once the attempts run out.
+      let contextReads = 0;
+      let failedOnce = false;
+      const failOnce = () => {
+        if (failedOnce) return false;
+        failedOnce = true;
+        return true;
+      };
+      return withNativeQueue(
+        `queue-native-capture-settlement-${failing}-failure`,
+        ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
+          Effect.gen(function* () {
+            yield* send(orchestrator, threadId, "foreground");
+            const foreground = yield* takeOffer;
+            yield* send(orchestrator, threadId, "first", true);
+            yield* foreground.answer("Answer kept through a busy database");
+            yield* foreground.settle("completed");
+            const next = yield* takeOffer.pipe(Effect.option);
+            const after = yield* orchestrator.getThreadProjection(threadId);
+            const run = after.runs.find((candidate) => candidate.id === foreground.input.runId);
+            assert.isTrue(failedOnce);
+            assert.equal(run?.status, "completed");
+            assert.isTrue(Option.isSome(next));
+            if (Option.isNone(next)) return;
+            assert.equal(next.value.input.message.text, "first");
+            assert.equal(
+              after.checkpoints.find((row) => row.id === run?.checkpointId)?.status,
+              "error",
+            );
+            // Exactly one settlement was committed.
+            const history = yield* (yield* EventStore.EventStoreV2)
+              .read({ threadId })
+              .pipe(Stream.runCollect);
+            assert.equal(
+              history.filter(
+                (entry) =>
+                  entry.event.type === "run.updated" &&
+                  entry.event.payload.id === foreground.input.runId &&
+                  entry.event.payload.status === "completed",
+              ).length,
+              1,
+            );
+            assert.equal(
+              history.filter(
+                (entry) =>
+                  entry.event.type === "checkpoint.captured" &&
+                  entry.event.payload.runId === foreground.input.runId,
+              ).length,
+              1,
+            );
+            yield* next.value.settle("completed");
+            yield* waitFor((projection) =>
+              projection.runs.every((candidate) => candidate.status === "completed"),
+            );
+            assert.deepEqual(offers, ["foreground", "first"]);
+          }),
+        {
+          decorateProjectionStore: (store) => ({
+            ...store,
+            getCheckpointCaptureContext: (threadId, target) =>
+              Effect.suspend(() => {
+                contextReads++;
+                // Reads 1-5 are the capture attempts; read 6 is the settlement's.
+                return failing === "read" && contextReads === 6 && failOnce()
+                  ? Effect.fail(
+                      new ProjectionStore.ProjectionStoreReadError({
+                        threadId,
+                        cause: "Synthetic busy database during settlement read",
+                      }),
+                    )
+                  : store.getCheckpointCaptureContext(threadId, target);
+              }).pipe(
+                Effect.map((context) =>
+                  context.scope === undefined
+                    ? context
+                    : {
+                        ...context,
+                        scope: { ...context.scope, cwd: `${context.scope.cwd}-moved` },
+                      },
+                ),
+              ),
+          }),
+          decorateEventSink: (sink) => ({
+            ...sink,
+            commitCommand: (input) =>
+              failing === "commit" && input.commandType === "checkpoint.capture" && failOnce()
+                ? Effect.fail(
+                    new EventSinkWriteError({
+                      eventCount: input.events.length,
+                      commandId: input.commandId,
+                      cause: "Synthetic busy database during settlement commit",
+                    }),
+                  )
+                : sink.commitCommand(input),
+          }),
+        },
+      );
+    },
+  );
+}
 
 it.live("a deferred start does not open a provider that was turned off after admission", () => {
   let enabled = true;

@@ -6,7 +6,10 @@
  * (a failed database commit, a missing or mismatched capture target) was only
  * retried, and after the last attempt the run stayed `waiting` until restart.
  * The last attempt now completes the run with an `error` checkpoint instead,
- * without touching the workspace, so the queue continues.
+ * without touching the workspace, so the queue continues. If that settlement
+ * itself fails (for example on a busy database), the effect stays retryable
+ * past its attempt limit until the settlement commits or the run is no longer
+ * waiting, so a transient failure cannot strand the run.
  */
 import {
   CommandId,
@@ -22,6 +25,7 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { checkpointRefForScopeOrdinal } from "../CheckpointService.ts";
 import type * as EventSink from "../EventSink.ts";
@@ -33,6 +37,28 @@ export class CheckpointCaptureFinalAttempt extends Context.Reference<boolean>(
   "scient/orchestration-v2/CheckpointCaptureFinalAttempt",
   { defaultValue: () => false },
 ) {}
+
+/** The last attempt's settlement failed; the worker must keep the effect retryable. */
+export class CheckpointSettlementPendingError extends Schema.TaggedError<CheckpointSettlementPendingError>()(
+  "CheckpointSettlementPendingError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "The run could not yet be completed without its checkpoint.";
+  }
+}
+
+const isCheckpointSettlementPendingError = Schema.is(CheckpointSettlementPendingError);
+
+/** True when a failure, through its wrapping causes, is an outstanding settlement. */
+export const isCheckpointSettlementPending = (failure: unknown): boolean => {
+  let current = failure;
+  for (let depth = 0; depth < 8 && typeof current === "object" && current !== null; depth++) {
+    if (isCheckpointSettlementPendingError(current)) return true;
+    current = (current as { readonly cause?: unknown }).cause;
+  }
+  return false;
+};
 
 interface CaptureTarget {
   readonly threadId: ThreadId;
@@ -186,7 +212,8 @@ const settleWaitingRun = Effect.fnUntraced(function* (
 /**
  * Wraps one capture execution. On the last attempt, a failure settles a
  * still-waiting run instead of leaving it waiting; every other failure, and
- * every earlier attempt, fails as before so the worker retries.
+ * every earlier attempt, fails as before so the worker retries. A settlement
+ * that fails is reported as pending, so the worker retries it again.
  */
 export const settleUncapturedRunOnFinalAttempt =
   (deps: SettlementDependencies, target: CaptureTarget) =>
@@ -195,7 +222,10 @@ export const settleUncapturedRunOnFinalAttempt =
       Effect.catch((error) =>
         Effect.gen(function* () {
           if (!(yield* CheckpointCaptureFinalAttempt)) return yield* Effect.fail(error);
-          if (!(yield* settleWaitingRun(deps, target))) return yield* Effect.fail(error);
+          const settled = yield* settleWaitingRun(deps, target).pipe(
+            Effect.mapError((cause) => new CheckpointSettlementPendingError({ cause })),
+          );
+          if (!settled) return yield* Effect.fail(error);
           yield* Effect.logWarning(
             "Completed a run with an unavailable checkpoint after its last capture attempt failed",
             { ...target, cause: error },
