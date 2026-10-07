@@ -81,6 +81,11 @@
   ],
   "upstreamMounts": [
     {
+      "path": "apps/server/src/observability/RpcInstrumentation.ts",
+      "anchor": "[WS_METHODS.computeInspectRuntimes]: \"compute\"",
+      "purpose": "Retain analysis and compute aggregate labels in the native typed RPC instrumentation middleware without changing telemetry authority."
+    },
+    {
       "path": "apps/desktop/src/app/DesktopEnvironment.ts",
       "anchor": "developmentUserDataDirName",
       "purpose": "Keep development state isolated from the installed Scient application."
