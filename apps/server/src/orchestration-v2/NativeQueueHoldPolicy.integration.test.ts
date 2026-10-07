@@ -1319,6 +1319,96 @@ it.live("normal native completion automatically drains queued messages in FIFO o
 );
 
 it.live(
+  "a queued run's provider start follows the previous answer and checkpoint.captured with no client open",
+  () =>
+    withNativeQueue(
+      "queue-policy-delivery-barrier",
+      ({
+        orchestrator,
+        threadId,
+        takeOffer,
+        offers,
+        captureEntered,
+        releaseCapture,
+        beforeOffer,
+      }) =>
+        Effect.gen(function* () {
+          const eventStore = yield* EventStore.EventStoreV2;
+          yield* send(orchestrator, threadId, "foreground");
+          const foreground = yield* takeOffer;
+          let deliveredAfterSequence: number | undefined;
+          beforeOffer((input) =>
+            input.message.text === "next"
+              ? eventStore.latestSequence({ threadId }).pipe(
+                  Effect.map((sequence) => {
+                    deliveredAfterSequence = sequence;
+                  }),
+                  Effect.orDie,
+                )
+              : Effect.void,
+          );
+          yield* send(orchestrator, threadId, "next", true);
+          const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.status === "queued",
+          );
+          assert.ok(queued);
+          yield* foreground.answer("Durable foreground answer");
+          yield* foreground.settle("completed");
+          // The real capture is parked before Git publishes its ref. Nothing that
+          // can be claimed meanwhile delivers the queued message.
+          yield* captureEntered.pipe(Effect.timeout("15 seconds"));
+          yield* (yield* OrchestrationEffectWorkerV2).drain(12);
+          assert.deepEqual(offers, ["foreground"]);
+          assert.isUndefined(deliveredAfterSequence);
+          assert.equal(
+            (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+              (run) => run.id === queued.id,
+            )?.status,
+            "queued",
+          );
+          yield* releaseCapture;
+          const next = yield* takeOffer;
+          assert.equal(next.input.runId, queued.id);
+          assert.ok(deliveredAfterSequence !== undefined);
+
+          // Durable order: the answer, then the capture, then the queued start.
+          const history = yield* eventStore.read({ threadId }).pipe(Stream.runCollect);
+          const sequenceOf = (
+            predicate: (event: (typeof history)[number]["event"]) => boolean,
+          ): number | undefined => history.find((entry) => predicate(entry.event))?.sequence;
+          const answered = sequenceOf(
+            (event) =>
+              event.type === "message.updated" &&
+              event.payload.runId === foreground.input.runId &&
+              event.payload.role === "assistant" &&
+              event.payload.text === "Durable foreground answer" &&
+              !event.payload.streaming,
+          );
+          const captured = sequenceOf(
+            (event) =>
+              event.type === "checkpoint.captured" &&
+              event.payload.runId === foreground.input.runId &&
+              event.payload.status === "ready",
+          );
+          const started = sequenceOf(
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === queued.id &&
+              event.payload.status !== "queued",
+          );
+          assert.ok(answered !== undefined && captured !== undefined && started !== undefined);
+          assert.isBelow(answered, captured);
+          assert.isBelow(captured, started);
+          assert.isAtMost(started, deliveredAfterSequence);
+          // Exactly one delivery.
+          yield* next.settle("completed");
+          assert.deepEqual(offers, ["foreground", "next"]);
+        }),
+      { holdCheckpointCapture: true },
+    ),
+);
+
+it.live(
   "native failure holds queued work across a later successful foreground turn until explicit Resume",
   () =>
     withNativeQueue(
@@ -1727,6 +1817,7 @@ for (const release of ["whole", "head", "newer-failure", "new-admission"] as con
               "interrupted",
             );
             if (release === "head" || release === "newer-failure") {
+              stage = "newer terminal re-holds tail";
               yield* waitForThread(childThreadId, (projection) =>
                 projection.runs.some(
                   (run) =>
