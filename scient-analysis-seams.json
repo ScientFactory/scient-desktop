@@ -59,7 +59,7 @@
   ],
   "analysisDiffSignals": [
     "@scientfactory/(analysis|compute|execution)",
-    "(/|~)scient/(analysis|artifacts|compute|execution|fileSurfaces|layout)",
+    "(/|~)scient/(analysis|artifacts|compute|execution|fileSurfaces|layout|previewPresentation)",
     "Compute(Session|Execution|Transport|Output)",
     "DuplexProcess",
     "analysis-artifact",
@@ -143,7 +143,7 @@
     {
       "path": "apps/web/src/components/ChatView.tsx",
       "anchor": "ScientRightPanelContent",
-      "purpose": "Mount Scient artifact and compute content in the inherited right-panel layout."
+      "purpose": "Mount Scient artifacts and compute in the inherited right panel; useScientBrowserPresentation consumes fresh browser reveal intents and suppresses only the matching browser surface."
     },
     {
       "path": "apps/web/src/components/RightPanelTabs.tsx",
@@ -194,11 +194,6 @@
       "path": "apps/web/src/components/files/projectFilesQueryState.ts",
       "anchor": "revision",
       "purpose": "Carry authoritative file revisions through the shared file-query projection."
-    },
-    {
-      "path": "apps/web/src/components/ChatView.tsx",
-      "anchor": "useScientBrowserPresentation({",
-      "purpose": "Consume fresh native browser presentation intents once and scope suppression to the matching browser while preserving Scient artifacts and devices."
     },
     {
       "path": "apps/web/src/components/preview/PreviewView.tsx",
