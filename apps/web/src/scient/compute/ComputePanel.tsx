@@ -62,6 +62,8 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { scientComputeSurface } from "~/scient/rightPanel/surfaces";
 import { refreshProjectFiles } from "~/components/files/projectFilesQueryState";
+import { useClientSettings } from "~/hooks/useSettings";
+import { formatDateTimeTimestamp, formatTimestamp } from "~/timestampFormat";
 
 import { ComputeOutputView } from "./ComputeOutputView";
 import { ComputeSavedFileAction } from "./ComputeSavedFileAction";
@@ -251,6 +253,7 @@ function ComputeExecutionCard(props: {
   readonly onFocusConsumed?: (executionId: string) => void;
   readonly onSelectExecution: (executionId: string) => void;
 }) {
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const outputsAtom = computeEnvironment.outputs({
     environmentId: props.environmentId,
     input: {
@@ -405,7 +408,10 @@ function ComputeExecutionCard(props: {
               </span>
               <span>·</span>
               <time dateTime={props.figureFallback.execution.request.submittedAt}>
-                {new Date(props.figureFallback.execution.request.submittedAt).toLocaleTimeString()}
+                {formatTimestamp(
+                  props.figureFallback.execution.request.submittedAt,
+                  timestampFormat,
+                )}
               </time>
             </button>
             {fallbackOutputs.length === 0 && persistedFallbackOutputs.error ? (
@@ -690,6 +696,7 @@ export function ComputePanel(props: {
   readonly embedded?: boolean;
   readonly resultPicker?: ReactNode;
 }) {
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const [localPanelView, setLocalPanelView] = useState<ComputePanelView>("results");
   const panelView = props.panelView ?? localPanelView;
   const setPanelView = props.onPanelViewChange ?? setLocalPanelView;
@@ -1414,7 +1421,8 @@ export function ComputePanel(props: {
                   {contextSessions.map((session) => (
                     <MenuRadioItem key={session.sessionId} value={session.sessionId} size="compact">
                       {computeSessionOwnerLabel(session, props.environmentId, props.cwd)} ·{" "}
-                      {new Date(session.createdAt).toLocaleString()} · {statusLabel(session.status)}
+                      {formatDateTimeTimestamp(session.createdAt, timestampFormat)} ·{" "}
+                      {statusLabel(session.status)}
                     </MenuRadioItem>
                   ))}
                 </MenuRadioGroup>
@@ -1665,7 +1673,7 @@ export function ComputePanel(props: {
                           key={execution.request.executionId}
                           value={execution.request.executionId}
                         >
-                          {new Date(execution.request.submittedAt).toLocaleTimeString()} ·{" "}
+                          {formatTimestamp(execution.request.submittedAt, timestampFormat)} ·{" "}
                           {computeSourceLabel(execution.request.source, {
                             includePath: !props.embedded,
                           })}{" "}

@@ -51,11 +51,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import { ServerSettingsService } from "../../serverSettings.ts";
-import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "../builtInDrivers.ts";
-import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
-import { ProviderInstanceRegistryMutator } from "../Services/ProviderInstanceRegistryMutator.ts";
+import * as Settings from "../../serverSettings.ts";
+import { BUILT_IN_DRIVERS } from "../builtInDrivers.ts";
+import * as ProviderInstanceRegistryMutator from "../Services/ProviderInstanceRegistryMutator.ts";
 import { ProviderInstanceRegistryMutableLayer } from "./ProviderInstanceRegistryLive.ts";
+import { ProviderOrchestrationAdapterInfrastructureLive } from "./ProviderOrchestrationAdapterInfrastructure.ts";
+import { AcpRegistryCatalogLive } from "./AcpRegistryCatalog.ts";
 
 /**
  * Synthesize a `ProviderInstanceConfigMap` from a `ServerSettings` snapshot.
@@ -117,7 +118,7 @@ export const deriveProviderInstanceConfigMap = (
 const SettingsWatcherLive = (settingsChanges: Stream.Stream<ServerSettings>) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
-      const mutator = yield* ProviderInstanceRegistryMutator;
+      const mutator = yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;
       yield* settingsChanges.pipe(
         Stream.runForEach((next) =>
           mutator
@@ -149,13 +150,9 @@ const SettingsWatcherLive = (settingsChanges: Stream.Stream<ServerSettings>) =>
  * The mutator tag is technically also exposed; only this module imports
  * it, so the visibility leak is harmless in practice.
  */
-export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
-  ProviderInstanceRegistry,
-  never,
-  BuiltInDriversEnv | ServerSettingsService
-> = Layer.unwrap(
+export const ProviderInstanceRegistryHydrationLive = Layer.unwrap(
   Effect.gen(function* () {
-    const serverSettings = yield* ServerSettingsService;
+    const serverSettings = yield* Settings.ServerSettingsService;
     // Subscribe before reading the seed snapshot. This closes both possible
     // loss windows: an update published while the snapshot is being read is
     // queued for reconcile, and the consumer is subscribed before it forks.
@@ -171,8 +168,11 @@ export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
     const mutableLayer = ProviderInstanceRegistryMutableLayer({
       drivers: BUILT_IN_DRIVERS,
       configMap: initialConfigMap,
-    });
+    }).pipe(
+      Layer.provide(ProviderOrchestrationAdapterInfrastructureLive),
+      Layer.provide(AcpRegistryCatalogLive),
+    );
 
     return SettingsWatcherLive(settingsChanges).pipe(Layer.provideMerge(mutableLayer));
   }),
-) as Layer.Layer<ProviderInstanceRegistry, never, BuiltInDriversEnv | ServerSettingsService>;
+);

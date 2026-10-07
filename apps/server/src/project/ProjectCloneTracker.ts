@@ -1,5 +1,7 @@
 import type {
-  OrchestrationCommand,
+  // SCIENT-FORK:START — restored from origin/main; upstream's rewrite dropped it, but the
+  // V1 `dispatchCommand` body in ws.ts calls it verbatim.
+  // SCIENT-FORK:END
   ProjectCloneSnapshot,
   ProjectCloneStage,
   ProjectCloneStartInput,
@@ -427,7 +429,9 @@ export const make = Effect.gen(function* () {
     start: (input, hooks) => locked(start(input, hooks)),
     cancel: (projectId) => locked(cancel(projectId)),
     retry: (projectId) => locked(retry(projectId)),
-    discard: (projectId) => locked(discard(projectId)),
+    // Retire the exact clone through filesystem and map cleanup even if its
+    // caller disconnects while waiting for the action lock or native shutdown.
+    discard: (projectId) => locked(discard(projectId)).pipe(Effect.uninterruptible),
     get,
     stream,
   });
@@ -468,13 +472,6 @@ function bootstrapProjectId(bootstrap: unknown): ProjectId | null {
   const createThread = (bootstrap as { createThread?: { projectId?: ProjectId } }).createThread;
   return createThread?.projectId ?? null;
 }
-
-/** Removing a project mid-clone stops the clone and drops its partial checkout. */
-export const discardCloneForDeletedProject = (
-  tracker: ProjectCloneTracker["Service"],
-  command: OrchestrationCommand,
-): Effect.Effect<void> =>
-  command.type === "project.delete" ? tracker.discard(command.projectId) : Effect.void;
 
 function describeCloneFailure(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);

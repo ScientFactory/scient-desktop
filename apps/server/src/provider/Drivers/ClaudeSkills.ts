@@ -15,27 +15,24 @@
  */
 import * as NodeOS from "node:os";
 
-import type {
-  ClaudeSettings,
-  ServerProviderSkill,
-  ServerProviderSlashCommand,
-} from "@t3tools/contracts";
+import type { ClaudeSettings, ServerProviderSkill } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Data from "effect/Data";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
-import { applyEdits, modify, parse, type ParseError } from "jsonc-parser/lib/esm/main.js";
 import { parse as parseYamlDocument } from "yaml";
 
 import { expandHomePath } from "../../pathExpansion.ts";
+// SCIENT-FORK:START — skill activation controls and the SDK skill merge.
+import { claudeSkillEnabledControl, makeSetClaudeSkillEnabled } from "./ScientNativeSkills.ts";
+export { mergeClaudeReportedSkills } from "./ScientNativeSkills.ts";
+// SCIENT-FORK:END
 
 type ClaudeSkillScope = "user" | "project";
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
-const CLAUDE_REPORTED_SKILL_PREFIX = "claude://skills/";
 
 type SkillFrontmatter =
   | { readonly kind: "missing" }
@@ -393,20 +390,8 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         path: skillPath,
         enabled: override?.enabled ?? true,
         scope: root.scope,
-        ...(root.scope === "user" &&
-        (override === undefined ||
-          (override.source === "user" && (override.mode === "on" || override.mode === "off")))
-          ? { canSetEnabled: true }
-          : {
-              enabledReadOnlyReason:
-                root.scope === "project"
-                  ? "Managed in this project"
-                  : override?.source === "managed"
-                    ? "Managed by policy"
-                    : override?.source === "project"
-                      ? "Overridden by this project"
-                      : "Uses a Claude invocation mode",
-            }),
+        // SCIENT-FORK: only plain user-scoped on/off overrides can be changed from Scient.
+        ...claudeSkillEnabledControl(root.scope, override),
         ...(frontmatter.kind === "parsed" && frontmatter.description
           ? { description: frontmatter.description }
           : {}),
@@ -421,138 +406,6 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 });
 
-/**
- * Combine Claude's authoritative SDK skill list with filesystem metadata.
- *
- * The SDK reports bundled skills that have no stable public filesystem path,
- * while direct discovery identifies the scope of personal and project skills.
- * Filesystem entries therefore override matching SDK entries; unmatched SDK
- * entries are provider-bundled and receive a stable virtual identity.
- */
-export function mergeClaudeReportedSkills(
-  discoveredSkills: ReadonlyArray<ServerProviderSkill>,
-  reportedSkills: ReadonlyArray<ServerProviderSlashCommand>,
-): ReadonlyArray<ServerProviderSkill> {
-  const skillsByName = new Map<string, ServerProviderSkill>();
-
-  for (const skill of reportedSkills) {
-    const name = skill.name.trim();
-    if (!name) continue;
-    skillsByName.set(name.toLowerCase(), {
-      name,
-      path: `${CLAUDE_REPORTED_SKILL_PREFIX}${encodeURIComponent(name)}`,
-      scope: "app",
-      enabled: true,
-      enabledReadOnlyReason: "Managed by Claude",
-      ...(skill.description ? { description: skill.description } : {}),
-    });
-  }
-
-  for (const skill of discoveredSkills) {
-    const key = skill.name.trim().toLowerCase();
-    if (!key) continue;
-    const reported = skillsByName.get(key);
-    const { enabledReadOnlyReason: _reportedReadOnlyReason, ...reportedMetadata } = reported ?? {};
-    skillsByName.set(key, {
-      ...reportedMetadata,
-      ...skill,
-    });
-  }
-
-  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
-}
-
-const CLAUDE_SKILL_SETTINGS_ERROR_TAG = "ClaudeSkillSettingsError";
-class ClaudeSkillSettingsError extends Data.TaggedError(CLAUDE_SKILL_SETTINGS_ERROR_TAG)<{
-  readonly cause?: unknown;
-  readonly detail: string;
-}> {}
-
-/**
- * Persist one user-scoped Claude skill override without rewriting unrelated
- * JSONC settings or comments. Higher-precedence project and managed settings
- * remain authoritative and are caught by the shared refresh/readback gate.
- */
-export const setClaudeSkillEnabled = Effect.fn("setClaudeSkillEnabled")(function* (input: {
-  readonly config: Pick<ClaudeSettings, "homePath">;
-  readonly environment: NodeJS.ProcessEnv;
-  readonly cwd?: string | undefined;
-  readonly name: string;
-  readonly scope?: string | undefined;
-  readonly enabled: boolean;
-}) {
-  if (input.scope !== "user") {
-    return yield* new ClaudeSkillSettingsError({
-      detail: "Only user-scoped Claude skills can be changed from External skills.",
-    });
-  }
-
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const configDirPath = yield* resolveClaudeConfigDirPath(
-    input.config,
-    input.environment,
-    input.cwd,
-  );
-  const settingsPath = path.join(configDirPath, "settings.json");
-  const contents = yield* fileSystem.readFileString(settingsPath).pipe(
-    Effect.catchTags({
-      PlatformError: (error) =>
-        error.reason._tag === "NotFound" ? Effect.succeed("{}\n") : Effect.fail(error),
-    }),
-    Effect.mapError(
-      (cause) =>
-        new ClaudeSkillSettingsError({
-          cause,
-          detail: "Claude's user settings could not be read.",
-        }),
-    ),
-  );
-
-  const parseErrors: ParseError[] = [];
-  const parsedSettings = parse(contents, parseErrors, {
-    allowTrailingComma: true,
-    disallowComments: false,
-  });
-  if (
-    parseErrors.length > 0 ||
-    typeof parsedSettings !== "object" ||
-    parsedSettings === null ||
-    Array.isArray(parsedSettings)
-  ) {
-    return yield* new ClaudeSkillSettingsError({
-      detail: "Claude's user settings contain invalid JSON and were not changed.",
-    });
-  }
-
-  const lineEnding = contents.includes("\r\n") ? "\r\n" : "\n";
-  const updated = applyEdits(
-    contents,
-    modify(contents, ["skillOverrides", input.name], input.enabled ? "on" : "off", {
-      formattingOptions: { insertSpaces: true, tabSize: 2, eol: lineEnding },
-    }),
-  );
-  yield* Effect.gen(function* () {
-    yield* fileSystem.makeDirectory(configDirPath, { recursive: true });
-    const temporaryPath = yield* fileSystem.makeTempFile({
-      directory: configDirPath,
-      prefix: ".settings.json.scient-",
-    });
-    yield* fileSystem
-      .writeFileString(temporaryPath, updated)
-      .pipe(
-        Effect.andThen(fileSystem.rename(temporaryPath, settingsPath)),
-        Effect.ensuring(fileSystem.remove(temporaryPath).pipe(Effect.ignore)),
-      );
-  }).pipe(
-    Effect.mapError(
-      (cause) =>
-        new ClaudeSkillSettingsError({
-          cause,
-          detail: "Claude's user skill setting could not be saved.",
-        }),
-    ),
-  );
-
-  return { effectiveEnabled: input.enabled };
-});
+// SCIENT-FORK:START — user-scoped on/off writes resolve the same config dir as discovery.
+export const setClaudeSkillEnabled = makeSetClaudeSkillEnabled(resolveClaudeConfigDirPath);
+// SCIENT-FORK:END

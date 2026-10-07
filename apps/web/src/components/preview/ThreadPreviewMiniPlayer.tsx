@@ -1,13 +1,8 @@
 "use client";
 
-import {
-  FILL_PREVIEW_VIEWPORT,
-  type EnvironmentId,
-  type ScopedThreadRef,
-} from "@t3tools/contracts";
+import { FILL_PREVIEW_VIEWPORT, type ScopedThreadRef } from "@t3tools/contracts";
 import { PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
 import {
-  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useCallback,
@@ -17,7 +12,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-import { useAssetUrlState } from "~/assets/assetUrls";
+import { useChatCanvas } from "../chat/ChatCanvasContext";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import {
   findActiveBrowserRecordingRuntimeTabId,
@@ -33,7 +28,6 @@ import { cn } from "~/lib/utils";
 import { useThreadPreviewState } from "~/previewStateStore";
 import {
   type PreviewMiniPlayerContent,
-  type PreviewMiniPlayerPosition,
   type PreviewMiniPlayerSize,
   type PreviewMiniPlayerState,
   usePreviewMiniPlayerStore,
@@ -45,23 +39,26 @@ import { useDeviceState } from "~/state/device";
 import { DeviceStreamView } from "../device/DeviceStreamView";
 import type { DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
 import { previewBridge } from "./previewBridge";
+// SCIENT-FORK:START
+import {
+  FloatingStaticArtifactActions,
+  type Layout,
+  miniPlayerKeyDownHandler,
+  miniPlayerResizer,
+  resolveMiniPlayerShellFrame,
+  useMiniPlayerMeasuredLayout,
+} from "./ScientMiniPlayerParts";
 import { StaticAssetImageSurface } from "./StaticAssetImageSurface";
-import { StaticImageCopyButton, StaticImageDownloadButton } from "./StaticImageActionButtons";
+// SCIENT-FORK:END
 import {
   clampPreviewMiniPlayerPosition,
-  clampPreviewMiniPlayerSize,
   NO_PREVIEW_MINI_PLAYER_OBSTACLES,
   PREVIEW_MINI_PLAYER_DEFAULT_SIZE,
   PREVIEW_MINI_PLAYER_CORNER_RADIUS,
   PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX,
   type PreviewMiniPlayerFrame,
-  type PreviewMiniPlayerObstacles,
-  resizePreviewMiniPlayer,
-  resizePreviewMiniPlayerRect,
   resolveDeviceMiniPlayerCornerRadius,
-  resolvePreviewMiniPlayerDefaultPosition,
   resolveDeviceMiniPlayerSourceSize,
-  resolvePreviewMiniPlayerFrame,
   resolvePreviewMiniPlayerSourceSize,
 } from "./previewMiniPlayerLayout";
 
@@ -76,49 +73,11 @@ interface PointerGesture {
 interface Props {
   readonly threadRef: ScopedThreadRef;
   readonly miniPlayer: PreviewMiniPlayerState;
-  /** The docked composer overlay; null while the composer floats mid-screen. */
-  readonly composerOverlayElement: HTMLElement | null;
-}
-
-interface Layout {
-  readonly container: PreviewMiniPlayerSize;
-  readonly obstacles: PreviewMiniPlayerObstacles;
-}
-
-const sameLayout = (a: Layout, b: Layout) =>
-  a.container.width === b.container.width &&
-  a.container.height === b.container.height &&
-  (a.obstacles.composer === b.obstacles.composer ||
-    (a.obstacles.composer !== null &&
-      b.obstacles.composer !== null &&
-      a.obstacles.composer.left === b.obstacles.composer.left &&
-      a.obstacles.composer.right === b.obstacles.composer.right &&
-      a.obstacles.composer.height === b.obstacles.composer.height));
-
-/**
- * Measures the chat column and the composer in the column's coordinates. The
- * composer's columns come from its centered stack, not the full-width overlay,
- * so the margins beside it stay open to the player.
- */
-function measureLayout(container: HTMLElement, composerOverlay: HTMLElement | null): Layout {
-  const containerRect = container.getBoundingClientRect();
-  const stackRect = composerOverlay
-    ?.querySelector('[data-chat-composer-stack="true"]')
-    ?.getBoundingClientRect();
-  const overlayRect = composerOverlay?.getBoundingClientRect();
-  return {
-    container: { width: container.clientWidth, height: container.clientHeight },
-    obstacles: {
-      composer:
-        overlayRect && stackRect && overlayRect.height > 0
-          ? {
-              left: Math.floor(stackRect.left - containerRect.left),
-              right: Math.ceil(stackRect.right - containerRect.left),
-              height: Math.ceil(overlayRect.height),
-            }
-          : null,
-    },
-  };
+  /**
+   * The docked composer overlay. Only read when the player lays itself out:
+   * inside a chat canvas the canvas already measures the composer.
+   */
+  readonly composerOverlayElement?: HTMLElement | null | undefined;
 }
 
 const frameCornerRadius = () => PREVIEW_MINI_PLAYER_CORNER_RADIUS;
@@ -133,38 +92,22 @@ const RESIZE_HANDLES: ReadonlyArray<{
   { direction: "west", className: "inset-y-0 -left-1 w-2 cursor-ew-resize" },
   { direction: "east", className: "inset-y-0 -right-1 w-2 cursor-ew-resize" },
   { direction: "northwest", className: "-left-2 -top-2 size-4 cursor-nwse-resize" },
-  { direction: "northeast", className: "-right-2 -top-2 size-4 cursor-nesw-resize" },
+  { direction: "northeast", className: "-right-2 -top-2 size-4 cursor-nwse-resize" },
   { direction: "southwest", className: "-bottom-2 -left-2 size-4 cursor-nesw-resize" },
   { direction: "southeast", className: "-bottom-2 -right-2 size-4 cursor-nwse-resize" },
 ];
 
-function FloatingStaticArtifactActions(props: {
-  readonly artifact: PreviewStaticImageSurfaceDescriptor;
-  readonly environmentId: EnvironmentId;
-  readonly threadRef: ScopedThreadRef;
-}) {
-  const asset = useAssetUrlState(props.environmentId, props.artifact.resource);
-  const assetUrl = asset._tag === "Success" ? asset.url : null;
-
-  return (
-    <>
-      <StaticImageCopyButton assetUrl={assetUrl} threadRef={props.threadRef} />
-      <StaticImageDownloadButton
-        assetUrl={assetUrl}
-        fileName={props.artifact.fileName}
-        threadRef={props.threadRef}
-      />
-    </>
-  );
-}
-
 /** Floats the thread's browser tab, device stream, or scientific artifact over chat. */
-export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer, composerOverlayElement }: Props) {
+export function ThreadPreviewMiniPlayer({
+  threadRef,
+  miniPlayer,
+  composerOverlayElement = null,
+}: Props) {
   const { content } = miniPlayer;
   if (content.kind === "browser") {
     return (
       <BrowserMiniPlayer
-        key={content.tabId}
+        key={content.id}
         threadRef={threadRef}
         tabId={content.tabId}
         miniPlayer={miniPlayer}
@@ -190,7 +133,6 @@ export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer, composerOverlay
         threadRef={threadRef}
         artifact={content.artifact}
         miniPlayer={miniPlayer}
-        composerOverlayElement={null}
       />
     );
   }
@@ -376,7 +318,6 @@ function StaticArtifactMiniPlayer({
       threadRef={threadRef}
       miniPlayer={miniPlayer}
       sourceSize={PREVIEW_MINI_PLAYER_DEFAULT_SIZE}
-      composerOverlayElement={null}
       label="Floating scientific artifact"
       onOpenInPanel={openInPanel}
       freeSize
@@ -422,12 +363,14 @@ function MiniPlayerShell({
   readonly threadRef: ScopedThreadRef;
   readonly miniPlayer: PreviewMiniPlayerState;
   readonly sourceSize: PreviewMiniPlayerSize;
-  readonly composerOverlayElement: HTMLElement | null;
+  readonly composerOverlayElement?: HTMLElement | null | undefined;
   readonly label: string;
   readonly onOpenInPanel: () => void;
   readonly pillActions?: ReactNode;
   readonly recording?: boolean;
+  /** A free-sized player keeps its own height instead of the source ratio. */
   readonly freeSize?: boolean;
+  /** A portaled player floats over the page instead of inside the chat canvas. */
   readonly fixed?: boolean;
   /** The clip radius for a given frame; the pill stays inside the curve. */
   readonly cornerRadius?: (frame: PreviewMiniPlayerSize) => number;
@@ -436,32 +379,57 @@ function MiniPlayerShell({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const gestureRef = useRef<PointerGesture | null>(null);
   const [layout, setLayout] = useState<Layout | null>(null);
-  const container = layout?.container ?? null;
-  const obstacles = layout?.obstacles ?? NO_PREVIEW_MINI_PLAYER_OBSTACLES;
+  const canvas = useChatCanvas();
   const contentId = miniPlayer.content.id;
-  const freeFrameSize = container
-    ? clampPreviewMiniPlayerSize(miniPlayer.size ?? PREVIEW_MINI_PLAYER_DEFAULT_SIZE, container)
-    : null;
-  const frame =
-    container && freeSize && freeFrameSize
-      ? {
-          ...clampPreviewMiniPlayerPosition(
-            miniPlayer.position ??
-              resolvePreviewMiniPlayerDefaultPosition(container, freeFrameSize),
-            container,
-            freeFrameSize,
-          ),
-          ...freeFrameSize,
-        }
-      : container
-        ? resolvePreviewMiniPlayerFrame({
-            width: miniPlayer.size?.width ?? null,
-            position: miniPlayer.position,
-            source: sourceSize,
-            container,
-            obstacles,
-          })
-        : null;
+  const reportPreview = canvas?.reportPreview;
+  const clearPreview = canvas?.clearPreview;
+
+  // Inside a chat canvas the canvas owns the lane geometry, so it also resolves
+  // the frame; a portaled or canvas-less player lays itself out.
+  const reportsToCanvas = !freeSize && !fixed;
+  const canvasFrame =
+    reportsToCanvas && canvas?.previewKey === contentId ? canvas.layout.frame : null;
+  const reportableSize = miniPlayer.size;
+  const reportPosition = miniPlayer.position;
+  const reportLastInteraction = miniPlayer.lastInteraction;
+  useLayoutEffect(() => {
+    if (!reportsToCanvas) return;
+    reportPreview?.({
+      key: contentId,
+      width: reportableSize?.width ?? null,
+      position: reportPosition,
+      source: sourceSize,
+      lastInteraction: reportLastInteraction,
+    });
+  }, [
+    reportsToCanvas,
+    reportPreview,
+    contentId,
+    reportableSize,
+    reportPosition,
+    reportLastInteraction,
+    sourceSize,
+  ]);
+  useLayoutEffect(
+    () => () => {
+      if (reportsToCanvas) clearPreview?.(contentId);
+    },
+    [reportsToCanvas, clearPreview, contentId],
+  );
+
+  const container = canvasFrame ? (canvas?.container ?? null) : (layout?.container ?? null);
+  const obstacles = canvasFrame ? NO_PREVIEW_MINI_PLAYER_OBSTACLES : (layout?.obstacles ?? null);
+
+  // SCIENT-FORK:START — free-sized and self-laid-out players resolve their own frame
+  const frame = resolveMiniPlayerShellFrame({
+    canvasFrame,
+    container,
+    obstacles,
+    freeSize,
+    miniPlayer,
+    sourceSize,
+  });
+  // SCIENT-FORK:END
 
   const radius = frame ? cornerRadius(frame) : PREVIEW_MINI_PLAYER_CORNER_RADIUS;
   // Inside a wide curve the default 8px inset would land on the clipped-away corner.
@@ -471,21 +439,17 @@ function MiniPlayerShell({
     usePreviewMiniPlayerStore.getState().close(threadRef);
   };
 
-  // The composer grows on its own (drafts, banners), so it is observed alongside the column.
-  useLayoutEffect(() => {
-    const element = containerRef.current;
-    if (!element) return;
-    const measure = () => {
-      const next = measureLayout(element, composerOverlayElement);
-      setLayout((current) => (current && sameLayout(current, next) ? current : next));
-    };
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    if (composerOverlayElement) observer.observe(composerOverlayElement);
-    return () => observer.disconnect();
-  }, [composerOverlayElement]);
+  // SCIENT-FORK:START — self layout, free resizing and keyboard moves
+  useMiniPlayerMeasuredLayout(containerRef, composerOverlayElement, canvasFrame, setLayout);
+  const resizeFrom = miniPlayerResizer({
+    container,
+    obstacles,
+    freeSize,
+    sourceSize,
+    threadRef,
+    contentId,
+  });
+  // SCIENT-FORK:END
 
   const beginGesture = (
     event: ReactPointerEvent<HTMLElement>,
@@ -506,7 +470,7 @@ function MiniPlayerShell({
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLElement>) => {
     const gesture = gestureRef.current;
-    if (!gesture || gesture.pointerId !== event.pointerId || !container) return;
+    if (!gesture || gesture.pointerId !== event.pointerId || !container || !obstacles) return;
     const delta = { x: event.clientX - gesture.pointerX, y: event.clientY - gesture.pointerY };
     const store = usePreviewMiniPlayerStore.getState();
     if (gesture.direction === null) {
@@ -525,46 +489,6 @@ function MiniPlayerShell({
     resizeFrom(gesture.frame, gesture.direction, delta);
   };
 
-  const resizeFrom = (
-    start: PreviewMiniPlayerFrame,
-    direction: BrowserViewportResizeDirection,
-    delta: PreviewMiniPlayerPosition,
-  ) => {
-    if (!container) return;
-    const next = freeSize
-      ? resizePreviewMiniPlayerRect({
-          rect: {
-            position: { x: start.x, y: start.y },
-            size: { width: start.width, height: start.height },
-          },
-          direction: direction
-            .replace("north", "n")
-            .replace("south", "s")
-            .replace("east", "e")
-            .replace(
-              "west",
-              "w",
-            ) as import("./previewMiniPlayerLayout").PreviewMiniPlayerResizeDirection,
-          delta,
-          container,
-        })
-      : (() => {
-          const resized = resizePreviewMiniPlayer({
-            start,
-            direction,
-            delta,
-            source: sourceSize,
-            container,
-            obstacles,
-          });
-          return {
-            position: { x: resized.x, y: resized.y },
-            size: { width: resized.width, height: resized.height },
-          };
-        })();
-    usePreviewMiniPlayerStore.getState().setRect(threadRef, contentId, next);
-  };
-
   const endGesture = (event: ReactPointerEvent<HTMLElement>) => {
     if (gestureRef.current?.pointerId !== event.pointerId) return;
     gestureRef.current = null;
@@ -573,54 +497,16 @@ function MiniPlayerShell({
     }
   };
 
-  const handleKeyDown = (
-    event: ReactKeyboardEvent<HTMLElement>,
-    direction: BrowserViewportResizeDirection | null,
-  ) => {
-    if (!frame || !container) return;
-    const horizontal = event.key === "ArrowLeft" || event.key === "ArrowRight";
-    const vertical = event.key === "ArrowUp" || event.key === "ArrowDown";
-    if (!horizontal && !vertical) return;
-    if (
-      direction &&
-      ((horizontal && !/east|west/.test(direction)) || (vertical && !/north|south/.test(direction)))
-    ) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    const step = direction ? (event.shiftKey ? 60 : 12) : event.shiftKey ? 80 : 8;
-    const delta = {
-      x: horizontal ? (event.key === "ArrowLeft" ? -step : step) : 0,
-      y: vertical ? (event.key === "ArrowUp" ? -step : step) : 0,
-    };
-    if (direction) {
-      resizeFrom(
-        frame,
-        horizontal
-          ? direction.includes("west")
-            ? "west"
-            : "east"
-          : direction.includes("north")
-            ? "north"
-            : "south",
-        delta,
-      );
-      return;
-    }
-    usePreviewMiniPlayerStore
-      .getState()
-      .move(
-        threadRef,
-        contentId,
-        clampPreviewMiniPlayerPosition(
-          { x: frame.x + delta.x, y: frame.y + delta.y },
-          container,
-          frame,
-          obstacles,
-        ),
-      );
-  };
+  // SCIENT-FORK:START
+  const handleKeyDown = miniPlayerKeyDownHandler({
+    frame,
+    container,
+    obstacles,
+    resizeFrom,
+    threadRef,
+    contentId,
+  });
+  // SCIENT-FORK:END
 
   const player = (
     <div

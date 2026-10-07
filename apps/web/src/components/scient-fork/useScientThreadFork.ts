@@ -12,7 +12,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
   type ForkOptions,
-  type TurnId,
+  type RunId,
 } from "@t3tools/contracts";
 import {
   useCallback,
@@ -77,13 +77,28 @@ export type ForkSource =
       readonly attachments: ReadonlyArray<ChatAttachment>;
     }
   // The running turn, including the work it has done so far.
-  | { readonly kind: "running-turn"; readonly turnId: TurnId };
+  | { readonly kind: "running-turn"; readonly runId: RunId };
 const sourceKey = (source: ForkSource) =>
   source.kind === "running-turn"
-    ? `running-turn:${source.turnId}`
+    ? `running-turn:${source.runId}`
     : source.kind === "assistant-response" && source.latest
       ? "latest"
       : `${source.kind}:${source.messageId}`;
+
+// SCIENT-FORK:START — `thread.fork` is a V1-only command, but it rides the
+// `orchestration.dispatchCommand` tag that V1 and V2 both register. The client
+// resolves that tag to V2's `{ sequence }` result, while the server still
+// returns V1's optional attachment receipt, so read it off the raw payload.
+function readForkAttachmentIdMap(receipt: object): Readonly<Record<string, string>> | undefined {
+  if (!("forkAttachmentIdMap" in receipt)) return undefined;
+  const map: unknown = receipt.forkAttachmentIdMap;
+  if (map === null || typeof map !== "object" || Array.isArray(map)) return undefined;
+  return Object.fromEntries(
+    Object.entries(map).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+}
+// SCIENT-FORK:END
+
 function composerFingerprint(ref: ScopedThreadRef): string {
   const draft = useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(ref)];
   const snapshot = JSON.stringify([
@@ -334,7 +349,7 @@ export function useScientThreadFork({
         input: {
           originThreadId: originId,
           ...(source.kind === "running-turn"
-            ? { sourceRunningTurnId: source.turnId }
+            ? { sourceRunningRunId: source.runId }
             : source.kind === "user-message"
               ? { sourceUserMessageId: source.messageId }
               : source.latest || source.messageId === null
@@ -365,7 +380,7 @@ export function useScientThreadFork({
               newWorktree: pending.command.workspaceMode === "new-worktree",
               sourceAssistantMessageId: pending.command.sourceAssistantMessageId ?? null,
               sourceUserMessageId: pending.command.sourceUserMessageId ?? null,
-              sourceRunningTurnId: pending.command.sourceRunningTurnId ?? null,
+              sourceRunningRunId: pending.command.sourceRunningRunId ?? null,
             }
           : await resolveOptions(source);
         if (
@@ -430,10 +445,7 @@ export function useScientThreadFork({
                 throw new Error(eligibility.reason ?? "This fork point is unavailable.");
               // A server that does not know running-turn forks answers for the
               // latest response instead; never fork that under this label.
-              if (
-                source.kind === "running-turn" &&
-                eligibility.sourceRunningTurnId !== source.turnId
-              )
+              if (source.kind === "running-turn" && eligibility.sourceRunningRunId !== source.runId)
                 throw new Error(
                   "This server cannot fork while the agent is working. Update Scient, or fork once the turn finishes.",
                 );
@@ -475,8 +487,8 @@ export function useScientThreadFork({
                   ...(options.titleOverride === undefined
                     ? {}
                     : { titleOverride: options.titleOverride }),
-                  ...(eligibility.sourceRunningTurnId
-                    ? { sourceRunningTurnId: eligibility.sourceRunningTurnId }
+                  ...(eligibility.sourceRunningRunId
+                    ? { sourceRunningRunId: eligibility.sourceRunningRunId }
                     : eligibility.sourceAssistantMessageId
                       ? { sourceAssistantMessageId: eligibility.sourceAssistantMessageId }
                       : { sourceUserMessageId: eligibility.sourceUserMessageId! }),
@@ -499,7 +511,7 @@ export function useScientThreadFork({
               dispatch: async (current) => {
                 const result = await forkThread({ environmentId, input: current.command });
                 if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-                return result.value.forkAttachmentIdMap;
+                return readForkAttachmentIdMap(result.value);
               },
             });
             // Completing in the background must not steal navigation or a composer

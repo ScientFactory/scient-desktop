@@ -196,7 +196,8 @@ index ff78e2ae0e20aa83124f758d193e978170c98a87..0cc347ae14caf019ad0c2f3c9d44d194
 +			const layoutStartLine = String(previousLineCount).length === String(change.lineCount).length ? change.startLine : 0;
 +			fileInstance.applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer, layoutStartLine);
 +		}
- 		if (this.#isDiff && (this.#diffSyle === "unified" || didLineCountChange)) this.#resetCache();
+-		if (this.#isDiff && (this.#diffSyle === "unified" || didLineCountChange)) this.#resetCache();
++		if (didLineCountChange || (this.#isDiff && this.#diffSyle === "unified")) this.#resetCache();
  		if (newLineAnnotations !== void 0) {
 @@ -1788,6 +1805,7 @@ var Editor = class {
  		}

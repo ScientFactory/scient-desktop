@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -9,6 +11,7 @@ import type { OmpRpcClient, OmpRpcNotification } from "effect-omp-rpc/client";
 import type { OmpRpcEvent, OmpRpcState } from "effect-omp-rpc/schema";
 import { isRecord } from "effect-omp-rpc/schema";
 import { encodeOmpModelSlug } from "./OmpModel.ts";
+import { makeOmpAssistantContent, type OmpAssistantContentUpdate } from "./OmpAssistantContent.ts";
 
 import {
   compileOmpCommandCatalog,
@@ -57,6 +60,7 @@ export interface OmpQuestionOption {
 }
 
 export type OmpSessionUpdate =
+  | OmpAssistantContentUpdate
   | { readonly type: "turn-started"; readonly turnId: string }
   | {
       readonly type: "turn-outcome";
@@ -73,18 +77,6 @@ export type OmpSessionUpdate =
       readonly source?: "process" | "unconfirmed" | "command";
     }
   | { readonly type: "assistant-started"; readonly messageId: string }
-  | { readonly type: "assistant-delta"; readonly messageId: string; readonly delta: string }
-  | {
-      readonly type: "assistant-completed";
-      readonly messageId: string;
-      /**
-       * `failed` when the model request behind this message failed. The cause
-       * travels on the turn outcome and retry warnings, never as item detail,
-       * which consumers render as the message's text.
-       */
-      readonly status?: "completed" | "failed";
-    }
-  | { readonly type: "reasoning-delta"; readonly messageId: string; readonly delta: string }
   | {
       readonly type: "tool";
       readonly phase: "started" | "updated" | "completed";
@@ -127,7 +119,7 @@ export type OmpSessionUpdate =
   | { readonly type: "session-settled" }
   | { readonly type: "background-work"; readonly pending: boolean }
   /** OMP injected a finished background job's result into the open turn's run. */
-  | { readonly type: "background-result"; readonly detail?: string }
+  | { readonly type: "background-result"; readonly id: string; readonly detail?: string }
   | { readonly type: "model-changed"; readonly model?: string; readonly thinkingLevel?: string }
   | { readonly type: "warning"; readonly message: string }
   | { readonly type: "error"; readonly message: string }
@@ -279,13 +271,14 @@ const subagentDetail = (event: OmpRpcEvent): string | undefined => {
   return text(payload?.message) ?? text(progress?.message) ?? text(event.message);
 };
 
-const lastAssistantText = (messages: unknown): string | undefined => {
-  if (!Array.isArray(messages)) return undefined;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (isAssistantMessage(message)) return messageText(message);
-  }
-  return undefined;
+const matchesAssistantReference = (
+  reference: { readonly responseId: string | undefined; readonly timestamp: number | undefined },
+  message: Record<string, unknown>,
+): boolean => {
+  const responseId = text(message.responseId);
+  return reference.responseId !== undefined && responseId !== undefined
+    ? reference.responseId === responseId
+    : reference.timestamp !== undefined && reference.timestamp === message.timestamp;
 };
 
 const eventTypeLabel = (type: string): string => {
@@ -383,9 +376,17 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   let continuationSequence = 0;
   let autonomousTurn = false;
   let assistantMessageSequence = 0;
-  let activeAssistantMessageId: string | undefined;
-  let activeAssistantInitialText = "";
-  let activeAssistantHasDelta = false;
+  let activeAssistantContent: ReturnType<typeof makeOmpAssistantContent> | undefined;
+  let activeAssistantNativeId: string | undefined;
+  let activeAssistantResponseId: string | undefined;
+  let activeAssistantTimestamp: number | undefined;
+  let latestCompletedAssistantReference:
+    | {
+        readonly responseId: string | undefined;
+        readonly timestamp: number | undefined;
+      }
+    | undefined;
+  const completedAssistantIds = new Set<string>();
   let assistantMessageSeen = false;
   let failureDetail: string | undefined;
   /** The prompt command itself failed; its sender reports that error. */
@@ -438,25 +439,24 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       if (ids.length > 0) yield* publish({ type: "questions-cleared", ids });
     });
 
-  const finishAssistant = (status: "completed" | "failed" = "completed") =>
+  const publishContent = (updates: ReadonlyArray<OmpAssistantContentUpdate>) =>
+    Effect.forEach(updates, publish, { discard: true });
+
+  const finishAssistant = (status: "completed" | "failed" = "completed", message?: unknown) =>
     Effect.gen(function* () {
-      const messageId = activeAssistantMessageId;
-      if (!messageId) return;
-      if (!activeAssistantHasDelta && activeAssistantInitialText) {
-        yield* publish({
-          type: "assistant-delta",
-          messageId,
-          delta: activeAssistantInitialText,
-        });
+      if (!activeAssistantContent) return;
+      yield* publishContent(activeAssistantContent.finish(status, message));
+      if (activeAssistantNativeId) {
+        completedAssistantIds.add(activeAssistantNativeId);
       }
-      activeAssistantMessageId = undefined;
-      activeAssistantInitialText = "";
-      activeAssistantHasDelta = false;
-      yield* publish({
-        type: "assistant-completed",
-        messageId,
-        ...(status === "failed" ? { status } : {}),
-      });
+      latestCompletedAssistantReference = {
+        responseId: activeAssistantResponseId,
+        timestamp: activeAssistantTimestamp,
+      };
+      activeAssistantContent = undefined;
+      activeAssistantNativeId = undefined;
+      activeAssistantResponseId = undefined;
+      activeAssistantTimestamp = undefined;
     });
 
   const rememberSettledPrompt = (requestId: string | undefined) => {
@@ -518,7 +518,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
 
   const settleTurn = (outcome: OmpTurnOutcome, signal: OmpTurnSignal) =>
     Effect.gen(function* () {
-      yield* finishAssistant();
+      yield* finishAssistant(outcome === "failed" ? "failed" : "completed");
       yield* clearQuestions();
       const requestId = turn.requestId;
       rememberSettledPrompt(requestId);
@@ -544,9 +544,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       activeTurnId = turnId;
       autonomousTurn = autonomous;
       assistantMessageSequence = 0;
-      activeAssistantMessageId = undefined;
-      activeAssistantInitialText = "";
-      activeAssistantHasDelta = false;
+      activeAssistantContent = undefined;
+      activeAssistantNativeId = undefined;
+      activeAssistantResponseId = undefined;
+      activeAssistantTimestamp = undefined;
+      latestCompletedAssistantReference = undefined;
+      completedAssistantIds.clear();
       assistantMessageSeen = false;
       drainRetries = 0;
       // A retry already scheduled stays the only one: it rechecks whichever
@@ -676,16 +679,25 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     yield* input.client.flushEvents();
   });
 
-  const ensureAssistant = (messageId?: string) =>
+  const ensureAssistant = (nativeId?: string, message?: unknown) =>
     Effect.gen(function* () {
-      if (activeAssistantMessageId) return activeAssistantMessageId;
-      const nextId = messageId ?? `message-${++assistantMessageSequence}`;
-      activeAssistantMessageId = nextId;
-      activeAssistantInitialText = "";
-      activeAssistantHasDelta = false;
+      if (activeAssistantContent) {
+        activeAssistantNativeId ??= nativeId;
+        if (isRecord(message)) {
+          activeAssistantResponseId ??= text(message.responseId);
+          if (typeof message.timestamp === "number") activeAssistantTimestamp ??= message.timestamp;
+        }
+        return activeAssistantContent;
+      }
+      const nextId = nativeId ?? `message-${++assistantMessageSequence}`;
+      activeAssistantContent = makeOmpAssistantContent(nextId, message);
+      activeAssistantNativeId = nativeId;
+      activeAssistantResponseId = isRecord(message) ? text(message.responseId) : undefined;
+      activeAssistantTimestamp =
+        isRecord(message) && typeof message.timestamp === "number" ? message.timestamp : undefined;
       assistantMessageSeen = true;
       yield* publish({ type: "assistant-started", messageId: nextId });
-      return nextId;
+      return activeAssistantContent;
     });
 
   const rejectHostTool = (id: string) =>
@@ -841,27 +853,46 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         const terminal = event.yielded ?? event.isTerminal !== false;
         const fallbackMessage =
           !stale && turnIsOpen(turn) ? lastAssistantMessage(event.messages) : undefined;
-        // OMP compacts or empties agent_end.messages past its frame limit, so
-        // the message_end frames are the primary outcome evidence.
-        if (terminal && fallbackMessage && !evidence.assistantEnded) {
-          evidence.stopReason = text(fallbackMessage.stopReason);
-          evidence.errorMessage = text(fallbackMessage.errorMessage);
+        // A run-end snapshot can repair its open envelope or recover a new
+        // envelope after this turn's observed one in the ordered native transcript.
+        // Identity and position establish ownership; wall-clock order does not.
+        if (fallbackMessage) {
+          const activeReference = {
+            responseId: activeAssistantResponseId,
+            timestamp: activeAssistantTimestamp,
+          };
+          const ownsSnapshot =
+            activeAssistantContent && matchesAssistantReference(activeReference, fallbackMessage);
+          const reference = activeAssistantContent
+            ? activeReference
+            : latestCompletedAssistantReference;
+          const anchorIndex =
+            reference && Array.isArray(event.messages)
+              ? event.messages.findLastIndex(
+                  (message) =>
+                    isAssistantMessage(message) &&
+                    isRecord(message) &&
+                    matchesAssistantReference(reference, message),
+                )
+              : -1;
+          const newerSnapshot =
+            anchorIndex >= 0 &&
+            Array.isArray(event.messages) &&
+            event.messages.lastIndexOf(fallbackMessage) > anchorIndex;
+          if (ownsSnapshot || !assistantMessageSeen || newerSnapshot) {
+            if (!ownsSnapshot && activeAssistantContent) yield* finishAssistant();
+            yield* ensureAssistant(undefined, fallbackMessage);
+            evidence.assistantEnded = true;
+            evidence.stopReason = text(fallbackMessage.stopReason);
+            evidence.errorMessage = text(fallbackMessage.errorMessage);
+            yield* finishAssistant(assistantItemStatus(fallbackMessage), fallbackMessage);
+          }
         }
         yield* applySignal({
           type: "agent-end",
           terminal,
           ...(runId === undefined ? {} : { runId }),
         });
-        if (stale) return;
-        if (!assistantMessageSeen && fallbackMessage) {
-          const fallback = lastAssistantText(event.messages);
-          if (fallback) {
-            const messageId = yield* ensureAssistant();
-            activeAssistantHasDelta = true;
-            yield* publish({ type: "assistant-delta", messageId, delta: fallback });
-            yield* finishAssistant(assistantItemStatus(fallbackMessage));
-          }
-        }
         return;
       }
       if (event.type === "prompt_result") {
@@ -963,9 +994,11 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       if (event.type === "message_start") {
         if (!turnIsOpen(turn) || staleRunOpen()) return;
         if (isAssistantMessage(event.message)) {
-          if (activeAssistantMessageId) yield* finishAssistant();
-          yield* ensureAssistant();
-          activeAssistantInitialText = messageText(event.message) ?? "";
+          const nativeId = text(event.messageId);
+          if (nativeId && completedAssistantIds.has(nativeId)) return;
+          if (nativeId && nativeId === activeAssistantNativeId) return;
+          if (activeAssistantContent) yield* finishAssistant();
+          yield* ensureAssistant(nativeId, event.message);
         }
         return;
       }
@@ -974,38 +1007,69 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         if (isBackgroundResultMessage(event.message)) {
           // Marks where OMP resumed with a background job's result, since
           // that run can also carry the answer to a newer message.
-          const detail = detailText(event.message);
-          yield* publish({ type: "background-result", ...(detail ? { detail } : {}) });
+          const detail = messageText(event.message);
+          if (!detail) return;
+          // Native deliveries include their job IDs in the content. Hash the complete
+          // receipt before redaction: repeated frames reuse an item without merging jobs.
+          const id = `background-result:${NodeCrypto.createHash("sha256").update(detail).digest("hex")}`;
+          yield* publish({ type: "background-result", id, detail });
           return;
         }
         if (!isAssistantMessage(event.message)) return;
+        const nativeId = text(event.messageId);
+        if (
+          nativeId &&
+          (completedAssistantIds.has(nativeId) ||
+            (activeAssistantNativeId !== undefined && nativeId !== activeAssistantNativeId))
+        )
+          return;
         const message = isRecord(event.message) ? event.message : {};
         evidence.assistantEnded = true;
         evidence.stopReason = text(message.stopReason);
         evidence.errorMessage = text(message.errorMessage);
-        const messageId = yield* ensureAssistant();
-        const fallback = activeAssistantHasDelta
-          ? undefined
-          : (messageText(event.message) ?? activeAssistantInitialText);
-        if (fallback && fallback.length > 0) {
-          activeAssistantHasDelta = true;
-          yield* publish({ type: "assistant-delta", messageId, delta: fallback });
-        }
-        yield* finishAssistant(assistantItemStatus(message));
+        yield* ensureAssistant(nativeId, message);
+        yield* finishAssistant(assistantItemStatus(message), message);
         return;
       }
       if (event.type === "message_update") {
-        if (!isRecord(event.assistantMessageEvent) || !turnIsOpen(turn) || staleRunOpen()) return;
+        if (
+          !isAssistantMessage(event.message) ||
+          !isRecord(event.assistantMessageEvent) ||
+          !turnIsOpen(turn) ||
+          staleRunOpen()
+        )
+          return;
         const update = event.assistantMessageEvent;
-        const delta = typeof update.delta === "string" ? update.delta : "";
-        if (update.type === "text_delta" && delta.length > 0) {
-          const messageId = yield* ensureAssistant();
-          activeAssistantHasDelta = true;
-          yield* publish({ type: "assistant-delta", messageId, delta });
-        } else if (update.type === "thinking_delta" && delta.length > 0) {
-          const messageId = yield* ensureAssistant();
-          yield* publish({ type: "reasoning-delta", messageId, delta });
-        }
+        const kind =
+          update.type === "text_delta" || update.type === "text_end"
+            ? "text"
+            : update.type === "thinking_delta" || update.type === "thinking_end"
+              ? "reasoning"
+              : undefined;
+        if (!kind) return;
+        const nativeId = text(event.messageId);
+        if (
+          nativeId &&
+          (completedAssistantIds.has(nativeId) ||
+            (activeAssistantNativeId !== undefined && nativeId !== activeAssistantNativeId))
+        )
+          return;
+        const content = yield* ensureAssistant(nativeId, event.message);
+        const index =
+          typeof update.contentIndex === "number" &&
+          Number.isInteger(update.contentIndex) &&
+          update.contentIndex >= 0
+            ? update.contentIndex
+            : 0;
+        const updates =
+          update.type === "text_delta" || update.type === "thinking_delta"
+            ? content.delta(index, kind, typeof update.delta === "string" ? update.delta : "")
+            : content.end(
+                index,
+                kind,
+                typeof update.content === "string" ? update.content : undefined,
+              );
+        yield* publishContent(updates);
         return;
       }
       // A fresh agent_start gives autonomous runs a turn. Unowned frames

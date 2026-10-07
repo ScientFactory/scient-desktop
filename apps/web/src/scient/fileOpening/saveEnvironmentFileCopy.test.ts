@@ -76,15 +76,18 @@ describe("save a copy from the file viewers", () => {
   // An exact capability is pinned to the revision it was issued for. A viewer
   // that asked through a cached query would be handed the previous one after
   // the file changed, and the save would be refused as changed.
-  it.each(["../../components/files/FilePreviewPanel.tsx", "./EnvironmentFilePreview.tsx"])(
-    "%s always requests a fresh capability",
-    (file) => {
-      const source = NodeFS.readFileSync(new URL(file, import.meta.url), "utf8");
-      expect(source).toMatch(
-        /const createCopyUrl = useAtomQueryRunner\(assetEnvironment\.createUrl, \{\s+reportFailure: false,\s+refresh: true,\s+\}\);/u,
-      );
-      expect(source).toContain("createAssetUrl: createCopyUrl,");
-      expect(source.match(/saveEnvironmentFileCopy\(\{/gu)).toHaveLength(1);
-    },
-  );
+  // FilePreviewPanel is read together with the Scient module its marked call uses.
+  it.each([
+    ["../../components/files/FilePreviewPanel.tsx", "../fileSurfaces/scientFileReadRecovery.tsx"],
+    ["./EnvironmentFilePreview.tsx"],
+  ])("%s always requests a fresh capability", (...files) => {
+    const source = files
+      .map((file) => NodeFS.readFileSync(new URL(file, import.meta.url), "utf8"))
+      .join("\n");
+    expect(source).toMatch(
+      /const createCopyUrl = useAtomQueryRunner\(assetEnvironment\.createUrl, \{\s+reportFailure: false,\s+refresh: true,\s+\}\);/u,
+    );
+    expect(source).toContain("createAssetUrl: createCopyUrl,");
+    expect(source.match(/saveEnvironmentFileCopy\(\{/gu)).toHaveLength(1);
+  });
 });

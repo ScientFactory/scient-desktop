@@ -5,7 +5,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { DROID_DEFAULT_MODEL, type DroidSettings, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
@@ -272,9 +272,7 @@ export const makeDroidTextGeneration = Effect.fn("makeDroidTextGeneration")(func
             : ({ outcome: "cancelled" } as const),
         });
       });
-      yield* runtime.handleElicitation(() =>
-        Effect.succeed({ action: { action: "cancel" as const } }),
-      );
+      yield* runtime.handleElicitation(() => Effect.succeed({ action: "cancel" as const }));
 
       yield* runtime.handleSessionUpdate((notification) => {
         const update = notification.update;

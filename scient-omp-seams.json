@@ -8,11 +8,18 @@
     "apps/server/src/provider/scient"
   ],
   "ownedFiles": [
+    "packages/contracts/src/scient/providerSettings.ts",
+    "apps/server/src/provider/testUtils/controlledOmpPeer.mjs",
+    "apps/server/src/orchestration-v2/Adapters/OmpAdapterV2.ts",
+    "apps/server/src/orchestration-v2/testkit/OmpNativeConjunctions.ts",
+    "apps/server/src/orchestration-v2/scient-provider/OmpProcessOwnership.ts",
+    "apps/server/src/provider/testUtils/nativeOmpOrchestration.ts",
+    "apps/server/src/provider/testUtils/nativeOmpSession.ts",
+    "apps/server/src/provider/testUtils/scriptedOmpRpc.ts",
     "apps/server/scripts/qualify-omp-rpc.ts",
     "apps/server/scripts/qualifyScientAgentManagedRuntime.ts",
     "apps/server/src/provider/Drivers/OmpDriver.ts",
     "apps/server/src/provider/Drivers/ScientAgentDriver.ts",
-    "apps/server/src/provider/Layers/OmpAdapter.ts",
     "apps/server/src/provider/Layers/OmpProvider.ts",
     "apps/server/src/scient/providerLifecycle/OmpManagedRuntimeActions.ts",
     "apps/server/src/scient/providerLifecycle/QualifiedRpcManagedRuntime.ts",
@@ -22,12 +29,16 @@
     "apps/web/src/scient/modelPicker/modelSourceSections.browser.test.tsx",
     "apps/web/src/scient/modelPicker/modelSourceSections.test.ts",
     "apps/web/src/scient/modelPicker/modelSourceSections.ts",
+    "apps/web/src/scient/modelPicker/useScientModelPickerGroups.ts",
     "apps/web/src/scient/providerConnection/OmpInlineSetup.tsx",
     "apps/web/src/scient/releaseNotes/catalog.ts",
     "docs/user/providers-omp.md",
     "docs/user/providers-scient-agent.md",
     "packages/scient-provider-runtime/src/managedOmpRuntime.ts",
-    "packages/scient-provider-runtime/src/ompManifest.ts"
+    "packages/scient-provider-runtime/src/ompManifest.ts",
+    "packages/shared/src/scientModel.ts",
+    "apps/server/src/scient/providerLifecycle/CustomModelRpcHandlers.ts",
+    "apps/web/src/components/ScientProviderIcons.tsx"
   ],
   "scientMounts": [
     {
@@ -114,6 +125,11 @@
       "path": "scripts/qualify-managed-runtime-catalog.ts",
       "anchor": "if (provider === \"omp\") await verifyRpc",
       "purpose": "Publish an Oh My Pi release only after the server's RPC qualification passes."
+    },
+    {
+      "path": "apps/web/src/scient/sessionLogic/providerOptions.ts",
+      "anchor": "ProviderDriverKind.make(\"omp\")",
+      "purpose": "List Oh My Pi in the model picker."
     }
   ],
   "upstreamMounts": [
@@ -134,7 +150,7 @@
     },
     {
       "path": "packages/shared/src/model.ts",
-      "anchor": "export function getDefaultHiddenAgentModels(",
+      "anchor": "getDefaultHiddenAgentModels,",
       "purpose": "Share Pi and Oh My Pi native model curation defaults while preserving user visibility overrides and custom models."
     },
     {
@@ -179,13 +195,13 @@
     },
     {
       "path": "apps/server/src/ws.ts",
-      "anchor": "encodeOmpModelSlug",
+      "anchor": "makeCustomModelRpcHandlers",
       "purpose": "Test custom model connections through Oh My Pi's own model slug."
     },
     {
       "path": "apps/web/src/components/Icons.tsx",
       "anchor": "OhMyPiIcon",
-      "purpose": "Define the Oh My Pi mark."
+      "purpose": "Re-export the Oh My Pi mark, which ScientProviderIcons.tsx defines."
     },
     {
       "path": "apps/web/src/components/chat/MessagesTimeline.tsx",
@@ -194,7 +210,7 @@
     },
     {
       "path": "apps/web/src/components/chat/ModelPickerContent.tsx",
-      "anchor": "groupModelsBySource",
+      "anchor": "useScientModelPickerGroups",
       "purpose": "Split Oh My Pi and Pi models into the user's own accounts and Scient custom models, as collapsible sections."
     },
     {
@@ -206,11 +222,6 @@
       "path": "apps/web/src/components/settings/providerDriverMeta.ts",
       "anchor": "settingsSchema: OmpSettings",
       "purpose": "List Oh My Pi in provider settings."
-    },
-    {
-      "path": "apps/web/src/session-logic.ts",
-      "anchor": "ProviderDriverKind.make(\"omp\")",
-      "purpose": "List Oh My Pi in the model picker and project open-url activity."
     },
     {
       "path": "knip.jsonc",

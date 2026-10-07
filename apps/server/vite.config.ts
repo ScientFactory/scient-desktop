@@ -18,6 +18,7 @@ import {
   isExternalCliDependency,
   shouldBundleCliDependency,
 } from "../../scripts/lib/cli-external-packages.ts";
+import { CLI_BUNDLE_ALIASES } from "../../scripts/lib/cli-bundle-aliases.ts";
 
 export { shouldBundleCliDependency };
 
@@ -37,10 +38,11 @@ export default mergeConfig(
       },
     },
     pack: {
+      alias: CLI_BUNDLE_ALIASES,
       entry: [
         "src/bin.ts",
         "src/analytics-worker.ts",
-        "src/claudeHistoryWorker.ts",
+        "src/claude-history-worker.ts",
         "src/pdf-validation-worker.ts",
         "src/pdf.worker.ts",
       ],

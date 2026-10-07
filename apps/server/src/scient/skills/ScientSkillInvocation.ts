@@ -17,6 +17,7 @@ import type {
  */
 export interface PreparedScientSkillTurn {
   readonly input: string | undefined;
+  readonly runtimeInstruction: string | undefined;
   readonly skillScope: AgentSkillScope;
 }
 
@@ -131,6 +132,7 @@ export function prepareScientSkillTurn(
     .join("\n\n");
   const preparedRuntimeInstruction = runtimeInstruction.length > 0 ? runtimeInstruction : undefined;
   return {
+    runtimeInstruction: preparedRuntimeInstruction,
     input: preparedRuntimeInstruction
       ? [input, preparedRuntimeInstruction].filter(Boolean).join("\n\n")
       : input,

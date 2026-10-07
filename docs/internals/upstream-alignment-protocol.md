@@ -145,6 +145,11 @@ Do not resolve a substantial conflict by taking one whole side without checking 
 their callers. Preserve immutable migration order; an upstream migration number that collides with a
 shipped Scient migration must be renumbered, never reused.
 
+When upstream replaces a subsystem, remove Scient's copy of the old subsystem in the same
+alignment. Never keep superseded execution code compiling beside its replacement: green tests
+of dead code hide lost behavior. Preserve required immutable formats/migrations through bounded
+readers, and port Scient behavior into the live replacement.
+
 ### Extend an existing alignment PR
 
 Continue in its current branch and worktree; do **not** use `alignment:start` or create another
@@ -180,6 +185,20 @@ current owned main. In the receipt, retain the original owned base and upstream 
 record the owned-main commit and catch-up merge ID. The catch-up does not advance `integrationBase`
 or replace `lastRefreshMerge` with an owned-main merge.
 
+### Compose reviewed owned implementation branches
+
+Every merge parent the alignment introduces must be official T3 history or a commit already in
+owned `main`; the provenance checker admits nothing else. Land an independently reviewed Scient
+implementation lane through its own pull request first, then carry it into the alignment with the
+ordinary owned-main catch-up above. Composing unlanded lanes directly into the alignment, and
+especially through octopus merges, produces history the required check rejects.
+
+If that has already happened, publish the exact qualified tree as one ordinary commit on the last
+passing boundary (normally the owned-main catch-up merge), prove tree equality with the qualified
+head, archive the original branch under `archive/`, and open a superseding pull request. The
+[2026-10-07 republication](./t3-upstream-sync-20261003-ca7df394ed.md#republication-on-checkable-history--2026-10-07)
+is the recorded example.
+
 ## 4. Audit protected seams
 
 Every alignment explicitly reviews:
@@ -199,12 +218,212 @@ Every alignment explicitly reviews:
 Provider-specific behavior stays provider-specific when the provider protocol differs. Shared
 infrastructure should own repeated lifecycle mechanics, not erase capability differences.
 
+### Keep Scient implementation outside upstream hosts
+
+Keep Scient policy and scientific capability bodies in their existing Scient-owned modules.
+An upstream-owned service, component, driver or contract should retain only the narrow import and
+call/mount needed to compose that behavior. Mark both boundaries with paired `SCIENT-FORK:START`
+and `SCIENT-FORK:END` delimiters appropriate to the file format. A single explanatory comment is
+not equivalent to a paired region in the divergence inventory. Do not move a whole upstream
+function or renderer merely because one branch is Scient-specific; keep its generic host logic
+upstream and extract only the Scient decision or capability. The
+[current separation map](./scient-fork-divergence.md#extracted-owners-and-host-mounts) names the
+maintained owners and mounts.
+
+Never copy a helper to establish a second owner: import the existing implementation. Consolidate
+helpers only when their behavior is identical, including property-read order, short-circuiting and
+error precedence. Similar-but-different provider policies remain separate. Delete code with no live
+consumer instead of moving it, while preserving any assertion that also protects a live path.
+
+Preserve genuinely consumed public or legacy import surfaces, including their types, with a marked
+re-export when the existing surface remains part of the live contract. This is not permission to
+restore retired aliases, compatibility shims or unused re-exports; migrate cutover callers and remove
+their obsolete paths. Keep extracted boundaries on named concrete input/output or service-shape
+types, rather than deriving a public contract from a helper's implementation return type. Avoid value
+import cycles that read a binding during module initialization.
+
+Preserve the semantic continuation, not just a copied body. Keep the original order of awaits,
+currentness checks, side effects, error mapping, SQL writes and publication. An asynchronous helper
+that checks ownership and then returns can introduce a scheduling boundary before the caller's
+protected side effect; revalidate at the original side-effect boundary or retain that continuation
+together. A synchronous same-stack helper call/return does not itself open a scheduling turn.
+Capture the same mutable owner and read it at the same point; do not substitute a later snapshot.
+
+On hot paths, extraction must not add Effect operations, generator/suspension wrappers or yielded
+no-ops to inactive branches. Keep originally synchronous predicates synchronous. Even an
+uninterruptible region does not make extra Effect steps scheduling-equivalent. Preserve lock order,
+scope/finalizer ownership and live callback/ref identity, as well as React hook order, component
+identity, keys and mount conditions.
+
+For the declared extraction scope, reduce Scient implementation left inside upstream files and
+aggregate added non-test source lines across that scope, while keeping scoped inventory debt nonincreasing.
+Already-marked code can move out with zero debt before and after; strictly decreasing an already-zero
+debt count is neither possible nor required. Record exact official/base/candidate inputs for the
+comparison. Source-line and inventory findings measure different things; neither is behavior proof
+or a blanket line budget. The existing inventory remains advisory unless its separate reviewed
+activation procedure actually enables a ratchet.
+
+#### Reproducible separation measurements
+
+Count **Scient lines inside upstream files** as added non-test lines in `apps/` and `packages/`
+files that exist at the exact official upstream snapshot. This is the host metric, not the total
+size of all Scient-owned modules. Compare the same paths and exclusions at the extraction base
+and candidate. The reproducible example below uses the historical separation interval recorded in
+the [alignment receipt](./t3-upstream-sync-20261003-ca7df394ed.md); it is not a claim about the final
+receiving tree or a change to the qualified upstream cursor. For another interval, replace `BASE`
+and `CANDIDATE` with its full 40-character commit IDs and record all three inputs.
+
+```sh
+UPSTREAM=ca7df394ed8151fa77f856beefa90bc60a785d60
+BASE=6ced7918d858ba35aec6b4f85d2ba6b2bf15436e
+CANDIDATE=f835e5adf9b33725f20dcc92bc44c77ed0a8fcdc
+for revision in "$BASE" "$CANDIDATE"; do
+  printf '%s: ' "$revision"
+  git diff --numstat --no-renames "$UPSTREAM" "$revision" -- apps packages |
+    awk -F'\t' -v up="$UPSTREAM" '
+      BEGIN { cmd = "git ls-tree -r --name-only " up " -- apps packages"
+              while ((cmd | getline p) > 0) base[p] = 1 }
+      $1 != "-" && ($3 in base) &&
+      $3 !~ /(\.(test|spec|testkit|fixture)\.|\/(testkit|testUtils|fixtures|__tests__|e2e)\/)/ {
+        lines += $1; files++ }
+      END { print lines " lines in " files " files" }'
+done
+```
+
+Pair that measurement with the existing
+[divergence inventory](./scient-divergence-inventory.md), using the same full commit IDs:
+
+```sh
+node scripts/scient-divergence-inventory.mjs \
+  --upstream "$UPSTREAM" --candidate "$BASE" > divergence-base.json
+node scripts/scient-divergence-inventory.mjs \
+  --upstream "$UPSTREAM" --candidate "$CANDIDATE" > divergence-candidate.json
+```
+
+For the declared separation scope, neither the host-line metric nor `counts["new-debt"]` may rise;
+line reduction is expected while debt may stay zero or otherwise unchanged. `counts.marked` may
+rise when an unmarked edit becomes a marked mount or fall when a marked implementation moves out.
+Preserve reports and the comparison scope as structural evidence, not as new source-count tests,
+automatic CI activation or behavioral qualification.
+
 ## 5. Validate progressively
 
 While composing, run focused tests for every touched contract and protected seam. Then audit the
 entire staged diff for conflict markers, duplicated branches, stale product copy, accidental package
 changes, and silently reintroduced upstream authority. Regenerate generated artifacts and lockfiles
 from the composed sources; do not hand-edit generated conflict blocks.
+
+Before deleting superseded code, inventory Scient-added assertions and fixture or parameter
+conditions, including those inside inherited upstream tests. Exclude only untouched upstream-only
+conditions. Group the remaining promises by feature; mark a behavior **covered** only when a live
+replacement test asserts its deciding conditions, and port real gaps. Test titles, file origin,
+import reachability and test counts do not establish origin or equivalent behavior. Unresolved
+Scient conditions block deletion of their only proving path.
+
+Retire one dependency-cleared family at a time: preserve its needed helpers and readers,
+confirm its replacement conditions, disconnect the old execution path, then remove its source
+and obsolete tests in a compiling commit. Unrelated unresolved families do not create a global
+deletion gate. Shared interfaces with multiple live consumers still require an atomic cutover.
+
+Reuse genuine existing behavior coverage when it asserts the same deciding conditions; do not add
+duplicate cases merely to make a retirement inventory look complete. Coverage of a historical
+reader does not qualify live execution, and source structure does not establish app behavior.
+
+Permanent tests must exercise consumer-visible behavior and its deciding boundaries, not read
+upstream source text, count imports/files/lines or assert a relocated call's spelling. Retire
+obsolete source-text/wiring guards rather than repin them to an extracted module. Keep genuine
+behavior coverage and use source/locator review only as bounded structural evidence.
+
+Hand back each completed family with its immutable commit/tree, scoped qualification and a completed
+independent review by a different reviewer. Preserve failed attempts and limits alongside the handback.
+One integrator owns the receiving tree, index, final qualification and authorized app delivery;
+isolated authors own only their reserved source or documentation paths. A draft or review in progress
+is not an accepted input, and source acceptance does not advance the qualified upstream cursor.
+
+The [Scient divergence inventory](./scient-divergence-inventory.md) records ownership drift.
+Exact reviewed historical debt and unsupported-format exceptions are different inputs; neither
+can waive missing objects, encoding failures or supported-language parser failures. Keep the
+existing seam and upstream-provenance checks alongside it. Import reachability is an advisory
+about code ownership, not proof that a test asserts a production guarantee.
+
+### 5.1 Read an error count only when the syntax gate is open
+
+`tsc` suppresses semantic diagnostics **program-wide** while any file in the program has a syntax
+error. With one unparseable file, `tsc` reports zero type errors even in sibling files with
+obvious mismatches. A "0 errors" reading taken while syntax errors remain means only that the
+file parsed.
+
+This is not theoretical. During the 2026-10 alignment several packages reported zero errors while
+their program was semantically unchecked; when the last syntax error cleared in `apps/server`, the
+same command went from "clean" to thousands of real errors. The marker count and the error count
+were both correct and both misleading.
+
+So, before quoting any diagnostic count:
+
+1. Measure the syntax gate first, with an explicit error-class list. Do **not** use a `TS1[0-9]{3}`
+   pattern — it also matches `TS18046`, a semantic code, and over-reports badly.
+2. If the gate is open, the count is meaningful. If it is not, say "parses" and nothing more.
+3. Re-check the gate after any bulk edit. One bad file silently invalidates every other number.
+
+```text
+grep -cE "error TS(1128|1135|1109|1005|1010|1011|1161|1434|1129|1110|1136)"
+```
+
+The same caution applies to `Cannot find module`: it reads zero while the gate is shut, for the
+same reason. Treat "zero missing modules" as evidence only alongside an open syntax gate.
+
+### 5.2 Zero conflict markers is not resolution
+
+A file with no conflict markers can still be wrong. Concatenating both sides of a region removes
+the marker and leaves the breakage behind — duplicated declarations, an orphaned block spliced
+after a construct upstream replaced, or a comment left describing code that is no longer there.
+
+Marker count, parse success, and semantic correctness are three different claims. Only the third
+one is worth reporting as "resolved", and the only reliable way to reach it is the compiler.
+
+When a region needs re-deriving, prefer the pre-resolution blobs over the concatenated text:
+
+```text
+git show :1:<path>    # merge base
+git show :2:<path>    # ours
+git show :3:<path>    # theirs
+```
+
+### 5.3 Structural hazards that recur on every alignment
+
+Each of these cost real debugging time during the 2026-10 alignment and will recur unless the
+check is written down.
+
+**Duplicate wire strings defeat constant-based searches — historical V1/V2 collision.**
+During the cutover, `ORCHESTRATION_WS_METHODS` and `ORCHESTRATION_V2_WS_METHODS` both mapped
+`dispatchCommand` to the literal `"orchestration.dispatchCommand"`. A search for clients calling
+the V1 constant therefore returned nothing even while the V1 transport was live: callers reached
+it under the V2 constant's name. Those duplicate execution owners are retired; the lesson remains.
+Before deleting a registration as dead, search the literal and inspect which body survives in the
+handler map. One string can select only one body; deleting a duplicate silently chooses for you.
+
+**Identical union tags cannot separate owners — historical V1/V2 collision.** The V1 and V2
+command unions both declared `thread.fork` during the cutover. The tag alone could not distinguish
+the payloads; routing had to inspect their fields. This is not a current dual-execution contract.
+
+**Migration numbering drifts non-uniformly.** Upstream and the fork insert different migrations,
+so the same logical migration can sit at a different id on each side, and the offset changes
+along the tail. Never assume "migration NNN is the same migration on both sides". The fork's
+ledger contract is pinned in `apps/server/src/persistence/Migrations.compatibility.test.ts`; a
+test asserting ids must track **that** ledger, and the number in the filename and the asserted id
+must agree. A name-based slot-collision check cannot detect a drift that changes what runs.
+
+**A generated file shorter than both parents may be correct.** `effect-acp`'s generator now emits
+two outputs — `_generated/schema.gen.ts` (ACP v2) and `_generated/schema-v1.gen.ts` (ACP v1).
+Seeing v1 declarations "missing" from `schema.gen.ts` is the split working as designed. Check the
+generator's output list before concluding anything was lost, and never hand-edit generated output
+to make a count look better.
+
+**A deleted test is only worth restoring if its behaviour still exists.** Before restoring a
+deleted suite, find what it tested and whether that module was superseded. `threads-pagination`
+was replaced upstream by a history-merge model (`mergeOlderHistoryIntoProjection`), so restoring
+its 664-line suite would have tested a subsystem that no longer exists. Restoring the file would
+have bought a green line and cost the reader a false assurance.
 
 When a quality rule, shared UI API, or cross-client contract changes, resolve the merge and run the
 **affected broad static check early** (for example web lint or affected-package typecheck), before

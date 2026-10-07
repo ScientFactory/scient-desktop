@@ -1,9 +1,16 @@
+import "fake-indexeddb/auto";
+import { EnvironmentId, ThreadId, MessageId, CommandId } from "@t3tools/contracts";
+import { initializeExtractedIntent, readExtractedIntent } from "./editJournal";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   acknowledgeQueueSubmission,
   queueSubmissionId,
   composerSubmissionMatchesDraft,
+  bindExtractedSubmission,
+  readExtractedSubmission,
+  consumeExtractedSubmission,
+  extractedDraftFingerprint,
 } from "./submission";
 import { createEmptyThreadDraft } from "../../composerDraftStore";
 
@@ -142,4 +149,65 @@ describe("accepted submission draft ownership", () => {
       }),
     ).toBe(false);
   });
+});
+
+it("freezes the prepared attachment packet, settings and identity across an unknown ACK, then consumes once", async () => {
+  const id = "44444444-4444-4444-8444-444444444444";
+  const record = await initializeExtractedIntent(id);
+  const draft = { ...createEmptyThreadDraft(), prompt: "same text" };
+  const fingerprint = await extractedDraftFingerprint(draft);
+  const packet = {
+    environmentId: EnvironmentId.make("own"),
+    input: {
+      commandId: CommandId.make(`extracted-intent:${id}`),
+      threadId: ThreadId.make("captured-target"),
+      createdAt: "2026-10-05T00:00:00.000Z",
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+      selectedScientSkillNames: ["analysis"],
+      message: {
+        messageId: MessageId.make("fixed-message"),
+        role: "user" as const,
+        text: "same text",
+        attachments: [
+          {
+            type: "image" as const,
+            name: "one.png",
+            mimeType: "image/png",
+            sizeBytes: 1,
+            dataUrl: "data:image/png;base64,YQ==",
+          },
+        ],
+      },
+    },
+  };
+  await bindExtractedSubmission(record, packet, fingerprint, "bound-journal");
+  const recovered = (await readExtractedIntent(id))!;
+  expect(readExtractedSubmission(recovered)).toEqual(packet);
+  await expect(
+    bindExtractedSubmission(
+      recovered,
+      { ...packet, input: { ...packet.input, createdAt: "2026-10-06T00:00:00.000Z" } },
+      fingerprint,
+      "bound-journal",
+    ),
+  ).rejects.toThrow("frozen");
+  await consumeExtractedSubmission(recovered);
+  expect(await readExtractedIntent(id)).toMatchObject({
+    phase: "consumed",
+    consumedCommandId: packet.input.commandId,
+  });
+  expect((await readExtractedIntent(id))?.packetJson).toBeUndefined();
+  await expect(
+    bindExtractedSubmission(recovered, packet, fingerprint, "bound-journal"),
+  ).rejects.toThrow("already submitted");
+});
+it("preserves later settings and thread context while accepted content is cleaned up", () => {
+  const submitted = createEmptyThreadDraft();
+  expect(
+    composerSubmissionMatchesDraft(submitted, { ...submitted, runtimeMode: "full-access" }),
+  ).toBe(false);
+  expect(composerSubmissionMatchesDraft(submitted, { ...submitted, interactionMode: "plan" })).toBe(
+    false,
+  );
 });

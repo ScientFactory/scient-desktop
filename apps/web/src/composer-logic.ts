@@ -1,5 +1,9 @@
 import type { ClientSettings } from "@t3tools/contracts/settings";
-import type { AssistantCitation, ComposerCitation } from "@t3tools/contracts";
+import type {
+  AssistantCitation,
+  ComposerCitation,
+  ResolvedKeybindingsConfig,
+} from "@t3tools/contracts";
 import {
   serializeComposerCitation,
   withComposerCitationComment,
@@ -8,6 +12,8 @@ import {
   splitPromptIntoComposerSegments,
   type ComposerPromptSegment,
 } from "./composer-editor-mentions";
+
+import { resolveShortcutCommand, type ShortcutEventLike } from "./keybindings";
 
 export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
 // SCIENT-FORK: "fork" reseats conversation forks in the composer slash menu.
@@ -29,6 +35,51 @@ export function formatCitationForComposer(citation: ComposerCitation, comment = 
   return `${serializeComposerCitation(withComposerCitationComment(citation, comment))} `;
 }
 
+function composerRequiresModifier(
+  sendShortcut: ClientSettings["sendShortcut"] | undefined,
+  prompt: string,
+) {
+  return (
+    sendShortcut === "mod-enter" ||
+    (sendShortcut === "mod-enter-multiline" && /[\r\n]/.test(prompt))
+  );
+}
+
+export function composerSubmissionIntentForKey(input: {
+  event: ShortcutEventLike & { isComposing?: boolean; keyCode?: number; repeat?: boolean };
+  keybindings: ResolvedKeybindingsConfig;
+  platform?: string;
+  isMobileViewport: boolean;
+  isDraftThread: boolean;
+  isRunning?: boolean;
+  sendShortcut?: ClientSettings["sendShortcut"];
+  prompt?: string;
+}): ComposerSubmissionIntent | null {
+  const { event } = input;
+  if (input.isMobileViewport || event.isComposing || event.keyCode === 229 || event.repeat)
+    return null;
+  const command = resolveShortcutCommand(event, input.keybindings, {
+    ...(input.platform === undefined ? {} : { platform: input.platform }),
+    context: {
+      composerFocus: true,
+      draftThreadRoute: input.isDraftThread,
+      turnRunning: input.isRunning === true,
+    },
+  });
+  if (command === "composer.sendAlternate" && input.isRunning) return "alternate";
+  if (command === "composer.sendBackground" && input.isDraftThread) return "background";
+  if (command !== null || event.key !== "Enter" || event.shiftKey || event.altKey) return null;
+  if (
+    composerRequiresModifier(input.sendShortcut, input.prompt ?? "") &&
+    !event.metaKey &&
+    !event.ctrlKey
+  )
+    return null;
+  return "foreground";
+}
+
+// SCIENT-FORK:START — Enter-only projection of the intent resolver, used by
+// Scient's working-placeholder hint so advertised keys cannot drift.
 export function composerSubmissionIntentForEnter(input: {
   isMobileViewport: boolean;
   shiftKey: boolean;
@@ -48,6 +99,7 @@ export function composerSubmissionIntentForEnter(input: {
   }
   return input.modifierKey && input.isDraftThread ? "background" : "foreground";
 }
+// SCIENT-FORK:END
 
 const isInlineTokenSegment = (segment: ComposerPromptSegment): boolean => segment.type !== "text";
 

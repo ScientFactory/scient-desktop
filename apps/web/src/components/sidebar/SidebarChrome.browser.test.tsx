@@ -24,6 +24,7 @@ vi.mock("../../state/environments", async (original) => ({
   useEnvironments: () => ({
     environments: [{ serverConfig: { environment: { capabilities: { pullRequests: true } } } }],
   }),
+  usePullRequestsSupported: () => true,
 }));
 vi.mock("@tanstack/react-router", async (original) => ({
   ...(await original<typeof import("@tanstack/react-router")>()),

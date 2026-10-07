@@ -31,7 +31,7 @@ const state = {
   nextId: 1000,
   waiters: new Map(),
 };
-const options = () => [
+let options = () => [
   ...(state.autonomy === "none"
     ? []
     : [{ id: "autonomy_level", name: "Autonomy", category: "mode", type: "select", currentValue: state.autonomy,
@@ -91,7 +91,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     [
       "#!/bin/sh",
       ...Object.entries(env).map(([key, value]) => `export ${key}=${JSON.stringify(value)}`),
-      `exec ${JSON.stringify(process.execPath)} ${JSON.stringify(agentPath)}`,
+      `exec ${JSON.stringify(process.execPath)} ${JSON.stringify(agentPath)} "$@"`,
       "",
     ].join("\n"),
     "utf8",
@@ -110,6 +110,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
                 readonly method?: string;
                 readonly params?: Record<string, unknown>;
                 readonly result?: {
+                  readonly [key: string]: unknown;
                   readonly outcome?: { readonly outcome?: string; readonly optionId?: string };
                 };
               },

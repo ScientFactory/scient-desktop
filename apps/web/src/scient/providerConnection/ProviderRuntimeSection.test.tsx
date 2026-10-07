@@ -125,6 +125,107 @@ function findActionButton(
 }
 
 describe("ProviderRuntimeSection", () => {
+  it("offers the shared removal command for a Scient-owned registry installation", async () => {
+    const registryProvider: ServerProvider = {
+      ...provider,
+      driver: ProviderDriverKind.make("acpRegistry"),
+      installed: true,
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          source: "registry",
+          target: "registry:example:/owned/example",
+          actions: ["remove"],
+          managedVersion: "1.2.3",
+        },
+      },
+    };
+    commands.plan.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        instanceId,
+        action: "remove",
+        target: "registry:example:/owned/example",
+        version: "1.2.3",
+        downloadBytes: null,
+        sourceLabel: "Scient-owned ACP Registry installation",
+        catalogRevision: "owned-installation:1",
+        message: "Remove this owned registry installation.",
+      },
+    });
+    commands.start.mockResolvedValue({ _tag: "Success", value: { providers: [provider] } });
+    const props = {
+      environmentId,
+      provider: registryProvider,
+      displayName: "Registry Agent",
+      initialAction: "remove" as const,
+    };
+    hooks.beginRender();
+    ProviderRuntimeSection(props);
+    await vi.waitFor(() =>
+      expect(commands.plan).toHaveBeenCalledWith({
+        environmentId,
+        input: { instanceId, action: "remove" },
+      }),
+    );
+    expect(commands.start).not.toHaveBeenCalled();
+    hooks.beginRender();
+    const plan = ProviderRuntimeSection(props);
+    expect(renderToStaticMarkup(plan)).toContain("Remove Registry Agent?");
+    const remove = findActionButton(plan, "Remove");
+    expect(remove).toBeDefined();
+    if (!remove || typeof remove.props.onClick !== "function")
+      throw new Error("Expected registry removal action");
+    remove.props.onClick();
+    await vi.waitFor(() =>
+      expect(commands.start).toHaveBeenCalledWith({
+        environmentId,
+        input: { instanceId, action: "remove", catalogRevision: "owned-installation:1" },
+      }),
+    );
+  });
+
+  it("labels registry ownership without presenting it as a system executable", () => {
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        environmentId,
+        displayName: "Registry Agent",
+        provider: {
+          ...provider,
+          driver: ProviderDriverKind.make("acpRegistry"),
+          connection: {
+            ...provider.connection!,
+            runtime: { ...provider.connection!.runtime!, source: "registry", actions: ["remove"] },
+          },
+        },
+      }),
+    );
+    expect(markup).toContain("ACP Registry installation managed by Scient");
+    expect(markup).toContain('aria-label="Remove Registry Agent"');
+    expect(markup).not.toContain("System installation");
+  });
+
+  it("presents a missing Cursor CLI as separate from bundled SDK execution", () => {
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        environmentId,
+        displayName: "Cursor",
+        provider: {
+          ...provider,
+          driver: ProviderDriverKind.make("cursor"),
+          instanceId: ProviderInstanceId.make("cursor"),
+        },
+      }),
+    );
+    expect(markup).toContain("Cursor CLI not installed");
+    expect(markup).toContain("Conversations use the bundled Cursor SDK.");
+    expect(markup).toContain('aria-label="Install Cursor CLI"');
+    expect(markup).not.toContain("Provider tool required");
+  });
+
   describe("settings row presentation", () => {
     const managedProvider: ServerProvider = {
       ...provider,
@@ -585,11 +686,14 @@ describe("ProviderRuntimeSection", () => {
     },
   );
 
-  describe("a switch to a managed release older than the system runtime", () => {
+  describe.each([
+    { driver: "droid", name: "Droid", runtimeName: "Droid" },
+    { driver: "cursor", name: "Cursor", runtimeName: "Cursor CLI" },
+  ] as const)("$runtimeName switch to a managed release older than the system runtime", (entry) => {
     const systemProvider: ServerProvider = {
       ...provider,
-      instanceId: ProviderInstanceId.make("droid"),
-      driver: ProviderDriverKind.make("droid"),
+      instanceId: ProviderInstanceId.make(entry.driver),
+      driver: ProviderDriverKind.make(entry.driver),
       installed: true,
       version: "0.231.0",
       status: "ready",
@@ -599,20 +703,19 @@ describe("ProviderRuntimeSection", () => {
           ...provider.connection!.runtime!,
           source: "system",
           actions: ["install"],
-          message: "Scient is using the healthy Droid runtime already installed on this computer.",
+          message: `Scient is using the healthy ${entry.runtimeName} runtime already installed on this computer.`,
         },
       },
     };
-    const droid = systemProvider.instanceId;
-    const olderMessage =
-      "Scient-managed Droid 0.230.0 is older than your installed Droid 0.231.0. Scient will use its own verified copy; your installation stays as it is.";
+    const runtimeInstanceId = systemProvider.instanceId;
+    const olderMessage = `Scient-managed ${entry.runtimeName} 0.230.0 is older than your installed ${entry.runtimeName} 0.231.0. Scient will use its own verified copy; your installation stays as it is.`;
     const olderPlan = {
-      instanceId: droid,
+      instanceId: runtimeInstanceId,
       action: "install" as const,
       target: "darwin-arm64",
       version: "0.230.0",
       downloadBytes: 1024,
-      sourceLabel: "Official Factory Droid release",
+      sourceLabel: `Official Factory ${entry.runtimeName} release`,
       catalogRevision: "reviewed:1:older-than-system",
       message: olderMessage,
       systemVersion: "0.231.0",
@@ -623,13 +726,18 @@ describe("ProviderRuntimeSection", () => {
       cause: Cause.fail(
         new ProviderConnectionError({
           provider: systemProvider.driver,
-          instanceId: droid,
+          instanceId: runtimeInstanceId,
           reason: "runtime_plan_stale",
           message: "The provider setup plan changed. Review it again before continuing.",
         }),
       ),
     });
-    const props = { compact: true, environmentId, provider: systemProvider, displayName: "Droid" };
+    const props = {
+      compact: true,
+      environmentId,
+      provider: systemProvider,
+      displayName: entry.name,
+    };
     const render = () => {
       hooks.beginRender();
       return ProviderRuntimeSection(props);
@@ -643,12 +751,14 @@ describe("ProviderRuntimeSection", () => {
     it("is offered, and starts only once both versions were shown and accepted", async () => {
       commands.plan.mockResolvedValue({ _tag: "Success", value: olderPlan });
 
-      expect(renderToStaticMarkup(render())).toContain('aria-label="Use Scient-managed Droid"');
+      expect(renderToStaticMarkup(render())).toContain(
+        `aria-label="Use Scient-managed ${entry.runtimeName}"`,
+      );
       click("Use Scient-managed");
       await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
 
       const review = renderToStaticMarkup(render());
-      expect(review).toContain("Use Scient-managed Droid 0.230.0?");
+      expect(review).toContain(`Use Scient-managed ${entry.runtimeName} 0.230.0?`);
       expect(review).toContain(olderMessage);
       expect(review).toContain("lucide-triangle-alert");
       expect(review).toContain(">Back</button>");
@@ -659,7 +769,7 @@ describe("ProviderRuntimeSection", () => {
         expect(commands.start).toHaveBeenCalledWith({
           environmentId,
           input: {
-            instanceId: droid,
+            instanceId: runtimeInstanceId,
             action: "install",
             catalogRevision: olderPlan.catalogRevision,
             acceptOlderThanSystem: true,
@@ -668,12 +778,25 @@ describe("ProviderRuntimeSection", () => {
       );
     });
 
+    it("returns to runtime controls on Back without starting", async () => {
+      commands.plan.mockResolvedValue({ _tag: "Success", value: olderPlan });
+      click("Use Scient-managed");
+      await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
+      expect(renderToStaticMarkup(render())).toContain(olderMessage);
+
+      click("Back");
+
+      const markup = renderToStaticMarkup(render());
+      expect(markup).not.toContain(olderMessage);
+      expect(markup).toContain(`aria-label="Use Scient-managed ${entry.runtimeName}"`);
+      expect(commands.start).not.toHaveBeenCalled();
+    });
+
     it("accepts a switch from a system runtime of unknown version from its decision", async () => {
       const unknownPlan = {
         ...olderPlan,
         catalogRevision: "reviewed:1:system-version-unknown",
-        message:
-          "Scient does not know which Droid version, if any, is installed on this computer (system version unknown), so Scient-managed Droid 0.230.0 may be older than it.",
+        message: `Scient does not know which ${entry.runtimeName} version, if any, is installed on this computer (system version unknown), so Scient-managed ${entry.runtimeName} 0.230.0 may be older than it.`,
         systemVersion: null,
         olderThanSystem: false,
       };
@@ -736,7 +859,7 @@ describe("ProviderRuntimeSection", () => {
 
         // The same decision as "Use Scient-managed": nothing starts from the click.
         const review = renderToStaticMarkup(renderLegacy());
-        expect(review).toContain("Use Scient-managed Droid 0.230.0?");
+        expect(review).toContain(`Use Scient-managed ${entry.runtimeName} 0.230.0?`);
         expect(review).toContain(repairPlan.message);
         expect(commands.start).not.toHaveBeenCalled();
 
@@ -744,7 +867,7 @@ describe("ProviderRuntimeSection", () => {
         (confirm!.props.onClick as () => void)();
         await vi.waitFor(() => expect(commands.start).toHaveBeenCalledTimes(1));
         expect(commands.start.mock.calls[0]![0].input).toEqual({
-          instanceId: droid,
+          instanceId: runtimeInstanceId,
           action: "repair",
           catalogRevision: repairPlan.catalogRevision,
           ...(accepts ? { acceptOlderThanSystem: true } : {}),
@@ -788,8 +911,7 @@ describe("ProviderRuntimeSection", () => {
       const reviewed = {
         ...olderPlan,
         catalogRevision: "reviewed:1",
-        message:
-          "Scient will install private Droid 0.230.0 and use it instead of the system installation (0.229.0), which stays untouched.",
+        message: `Scient will install private ${entry.runtimeName} 0.230.0 and use it instead of the system installation (0.229.0), which stays untouched.`,
         systemVersion: "0.229.0",
         olderThanSystem: false,
       };
@@ -1672,7 +1794,7 @@ describe("ProviderRuntimeSection", () => {
     const diagnosticsStart = markup.indexOf("<details");
     expect(diagnosticsStart).toBeGreaterThan(-1);
     const summary = markup.slice(0, diagnosticsStart);
-    expect(summary).toContain("Managed by Scient");
+    expect(summary).toContain("Cursor CLI managed by Scient");
     expect(summary).not.toContain(version);
     expect(summary).toContain(">Repair<");
     expect(summary).toContain(">Remove<");

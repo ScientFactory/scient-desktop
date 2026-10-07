@@ -381,6 +381,150 @@ const assistantEnd = (message: Record<string, unknown>) => ({
   message: { role: "assistant", content: [], ...message },
 });
 
+describe("Oh My Pi content ownership", () => {
+  it.effect(
+    "reconciles only the open envelope from agent_end after earlier tool-only messages",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* wireHarness();
+        yield* h.runtime.begin("turn");
+        yield* h.wire.send(
+          { type: "agent_start" },
+          {
+            type: "message_start",
+            messageId: "tool",
+            message: { role: "assistant", content: [{ type: "toolCall" }] },
+          },
+          {
+            type: "message_end",
+            messageId: "tool",
+            message: { role: "assistant", content: [{ type: "toolCall" }] },
+          },
+          {
+            type: "message_start",
+            messageId: "answer",
+            message: { role: "assistant", responseId: "current", content: [] },
+          },
+          {
+            type: "message_update",
+            messageId: "answer",
+            message: { role: "assistant" },
+            assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Part" },
+          },
+          {
+            type: "agent_end",
+            messages: [
+              {
+                role: "assistant",
+                responseId: "current",
+                content: [
+                  { type: "text", text: "Full answer" },
+                  { type: "thinking", thinking: "Reason" },
+                ],
+              },
+            ],
+          },
+        );
+        const updates = yield* h.settleFrames;
+        expect(updates.filter((u) => u.type === "content-snapshot")).toMatchObject([
+          { text: "Full answer", reasoning: false },
+        ]);
+        expect(updates.filter((u) => u.type === "reasoning-delta")).toMatchObject([
+          { delta: "Reason" },
+        ]);
+        expect(updates.filter((u) => u.type === "assistant-completed")).toHaveLength(2);
+        yield* Scope.close(h.scope, Exit.void);
+      }),
+  );
+
+  it.effect(
+    "recovers a snapshot after an owned tool envelope by transcript position rather than wall-clock order",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* wireHarness();
+        yield* h.runtime.begin("turn");
+        const tool = { role: "assistant", timestamp: 10, content: [{ type: "toolCall" }] };
+        yield* h.wire.send(
+          { type: "agent_start" },
+          { type: "message_end", messageId: "tool", message: tool },
+          { type: "agent_end", isTerminal: false, messages: [tool] },
+        );
+        expect((yield* h.settleFrames).filter((u) => u.type === "assistant-completed")).toEqual([]);
+        yield* h.wire.send({
+          type: "agent_end",
+          messages: [
+            tool,
+            {
+              role: "assistant",
+              timestamp: 5,
+              stopReason: "error",
+              errorMessage: "Snapshot failure",
+              content: [{ type: "text", text: "Retained answer" }],
+            },
+          ],
+        });
+        const updates = yield* h.settleFrames;
+        expect(updates.filter((u) => u.type === "assistant-delta")).toMatchObject([
+          { delta: "Retained answer" },
+        ]);
+        expect(updates.filter((u) => u.type === "assistant-completed")).toMatchObject([
+          { status: "failed" },
+        ]);
+        yield* h.runtime.accepted("prompt", true);
+        expect(yield* h.outcome).toMatchObject({ outcome: "failed", detail: "Snapshot failure" });
+        yield* Scope.close(h.scope, Exit.void);
+      }),
+  );
+
+  it.effect("drops duplicate and late envelopes while a different message owns the stream", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.runtime.begin("turn");
+      yield* h.wire.send(
+        {
+          type: "message_end",
+          messageId: "first",
+          message: { role: "assistant", content: [{ type: "text", text: "First" }] },
+        },
+        { type: "message_start", messageId: "second", message: { role: "assistant", content: [] } },
+        {
+          type: "message_update",
+          message: { role: "toolResult" },
+          assistantMessageEvent: { type: "text_delta", delta: "TOOL RESULT" },
+        },
+        { type: "message_start", messageId: "first", message: { role: "assistant", content: [] } },
+        {
+          type: "message_update",
+          messageId: "first",
+          message: { role: "assistant" },
+          assistantMessageEvent: { type: "text_delta", delta: "OLD" },
+        },
+        {
+          type: "message_end",
+          messageId: "first",
+          message: { role: "assistant", content: [{ type: "text", text: "OLD" }] },
+        },
+        {
+          type: "message_end",
+          messageId: "second",
+          message: { role: "assistant", content: [{ type: "text", text: "Second" }] },
+        },
+        {
+          type: "agent_end",
+          messages: [{ role: "assistant", content: [{ type: "text", text: "OLD" }] }],
+        },
+      );
+      const updates = yield* h.settleFrames;
+      expect(updates.filter((u) => u.type === "assistant-delta")).toMatchObject([
+        { delta: "First" },
+        { delta: "Second" },
+      ]);
+      expect(updates.filter((u) => u.type === "assistant-completed")).toHaveLength(2);
+      yield* Scope.close(h.scope, Exit.void);
+    }),
+  );
+});
+
 describe("Oh My Pi session runtime outcomes", () => {
   it.effect("review: terminal assistant errors must fail the turn", () =>
     Effect.gen(function* () {
@@ -853,6 +997,7 @@ describe("Oh My Pi autonomous continuation ownership", () => {
       const woken = yield* h.settleFrames;
       expect(woken).toContainEqual({
         type: "background-result",
+        id: expect.stringMatching(/^background-result:[a-f0-9]{64}$/),
         detail: "Background job finished: BUILD OK",
       });
       // The wake-up opens no continuation and does not settle the message.

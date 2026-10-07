@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
   OrchestrationForkLineage,
+  OrchestrationV2ThreadShell,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -17,6 +18,7 @@ import {
 } from "react";
 
 import { useEnvironmentThreadShells } from "../../../state/entities";
+import { useArchivedThreadSnapshots } from "../../../lib/archivedThreadsState";
 import { Button } from "../../ui/button";
 import {
   Dialog,
@@ -36,7 +38,7 @@ export type ScientForkSource =
   | "latest-response"
   | "this-response"
   | "this-message"
-  | "switch-provider"
+  | "new-chat"
   // SCIENT-FORK: the running turn, with the work it has done so far.
   | "running-turn";
 
@@ -53,8 +55,8 @@ export function scientForkDialogCopy(source: ScientForkSource): {
       return { title, description: "Fork from this response" };
     case "this-message":
       return { title, description: "Fork and edit this message" };
-    case "switch-provider":
-      return { title, description: "Fork and continue with another provider" };
+    case "new-chat":
+      return { title, description: "Continue in a new chat" };
     case "running-turn":
       return { title, description: "Fork with work in progress" };
   }
@@ -113,6 +115,7 @@ interface ScientForkTitleOrigin {
   readonly projectId: ProjectId | null;
   readonly title: string;
   readonly forkLineage?: OrchestrationForkLineage | null | undefined;
+  readonly source?: Pick<OrchestrationV2ThreadShell, "forkLineage">;
 }
 
 /**
@@ -153,17 +156,28 @@ export function ScientForkDialog({
 }: ScientForkDialogProps & {
   readonly origin: ScientForkTitleOrigin | null;
 }) {
-  const environmentThreads = useEnvironmentThreadShells(
-    props.open ? (origin?.environmentId ?? null) : null,
+  const originEnvironmentId = props.open ? (origin?.environmentId ?? null) : null;
+  const environmentThreads = useEnvironmentThreadShells(originEnvironmentId);
+  const archiveEnvironmentIds = useMemo(
+    () => (originEnvironmentId === null ? [] : [originEnvironmentId]),
+    [originEnvironmentId],
   );
+  const { snapshots: archivedSnapshots } = useArchivedThreadSnapshots(archiveEnvironmentIds);
   const proposedTitle = useMemo(() => {
     if (!props.open || origin === null) return "";
+    const forkLineage =
+      origin.source === undefined ? origin.forkLineage : origin.source.forkLineage;
+    const archivedThreads = archivedSnapshots
+      .filter((entry) => entry.environmentId === origin.environmentId)
+      .flatMap((entry) => entry.snapshot.threads);
     return deriveForkTitle({
       origin,
-      originHasForkLineage: origin.forkLineage != null,
-      projectThreads: environmentThreads.filter((thread) => thread.projectId === origin.projectId),
+      originHasForkLineage: forkLineage != null,
+      projectThreads: [...environmentThreads, ...archivedThreads].filter(
+        (thread) => thread.projectId === origin.projectId,
+      ),
     });
-  }, [environmentThreads, origin, props.open]);
+  }, [archivedSnapshots, environmentThreads, origin, props.open]);
 
   return <ScientForkWorkspaceModeDialog {...props} proposedTitle={proposedTitle} />;
 }
@@ -218,6 +232,15 @@ export function ScientForkWorkspaceModeDialog({
       openSinceSubmit.current = false;
     };
   }, [open]);
+
+  useLayoutEffect(() => {
+    if (!closingForNavigation) return;
+    // The accepted fork can navigate once the dialog subtree is removed.
+    // Animation completion can be lost when the browser cancels a transition.
+    const complete = finishClose.current;
+    finishClose.current = null;
+    complete?.(open && openSinceSubmit.current);
+  }, [closingForNavigation, open]);
 
   useEffect(() => {
     if (open && !wasOpenRef.current) {
@@ -305,16 +328,10 @@ export function ScientForkWorkspaceModeDialog({
     }
   };
 
+  if (closingForNavigation) return null;
+
   return (
-    <Dialog
-      open={open && !closingForNavigation}
-      onOpenChange={onOpenChange}
-      onOpenChangeComplete={(isOpen) => {
-        if (isOpen) return;
-        finishClose.current?.(true);
-        finishClose.current = null;
-      }}
-    >
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="max-w-[23rem] -translate-y-4">
         {/* Pulled toward the name field so the subtitle groups with the title. */}
         <DialogHeader size="compact" className="-mb-1">

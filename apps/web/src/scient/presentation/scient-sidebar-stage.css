@@ -1,0 +1,114 @@
+@layer components {
+  .sidebar-brand {
+    display: none;
+  }
+
+  .sidebar-brand-stage {
+    display: none;
+  }
+
+  /* The desktop sidebar never narrows below its legal 13.5rem minimum, where
+     the compact Scient wordmark and native window controls still fit. The
+     brand also stays shrinkable, so a wider titlebar inset or a larger OS
+     font truncates the wordmark instead of spilling past the sidebar edge. */
+  @media (min-width: 48rem) {
+    .sidebar-brand {
+      display: flex;
+    }
+
+    @container sidebar-header (min-width: 15.75rem) {
+      .sidebar-brand-stage {
+        display: inline-flex;
+      }
+    }
+  }
+
+  /* Scient owns the restrained stage composition while the inherited stage
+     token contract supplies reviewed colors for each built-in theme. */
+  .sidebar-stage-backdrop {
+    --stage-fade: var(--sidebar-stage-fade, var(--app-chrome-background));
+    mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
+    -webkit-mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
+  }
+
+  .sidebar-stage-backdrop::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      to bottom,
+      transparent 0%,
+      transparent 28%,
+      color-mix(in srgb, var(--stage-fade) 10%, transparent) 40%,
+      color-mix(in srgb, var(--stage-fade) 30%, transparent) 52%,
+      color-mix(in srgb, var(--stage-fade) 58%, transparent) 64%,
+      color-mix(in srgb, var(--stage-fade) 82%, transparent) 75%,
+      color-mix(in srgb, var(--stage-fade) 96%, transparent) 85%,
+      var(--stage-fade) 93%
+    );
+  }
+
+  .scient-stage-art {
+    background:
+      radial-gradient(
+        18rem 7rem at 82% -30%,
+        color-mix(in oklch, var(--scient-stage-highlight) 28%, transparent),
+        transparent 72%
+      ),
+      radial-gradient(
+        14rem 6rem at 14% 10%,
+        color-mix(in oklch, var(--scient-stage-secondary) 24%, transparent),
+        transparent 76%
+      ),
+      linear-gradient(
+        135deg,
+        var(--scient-stage-top) 0%,
+        var(--scient-stage-mid) 52%,
+        var(--scient-stage-bottom) 100%
+      );
+  }
+
+  .scient-stage-watermark {
+    opacity: 0.07;
+  }
+
+  .sidebar-brand-on-stage[data-stage-variant="dev"] {
+    color: var(--stage-art-line);
+  }
+
+  .sidebar-brand-on-stage[data-stage-variant="nightly"] {
+    color: var(--stage-night-line);
+  }
+
+  .sidebar-brand-stage-label {
+    opacity: 0.78;
+  }
+
+  [data-slot="sidebar-trigger"][data-stage-variant="dev"] {
+    --scient-stage-control-highlight: var(--stage-art-highlight);
+    --scient-stage-control-line: var(--stage-art-line);
+  }
+
+  [data-slot="sidebar-trigger"][data-stage-variant="nightly"] {
+    --scient-stage-control-highlight: var(--stage-night-highlight);
+    --scient-stage-control-line: var(--stage-night-line);
+  }
+
+  [data-slot="sidebar-trigger"][data-stage-variant] {
+    --tw-ring-color: var(--scient-stage-control-line);
+    color: var(--scient-stage-control-line);
+  }
+
+  [data-slot="sidebar-trigger"][data-stage-variant]:is(:hover, [data-pressed]) {
+    background: color-mix(in oklch, var(--scient-stage-control-highlight) 18%, transparent);
+  }
+
+  [data-slot="sidebar-trigger"][data-stage-variant] svg {
+    stroke: var(--scient-stage-control-line) !important;
+    opacity: 1 !important;
+  }
+
+  .dark .scient-stage-watermark {
+    opacity: 0.12;
+  }
+}

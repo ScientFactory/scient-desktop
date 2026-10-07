@@ -276,6 +276,8 @@ jobs:
             apps/server/src/git \
             apps/server/src/mcp \
             apps/server/src/observability \
+            apps/server/src/orchestration-v2 \
+            apps/server/src/process \
             apps/server/src/provider \
             apps/server/src/resourceTelemetry \
             apps/server/src/scient/providerLifecycle \

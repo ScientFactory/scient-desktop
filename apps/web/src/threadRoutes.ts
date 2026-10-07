@@ -22,23 +22,27 @@ export type ThreadRouteRenderState = "loading" | "ready" | "missing";
 
 export function resolveThreadRouteRenderState(input: {
   bootstrapComplete: boolean;
-  serverThreadShellExists: boolean;
-  serverThreadDetailExists: boolean;
-  serverThreadDetailDeleted: boolean;
+  serverThreadExists: boolean;
+  serverThreadDeleted: boolean;
   draftThreadExists: boolean;
 }): ThreadRouteRenderState {
   if (!input.bootstrapComplete) {
     return "loading";
   }
-  if (input.serverThreadDetailExists || input.draftThreadExists) {
+  if (input.draftThreadExists) {
     return "ready";
   }
-  if (input.serverThreadDetailDeleted) {
+  if (input.serverThreadDeleted) {
     return "missing";
   }
-  // A ready fork or an archived source may not be in the sidebar snapshot.
-  // Only the detail subscription's explicit deletion proves it is missing.
+  if (input.serverThreadExists) {
+    return "ready";
+  }
+  // SCIENT-FORK:START a ready fork or an archived source may not be in the sidebar
+  // snapshot yet. Only an explicit deletion proves the thread is missing, so keep
+  // waiting instead of rendering the missing state on an absent snapshot entry.
   return "loading";
+  // SCIENT-FORK:END
 }
 
 export function buildThreadRouteParams(ref: ScopedThreadRef): {

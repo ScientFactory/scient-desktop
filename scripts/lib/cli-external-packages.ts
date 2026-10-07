@@ -26,6 +26,10 @@
  * enforced by a test, not by inspection.
  */
 export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
+  // Cursor ships computed Webpack imports and platform helper packages. Its
+  // installed JS dependency tree stays on disk with the SDK. Those dependency
+  // names remain bundleable at other providers' locked import resolutions.
+  "@cursor/sdk",
   "node-pty",
   // PDF.js loads this native canvas implementation through createRequire at
   // runtime, which the bundler cannot see. Keep the wrapper and its
@@ -88,7 +92,10 @@ export function isRuntimeExternalCliDependency(id: string): boolean {
  * dependency) stayed external.
  */
 export function isExternalCliDependency(id: string): boolean {
-  return CLI_EXTERNAL_PACKAGE_PREFIXES.some((prefix) => id.startsWith(prefix));
+  return (
+    isRuntimeExternalCliDependency(id) ||
+    CLI_BUILD_ONLY_EXTERNAL_PREFIXES.some((prefix) => id.startsWith(prefix))
+  );
 }
 
 /** True when the CLI bundle should inline `id` rather than leave it external. */

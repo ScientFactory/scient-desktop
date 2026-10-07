@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   inspectMarkdownDocument,
+  markdownProseTextSpans,
   rewriteMarkdownImageDestinations,
   resolveMarkdownDocumentRelativePath,
 } from "./documentResources.ts";
@@ -144,5 +145,20 @@ describe("Markdown image destination rewriting", () => {
     );
     expect(result.markdown).toBe(source);
     expect(result.unlocated).toEqual(["fig.png"]);
+  });
+});
+
+describe("Markdown prose source spans", () => {
+  it("returns original UTF-16 prose offsets without serializing escaped source or syntax", () => {
+    const source =
+      "שלום 😀 prose *emphasis* \\*literal\\* `code` [link](https://example.test)\n\n```md\nnot prose\n```";
+    const spans = markdownProseTextSpans(source);
+    expect(spans.map(({ start, end }) => source.slice(start, end))).toEqual([
+      "שלום 😀 prose ",
+      "emphasis",
+      " \\*literal\\* ",
+      " ",
+    ]);
+    expect(spans[0]).toEqual({ start: 0, end: "שלום 😀 prose ".length });
   });
 });

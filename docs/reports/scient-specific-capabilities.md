@@ -1,5 +1,7 @@
 # Scient-specific capability catalog
 
+Historical record; implementation paths and checks describe its dated snapshot, not current V2 architecture.
+
 Status: Historical
 Owner: Yaacov
 Created: 2026-08-28

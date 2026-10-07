@@ -211,6 +211,50 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
 });
 
 it.layer(NodeServices.layer)("boot service install", (it) => {
+  it.effect.each(["linux", "darwin"] as const)(
+    "defers a restart without stopping the running service on %s",
+    (platform) =>
+      Effect.gen(function* () {
+        const { service, fs, statePath, commands } = yield* makeHarness(platform);
+        const plan = yield* service.install();
+        const commandCount = commands.length;
+        yield* service.install({ start: false });
+        expect(
+          commands
+            .slice(commandCount)
+            .some(
+              (command) =>
+                command.includes("stop ") ||
+                command.includes("restart ") ||
+                command.includes("bootout") ||
+                command.includes("bootstrap"),
+            ),
+        ).toBe(false);
+        expect(yield* service.status).toMatchObject({
+          current: false,
+          installedBaseDir: plan.baseDir,
+          problems: ["restart-pending"],
+        });
+        expect(parseServiceState(yield* fs.readFileString(statePath))?.activeVersion).toBe("1.2.3");
+        expect(yield* service.restart).toBe(true);
+        expect((yield* service.status).current).toBe(true);
+        // A shared user unit serving another home is never restarted here.
+        const foreignPlan = { ...plan, baseDir: `${plan.baseDir}-other` };
+        yield* fs.writeFileString(
+          plan.unitPath,
+          platform === "linux"
+            ? BootService.renderBootServiceUnit(foreignPlan)
+            : BootService.renderBootServicePlist(foreignPlan, {
+                homeDir: "/test",
+                environmentPath: "/usr/bin",
+              }),
+        );
+        const beforeForeign = commands.length;
+        expect(yield* service.restart).toBe(false);
+        expect(commands.length).toBe(beforeForeign);
+      }),
+  );
+
   it.effect(
     "fails before installing files or validating a runtime when lingering needs an administrator",
     () =>

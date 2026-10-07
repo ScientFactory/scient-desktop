@@ -21,6 +21,9 @@ describe("Scient brand guard", () => {
     "packages/client-runtime/src/work-log/presentation.ts",
     "apps/mobile/src/lib/threadActivity.ts",
     "apps/mobile/src/features/threads/thread-work-log.tsx",
+    "apps/mobile/src/components/CompactBrandTitle.tsx",
+    "apps/mobile/src/lib/authClientMetadata.ts",
+    "apps/mobile/src/features/settings/SettingsAboutRouteScreen.tsx",
   ])("covers owned tool presentation without expanding donor-wide enforcement: %s", (path) => {
     const contents = 'const label = "Reading a T3 thread";';
     expect(findPublicBrandViolations([{ path, contents }])).toEqual([
@@ -119,5 +122,17 @@ describe("Scient brand guard", () => {
   it("keeps internal package namespaces outside product-brand enforcement", () => {
     expect(isProductSurface("packages/shared/src/scientDesktopIdentity.ts")).toBe(false);
     expect(isProductSurface("packages/contracts/src/settings.ts")).toBe(true);
+  });
+
+  it("preserves captured compatibility identities in test-only replay helpers", () => {
+    const contents = 'const capturedClientTitle = "T3 Code";';
+    expect(
+      findPublicBrandViolations([
+        { path: "apps/server/src/provider/CodexAdapterV2.testkit.ts", contents },
+      ]),
+    ).toEqual([]);
+    expect(
+      findPublicBrandViolations([{ path: "apps/server/src/provider/CodexAdapterV2.ts", contents }]),
+    ).toHaveLength(1);
   });
 });

@@ -15,7 +15,13 @@ import * as McpProviderSession from "./McpProviderSession.ts";
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
-  readonly capabilities: ReadonlySet<McpInvocationContext.McpCapability>;
+  /**
+   * When false, the credential is minted without the "preview" capability so
+   * the user's choice to withhold agent browser access holds everywhere the
+   * token is honored (#7083). Defaults to full access.
+   */
+  readonly browserToolsAvailable?: boolean;
+  readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
   readonly skillScope?: McpInvocationContext.McpScientSkillScope;
 }
 
@@ -137,9 +143,16 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       const providerSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
+      const browserToolsAvailable = request.browserToolsAvailable ?? true;
+      // Bind exactly the authority the caller asked for. Upstream granted
+      // `orchestration`, `worktree` and `pull-requests` to every token as an
+      // ambient default, which widens a credential beyond what its issuer
+      // requested; toolkits now ask for their own capabilities instead.
       // Copy the caller's policy decision so a later mutation cannot change
       // the authority already bound to this credential.
-      const capabilities = new Set(request.capabilities);
+      const capabilities = new Set<McpInvocationContext.McpCapability>(
+        request.capabilities ?? (browserToolsAvailable ? (["preview"] as const) : []),
+      );
       const scope: McpInvocationContext.McpInvocationScope = {
         environmentId,
         threadId: ThreadId.make(request.threadId),
@@ -171,7 +184,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           // Keep the provider-facing manifest independent from the
           // authorization record. `ReadonlySet` is compile-time only; sharing
           // one mutable Set would let an adapter accidentally widen its token.
-          capabilities: new Set(capabilities),
+          browserToolsAvailable: scope.capabilities.has("preview"),
+          capabilities: new Set(scope.capabilities),
         },
       };
     },
@@ -310,12 +324,6 @@ export const replaceActiveMcpSkillScope = (
   activeMcpSessionRegistry
     ? activeMcpSessionRegistry.replaceSkillScope(threadId, skillScope)
     : Effect.void;
-
-export const revokeActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
-  activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeThread(threadId) : Effect.void;
-
-export const revokeAllActiveMcpCredentials = (): Effect.Effect<void> =>
-  activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeAll : Effect.void;
 
 /** Exposed for tests. */
 export const __testing = {

@@ -10,6 +10,8 @@ export const SERVICE_STATE_FILE = "service-state.json";
     the child can tell "the service is going away" from "the launcher is about
     to start my replacement" while a pending update is recorded. */
 export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
+/** The next boot uses the installed version while an existing launcher keeps running. */
+export const SERVICE_RESTART_PENDING_FILE = ".restart-pending";
 
 export interface PendingServiceUpdate {
   readonly id: string;

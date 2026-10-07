@@ -11,7 +11,8 @@
 // "never offer a downgrade" rule. Only the repository identity differs.
 import { SCIENT_DESKTOP_RELEASE_REPOSITORY } from "./scientRelease.ts";
 
-export type CliReleaseChannel = "stable" | "nightly" | "preview";
+export const CLI_RELEASE_CHANNELS = ["stable", "nightly", "preview"] as const;
+export type CliReleaseChannel = (typeof CLI_RELEASE_CHANNELS)[number];
 
 export function cliReleaseChannelOf(version: string): CliReleaseChannel {
   const channel = /^[^-+]+-(nightly|preview)\.\d{8}\.\d+$/.exec(version)?.[1];

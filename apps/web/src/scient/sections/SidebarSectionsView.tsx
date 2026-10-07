@@ -829,7 +829,7 @@ function SectionHeaderRow(props: {
     disabled: { draggable: props.renaming },
   });
   const runningCount = props.collapsed
-    ? group.threads.filter((thread) => thread.session?.status === "running").length
+    ? group.threads.filter((thread) => thread.runtime?.status === "running").length
     : 0;
   const openMenu = (event: { clientX: number; clientY: number; preventDefault: () => void }) => {
     event.preventDefault();

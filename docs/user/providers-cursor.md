@@ -1,53 +1,40 @@
 # Cursor in Scient
 
-Cursor Agent works with project files, code, and commands through the official
-Cursor CLI. Scient can connect it to an existing Cursor account. Cursor owns
-the account session and credentials; Scient starts the official browser flow
-without receiving your password or tokens.
+Cursor runs through the bundled official Cursor SDK. Enable it in **Settings > Providers**
+and sign in with your Cursor account, or configure `CURSOR_API_KEY` on the environment that
+runs the provider. Each Scient provider instance keeps its own credential; your Cursor editor
+and CLI login are separate.
 
-For the behavior shared by all assisted providers, see [Providers in Scient](./providers.md).
+For shared account controls, see [Providers in Scient](./providers.md). For execution capabilities
+and limitations, see [Cursor](./cursor.md).
 
-## Enable and install
+## Sign in and sign out
 
-Enable Cursor in **Settings > Providers** or choose it from the composer's provider rail. Scient
-preserves an explicit custom binary path or a healthy `cursor-agent` already installed on the server.
-When neither is usable, a supported local desktop can offer a qualified Scient-managed copy.
+Choose **Sign in to Cursor** and complete the official browser flow. Scient validates the
+authorization URL and opens it once. **Reopen Cursor sign-in** opens that same page while the
+operation is active. The provider becomes ready after its account and model checks succeed.
+There is no pasted-code step.
 
-Install, update, repair, and remove affect only Scient's private runtime. They never overwrite or
-delete a custom or system Cursor installation. If a healthy system runtime is active and
-**Use Scient-managed Cursor** is available, the qualified private install remains an explicit choice.
+A configured `CURSOR_API_KEY` owns SDK authentication instead of the browser flow. Sign-out stops
+that instance's running sessions and forgets its saved browser credential while preserving
+conversation history. To revoke the generated key before expiry, remove it in Cursor's API-key
+dashboard.
 
-## Sign in
+## Separate Cursor CLI management
 
-Choose **Sign in to Cursor**. Scient asks Cursor not to open a browser itself, validates the official
-Cursor authorization URL, and opens that page once. While the operation is active,
-**Reopen Cursor sign-in** can open the same validated page again.
+The Cursor CLI controls manage the retained CLI integration. Installing, updating, repairing,
+removing, or selecting a CLI copy does not change the bundled SDK used for V2 conversations.
+A missing CLI does not prevent SDK sign-in or execution.
 
-Cursor's flow does not accept a code pasted into Scient. After the browser flow finishes, Scient uses
-a fresh Cursor account probe before reporting the provider as connected and ready. If Cursor
-finishes before returning a page, Scient verifies the completed account directly instead of asking
-the user to sign in again.
-
-When an API endpoint, API key, or token configuration owns authentication, Scient does not show an
-irrelevant browser sign-in or sign-out action.
-
-## Updates and removal
-
-An active Scient-managed copy uses Scient's qualified update, repair, and removal path. Update is
-offered only for a strictly newer stable release; Repair installs the latest qualified release (or the
-installed one, when that is newer), so it can also bring a newer release. A custom or
-system Cursor installation keeps Cursor's existing external update behavior. Removing the managed
-copy preserves the Cursor account and returns eligible default instances to a healthy system runtime.
-
-Signing out first stops affected Cursor sessions, then asks Cursor to revoke its account session. It
-does not remove any runtime.
+Scient preserves explicit custom paths and healthy system installations. Supported local desktop
+platforms can offer a qualified private CLI copy. Managed actions affect only that private copy;
+they never overwrite or remove a custom or system installation. An explicitly configured external
+CLI retains Cursor's own update command. The default bundled SDK has no CLI update command.
 
 ## Troubleshooting
 
 - **Browser did not open:** use **Reopen Cursor sign-in** while the flow is active.
-- **Cursor needs repair:** repair the Scient-managed copy; a failed repair keeps the previous working
-  copy active.
-- **Custom Cursor setup:** verify the configured binary path and any endpoint or token settings in
-  the provider's advanced configuration.
-- **System installation:** update it with Cursor's own supported updater. Scient-managed controls do
-  not modify it.
+- **Unexpected account:** check whether `CURSOR_API_KEY` overrides browser login.
+- **CLI needs repair:** repair the private CLI copy; a failed repair preserves the previous working copy.
+- **Custom CLI setup:** check the configured binary path and CLI endpoint settings. Those settings
+  do not select the SDK executable or override its endpoint. Legacy CLI tokens do not supply SDK credentials.

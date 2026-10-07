@@ -7,7 +7,6 @@ import { it } from "@effect/vitest";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import { describe, expect } from "vite-plus/test";
-import type * as EffectAcpRpc from "effect-acp/rpc";
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
@@ -110,8 +109,7 @@ describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", 
         }
       }
 
-      const setResult: EffectAcpRpc.LenientSetSessionConfigOptionResponseData =
-        yield* runtime.setConfigOption(modelConfigId, "gpt-5.4");
+      const setResult = yield* runtime.setConfigOption(modelConfigId, "gpt-5.4");
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       yield* Console.log("session/set_config_option result:", JSON.stringify(setResult, null, 2));
 

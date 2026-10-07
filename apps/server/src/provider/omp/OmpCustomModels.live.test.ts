@@ -6,12 +6,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import {
-  ProviderInstanceId,
-  ThreadId,
-  type ProviderRuntimeEvent,
-  type ServerSettings,
-} from "@t3tools/contracts";
+import { ProviderInstanceId, ThreadId, type ServerSettings } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -23,11 +18,12 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import type { ResolvedModelConnection } from "../../customModels.ts";
-import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
+import { nativeOmpSession, watchNativeOmpTextTurn } from "../testUtils/nativeOmpSession.ts";
+import type { ProviderAdapterV2Event } from "../../orchestration-v2/ProviderAdapter.ts";
 import { OMP_ISOLATED_ARGS } from "./OmpRpcProcess.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
-import { watchAdapterTextTurn, watchRpcTextTurn } from "./OmpCustomModels.testFixtures.ts";
+import { watchRpcTextTurn } from "./OmpCustomModels.testFixtures.ts";
 import {
   ompLiveInstance,
   ompQualifyBinary,
@@ -333,10 +329,14 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
           );
           const logged: Array<unknown> = [];
           const { environment, homePath } = liveInstance(root);
-          const adapter = yield* makeOmpAdapter({
+          const threadId = ThreadId.make("omp-custom-echo-thread");
+          const session = yield* nativeOmpSession({
+            root,
             target: ompQualifyTarget,
             binaryPath: binary,
-            providerInstanceId: instanceId,
+            instanceId,
+            threadId,
+            modelSelection: createModelSelection(instanceId, "scient_echo/echo-model"),
             stateDir,
             attachmentsDir: NodePath.join(root, "attachments"),
             environment,
@@ -351,13 +351,13 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
               close: () => Effect.void,
             },
           });
-          const events: Array<ProviderRuntimeEvent> = [];
+          const events: Array<ProviderAdapterV2Event> = [];
           const terminal = yield* Deferred.make<void>();
-          yield* adapter.streamEvents.pipe(
+          yield* session.events.pipe(
             Stream.runForEach((event) =>
               Effect.sync(() => events.push(event)).pipe(
                 Effect.andThen(
-                  event.type === "turn.completed" || event.type === "turn.aborted"
+                  event.type === "turn.terminal"
                     ? Deferred.succeed(terminal, undefined)
                     : Effect.void,
                 ),
@@ -365,24 +365,21 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
             ),
             Effect.forkScoped,
           );
-          const threadId = ThreadId.make("omp-custom-echo-thread");
-          yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
-          yield* adapter.sendTurn({
-            threadId,
-            input: "Say hello.",
-            modelSelection: createModelSelection(instanceId, "scient_echo/echo-model"),
-          });
+          yield* session.start({ text: "Say hello." });
           yield* Deferred.await(terminal).pipe(Effect.timeout("60 seconds"));
-          const sessions = yield* adapter.listSessions();
-          yield* adapter.stopAll();
+          const snapshot = {
+            session: session.runtime.providerSession,
+            thread: session.latestProviderThread(),
+          };
+          yield* session.close;
 
-          const completed = events.find((event) => event.type === "turn.completed");
-          expect(completed?.payload).toMatchObject({ state: "failed" });
-          expect(toJson(completed?.payload)).toContain("Incorrect API key provided: [REDACTED]");
+          const completed = events.find((event) => event.type === "turn.terminal");
+          expect(completed).toMatchObject({ status: "failed" });
+          expect(toJson(completed)).toContain("Incorrect API key provided: [REDACTED]");
           expect(logged.length).toBeGreaterThan(0);
           expect(toJson(events)).not.toContain(key);
           expect(toJson(logged)).not.toContain(key);
-          expect(toJson(sessions)).not.toContain(key);
+          expect(toJson(snapshot)).not.toContain(key);
           // Oh My Pi 18.3.1 itself writes the provider's error, key included,
           // to its log under HOME and to the session transcript. Scient cannot
           // redact those (docs/user/providers-omp.md); no other file holds it,
@@ -447,31 +444,29 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
             NodePath.join(root, "state"),
           );
           const { environment, homePath } = liveInstance(root);
-          const adapter = yield* makeOmpAdapter({
+          const threadId = ThreadId.make("omp-custom-adapter-thread");
+          const session = yield* nativeOmpSession({
+            root,
             target: ompQualifyTarget,
             binaryPath: binary,
-            providerInstanceId: instanceId,
+            instanceId,
+            threadId,
+            modelSelection: createModelSelection(
+              instanceId,
+              "scient_local-adapter/gemma4:12b-it-qat",
+            ),
             stateDir: NodePath.join(root, "state"),
             attachmentsDir: NodePath.join(root, "attachments"),
             environment,
             homePath,
             makeProcess: factory,
           });
-          const threadId = ThreadId.make("omp-custom-adapter-thread");
-          yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
-          const completed = yield* watchAdapterTextTurn(adapter.streamEvents);
-          yield* adapter.sendTurn({
-            threadId,
-            input: "Reply with exactly CUSTOM_ADAPTER_OK.",
-            modelSelection: createModelSelection(
-              instanceId,
-              "scient_local-adapter/gemma4:12b-it-qat",
-            ),
-          });
+          const completed = yield* watchNativeOmpTextTurn(session.events);
+          yield* session.start({ text: "Reply with exactly CUSTOM_ADAPTER_OK." });
           expect((yield* completed.pipe(Effect.timeout("60 seconds"))).trim()).toBe(
             "CUSTOM_ADAPTER_OK",
           );
-          yield* adapter.stopAll();
+          yield* session.close;
         }),
       ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
     180_000,

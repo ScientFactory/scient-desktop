@@ -101,6 +101,7 @@ export const ProviderRuntimeSource = Schema.Literals([
   "custom",
   "system",
   "scient_managed",
+  "registry",
   "missing",
   "unknown",
 ]);
@@ -166,6 +167,20 @@ export const ProviderRuntimeDiagnostics = Schema.Struct({
 });
 export type ProviderRuntimeDiagnostics = typeof ProviderRuntimeDiagnostics.Type;
 
+/** App-owned registry installation facts; paths never confer execution authority. */
+export const ProviderRegistryInstallation = Schema.Struct({
+  agentId: TrimmedNonEmptyString,
+  distribution: Schema.Literals(["binary", "npx", "uvx"]),
+  version: TrimmedNonEmptyString,
+  /** Older confined binary caches may predate installation receipts. */
+  installer: Schema.optionalKey(TrimmedNonEmptyString),
+  installRoot: TrimmedNonEmptyString,
+  executablePath: TrimmedNonEmptyString,
+  packageSpec: Schema.optionalKey(TrimmedNonEmptyString),
+  packageVersion: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ProviderRegistryInstallation = typeof ProviderRegistryInstallation.Type;
+
 export const ProviderRuntimeSummary = Schema.Struct({
   source: ProviderRuntimeSource,
   supportTier: ProviderRuntimeSupportTier,
@@ -178,6 +193,7 @@ export const ProviderRuntimeSummary = Schema.Struct({
   operation: Schema.NullOr(ProviderRuntimeOperation),
   message: TrimmedNonEmptyString,
   diagnostics: Schema.optionalKey(ProviderRuntimeDiagnostics),
+  installation: Schema.optionalKey(ProviderRegistryInstallation),
 });
 export type ProviderRuntimeSummary = typeof ProviderRuntimeSummary.Type;
 

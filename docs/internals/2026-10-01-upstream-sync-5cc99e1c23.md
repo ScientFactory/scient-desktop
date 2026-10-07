@@ -1,5 +1,7 @@
 # Upstream alignment through 5cc99e1c23
 
+Historical record; implementation paths and checks describe its dated snapshot, not current V2 architecture.
+
 Scient pull request: [#428](https://github.com/ScientFactory/scient-desktop/pull/428).
 
 Date: 2026-10-01. Status: alignment qualification receipt, not release authorization.

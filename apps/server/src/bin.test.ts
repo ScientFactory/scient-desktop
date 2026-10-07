@@ -1,3 +1,4 @@
+import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration exercises Node HTTP and filesystem boundaries.
 import * as NodeHttp from "node:http";
 import * as NodeFS from "node:fs";
@@ -7,19 +8,14 @@ import * as NodeChildProcess from "node:child_process";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import {
-  CommandId,
-  EnvironmentOrchestrationHttpApi,
-  ProviderInstanceId,
-  ThreadId,
-} from "@t3tools/contracts";
+import { CommandId, EnvironmentHttpApi, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as DateTime from "effect/DateTime";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Layer from "effect/Layer";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
@@ -29,7 +25,7 @@ import * as CliError from "effect/unstable/cli/CliError";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
 
-import { cli, makeCli } from "./bin.ts";
+import { cli, makeCli } from "./binCli.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
@@ -37,11 +33,18 @@ import {
 } from "./cloud/serviceProtocol.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
-import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
-import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
-import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
-import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
-import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
+import * as ProjectService from "./project/ProjectService.ts";
+import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
+import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
+import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
+import * as ProviderAdapterRegistryV2 from "./orchestration-v2/ProviderAdapterRegistry.ts";
+import { makeOrchestratorV2ReplayLayerWithRegistry } from "./orchestration-v2/testkit/ProviderReplayHarness.ts";
+import { ProjectServiceLayerLive } from "./orchestration-v2/runtimeLayer.ts";
+import { projectHttpApiLayer } from "./project/http.ts";
+import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
+import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
+import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
+import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import {
@@ -55,7 +58,11 @@ import { environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 
 import packageJson from "../package.json" with { type: "json" };
 
-const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
+const CliRuntimeLayer = Layer.mergeAll(
+  NodeServices.layer,
+  NetService.layer,
+  ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+);
 const DisconnectedLauncherChildLayer = Layer.mergeAll(
   Layer.succeed(HostProcessEnvironment, {
     ...process.env,
@@ -71,7 +78,9 @@ const DisconnectedLauncherChildLayer = Layer.mergeAll(
     off: () => undefined,
   }),
 );
-class ProjectCliHttpApi extends HttpApi.make("environment").add(EnvironmentOrchestrationHttpApi) {}
+class ProjectCliHttpApi extends HttpApi.make("environment").add(
+  EnvironmentHttpApi.groups.projects,
+) {}
 
 const connectCli = makeCli({ cloudEnabled: true });
 const noConnectCli = makeCli({ cloudEnabled: false });
@@ -126,21 +135,56 @@ const makeCliTestServerConfig = (baseDir: string) =>
     } satisfies ServerConfig.ServerConfig["Service"];
   });
 
-const makeProjectPersistenceLayer = (config: ServerConfig.ServerConfig["Service"]) =>
-  Layer.mergeAll(
-    OrchestrationLayerLive.pipe(
-      Layer.provideMerge(RepositoryIdentityResolver.layer),
-      Layer.provideMerge(SqlitePersistenceLayerLive),
+const makeProjectPersistenceLayer = (config: ServerConfig.ServerConfig["Service"]) => {
+  const database = SqlitePersistenceLayerLive.pipe(
+    Layer.provide(ServerConfig.layer(config)),
+    Layer.provide(NodeServices.layer),
+  );
+  const replay = makeOrchestratorV2ReplayLayerWithRegistry(
+    { name: "project-cli" },
+    ProviderAdapterRegistryV2.makeLayer([]),
+    { databaseLayer: database, runEffectWorker: false },
+  );
+  return Layer.mergeAll(
+    ProjectServiceLayerLive,
+    ProjectStore.layer,
+    ProjectionStore.layer,
+    ThreadManagement.layer.pipe(Layer.provide(replay)),
+  ).pipe(
+    Layer.provideMerge(ProjectEnrichmentService.layer),
+    Layer.provide(
+      Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ discard: () => Effect.void }),
     ),
-    WorkspacePaths.layer,
-  ).pipe(Layer.provideMerge(NodeServices.layer), Layer.provide(ServerConfig.layer(config)));
-
+    Layer.provideMerge(RepositoryIdentityResolver.layer),
+    Layer.provideMerge(
+      ProjectFaviconResolver.layer.pipe(
+        Layer.provide(WorkspacePaths.layer),
+        Layer.provide(T3ProjectFileLoader.layer),
+      ),
+    ),
+    Layer.provideMerge(WorkspacePaths.layer),
+    Layer.provideMerge(database),
+    Layer.provideMerge(NodeServices.layer),
+    Layer.provide(ServerConfig.layer(config)),
+  );
+};
 const readPersistedSnapshot = (baseDir: string) =>
   Effect.gen(function* () {
     const config = yield* makeCliTestServerConfig(baseDir);
     return yield* Effect.gen(function* () {
-      const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-      return yield* projectionSnapshotQuery.getSnapshot();
+      const projects = yield* (yield* ProjectService.ProjectService).snapshot;
+      const storedProjects = yield* (yield* ProjectStore.ProjectStoreV2).list({
+        includeDeleted: true,
+      });
+      const shell = yield* (yield* ProjectionStore.ProjectionStoreV2).getShellSnapshot();
+      return {
+        ...projects,
+        projects: storedProjects.map(({ projectId, ...project }) => ({
+          ...project,
+          id: projectId,
+        })),
+        threads: shell.threads,
+      };
     }).pipe(Effect.provide(makeProjectPersistenceLayer(config)));
   });
 
@@ -164,8 +208,8 @@ const makeProjectLookupFixture = Effect.fn("makeProjectLookupFixture")(function*
   if (withThread) {
     const config = yield* makeCliTestServerConfig(baseDir);
     yield* Effect.gen(function* () {
-      const engine = yield* OrchestrationEngine.OrchestrationEngineService;
-      yield* engine.dispatch({
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      yield* threads.dispatch({
         type: "thread.create",
         commandId: CommandId.make("cmd-project-lookup-thread"),
         threadId: ThreadId.make("thread-project-lookup"),
@@ -176,7 +220,8 @@ const makeProjectLookupFixture = Effect.fn("makeProjectLookupFixture")(function*
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
-        createdAt: DateTime.formatIso(yield* DateTime.now),
+        createdBy: "user",
+        creationSource: "server",
       });
     }).pipe(Effect.provide(makeProjectPersistenceLayer(config)));
   }
@@ -209,14 +254,12 @@ it.layer(NodeServices.layer)("project lookup with unavailable workspaces", (it) 
           "--base-dir",
           baseDir,
         ]).pipe(Effect.flip);
-        assert.include(error.message, "cannot be deleted without force=true");
+        assert.instanceOf(error, ProjectService.ProjectNotEmptyError);
         const retained = yield* readPersistedSnapshot(baseDir);
         assert.isNull(
           retained.projects.find((candidate) => candidate.id === project.id)!.deletedAt,
         );
-        assert.isNull(
-          retained.threads.find((thread) => thread.id === "thread-project-lookup")!.deletedAt,
-        );
+        assert.isDefined(retained.threads.find((thread) => thread.id === "thread-project-lookup"));
         yield* runCliWithRuntime([
           "project",
           "remove",
@@ -229,9 +272,7 @@ it.layer(NodeServices.layer)("project lookup with unavailable workspaces", (it) 
         assert.isNotNull(
           after.projects.find((candidate) => candidate.id === project.id)!.deletedAt,
         );
-        assert.isNotNull(
-          after.threads.find((thread) => thread.id === "thread-project-lookup")!.deletedAt,
-        );
+        assert.isUndefined(after.threads.find((thread) => thread.id === "thread-project-lookup"));
       }),
   );
 
@@ -294,7 +335,7 @@ it.layer(NodeServices.layer)("project lookup with unavailable workspaces", (it) 
         "--base-dir",
         baseDir,
       ]).pipe(Effect.flip);
-      assert.include(error.message, "cannot be deleted without force=true");
+      assert.instanceOf(error, ProjectService.ProjectNotEmptyError);
       yield* runCliWithRuntime([
         "project",
         "remove",
@@ -305,9 +346,7 @@ it.layer(NodeServices.layer)("project lookup with unavailable workspaces", (it) 
       ]);
       const after = yield* readPersistedSnapshot(baseDir);
       assert.isNotNull(after.projects.find((candidate) => candidate.id === project.id)!.deletedAt);
-      assert.isNotNull(
-        after.threads.find((thread) => thread.id === "thread-project-lookup")!.deletedAt,
-      );
+      assert.isUndefined(after.threads.find((thread) => thread.id === "thread-project-lookup"));
       assert.isFalse(NodeFS.existsSync(workspaceRoot));
     }),
   );
@@ -367,15 +406,13 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
   Effect.gen(function* () {
     const config = yield* makeCliTestServerConfig(baseDir);
     const routesLayer = HttpApiBuilder.layer(ProjectCliHttpApi).pipe(
+      Layer.provide(projectHttpApiLayer),
       Layer.provide(
-        orchestrationHttpApiLayer.pipe(
-          Layer.provide(
-            Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({
-              get: () => Effect.succeed(null),
-              discard: () => Effect.void,
-            }),
-          ),
-        ),
+        Layer.succeed(ServerRuntimeStartup.ServerRuntimeStartup, {
+          awaitCommandReady: Effect.void,
+          markHttpListening: Effect.void,
+          enqueueCommand: (operation) => operation,
+        }),
       ),
       Layer.provide(environmentAuthenticatedAuthLayer),
     );
@@ -476,7 +513,24 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const { output } = yield* captureStdout(runCli(["--help"], noConnectCli));
 
       assert.notInclude(output, "Manage the Scient background service.");
-      assert.notInclude(output, "__service-preflight");
+      for (const command of [
+        "service",
+        "__service-preflight",
+        "update",
+        "uninstall",
+        "__service-launcher",
+      ]) {
+        assert.isFalse(
+          noConnectCli.subcommands
+            .flatMap((group) => group.commands)
+            .some((candidate) => candidate.name === command),
+          command,
+        );
+        // The root accepts a positional cwd, so an unknown name alone is a
+        // directory argument. --help exercises parsing without starting a server.
+        const help = yield* captureStdout(runCli([command, "--help"], noConnectCli));
+        assert.include(help.output, "Run the Scient server.", command);
+      }
     }),
   );
 
@@ -766,8 +820,8 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
 
       const config = yield* makeCliTestServerConfig(baseDir);
       yield* Effect.gen(function* () {
-        const engine = yield* OrchestrationEngine.OrchestrationEngineService;
-        yield* engine.dispatch({
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        yield* threads.dispatch({
           type: "thread.create",
           commandId: CommandId.make("cmd-cli-force-remove-thread"),
           threadId: ThreadId.make("thread-cli-force-remove"),
@@ -781,7 +835,8 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
           runtimeMode: "approval-required",
           branch: null,
           worktreePath: null,
-          createdAt: DateTime.formatIso(yield* DateTime.now),
+          createdBy: "user",
+          creationSource: "server",
         });
       }).pipe(Effect.provide(makeProjectPersistenceLayer(config)));
 
@@ -798,9 +853,8 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
         (afterRemove.projects.find((candidate) => candidate.id === project!.id)?.deletedAt ??
           null) !== null,
       );
-      assert.isTrue(
-        (afterRemove.threads.find((thread) => thread.id === "thread-cli-force-remove")?.deletedAt ??
-          null) !== null,
+      assert.isUndefined(
+        afterRemove.threads.find((thread) => thread.id === "thread-cli-force-remove"),
       );
     }),
   );
@@ -825,8 +879,8 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
             "--base-dir",
             baseDir,
           ]);
-          const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-          const readModel = yield* projectionSnapshotQuery.getSnapshot();
+          const projects = yield* ProjectService.ProjectService;
+          const readModel = yield* projects.snapshot;
           const addedProject = readModel.projects.find(
             (project) => project.workspaceRoot === workspaceRoot && project.deletedAt === null,
           );

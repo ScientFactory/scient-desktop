@@ -1,5 +1,7 @@
 # Scient conversation export, document conversion, and portable import proposal
 
+Historical record; implementation paths and checks describe its dated snapshot, not current V2 architecture.
+
 > **Status: ACCEPTED FOR IMPLEMENTATION (2026-09-28).** The owner approved starting implementation.
 > Details may still be refined during implementation; the owner's decisions are listed in
 > [Decisions](#decisions). Nothing here describes released behavior yet.
@@ -83,8 +85,8 @@ Four related capabilities:
 
 | Foundation                                                                             | Where                                                                                                       | Use here                                                    |
 | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Transactional per-thread snapshot with sequence watermark                              | [`ProjectionSnapshotQuery.ts`](../../apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts)       | Basis of the conversation snapshot                          |
-| All events of one command commit in one SQL transaction                                | [`OrchestrationEngine.ts`](../../apps/server/src/orchestration/Layers/OrchestrationEngine.ts)               | Import writes a whole thread atomically                     |
+| Transactional per-thread snapshot with sequence watermark                              | [`ProjectionStore.ts`](../../apps/server/src/orchestration-v2/ProjectionStore.ts)                           | Basis of the conversation snapshot                          |
+| All events of one command commit in one SQL transaction                                | [`EventSink.ts`](../../apps/server/src/orchestration-v2/EventSink.ts)                                       | Import writes a whole thread atomically                     |
 | Pending attachment uploads, swept when stale                                           | [`attachmentStore.ts`](../../apps/server/src/attachmentStore.ts)                                            | Import stages attachment files without a new recovery table |
 | Controlled hidden-window renderer                                                      | [`ControlledHtmlPdfRenderer.ts`](../../apps/desktop/src/scient/documentExport/ControlledHtmlPdfRenderer.ts) | Prints the dedicated document page                          |
 | `printToPDF` with tagged PDF and document outline                                      | [`BrowserPdfRenderer.ts`](../../apps/desktop/src/scient/documentExport/BrowserPdfRenderer.ts)               | PDF output                                                  |

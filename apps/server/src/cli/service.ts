@@ -153,6 +153,27 @@ const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
   ),
 );
 
+const serviceRestartCommand = Command.make("restart", projectLocationFlags).pipe(
+  Command.withDescription(
+    "Restart the background service. Picks up a version installed by `t3 update` that was not restarted at the time.",
+  ),
+  Command.withHandler((flags) =>
+    runServiceCommand(
+      flags,
+      Effect.gen(function* () {
+        const service = yield* BootService.BootService;
+        const status = yield* service.status;
+        const restarted = yield* service.restart;
+        yield* Console.log(
+          restarted
+            ? `Restarted the Scient service${status.installedVersion === undefined ? "" : ` on t3@${status.installedVersion}`}.`
+            : "Scient service is not installed.",
+        );
+      }),
+    ),
+  ),
+);
+
 const serviceUninstallCommand = Command.make("uninstall", projectLocationFlags).pipe(
   Command.withDescription("Stop and remove the Scient background service."),
   Command.withHandler((flags) =>
@@ -270,6 +291,7 @@ export const serviceCommand = Command.make("service").pipe(
   Command.withDescription("Manage the Scient background service."),
   Command.withSubcommands([
     serviceInstallCommand,
+    serviceRestartCommand,
     serviceUninstallCommand,
     serviceUpdateCommand,
     serviceStatusCommand,

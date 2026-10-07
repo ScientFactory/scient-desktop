@@ -10,7 +10,8 @@ import {
   ComputeLanguageId,
   resolveScientificComputingLanguageSettings,
 } from "@t3tools/contracts";
-import { useEnvironmentSettings } from "~/hooks/useSettings";
+import { useClientSettings, useEnvironmentSettings } from "~/hooks/useSettings";
+import { formatTimestamp } from "~/timestampFormat";
 import { useCancelComputeBatchRun } from "./useCancelComputeBatchRun";
 import { randomUUID } from "~/lib/utils";
 import type {
@@ -691,6 +692,7 @@ export function ComputeBatchResults({
   showRunControls = false,
   resultPicker,
 }: ComputeBatchResultsProps) {
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const props = model.source;
   const { runtimeResult, profile, streamedRunValue, streamedRuns, activeRun } = model;
   const inspection = resultValue(runtimeResult);
@@ -1026,7 +1028,7 @@ export function ComputeBatchResults({
                 >
                   <span className="truncate">
                     {selectedRun
-                      ? `${statusLabel(selectedRun, props.runtimeLabel)} · ${new Date(selectedRun.receipt.startedAt).toLocaleTimeString()}`
+                      ? `${statusLabel(selectedRun, props.runtimeLabel)} · ${formatTimestamp(selectedRun.receipt.startedAt, timestampFormat)}`
                       : "Run history"}
                   </span>
                   <ChevronDown className="size-3.5 shrink-0" />
@@ -1044,7 +1046,7 @@ export function ComputeBatchResults({
                 {runs.map((run) => (
                   <MenuRadioItem key={run.receipt.runId} value={run.receipt.runId} size="compact">
                     {statusLabel(run, props.runtimeLabel)} ·{" "}
-                    {new Date(run.receipt.startedAt).toLocaleTimeString()}
+                    {formatTimestamp(run.receipt.startedAt, timestampFormat)}
                   </MenuRadioItem>
                 ))}
               </MenuRadioGroup>

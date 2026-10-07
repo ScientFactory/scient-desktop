@@ -1,7 +1,8 @@
 import {
   OrchestrationProjectShell,
-  OrchestrationShellSnapshot,
-  OrchestrationThreadShell,
+  OrchestrationV2ShellSnapshot,
+  OrchestrationV2ShellSnapshotJson,
+  OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Arr from "effect/Array";
@@ -28,14 +29,17 @@ const sampleDecoded = <S extends Schema.Constraint>(schema: S) =>
     );
     return Arr.getSomes(decoded);
   });
-const encodeSnapshot = Schema.encodeEffect(OrchestrationShellSnapshot);
+
+// The cache persists the Json variant, so this is what actually reads the payload back.
+const decodeCacheSnapshot = Schema.decodeEffect(OrchestrationV2ShellSnapshotJson);
 
 describe("encodeShellSnapshotForCache", () => {
-  it.effect("matches the Schema encoding of a generated snapshot", () =>
+  it.effect("round-trips a generated snapshot through the cache encoding", () =>
     Effect.gen(function* () {
-      const threads = yield* sampleDecoded(OrchestrationThreadShell);
+      const threads = yield* sampleDecoded(OrchestrationV2ThreadShell);
       const projects = yield* sampleDecoded(OrchestrationProjectShell);
-      const snapshot: OrchestrationShellSnapshot = {
+      const snapshot: OrchestrationV2ShellSnapshot = {
+        schemaVersion: 3,
         snapshotSequence: 1,
         // The generator rarely makes monogram icons, and they are the one
         // project field whose encoding differs from the decoded value.
@@ -45,12 +49,14 @@ describe("encodeShellSnapshotForCache", () => {
             : project,
         ),
         threads,
-        updatedAt: "2026-09-25T00:00:00.000Z",
+        archivedThreads: [],
       };
 
       expect(threads.length).toBeGreaterThan(0);
       expect(projects.length).toBeGreaterThan(0);
-      expect(yield* encodeShellSnapshotForCache(snapshot)).toEqual(yield* encodeSnapshot(snapshot));
+      expect(yield* decodeCacheSnapshot(yield* encodeShellSnapshotForCache(snapshot))).toEqual(
+        snapshot,
+      );
     }),
   );
 });

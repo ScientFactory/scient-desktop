@@ -10,7 +10,10 @@ import { Cause, Effect, Exit, FileSystem, Redacted, Schema, Stream } from "effec
 import * as TestClock from "effect/testing/TestClock";
 import { beforeAll } from "vite-plus/test";
 
-import type { SessionConfigOption } from "effect-acp/schema";
+// SCIENT-FORK:START — legacy v1 vocabulary; see compat rationale in
+// `acp/DroidAcpSupport.ts`.
+import type { SessionConfigOption } from "effect-acp/compat";
+// SCIENT-FORK:END
 
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -143,8 +146,8 @@ const backgroundGenerationFixture = (
           handleRequestPermission: (
             handler: Parameters<typeof runtime.handleRequestPermission>[0],
           ) =>
-            runtime.handleRequestPermission((request) =>
-              handler(request).pipe(
+            runtime.handleRequestPermission((request, context) =>
+              handler(request, context).pipe(
                 Effect.tap((answer) =>
                   Effect.sync(() => {
                     const chosen = request.options.find(

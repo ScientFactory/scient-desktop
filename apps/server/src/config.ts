@@ -158,7 +158,7 @@ export const deriveServerPaths = Effect.fn(function* (
       ? (options.developmentStateDirName ?? "dev")
       : "userdata",
   );
-  const dbPath = join(stateDir, "state.sqlite");
+  const dbPath = join(stateDir, "statev2.sqlite");
   const attachmentsDir = join(stateDir, "attachments");
   const documentArtifactsDir = join(stateDir, "document-artifacts");
   const logsDir = join(stateDir, "logs");

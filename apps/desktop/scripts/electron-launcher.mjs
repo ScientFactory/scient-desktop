@@ -215,23 +215,25 @@ export function makeDevelopmentCodeSigningCommand({ appBundlePath, identity, sig
   };
 }
 
-function hasValidDevelopmentCodeIdentity(appBundlePath) {
-  const verification = NodeChildProcess.spawnSync(
+export function hasValidDevelopmentCodeIdentity(
+  appBundlePath,
+  { bundleId = APP_BUNDLE_ID, spawnSync = NodeChildProcess.spawnSync } = {},
+) {
+  // Ad hoc signatures may designate only their code hash. Ask codesign to
+  // verify the signed identifier instead of parsing displayed requirements.
+  const verification = spawnSync(
     "/usr/bin/codesign",
-    ["--verify", "--deep", "--strict", appBundlePath],
+    [
+      "--verify",
+      "--deep",
+      "--strict",
+      "--test-requirement",
+      `=identifier ${JSON.stringify(bundleId)}`,
+      appBundlePath,
+    ],
     { encoding: "utf8" },
   );
-  if (verification.status !== 0) return false;
-
-  const requirement = NodeChildProcess.spawnSync(
-    "/usr/bin/codesign",
-    ["--display", "--requirements", "-", appBundlePath],
-    { encoding: "utf8" },
-  );
-  return (
-    requirement.status === 0 &&
-    `${requirement.stdout}${requirement.stderr}`.includes(`identifier "${APP_BUNDLE_ID}"`)
-  );
+  return verification.status === 0;
 }
 
 function signDevelopmentAppBundle(appBundlePath, identity) {

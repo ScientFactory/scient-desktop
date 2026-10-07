@@ -10,7 +10,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as AcpErrors from "effect-acp/errors";
-import type * as AcpSchema from "effect-acp/schema";
+import type * as AcpSchema from "effect-acp/compat";
 
 import {
   makeAntigravityAuth,
@@ -103,11 +103,10 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
               yield* Deferred.await(discovered);
               return started;
             }),
-          request: (method) =>
-            Effect.sync(() => {
-              events.push(method);
-              return {};
-            }),
+          logout: Effect.sync(() => {
+            events.push("logout");
+            return {};
+          }),
         } satisfies AntigravityAuthRuntime;
       }),
     onAuthenticated: () =>

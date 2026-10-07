@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import { migrationManifest, runMigrations } from "./Migrations.ts";
+import { runMigrations } from "./Migrations.ts";
 
 for (const previousId of [49, 50, 52] as const) {
   it.layer(Layer.fresh(NodeSqliteClient.layerMemory()))(
@@ -24,33 +24,7 @@ for (const previousId of [49, 50, 52] as const) {
             (thread_id, status, provider_name, runtime_mode, last_error, updated_at)
             VALUES ('legacy', 'error', 'pi', 'full-access', 'Old error', '2026-09-06T00:00:00.000Z')`;
 
-          const executed = yield* runMigrations();
-          assert.deepStrictEqual(
-            executed,
-            previousId === 52
-              ? [
-                  [53, "ProjectionThreadPullRequests"],
-                  [54, "ProjectionThreadMessageContext"],
-                  [55, "ProjectionThreadTitleState"],
-                  [56, "PullRequestFilesViewed"],
-                  [57, "ProjectionThreadsAutoSettleDisabledAt"],
-                  // SCIENT-FORK:START
-                  [58, "ProjectionThreadSections"],
-                  // SCIENT-FORK:END
-                ]
-              : [
-                  [51, "ProjectionThreadBranchPullRequest"],
-                  [52, "ProjectionThreadsActiveOrderKey"],
-                  [53, "ProjectionThreadPullRequests"],
-                  [54, "ProjectionThreadMessageContext"],
-                  [55, "ProjectionThreadTitleState"],
-                  [56, "PullRequestFilesViewed"],
-                  [57, "ProjectionThreadsAutoSettleDisabledAt"],
-                  // SCIENT-FORK:START
-                  [58, "ProjectionThreadSections"],
-                  // SCIENT-FORK:END
-                ],
-          );
+          yield* runMigrations();
           assert.deepStrictEqual(
             yield* sql`SELECT * FROM effect_sql_migrations
               WHERE migration_id <= ${previousId} ORDER BY migration_id`,
@@ -61,50 +35,37 @@ for (const previousId of [49, 50, 52] as const) {
           assert.deepStrictEqual(rows, [
             { last_error: "Old error", updated_at: "2026-09-06T00:00:00.000Z" },
           ]);
-          const columns = yield* sql<{ name: string }>`PRAGMA table_info(projection_threads)`;
-          assert.ok(columns.some((column) => column.name === "branch_pull_request_json"));
-          assert.ok(columns.some((column) => column.name === "active_order_key"));
-          assert.ok(columns.some((column) => column.name === "title_state_json"));
-          // SCIENT-FORK:START
-          assert.ok(columns.some((column) => column.name === "section_id"));
-          // SCIENT-FORK:END
-          assert.deepStrictEqual(yield* sql`SELECT * FROM projection_thread_pull_requests`, []);
-          const viewedFileColumns = yield* sql<{
-            name: string;
-          }>`PRAGMA table_info(pull_request_files_viewed)`;
+          const completedLedger =
+            yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
+          yield* runMigrations();
           assert.deepStrictEqual(
-            viewedFileColumns.map((column) => column.name),
-            ["provider", "host", "repository", "number", "viewer", "path", "revision", "viewed_at"],
+            yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
+            completedLedger,
           );
-          assert.isEmpty(yield* runMigrations());
         }),
       );
     },
   );
 }
 
-it.layer(Layer.fresh(NodeSqliteClient.layerMemory()))("fresh migration compatibility", (it) => {
-  it.effect("installs the complete manifest without reusing retired migration 50", () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      assert.deepStrictEqual(yield* runMigrations(), migrationManifest);
-      const rows = yield* sql`SELECT migration_id, name FROM effect_sql_migrations
-        WHERE migration_id >= 50 ORDER BY migration_id`;
-      assert.deepStrictEqual(rows, [
-        { migration_id: 51, name: "ProjectionThreadBranchPullRequest" },
-        { migration_id: 52, name: "ProjectionThreadsActiveOrderKey" },
-        { migration_id: 53, name: "ProjectionThreadPullRequests" },
-        { migration_id: 54, name: "ProjectionThreadMessageContext" },
-        { migration_id: 55, name: "ProjectionThreadTitleState" },
-        { migration_id: 56, name: "PullRequestFilesViewed" },
-        { migration_id: 57, name: "ProjectionThreadsAutoSettleDisabledAt" },
-        // SCIENT-FORK:START
-        { migration_id: 58, name: "ProjectionThreadSections" },
-        // SCIENT-FORK:END
-      ]);
-      assert.deepStrictEqual(yield* sql`SELECT * FROM projection_thread_pull_requests`, []);
-      assert.deepStrictEqual(yield* sql`SELECT * FROM pull_request_files_viewed`, []);
-      assert.isEmpty(yield* runMigrations());
-    }),
+it.layer(Layer.fresh(NodeSqliteClient.layerMemory()))("migration ledger collisions", (it) => {
+  it.effect(
+    "refuses a conflicting recorded migration without rewriting the ledger or applying later steps",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* runMigrations({ toMigrationInclusive: 40 });
+        yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (41, 'ForeignBuildMigration')`;
+        const original = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
+        assert.equal((yield* Effect.exit(runMigrations()))._tag, "Failure");
+        assert.deepStrictEqual(
+          yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
+          original,
+        );
+        assert.deepStrictEqual(
+          yield* sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'orchestration_v2_projection_threads'`,
+          [],
+        );
+      }),
   );
 });

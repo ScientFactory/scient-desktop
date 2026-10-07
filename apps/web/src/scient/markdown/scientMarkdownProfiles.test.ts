@@ -28,6 +28,7 @@ const GRAMMAR_NAMES = [
   "remarkScientMath",
   "remarkScientSingleDollarMath",
   "remarkScientMathRefinements",
+  "remarkKeepWindowsPathDestinations",
   "remarkGithubAlerts",
   "remarkNormalizeListItemIndentation",
 ];

@@ -113,6 +113,7 @@ function makeTestService(serviceStatus: BootService.BootServiceStatus) {
         };
       }),
     uninstall: Effect.succeed(false),
+    restart: Effect.succeed(false),
   });
   return { service, installOptions };
 }

@@ -3,7 +3,6 @@ import {
   DesktopUpdateChannelSchema,
   type DesktopServerExposureMode,
   type DesktopUpdateChannel,
-  VoiceModelId as VoiceModelIdSchema,
   type VoiceModelId,
 } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -17,6 +16,16 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+// SCIENT-FORK:START — Scient window, update-channel and voice settings transitions.
+import {
+  applyMainWindowNearFullSize,
+  applyMainWindowSizeIncrease,
+  normalizeVoiceSelectedModelId,
+  setVoiceSelectedModelId,
+  stableOnlyUpdateChannel,
+  stableOnlyUpdateChannelFields,
+} from "./scientDesktopSettings.ts";
+// SCIENT-FORK:END
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import {
@@ -133,7 +142,6 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 const DesktopSettingsJson = fromLenientJson(DesktopSettingsDocument);
 const decodeDesktopSettingsJson = Schema.decodeEffect(DesktopSettingsJson);
 const encodeDesktopSettingsJson = Schema.encodeEffect(DesktopSettingsJson);
-const isVoiceModelId = Schema.is(VoiceModelIdSchema);
 const decodeDesktopWindowBounds = Schema.decodeUnknownOption(DesktopWindowBoundsSchema);
 const desktopWindowBoundsEquivalence = Schema.toEquivalence(DesktopWindowBoundsSchema);
 
@@ -247,18 +255,6 @@ function normalizeDesktopSettingsDocument(
   const updateChannelConfiguredByUser =
     parsed.updateChannelConfiguredByUser === true ||
     (isLegacySettings && Option.contains(parsedUpdateChannel, "nightly"));
-  const normalizedUpdateChannel =
-    SCIENT_DESKTOP_IDENTITY.desktopUpdateChannelPolicy === "stable-only"
-      ? {
-          updateChannel: "latest" as const,
-          updateChannelConfiguredByUser: false,
-        }
-      : {
-          updateChannel: updateChannelConfiguredByUser
-            ? Option.getOrElse(parsedUpdateChannel, () => defaultSettings.updateChannel)
-            : defaultSettings.updateChannel,
-          updateChannelConfiguredByUser,
-        };
 
   // Newer form wins when both are present; otherwise fall back to the legacy
   // `wslMode === "wsl"` signal so users coming off the swap-mode build keep
@@ -278,12 +274,18 @@ function normalizeDesktopSettingsDocument(
       parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
     tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
     tailscaleServePort: normalizeTailscaleServePort(parsed.tailscaleServePort),
-    ...normalizedUpdateChannel,
+    updateChannel: updateChannelConfiguredByUser
+      ? Option.getOrElse(parsedUpdateChannel, () => defaultSettings.updateChannel)
+      : defaultSettings.updateChannel,
+    updateChannelConfiguredByUser,
+    // SCIENT-FORK:START — stable-only products ignore a stored update channel.
+    ...stableOnlyUpdateChannelFields(),
+    // SCIENT-FORK:END
     wslBackendEnabled,
     wslDistro: normalizeWslDistro(parsed.wslDistro),
-    voiceSelectedModelId: isVoiceModelId(parsed.voiceSelectedModelId)
-      ? parsed.voiceSelectedModelId
-      : null,
+    // SCIENT-FORK:START — selected local voice model.
+    voiceSelectedModelId: normalizeVoiceSelectedModelId(parsed.voiceSelectedModelId),
+    // SCIENT-FORK:END
     wslOnly: parsed.wslOnly === true,
   };
 }
@@ -375,34 +377,6 @@ function setMainWindowBounds(
       };
 }
 
-function applyMainWindowSizeIncrease(
-  settings: DesktopSettings,
-  bounds: DesktopWindowBounds | null,
-): DesktopSettings {
-  return settings.mainWindowSizeIncreaseApplied
-    ? settings
-    : {
-        ...settings,
-        mainWindowBounds: bounds,
-        mainWindowMaximized: bounds !== null && settings.mainWindowMaximized,
-        mainWindowSizeIncreaseApplied: true,
-      };
-}
-
-function applyMainWindowNearFullSize(
-  settings: DesktopSettings,
-  bounds: DesktopWindowBounds | null,
-): DesktopSettings {
-  return settings.mainWindowNearFullSizeApplied
-    ? settings
-    : {
-        ...settings,
-        mainWindowBounds: bounds,
-        mainWindowMaximized: bounds !== null && settings.mainWindowMaximized,
-        mainWindowNearFullSizeApplied: true,
-      };
-}
-
 function setTailscaleServe(
   settings: DesktopSettings,
   input: { readonly enabled: boolean; readonly port: Option.Option<number> },
@@ -433,22 +407,10 @@ function setUpdateChannel(
       };
 }
 
-function setProductUpdateChannel(
-  settings: DesktopSettings,
-  requestedChannel: DesktopUpdateChannel,
-): DesktopSettings {
-  if (SCIENT_DESKTOP_IDENTITY.desktopUpdateChannelPolicy !== "stable-only") {
-    return setUpdateChannel(settings, requestedChannel);
-  }
-
-  return settings.updateChannel === "latest" && !settings.updateChannelConfiguredByUser
-    ? settings
-    : {
-        ...settings,
-        updateChannel: "latest",
-        updateChannelConfiguredByUser: false,
-      };
-}
+// SCIENT-FORK:START — stable-only products always stay on the latest channel.
+const setProductUpdateChannel = (settings: DesktopSettings, channel: DesktopUpdateChannel) =>
+  stableOnlyUpdateChannel(settings) ?? setUpdateChannel(settings, channel);
+// SCIENT-FORK:END
 
 function setWslBackendEnabled(settings: DesktopSettings, enabled: boolean): DesktopSettings {
   return settings.wslBackendEnabled === enabled
@@ -466,18 +428,6 @@ function setWslDistro(settings: DesktopSettings, distro: string | null): Desktop
     : {
         ...settings,
         wslDistro: normalized,
-      };
-}
-
-function setVoiceSelectedModelId(
-  settings: DesktopSettings,
-  modelId: VoiceModelId | null,
-): DesktopSettings {
-  return settings.voiceSelectedModelId === modelId
-    ? settings
-    : {
-        ...settings,
-        voiceSelectedModelId: modelId,
       };
 }
 
@@ -668,6 +618,7 @@ export const make = Effect.gen(function* () {
           },
         }),
       ),
+    // SCIENT-FORK:START — one-time main window size updates.
     applyMainWindowSizeIncrease: (bounds) =>
       persist((settings) => applyMainWindowSizeIncrease(settings, bounds)).pipe(
         Effect.withSpan("desktop.settings.applyMainWindowSizeIncrease"),
@@ -676,6 +627,7 @@ export const make = Effect.gen(function* () {
       persist((settings) => applyMainWindowNearFullSize(settings, bounds)).pipe(
         Effect.withSpan("desktop.settings.applyMainWindowNearFullSize"),
       ),
+    // SCIENT-FORK:END
     setServerExposureMode: (mode) =>
       persist((settings) => setServerExposureMode(settings, mode)).pipe(
         Effect.withSpan("desktop.settings.setServerExposureMode", { attributes: { mode } }),
@@ -698,12 +650,14 @@ export const make = Effect.gen(function* () {
           attributes: { distro: distro ?? null },
         }),
       ),
+    // SCIENT-FORK:START — selected local voice model.
     setVoiceSelectedModelId: (modelId) =>
       persist((settings) => setVoiceSelectedModelId(settings, modelId)).pipe(
         Effect.withSpan("desktop.settings.setVoiceSelectedModelId", {
           attributes: { modelId: modelId ?? null },
         }),
       ),
+    // SCIENT-FORK:END
     setWslOnly: (enabled) =>
       persist((settings) => setWslOnly(settings, enabled)).pipe(
         Effect.withSpan("desktop.settings.setWslOnly", { attributes: { enabled } }),
@@ -745,10 +699,12 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
         load: SynchronizedRef.get(settingsRef),
         setMainWindowBounds: (bounds, isMaximized) =>
           update((settings) => setMainWindowBounds(settings, bounds, isMaximized)),
+        // SCIENT-FORK:START — one-time main window size updates.
         applyMainWindowSizeIncrease: (bounds) =>
           update((settings) => applyMainWindowSizeIncrease(settings, bounds)),
         applyMainWindowNearFullSize: (bounds) =>
           update((settings) => applyMainWindowNearFullSize(settings, bounds)),
+        // SCIENT-FORK:END
         setServerExposureMode: (mode) =>
           update((settings) => setServerExposureMode(settings, mode)),
         setTailscaleServe: (input) => update((settings) => setTailscaleServe(settings, input)),
@@ -756,8 +712,10 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
         setWslBackendEnabled: (enabled) =>
           update((settings) => setWslBackendEnabled(settings, enabled)),
         setWslDistro: (distro) => update((settings) => setWslDistro(settings, distro)),
+        // SCIENT-FORK:START — selected local voice model.
         setVoiceSelectedModelId: (modelId) =>
           update((settings) => setVoiceSelectedModelId(settings, modelId)),
+        // SCIENT-FORK:END
         setWslOnly: (enabled) => update((settings) => setWslOnly(settings, enabled)),
         setLocalEnvironmentEnabled: (enabled) =>
           update((settings) => setLocalEnvironmentEnabled(settings, enabled)),

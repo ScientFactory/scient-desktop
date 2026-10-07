@@ -2,10 +2,14 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { DevicePlatform, ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 
+import type { PreviewStaticImageSurfaceDescriptor } from "./previewStaticImageSurface";
+// SCIENT-FORK:START — static artifact content for the floating player.
 import {
-  previewStaticImageDescriptorKey,
-  type PreviewStaticImageSurfaceDescriptor,
-} from "./previewStaticImageSurface";
+  openContent,
+  openPreviewArtifact,
+  updatePreviewArtifact,
+} from "./scientPreviewMiniPlayerArtifacts";
+// SCIENT-FORK:END
 
 export interface PreviewMiniPlayerPosition {
   readonly x: number;
@@ -22,6 +26,18 @@ export interface PreviewMiniPlayerRect {
   readonly size: PreviewMiniPlayerSize;
 }
 
+/** What the floating player mirrors: a browser tab or a device stream. */
+export type PreviewMiniPlayerSource =
+  | { readonly kind: "browser"; readonly tabId: string }
+  | {
+      readonly kind: "device";
+      readonly hostId: string;
+      readonly deviceId: string;
+      readonly platform: DevicePlatform;
+      readonly name: string;
+    };
+
+/** What the floating player actually shows, including a static artifact image. */
 export type PreviewMiniPlayerContent =
   | { readonly kind: "browser"; readonly id: string; readonly tabId: string }
   | {
@@ -43,18 +59,9 @@ export interface PreviewMiniPlayerState {
   readonly position: PreviewMiniPlayerPosition | null;
   /** Browser height is derived from the live source ratio; artifacts retain free sizing. */
   readonly size: PreviewMiniPlayerSize | null;
+  /** Whether the last gesture was a drag or a resize; the chat lane reads it. */
+  readonly lastInteraction: "drag" | "resize";
 }
-
-/** What the floating player mirrors: a browser tab or a device stream. */
-export type PreviewMiniPlayerSource =
-  | { readonly kind: "browser"; readonly tabId: string }
-  | {
-      readonly kind: "device";
-      readonly hostId: string;
-      readonly deviceId: string;
-      readonly platform: DevicePlatform;
-      readonly name: string;
-    };
 
 interface PreviewMiniPlayerStoreState {
   readonly byThreadKey: Record<string, PreviewMiniPlayerState>;
@@ -73,6 +80,7 @@ interface PreviewMiniPlayerStoreState {
     artifact: PreviewStaticImageSurfaceDescriptor,
   ) => void;
   readonly close: (ref: ScopedThreadRef) => void;
+  /** `contentId` guards against a drag that outlives the content it started on. */
   readonly move: (
     ref: ScopedThreadRef,
     contentId: string,
@@ -95,32 +103,7 @@ export const browserMiniPlayerSource = (tabId: string): PreviewMiniPlayerSource 
 });
 
 function sourceContent(source: PreviewMiniPlayerSource): PreviewMiniPlayerContent {
-  return source.kind === "browser"
-    ? { ...source, id: previewMiniPlayerSourceKey(source) }
-    : { ...source, id: previewMiniPlayerSourceKey(source) };
-}
-
-function artifactContent(artifact: PreviewStaticImageSurfaceDescriptor): PreviewMiniPlayerContent {
-  return { kind: "static-artifact", id: artifact.surfaceId, artifact };
-}
-
-function artifactEquals(
-  left: PreviewStaticImageSurfaceDescriptor,
-  right: PreviewStaticImageSurfaceDescriptor,
-): boolean {
-  return previewStaticImageDescriptorKey(left) === previewStaticImageDescriptorKey(right);
-}
-
-function openContent(
-  current: PreviewMiniPlayerState | undefined,
-  content: PreviewMiniPlayerContent,
-  position: PreviewMiniPlayerPosition | undefined,
-): PreviewMiniPlayerState {
-  return {
-    content,
-    position: position ?? current?.position ?? null,
-    size: current?.size ?? null,
-  };
+  return { ...source, id: previewMiniPlayerSourceKey(source) };
 }
 
 export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((set) => ({
@@ -145,44 +128,11 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
         },
       };
     }),
+  // SCIENT-FORK:START — static artifact images in the floating player.
   openArtifact: (ref, artifact, position) =>
-    set((state) => {
-      const threadKey = scopedThreadKey(ref);
-      const current = state.byThreadKey[threadKey];
-      const nextPosition = position ?? current?.position ?? null;
-      if (
-        current?.content.kind === "static-artifact" &&
-        artifactEquals(current.content.artifact, artifact) &&
-        current.position?.x === nextPosition?.x &&
-        current.position?.y === nextPosition?.y
-      ) {
-        return state;
-      }
-      return {
-        byThreadKey: {
-          ...state.byThreadKey,
-          [threadKey]: openContent(current, artifactContent(artifact), position),
-        },
-      };
-    }),
-  updateArtifact: (ref, artifact) =>
-    set((state) => {
-      const threadKey = scopedThreadKey(ref);
-      const current = state.byThreadKey[threadKey];
-      if (
-        current?.content.kind !== "static-artifact" ||
-        current.content.artifact.surfaceId !== artifact.surfaceId ||
-        artifactEquals(current.content.artifact, artifact)
-      ) {
-        return state;
-      }
-      return {
-        byThreadKey: {
-          ...state.byThreadKey,
-          [threadKey]: { ...current, content: artifactContent(artifact) },
-        },
-      };
-    }),
+    set((state) => openPreviewArtifact(state, ref, artifact, position)),
+  updateArtifact: (ref, artifact) => set((state) => updatePreviewArtifact(state, ref, artifact)),
+  // SCIENT-FORK:END
   close: (ref) =>
     set((state) => {
       const threadKey = scopedThreadKey(ref);
@@ -195,11 +145,11 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
       const threadKey = scopedThreadKey(ref);
       const current = state.byThreadKey[threadKey];
       if (!current || current.content.id !== contentId) return state;
-      if (current.position?.x === position.x && current.position.y === position.y) return state;
+      if (current.position?.x === position.x && current.position?.y === position.y) return state;
       return {
         byThreadKey: {
           ...state.byThreadKey,
-          [threadKey]: { ...current, position },
+          [threadKey]: { ...current, position, lastInteraction: "drag" },
         },
       };
     }),
@@ -208,11 +158,11 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
       const threadKey = scopedThreadKey(ref);
       const current = state.byThreadKey[threadKey];
       if (!current || current.content.id !== contentId) return state;
-      if (current.size?.width === size.width && current.size.height === size.height) return state;
+      if (current.size?.width === size.width && current.size?.height === size.height) return state;
       return {
         byThreadKey: {
           ...state.byThreadKey,
-          [threadKey]: { ...current, size },
+          [threadKey]: { ...current, size, lastInteraction: "resize" },
         },
       };
     }),
@@ -223,16 +173,21 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
       if (!current || current.content.id !== contentId) return state;
       if (
         current.position?.x === rect.position.x &&
-        current.position.y === rect.position.y &&
+        current.position?.y === rect.position.y &&
         current.size?.width === rect.size.width &&
-        current.size.height === rect.size.height
+        current.size?.height === rect.size.height
       ) {
         return state;
       }
       return {
         byThreadKey: {
           ...state.byThreadKey,
-          [threadKey]: { ...current, position: rect.position, size: rect.size },
+          [threadKey]: {
+            ...current,
+            position: rect.position,
+            size: rect.size,
+            lastInteraction: "resize",
+          },
         },
       };
     }),

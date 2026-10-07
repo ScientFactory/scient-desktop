@@ -18,6 +18,18 @@ const PRODUCT_SURFACE_FILES = new Set([
   "packages/client-runtime/src/work-log/presentation.ts",
   "apps/mobile/src/lib/threadActivity.ts",
   "apps/mobile/src/features/threads/thread-work-log.tsx",
+  "apps/mobile/src/Stack.tsx",
+  "apps/mobile/src/components/BrandMark.tsx",
+  "apps/mobile/src/components/CompactBrandTitle.tsx",
+  "apps/mobile/src/lib/authClientMetadata.ts",
+  "apps/mobile/src/lib/mobileTheme.ts",
+  "apps/mobile/src/features/agent-awareness/remoteRegistration.ts",
+  "apps/mobile/src/features/diagnostics/crash-log-model.ts",
+  "apps/mobile/src/features/settings/SettingsAboutRouteScreen.tsx",
+  "apps/mobile/src/features/settings/SettingsEnvironmentDetailRouteScreen.tsx",
+  "apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx",
+  "apps/mobile/src/features/settings/SettingsRouteScreen.tsx",
+  "apps/mobile/src/features/threads/ThreadComposer.tsx",
   "scripts/build-desktop-artifact.ts",
   "scripts/canonical-main-sync.mjs",
   "scripts/local-dev-app.mjs",
@@ -92,7 +104,8 @@ function extension(path: string): string {
 export function isProductSurface(path: string): boolean {
   if (EXCLUDED_ROOTS.some((root) => path.startsWith(root)) && !PRODUCT_SURFACE_FILES.has(path))
     return false;
-  if (path.includes(".test.") || path.includes(".spec.")) return false;
+  if (path.includes(".test.") || path.includes(".spec.") || path.includes(".testkit."))
+    return false;
   if (!SOURCE_EXTENSIONS.has(extension(path))) return false;
   return (
     PRODUCT_SURFACE_FILES.has(path) || PRODUCT_SURFACE_ROOTS.some((root) => path.startsWith(root))
