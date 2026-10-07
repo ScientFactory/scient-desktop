@@ -746,9 +746,9 @@ Preservation is range-based, not a claim that a semantic editor never serializes
 - A block is projected as rich content only when its parsed form keeps every source construct.
   Headings may hold inline math, citations, wiki links, and footnote references. A block the
   parser would drop or partly empty opens as an exact-source raw island instead, as does a quote
-  or list holding nested source-only syntax (reference definitions, HTML comments, display math,
-  footnote definitions), a heading whose inline atom spans lines, and a malformed or nested
-  text-direction wrapper.
+  or list holding nested source-only syntax (reference definitions, HTML blocks or inline HTML
+  such as comments, display math, footnote definitions), a heading whose inline atom or link
+  title spans lines, and a malformed or nested text-direction wrapper.
 - Every rich source change is prepared before publication, including changed-block serialization,
   object fields, source islands and appended structural transactions. Changed content must reopen
   with the intended meaning. Reference provenance and derived list spacing are distinguished from

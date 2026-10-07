@@ -29,9 +29,10 @@ export interface MarkdownSourceBlock {
   readonly textSpans: ReadonlyArray<MarkdownSourceTextSpan>;
   /**
    * Kinds of the blocks nested inside a container (quote, list, list item,
-   * footnote), in document order and without repeats. Empty for a block whose
-   * content is inline only. Lets a projection notice nested syntax, such as a
-   * reference definition or an HTML comment, that it cannot carry.
+   * footnote), in document order and without repeats, plus `html` for inline
+   * HTML within those nested blocks. Empty for a block whose content is
+   * inline only. Lets a projection notice nested syntax, such as a reference
+   * definition or an HTML comment, that it cannot carry.
    */
   readonly nestedBlockKinds: ReadonlyArray<string>;
   /** For a merged `<div dir>` region holding exactly one block, that block's kind. */
@@ -141,13 +142,22 @@ function directionWrapperIndexes(children: ReadonlyArray<MdastValueNode>): Set<n
 
 function nestedBlockKinds(node: MdastValueNode): string[] {
   const kinds = new Set<string>();
+  // Inline HTML inside a nested paragraph, heading or table is source the
+  // rich document shows as literal text; report it like an HTML block.
+  const visitInline = (parent: MdastValueNode): void => {
+    for (const child of parent.children ?? []) {
+      if (child.type === "html") kinds.add(child.type);
+      visitInline(child);
+    }
+  };
   const visit = (container: MdastValueNode): void => {
     if (!CONTAINER_NODE_KINDS.has(container.type)) return;
     const children = container.children ?? [];
     const wrapperIndexes = directionWrapperIndexes(children);
     children.forEach((child, index) => {
       kinds.add(wrapperIndexes.has(index) ? DIRECTION_WRAPPER_KIND : child.type);
-      visit(child);
+      if (CONTAINER_NODE_KINDS.has(child.type)) visit(child);
+      else visitInline(child);
     });
   };
   visit(node);

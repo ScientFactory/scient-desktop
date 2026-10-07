@@ -134,6 +134,38 @@ describe("faithful Markdown projection", () => {
     expect(quote?.child(1).textContent).toBe("Keep body.");
   });
 
+  // Bolding everything is a structural edit: every rich block that holds text
+  // is written again by the serializer, while editable source keeps its bytes.
+  it.each([
+    ["a Setext heading whose link title spans lines", '[Title](https://x.org "a\nb")\n===\n'],
+    [
+      "a quote holding a Setext heading whose link title spans lines",
+      '> [Title](https://x.org "a\n> b")\n> ===\n>\n> Keep body.\n',
+    ],
+    [
+      "a list holding a Setext heading whose link title spans lines",
+      '- [Title](https://x.org "a\n  b")\n  ===\n\n  Keep body.\n',
+    ],
+    ["a quote holding an inline HTML comment", "> Keep <!-- note --> here\n"],
+    ["a list holding an inline HTML comment", "- Keep <!-- note --> here\n- Beta\n"],
+  ])("reopens %s exactly as edited after bolding everything", (_case, block) => {
+    const source = `${block}\nBody text.\n`;
+    const session = new ScientProseMirrorSession({ source, revision: "r1", mode: "write" });
+    const strong = session.state.schema.marks.strong;
+    if (!strong) throw new Error("Missing strong mark.");
+
+    session.applyTransaction(
+      session.state.tr.addMark(0, session.state.doc.content.size, strong.create()),
+      "user",
+    );
+
+    const draft = session.session.draftSource;
+    expect(draft).toContain(block);
+    expect(draft).toContain("**Body text.**");
+    const reopened = new ScientProseMirrorSession({ source: draft, revision: "r2" });
+    expect(reopened.state.doc.eq(session.state.doc)).toBe(true);
+  });
+
   it("writes back a code block holding more fence-like lines than a call takes arguments", () => {
     const lines = "```\n".repeat(150_000);
     const source = `\`\`\`\`\n${lines}\`\`\`\`\n`;
