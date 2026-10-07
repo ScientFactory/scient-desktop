@@ -131,6 +131,36 @@ an atomic snapshot of an external provider and the filesystem. Re-forking copied
 local frozen prefix rather than borrowing mutable ancestor projections. Rollback preserves that
 inherited prefix.
 
+A running local fork has no fork-time file ref or OID. Its first provider turn captures the
+destination's own execution baseline after any intervening file edits. File rewind requires that
+exact baseline; a missing ref never substitutes `HEAD`, and shared-workspace restore remains
+subject to the V2 ownership guard. Completed forks still retain the selected historical snapshot.
+
+Pre-admission file publication uses `scient_fork_checkpoint_ownership`, a separate internal
+resource journal in the V2 database. Each attempt reserves a unique ref and persists its expected
+OID before Git can publish it. Scope release and startup recovery consult the accepted V2 receipt
+and destination metadata. An unaccepted attempt can compare-delete only its own unchanged ref;
+a changed ref or uncertain/live owner is preserved for later reconciliation. Journal recovery
+does not delete branches or worktrees. Accepted retries continue using their frozen ref and OID.
+Source/destination command locks retain their stable order. Global title serialization covers
+authoritative sibling reads and atomic admission, so another source's local fork can proceed
+during a slow file capture.
+
+Running native-text capture has a 90-second pre-admission deadline, matching the file-capture
+bound. Expiration releases the fork token without retiring the original run. SQL facts already
+committed by its consumer remain valid. Accepted provisioning continues under durable receipts;
+this deadline does not reject or cancel an accepted destination.
+
+Ordinary execution baselines, completed-turn checkpoints, and running-worktree forks share the
+same bounded capture substrate. Changed paths are consumed incrementally with backpressure:
+128 MiB of listing bytes, 250,000 records (including rename sources), and 1 MiB per record.
+The 512 MiB per-file, 1 GiB changed-byte, and 90-second whole-capture limits remain. Diagnostic
+buffer truncation is independent of enumeration completeness. Publication transfers only objects
+new to the private staging repository, preserves Git's loose/packed transfer policy and object
+format, and checks connectivity before publishing the ref. Private indexes and staging files are
+scoped resources. These limits do not make a workspace containing tens of gigabytes eligible;
+workspace ignore rules and maintenance remain separate user decisions.
+
 ### Client operation identity and eligibility
 
 User-message forks prepare images before creating the command or destination draft. Unsupported

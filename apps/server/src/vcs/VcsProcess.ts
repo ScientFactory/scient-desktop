@@ -29,6 +29,7 @@ export interface VcsProcessInput {
   readonly stdin?: string;
   readonly stdinBytes?: Uint8Array;
   readonly onStdoutChunk?: (chunk: Uint8Array) => void;
+  readonly onStdoutChunkEffect?: ProcessRunner.ProcessRunInput["onStdoutChunkEffect"];
   readonly env?: NodeJS.ProcessEnv;
   readonly allowNonZeroExit?: boolean;
   readonly timeoutMs?: number;
@@ -136,6 +137,9 @@ export const make = Effect.gen(function* () {
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.stdinBytes !== undefined ? { stdinBytes: input.stdinBytes } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
+        ...(input.onStdoutChunkEffect !== undefined
+          ? { onStdoutChunkEffect: input.onStdoutChunkEffect }
+          : {}),
         ...(input.env !== undefined ? { env: input.env } : {}),
         timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
@@ -209,7 +213,8 @@ export const make = Effect.gen(function* () {
     if (
       input.command === "git" &&
       input.operation === CHECKPOINT_CAPTURE_OPERATION &&
-      input.onStdoutChunk === undefined
+      input.onStdoutChunk === undefined &&
+      input.onStdoutChunkEffect === undefined
     ) {
       // Retry the failed command, retaining the private index/tree and recovery's outer deadline.
       return yield* bounded.pipe(

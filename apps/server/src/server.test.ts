@@ -32,6 +32,7 @@ import {
   ThreadSectionId,
   GitCommandError,
   VcsUnsupportedOperationError,
+  VcsCheckpointUnavailableError,
   KeybindingRule,
   MessageId,
   ExternalLauncherCommandNotFoundError,
@@ -11514,9 +11515,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect(
-    "rejects a real V2 running fork when native workspace baseline capture fails before acceptance",
-    () =>
+  it.effect.each(["local", "new-worktree"] as const)(
+    "real V2 running fork with failing workspace capture, mode=%s",
+    (workspaceMode) =>
       Effect.gen(function* () {
         const captures: Array<{ readonly cwd: string; readonly checkpointRef: string }> = [];
         const app = yield* buildAppUnderTest({
@@ -11527,10 +11528,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   Effect.sync(() => captures.push(input)).pipe(
                     Effect.andThen(
                       Effect.fail(
-                        new VcsUnsupportedOperationError({
+                        new VcsCheckpointUnavailableError({
                           operation: "fixture.capture",
-                          kind: "git",
-                          detail: "Injected checkpoint failure",
+                          cwd: input.cwd,
+                          reason: "path-limit",
+                          detail: "Private diagnostic: oversized Git listing",
                         }),
                       ),
                     ),
@@ -11566,19 +11568,47 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         });
         const before = yield* app.v2.eventSink.latestSequence();
         const target = ThreadId.make("native-failed-capture-target");
-        const failure = yield* withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
+        const dispatch = withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
           client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
             type: "thread.fork",
             commandId: CommandId.make("native-failed-capture"),
             originThreadId: transferV2ThreadId,
             newThreadId: target,
             sourceRunningRunId: RunId.make("run-0"),
-            workspaceMode: "new-worktree",
+            workspaceMode,
           }),
-        ).pipe(Effect.flip);
+        );
+        if (workspaceMode === "local") {
+          const provisioning = yield* app.v2.eventSink
+            .stream({ threadId: target, afterSequence: before })
+            .pipe(
+              Stream.filter((stored) => stored.event.type === "thread.created"),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.andThen(app.v2.worker.drain()),
+              Effect.forkScoped,
+            );
+          yield* dispatch;
+          yield* Fiber.join(provisioning);
+          const fork = yield* app.v2.threads.getThreadProjection(target);
+          assert.equal(captures.length, 0);
+          assert.equal(fork.thread.conversationFork?.status, "ready");
+          assert.isNull(fork.thread.conversationFork?.checkpointRef);
+          assert.isNull(fork.thread.conversationFork?.checkpointOid);
+          assert.deepEqual(fork.runs, []);
+          assert.deepEqual(fork.providerSessions, []);
+          assert.equal(
+            (yield* app.v2.threads.getThreadProjection(transferV2ThreadId)).runs[0]?.status,
+            "running",
+          );
+          return;
+        }
+        const failure = yield* dispatch.pipe(Effect.flip);
         assert.equal(failure._tag, "OrchestrationDispatchCommandError");
         if (failure._tag === "OrchestrationDispatchCommandError") {
-          assert.include(failure.message, "Unable to freeze this workspace checkpoint");
+          assert.include(failure.message, "This workspace exceeds the snapshot limits");
+          assert.notInclude(failure.message, "Private diagnostic");
+          assert.isUndefined(failure.cause);
           assert.equal(failure.forkDisposition, "rejected");
         }
         assert.equal(captures.length, 1);

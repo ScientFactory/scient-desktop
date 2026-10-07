@@ -28,6 +28,15 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as Option from "effect/Option";
+import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
+import { CheckpointServiceV2 } from "../CheckpointService.ts";
+import { AcpProviderCapabilitiesV2 } from "../Adapters/AcpAdapterV2.ts";
+import {
+  makeNativeSessionAdapterV2,
+  NativeSessionOperationError,
+} from "../Adapters/NativeSessionAdapterV2.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import * as GitWorkflow from "../../git/GitWorkflowService.ts";
 import * as GitManager from "../../git/GitManager.ts";
 import * as GitVcs from "../../vcs/GitVcsDriver.ts";
@@ -41,6 +50,11 @@ import { EventSinkV2 } from "../EventSink.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import {
+  SqlitePersistenceMemory,
+  makeSqlitePersistenceLive,
+} from "../../persistence/Layers/Sqlite.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "fixture" };
@@ -62,7 +76,10 @@ const gitLayer = GitWorkflow.layer.pipe(
   Layer.provide(vcsLayer),
   Layer.provide(NodeServices.layer),
 );
-const makeRuntime = (workflow = gitLayer) =>
+const makeRuntime = (
+  workflow = gitLayer,
+  options: NonNullable<Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2]> = {},
+) =>
   makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "native-fork-workspace" },
     makeLayer([
@@ -74,7 +91,7 @@ const makeRuntime = (workflow = gitLayer) =>
         openSession: () => Effect.die("A workspace fork must not execute a provider"),
       },
     ]),
-    { runEffectWorker: false, configureMcp: false, forkGitWorkflowLayer: workflow },
+    { runEffectWorker: false, configureMcp: false, forkGitWorkflowLayer: workflow, ...options },
   ).pipe(Layer.provideMerge(vcsLayer), Layer.provideMerge(NodeServices.layer));
 const layer = makeRuntime();
 const git = Effect.fn("Workspace.git")(function* (cwd: string, args: string[]) {
@@ -87,9 +104,9 @@ const git = Effect.fn("Workspace.git")(function* (cwd: string, args: string[]) {
   assert.equal(result.exitCode, 0);
   return result.stdout.trim();
 });
-const seed = Effect.fn("Workspace.seed")(function* (running = false) {
+const seed = Effect.fn("Workspace.seed")(function* (running = false, suppliedCwd?: string) {
   const fs = yield* FileSystem.FileSystem;
-  const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "native-fork-git-" });
+  const cwd = suppliedCwd ?? (yield* fs.makeTempDirectoryScoped({ prefix: "native-fork-git-" }));
   yield* git(cwd, ["init", "-b", "main"]);
   yield* git(cwd, ["config", "user.name", "Synthetic Scient"]);
   yield* git(cwd, ["config", "user.email", "fixture@example.invalid"]);
@@ -584,4 +601,416 @@ it.live(
       }).pipe(Effect.provide(makeRuntime(unfinished)), Effect.timeout("20 seconds")),
     );
   },
+);
+
+// RunExecutionService must capture the fork's first-send baseline independently
+// of the optional fork-time ref. Provider execution here uses the native adapter
+// and real EventSink, checkpoint service and Git store, without a live account.
+it.live(
+  "running local fork first send captures intervening edits and rewind never falls back to HEAD",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstCwd = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+          prefix: "native-fork-first-send-",
+        });
+        const registry = Layer.effectContext(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const adapter = makeNativeSessionAdapterV2({
+              instanceId,
+              driver: ProviderDriverKind.make("codex"),
+              capabilities: AcpProviderCapabilitiesV2,
+              defaultCwd: process.cwd(),
+              idAllocator: yield* IdAllocator.IdAllocatorV2,
+              mcpSessionInjection: false,
+              continuations: { offer: () => Effect.void },
+              open: (_input, onUpdate) =>
+                Effect.succeed({
+                  nativeId: "first-send-native",
+                  nativeThreadKnown: true,
+                  ensureFresh: () => Effect.void,
+                  resume: () => Effect.void,
+                  interrupt: Effect.void,
+                  respond: () => Effect.void,
+                  send: (input) =>
+                    Effect.gen(function* () {
+                      yield* fs.writeFileString(
+                        NodePath.join(firstCwd, "evidence.txt"),
+                        "Provider turn edit",
+                      );
+                      yield* onUpdate({ type: "text", id: "first-send-answer", delta: "Done" });
+                      yield* onUpdate({ type: "terminal", status: "completed" });
+                    }).pipe(
+                      Effect.mapError(
+                        (cause) => new NativeSessionOperationError({ detail: cause.message }),
+                      ),
+                    ),
+                }),
+            });
+            return yield* Layer.build(makeLayer([adapter]));
+          }),
+        ).pipe(Layer.provide(IdAllocator.layer), Layer.provide(NodeServices.layer));
+        const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
+          { name: "running-local-first-baseline", runtimePolicyOverride: { cwd: firstCwd } },
+          registry,
+          { runEffectWorker: true, configureMcp: false, forkGitWorkflowLayer: gitLayer },
+        ).pipe(Layer.provideMerge(vcsLayer), Layer.provideMerge(NodeServices.layer));
+        yield* Effect.gen(function* () {
+          const { cwd } = yield* seed(true, firstCwd);
+          const fs = yield* FileSystem.FileSystem;
+          const store = yield* ProjectionStoreV2;
+          const worker = yield* OrchestrationEffectWorkerV2;
+          const { command, waiting, frozen } = yield* pending("first-baseline", "local", true);
+          assert.isNull(frozen.thread.conversationFork?.checkpointRef);
+          yield* worker.drain();
+          assert.equal((yield* Fiber.join(waiting))._tag, "Success");
+          yield* fs.writeFileString(
+            NodePath.join(cwd, "evidence.txt"),
+            "Between fork and first send",
+          );
+          const orchestrator = yield* OrchestratorV2;
+          const cursor = yield* orchestrator.getThreadEventSequence(command.newThreadId);
+          const pull = yield* Stream.toPull(
+            orchestrator.streamStoredEventsFrom({
+              threadId: command.newThreadId,
+              afterSequence: cursor,
+            }),
+          );
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("first-baseline-send"),
+            threadId: command.newThreadId,
+            messageId: MessageId.make("first-baseline-send"),
+            text: "Continue",
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* worker.drain();
+          const completed = yield* Stream.concat(
+            Stream.succeed(yield* store.getThreadProjection(command.newThreadId)),
+            Stream.fromPull(Effect.succeed(pull)).pipe(
+              Stream.mapEffect(() => store.getThreadProjection(command.newThreadId)),
+            ),
+          ).pipe(
+            Stream.filter(
+              (p) =>
+                p.runs[0]?.status === "failed" ||
+                (p.runs[0]?.status === "completed" && p.checkpoints.some((c) => c.runId === null)),
+            ),
+            Stream.runHead,
+            Effect.timeout("10 seconds"),
+          );
+          assert.ok(Option.isSome(completed));
+          assert.equal(completed.value.runs[0]?.status, "completed");
+          const baseline = completed.value.checkpoints.find((c) => c.runId === null)!;
+          assert.equal(baseline.status, "ready");
+          const scope = completed.value.checkpointScopes.find(
+            (scope) => scope.id === baseline.scopeId,
+          )!;
+          assert.equal(
+            yield* git(cwd, ["show", `${baseline.ref}:evidence.txt`]),
+            "Between fork and first send",
+          );
+          assert.equal(yield* fsRead(cwd, "evidence.txt"), "Provider turn edit");
+          // The user-facing command still refuses a file restore into a shared folder.
+          const rejected = yield* orchestrator
+            .dispatch({
+              type: "checkpoint.rollback",
+              commandId: CommandId.make("first-baseline-shared-refusal"),
+              threadId: command.newThreadId,
+              checkpointId: baseline.id,
+              scopeId: baseline.scopeId,
+              restoreFiles: true,
+            })
+            .pipe(Effect.result);
+          assert.equal(rejected._tag, "Failure");
+          assert.equal(yield* fsRead(cwd, "evidence.txt"), "Provider turn edit");
+          // Qualify the actual file-store semantics separately from the ownership policy.
+          const checkpoints = yield* CheckpointServiceV2;
+          yield* checkpoints.restore({ scope, checkpoint: baseline });
+          assert.equal(yield* fsRead(cwd, "evidence.txt"), "Between fork and first send");
+          yield* git(cwd, ["update-ref", "-d", baseline.ref]);
+          yield* fs.writeFileString(
+            NodePath.join(cwd, "evidence.txt"),
+            "Preserve after missing ref",
+          );
+          const absent = yield* checkpoints.materializeBaselineCheckpoint({
+            scope,
+            ordinalWithinScope: 0,
+          });
+          assert.equal(absent.status, "missing");
+          assert.equal(
+            (yield* checkpoints.restore({ scope, checkpoint: absent }).pipe(Effect.result))._tag,
+            "Failure",
+          );
+          assert.equal(
+            (yield* checkpoints.restore({ scope, checkpoint: baseline }).pipe(Effect.result))._tag,
+            "Failure",
+          );
+          assert.equal(yield* fsRead(cwd, "evidence.txt"), "Preserve after missing ref");
+        }).pipe(Effect.provide(runtime));
+      }).pipe(Effect.provide(NodeServices.layer), Effect.timeout("30 seconds")),
+    ),
+);
+
+it.live("late SQL admission failure releases only the just-published snapshot", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const databaseLayer = SqlitePersistenceMemory;
+      yield* Effect.gen(function* () {
+        const { cwd } = yield* seed(true);
+        const sql = yield* SqlClient.SqlClient;
+        const destination = ThreadId.make("late-rejected-fork");
+        yield* sql.unsafe(`CREATE TRIGGER reject_fork BEFORE INSERT ON orchestration_v2_projection_threads
+        WHEN NEW.thread_id = 'late-rejected-fork' BEGIN SELECT RAISE(ABORT, 'injected admission failure'); END`);
+        const result = yield* Effect.result(
+          (yield* ConversationForkService).dispatch({
+            type: "thread.fork",
+            commandId: CommandId.make("late-rejected-fork"),
+            originThreadId: sourceId,
+            newThreadId: destination,
+            workspaceMode: "new-worktree",
+            sourceRunningRunId: RunId.make("workspace-run-3"),
+          }),
+        );
+        assert.equal(result._tag, "Failure");
+        assert.equal(
+          yield* git(cwd, [
+            "for-each-ref",
+            "--format=%(refname)",
+            checkpointRefForThreadTurn(destination, 0),
+          ]),
+          "",
+        );
+        assert.equal((yield* sql`SELECT * FROM scient_fork_checkpoint_ownership`).length, 0);
+        assert.equal(
+          (yield* sql`SELECT * FROM orchestration_v2_events WHERE thread_id = ${destination}`)
+            .length,
+          0,
+        );
+        assert.equal(
+          (yield* sql`SELECT * FROM orchestration_command_receipts WHERE command_id = 'late-rejected-fork'`)
+            .length,
+          0,
+        );
+        assert.equal(yield* fsRead(cwd, "evidence.txt"), "version 3");
+      }).pipe(
+        Effect.provide(
+          makeRuntime(gitLayer, { databaseLayer }).pipe(Layer.provideMerge(databaseLayer)),
+        ),
+      );
+    }).pipe(Effect.timeout("25 seconds")),
+  ),
+);
+
+it.live("a paused running-worktree snapshot does not block an unrelated local fork", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const runtime = makeRuntime(gitLayer, {
+        decorateForkCheckpointBaseline: (baseline) => ({
+          ...baseline,
+          capture: (input) =>
+            Effect.andThen(
+              Deferred.succeed(entered, undefined),
+              Effect.andThen(Deferred.await(release), baseline.capture(input)),
+            ),
+        }),
+      });
+      yield* Effect.gen(function* () {
+        yield* seed(true);
+        const { command, waiting } = yield* pending("independent-source", "local");
+        yield* (yield* OrchestrationEffectWorkerV2).drain();
+        assert.equal((yield* Fiber.join(waiting))._tag, "Success");
+        const source = yield* (yield* ProjectionStoreV2).getThreadProjection(command.newThreadId);
+        const assistant = source.messages.find((item) => item.role === "assistant")!;
+        const slowCreated = yield* Stream.toPull(
+          (yield* EventSinkV2).stream({
+            threadId: ThreadId.make("paused-workspace"),
+            eventType: "thread.created",
+            afterSequence: 0,
+          }),
+        );
+        const slow = yield* (yield* ConversationForkService)
+          .dispatch({
+            type: "thread.fork",
+            commandId: CommandId.make("paused-workspace"),
+            originThreadId: sourceId,
+            newThreadId: ThreadId.make("paused-workspace"),
+            workspaceMode: "new-worktree",
+            sourceRunningRunId: RunId.make("workspace-run-3"),
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(entered).pipe(Effect.timeout("5 seconds"));
+        const target = ThreadId.make("unrelated-local");
+        const pull = yield* Stream.toPull(
+          (yield* EventSinkV2).stream({
+            threadId: target,
+            eventType: "thread.created",
+            afterSequence: 0,
+          }),
+        );
+        const fast = yield* (yield* ConversationForkService)
+          .dispatch({
+            type: "thread.fork",
+            commandId: CommandId.make("unrelated-local"),
+            originThreadId: source.thread.id,
+            newThreadId: target,
+            workspaceMode: "local",
+            sourceAssistantMessageId: assistant.id,
+          })
+          .pipe(Effect.forkChild);
+        yield* pull.pipe(Effect.timeout("5 seconds"));
+        assert.equal(
+          (yield* (yield* ProjectionStoreV2).getThread(target)).conversationFork?.status,
+          "pending",
+        );
+        yield* Deferred.succeed(release, undefined);
+        yield* slowCreated.pipe(Effect.timeout("5 seconds"));
+        yield* (yield* OrchestrationEffectWorkerV2).drain();
+        yield* Fiber.join(fast);
+        yield* Fiber.join(slow);
+        const store = yield* ProjectionStoreV2;
+        assert.notEqual(
+          (yield* store.getThread(target)).title,
+          (yield* store.getThread(ThreadId.make("paused-workspace"))).title,
+        );
+        // Opposite lock directions must settle without changing either existing thread.
+        const before = yield* store.getThread(sourceId);
+        const reverse = yield* Effect.all(
+          [
+            (yield* ConversationForkService)
+              .dispatch({
+                type: "thread.fork",
+                commandId: CommandId.make("direction-a"),
+                originThreadId: sourceId,
+                newThreadId: source.thread.id,
+                workspaceMode: "local",
+                sourceAssistantMessageId: MessageId.make("workspace-a1"),
+              })
+              .pipe(Effect.result),
+            (yield* ConversationForkService)
+              .dispatch({
+                type: "thread.fork",
+                commandId: CommandId.make("direction-b"),
+                originThreadId: source.thread.id,
+                newThreadId: sourceId,
+                workspaceMode: "local",
+                sourceAssistantMessageId: assistant.id,
+              })
+              .pipe(Effect.result),
+          ],
+          { concurrency: 2 },
+        );
+        assert.deepEqual(
+          reverse.map((result) => result._tag),
+          ["Failure", "Failure"],
+        );
+        assert.deepEqual(yield* store.getThread(sourceId), before);
+      }).pipe(Effect.provide(runtime), Effect.ensuring(Deferred.succeed(release, undefined)));
+    }).pipe(Effect.timeout("25 seconds")),
+  ),
+);
+
+it.live(
+  "file-backed recovery keeps accepted snapshots and compare-deletes rejected attempts across restart",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const profile = yield* fs.makeTempDirectoryScoped({ prefix: "fork-ownership-restart-" });
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "fork-ownership-git-" });
+        const databaseLayer = makeSqlitePersistenceLive(
+          NodePath.join(profile, "statev2.sqlite"),
+        ).pipe(Layer.provide(NodeServices.layer));
+        const runtime = makeRuntime(gitLayer, { databaseLayer }).pipe(
+          Layer.provideMerge(databaseLayer),
+        );
+        const orphan = "refs/t3/checkpoints/orphan/turn/0-attempt";
+        const changed = "refs/t3/checkpoints/changed/turn/0-attempt";
+        const uncertain = "refs/t3/checkpoints/accepted-uncertain/turn/0-attempt";
+        let acceptedRef = "";
+        let acceptedOid = "";
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const { commits } = yield* seed(false, cwd);
+            const { command, waiting, frozen } = yield* pending("accepted-restart", "local");
+            yield* (yield* OrchestrationEffectWorkerV2).drain();
+            assert.equal((yield* Fiber.join(waiting))._tag, "Success");
+            acceptedRef = frozen.thread.conversationFork!.checkpointRef!;
+            acceptedOid = frozen.thread.conversationFork!.checkpointOid!;
+            const sql = yield* SqlClient.SqlClient;
+            for (const row of [
+              {
+                attempt_id: "accepted",
+                command_id: command.commandId,
+                target_thread_id: command.newThreadId,
+                checkpoint_ref: acceptedRef,
+                checkpoint_oid: acceptedOid,
+              },
+              {
+                attempt_id: "accepted-uncertain",
+                command_id: command.commandId,
+                target_thread_id: command.newThreadId,
+                checkpoint_ref: uncertain,
+                checkpoint_oid: acceptedOid,
+              },
+              {
+                attempt_id: "orphan",
+                command_id: "orphan-command",
+                target_thread_id: "orphan",
+                checkpoint_ref: orphan,
+                checkpoint_oid: commits[0]!,
+              },
+              {
+                attempt_id: "changed",
+                command_id: "changed-command",
+                target_thread_id: "changed",
+                checkpoint_ref: changed,
+                checkpoint_oid: commits[0]!,
+              },
+              {
+                attempt_id: "unpublished",
+                command_id: "unpublished-command",
+                target_thread_id: "unpublished",
+                checkpoint_ref: "refs/t3/checkpoints/unpublished/turn/0-attempt",
+                checkpoint_oid: null,
+              },
+            ])
+              yield* sql`INSERT INTO scient_fork_checkpoint_ownership ${sql.insert({ ...row, cwd, owner_pid: process.pid })}`;
+            yield* git(cwd, ["update-ref", orphan, commits[0]!]);
+            yield* git(cwd, ["update-ref", uncertain, acceptedOid]);
+            yield* git(cwd, ["update-ref", changed, commits[2]!]);
+          }).pipe(Effect.provide(runtime)),
+        );
+        // Closing the first scoped runtime closes SQLite. A fresh service construction
+        // must reconcile the persisted journal before accepting another command.
+        for (let repeat = 0; repeat < 2; repeat++)
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              yield* ConversationForkService;
+              const sql = yield* SqlClient.SqlClient;
+              const rows = yield* sql<{
+                attempt_id: string;
+              }>`SELECT attempt_id FROM scient_fork_checkpoint_ownership ORDER BY attempt_id`;
+              assert.deepEqual(
+                rows.map((row) => row.attempt_id),
+                ["accepted-uncertain", "changed"],
+              );
+              assert.equal(yield* git(cwd, ["rev-parse", acceptedRef]), acceptedOid);
+              assert.equal(yield* git(cwd, ["rev-parse", uncertain]), acceptedOid);
+              assert.equal(yield* git(cwd, ["for-each-ref", "--format=%(refname)", orphan]), "");
+              assert.equal(
+                yield* git(cwd, ["rev-parse", changed]),
+                yield* git(cwd, ["rev-parse", "HEAD"]),
+              );
+            }).pipe(Effect.provide(runtime)),
+          );
+      }).pipe(Effect.provide(NodeServices.layer), Effect.timeout("30 seconds")),
+    ),
 );

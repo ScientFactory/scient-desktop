@@ -302,8 +302,10 @@ const conversationForkProvided = conversationForkServiceLayer.pipe(
       legacyV1ThreadImporterProvided,
       ScientForkCheckpointBaselineLive.pipe(Layer.provide(VcsProcess.layer)),
       ScientForkAttachmentCopierLive,
+      Layer.effect(SqlClient.SqlClient, SqlClient.SqlClient),
     ),
   ),
+  Layer.provide(VcsProcess.layer),
 );
 const effectExecutorProvided = effectExecutorLayer.pipe(
   Layer.provide(
