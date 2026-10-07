@@ -23,12 +23,12 @@ const shown: WorkingRowExitState = {
 };
 
 describe("working header exit", () => {
-  it("keeps a header that left in its place, marked exiting", () => {
+  it("keeps a header that left in its place", () => {
     const next = nextWorkingRowExit(shown, { threadKey: "t", current: null, animate: true });
     expect(next.exiting?.afterId).toBe("prompt");
     const rows = withExitingWorkingRow(doneRows, next.exiting);
     expect(rows.map((row) => row.id)).toEqual(["prompt", "working-indicator-row", "answer"]);
-    expect(rows[1]).toMatchObject({ kind: "working", exiting: true });
+    expect(rows[1]).toBe(working);
   });
 
   it("leaves at once with reduced motion, on a thread change, or when a new header shows", () => {
@@ -36,6 +36,10 @@ describe("working header exit", () => {
       nextWorkingRowExit(shown, { threadKey: "t", current: null, animate: false }).exiting,
     ).toBeNull();
     const exiting = nextWorkingRowExit(shown, { threadKey: "t", current: null, animate: true });
+    // Reduced motion turning on mid-exit ends it too.
+    expect(
+      nextWorkingRowExit(exiting, { threadKey: "t", current: null, animate: false }).exiting,
+    ).toBeNull();
     expect(
       nextWorkingRowExit(exiting, { threadKey: "other", current: null, animate: true }).exiting,
     ).toBeNull();

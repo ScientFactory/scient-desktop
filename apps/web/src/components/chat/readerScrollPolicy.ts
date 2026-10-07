@@ -273,29 +273,28 @@ export function resolveReadingRow(
 }
 
 /**
- * Whether a newly arrived prompt gets the same reveal as a direct send: only
- * a queued prompt the server delivered (not one sent from another window),
- * as the new latest prompt of the same thread, while the reader was at the
- * end before it arrived.
+ * Whether the latest prompt gets the same reveal as a send: a queued prompt
+ * the server just delivered (V2 marks it so), as the latest prompt of the
+ * same thread, while the reader was at the end before it arrived. It is
+ * decided again when the latest prompt becomes a delivered one, so a
+ * delivery seen before this window learned its own send was queued counts.
  */
 export function shouldRevealArrivedPrompt(input: {
-  previous: { threadKey: string | null; id: string | null } | null;
+  previous: { threadKey: string | null; id: string | null; delivered: boolean } | null;
   threadKey: string | null;
   latestPromptId: string | null;
-  /** Whether this window saw the prompt waiting in the thread's queue. */
-  wasQueued: boolean;
-  sentHere: boolean;
+  /** The latest prompt is a queued prompt the server delivered. */
+  delivered: boolean;
   readerAtEnd: boolean;
 }) {
   const { previous } = input;
   return (
     input.latestPromptId !== null &&
-    input.wasQueued &&
+    input.delivered &&
     previous !== null &&
     previous.threadKey === input.threadKey &&
     previous.id !== null &&
-    previous.id !== input.latestPromptId &&
-    !input.sentHere &&
+    (previous.id !== input.latestPromptId || !previous.delivered) &&
     input.readerAtEnd
   );
 }

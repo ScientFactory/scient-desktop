@@ -56,3 +56,44 @@ export function liveFollowOffset(
   if (latestTop + FIRST_LINES_PX <= promptAtTop + readingHeight) return promptAtTop;
   return Math.min(end, Math.max(promptAtTop, latestTop - CHAT_TIMELINE_ANCHOR_OFFSET));
 }
+
+/**
+ * Brings a reader who left while following back to where the follow would be
+ * now: to the end first, then to `liveFollowOffset` until it holds for two
+ * frames (at most 60). Frames go through `nextFrame`, so the caller's restore
+ * cleanup cancels them; `done` runs once it holds, or when it gives up.
+ */
+export function returnToLiveFollow(input: {
+  list: LegendListRef;
+  rows: readonly MessagesTimelineRow[];
+  composerInset: number;
+  cancelled: () => boolean;
+  nextFrame: (step: () => void) => void;
+  done: () => void;
+}) {
+  const { list, rows, composerInset, cancelled, nextFrame, done } = input;
+  void Promise.resolve(list.scrollToEnd({ animated: false })).then(() => {
+    if (cancelled()) return;
+    let stableFrames = 0;
+    let remainingFrames = 60;
+    const settle = () => {
+      if (cancelled()) return;
+      const offset = liveFollowOffset(list, rows, composerInset);
+      const element = list.getScrollableNode();
+      if (offset === null || !element || --remainingFrames <= 0) {
+        done();
+        return;
+      }
+      if (Math.abs(element.scrollTop - offset) > 1) {
+        stableFrames = 0;
+        void list.scrollToOffset({ offset, animated: false }).then(() => {
+          if (!cancelled()) nextFrame(settle);
+        });
+        return;
+      }
+      if (++stableFrames < 2) nextFrame(settle);
+      else done();
+    };
+    nextFrame(settle);
+  });
+}

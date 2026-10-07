@@ -11,6 +11,7 @@ const sendingAlone = {
   isWorking: true,
   onlySendBusy: true,
   dispatchBaselineUserMessageId: previousPrompt,
+  promptRunStarting: false,
 };
 
 describe("resolveTimelineWorking", () => {
@@ -54,7 +55,7 @@ describe("resolveTimelineWorking", () => {
     ).toBe(false);
   });
 
-  it("stays on from the shown prompt until the V2 run is running", () => {
+  it("stays on from the shown prompt until the V2 run is running, through the dispatch reset", () => {
     const completedRun: ThreadRunSummary = {
       runId: RunId.make("run-1"),
       status: "completed",
@@ -88,24 +89,30 @@ describe("resolveTimelineWorking", () => {
       runtime: ThreadRuntimeSummary;
       latestUserMessageId: MessageId;
       optimisticPromptShown: boolean;
+      /** ChatView resets the dispatch once the send is admitted (it has a submission id). */
+      dispatchReset: boolean;
     }) => {
       const phase = derivePhase(state.runtime);
-      const sendBusy = !hasServerAcknowledgedLocalDispatch({
-        localDispatch: dispatch,
-        phase,
-        latestRun: state.latestRun,
-        latestUserMessageId: state.latestUserMessageId,
-        runtime: state.runtime,
-        hasPendingApproval: false,
-        hasPendingUserInput: false,
-        threadError: null,
-      });
+      const sendBusy =
+        !state.dispatchReset &&
+        !hasServerAcknowledgedLocalDispatch({
+          localDispatch: dispatch,
+          phase,
+          latestRun: state.latestRun,
+          latestUserMessageId: state.latestUserMessageId,
+          runtime: state.runtime,
+          hasPendingApproval: false,
+          hasPendingUserInput: false,
+          threadError: null,
+        });
+      const sentRun = state.latestRun.runId === completedRun.runId ? null : state.latestRun;
       return resolveTimelineWorking({
         isWorking: phase === "running" || sendBusy,
         onlySendBusy: sendBusy && phase !== "running",
         dispatchBaselineUserMessageId: dispatch.latestUserMessageId,
         latestUserMessageId: state.latestUserMessageId,
         optimisticPromptShown: state.optimisticPromptShown,
+        promptRunStarting: sentRun?.status === "preparing" || sentRun?.status === "starting",
       });
     };
     const newRun = (status: ThreadRunSummary["status"]): ThreadRunSummary => ({
@@ -130,10 +137,12 @@ describe("resolveTimelineWorking", () => {
         runtime: idleRuntime,
         latestUserMessageId: previousPrompt,
         optimisticPromptShown: true,
+        dispatchReset: false,
       }),
     ).toBe(true);
-    // Admitted and starting: the dispatch stays busy, so the row does not drop out.
-    for (const status of ["queued", "preparing", "starting", "running"] as const) {
+    // Admitted (the dispatch is reset) while its run prepares and starts: the
+    // row does not drop out, and stays on once the run runs.
+    for (const status of ["preparing", "starting", "running"] as const) {
       const run = newRun(status);
       expect(
         timelineWorking({
@@ -141,8 +150,20 @@ describe("resolveTimelineWorking", () => {
           runtime: runtimeFor(run),
           latestUserMessageId: sentPrompt,
           optimisticPromptShown: false,
+          dispatchReset: true,
         }),
       ).toBe(true);
     }
+    // A run held in the queue is not this thread working.
+    const held = newRun("queued");
+    expect(
+      timelineWorking({
+        latestRun: held,
+        runtime: { ...idleRuntime, status: "queued" },
+        latestUserMessageId: sentPrompt,
+        optimisticPromptShown: false,
+        dispatchReset: true,
+      }),
+    ).toBe(false);
   });
 });

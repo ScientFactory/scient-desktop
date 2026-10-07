@@ -118,8 +118,7 @@ export function useSaveReadingPosition({
   timelinePositioningPending,
   runningRunId,
   turnUnfinished,
-  isWorking,
-  revealActive,
+  followingPromptId,
   rows,
   listIdentityKey,
   anchorMessageId,
@@ -137,10 +136,11 @@ export function useSaveReadingPosition({
   timelinePositioningPending: boolean;
   runningRunId: RunId | null | undefined;
   turnUnfinished: boolean;
-  /** The thread is working: a reader at the end, or still followed, is following it. */
-  isWorking: boolean;
-  /** The bounded follow of a sent prompt's response is still running. */
-  revealActive: boolean;
+  /**
+   * The prompt whose response the send follow is following right now (not
+   * cancelled, not finished), read as the position is saved.
+   */
+  followingPromptId: () => string | null;
   rows: readonly MessagesTimelineRow[];
   listIdentityKey: string;
   anchorMessageId: MessageId | null;
@@ -172,6 +172,7 @@ export function useSaveReadingPosition({
     const row = state.elementAtIndex(index);
     if (!identity || !row || !element) return;
     const atEnd = readerAtReadingEnd(state, contentInsetEndAdjustment, turnUnfinished) ?? false;
+    const following = followingPromptId();
     rememberTimelinePosition(listIdentityKey, {
       ...position,
       ...identity,
@@ -179,8 +180,8 @@ export function useSaveReadingPosition({
         ? element.getBoundingClientRect().top - row.getBoundingClientRect().top
         : 0,
       atEnd,
-      // Following a working thread: at the end, or the follow still running.
-      ...(isWorking && (atEnd || revealActive) ? { following: true } : {}),
+      // Only a follow that is still going, never a reader merely at the end.
+      ...(following ? { followingPromptId: following } : {}),
       ...(anchorMessageId ? { anchorMessageId } : {}),
       disclosures: {
         runs: paintedExpandedRunIds,
@@ -198,8 +199,7 @@ export function useSaveReadingPosition({
     timelinePositioningPending,
     runningRunId,
     turnUnfinished,
-    isWorking,
-    revealActive,
+    followingPromptId,
     rows,
     listIdentityKey,
     anchorMessageId,

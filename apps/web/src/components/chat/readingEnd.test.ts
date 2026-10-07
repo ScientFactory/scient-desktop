@@ -80,13 +80,12 @@ describe("boundedAnswerScrollDelta", () => {
 });
 
 describe("shouldRevealArrivedPrompt", () => {
-  const previous = { threadKey: "thread", id: "p1" };
+  const previous = { threadKey: "thread", id: "p1", delivered: false };
   const arrived = {
     previous,
     threadKey: "thread",
-    latestPromptId: "qitem_2",
-    wasQueued: true,
-    sentHere: false,
+    latestPromptId: "p2",
+    delivered: true,
     readerAtEnd: true,
   };
 
@@ -94,15 +93,25 @@ describe("shouldRevealArrivedPrompt", () => {
     expect(shouldRevealArrivedPrompt(arrived)).toBe(true);
   });
 
-  it("leaves prompts sent here, readers away from the end, and thread changes alone", () => {
-    expect(shouldRevealArrivedPrompt({ ...arrived, sentHere: true })).toBe(false);
+  it("reveals a prompt already listed here once V2 reports it delivered from the queue", () => {
+    // Sent from this window and shown before its receipt said it was queued.
+    expect(shouldRevealArrivedPrompt({ ...arrived, previous: { ...previous, id: "p2" } })).toBe(
+      true,
+    );
+    // Already a delivered prompt: nothing new arrived.
+    expect(
+      shouldRevealArrivedPrompt({
+        ...arrived,
+        previous: { ...previous, id: "p2", delivered: true },
+      }),
+    ).toBe(false);
+  });
+
+  it("leaves direct sends, readers away from the end, and thread changes alone", () => {
+    // A direct send (from this or another window) is not a queued delivery.
+    expect(shouldRevealArrivedPrompt({ ...arrived, delivered: false })).toBe(false);
     expect(shouldRevealArrivedPrompt({ ...arrived, readerAtEnd: false })).toBe(false);
     expect(shouldRevealArrivedPrompt({ ...arrived, threadKey: "other" })).toBe(false);
-    expect(shouldRevealArrivedPrompt({ ...arrived, latestPromptId: "p1" })).toBe(false);
-    // A direct send from another window was never seen waiting in the queue.
-    expect(shouldRevealArrivedPrompt({ ...arrived, latestPromptId: "p2", wasQueued: false })).toBe(
-      false,
-    );
     // Opening a thread, or its first prompt, is not an arrival.
     expect(shouldRevealArrivedPrompt({ ...arrived, previous: null })).toBe(false);
     expect(shouldRevealArrivedPrompt({ ...arrived, previous: { ...previous, id: null } })).toBe(

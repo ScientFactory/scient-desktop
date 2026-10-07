@@ -1,8 +1,7 @@
 export const DRAFT_HERO_TRANSITION_ANIMATION_ID = "t3-draft-hero-transition";
-// Fast start, soft landing; the first prompt's entrance uses the same curve.
+// SCIENT-FORK:START — fast start, soft landing; the first prompt's entrance uses the same curve.
 export const DRAFT_HERO_TRANSITION_EASING = "cubic-bezier(0.2, 0, 0, 1)";
-/** The composer's move between the draft hero and the thread: quick, continuous. */
-export const DRAFT_HERO_TRANSITION_DURATION_MS = 260;
+// SCIENT-FORK:END
 export const MOBILE_COMPOSER_VIEW_TRANSITION_NAME = "t3-mobile-composer";
 export const MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME = "t3-mobile-draft-headline";
 const MOBILE_COMPOSER_TRANSITION_DURATION_PROPERTY = "--mobile-composer-transition-duration";

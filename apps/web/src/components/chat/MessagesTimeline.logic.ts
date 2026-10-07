@@ -547,8 +547,6 @@ type MessagesTimelineRowContent =
       kind: "working";
       id: string;
       createdAt: string | null;
-      /** The turn finished: the header fades out and closes its space before it leaves. */
-      exiting?: boolean;
     }
   | {
       kind: "thinking";
@@ -639,6 +637,11 @@ type MessagesTimelineRowContent =
       id: string;
       createdAt: string;
       proposedPlan: ProposedPlan;
+    }
+  | {
+      kind: "working";
+      id: string;
+      createdAt: string | null;
     }
   | {
       kind: "thinking";
@@ -2155,7 +2158,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
   switch (a.kind) {
     case "working":
-      return a.createdAt === (b as typeof a).createdAt && a.exiting === (b as typeof a).exiting;
     case "thinking":
       return a.createdAt === (b as typeof a).createdAt;
     case "worktree-setup":

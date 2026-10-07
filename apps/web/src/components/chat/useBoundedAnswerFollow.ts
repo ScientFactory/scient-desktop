@@ -1,9 +1,10 @@
-import { useLayoutEffect, useRef, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useRef, type RefObject } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 import { CHAT_TIMELINE_ANCHOR_OFFSET } from "./timelineScrollAnchoring";
 import { isTimelineScrollTarget } from "./timelineScrollTarget";
-import { streamingRevealedHeight } from "./useStreamingBlockEntrance";
+import { motionClock } from "./motionClock";
+import { streamingRevealActive, subscribeStreamingReveal } from "./useStreamingBlockEntrance";
 
 /** How much of a newly arrived message the reveal shows: its first lines. */
 const FIRST_LINES_PX = 48;
@@ -59,16 +60,20 @@ export function boundedAnswerScrollDelta(input: {
  * reveal moves past progress notes and trace runs to the message the agent is
  * writing now. For a later prompt (`followResponse`), the whole response is
  * followed at a calmer pace, keeping the view at the conversation's end, until
- * the prompt reaches the top margin. It stops once the response has settled
- * and its last message is revealed, or when the reader scrolls back up.
+ * the prompt reaches the top margin. It stops once the prompt's own run has
+ * ended and its last message is revealed, or when the reader scrolls back up.
  * Scrolling down, clicks, text selection and scrolling inside nested output
- * never cancel it.
+ * never cancel it. It moves only while there is something to reveal, and
+ * otherwise rests until the content, the view or a reveal changes.
+ *
+ * Returns a reader for the prompt it is following right now (not cancelled,
+ * not finished), for saving with the reading position.
  */
 export function useBoundedAnswerFollow({
   listRef,
   rows,
   promptMessageId,
-  responseRunning,
+  responseSettled,
   suspended,
   composerInset,
   followResponse = false,
@@ -77,8 +82,8 @@ export function useBoundedAnswerFollow({
   listRef: RefObject<LegendListRef | null>;
   rows: readonly MessagesTimelineRow[];
   promptMessageId: string | null;
-  /** Whether the thread is still working, so later messages may still arrive. */
-  responseRunning: boolean;
+  /** The prompt's own run has ended, so no more of its response will arrive. */
+  responseSettled: boolean;
   suspended: boolean;
   composerInset: number;
   /** A later prompt: follow its whole response to the end, not only its answer. */
@@ -89,7 +94,6 @@ export function useBoundedAnswerFollow({
   const intent = useRef<{
     prompt: string | null;
     stopped: boolean;
-    sawRunning: boolean;
     /** A followed response's motion, kept across updates so its speed never jumps. */
     motion: { velocity: number; position: number | null };
     /** Until when the reader's own scrolling is in motion (the follow yields). */
@@ -97,7 +101,6 @@ export function useBoundedAnswerFollow({
   }>({
     prompt: null,
     stopped: false,
-    sawRunning: false,
     motion: { velocity: 0, position: null },
     readerInputUntil: 0,
   });
@@ -106,11 +109,9 @@ export function useBoundedAnswerFollow({
       intent.current = {
         prompt: promptMessageId,
         stopped: false,
-        sawRunning: false,
         motion: { velocity: 0, position: null },
         readerInputUntil: 0,
       };
-    if (responseRunning) intent.current.sawRunning = true;
     if (!promptMessageId || suspended || intent.current.stopped) return;
     const promptIndex = rows.findIndex(
       (row) => row.kind === "message" && row.message.id === promptMessageId,
@@ -128,16 +129,12 @@ export function useBoundedAnswerFollow({
     const viewport = list?.getScrollableNode();
     const promptRow = rows[promptIndex]!;
     const answerRow = rows[answerIndex] ?? promptRow;
-    // A followed response has settled once the thread worked on it and is done,
-    // answer or not; right after the send it may not have started yet.
-    const answerSettled = followResponse
-      ? (intent.current.sawRunning || answerIndex >= 0) &&
-        !responseRunning &&
-        (answerRow.kind !== "message" || !answerRow.message.streaming)
-      : answerIndex >= 0 &&
-        !responseRunning &&
-        answerRow.kind === "message" &&
-        !answerRow.message.streaming;
+    // The response has settled once the prompt's own run ended (answer or not)
+    // and its last message is no longer streaming or being revealed.
+    const answerId = answerRow.kind === "message" ? answerRow.message.id : null;
+    const answerRevealing = () => answerId !== null && streamingRevealActive(answerId);
+    const answerSettled =
+      responseSettled && (answerRow.kind !== "message" || !answerRow.message.streaming);
     if (!viewport || !list) return;
     const finish = () => {
       intent.current.stopped = true;
@@ -146,13 +143,13 @@ export function useBoundedAnswerFollow({
     let observedAnswer: Element | null = null;
     let mountAttempts = 12;
     let frame: number | null = null;
-    let previousFrameTime = performance.now();
+    let previousFrameTime = motionClock.now();
     // The highest position the reveal (or the reader scrolling down) reached.
     let revealTop = viewport.scrollTop;
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const tick = () => {
       frame = null;
-      const now = performance.now();
+      const now = motionClock.now();
       const elapsed = Math.min(32, Math.max(1, now - previousFrameTime));
       previousFrameTime = now;
       if (intent.current.stopped) return;
@@ -186,9 +183,6 @@ export function useBoundedAnswerFollow({
       };
       // How far the conversation's real end is below its resting place above
       // the composer, never past the scroll range (nor into reserved space).
-      // How much of the answer has been revealed so far, while it is being revealed.
-      const revealedHeight = () =>
-        answerRow.kind === "message" ? streamingRevealedHeight(answerRow.message.id) : null;
       const endBelow = () => {
         const toMax = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
         const last = rows.at(-1);
@@ -224,13 +218,12 @@ export function useBoundedAnswerFollow({
         viewportBottom: viewportRect.top + viewport.clientHeight - composerInset,
         ...(followResponse ? { endBelow: endBelow() } : {}),
       });
-      const revealing = followResponse && revealedHeight() !== null;
+      // The answer is being revealed line by line: each step of it wakes the follow.
+      const revealing = followResponse && answerRevealing();
       if (delta <= 0.5) {
-        // Nothing to reveal now. Later messages may still arrive while the
-        // thread works; the reveal ends once the settled response is shown.
-        // While its lines are still being revealed, keep up with them.
-        if (revealing) frame = requestAnimationFrame(tick);
-        else if (answerSettled) finish();
+        // Nothing to reveal now. More may arrive while the prompt's run works,
+        // or while its last lines appear; the reveal ends once they are shown.
+        if (answerSettled && !answerRevealing()) finish();
         return;
       }
       const before = viewport.scrollTop;
@@ -245,10 +238,11 @@ export function useBoundedAnswerFollow({
       }
       if (followResponse && !reducedMotion && now < intent.current.readerInputUntil) {
         // The reader is scrolling: never write over their scroll in motion. The
-        // follow picks up from wherever they end, from rest.
+        // follow picks up from wherever they end, from rest. A held scrollbar
+        // waits for its release instead of checking every frame.
         intent.current.motion = { velocity: 0, position: null };
         revealTop = Math.max(revealTop, viewport.scrollTop);
-        frame = requestAnimationFrame(tick);
+        if (Number.isFinite(intent.current.readerInputUntil)) frame = requestAnimationFrame(tick);
         return;
       }
       if (followResponse && !reducedMotion) {
@@ -271,9 +265,11 @@ export function useBoundedAnswerFollow({
         revealTop = Math.max(revealTop, viewport.scrollTop);
         // Keep going while there is distance left and the view can still move
         // (the browser may round the position to whole pixels, so allow that).
+        // Caught up with lines still appearing, it keeps its speed for their
+        // next step rather than starting again from rest.
         const stalled = motion.position - viewport.scrollTop > 2;
-        if ((delta - step > 0.5 || revealing) && !stalled) frame = requestAnimationFrame(tick);
-        else {
+        if (delta - step > 0.5 && !stalled) frame = requestAnimationFrame(tick);
+        else if (stalled || !revealing) {
           motion.velocity = 0;
           motion.position = viewport.scrollTop;
         }
@@ -300,7 +296,7 @@ export function useBoundedAnswerFollow({
     const yieldToReader = (forMs = READER_INPUT_GRACE_MS) => {
       intent.current.readerInputUntil = Math.max(
         intent.current.readerInputUntil,
-        performance.now() + forMs,
+        motionClock.now() + forMs,
       );
       schedule();
     };
@@ -349,10 +345,14 @@ export function useBoundedAnswerFollow({
     // A followed response can grow anywhere (a tool's output expanding in place).
     const content = viewport.firstElementChild;
     if (followResponse && content) observer.observe(content);
+    // An answer appearing line by line moves the end without resizing the
+    // list, and the follow can end only once its reveal has.
+    const unsubscribeReveal = subscribeStreamingReveal(schedule);
     schedule();
     return () => {
       if (frame !== null) cancelAnimationFrame(frame);
       observer.disconnect();
+      unsubscribeReveal();
       viewport.removeEventListener("wheel", onWheel);
       viewport.removeEventListener("scroll", onScroll);
       viewport.removeEventListener("touchmove", onTouchMove);
@@ -364,10 +364,11 @@ export function useBoundedAnswerFollow({
     listRef,
     rows,
     promptMessageId,
-    responseRunning,
+    responseSettled,
     suspended,
     composerInset,
     followResponse,
     onFinished,
   ]);
+  return useCallback(() => (intent.current.stopped ? null : intent.current.prompt), []);
 }
