@@ -47,13 +47,13 @@ Owner: the restore effect in `chat/MessagesTimeline.tsx`; storage in
   saved spot is the row at the top of the view plus your offset into it. If
   that row is gone, it falls back to the same turn, then to nearby messages,
   after loading up to 2 pages of older history.
-- **Coming back to a thread you left while following it** (it was working and
-  you were at the end, or the follow was still running): you land where the
-  follow would be now, not where you left.
+- **Coming back to a thread you left while the follow was still going** (saved
+  as the followed prompt's id; resting at the end alone is not following): you
+  land where the follow would be now, not where you left.
   - **Everything since your message fits:** the bottom.
   - **It doesn't fit:** your message at the top margin.
   - **Your message is at the top but the latest answer's first lines would still be below the screen:** that answer's start goes at the top margin instead.
-  - **Never** past the bottom. If the agent is still working, the follow carries on from there.
+  - **Never** past the bottom. While that prompt's run still works, the follow carries on from there.
 - **Any scroll, key, touch or click** during a restore cancels it and leaves
   you where you are.
 - **When positions are saved:**
@@ -67,15 +67,16 @@ Owner: the restore effect in `chat/MessagesTimeline.tsx`; storage in
 
 ## Sending a message
 
-Owner: `ChatView.tsx` (`captureSendReadingPosition`, `frameSubmittedMessage`),
-`chat/useBoundedAnswerFollow.ts`.
+Owner: `chat/responseFollow.ts` (the one owner of the follow, called from
+`ChatView.tsx`'s `frameSubmittedMessage`), `chat/useBoundedAnswerFollow.ts`.
 
 - **Sent while away from the end:** nothing moves. The Scroll to end control
   stays available.
 - **The thread's first message** (from the centered draft):
   1. The composer glides from the center to the bottom: 260ms, fast start,
-     soft landing (`chat/draftHeroTransition.ts`). This now always animates,
-     no longer only when the opt-in panel animation setting is on.
+     soft landing (`chat/timelineEntranceMotion.ts`, curve in
+     `chat/draftHeroTransition.ts`). This always animates, not only when the
+     opt-in panel animation setting is on.
   2. Room is reserved below the message, and it is placed at the top margin
      (LegendList anchored end space, from upstream T3).
   3. The message fades in, revealed from the top down: 300ms, starting 100ms
@@ -91,9 +92,11 @@ Owner: `ChatView.tsx` (`captureSendReadingPosition`, `frameSubmittedMessage`),
      margin.
   3. After that it only shows the first lines (48px) of a newer message
      pushed below the screen, and never follows an answer down to its end.
-- **A queued message counts as "delivered"** when this window saw it waiting
-  in the thread's V2 queue: a queued run's message keeps its id when it is
-  delivered.
+- **A queued message counts as "delivered"** when V2 marks the delivered
+  prompt so (`queued_turn`, or `promoted_queued_to_steer`). It keeps its
+  message id, so this window's own queued send counts too, even when the
+  delivery arrives before the send's receipt. A message sent directly from
+  another window is never followed.
 
 ## How the follow moves
 
@@ -114,14 +117,17 @@ Owner: `ChatView.tsx` (`captureSendReadingPosition`, `frameSubmittedMessage`),
   - **Clicks and text selection** never cancel it.
 - **Far behind** (more than a screen to go): it skips all but the last screen
   at once, then glides.
-- **When it ends:** once the response has settled and been revealed, or when
-  you scroll up. While the send's run has not started yet, it waits rather
-  than ending.
+- **When it ends:** once the prompt's own V2 run has ended and its last
+  message has been revealed; or when you scroll up, click Scroll to end, or
+  switch threads; or when the send fails. While the run is queued,
+  preparing or starting, it waits rather than ending.
+- **At rest:** with nothing to reveal it does nothing until the content, the
+  view or an answer's reveal changes.
 
 ## While the agent works
 
-Owners: `chat/MessagesTimeline.tsx` (`WorkingTimelineRow`,
-`ThinkingTimelineRow`), `chat/timelineWorkingState.ts`, `chat/workingRowExit.ts`.
+Owners: `chat/timelineWorkingState.ts`, `chat/workingRowExit.ts`,
+`chat/ThinkingRowFade.tsx` (seams in `chat/MessagesTimeline.tsx`).
 
 - **"Working for…" header:** a label and a separator line under it.
   - The label carries the same live shine as the thinking traces (a 4.5rem
@@ -131,10 +137,11 @@ Owners: `chat/MessagesTimeline.tsx` (`WorkingTimelineRow`,
   under the previous answer and then jumps below your message. The exception
   is a worktree being set up, which shows at once.
 - **It doesn't flicker out** between the server accepting your message and
-  the agent starting its run: the send stays busy until V2 reports the run
-  running.
+  the agent starting its run: it stays while that message's own run is
+  preparing or starting.
 - **When the turn finishes,** the header fades out while its space closes
   (320ms, even ease), so the answer slides up instead of snapping up about 43px.
+  If the next run starts first, or motion is reduced, the exit stops at once.
 - **"Thinking" row** (below the content):
   - It fades out over 300ms, keeping its 28px place, while the answer
     right above it is appearing.
@@ -164,8 +171,10 @@ flow:
    and whatever follows it stays right below the newest line.
 6. **No replays:**
    - A row that scrolls away and back, or a thread you switch away from and
-     back to, continues where it was.
+     back to, continues where it was (progress is kept for 100 messages).
    - A finished answer that was never revealed in this window simply shows.
+7. **Caught up with an answer still streaming,** the reveal rests until the
+   answer's text, width or images change.
 
 Only masking and clipping are used, so nothing slides. List bullets are not
 clipped.
@@ -268,27 +277,27 @@ clipped.
 
 ## Numbers in one place
 
-| What                                      | Value                                               | Where                                                        |
-| ----------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------ |
-| Top margin for placed messages            | 24px                                                | `chat/timelineScrollAnchoring.ts`                            |
-| End allowance                             | 3 lines, at least 40px (40px for your own message)  | `chat/readerScrollPolicy.ts`                                 |
-| Gap kept above the composer at the bottom | 16px (12px narrow)                                  | `chat/useBoundedAnswerFollow.ts`, footer                     |
-| Scroll to end show delay                  | 150ms (hide instant)                                | `chat/useTimelineEndControl.ts`                              |
-| Follow top speed / acceleration           | 1px/ms / 0.004px/ms²                                | `chat/useBoundedAnswerFollow.ts`                             |
-| Follow yields after your scroll           | 250ms                                               | `chat/useBoundedAnswerFollow.ts`                             |
-| First lines shown of a message below      | 48px                                                | `chat/useBoundedAnswerFollow.ts`, `chat/liveFollowOffset.ts` |
-| Answer reveal wait / pace / catch-up      | 1s / 4 lines a second / above 8 waiting lines       | `chat/useStreamingBlockEntrance.ts`                          |
-| Gap speed-up / newest-line strength       | 5× / 65%                                            | `chat/useStreamingBlockEntrance.ts`, `index.css`             |
-| Composer glide (first send)               | 260ms, cubic-bezier(0.2, 0, 0, 1)                   | `chat/draftHeroTransition.ts`                                |
-| First message entrance                    | 300ms after 100ms                                   | `chat/MessagesTimeline.tsx`                                  |
-| Working header exit                       | 320ms, cubic-bezier(0.45, 0, 0.55, 1)               | `chat/workingRowExit.ts`                                     |
-| Thinking fade                             | 300ms                                               | `chat/MessagesTimeline.tsx`                                  |
-| Shines                                    | 4.5rem band, 2.2s                                   | `index.css`                                                  |
-| Interaction settle / disclosure settle    | 400ms / 2 frames                                    | `chat/MessagesTimeline.tsx`                                  |
-| Position storage                          | 120ms debounce, 100 threads                         | `chat/timelineScrollAnchoring.ts`                            |
-| Restore history                           | up to 2 pages; citations up to 20                   | `chat/MessagesTimeline.tsx`, citations                       |
-| Page keys                                 | screen − 36px in 150ms; hold ramps to 2× over 400ms | `chat/pageScrollController.ts`                               |
-| Citation offset / pulse                   | min(120px, ⅓ view) / 3s                             | `chat/AssistantCitationSource.tsx`                           |
+| What                                      | Value                                               | Where                                                           |
+| ----------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------- |
+| Top margin for placed messages            | 24px                                                | `chat/timelineScrollAnchoring.ts`                               |
+| End allowance                             | 3 lines, at least 40px (40px for your own message)  | `chat/readerScrollPolicy.ts`                                    |
+| Gap kept above the composer at the bottom | 16px (12px narrow)                                  | `chat/useBoundedAnswerFollow.ts`, footer                        |
+| Scroll to end show delay                  | 150ms (hide instant)                                | `chat/useTimelineEndControl.ts`                                 |
+| Follow top speed / acceleration           | 1px/ms / 0.004px/ms²                                | `chat/useBoundedAnswerFollow.ts`                                |
+| Follow yields after your scroll           | 250ms                                               | `chat/useBoundedAnswerFollow.ts`                                |
+| First lines shown of a message below      | 48px                                                | `chat/useBoundedAnswerFollow.ts`, `chat/liveFollowOffset.ts`    |
+| Answer reveal wait / pace / catch-up      | 1s / 4 lines a second / above 8 waiting lines       | `chat/useStreamingBlockEntrance.ts`                             |
+| Gap speed-up / newest-line strength       | 5× / 65%                                            | `chat/useStreamingBlockEntrance.ts`, `index.css`                |
+| Composer glide (first send)               | 260ms, cubic-bezier(0.2, 0, 0, 1)                   | `chat/timelineEntranceMotion.ts`, `chat/draftHeroTransition.ts` |
+| First message entrance                    | 300ms after 100ms                                   | `chat/timelineEntranceMotion.ts`                                |
+| Working header exit                       | 320ms, cubic-bezier(0.45, 0, 0.55, 1)               | `chat/workingRowExit.ts`                                        |
+| Thinking fade                             | 300ms                                               | `chat/ThinkingRowFade.tsx`                                      |
+| Shines                                    | 4.5rem band, 2.2s                                   | `index.css`                                                     |
+| Interaction settle / disclosure settle    | 400ms / 2 frames                                    | `chat/MessagesTimeline.tsx`                                     |
+| Position storage                          | 120ms debounce, 100 threads                         | `chat/timelineScrollAnchoring.ts`                               |
+| Restore history                           | up to 2 pages; citations up to 20                   | `chat/MessagesTimeline.tsx`, citations                          |
+| Page keys                                 | screen − 36px in 150ms; hold ramps to 2× over 400ms | `chat/pageScrollController.ts`                                  |
+| Citation offset / pulse                   | min(120px, ⅓ view) / 3s                             | `chat/AssistantCitationSource.tsx`                              |
 
 ## Where Scient differs from upstream T3
 
@@ -328,13 +337,9 @@ Known rough edges, found while mapping this:
   the very bottom of the viewport, including the strip behind the composer.
   It also comes back when you return to the thread.
 - **A restore in progress restarts** whenever new rows stream in.
-- **A message queued from another window** that is delivered within about a
-  second may not get the follow, because this window never saw it waiting.
 - **Long code blocks and tables** in a streaming answer are revealed by height
   like text. Each takes as long as its number of lines.
 - **`data-scroll-anchor-ignore`** markers in several rows have no effect any more.
-- **Tests:**
-  - The send logic in `ChatView.tsx` has no browser test harness. Its rules
-    are covered through the timeline and helper tests.
-  - A Codex review of the whole of PR #462 is still to run, at the end of
-    this work.
+- **Tests:** ChatView itself has no browser harness. The follow is tested
+  through its controller, wired as ChatView wires it
+  (`chat/responseFollow.browser.test.tsx`), on a controlled motion clock.
