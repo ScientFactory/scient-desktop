@@ -5,11 +5,22 @@ import {
   managedRuntimeTargetKey,
   resolveReviewedCursorArtifact,
 } from "@scientfactory/provider-runtime";
-import type { CursorSettings } from "@t3tools/contracts";
+import { type CursorSettings, ProviderDriverKind } from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
+import { cursorRuntimeEnvironment } from "../../provider/Layers/CursorCli.ts";
+import {
+  makeCachedProviderMaintenanceResolution,
+  makeManualOnlyProviderMaintenanceCapabilities,
+  makeProviderMaintenanceCapabilities,
+  type ProviderMaintenanceCapabilitiesResolver,
+  resolveProviderMaintenanceCapabilitiesEffect,
+} from "../../provider/providerMaintenance.ts";
+import { assistedCursorConnectionMethods } from "./CursorConnectionActions.ts";
 import {
   makeManagedProviderRuntimeResolution,
   nativeProviderRuntimeBackendLabel,
@@ -17,6 +28,7 @@ import {
 } from "./ManagedProviderRuntimeActions.ts";
 
 const DEFAULT_CURSOR_BINARY = "cursor-agent";
+const DRIVER_KIND = ProviderDriverKind.make("cursor");
 
 function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
   try {
@@ -44,9 +56,9 @@ export const makeCursorManagedRuntimeResolution = Effect.fn("CursorManagedRuntim
     const targetLabel = target ? managedRuntimeTargetKey(target) : `${platform}-${arch}`;
 
     return yield* makeManagedProviderRuntimeResolution({
-      configuredBinaryPath: input.settings.binaryPath,
+      configuredBinaryPath: input.settings.binaryPath?.trim() || DEFAULT_CURSOR_BINARY,
       defaultBinary: DEFAULT_CURSOR_BINARY,
-      providerName: "Cursor",
+      providerName: "Cursor CLI",
       providerSlug: "cursor",
       runtime: new ManagedCursorRuntime(input.baseDir),
       bundledArtifact: artifact,
@@ -57,12 +69,93 @@ export const makeCursorManagedRuntimeResolution = Effect.fn("CursorManagedRuntim
       configuredRuntimeProbeAllowed: input.enabled,
       managedInstallationAllowed: input.managedInstallationAllowed,
       systemToManagedSwitchAllowed: true,
-      sourceLabel: "Official Cursor Agent release",
+      sourceLabel: "Official Cursor CLI release",
       managedInstallationLimitation:
-        "Scient can use a healthy Cursor runtime here, but managed installation is only enabled in the local desktop app.",
+        "Scient can use a healthy Cursor CLI here, but managed installation is only enabled in the local desktop app.",
       diagnosticsHomePath:
         input.environment.HOME?.trim() || input.environment.USERPROFILE?.trim() || null,
       diagnosticsBackend: nativeProviderRuntimeBackendLabel(platform),
     });
   },
 );
+
+// cursor-agent updates itself, so the resolved executable is its own updater.
+// No executable means nothing to update, not "whatever is on PATH".
+const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
+  resolve: (context) =>
+    Effect.succeed(
+      context
+        ? makeProviderMaintenanceCapabilities({
+            provider: DRIVER_KIND,
+            packageName: null,
+            updateExecutable: context.resolvedCommandPath,
+            updateArgs: ["update"],
+            updateLockKey: "cursor-agent",
+            platform: context.platform,
+          })
+        : makeManualOnlyProviderMaintenanceCapabilities({
+            provider: DRIVER_KIND,
+            packageName: null,
+          }),
+    ),
+};
+
+/**
+ * Scient's per-instance Cursor runtime: the managed or configured
+ * `cursor-agent` executable and its environment, the assisted sign-in
+ * methods, and the maintenance controls of an explicit CLI target.
+ */
+export const makeCursorInstanceRuntime = Effect.fnUntraced(function* (input: {
+  readonly config: CursorSettings;
+  readonly enabled: boolean;
+  readonly baseDir: string;
+  readonly managedInstallationAllowed: boolean;
+  readonly processEnv: NodeJS.ProcessEnv;
+  readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly path: Path.Path;
+}) {
+  const { config, enabled, processEnv, spawner, fileSystem, path } = input;
+  const managedRuntime = yield* makeCursorManagedRuntimeResolution({
+    settings: config,
+    enabled,
+    baseDir: input.baseDir,
+    environment: processEnv,
+    spawner,
+    managedInstallationAllowed: input.managedInstallationAllowed,
+  });
+  const effectiveConfig = {
+    ...config,
+    enabled,
+    binaryPath: managedRuntime.effectiveBinaryPath,
+  } satisfies CursorSettings;
+  const effectiveProcessEnv = cursorRuntimeEnvironment(processEnv, managedRuntime.usesManagedPath);
+  const connectionMethods = assistedCursorConnectionMethods(processEnv);
+  // The bundled SDK has no CLI update target. Explicit CLI targets retain
+  // their maintenance controls; managed installs are replaced by Scient.
+  const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
+    (!config.binaryPath?.trim() || managedRuntime.usesManagedPath
+      ? Effect.succeed(
+          makeManualOnlyProviderMaintenanceCapabilities({
+            provider: DRIVER_KIND,
+            packageName: null,
+          }),
+        )
+      : resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+          binaryPath: effectiveConfig.binaryPath,
+          env: effectiveProcessEnv,
+        })
+    ).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    ),
+  );
+  return {
+    managedRuntime,
+    effectiveConfig,
+    effectiveProcessEnv,
+    connectionMethods,
+    resolveMaintenance,
+  };
+});

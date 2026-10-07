@@ -67,6 +67,7 @@ export function buildScientAwareness(
  * adding a provider cannot silently omit Scient awareness.
  */
 export const SCIENT_AWARENESS_DELIVERY = {
+  acpRegistry: "unsupported-no-private-system-seam",
   antigravity: "unsupported-no-private-system-seam",
   claudeAgent: "system-preset-append",
   codex: "developer-instructions",

@@ -8,6 +8,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as CodexRpc from "./_generated/meta.gen.ts";
+import * as CodexSchema from "./_generated/schema.gen.ts";
 import * as CodexError from "./errors.ts";
 import * as CodexProtocol from "./protocol.ts";
 import {
@@ -19,6 +20,7 @@ import {
 import { makeChildStdio, makeTerminationError } from "./_internal/stdio.ts";
 
 export interface CodexAppServerClientOptions {
+  readonly onTermination?: CodexProtocol.CodexAppServerPatchedProtocolOptions["onTermination"];
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
   readonly logger?: (
@@ -84,7 +86,16 @@ type ServerNotificationHandler = (
   payload: unknown,
 ) => Effect.Effect<void, CodexError.CodexAppServerError>;
 
-const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make")(function* (
+const V2TurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.pipe(
+  Schema.fieldsAssign({
+    collaborationMode: Schema.optionalKey(CodexSchema.ClientRequest__CollaborationMode),
+    additionalContext: Schema.optionalKey(
+      Schema.Record(Schema.String, CodexSchema.V2TurnStartParams__AdditionalContextEntry),
+    ),
+  }),
+);
+
+export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make")(function* (
   stdio: Stdio.Stdio,
   options: CodexAppServerClientOptions = {},
   terminationError?: Effect.Effect<CodexError.CodexAppServerError>,
@@ -117,7 +128,10 @@ const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make")(func
     method: M,
   ):
     | Schema.Codec<CodexRpc.ClientRequestParamsByMethod[M], CodexRpc.ClientRequestParamsByMethod[M]>
-    | undefined => CodexRpc.CLIENT_REQUEST_PARAMS[method] as never;
+    | undefined =>
+    method === "turn/start"
+      ? (V2TurnStartParamsWithCollaborationMode as never)
+      : (CodexRpc.CLIENT_REQUEST_PARAMS[method] as never);
 
   const getClientRequestResponseSchema = <M extends CodexRpc.ClientRequestMethod>(
     method: M,
@@ -188,6 +202,7 @@ const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make")(func
     ...(options.logIncoming !== undefined ? { logIncoming: options.logIncoming } : {}),
     ...(options.logOutgoing !== undefined ? { logOutgoing: options.logOutgoing } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
+    ...(options.onTermination ? { onTermination: options.onTermination } : {}),
     onNotification: dispatchNotification,
     onRequest: dispatchRequest,
   });

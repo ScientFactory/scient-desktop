@@ -29,6 +29,7 @@ function renderPendingActions(isRunning: boolean) {
         isComplete: true,
       },
       isRunning,
+      canInterrupt: isRunning,
       showPlanFollowUpPrompt: false,
       promptHasText: false,
       isSendBusy: false,
@@ -50,6 +51,7 @@ function renderRunningActions(showSendWhileRunning: boolean, hasSendableContent:
       compact: true,
       pendingAction: null,
       isRunning: true,
+      canInterrupt: true,
       showPlanFollowUpPrompt: false,
       promptHasText: hasSendableContent,
       isSendBusy: false,
@@ -59,6 +61,7 @@ function renderRunningActions(showSendWhileRunning: boolean, hasSendableContent:
       isPreparingWorktree: false,
       hasSendableContent,
       showSendWhileRunning,
+      followUpBehavior: "queue",
       onPreviousPendingQuestion: () => {},
       onInterrupt: () => {},
       onImplementPlanInNewThread: () => {},
@@ -72,6 +75,7 @@ function renderSendButton(sendDisabledReason: string | null = null) {
       compact: true,
       pendingAction: null,
       isRunning: false,
+      canInterrupt: false,
       showPlanFollowUpPrompt: false,
       promptHasText: true,
       isSendBusy: false,
@@ -154,5 +158,21 @@ describe("ComposerPrimaryActions", () => {
 
     expect(markup).toContain('aria-label="Stop generation"');
     expect(markup).not.toContain('aria-label="Queue message"');
+  });
+});
+
+describe("MAIN primary action appearance", () => {
+  it("preserves the shared arrow and MAIN circle size, shadow and pressed depth", () => {
+    const html = renderSendButton();
+    expect(html).toContain("size-8 sm:size-7");
+    expect(html).toContain("inset-shadow-2xs");
+    expect(html).toContain("inset-shadow-white/16");
+    expect(html).toContain("active:inset-shadow-black/8");
+    expect(html).toContain("M7 11.5V2.5");
+    expect(html).not.toContain("lucide-list-plus");
+    expect(html).not.toContain("h-9 w-9");
+    const stop = renderRunningActions(false, false);
+    expect(stop).toContain("size-8 sm:size-7");
+    expect(stop).toContain('aria-label="Stop generation"');
   });
 });

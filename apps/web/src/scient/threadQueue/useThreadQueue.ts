@@ -7,7 +7,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { usePreparedConnection } from "../../state/session";
 import {
   controlThreadQueue,
@@ -27,7 +27,9 @@ export function useThreadQueue(input: {
   const { environmentId, threadId } = input;
   const key = JSON.stringify([environmentId, threadId]);
   const currentKey = useRef(key);
-  currentKey.current = key;
+  useLayoutEffect(() => {
+    currentKey.current = key;
+  }, [key]);
   const [state, setState] = useState<{
     key: string;
     snapshot: ScientThreadQueueSnapshot | null;
@@ -98,11 +100,11 @@ export function useThreadQueue(input: {
     }
   }, [environmentId, threadId, key, accept, fail]);
   useEffect(() => {
-    if (!connected) return;
+    if (!connected || (state.key === key && state.snapshot?.nativeQueue === true)) return;
     void refresh();
     const timer = setInterval(() => void refresh(), 1000);
     return () => clearInterval(timer);
-  }, [connected, refresh]);
+  }, [connected, refresh, key, state.key, state.snapshot?.nativeQueue]);
   const scope = () => {
     if (!environmentId || !threadId) throw new Error("No active thread for the queue.");
     return { environmentId, threadId };
@@ -175,7 +177,10 @@ export function useThreadQueue(input: {
     });
   };
   const snapshot = state.key === key ? state.snapshot : null;
-  const visibleItems = snapshot?.items.filter((item) => item.state !== "editing") ?? [];
+  const visibleItems =
+    snapshot?.nativeQueue === true
+      ? []
+      : (snapshot?.items.filter((item) => item.state !== "editing") ?? []);
   if (optimisticOrder?.key === key) {
     const rank = new Map(optimisticOrder.ids.map((id, index) => [id, index]));
     visibleItems.sort(
@@ -184,7 +189,10 @@ export function useThreadQueue(input: {
   }
   return {
     items: visibleItems,
-    editingItems: snapshot?.items.filter((item) => item.state === "editing") ?? [],
+    editingItems:
+      snapshot?.nativeQueue === true
+        ? []
+        : (snapshot?.items.filter((item) => item.state === "editing") ?? []),
     error:
       state.key === key
         ? (state.error ?? (snapshot?.items.length ? snapshot.paused : null) ?? null)

@@ -140,7 +140,9 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
 function AgentRow({ agent }: { agent: RuntimeSubagent }) {
   const visuals = STATUS_VISUALS[agent.status];
   const statusLabel =
-    agent.kind === "subagent_batch" && agent.status === "idle" ? "Idle" : visuals.label;
+    agent.status === "idle" && (agent.historical || agent.kind === "subagent_batch")
+      ? "Idle"
+      : visuals.label;
   const activity = agentActivityText(agent);
   const modelLabel = formatSubagentModelLabel(agent.model, agent.effort);
   const role =
@@ -149,7 +151,9 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
       : agent.role;
   const metadata = [
     modelLabel,
-    agent.usage ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok` : "— tok",
+    agent.usage?.totalTokens !== undefined
+      ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok`
+      : "— tok",
     agent.usage?.toolUses !== undefined ? `${agent.usage.toolUses} tools` : null,
     agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
   ].filter((value): value is string => value !== null);
@@ -161,6 +165,9 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
       </span>
       <span className="col-start-2 row-start-1 flex min-w-0 items-baseline gap-2">
         <span className="min-w-0 truncate text-sm font-medium">{agent.title}</span>
+        {agent.historical ? (
+          <span className="text-3xs text-muted-foreground">Historical</span>
+        ) : null}
         {role ? (
           <span className="max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-3xs text-muted-foreground">
             {role}
@@ -396,7 +403,11 @@ function ExpandedWorkflowSection({
       member.status === "interrupted",
   ).length;
   const scriptPath = group.workflow.runHandles?.scriptPath;
-  const canShowScript = scriptPath !== undefined && environmentId !== null && threadId !== null;
+  const canShowScript =
+    !group.workflow.historical &&
+    scriptPath !== undefined &&
+    environmentId !== null &&
+    threadId !== null;
   return (
     <section className="rounded-lg border border-border/50 bg-card/30 p-1.5">
       <div className="flex items-center gap-2 px-1.5 pt-0.5 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -466,10 +477,11 @@ function CollapsedWorkflowSection({
   const failed = members.filter((member) => member.status === "failed").length;
   // Coordinator usage may already aggregate members (panel-footer rule):
   // count it only when there are no member rows to sum.
-  const totalTokens = members.reduce(
-    (sum, member) => sum + (member.usage?.totalTokens ?? 0),
-    members.length === 0 ? (group.workflow.usage?.totalTokens ?? 0) : 0,
+  const observedTotals = (members.length === 0 ? [group.workflow] : members).flatMap((member) =>
+    member.usage?.totalTokens === undefined ? [] : [member.usage.totalTokens],
   );
+  const totalTokens =
+    observedTotals.length === 0 ? null : observedTotals.reduce((sum, count) => sum + count, 0);
   const elapsed =
     group.workflow.startedAt && group.workflow.completedAt
       ? elapsedBetween(group.workflow.startedAt, group.workflow.completedAt)
@@ -489,7 +501,9 @@ function CollapsedWorkflowSection({
         <span className="ml-auto flex items-center gap-1.5 font-mono text-2xs text-muted-foreground/80">
           {failed > 0 ? <span className="text-destructive-foreground">{failed} failed</span> : null}
           <span>{members.length} agents</span>
-          <span className="tabular-nums">· {formatSubagentTokenCount(totalTokens)} tok</span>
+          <span className="tabular-nums">
+            · {totalTokens === null ? "—" : formatSubagentTokenCount(totalTokens)} tok
+          </span>
           {elapsed ? <span className="tabular-nums">· {elapsed}</span> : null}
           <ChevronRight aria-hidden className="size-3" />
         </span>
@@ -577,7 +591,9 @@ export function AgentsPanel({
           {model.idleCount > 0 ? <span>{model.idleCount} idle</span> : null}
           {model.settledCount > 0 ? <span>{model.settledCount} settled</span> : null}
         </span>
-        <span className="tabular-nums">Σ {formatSubagentTokenCount(model.totalTokens)} tok</span>
+        <span className="tabular-nums">
+          Σ {model.totalTokens === null ? "—" : formatSubagentTokenCount(model.totalTokens)} tok
+        </span>
       </footer>
     </div>
   );

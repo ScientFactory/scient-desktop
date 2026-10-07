@@ -1,0 +1,15 @@
+.cursor-platform-col-resize {
+  cursor: col-resize;
+}
+
+.cursor-platform-row-resize {
+  cursor: row-resize;
+}
+
+.electron-windows .cursor-platform-col-resize {
+  cursor: ew-resize;
+}
+
+.electron-windows .cursor-platform-row-resize {
+  cursor: ns-resize;
+}

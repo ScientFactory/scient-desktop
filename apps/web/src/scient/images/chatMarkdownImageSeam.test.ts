@@ -3,10 +3,11 @@ import * as NodeFS from "node:fs";
 
 import { describe, expect, it } from "vite-plus/test";
 
-const chatMarkdownSource = NodeFS.readFileSync(
-  new URL("../../components/ChatMarkdown.tsx", import.meta.url),
-  "utf8",
-);
+// ChatMarkdown's image renderer calls the Scient image gates in scientMarkdownImage.
+const chatMarkdownSource = [
+  NodeFS.readFileSync(new URL("../../components/ChatMarkdown.tsx", import.meta.url), "utf8"),
+  NodeFS.readFileSync(new URL("./scientMarkdownImage.tsx", import.meta.url), "utf8"),
+].join("\n");
 const imageCardSource = NodeFS.readFileSync(
   new URL("./ScientInlineWorkspaceImage.tsx", import.meta.url),
   "utf8",

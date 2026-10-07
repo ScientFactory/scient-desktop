@@ -3,7 +3,11 @@ import {
   writeQueueEditJournal as write,
   readQueueEditJournals,
   readQueueEditJournal,
+  initializeExtractedIntent,
+  readExtractedIntent,
+  updateExtractedIntent,
   type QueueEditSession as EditSession,
+  type QueueEditItem,
 } from "./editJournal";
 import * as Schema from "effect/Schema";
 import { usePromptStashStore, type PromptStashEntry } from "../../promptStashStore";
@@ -12,18 +16,18 @@ import {
   ScientThreadQueueOperationError,
   type EnvironmentId,
   type ScopedThreadRef,
-  type ScientThreadQueueItem,
 } from "@t3tools/contracts";
 import { create } from "zustand";
 import {
   composerTargetKey,
   composerDraftHasUserContent,
   createEmptyThreadDraft,
+  flushComposerDraftPersistence,
   useComposerDraftStore,
   type DraftId,
   type ComposerThreadDraftState,
 } from "../../composerDraftStore";
-import { controlThreadQueue } from "./client";
+import { controlThreadQueue, extractNativeQueuedRun } from "./client";
 import { restoreQueuedAttachments } from "./queueImageRestore";
 import {
   decodeQueueItemComposerContext,
@@ -117,13 +121,20 @@ function unregister(session: EditSession) {
     return { sessions };
   });
   releaseEditLease(session.key);
+  if (
+    session.intentId &&
+    !Object.values(useQueueEditSessions.getState().sessions).some(
+      (candidate) => candidate.intentId === session.intentId,
+    )
+  )
+    releaseEditLease(`intent:${session.intentId}`);
 }
 const ending = new Set<string>();
 const starting = new Set<string>();
 const transferring = new Map<string, Promise<EditSession>>();
 async function draftFromItem(
   target: ScopedThreadRef,
-  item: ScientThreadQueueItem,
+  item: QueueEditItem,
   ordinary: ComposerThreadDraftState,
 ) {
   const composer = decodeQueueItemComposerContext(item, target.threadId);
@@ -189,26 +200,43 @@ async function transfer(session: EditSession): Promise<EditSession> {
   const operation = (async () => {
     if (typeof session.originalTarget === "string")
       throw new Error("This recovered draft has no queue item to extract.");
-    await controlThreadQueue(session.originalTarget.environmentId, {
-      threadId: session.originalTarget.threadId,
-      queueItemId: session.queueItemId,
-      editToken: session.editToken,
-      action: "extract",
-      expectedUpdatedAt: session.extractedItem?.updatedAt,
-    });
+    if (session.nativeRun)
+      await extractNativeQueuedRun(session.originalTarget.environmentId, {
+        threadId: session.originalTarget.threadId,
+        runId: session.nativeRun.runId,
+        expectedUpdatedAt: session.nativeRun.expectedUpdatedAt,
+        editToken: session.editToken,
+      });
+    else
+      await controlThreadQueue(session.originalTarget.environmentId, {
+        threadId: session.originalTarget.threadId,
+        queueItemId: session.queueItemId,
+        editToken: session.editToken,
+        action: "extract",
+        expectedUpdatedAt: session.extractedItem?.updatedAt,
+      });
+    const intentId = session.intentId ?? session.editToken;
+    await initializeExtractedIntent(intentId, session.extractedItem?.sourceProposedPlan);
+    if (!(await acquireEditLease(`intent:${intentId}`)))
+      throw new Error("This extracted intent is open in another window.");
     const result = { item: session.extractedItem };
     const restored = { draft: session.edited, separated: session.composerSeparated };
     const ordinary =
       useComposerDraftStore.getState().getComposerDraft(session.originalTarget) ?? session.ordinary;
     let complete: EditSession = {
       ...session,
+      intentId,
       extractedItem: result.item,
       ordinary,
-      edited: revive(restored.draft),
+      edited: {
+        ...revive(restored.draft),
+        extractedIntent: { intentId, journalKey: session.journalKey },
+      },
       editTarget: session.originalTarget,
       transferred: false,
       composerSeparated: restored.separated,
     };
+    register(complete);
     for (;;) {
       await save({ ...complete, transferred: false });
       const beforeStash =
@@ -231,6 +259,7 @@ async function transfer(session: EditSession): Promise<EditSession> {
     flushSync(() => {
       installDraft(session.originalTarget, complete.edited);
       register(complete);
+      flushComposerDraftPersistence();
     });
     ending.delete(session.journalKey);
     return complete;
@@ -242,17 +271,112 @@ async function transfer(session: EditSession): Promise<EditSession> {
     transferring.delete(session.key);
   }
 }
+// The async journal can lag behind the composer snapshot flushed on unload.
+// Keep same-intent edits and use the journal only for missing captured bytes.
+function transferredDraftAfterReload(saved: EditSession): ComposerThreadDraftState {
+  const current = useComposerDraftStore.getState().getComposerDraft(saved.originalTarget);
+  const marker = current?.extractedIntent;
+  if (
+    !current ||
+    !marker ||
+    !("intentId" in marker) ||
+    marker.intentId !== saved.intentId ||
+    marker.journalKey !== saved.journalKey
+  )
+    return revive(saved.edited);
+  const matches = (
+    left: ComposerThreadDraftState["images"][number],
+    right: {
+      id: string;
+      name: string;
+      mimeType: string;
+      sizeBytes: number;
+    },
+  ) =>
+    left.id === right.id &&
+    left.name === right.name &&
+    left.mimeType === right.mimeType &&
+    left.sizeBytes === right.sizeBytes;
+  if (
+    current.pendingImageSelection === null &&
+    saved.edited.images.some(
+      (image) => !current.images.some((candidate) => matches(candidate, image)),
+    )
+  )
+    throw new Error(
+      "This older extracted draft has ambiguous image selection. Its image bytes remain in the recovery journal; restore the draft before sending.",
+    );
+  const selection =
+    current.pendingImageSelection == null
+      ? current.images
+      : [
+          ...current.pendingImageSelection,
+          ...current.images.filter(
+            (image) => !current.pendingImageSelection?.some((selected) => selected.id === image.id),
+          ),
+        ];
+  const images = selection.map((selection) => {
+    const live = current.images.find((image) => matches(image, selection));
+    if (live) return live;
+    const captured = saved.edited.images.find((image) => matches(image, selection));
+    if (!captured)
+      throw new Error(
+        `Image ${selection.name} could not be recovered. The draft and recovery journal have been kept.`,
+      );
+    return { ...captured, previewUrl: URL.createObjectURL(captured.file) };
+  });
+  return {
+    ...current,
+    images,
+    pendingImageSelection: undefined,
+    persistedAttachments: current.persistedAttachments.filter((attachment) =>
+      images.some((image) => matches(image, attachment)),
+    ),
+    files: current.files.map((file) => {
+      if (file.file) return file;
+      const captured = saved.edited.files.find(
+        (candidate) =>
+          candidate.id === file.id &&
+          candidate.name === file.name &&
+          candidate.mimeType === file.mimeType &&
+          candidate.sizeBytes === file.sizeBytes,
+      );
+      return captured?.file ? { ...file, file: captured.file } : file;
+    }),
+  };
+}
 let loading: Promise<void> | undefined;
 export function loadQueueEdits() {
   return (loading ??= (async () => {
     try {
       for (const saved of await readQueueEditJournals()) {
-        if (!(await acquireEditLease(saved.key))) continue;
-        const session = {
-          ...saved,
-          ordinary: revive(saved.ordinary),
-          edited: revive(saved.edited),
-        };
+        const alreadyOwnedIntent = saved.intentId ? leases.has(`intent:${saved.intentId}`) : false;
+        if (saved.intentId) {
+          const intent = await readExtractedIntent(saved.intentId);
+          if (!intent || intent.phase === "consumed") continue;
+          if (!(await acquireEditLease(`intent:${saved.intentId}`))) continue;
+        }
+        if (!(await acquireEditLease(saved.key))) {
+          if (saved.intentId && !alreadyOwnedIntent) releaseEditLease(`intent:${saved.intentId}`);
+          continue;
+        }
+        let session: EditSession;
+        try {
+          session = {
+            ...saved,
+            ordinary: revive(saved.ordinary),
+            edited: saved.transferred ? transferredDraftAfterReload(saved) : revive(saved.edited),
+          };
+        } catch (cause) {
+          // Do not register an incomplete draft: later typing must not overwrite its journal bytes.
+          releaseEditLease(saved.key);
+          if (saved.intentId && !alreadyOwnedIntent) releaseEditLease(`intent:${saved.intentId}`);
+          stashRecovery(saved, "edited");
+          useQueueEditSessions.setState({
+            error: { message: String(cause), targetKey: saved.key },
+          });
+          continue;
+        }
         register(session);
         try {
           if (session.transferred) {
@@ -290,7 +414,11 @@ export function loadQueueEdits() {
     }
   })());
 }
-export async function beginQueueEdit(target: ScopedThreadRef, item: ScientThreadQueueItem) {
+export async function beginQueueEdit(
+  target: ScopedThreadRef,
+  item: QueueEditItem,
+  nativeRun?: EditSession["nativeRun"],
+) {
   await loadQueueEdits();
   const key = composerTargetKey(target);
   const existing = useQueueEditSessions.getState().sessions[key];
@@ -334,6 +462,7 @@ export async function beginQueueEdit(target: ScopedThreadRef, item: ScientThread
       ordinary,
       edited: restored.draft,
       extractedItem: item,
+      ...(nativeRun === undefined ? {} : { nativeRun }),
       composerSeparated: restored.separated,
     };
     await save(session);
@@ -408,13 +537,17 @@ export async function stashRecoveredDraft(session: EditSession) {
   const complete = await transfer(session);
   const snapshot =
     useComposerDraftStore.getState().getComposerDraft(complete.originalTarget) ?? complete.edited;
+  await resolveExtractedDraftIntent(snapshot);
   const copyKey = randomUUID();
   const copy = {
     ...complete,
     journalKey: copyKey,
     editToken: copyKey,
     ordinary: createEmptyThreadDraft(),
-    edited: snapshot,
+    edited:
+      snapshot.extractedIntent && "intentId" in snapshot.extractedIntent
+        ? { ...snapshot, extractedIntent: { ...snapshot.extractedIntent, journalKey: copyKey } }
+        : snapshot,
     stashed: false,
   };
   await save(copy);
@@ -431,8 +564,11 @@ export async function stashRecoveredDraft(session: EditSession) {
 useComposerDraftStore.subscribe((state, previous) => {
   for (const session of Object.values(useQueueEditSessions.getState().sessions)) {
     if (!session.transferred || ending.has(session.journalKey)) continue;
-    const edited = state.getComposerDraft(session.originalTarget) ?? session.edited;
-    if (edited === previous.getComposerDraft(session.originalTarget)) continue;
+    // Transfer and recovery install this exact key. Store methods close over
+    // live state, so compare the immutable snapshots rather than their getters.
+    const key = composerTargetKey(session.originalTarget);
+    const edited = state.draftsByThreadKey[key];
+    if (!edited || edited === previous.draftsByThreadKey[key]) continue;
     void save({ ...session, edited }).catch((cause) =>
       useQueueEditSessions.setState({
         error: {
@@ -456,6 +592,17 @@ export async function restoreQueueEditStash(
     useComposerDraftStore.getState().getComposerDraft(target) ?? createEmptyThreadDraft();
   const side = entry.queueEditSide ?? "edited";
   const restored = revive(session[side]);
+  if (side === "ordinary") delete restored.extractedIntent;
+  if (restored.extractedIntent) {
+    await resolveExtractedDraftIntent(restored);
+    if (
+      current.extractedIntent &&
+      (!("intentId" in current.extractedIntent) ||
+        !("intentId" in restored.extractedIntent) ||
+        current.extractedIntent.intentId !== restored.extractedIntent.intentId)
+    )
+      throw new Error("Keep extracted intents in separate recoverable drafts.");
+  }
   if (side === "edited")
     assertQueueEditSelectionProvenance(session.composerSeparated, restored.prompt);
   if (restored.files.some((file) => !file.file && file.uploadEnvironmentId !== environmentId))
@@ -517,6 +664,7 @@ export async function restoreQueueEditStash(
   });
   const combine = () => ({
     ...restored,
+    ...(current.extractedIntent ? { extractedIntent: current.extractedIntent } : {}),
     prompt: [current.prompt, prompt].filter(Boolean).join("\n"),
     images: [...current.images, ...images],
     files: [...current.files, ...files],
@@ -534,13 +682,21 @@ export async function restoreQueueEditStash(
   const recoveryKey = activeSession?.journalKey ?? randomUUID();
   let recovery: EditSession = {
     ...(activeSession ?? session),
+    // An ordinary stash restores authored content, not the extracted run's
+    // plan or retry identity. An existing target edit keeps its own provenance.
+    ...(!activeSession && side === "ordinary"
+      ? { extractedItem: undefined, nativeRun: undefined, intentId: undefined }
+      : {}),
     key: targetKey,
     journalKey: recoveryKey,
     originalTarget: target,
     editTarget: target,
     editToken: recoveryKey,
     ordinary: activeSession?.ordinary ?? createEmptyThreadDraft(),
-    edited: combined,
+    edited:
+      combined.extractedIntent && "intentId" in combined.extractedIntent
+        ? { ...combined, extractedIntent: { ...combined.extractedIntent, journalKey: recoveryKey } }
+        : combined,
     transferred: true,
     stashed: false,
     composerSeparated: true,
@@ -552,7 +708,16 @@ export async function restoreQueueEditStash(
       if (latest === current) break;
       current = latest;
       combined = combine();
-      recovery = { ...recovery, edited: combined };
+      recovery = {
+        ...recovery,
+        edited:
+          combined.extractedIntent && "intentId" in combined.extractedIntent
+            ? {
+                ...combined,
+                extractedIntent: { ...combined.extractedIntent, journalKey: recoveryKey },
+              }
+            : combined,
+      };
     }
   } catch (cause) {
     if (!activeSession) releaseEditLease(targetKey);
@@ -560,7 +725,7 @@ export async function restoreQueueEditStash(
   }
   flushSync(() => {
     ending.add(recovery.journalKey);
-    installDraft(target, combined);
+    installDraft(target, recovery.edited);
     register(recovery);
     ending.delete(recovery.journalKey);
   });
@@ -573,4 +738,121 @@ export async function restoreQueueEditStash(
   );
   if (removal.durable && !otherStash && !active) await save(session.journalKey);
   return true;
+}
+
+/** A hydrated composer can have provenance without a local edit session. */
+export async function resolveExtractedDraftIntent(
+  draft: ComposerThreadDraftState | null | undefined,
+) {
+  const marker = draft?.extractedIntent;
+  if (!marker) return undefined;
+  if (!("intentId" in marker))
+    throw new Error("The extracted intent marker is invalid. Recovery has been kept.");
+  const record = await readExtractedIntent(marker.intentId);
+  if (!record)
+    throw new Error("The extracted intent journal is unavailable. Recovery has been kept.");
+  if (record.phase === "consumed")
+    throw new Error(
+      "This extracted intent was already submitted. Clear it before authoring a new ordinary draft.",
+    );
+  if (draft?.pendingImageSelection === null || (draft?.pendingImageSelection?.length ?? 0) > 0)
+    throw new Error(
+      "The extracted images have not been recovered. The draft and journal have been kept.",
+    );
+  if (!(await acquireEditLease(`intent:${marker.intentId}`)))
+    throw new Error("This extracted intent is open in another window.");
+  return record;
+}
+export async function prepareExtractedDraftIntent(intentId: string) {
+  if (!leases.has(`intent:${intentId}`))
+    throw new Error("This extracted intent is owned by another window.");
+  return updateExtractedIntent(intentId, (current) => {
+    if (!current || current.phase === "consumed")
+      throw new Error("This extracted intent was already submitted.");
+    return current.packetJson ? current : { ...current, phase: "preparing" };
+  });
+}
+export async function retireConsumedDraftIntent(
+  target: ScopedThreadRef | DraftId,
+  intentId: string,
+  expectedJournalKey: string | undefined,
+) {
+  const key = composerTargetKey(target);
+  const current = useComposerDraftStore.getState().getComposerDraft(target);
+  const marker = current?.extractedIntent;
+  if (
+    marker &&
+    "intentId" in marker &&
+    marker.intentId === intentId &&
+    marker.journalKey !== expectedJournalKey
+  ) {
+    // Remapping a recovery copy is not evidence of later ordinary authoring.
+    // Its consumed marker remains visible/recoverable and refuses another offer.
+    releaseEditLease(`intent:${intentId}`);
+    flushComposerDraftPersistence();
+    return;
+  }
+  const registered = useQueueEditSessions.getState().sessions[key];
+  const session =
+    registered?.intentId === intentId
+      ? registered
+      : marker && "intentId" in marker && marker.intentId === intentId
+        ? await readQueueEditJournal(marker.journalKey)
+        : undefined;
+  if (session) {
+    ending.add(session.journalKey);
+    try {
+      for (;;) {
+        const latest = useComposerDraftStore.getState().getComposerDraft(target);
+        const latestMarker = latest?.extractedIntent;
+        if (latestMarker && "intentId" in latestMarker && latestMarker.intentId !== intentId) break;
+        if (
+          latestMarker &&
+          "journalKey" in latestMarker &&
+          latestMarker.journalKey !== expectedJournalKey
+        )
+          break;
+        const { extractedIntent: _intent, ...ordinary } = latest ?? createEmptyThreadDraft();
+        const continuing = {
+          ...session,
+          key,
+          originalTarget: target,
+          editTarget: target,
+          intentId: undefined,
+          nativeRun: undefined,
+          extractedItem: undefined,
+          edited: ordinary,
+        };
+        // Persist exact late file bytes/settings before removing provenance.
+        // A failed storage write leaves the consumed marker and recovery intact.
+        await save(continuing);
+        if (useComposerDraftStore.getState().getComposerDraft(target) === latest) {
+          if (latestMarker) installDraft(target, ordinary);
+          if (registered?.intentId === intentId) register(continuing);
+          break;
+        }
+      }
+    } finally {
+      ending.delete(session.journalKey);
+    }
+  }
+  releaseEditLease(`intent:${intentId}`);
+  flushComposerDraftPersistence();
+}
+export async function stashProvenanceDraft(target: ScopedThreadRef | DraftId) {
+  const draft = useComposerDraftStore.getState().getComposerDraft(target);
+  await resolveExtractedDraftIntent(draft);
+  const marker = draft?.extractedIntent;
+  if (!draft || !marker || !("intentId" in marker))
+    throw new Error("This extracted intent has no recovery journal.");
+  const saved = await readQueueEditJournal(marker.journalKey);
+  if (!saved) throw new Error("The extracted intent recovery journal is unavailable.");
+  await stashRecoveredDraft({
+    ...saved,
+    key: composerTargetKey(target),
+    originalTarget: target,
+    editTarget: target,
+    transferred: true,
+    edited: draft,
+  });
 }

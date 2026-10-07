@@ -68,6 +68,7 @@ interface ResolutionInput {
 
 interface ProviderCase {
   readonly name: string;
+  readonly runtimeName?: string;
   readonly binary: string;
   readonly catalog: ManagedRuntimeCatalogProvider;
   /** What the provider's own CLI prints for `--version`. */
@@ -133,6 +134,7 @@ const providers: ReadonlyArray<ProviderCase> = [
   },
   {
     name: "Cursor",
+    runtimeName: "Cursor CLI",
     binary: "cursor-agent",
     catalog: "cursor",
     versionOutput: (version) => `${version}\n`,
@@ -224,16 +226,18 @@ const relative = (provider: ProviderCase, direction: "newer" | "older") =>
 const managedVersion = (provider: ProviderCase) =>
   BUNDLED_MANAGED_RUNTIME_CATALOG.providers[provider.catalog]!.version;
 
+const runtimeName = (provider: ProviderCase) => provider.runtimeName ?? provider.name;
+
 /** What the user decides on before switching to an older managed release. */
 const olderSwitch = (provider: ProviderCase, systemVersion: string) =>
-  `Scient-managed ${provider.name} ${managedVersion(provider)} is older than your installed ${provider.name} ${systemVersion}. Scient will use its own verified copy; your installation stays as it is. ${provider.name} accounts in this environment that use the default runtime will use that copy; custom paths remain unchanged.`;
+  `Scient-managed ${runtimeName(provider)} ${managedVersion(provider)} is older than your installed ${runtimeName(provider)} ${systemVersion}. Scient will use its own verified copy; your installation stays as it is. ${runtimeName(provider)} accounts in this environment that use the default runtime will use that copy; custom paths remain unchanged.`;
 
 /** What the user decides on when Scient does not know the system runtime's release. */
 const unknownSwitch = (provider: ProviderCase) =>
-  `Scient does not know which ${provider.name} version, if any, is installed on this computer (system version unknown), so Scient-managed ${provider.name} ${managedVersion(provider)} may be older than it. Scient will use its own verified copy; an existing installation stays as it is. ${provider.name} accounts in this environment that use the default runtime will use that copy; custom paths remain unchanged.`;
+  `Scient does not know which ${runtimeName(provider)} version, if any, is installed on this computer (system version unknown), so Scient-managed ${runtimeName(provider)} ${managedVersion(provider)} may be older than it. Scient will use its own verified copy; an existing installation stays as it is. ${runtimeName(provider)} accounts in this environment that use the default runtime will use that copy; custom paths remain unchanged.`;
 
 const planChanged = (provider: ProviderCase) =>
-  `The qualified ${provider.name} setup plan changed. Review it again before continuing.`;
+  `The qualified ${runtimeName(provider)} setup plan changed. Review it again before continuing.`;
 
 const onDarwinArm = <A, E>(effect: Effect.Effect<A, E, NodeServices.NodeServices>) =>
   effect.pipe(
@@ -579,7 +583,7 @@ describe("switching from a system runtime to the Scient-managed one", () => {
           systemVersion: older,
           olderThanSystem: false,
         });
-        expect(plan.message).toContain(`${provider.name} ${managed}`);
+        expect(plan.message).toContain(`${runtimeName(provider)} ${managed}`);
         expect(plan.message).toContain(`system installation (${older})`);
       }).pipe(
         Effect.provideService(HostProcessPlatform, target.platform),

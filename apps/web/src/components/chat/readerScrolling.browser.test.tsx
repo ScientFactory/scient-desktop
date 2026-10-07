@@ -1,5 +1,5 @@
 import "../../index.css";
-import { EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { createRef } from "react";
 import { flushSync } from "react-dom";
@@ -28,7 +28,7 @@ function entry(index: number, text = `Message ${index}\n\n${"Readable paragraph.
       id: MessageId.make(`message-${index}`),
       role: "user" as const,
       text,
-      turnId: TurnId.make(`turn-${index}`),
+      runId: RunId.make(`run-${index}`),
       createdAt: date,
       updatedAt: date,
       streaming: false,
@@ -38,11 +38,15 @@ function entry(index: number, text = `Message ${index}\n\n${"Readable paragraph.
 const base = {
   listRef,
   isWorking: false,
+  activeTurnInProgress: false,
   activeTurnStartedAt: null,
-  latestTurn: null,
-  runningTurnId: null,
+  latestRun: null,
+  runningRunId: null,
   turnDiffSummaries: [],
   onOpenTurnDiff: () => {},
+  onOpenThread: () => {},
+  onForkFromRun: () => Promise.resolve(),
+  onRollbackCheckpoint: () => {},
   supportsConversationRollback: false,
   onRevertToTurnCount: () => {},
   isRevertingCheckpoint: false,
@@ -52,8 +56,11 @@ const base = {
   resolvedTheme: "light" as const,
   timestampFormat: "locale" as const,
   workspaceRoot: undefined,
+  runs: [],
+  providerStatuses: [],
   anchorMessageId: null,
   onAnchorReady: () => {},
+  onAnchorSizeChanged: () => {},
   contentInsetEndAdjustment: 100,
   onIsAtEndChange: vi.fn(),
   onManualNavigation: () => {},
@@ -235,7 +242,7 @@ it("does not apply an unrelated offset when a transient saved row disappeared", 
   const entries = Array.from({ length: 20 }, (_, i) => entry(i));
   rememberTimelinePosition("geometry:transient", {
     rowId: "working-indicator-row",
-    turnId: "turn-7",
+    turnId: "run-7",
     offsetWithinRow: 0,
     scrollOffset: 99999,
     atEnd: false,
@@ -281,7 +288,8 @@ it("waits for older history before restoring a saved reading message", async () 
   rememberTimelinePosition("geometry:paged", {
     rowId: old.id,
     messageId: old.message.id,
-    turnId: old.message.turnId,
+    // The persisted field is still named `turnId`; the timeline is keyed on runs.
+    ...(old.message.runId ? { turnId: old.message.runId } : {}),
     offsetWithinRow: 0,
     scrollOffset: 8000,
     atEnd: false,
@@ -317,7 +325,7 @@ it("manual navigation cancels restoration while history is still loading", async
   rememberTimelinePosition("geometry:cancel", {
     rowId: "gone",
     messageId: "message-1",
-    turnId: "turn-1",
+    turnId: "run-1",
     offsetWithinRow: 0,
     scrollOffset: 9000,
     atEnd: false,

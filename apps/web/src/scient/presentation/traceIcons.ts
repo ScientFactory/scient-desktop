@@ -37,12 +37,12 @@ export function traceCommandKind(command: string | undefined): "list" | "fetch" 
 }
 
 /** An agent tool that lists files or folders, by its name or title. */
-export function isListFilesTool(toolTitle: string | undefined): boolean {
+function isListFilesTool(toolTitle: string | undefined): boolean {
   return toolTitle !== undefined && LIST_TOOL_TITLES.has(toolTitle.trim().toLowerCase());
 }
 
 /** The tool name a provider recorded in a row's tool data, when it has one. */
-export function traceToolName(toolData: unknown): string | undefined {
+function traceToolName(toolData: unknown): string | undefined {
   if (toolData === null || typeof toolData !== "object") return undefined;
   const record = toolData as Record<string, unknown>;
   const name = record.toolName ?? record.tool;
@@ -62,31 +62,12 @@ export type TraceIconOverride = "shield" | "skill" | "image" | "folder" | "globe
  * image view, a file listing, or a command that lists files or fetches from the
  * web. Other actions keep their category's icon.
  */
-export function traceIconOverride(
-  entry: Pick<
-    WorkLogPresentationEntry,
-    | "label"
-    | "toolTitle"
-    | "toolData"
-    | "itemType"
-    | "viewedImagePath"
-    | "command"
-    | "sourceActivityKind"
-    | "requestKind"
-    | "changedFiles"
-    | "tone"
-  >,
-): TraceIconOverride | undefined {
-  if (
-    entry.sourceActivityKind === "approval.requested" ||
-    entry.sourceActivityKind === "approval.resolved"
-  ) {
-    return "shield";
-  }
+export function traceIconOverride(entry: WorkLogPresentationEntry): TraceIconOverride | undefined {
+  if (entry.itemType === "approval_request") return "shield";
   if (isScientSkillTool([entry.toolTitle, entry.label, traceToolName(entry.toolData)])) {
     return "skill";
   }
-  if (entry.itemType === "image_view" || entry.viewedImagePath !== undefined) return "image";
+  if (entry.viewedImagePath !== undefined) return "image";
   if (isListFilesTool(entry.toolTitle ?? entry.label)) return "folder";
   if (toolGroupAction(entry) !== "command") return undefined;
   const commandKind = traceCommandKind(entry.command);
@@ -97,7 +78,7 @@ export function traceIconOverride(
 
 /** The override every entry of a group shares, if they all share one. */
 export function groupTraceIconOverride(
-  entries: ReadonlyArray<Parameters<typeof traceIconOverride>[0]>,
+  entries: ReadonlyArray<WorkLogPresentationEntry>,
 ): TraceIconOverride | undefined {
   const [first, ...rest] = entries.map(traceIconOverride);
   return first !== undefined && rest.every((icon) => icon === first) ? first : undefined;

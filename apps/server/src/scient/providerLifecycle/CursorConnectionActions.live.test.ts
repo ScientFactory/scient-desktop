@@ -52,7 +52,7 @@ describe.runIf(enabled)("Cursor no-browser login transport", () => {
         LOCALAPPDATA: NodePath.join(root, "AppData", "Local"),
       };
       const actions = yield* makeCursorConnectionActions(
-        decodeCursorSettings({ binaryPath }),
+        decodeCursorSettings(binaryPath === undefined ? {} : { binaryPath }),
         environment,
         spawner,
       );

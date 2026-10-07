@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   type ProviderConnectionOperation,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -22,13 +23,17 @@ import {
   ProviderRegistryRefreshError,
   type ProviderRegistryShape,
 } from "../../provider/Services/ProviderRegistry.ts";
-import { ProviderAdapterProcessError } from "../../provider/Errors.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../../provider/providerMaintenance.ts";
 import type {
   ProviderConnectionActions,
   ProviderVoiceTranscriptCorrection,
 } from "../../provider/ProviderDriver.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  ProviderSessionCloseError,
+  ProviderSessionManagerV2,
+  type ProviderSessionManagerV2Shape,
+} from "../../orchestration-v2/ProviderSessionManager.ts";
 import {
   layer as ProviderConnectionManagerLayer,
   make,
@@ -85,6 +90,8 @@ const yieldUntil = <A>(
 
 function makeHarness(options?: {
   readonly provider?: ServerProvider;
+  readonly providers?: ReadonlyArray<ServerProvider>;
+  readonly closeInstance?: ProviderSessionManagerV2Shape["closeInstance"];
   readonly actions?: ProviderConnectionActions | undefined;
   readonly beforeSetProviderConnectionOperation?: (
     operation: ProviderConnectionOperation | null,
@@ -96,12 +103,11 @@ function makeHarness(options?: {
   readonly refreshProvider?: (provider: ServerProvider, refreshCount: number) => ServerProvider;
   readonly failStrictRefreshAt?: number;
   readonly useProductionLayer?: boolean;
-  readonly stopProviderSessions?: ProviderRegistryShape["stopProviderSessions"];
 }) {
   return Effect.gen(function* () {
-    const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>([
-      options?.provider ?? disconnectedProvider,
-    ]);
+    const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
+      options?.providers ?? [options?.provider ?? disconnectedProvider],
+    );
     const transitionsRef = yield* Ref.make<ReadonlyArray<ProviderConnectionOperation | null>>([]);
     const refreshCountRef = yield* Ref.make(0);
     const accountChangeRefreshCountRef = yield* Ref.make(0);
@@ -171,7 +177,6 @@ function makeHarness(options?: {
       getVoiceTranscriptCorrectionForInstance: () =>
         // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
         Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
-      stopProviderSessions: options?.stopProviderSessions ?? (() => Effect.void),
       setProviderManagedRuntimeSummary: () => Effect.succeed([]),
       setProviderMaintenanceActionState: () => Ref.get(providersRef),
       setProviderConnectionOperation,
@@ -190,6 +195,9 @@ function makeHarness(options?: {
     });
     const managerScope = yield* Scope.make();
     yield* Effect.addFinalizer(() => Scope.close(managerScope, Exit.void));
+    const providerSessionsLayer = Layer.mock(ProviderSessionManagerV2)({
+      closeInstance: options?.closeInstance ?? (() => Effect.void),
+    });
     const manager = options?.useProductionLayer
       ? yield* Layer.build(
           ProviderConnectionManagerLayer.pipe(
@@ -197,6 +205,7 @@ function makeHarness(options?: {
               Layer.mergeAll(
                 Layer.succeed(ProviderRegistry, registry),
                 Layer.succeed(ProviderLifecycleCoordinator, trackedLifecycleCoordinator),
+                providerSessionsLayer,
                 NodeServices.layer,
               ),
             ),
@@ -208,7 +217,7 @@ function makeHarness(options?: {
       : yield* make().pipe(
           Effect.provideService(ProviderRegistry, registry),
           Effect.provideService(ProviderLifecycleCoordinator, trackedLifecycleCoordinator),
-          Effect.provide(NodeServices.layer),
+          Effect.provide(Layer.mergeAll(providerSessionsLayer, NodeServices.layer)),
           Scope.provide(managerScope),
         );
     return {
@@ -1386,6 +1395,79 @@ describe("ProviderConnectionManager", () => {
     }),
   );
 
+  it.effect("closes only the requested V2 instance before credential logout and refresh", () =>
+    Effect.gen(function* () {
+      const otherInstance = ProviderInstanceId.make("codex-other-account");
+      const liveInstances = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>([
+        CODEX_INSTANCE,
+        otherInstance,
+      ]);
+      const order = yield* Ref.make<ReadonlyArray<string>>([]);
+      const { manager, lifecycleCoordinator } = yield* makeHarness({
+        useProductionLayer: true,
+        providers: [
+          authenticatedProvider(disconnectedProvider),
+          authenticatedProvider({ ...disconnectedProvider, instanceId: otherInstance }),
+        ],
+        closeInstance: (instanceId) =>
+          Effect.gen(function* () {
+            assert.equal(instanceId, CODEX_INSTANCE);
+            yield* Ref.update(order, (events) => [...events, `close:${instanceId}`]);
+            yield* Ref.update(liveInstances, (instances) =>
+              instances.filter((candidate) => candidate !== instanceId),
+            );
+          }),
+        actions: {
+          methods: ["codex_browser"],
+          start: () => Effect.die("Sign-out must not start a sign-in flow"),
+          disconnect: Effect.gen(function* () {
+            assert.deepEqual(yield* Ref.get(liveInstances), [otherInstance]);
+            yield* Ref.update(order, (events) => [...events, "logout"]);
+          }),
+        },
+        beforeRefreshInstance: (instanceId) =>
+          Ref.update(order, (events) => [...events, `refresh:${instanceId}`]),
+      });
+
+      yield* manager.disconnect({ instanceId: CODEX_INSTANCE });
+      assert.deepEqual(yield* Ref.get(order), [
+        `close:${CODEX_INSTANCE}`,
+        "logout",
+        `refresh:${CODEX_INSTANCE}`,
+      ]);
+      assert.deepEqual(yield* Ref.get(liveInstances), [otherInstance]);
+      assert.equal(yield* lifecycleCoordinator.current(CODEX_INSTANCE), undefined);
+    }),
+  );
+
+  it.effect("aborts credential logout when V2 shutdown fails and releases its reservation", () =>
+    Effect.gen(function* () {
+      const logoutCount = yield* Ref.make(0);
+      const { manager, lifecycleCoordinator, refreshCountRef, lifecycleReleaseCountRef } =
+        yield* makeHarness({
+          provider: authenticatedProvider(disconnectedProvider),
+          closeInstance: () =>
+            Effect.fail(
+              new ProviderSessionCloseError({
+                providerSessionId: ProviderSessionId.make("failed-session"),
+              }),
+            ),
+          actions: {
+            methods: ["codex_browser"],
+            start: () => Effect.die("Sign-out must not start a sign-in flow"),
+            disconnect: Ref.update(logoutCount, (count) => count + 1),
+          },
+        });
+      const failure = yield* manager.disconnect({ instanceId: CODEX_INSTANCE }).pipe(Effect.flip);
+      assert.equal(failure.reason, "disconnect_failed");
+      assert.equal(failure.instanceId, CODEX_INSTANCE);
+      assert.equal(yield* Ref.get(logoutCount), 0);
+      assert.equal(yield* Ref.get(refreshCountRef), 0);
+      assert.equal(yield* lifecycleCoordinator.current(CODEX_INSTANCE), undefined);
+      assert.equal(yield* Ref.get(lifecycleReleaseCountRef), 1);
+    }),
+  );
+
   it.effect("reports an unverifiable account state after provider-owned sign out completes", () =>
     Effect.gen(function* () {
       const disconnects = yield* Ref.make(0);
@@ -1808,9 +1890,14 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
   const signedInAgent = () =>
     agentProvider([account({ id: "openai-codex", connected: true, canDisconnect: true })]);
 
-  it.effect("removes an account's sign-in and then stops the provider's conversations", () =>
+  it.effect("removes an account's sign-in and then stops only its native instance", () =>
     Effect.gen(function* () {
       const steps = yield* Ref.make<ReadonlyArray<string>>([]);
+      const otherInstance = ProviderInstanceId.make("scient-independent-account-root");
+      const liveInstances = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>([
+        SCIENT_INSTANCE,
+        otherInstance,
+      ]);
       const note = (step: string) => Ref.update(steps, (previous) => [...previous, step]);
       const actions: ProviderConnectionActions = {
         methods: ["scient_agent_account"],
@@ -1822,11 +1909,18 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
       const { manager } = yield* makeHarness({
         actions,
         provider: signedInAgent(),
-        stopProviderSessions: (provider) => note(`stop ${provider}`),
+        closeInstance: (instanceId) =>
+          Ref.update(liveInstances, (instances) =>
+            instances.filter((id) => id !== instanceId),
+          ).pipe(Effect.andThen(note(`stop ${instanceId}`))),
       });
 
       yield* manager.disconnect({ instanceId: SCIENT_INSTANCE, account: "openai-codex" });
-      assert.deepStrictEqual(yield* Ref.get(steps), ["remove openai-codex", "stop scient"]);
+      assert.deepStrictEqual(yield* Ref.get(steps), [
+        "remove openai-codex",
+        `stop ${SCIENT_INSTANCE}`,
+      ]);
+      assert.deepStrictEqual(yield* Ref.get(liveInstances), [otherInstance]);
     }),
   );
 
@@ -1846,7 +1940,10 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
       const { manager } = yield* makeHarness({
         actions,
         provider: signedInAgent(),
-        stopProviderSessions: () => Deferred.succeed(stopped, undefined).pipe(Effect.asVoid),
+        closeInstance: (instanceId) => {
+          assert.strictEqual(instanceId, SCIENT_INSTANCE);
+          return Deferred.succeed(stopped, undefined).pipe(Effect.asVoid);
+        },
       });
 
       const request = yield* manager
@@ -1885,7 +1982,10 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
       const { manager } = yield* makeHarness({
         actions,
         provider: signedInAgent(),
-        stopProviderSessions: () => Ref.update(stops, (count) => count + 1),
+        closeInstance: (instanceId) => {
+          assert.strictEqual(instanceId, SCIENT_INSTANCE);
+          return Ref.update(stops, (count) => count + 1);
+        },
       });
       const signOut = manager
         .disconnect({ instanceId: SCIENT_INSTANCE, account: "openai-codex" })
@@ -1915,12 +2015,10 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
       const { manager } = yield* makeHarness({
         actions,
         provider: signedInAgent(),
-        stopProviderSessions: () =>
+        closeInstance: () =>
           Effect.fail(
-            new ProviderAdapterProcessError({
-              provider: SCIENT,
-              threadId: "thread",
-              detail: "could not stop",
+            new ProviderSessionCloseError({
+              providerSessionId: ProviderSessionId.make("scient-account-session"),
             }),
           ),
       });

@@ -2,6 +2,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  EnvironmentId,
+  MessageId,
+  NodeId,
+  ProjectId,
+  ProviderSessionId,
+  RunAttemptId,
+  RunId,
+  ThreadId,
   ProviderDriverKind,
   ProviderInstanceId,
   type AntigravitySettings,
@@ -13,6 +21,9 @@ import {
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
+import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -25,20 +36,18 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import { ServerConfig } from "../../config.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
-import {
-  AntigravityInstallation,
-  AntigravityInstallationError,
-  type AntigravityExecutable,
-} from "../AntigravityInstallation.ts";
+import * as ServerConfig from "../../config.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import * as AntigravityInstallation from "../AntigravityInstallation.ts";
 import {
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
   resolveAntigravityInstanceDirectories,
 } from "../antigravityAuthSupport.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
+import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { AntigravityDriver, usesLegacyAntigravityBackend } from "./AntigravityDriver.ts";
 import { bundledAntigravityAcpAsset } from "../../scient/providerLifecycle/antigravityAcpCatalog.ts";
 
@@ -98,7 +107,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const config = yield* ServerConfig;
+  const config = yield* ServerConfig.ServerConfig;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const nodePath = yield* HostProcessExecutablePath;
   const baseEnv = yield* HostProcessEnvironment;
@@ -115,6 +124,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   const makeExecutable = Effect.fn("AntigravityDriverTest.makeExecutable")(function* (
     name: string,
     loginRequired = false,
+    stalled = false,
   ) {
     const directory = path.join(root, name);
     const executablePath = path.join(directory, "agy_acp_server.par");
@@ -129,7 +139,9 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         ...(loginRequired
           ? [`printf '%s\\n' ${shellQuote(ANTIGRAVITY_AUTH_STDOUT_PREFIX + authorizationUrl)}`]
           : []),
-        `exec ${shellQuote(nodePath)} ${shellQuote(mockAgentPath)} "$@"`,
+        stalled
+          ? `exec ${shellQuote(nodePath)} -e 'process.stdin.resume()'`
+          : `exec ${shellQuote(nodePath)} ${shellQuote(mockAgentPath)} "$@"`,
         "",
       ].join("\n"),
     );
@@ -142,13 +154,22 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       source: "managed",
       version: name,
       managedVersionDirectory: directory,
-    } satisfies AntigravityExecutable;
+    } satisfies AntigravityInstallation.AntigravityExecutable;
   });
 
   const first = yield* makeExecutable("runtime 'one");
   const second = yield* makeExecutable("runtime two");
   const signedOut = yield* makeExecutable("runtime signed-out", true);
-  const controls = { selected: first, failResolution: false, beforeAcquire: Effect.void };
+  const waiting = yield* makeExecutable("runtime waiting", true, true);
+  const stalled = yield* makeExecutable("runtime stalled", false, true);
+  const controls = {
+    selected: first,
+    failResolution: false,
+    beforeAcquire: Effect.void,
+    beforeSpawn: Effect.void,
+    afterSpawn: Effect.void,
+    beforeRelease: Effect.void,
+  };
   const acquisitions: Array<{ binaryPath: string | undefined; path: string | undefined }> = [];
   const releases: Array<string | null> = [];
   const launches: Array<{
@@ -167,7 +188,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
 
   const resolveSelected = Effect.fn("AntigravityDriverTest.resolveSelected")(function* () {
     if (controls.failResolution) {
-      return yield* new AntigravityInstallationError({
+      return yield* new AntigravityInstallation.AntigravityInstallationError({
         operation: "resolve",
         detail: "Fixture resolution failed.",
       });
@@ -175,8 +196,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     return controls.selected;
   });
   const installation = Layer.succeed(
-    AntigravityInstallation,
-    AntigravityInstallation.of({
+    AntigravityInstallation.AntigravityInstallation,
+    AntigravityInstallation.AntigravityInstallation.of({
       managedDirectory: root,
       latestRelease: Effect.succeed(bundledAntigravityAcpAsset("linux", "x64")),
       refreshLatestRelease: Effect.succeed(bundledAntigravityAcpAsset("linux", "x64")),
@@ -189,7 +210,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
           yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
               releases.push(selected.version);
-            }),
+            }).pipe(Effect.andThen(Effect.suspend(() => controls.beforeRelease))),
           );
           return selected;
         }),
@@ -215,6 +236,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     Effect.gen(function* () {
       if (command._tag !== "StandardCommand")
         return yield* Effect.die("Unexpected process pipeline.");
+      yield* controls.beforeSpawn;
       const handle = yield* spawner.spawn(command);
       const environment = command.options.env ?? {};
       launches.push({
@@ -235,6 +257,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
           environment.ANTIGRAVITY_HARNESS_PATH === undefined ? undefined : environment.TMPDIR,
         handle,
       });
+      if (environment.ANTIGRAVITY_HARNESS_PATH !== undefined) yield* controls.afterSpawn;
       return handle;
     }),
   );
@@ -288,6 +311,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     first,
     second,
     signedOut,
+    waiting,
+    stalled,
     controls,
     acquisitions,
     releases,
@@ -297,17 +322,138 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   };
 });
 
+type DriverHarness = Effect.Success<ReturnType<typeof makeHarness>>;
+
+const nativeLaunches = (h: DriverHarness) =>
+  h.launches.filter((launch) => launch.harnessPath !== undefined);
+
+const actionsFor = (h: DriverHarness) => {
+  if (!h.instance.connectionActions || !h.instance.auth) {
+    throw new Error(
+      "The actual Antigravity factory must expose native auth and lifecycle actions.",
+    );
+  }
+  return { actions: h.instance.connectionActions, auth: h.instance.auth };
+};
+
+// Only child-owned extraction files close here. Workspace and manager/MCP
+// lifetimes stay owned by their caller; a native turn can respawn after sign-in.
+const assertProcessesClosed = Effect.fn("assertAntigravityProcessesClosed")(function* (
+  h: DriverHarness,
+  launches: ReadonlyArray<DriverHarness["launches"][number]> = h.launches,
+) {
+  for (const launch of launches) {
+    yield* launch.handle.exitCode.pipe(Effect.ignore);
+    expect(yield* launch.handle.isRunning).toBe(false);
+    if (launch.tempDirectory) expect(yield* h.fs.exists(launch.tempDirectory)).toBe(false);
+  }
+}, Effect.orDie);
+
+const openNative = Effect.fn("openFactoryAntigravityNative")(function* (
+  h: DriverHarness,
+  suffix = "initial",
+) {
+  const cwd = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-native-" });
+  const threadId = ThreadId.make(`${h.instance.instanceId}:${suffix}`);
+  const modelSelection = { instanceId: h.instance.instanceId, model: "gemini-test-low" };
+  const runtimePolicy = { runtimeMode: "full-access", interactionMode: "default", cwd } as const;
+  const mcp = {
+    environmentId: EnvironmentId.make("antigravity-callback-fixture"),
+    threadId,
+    providerSessionId: `${threadId}:mcp`,
+    providerInstanceId: h.instance.instanceId,
+    endpoint: "http://127.0.0.1:43123/mcp",
+    authorizationHeader: `Bearer synthetic:${threadId}`,
+    capabilities: new Set(["threads:read"] as const),
+  };
+  yield* Effect.acquireRelease(
+    Effect.sync(() => McpProviderSession.setMcpProviderSession(mcp)),
+    () => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+  );
+  const session = yield* h.instance.orchestrationAdapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make(`${threadId}:native`),
+    modelSelection,
+    runtimePolicy,
+  });
+  const providerThread = yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+  const turn = Effect.fn("turnFactoryAntigravityNative")(function* (ordinal: number) {
+    const now = yield* DateTime.now;
+    yield* session.startTurn({
+      appThread: {
+        createdBy: "user",
+        creationSource: "web",
+        id: threadId,
+        projectId: ProjectId.make("antigravity-callback-fixture"),
+        title: "Native auth callback fixture",
+        providerInstanceId: h.instance.instanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: cwd,
+        activeProviderThreadId: providerThread.id,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+      threadId,
+      runId: RunId.make(`${threadId}:run:${ordinal}`),
+      runOrdinal: ordinal,
+      providerTurnOrdinal: ordinal,
+      attemptId: RunAttemptId.make(`${threadId}:attempt:${ordinal}`),
+      rootNodeId: NodeId.make(`${threadId}:node:${ordinal}`),
+      providerThread,
+      message: {
+        createdBy: "user",
+        creationSource: "web",
+        messageId: MessageId.make(`${threadId}:message:${ordinal}`),
+        text: "Prove the current native process can answer.",
+        attachments: [],
+      },
+      modelSelection,
+      runtimePolicy,
+    });
+    const terminal = yield* session.events.pipe(
+      Stream.filter(
+        (event) =>
+          event.type === "provider_turn.updated" &&
+          event.providerTurn.ordinal === ordinal &&
+          event.providerTurn.status !== "running" &&
+          event.providerTurn.status !== "pending",
+      ),
+      Stream.runHead,
+      Effect.map(Option.getOrThrow),
+    );
+    if (terminal.type !== "provider_turn.updated")
+      return yield* Effect.die("Missing native terminal");
+    expect(terminal.providerTurn.status).toBe("completed");
+  });
+  return { session, threadId, mcp, turn };
+});
+
 const testLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-antigravity-driver-config-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
-  Layer.provideMerge(ServerSettingsService.layerTest()),
+  Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provideMerge(
     Layer.mock(BackgroundPolicy.BackgroundPolicy)({
       shouldRunScopeWork: () => Effect.succeed(false),
     }),
   ),
-  Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+  Layer.provideMerge(
+    Layer.succeed(
+      ProviderEventLoggers.ProviderEventLoggers,
+      ProviderEventLoggers.NoOpProviderEventLoggers,
+    ),
+  ),
   Layer.provideMerge(ModelManifest.layerTest),
   Layer.provideMerge(
     Layer.succeed(
@@ -325,9 +471,313 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
       }),
     ),
   ),
+  Layer.provideMerge(IdAllocator.layer),
 );
 
 it.layer(testLayer)("AntigravityDriver", (it) => {
+  it.effect.skipIf(windowsHost)(
+    "awaits native target teardown before sign-in and logout while a peer survives and a turn respawns",
+    () =>
+      Effect.gen(function* () {
+        const target = yield* makeHarness();
+        const peer = yield* makeHarness();
+        const targetNative = yield* openNative(target);
+        const peerNative = yield* openNative(peer);
+        for (const [h, native] of [
+          [target, targetNative],
+          [peer, peerNative],
+        ] as const) {
+          const create = (yield* h.readRequests).find(
+            (request) => request.method === "session/new",
+          );
+          expect(create?.params?.mcpServers).toEqual([
+            expect.objectContaining({
+              name: "scient",
+              env: expect.arrayContaining([
+                { name: "T3_ACP_MCP_ENDPOINT", value: native.mcp.endpoint },
+                { name: "T3_ACP_MCP_AUTHORIZATION", value: native.mcp.authorizationHeader },
+              ]),
+            }),
+          ]);
+        }
+        yield* targetNative.turn(1);
+        const beforeSignIn = (yield* target.readRequests).length;
+        const oldLaunches = [...nativeLaunches(target)];
+        for (const launch of oldLaunches) {
+          if (launch.tempDirectory) {
+            yield* target.fs.writeFileString(
+              target.path.join(launch.tempDirectory, "owned.bin"),
+              "fixture",
+            );
+          }
+        }
+        const { actions } = actionsFor(target);
+        let authSpawnObserved = false;
+        target.controls.beforeSpawn = Effect.gen(function* () {
+          yield* assertProcessesClosed(target, oldLaunches);
+          for (const launch of nativeLaunches(peer))
+            expect(yield* launch.handle.isRunning).toBe(true);
+          expect(McpProviderSession.readMcpProviderSession(peerNative.threadId)).toEqual(
+            peerNative.mcp,
+          );
+          authSpawnObserved = true;
+        }).pipe(Effect.orDie);
+        const connection = yield* actions.start("antigravity_google");
+        yield* connection.waitForCompletion;
+        expect(authSpawnObserved).toBe(true);
+        const signInRequests = (yield* target.readRequests).slice(beforeSignIn);
+        expect(signInRequests.map((request) => request.method)).toContain("auth/login");
+        expect(signInRequests.map((request) => request.method)).toContain("session/new");
+        expect(
+          signInRequests.find((request) => request.method === "session/new")?.params?.mcpServers,
+        ).toEqual([]);
+        expect((yield* target.instance.snapshot.getSnapshot).auth.status).toBe("authenticated");
+        yield* assertProcessesClosed(target);
+
+        target.controls.beforeSpawn = Effect.void;
+        yield* targetNative.turn(2);
+        expect(nativeLaunches(target)).toHaveLength(oldLaunches.length + 2);
+        expect(yield* nativeLaunches(target).at(-1)!.handle.isRunning).toBe(true);
+        const reopened = [...nativeLaunches(target)];
+        let logoutSpawnObserved = false;
+        target.controls.beforeSpawn = Effect.gen(function* () {
+          yield* assertProcessesClosed(target, reopened);
+          for (const launch of nativeLaunches(peer))
+            expect(yield* launch.handle.isRunning).toBe(true);
+          expect(McpProviderSession.readMcpProviderSession(targetNative.threadId)).toEqual(
+            targetNative.mcp,
+          );
+          logoutSpawnObserved = true;
+        }).pipe(Effect.orDie);
+        const beforeLogout = (yield* target.readRequests).length;
+        yield* actions.disconnect;
+        expect(logoutSpawnObserved).toBe(true);
+        expect(
+          (yield* target.readRequests).slice(beforeLogout).map((request) => request.method),
+        ).toEqual(["initialize", "auth/logout"]);
+        const signedOut = yield* target.instance.snapshot.getSnapshot;
+        expect(signedOut.auth.status).toBe("unauthenticated");
+        expect(signedOut.models).toEqual([]);
+        yield* assertProcessesClosed(target);
+        yield* peerNative.turn(1);
+        expect(nativeLaunches(peer)).toHaveLength(1);
+        expect(McpProviderSession.readMcpProviderSession(peerNative.threadId)).toEqual(
+          peerNative.mcp,
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  for (const startupKind of ["native", "generation", "refresh"] as const) {
+    for (const operation of ["sign-in", "logout"] as const) {
+      it.effect.skipIf(windowsHost)(
+        `${operation} interrupts registered ${startupKind} startup and refuses every competing factory launch`,
+        () =>
+          Effect.gen(function* () {
+            const h = yield* makeHarness();
+            const { actions } = actionsFor(h);
+            const entered = yield* Deferred.make<void>();
+            const lateRelease = yield* Deferred.make<void>();
+            const authEntered = yield* Deferred.make<void>();
+            const authRelease = yield* Deferred.make<void>();
+            yield* Effect.addFinalizer(() => Deferred.succeed(lateRelease, undefined));
+            yield* Effect.addFinalizer(() => Deferred.succeed(authRelease, undefined));
+            let acquisitions = 0;
+            h.controls.beforeAcquire = Effect.suspend(() =>
+              ++acquisitions === 1
+                ? Deferred.succeed(entered, undefined).pipe(
+                    Effect.andThen(Deferred.await(lateRelease)),
+                  )
+                : Deferred.succeed(authEntered, undefined).pipe(
+                    Effect.andThen(Deferred.await(authRelease)),
+                  ),
+            );
+            const generate = h.instance.textGeneration.generateThreadTitle({
+              cwd: h.profileDirectory,
+              message: "Registered helper startup",
+              modelSelection: { instanceId: h.instance.instanceId, model: "gemini-test-low" },
+            });
+            const pending = yield* Effect.gen(function* () {
+              if (startupKind === "native") yield* openNative(h);
+              else if (startupKind === "generation") yield* generate;
+              else yield* h.refresh();
+            }).pipe(Effect.exit, Effect.forkScoped);
+            yield* Deferred.await(entered);
+            const credential = yield* (
+              operation === "sign-in"
+                ? actions
+                    .start("antigravity_google")
+                    .pipe(Effect.flatMap((connection) => connection.waitForCompletion))
+                : actions.disconnect
+            ).pipe(Effect.exit, Effect.forkScoped);
+            yield* Deferred.await(authEntered);
+            const interrupted = yield* Fiber.join(pending);
+            expect(Exit.isFailure(interrupted)).toBe(true);
+            const deniedNative = yield* openNative(h, "denied").pipe(Effect.exit);
+            const deniedGeneration = yield* generate.pipe(Effect.exit);
+            const deniedRefresh = yield* h.refresh().pipe(Effect.exit);
+            expect(Exit.isFailure(deniedNative)).toBe(true);
+            expect(Exit.isFailure(deniedGeneration)).toBe(true);
+            expect(Exit.isFailure(deniedRefresh)).toBe(true);
+            expect(h.acquisitions).toHaveLength(2);
+            expect(nativeLaunches(h)).toEqual([]);
+            yield* Deferred.succeed(lateRelease, undefined);
+            yield* Deferred.succeed(authRelease, undefined);
+            const credentialResult = yield* Fiber.join(credential);
+            if (Exit.isFailure(credentialResult)) return yield* credentialResult;
+            expect(Exit.isSuccess(credentialResult)).toBe(true);
+            expect(h.acquisitions).toHaveLength(2);
+            expect(nativeLaunches(h)).toHaveLength(1);
+            const requests = yield* h.readRequests;
+            expect(requests.map((request) => request.method)).toEqual(
+              operation === "sign-in"
+                ? ["initialize", "auth/login", "session/new"]
+                : ["initialize", "auth/logout"],
+            );
+            h.controls.beforeAcquire = Effect.void;
+            yield* h.refresh();
+            expect(nativeLaunches(h)).toHaveLength(2);
+            yield* assertProcessesClosed(h);
+          }).pipe(Effect.scoped),
+      );
+    }
+  }
+
+  for (const operation of ["sign-in", "logout"] as const) {
+    it.effect.skipIf(windowsHost)(
+      `${operation} refuses credential mutation after defective native teardown without clearing the catalog`,
+      () =>
+        Effect.gen(function* () {
+          const h = yield* makeHarness();
+          const peer = yield* makeHarness();
+          yield* openNative(h);
+          const peerNative = yield* openNative(peer);
+          const before = yield* h.instance.snapshot.getSnapshot;
+          const requestsBefore = yield* h.readRequests;
+          h.controls.beforeRelease = Effect.die("Fixture owned installation lease close failed");
+          const { actions } = actionsFor(h);
+          const result = yield* (
+            operation === "sign-in"
+              ? actions
+                  .start("antigravity_google")
+                  .pipe(Effect.flatMap((connection) => connection.waitForCompletion))
+              : actions.disconnect
+          ).pipe(Effect.result);
+          expect(result._tag).toBe("Failure");
+          if (result._tag === "Failure") {
+            expect(result.failure.message).toContain("could not stop active Antigravity sessions");
+            if (operation === "logout")
+              expect(result.failure.cause).toMatchObject({ operation: "stopSessions" });
+          }
+          expect(yield* h.readRequests).toEqual(requestsBefore);
+          expect(nativeLaunches(h)).toHaveLength(1);
+          yield* assertProcessesClosed(h);
+          const after = yield* h.instance.snapshot.getSnapshot;
+          expect(after.models).toEqual(before.models);
+          expect(after.auth).toEqual(before.auth);
+          expect(McpProviderSession.readMcpProviderSession(peerNative.threadId)).toEqual(
+            peerNative.mcp,
+          );
+          yield* peerNative.turn(1);
+          expect(nativeLaunches(peer)).toHaveLength(1);
+          h.controls.beforeRelease = Effect.void;
+          yield* h.refresh();
+          expect(nativeLaunches(h)).toHaveLength(2);
+        }).pipe(Effect.scoped),
+    );
+  }
+
+  it.effect.skipIf(windowsHost)(
+    "completes factory logout after the requesting client disconnects from blocked physical teardown",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* openNative(h);
+        const { actions, auth } = actionsFor(h);
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined));
+        h.controls.beforeRelease = Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+        );
+        const previous = yield* h.readRequests;
+        const request = yield* actions.disconnect.pipe(Effect.forkScoped);
+        yield* Deferred.await(entered);
+        yield* assertProcessesClosed(h);
+        yield* Fiber.interrupt(request);
+        expect(yield* h.readRequests).toEqual(previous);
+        h.controls.beforeRelease = Effect.void;
+        yield* Deferred.succeed(release, undefined);
+        const state = yield* auth.subscribe("native-callback-observer").pipe(
+          Stream.filter((value) => value.message === "Signed out of Google."),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+        expect(state.phase).toBe("idle");
+        expect((yield* h.readRequests).slice(previous.length).map((value) => value.method)).toEqual(
+          ["initialize", "auth/logout"],
+        );
+        expect((yield* h.instance.snapshot.getSnapshot).models).toEqual([]);
+        yield* assertProcessesClosed(h);
+        yield* h.refresh();
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "cancels a factory browser flow and retires its real pending ACP child before native reopen",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* openNative(h);
+        const before = yield* h.instance.snapshot.getSnapshot;
+        const oldLaunches = [...nativeLaunches(h)];
+        h.controls.selected = h.waiting;
+        const { actions } = actionsFor(h);
+        const flow = yield* actions.start("antigravity_google");
+        expect(flow.initialStatus).toBe("waiting_for_browser");
+        yield* assertProcessesClosed(h, oldLaunches);
+        expect(nativeLaunches(h)).toHaveLength(2);
+        expect(yield* nativeLaunches(h)[1]!.handle.isRunning).toBe(true);
+        yield* flow.cancel;
+        expect(Exit.isFailure(yield* flow.waitForCompletion.pipe(Effect.exit))).toBe(true);
+        yield* assertProcessesClosed(h);
+        expect((yield* h.instance.snapshot.getSnapshot).models).toEqual(before.models);
+        h.controls.selected = h.first;
+        yield* openNative(h, "after-cancel");
+        expect(nativeLaunches(h)).toHaveLength(3);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "times out factory logout, closes its stalled child and reopens admission without clearing the catalog",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* openNative(h);
+        const before = yield* h.instance.snapshot.getSnapshot;
+        const oldLaunches = [...nativeLaunches(h)];
+        const { actions } = actionsFor(h);
+        h.controls.selected = h.stalled;
+        const spawned = yield* Deferred.make<void>();
+        h.controls.beforeSpawn = assertProcessesClosed(h, oldLaunches);
+        h.controls.afterSpawn = Deferred.succeed(spawned, undefined).pipe(Effect.asVoid);
+        const logout = yield* actions.disconnect.pipe(Effect.exit, Effect.forkScoped);
+        // Observe the actual stalled child, not merely the auth admission receipt.
+        yield* Deferred.await(spawned);
+        expect(nativeLaunches(h)).toHaveLength(2);
+        expect(yield* nativeLaunches(h)[1]!.handle.isRunning).toBe(true);
+        yield* TestClock.adjust("90 seconds");
+        expect(Exit.isFailure(yield* Fiber.join(logout))).toBe(true);
+        yield* assertProcessesClosed(h, oldLaunches);
+        yield* assertProcessesClosed(h);
+        expect((yield* h.instance.snapshot.getSnapshot).models).toEqual(before.models);
+        expect((yield* h.readRequests).some((request) => request.method === "auth/logout")).toBe(
+          false,
+        );
+        h.controls.selected = h.first;
+        yield* openNative(h, "after-timeout");
+      }).pipe(Effect.scoped),
+  );
+
   it.effect.skipIf(windowsHost)(
     "preserves the Node install message when starting a standalone provider",
     () =>
@@ -420,15 +870,15 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
         const requests = yield* h.readRequests;
         expect(requests.map((request) => request.method)).toEqual([
           "initialize",
-          "authenticate",
+          "auth/login",
           "session/new",
           "initialize",
-          "authenticate",
+          "auth/login",
           "session/new",
         ]);
         expect(
           requests
-            .filter((request) => request.method === "authenticate")
+            .filter((request) => request.method === "auth/login")
             .map((request) => request.params?.methodId),
         ).toEqual(["oauth-personal", "oauth-personal"]);
         expect(
@@ -460,7 +910,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
         const requests = yield* h.readRequests;
         expect(
           requests
-            .filter((request) => request.method === "authenticate")
+            .filter((request) => request.method === "auth/login")
             .map((request) => request.params?.methodId),
         ).toEqual(["gemini-api-key"]);
         yield* h.assertClosed;
@@ -563,7 +1013,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const config = yield* ServerConfig;
+        const config = yield* ServerConfig.ServerConfig;
         const instanceId = ProviderInstanceId.make("antigravity-orphan-sweep");
         const directories = yield* resolveAntigravityInstanceDirectories(
           config.stateDir,
@@ -584,7 +1034,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
           environment: [],
         }).pipe(
           Effect.provide(
-            Layer.mock(AntigravityInstallation)({
+            Layer.mock(AntigravityInstallation.AntigravityInstallation)({
               managedDirectory: config.stateDir,
               latestRelease: Effect.succeed(null),
               state: Effect.succeed({
@@ -600,7 +1050,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
               }),
               resolve: () =>
                 Effect.fail(
-                  new AntigravityInstallationError({
+                  new AntigravityInstallation.AntigravityInstallationError({
                     operation: "resolve",
                     detail: "No runtime is needed for orphan cleanup.",
                   }),

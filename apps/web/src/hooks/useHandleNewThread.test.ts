@@ -174,8 +174,9 @@ vi.mock("../state/entities", () => ({
     },
   ],
   readThreadShell: () => null,
+  readProject: () => null,
   useProjects: () => [],
-  useThread: () => null,
+  useThreadShell: () => null,
 }));
 vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},

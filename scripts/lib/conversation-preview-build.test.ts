@@ -15,6 +15,7 @@ import {
   peMachine,
   previewBuildCommand,
   previewSourceSha256,
+  requirePreviewQualification,
   stageWindowsPreviewNotices,
   WINDOWS_PREVIEW_CLSIDS,
   WINDOWS_PREVIEW_DEPENDENCIES,
@@ -149,29 +150,31 @@ it("includes the archive policy and pinned vcpkg revision in Windows qualificati
   );
 });
 
+async function writePreviewDigestFixture(root: string): Promise<void> {
+  const files = [
+    "native/conversation-preview/CMakeLists.txt",
+    "native/conversation-preview/cmake/ScicArchive.cmake",
+    "scripts/build-conversation-preview.sh",
+    "scripts/build-conversation-preview.ps1",
+    "scripts/build-desktop-artifact.ts",
+    "scripts/scient/conversationAssociation.ts",
+    "scripts/scient/wslNodePty.ts",
+    "scripts/sign-macos.ts",
+    "scripts/lib/conversation-preview-build.ts",
+    "apps/desktop/scripts/conversation-file-type.mjs",
+    ".github/workflows/conversation-preview.yml",
+  ];
+  for (const file of files) {
+    const path = NodePath.join(root, file);
+    await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });
+    await NodeFSP.writeFile(path, "original");
+  }
+}
+
 it("invalidates qualification when a native source or pinned build input changes", async () => {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scic-preview-digest-"));
   try {
-    await NodeFSP.mkdir(NodePath.join(root, "native/conversation-preview"), { recursive: true });
-    await NodeFSP.mkdir(NodePath.join(root, "native/conversation-preview/cmake"), {
-      recursive: true,
-    });
-    await NodeFSP.mkdir(NodePath.join(root, "scripts"), { recursive: true });
-    await NodeFSP.mkdir(NodePath.join(root, "scripts/lib"), { recursive: true });
-    await NodeFSP.mkdir(NodePath.join(root, "apps/desktop/scripts"), { recursive: true });
-    await NodeFSP.mkdir(NodePath.join(root, ".github/workflows"), { recursive: true });
-    const files = [
-      "native/conversation-preview/CMakeLists.txt",
-      "native/conversation-preview/cmake/ScicArchive.cmake",
-      "scripts/build-conversation-preview.sh",
-      "scripts/build-conversation-preview.ps1",
-      "scripts/build-desktop-artifact.ts",
-      "scripts/sign-macos.ts",
-      "scripts/lib/conversation-preview-build.ts",
-      "apps/desktop/scripts/conversation-file-type.mjs",
-      ".github/workflows/conversation-preview.yml",
-    ];
-    for (const file of files) await NodeFSP.writeFile(NodePath.join(root, file), "original");
+    await writePreviewDigestFixture(root);
     const before = await previewSourceSha256(root);
     await NodeFSP.writeFile(
       NodePath.join(root, "scripts/build-conversation-preview.sh"),
@@ -200,6 +203,49 @@ it("invalidates qualification when a native source or pinned build input changes
     await NodeFSP.rm(root, { recursive: true, force: true });
   }
 });
+
+it.each(["scripts/scient/conversationAssociation.ts", "scripts/scient/wslNodePty.ts"])(
+  "rejects prior qualification when only %s changes",
+  async (source) => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scic-preview-extracted-"));
+    try {
+      await writePreviewDigestFixture(root);
+      const before = await previewSourceSha256(root);
+      const manifestPath = NodePath.join(root, "qualification.json");
+      const manifest = {
+        schemaVersion: 2,
+        status: "qualified",
+        platform: "mac",
+        arch: "arm64",
+        channel: "latest",
+        sourceSha256: before,
+        dependencyRevision: MAC_PREVIEW_DEPENDENCIES,
+        evidence: "synthetic installed-preview qualification",
+      };
+      const input = {
+        platform: "mac",
+        arch: "arm64",
+        channel: "latest",
+        manifestPath,
+        repoRoot: root,
+      } as const;
+      await NodeFSP.writeFile(manifestPath, JSON.stringify(manifest));
+      assert.equal(await requirePreviewQualification(input), "qualified");
+
+      await NodeFSP.writeFile(NodePath.join(root, source), "changed extracted packaging input");
+      const after = await previewSourceSha256(root);
+      assert.notEqual(after, before);
+      await expect(requirePreviewQualification(input)).rejects.toThrow(
+        /Native preview qualification does not cover mac\/arm64\/latest/u,
+      );
+
+      await NodeFSP.writeFile(manifestPath, JSON.stringify({ ...manifest, sourceSha256: after }));
+      assert.equal(await requirePreviewQualification(input), "qualified");
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 it("requires an exact platform, architecture, and channel qualification", () => {
   assert.equal(MAC_PREVIEW_DEPENDENCIES, "json-c@0.19/libarchive@3.8.7/policy1");

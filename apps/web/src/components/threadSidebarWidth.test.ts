@@ -40,7 +40,10 @@ describe("thread sidebar width", () => {
       new URL("./sidebar/SidebarChrome.tsx", import.meta.url),
       "utf8",
     );
-    const stylesheetSource = NodeFS.readFileSync(new URL("../index.css", import.meta.url), "utf8");
+    // The app stylesheet and the Scient stylesheet it imports for the sidebar brand.
+    const stylesheetSource = ["../index.css", "../scient/presentation/scient-sidebar-stage.css"]
+      .map((path) => NodeFS.readFileSync(new URL(path, import.meta.url), "utf8"))
+      .join("\n");
 
     expect(sidebarSource).toContain(
       "sidebar-brand relative z-10 ml-[var(--workspace-titlebar-content-left)] h-7 w-fit min-w-0 shrink items-center gap-1.5",

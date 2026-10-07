@@ -17,10 +17,12 @@ wants to run or edit, and waits for approval. Work outside the workspace is rest
 **Auto-accept edits**: auto-approve edits, ask before other actions. File changes go through
 without prompting; commands and anything else still stop for approval.
 
-**Auto**: routine actions proceed without you; risky ones still ask. How this is enforced depends
+**Auto**: routine actions proceed without you; risky ones still ask. Providers enforce permissions
+differently, and some read-only actions can proceed in **Supervised**. How this is enforced depends
 on the provider: Codex delegates routine approvals to an AI reviewer, Claude uses its own auto
-permission mode, Cursor uses Smart Auto review, and providers without an equivalent (such as
-OpenCode and Antigravity) fall back to asking, like Supervised.
+permission mode, Cursor uses Smart Auto review, and Grok reviews automatically and sends you the
+commands its review blocks. Providers without an equivalent (such as OpenCode and Antigravity)
+fall back to asking, like Supervised.
 
 **Full access**: allow commands and edits without prompts. The default. The agent runs
 unattended until it finishes or asks a question of its own.
@@ -28,8 +30,14 @@ unattended until it finishes or asks a question of its own.
 Approvals appear inline in the conversation. Approve or reject one and the agent continues from
 there.
 
-For Grok, **Always allow this session** remembers the matching command or tool input. Other
-actions still ask for approval. It does not change the thread to **Full access**.
+Grok offers no **Auto-accept edits**. A Grok thread already set to it runs in **Supervised**. Its
+file-change approvals offer **Allow all edits this session**, while its command approvals have no
+session-wide choice, because Grok would remember that command for the whole project. Remembering
+an approval that way still leaves other actions asking for approval, and it does not change the
+thread to **Full access**.
+
+ACP Registry agents run their own tools in their own mode; Scient answers their approval requests
+by the permission mode. See [ACP Registry permissions](./providers-acp.md#permissions-and-terminals).
 
 Antigravity uses its own permission policy for each mode. Scient still shows any approval or
 question the official agent sends in **Full access**. A remembered approval is available only

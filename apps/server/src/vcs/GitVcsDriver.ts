@@ -1,5 +1,3 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off - FileSystem.stat follows symlinks; checkpoint accounting needs lstat.
-import * as NodeFSP from "node:fs/promises";
 import * as NodeCrypto from "node:crypto";
 import * as NodeBuffer from "node:buffer";
 
@@ -15,9 +13,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   GitCommandError,
   VcsExecutableUnavailableError,
-  VcsCheckpointUnavailableError,
   VcsProcessExitError,
-  VcsProcessTimeoutError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
@@ -38,6 +34,13 @@ import {
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
 import { CommandAvailability } from "@t3tools/shared/shell";
+import {
+  checkpointCleanGitEnv,
+  makeCheckpointSizeCheck,
+  prepareCheckpointStagingRepo,
+  publishStagedCheckpoint,
+  scopedCheckpointCapture,
+} from "./ScientCheckpointCapture.ts";
 import {
   makeGitVcsDriverCore,
   PATCH_RENDER_PREFIX_ARGS,
@@ -86,6 +89,11 @@ export interface GitStatusDetails {
   aheadCount: number;
   behindCount: number;
   aheadOfDefaultCount: number;
+}
+
+export interface GitLocalStatusOptions {
+  /** Skip revision walks and return zero divergence counts for local-only consumers. */
+  readonly includeDivergence?: boolean;
 }
 
 export interface GitRemoteStatusDetails {
@@ -174,6 +182,12 @@ export interface GitCommitOptions {
   readonly progress?: GitCommitProgress;
 }
 
+export interface GitDeleteLocalBranchInput {
+  readonly cwd: string;
+  readonly refName: string;
+  readonly force?: boolean;
+}
+
 export interface GitPushResult {
   status: "pushed" | "skipped_up_to_date";
   branch: string;
@@ -188,6 +202,8 @@ export interface GitRangeContext {
 }
 
 export interface GitRenameBranchInput {
+  /** Fail on a name collision instead of appending a numeric suffix. */
+  exactName?: boolean;
   cwd: string;
   oldBranch: string;
   newBranch: string;
@@ -295,7 +311,10 @@ export class GitVcsDriver extends Context.Service<
     readonly execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, GitCommandError>;
     readonly status: (input: VcsStatusInput) => Effect.Effect<VcsStatusResult, GitCommandError>;
     readonly statusDetails: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;
-    readonly statusDetailsLocal: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;
+    readonly statusDetailsLocal: (
+      cwd: string,
+      options?: GitLocalStatusOptions,
+    ) => Effect.Effect<GitStatusDetails, GitCommandError>;
     readonly statusDetailsRemote: (
       cwd: string,
       options?: GitRemoteStatusOptions,
@@ -381,6 +400,9 @@ export class GitVcsDriver extends Context.Service<
     readonly pruneWorktrees: (input: {
       readonly cwd: string;
     }) => Effect.Effect<void, GitCommandError>;
+    readonly deleteLocalBranch: (
+      input: GitDeleteLocalBranchInput,
+    ) => Effect.Effect<void, GitCommandError>;
     readonly renameBranch: (
       input: GitRenameBranchInput,
     ) => Effect.Effect<GitRenameBranchResult, GitCommandError>;
@@ -398,9 +420,6 @@ export class GitVcsDriver extends Context.Service<
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
-const CHECKPOINT_CAPTURE_TIMEOUT_MS = 90_000;
-const CHECKPOINT_CAPTURE_MAX_FILE_BYTES = 512n * 1024n * 1024n;
-const CHECKPOINT_CAPTURE_MAX_CHANGED_BYTES = 1024n * 1024n * 1024n;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
@@ -787,91 +806,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
     });
 
-  const checkpointFileError = (
-    cwd: string,
-    operation: string,
-    error: { readonly message: string },
-  ) =>
-    new VcsCheckpointUnavailableError({
-      operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
-      cwd,
-      reason: "filesystem-error",
-      detail: `${operation}: ${error.message}`,
-    });
-
-  // Reject captures that would have to hash unusually large changed files.
-  // This is a checkpoint availability limit, never a limit on the user's files
-  // or on their ability to continue a conversation.
-  const checkCheckpointSize = Effect.fn("GitVcsDriver.checkpoints.checkSize")(function* (
-    cwd: string,
-    env: NodeJS.ProcessEnv,
-  ) {
-    const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
-    // Porcelain v1 paths are repository-relative even when cwd is a subdirectory.
-    // Scope enumeration to the same pathspec used by checkpoint staging.
-    const root = yield* execute({ operation, cwd, args: ["rev-parse", "--show-toplevel"], env });
-    const status = yield* execute({
-      operation,
-      cwd,
-      args: ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."],
-      env: { ...env, GIT_OPTIONAL_LOCKS: "0" },
-      maxOutputBytes: 16 * 1024 * 1024,
-      outputMode: "truncate",
-    });
-    if (status.stdoutTruncated) {
-      return yield* new VcsCheckpointUnavailableError({
-        operation,
-        cwd,
-        reason: "path-limit",
-        detail: "Too many changed paths to safely capture a checkpoint.",
-      });
-    }
-    let changedBytes = 0n;
-    const records = status.stdout.split("\0");
-    for (let index = 0; index < records.length; index++) {
-      const record = records[index];
-      if (!record || record.length < 4) continue;
-      // Porcelain -z adds the old path as a second record for renames/copies.
-      if (/[RC]/.test(record.slice(0, 2))) index++;
-      const filePath = path.join(root.stdout.replace(/\r?\n$/, ""), record.slice(3));
-      // Git stores the link text, not the target bytes. lstat also preserves
-      // dangling links; a following exists/stat pair incorrectly treats them as deletions.
-      const info = yield* Effect.tryPromise({
-        try: () =>
-          NodeFSP.lstat(filePath, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
-            if (error.code === "ENOENT") return null; // Deleted while enumerating.
-            throw error;
-          }),
-        catch: (error) =>
-          checkpointFileError(cwd, "checkpoint size check", {
-            message: error instanceof Error ? error.message : String(error),
-          }),
-      });
-      if (info === null || info.isDirectory()) continue; // Gitlinks contain no file payload.
-      if (!info.isFile() && !info.isSymbolicLink()) {
-        return yield* new VcsCheckpointUnavailableError({
-          operation,
-          cwd,
-          reason: "unsupported-file",
-          detail: "A changed special file cannot be included in file history.",
-        });
-      }
-      const size = info.size;
-      changedBytes += size;
-      if (
-        size > CHECKPOINT_CAPTURE_MAX_FILE_BYTES ||
-        changedBytes > CHECKPOINT_CAPTURE_MAX_CHANGED_BYTES
-      ) {
-        return yield* new VcsCheckpointUnavailableError({
-          operation,
-          cwd,
-          reason: "size-limit",
-          detail:
-            "Changed files exceed the checkpoint capture size limit (512 MiB per file, 1 GiB total).",
-        });
-      }
-    }
-  });
+  // SCIENT-FORK:START — checkpoint size limits live in ScientCheckpointCapture.
+  const checkCheckpointSize = makeCheckpointSizeCheck({ execute, path });
+  // SCIENT-FORK:END
 
   // Git renames loose objects and refs into place without fsync by default, so
   // an unclean restart can leave 0-byte files under refs/t3/** that break every
@@ -907,15 +844,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
       };
 
-      const cleanGitEnv: NodeJS.ProcessEnv = {
-        ...process.env,
-        GIT_DIR: undefined,
-        GIT_WORK_TREE: undefined,
-        GIT_COMMON_DIR: undefined,
-        GIT_INDEX_FILE: undefined,
-        GIT_OBJECT_DIRECTORY: undefined,
-        GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
-      };
+      // SCIENT-FORK:START — Git commands that must not inherit a caller's repository.
+      const cleanGitEnv = checkpointCleanGitEnv();
+      // SCIENT-FORK:END
 
       // Forced process termination can leave Git's private index lock behind.
       const cleanupTempIndex = Effect.forEach(
@@ -925,52 +856,18 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       );
 
       yield* Effect.gen(function* () {
-        // Git hashes workspace files into a scoped bare repository, so staging
-        // failures cannot strand pack files in the user's repository. Git then
-        // transfers the completed object graph and publishes the hidden ref.
-        const objectFormat = yield* execute({
+        // SCIENT-FORK:START — stage objects in a scoped bare repository.
+        const { stagingRepo, stagedEnv } = yield* prepareCheckpointStagingRepo({
+          execute,
+          fileSystem,
+          path,
           operation,
           cwd: input.cwd,
-          args: ["rev-parse", "--show-object-format"],
-          env: cleanGitEnv,
-          allowNonZeroExit: true,
+          gitCommonDir,
+          commitEnv,
+          cleanGitEnv,
         });
-        const stagingRepo = yield* fileSystem
-          .makeTempDirectoryScoped({
-            prefix: "scient-checkpoint-",
-          })
-          .pipe(
-            Effect.mapError((error) =>
-              checkpointFileError(input.cwd, "create checkpoint staging repository", error),
-            ),
-          );
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: [
-            "init",
-            "--bare",
-            "--quiet",
-            ...(objectFormat.stdout.trim() === "sha256" ? ["--object-format=sha256"] : []),
-            stagingRepo,
-          ],
-          env: cleanGitEnv,
-        });
-        yield* fileSystem
-          .writeFileString(
-            path.join(stagingRepo, "objects", "info", "alternates"),
-            `${path.join(gitCommonDir, "objects").replaceAll("\\", "/")}\n`,
-          )
-          .pipe(
-            Effect.mapError((error) =>
-              checkpointFileError(input.cwd, "prepare checkpoint staging repository", error),
-            ),
-          );
-        const stagedEnv: NodeJS.ProcessEnv = {
-          ...commitEnv,
-          GIT_OBJECT_DIRECTORY: path.join(stagingRepo, "objects"),
-          GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
-        };
+        // SCIENT-FORK:END
         const headExists = yield* hasHeadCommit(input.cwd);
         const sparseConfig = yield* execute({
           operation,
@@ -1203,49 +1100,24 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
-        yield* execute({
+        // SCIENT-FORK:START — publish the staged commit into the user's repository.
+        yield* publishStagedCheckpoint({
+          execute,
           operation,
           cwd: input.cwd,
-          args: [
-            "--git-dir",
-            stagingRepo,
-            ...durableWrite,
-            "update-ref",
-            "refs/t3/staging",
-            commitOid,
-          ],
-          env: stagedEnv,
+          stagingRepo,
+          stagedEnv,
+          cleanGitEnv,
+          durableWrite,
+          commitOid,
+          checkpointRef: input.checkpointRef,
         });
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: [
-            ...durableWrite,
-            "fetch",
-            "--quiet",
-            "--no-write-fetch-head",
-            "--no-tags",
-            "--no-recurse-submodules",
-            stagingRepo,
-            `+refs/t3/staging:${input.checkpointRef}`,
-          ],
-          env: cleanGitEnv,
-        });
+        // SCIENT-FORK:END
       }).pipe(
         Effect.ensuring(cleanupTempIndex),
-        Effect.scoped,
-        Effect.timeoutOrElse({
-          duration: CHECKPOINT_CAPTURE_TIMEOUT_MS,
-          orElse: () =>
-            Effect.fail(
-              new VcsProcessTimeoutError({
-                operation,
-                command: "git checkpoint capture",
-                cwd: input.cwd,
-                timeoutMs: CHECKPOINT_CAPTURE_TIMEOUT_MS,
-              }),
-            ),
-        }),
+        // SCIENT-FORK:START — the staging scope and the whole-capture timeout.
+        scopedCheckpointCapture(operation, input.cwd),
+        // SCIENT-FORK:END
       );
     }),
 

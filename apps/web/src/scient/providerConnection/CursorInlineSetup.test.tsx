@@ -98,7 +98,7 @@ describe("CursorInlineSetup", () => {
     expect(markup).not.toContain("Paste code");
   });
 
-  it("does not duplicate a managed switch owned by the shared management surface", () => {
+  it("does not offer a CLI switch as SDK sign-in recovery", () => {
     const failedSignIn = provider({
       connection: {
         ...provider().connection!,
@@ -113,10 +113,61 @@ describe("CursorInlineSetup", () => {
       },
     });
 
-    // Runtime diagnostics, and the managed switch inside them, wait for a failure.
+    // CLI management never becomes a remedy for SDK account sign-in.
     expect(render(provider())).not.toContain("Runtime diagnostics");
-    expect(render(failedSignIn)).toContain("Use Scient-managed Cursor");
+    expect(render(failedSignIn)).not.toContain("Use Scient-managed Cursor");
+    expect(render(failedSignIn)).toContain("Cursor sign-in didn’t finish");
     expect(render(failedSignIn, true)).not.toContain("Use Scient-managed Cursor");
+  });
+
+  it("keeps SDK catalog failures separate from a healthy managed CLI", () => {
+    const markup = render(
+      provider({
+        status: "error",
+        auth: { status: "unknown", required: true },
+        message: "Cursor model lookup failed: network unavailable.",
+        connection: {
+          ...provider().connection!,
+          runtime: {
+            ...provider().connection!.runtime!,
+            source: "scient_managed",
+            managedVersion: "2026.08.11-e8db854",
+            actions: ["repair", "remove"],
+          },
+        },
+      }),
+    );
+    expect(markup).toContain("Cursor needs attention");
+    expect(markup).toContain("Cursor model lookup failed: network unavailable.");
+    expect(markup).not.toContain("Repair Cursor");
+    expect(markup).not.toContain("Use Scient-managed");
+  });
+
+  it("preserves repair after an explicitly attempted CLI operation fails", () => {
+    const markup = render(
+      provider({
+        connection: {
+          ...provider().connection!,
+          runtime: {
+            ...provider().connection!.runtime!,
+            source: "scient_managed",
+            managedVersion: "2026.08.11-e8db854",
+            actions: ["repair", "remove"],
+            operation: {
+              operationId: "cursor-cli-repair-failed",
+              action: "repair",
+              status: "failed",
+              startedAt: "2026-08-23T08:00:00.000Z",
+              finishedAt: "2026-08-23T08:01:00.000Z",
+              message: "Cursor CLI archive verification failed.",
+            },
+          },
+        },
+      }),
+    );
+    expect(markup).toContain("Cursor CLI needs repair");
+    expect(markup).toContain("Cursor CLI archive verification failed.");
+    expect(markup).toContain("Repair Cursor CLI");
   });
 
   it("uses the Cursor mark for composer installation while preserving dialog status styling", () => {
@@ -166,7 +217,7 @@ describe("CursorInlineSetup", () => {
       }),
     );
 
-    expect(markup).toContain("Installing Cursor");
+    expect(markup).toContain("Installing Cursor CLI");
     expect(markup).toContain("Downloading Cursor.");
     expect(markup).not.toContain('viewBox="0 0 466.73 532.09"');
     expect(markup.match(/animate-spin/g)).toHaveLength(1);
@@ -178,7 +229,7 @@ describe("CursorInlineSetup", () => {
     expect(markup.match(/animate-spin/g)).toHaveLength(1);
   });
 
-  it("shows model discovery as part of the final installation check", () => {
+  it("shows the explicitly requested CLI activation", () => {
     const markup = render(
       provider({
         connection: {
@@ -201,7 +252,7 @@ describe("CursorInlineSetup", () => {
       }),
     );
 
-    expect(markup).toContain("Installing Cursor");
+    expect(markup).toContain("Installing Cursor CLI");
     expect(markup).toContain("Activating Cursor.");
   });
 

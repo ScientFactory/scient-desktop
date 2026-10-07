@@ -20,7 +20,10 @@ import type { DroidAcpRuntimeFactory, DroidAcpRuntimeInput } from "../acp/DroidA
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { makeModelReasoningResolver } from "../../modelReasoning.ts";
 import { AcpRequestError } from "effect-acp/errors";
-import type { SessionConfigOption } from "effect-acp/schema";
+// SCIENT-FORK:START — legacy v1 vocabulary; see compat rationale in
+// `acp/DroidAcpSupport.ts`.
+import type { SessionConfigOption } from "effect-acp/compat";
+// SCIENT-FORK:END
 import {
   buildDroidCustomModelsSettings,
   droidCustomModelsSnapshot,

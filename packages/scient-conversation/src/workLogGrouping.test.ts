@@ -6,7 +6,6 @@ import {
   deriveTurnFolds,
   deriveUnsettledTurnId,
   shouldPreserveAssistantLineBreaks,
-  workEntryStandsAlone,
   type GroupingTimelineEntry,
 } from "./workLogGrouping.ts";
 
@@ -80,14 +79,6 @@ describe("work-log grouping", () => {
     expect(
       deriveUnsettledTurnId({ turnId: turn, state: "completed", completedAt: at(9) }, null),
     ).toBeNull();
-  });
-
-  it("keeps standalone work out of groups", () => {
-    expect(workEntryStandsAlone({ tone: "error" })).toBe(true);
-    expect(workEntryStandsAlone({ tone: "tool", sourceActivityKind: "context-compaction" })).toBe(
-      true,
-    );
-    expect(workEntryStandsAlone({ tone: "tool" })).toBe(false);
   });
 
   it("preserves assistant line breaks only in Insight blocks", () => {

@@ -2,16 +2,17 @@ import {
   CommandId,
   MessageId,
   ThreadId,
+  type ChatAttachment,
   type ModelSelection,
   type OrchestrationMessageContext,
   type ProjectId,
   type ProviderInteractionMode,
   type RuntimeMode,
+  type UploadChatAttachment,
 } from "@t3tools/contracts";
 import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
 import { composerCitationsToPlainText } from "@t3tools/shared/composerCitations";
-
-import type { UploadedMobileAttachment } from "./attachmentUpload";
+import { truncate } from "@t3tools/shared/String";
 
 export function deriveThreadTitleFromPrompt(value: string): string {
   const trimmed = composerCitationsToPlainText(value).trim();
@@ -23,6 +24,34 @@ export function deriveThreadTitleFromPrompt(value: string): string {
   return compact.length <= 72 ? compact : `${compact.slice(0, 69).trimEnd()}...`;
 }
 
+/**
+ * Title seed for a new thread.
+ *
+ * SCIENT-FORK:START — same shape as client-runtime's `deriveThreadTitleSeed`, but
+ * keeps `composerCitationsToPlainText`: it renders file quotes that
+ * `assistantCitationsToPlainText` drops, and a thread started from a cited file
+ * should be titled from what the user actually sees.
+ * SCIENT-FORK:END
+ */
+export function deriveThreadTitleSeed(input: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<{ readonly name: string }>;
+}): string {
+  const text = composerCitationsToPlainText(input.text).trim().replace(/\s+/gu, " ");
+  if (text.length > 0) {
+    return truncate(text);
+  }
+
+  const attachmentName = composerCitationsToPlainText(input.attachments[0]?.name ?? "")
+    .trim()
+    .replace(/\s+/gu, " ");
+  if (attachmentName.length > 0) {
+    return truncate(`Image: ${attachmentName}`);
+  }
+
+  return "New thread";
+}
+
 export interface ProjectThreadStartTurnSpec {
   readonly projectId: ProjectId;
   readonly projectCwd: string;
@@ -32,8 +61,10 @@ export interface ProjectThreadStartTurnSpec {
   readonly createdAt: string;
   readonly text: string;
   readonly context?: OrchestrationMessageContext;
-  /** Wire attachments from `prepareTurnAttachments`, in composer order. */
-  readonly uploadedAttachments: ReadonlyArray<UploadedMobileAttachment>;
+  /** Wire attachments in composer order: freshly uploaded ones from
+   * `prepareTurnAttachments`, or the server's own persisted copies when a
+   * thread is relaunched from its setup message. */
+  readonly uploadedAttachments: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -51,9 +82,13 @@ export interface ProjectThreadStartTurnSpec {
  * offline outbox drain so both deliver identical commands.
  */
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
-  const title = deriveThreadTitleFromPrompt(spec.text);
+  const title = deriveThreadTitleSeed({
+    text: spec.text,
+    attachments: spec.uploadedAttachments,
+  });
   const isWorktree = spec.workspaceMode === "worktree";
   return {
+    creationSource: "mobile" as const,
     commandId: CommandId.make(spec.commandId),
     selectedScientSkillNames: collectSelectedScientSkillNames(spec.text),
     threadId: ThreadId.make(spec.threadId),

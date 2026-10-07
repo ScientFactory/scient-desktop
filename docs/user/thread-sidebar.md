@@ -110,6 +110,14 @@ If dragging is unavailable for one environment, update the Scient server running
 environment. Pinned and active reordering require server support. Threads from older servers keep
 their default order until the server is updated.
 
+To generate a fresh title from the conversation, open a thread's context menu and choose
+**Regenerate title**. While Scient is generating it, the action reads **Regenerating…** and cannot
+be selected again. The option is hidden when the connected environment needs a server update.
+
+Agents connected through Scient can use the same server-owned metadata workflow to rename a thread,
+regenerate its title, or link and unlink a pull request. These changes appear on web, desktop, and
+mobile without requiring the originating browser to remain open.
+
 ## Keep active threads near the top
 
 In **Sections** view, **Settings → General → Organization → Keep active threads near the top**
@@ -307,10 +315,6 @@ the send button. Choose **Artwork**, **Version pill**, or **None** in Settings u
 identification. Artwork is recolored to match each built-in theme. Custom themes use the **Version
 pill** fallback because their colors are not controlled by Scient.
 
-To generate a fresh title from the conversation, open a thread's context menu and choose
-**Regenerate title**. While Scient is generating it, the action reads **Regenerating…** and cannot
-be selected again. The option is hidden when the connected environment needs a server update.
-
 ## Answers waiting in the Dock
 
 On macOS, Scient's Dock badge counts conversations with an unread completed answer.
@@ -331,7 +335,38 @@ Scient's notification settings and allow app-icon badges. No banner or sound is
 sent by this feature. Closing the last window pauses badge updates until a window
 is reopened; the last displayed count remains. Quitting Scient stops updates.
 
+## Inspect agent work
+
+**Limited** means the provider stopped on a usage or rate limit. The conversation
+keeps the provider's explanation. Retry after the limit resets, or switch to
+another provider instance.
+On web and desktop, press **Resume** in an empty composer to continue a limited
+or interrupted turn manually.
+Queued messages stay saved while the limit blocks the thread. They run after
+the continuation finishes. If the queue was held by a restart, resume it then.
+
+When the provider reports a reset time, choose **Resume at reset** to schedule a
+continuation. You can cancel it from the thread. Enable **Auto-resume limited
+threads** in **Settings → General** on web and desktop, or **Settings → Thread
+behavior** on mobile, to schedule limit stops by default.
+The environment must be running when the reset arrives; it resumes overdue
+continuations after a restart. Sending a new message, archiving, or settling the
+thread prevents a pending continuation from starting.
+
+Choose **Snooze until reset** to hide the thread until its allowance returns.
+Snooze and auto-resume are independent: snooze alone wakes the thread without
+sending a message; enabling both wakes and continues it. **Wake now** cancels
+the snooze. Enable **Snooze limited threads** in thread behavior settings to
+snooze limit stops by default. Providers without a reset time offer manual
+retry and the normal snooze choices.
+
 ## Tool details
+
+On web and desktop, use **Agents** to follow work delegated to subagents.
+
+Subagent threads started by the agent can't take messages; message the parent
+thread instead. When such a subagent needs an approval or an answer, the parent
+thread asks for it.
 
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it

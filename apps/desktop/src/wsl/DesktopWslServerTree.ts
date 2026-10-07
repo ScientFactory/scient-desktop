@@ -17,8 +17,8 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 //
 // Reading through Electron's patched fs also transparently returns the
 // contents of files that electron-builder/asar left in the server.asar.unpacked
-// sibling (native binaries), so a single walk of the archive yields the
-// complete tree.
+// sibling (native binaries). Cursor platform helpers live in extraResources;
+// extraction also copies the packaged Linux helpers into the fallback root.
 
 export type WslServerTreeResult =
   | { readonly ok: true; readonly root: string }
@@ -27,7 +27,7 @@ export type WslServerTreeResult =
 const MARKER_FILE_NAME = "t3code-wsl-server-tree.json";
 const COPY_CONCURRENCY = 8;
 
-const Marker = Schema.Struct({ version: Schema.String });
+const Marker = Schema.Struct({ version: Schema.String, payloadRevision: Schema.Literal(2) });
 const decodeMarker = Schema.decodeUnknownEffect(Schema.fromJsonString(Marker));
 const encodeMarker = Schema.encodeEffect(Schema.fromJsonString(Marker));
 
@@ -111,6 +111,7 @@ const copyTree = (
           // buffers can be retained while their writes complete.
           const bytes = yield* fs.readFile(sourcePath);
           yield* fs.writeFile(targetPath, bytes);
+          yield* fs.chmod(targetPath, info.mode & 0o777);
         }
         return [];
       }),
@@ -157,7 +158,27 @@ export const make = Effect.gen(function* () {
     });
     yield* Effect.gen(function* () {
       yield* copyTree(fs, join, serverRoot, partialDir);
-      const markerJson = yield* encodeMarker({ version });
+      // Cursor's spawnable helpers are outside server.asar for the Windows primary.
+      // The fallback's argv lives in this extracted tree, so Linux needs its own copy.
+      if (yield* fs.exists(join(partialDir, "node_modules", "@cursor", "sdk"))) {
+        const cursorResources = join(environment.resourcesPath, "node_modules", "@cursor");
+        const packages = (yield* fs.readDirectory(cursorResources)).filter((name) =>
+          name.startsWith("sdk-linux-"),
+        );
+        if (packages.length === 0)
+          return yield* new DesktopWslServerTreeExtractError({
+            targetDir: versionDir,
+            cause: "Packaged Linux Cursor helpers are missing.",
+          });
+        for (const name of packages)
+          yield* copyTree(
+            fs,
+            join,
+            join(cursorResources, name),
+            join(partialDir, "node_modules", "@cursor", name),
+          );
+      }
+      const markerJson = yield* encodeMarker({ version, payloadRevision: 2 });
       yield* fs.writeFileString(join(partialDir, MARKER_FILE_NAME), `${markerJson}\n`);
       // The marker is written before the rename, so a directory named after
       // the version is complete by construction.

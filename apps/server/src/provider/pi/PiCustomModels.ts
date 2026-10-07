@@ -432,6 +432,8 @@ export const makePiCustomModelsClientFactory = Effect.fn("PiCustomModels.make")(
         });
       return {
         ...client,
+        validateModelAuthority: () => checkAuthority,
+        annotateModel: annotate,
         assessModelConnections: (models: ReadonlyArray<PiRpcModel>) =>
           assessModelConnections(resolvedConnections, (connection, model) => {
             const native = models.find(
@@ -454,7 +456,8 @@ export const makePiCustomModelsClientFactory = Effect.fn("PiCustomModels.make")(
         prompt: (...args: Parameters<typeof client.prompt>) =>
           checkAuthority.pipe(Effect.andThen(client.prompt(...args))),
         setModel: (provider: string, modelId: string) =>
-          client.prompt("/" + REFRESH_COMMAND).pipe(
+          checkAuthority.pipe(
+            Effect.andThen(client.prompt("/" + REFRESH_COMMAND)),
             Effect.andThen(
               Effect.suspend(() => {
                 const detail = unavailableConnections.get(provider);
@@ -478,7 +481,8 @@ export const makePiCustomModelsClientFactory = Effect.fn("PiCustomModels.make")(
             ),
           ),
         getAvailableModels: () =>
-          client.prompt("/" + REFRESH_COMMAND).pipe(
+          checkAuthority.pipe(
+            Effect.andThen(client.prompt("/" + REFRESH_COMMAND)),
             Effect.andThen(client.getAvailableModels()),
             Effect.map((inventory) => ({ ...inventory, models: inventory.models.map(annotate) })),
           ),

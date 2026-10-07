@@ -1,7 +1,7 @@
 import type { EnvironmentId, ProviderRuntimeSummary, ServerProvider } from "@t3tools/contracts";
 import { useState } from "react";
 
-import { ModelPickerProviderUpdateFooter } from "../../components/chat/ModelPickerContent";
+import { ModelPickerProviderUpdateFooter } from "./ModelPickerProviderUpdateFooter";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import {
   currentOptimisticProviderValue,

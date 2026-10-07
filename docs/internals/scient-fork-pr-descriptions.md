@@ -1,5 +1,7 @@
 # Scient fork modernization PR drafts
 
+Historical record; implementation paths and checks describe its dated snapshot, not current V2 architecture.
+
 > Status: historical delivery record. The boundary phase became
 > [PR #19](https://github.com/ScientFactory/scient-desktop/pull/19) and the
 > persistence phase became

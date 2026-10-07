@@ -82,6 +82,40 @@ describe("ProviderRuntimeDiagnostics", () => {
     expect(markup).not.toContain("app-server");
   });
 
+  it("renders exact owned registry installer, version and directory facts", () => {
+    const current = provider();
+    const markup = renderToStaticMarkup(
+      <ProviderRuntimeDiagnosticsDetails
+        displayName="Registry Agent"
+        provider={{
+          ...current,
+          connection: {
+            ...current.connection!,
+            runtime: {
+              ...current.connection!.runtime!,
+              source: "registry",
+              installation: {
+                agentId: "example-agent",
+                distribution: "npx",
+                version: "1.2.3",
+                packageVersion: "1.2.3",
+                installer: "/server/node/bin/npm",
+                installRoot: "/server/scient/tools/example-agent/1.2.3/npm",
+                executablePath: "/server/scient/tools/example-agent/1.2.3/npm/bin/example-agent",
+                packageSpec: "@example/acp@1.2.3",
+              },
+            },
+          },
+        }}
+      />,
+    );
+    expect(markup).toContain("Scient-owned ACP Registry");
+    expect(markup).toContain("example-agent · npx");
+    expect(markup).toContain("/server/node/bin/npm");
+    expect(markup).toContain("/server/scient/tools/example-agent/1.2.3/npm");
+    expect(markup).toContain("Owned directory");
+  });
+
   it("offers managed recovery only when the caller exposes the install action", () => {
     const onUseManaged = vi.fn();
     const available = renderToStaticMarkup(

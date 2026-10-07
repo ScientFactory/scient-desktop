@@ -1,3 +1,4 @@
+import type { WorkLogPresentationEntry } from "@t3tools/client-runtime/work-log/presentation";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -7,7 +8,9 @@ import {
   traceIconOverride,
 } from "./traceIcons";
 
-const tool = (fields: Partial<Parameters<typeof traceIconOverride>[0]>) => ({
+const tool = (fields: Partial<WorkLogPresentationEntry>): WorkLogPresentationEntry => ({
+  id: "entry",
+  createdAt: "2026-10-07T00:00:00.000Z",
   label: "Tool call",
   tone: "tool" as const,
   ...fields,
@@ -35,11 +38,9 @@ describe("trace icons", () => {
   });
 
   it("picks an icon from what an action did", () => {
-    expect(
-      traceIconOverride(tool({ sourceActivityKind: "approval.requested", tone: "info" })),
-    ).toBe("shield");
+    expect(traceIconOverride(tool({ itemType: "approval_request", tone: "info" }))).toBe("shield");
     expect(traceIconOverride(tool({ toolData: { toolName: "scient_skill_load" } }))).toBe("skill");
-    expect(traceIconOverride(tool({ itemType: "image_view" }))).toBe("image");
+    expect(traceIconOverride(tool({ viewedImagePath: "plot.png" }))).toBe("image");
     expect(traceIconOverride(tool({ toolTitle: "glob" }))).toBe("folder");
     expect(traceIconOverride(tool({ itemType: "command_execution", command: "ls" }))).toBe(
       "folder",
@@ -53,9 +54,11 @@ describe("trace icons", () => {
   });
 
   it("gives a group the icon all of its actions share", () => {
-    const approval = tool({ sourceActivityKind: "approval.resolved", tone: "info" });
+    const approval = tool({ itemType: "approval_request", tone: "info" });
     expect(groupTraceIconOverride([approval, approval])).toBe("shield");
-    expect(groupTraceIconOverride([approval, tool({ itemType: "image_view" })])).toBeUndefined();
+    expect(
+      groupTraceIconOverride([approval, tool({ viewedImagePath: "plot.png" })]),
+    ).toBeUndefined();
     expect(groupTraceIconOverride([])).toBeUndefined();
   });
 });

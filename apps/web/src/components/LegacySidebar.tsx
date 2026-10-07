@@ -190,6 +190,7 @@ import {
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   resolveProjectStatusIndicator,
+  resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
@@ -468,8 +469,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     },
     [discoveredPorts, navigateToThread, openPreview, threadRef],
   );
-  const isThreadRunning =
-    thread.session?.status === "running" && thread.session.activeTurnId != null;
+  const threadRuntime = thread.runtime;
+  const isThreadRunning = threadRuntime?.status === "running" && threadRuntime.activeRunId != null;
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
@@ -1920,9 +1921,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         const thread = threadRef ? readThreadShell(threadRef) : null;
         return threadRef && thread ? [{ threadKey, threadRef, thread }] : [];
       });
-      const hasRunningThread = selectedThreadEntries.some(
-        ({ thread }) => thread.session?.status === "running" && thread.session.activeTurnId != null,
-      );
+      const hasRunningThread = selectedThreadEntries.some(({ thread }) => {
+        const runtime = thread.runtime;
+        return runtime?.status === "running" && runtime.activeRunId != null;
+      });
 
       const clicked = await api.contextMenu.show(
         buildMultiSelectThreadContextMenuItems({ count, hasRunningThread }),

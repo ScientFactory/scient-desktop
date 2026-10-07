@@ -53,6 +53,51 @@ test("validates the fixed artifact schema", () => {
   );
 });
 
+test("distinguishes startup transports and historical artifacts", () => {
+  const current = result();
+  current.schemaVersion = 2;
+  current.scenario.id = "thread-transfer-v2";
+  current.scenario.startupTransport = ["full-compact-http-with-live-cursor"];
+  validateResult(current);
+  const render = (baseline) =>
+    renderComment({
+      current,
+      baseline,
+      currentRun: { sha: "bbbbbbbb", conclusion: "success", url: "https://example.com/current" },
+      baselineRun: { sha: "aaaaaaaa", matchesBase: true, url: "https://example.com/baseline" },
+    });
+  assert.match(render(current), /Full compact HTTP snapshot with live cursor/);
+  assert.doesNotMatch(render(current), /fixture changed/);
+  const historical = result();
+  historical.scenario.id = "thread-transfer-v2";
+  assert.match(render(validateResult(historical)), /fixture changed/);
+  const bounded = structuredClone(current);
+  bounded.scenario.startupTransport = ["bounded-compact-http-with-live-cursor"];
+  assert.match(render(validateResult(bounded)), /fixture changed/);
+});
+
+test("rejects untrusted transport metadata while preserving historical artifacts", () => {
+  assert.equal(validateResult(result()).schemaVersion, 1);
+  for (const transport of [
+    undefined,
+    "full-compact-http-with-live-cursor",
+    [],
+    ["@everyone"],
+    ["toString"],
+    ["full-compact-http-with-live-cursor", "full-compact-http-with-live-cursor"],
+  ]) {
+    const current = result();
+    current.schemaVersion = 2;
+    current.scenario.startupTransport = transport;
+    assert.throws(() => validateResult(current), /unique supported transports/);
+  }
+  const injected = result();
+  injected.schemaVersion = 2;
+  injected.scenario.startupTransport = ["full-compact-http-with-live-cursor"];
+  injected.scenario.injectedMarkdown = "@everyone";
+  assert.throws(() => validateResult(injected), /unexpected fields/);
+});
+
 test("renders baseline, impact, ceiling, and ceiling changes", () => {
   const baseline = result();
   const current = result({ measuredTurnWebSocketWireBytes: 260_000 });

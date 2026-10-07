@@ -9,6 +9,7 @@ import {
   DownloadIcon,
   LockIcon,
   LockOpenIcon,
+  ExternalLinkIcon,
   PlusIcon,
   Trash2Icon,
   XIcon,
@@ -23,6 +24,8 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
+  type AcpRegistryUrlAuthAction,
+  type ProjectId,
   type ProviderDriverKind,
   type ProviderManagedRuntimeAction,
   type ServerProvider,
@@ -44,11 +47,11 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import type { DriverOption } from "./providerDriverMeta";
-import { ProviderSettingsForm } from "./ProviderSettingsForm";
+import type { DriverOption, ProviderEnvironmentFieldDefinition } from "./providerDriverMeta";
+import { deriveProviderSettingsFields, ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderVersionLabel } from "./ProviderVersionLabel";
-import { ProviderInstanceIcon, providerInstanceInitials } from "../chat/ProviderInstanceIcon";
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { ProviderRuntimeSection } from "../../scient/providerConnection/ProviderRuntimeSection";
@@ -57,6 +60,10 @@ import { providerSettingsLifecyclePresentation } from "../../scient/providerConn
 import { withProviderInstanceEnabled } from "../../scient/providerConnection/providerEnablement";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { providerSettingsTabClassName } from "./providerSettingsTabs";
+
+import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
+import { FoldedSettingsSection } from "./FoldedSettingsSection";
+import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -136,6 +143,12 @@ function readConfigCustomModels(config: unknown): ReadonlyArray<CustomModelDefin
   return readCustomModelEntries((config as Record<string, unknown>).customModels);
 }
 
+function readConfigString(config: unknown, key: string): string | null {
+  if (config === null || typeof config !== "object") return null;
+  const value = (config as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
 /**
  * Set `key` to an arbitrary value on the opaque config blob. Unlike
  * provider settings field updates, does not drop empty-looking values — the
@@ -204,6 +217,102 @@ function ProviderAuthEmail(props: {
         className="max-w-full truncate"
       />
     </span>
+  );
+}
+
+export function readProviderEnvironmentVariable(
+  environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
+  name: string,
+): ProviderInstanceEnvironmentVariable | undefined {
+  return environment?.find((variable) => variable.name === name);
+}
+
+export function providerEnvironmentWithoutNames(
+  environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
+  names: ReadonlySet<string>,
+): ReadonlyArray<ProviderInstanceEnvironmentVariable> {
+  return (environment ?? []).filter((variable) => !names.has(variable.name));
+}
+
+export function nextProviderEnvironmentWithFieldValue(
+  environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
+  field: ProviderEnvironmentFieldDefinition,
+  value: string,
+): ReadonlyArray<ProviderInstanceEnvironmentVariable> {
+  const trimmed = value.trim();
+  const next: ProviderInstanceEnvironmentVariable[] = [];
+  let found = false;
+
+  for (const variable of environment ?? []) {
+    if (variable.name !== field.name) {
+      next.push(variable);
+      continue;
+    }
+    found = true;
+    if (trimmed.length > 0) {
+      next.push({
+        name: variable.name,
+        value: trimmed,
+        sensitive: field.sensitive ?? true,
+      });
+    }
+  }
+
+  if (!found && trimmed.length > 0) {
+    next.push({
+      name: field.name,
+      value: trimmed,
+      sensitive: field.sensitive ?? true,
+    });
+  }
+
+  return next;
+}
+
+function ProviderEnvironmentFieldRow(props: {
+  readonly field: ProviderEnvironmentFieldDefinition;
+  readonly variable: ProviderInstanceEnvironmentVariable | undefined;
+  readonly idPrefix: string;
+  readonly onCommit: (field: ProviderEnvironmentFieldDefinition, value: string) => void;
+  readonly onRemove: (field: ProviderEnvironmentFieldDefinition) => void;
+}) {
+  const inputId = `${props.idPrefix}-environment-${props.field.name}`;
+  const value = props.variable?.valueRedacted ? "" : (props.variable?.value ?? "");
+  const placeholder = props.variable?.valueRedacted
+    ? "Stored secret - enter a new value to replace"
+    : props.field.placeholder;
+
+  return (
+    <SettingsRow
+      title={<label htmlFor={inputId}>{props.field.label}</label>}
+      description={props.field.description}
+      control={
+        <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
+          <DraftInput
+            id={inputId}
+            size="sm"
+            className="min-w-0 flex-1"
+            type={props.field.sensitive === false ? undefined : "password"}
+            autoComplete="off"
+            value={value}
+            onCommit={(next) => props.onCommit(props.field, next)}
+            placeholder={placeholder}
+            spellCheck={false}
+          />
+          {props.variable ? (
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost-destructive"
+              onClick={() => props.onRemove(props.field)}
+              aria-label={`Clear ${props.field.label}`}
+            >
+              <XIcon className="size-3.5" />
+            </Button>
+          ) : null}
+        </div>
+      }
+    />
   );
 }
 
@@ -421,7 +530,19 @@ interface ProviderInstanceCardProps {
   readonly onManageConnection?:
     | ((initialRuntimeAction?: ProviderManagedRuntimeAction) => void)
     | undefined;
+  /** SCIENT-FORK:START — ACP registry URL-auth handoff and session management. */
+  readonly onAcceptUrlAuth?: ((action: AcpRegistryUrlAuthAction) => void) | undefined;
+  readonly acpProjects?:
+    | ReadonlyArray<{
+        readonly id: ProjectId;
+        readonly title: string;
+        readonly workspaceRoot: string;
+      }>
+    | undefined;
+  // SCIENT-FORK:END
 }
+
+const EMPTY_ACP_PROJECTS: NonNullable<ProviderInstanceCardProps["acpProjects"]> = [];
 
 /**
  * Renders one provider instance as either a compact selectable list row or
@@ -430,7 +551,7 @@ interface ProviderInstanceCardProps {
  *
  * Behavior notes:
  *   - `liveProvider` is matched by the caller via `instanceId`; when no
- *     match is available (e.g. the server hasn't probed yet, or the
+ *     match is available (e.g. the server hasn't checked it yet, or the
  *     driver is not shipped by the current build) the card still renders
  *     with a neutral "checking" summary.
  *   - Unknown drivers (`driverOption === undefined`) get a read-only
@@ -456,6 +577,7 @@ export function ProviderInstanceCard({
   onDelete,
   headerAction,
   setup,
+  runtime,
   hiddenModels,
   favoriteModels,
   modelOrder,
@@ -466,6 +588,10 @@ export function ProviderInstanceCard({
   onInstallRecommended,
   isUpdating = false,
   onManageConnection,
+  // SCIENT-FORK:START — ACP registry URL-auth handoff and session management.
+  onAcceptUrlAuth,
+  acpProjects = EMPTY_ACP_PROJECTS,
+  // SCIENT-FORK:END
 }: ProviderInstanceCardProps) {
   const [activeTab, setActiveTab] = useState<"models" | "configuration">("models");
   const visibleTab = driverOption ? activeTab : "configuration";
@@ -516,6 +642,8 @@ export function ProviderInstanceCard({
       ? onInstallRecommended
       : onRunUpdate;
   const FallbackIconComponent = driverOption?.icon;
+
+  const urlAuthAction = liveProvider?.auth.action;
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
   const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
     onCopy: ({ providerName }) => {
@@ -547,7 +675,7 @@ export function ProviderInstanceCard({
     driverOption?.supportsCustomModels === false || instance.driver === "antigravity"
       ? []
       : readConfigCustomModels(instance.config);
-  // Server-returned models may lag behind settings writes. Treat probe
+  // Server-returned models may lag behind settings writes. Treat server
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
   const modelsForDisplay = deriveProviderModelsForDisplay({
@@ -606,28 +734,41 @@ export function ProviderInstanceCard({
         : (rest as ProviderInstanceConfig),
     );
   };
+  // Drivers that need a named secret (Cursor's API key) get a dedicated field;
+  // the generic editor only shows the remaining variables.
+  const environmentFields = driverOption?.environmentFields ?? [];
+  const environmentFieldNames = new Set(environmentFields.map((field) => field.name));
+  const genericEnvironment = providerEnvironmentWithoutNames(
+    instance.environment,
+    environmentFieldNames,
+  );
+  const updateGenericEnvironment = (
+    environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
+  ) => {
+    const dedicatedEnvironment = (instance.environment ?? []).filter((variable) =>
+      environmentFieldNames.has(variable.name),
+    );
+    updateEnvironment([...dedicatedEnvironment, ...environment]);
+  };
+  const updateEnvironmentField = (field: ProviderEnvironmentFieldDefinition, value: string) => {
+    updateEnvironment(nextProviderEnvironmentWithFieldValue(instance.environment, field, value));
+  };
+  const removeEnvironmentField = (field: ProviderEnvironmentFieldDefinition) => {
+    updateEnvironment(providerEnvironmentWithoutNames(instance.environment, new Set([field.name])));
+  };
 
-  const titleIconNode = driverKind ? (
+  const titleIconNode = (
     <ProviderInstanceIcon
-      driverKind={driverKind}
+      driverKind={driverKind ?? instance.driver}
       displayName={displayName}
       accentColor={accentColor}
+      acpRegistryAgentId={readConfigString(instance.config, "agentId") ?? undefined}
+      acpRegistryIconUrl={readConfigString(instance.config, "registryIconUrl") ?? undefined}
       showBadge={Boolean(accentColor)}
       className="size-5"
       iconClassName="size-4 text-foreground/80"
       badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
     />
-  ) : FallbackIconComponent ? (
-    <span className="inline-flex size-5 shrink-0 items-center justify-center">
-      <FallbackIconComponent className="size-4 text-foreground/80" aria-hidden />
-    </span>
-  ) : (
-    <span
-      className="inline-flex size-5 shrink-0 items-center justify-center text-3xs font-semibold leading-none text-foreground/80"
-      aria-hidden
-    >
-      {providerInstanceInitials(displayName)}
-    </span>
   );
 
   const titleTailNode = headerAction ? (
@@ -929,6 +1070,26 @@ export function ProviderInstanceCard({
     </div>
   );
 
+  const runtimeFields = driverOption ? (
+    <ProviderSettingsForm
+      definition={driverOption}
+      value={instance.config}
+      idPrefix={`provider-instance-${instanceId}`}
+      variant="settings"
+      onChange={updateConfig}
+    />
+  ) : (
+    <SettingsRow
+      title="Driver"
+      description={
+        <span>
+          This instance uses <code className="text-foreground">{String(instance.driver)}</code>,
+          which is not available in this build. Its configuration is preserved.
+        </span>
+      }
+    />
+  );
+
   return (
     <>
       <SettingsSection
@@ -951,6 +1112,31 @@ export function ProviderInstanceCard({
               {editorStatusNode}
             </div>
           </ProviderStatusDiagnostic>
+          {/* SCIENT-FORK:START — ACP registry URL-auth handoff surfaced in the header. */}
+          {urlAuthAction && onAcceptUrlAuth ? (
+            <div className="grid max-w-xl gap-1.5 pt-1 text-xs">
+              <p>{urlAuthAction.message}</p>
+              <code className="break-all text-2xs">{urlAuthAction.url}</code>
+              <Button
+                render={
+                  <a
+                    href={urlAuthAction.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => onAcceptUrlAuth(urlAuthAction)}
+                  />
+                }
+                size="xs"
+                variant="outline"
+                className="w-fit"
+                disabled={readOnly}
+              >
+                <ExternalLinkIcon />
+                Continue authentication
+              </Button>
+            </div>
+          ) : null}
+          {/* SCIENT-FORK:END */}
         </div>
       </SettingsSection>
       {/* Scient keeps the models-first view; configuration uses upstream settings rows. */}
@@ -1009,48 +1195,63 @@ export function ProviderInstanceCard({
           />
         </SettingsSection>
 
-        {setup ? (
+        {setup || environmentFields.length > 0 ? (
           <SettingsSection title="Setup">
-            <div className="px-3 py-3 sm:px-4">{setup}</div>
+            {setup ? <div className="px-3 py-3 sm:px-4">{setup}</div> : null}
+            <div
+              inert={readOnly}
+              aria-disabled={readOnly || undefined}
+              className={readOnly ? "opacity-50 select-none" : undefined}
+            >
+              {environmentFields.map((field) => (
+                <ProviderEnvironmentFieldRow
+                  key={field.name}
+                  field={field}
+                  variable={readProviderEnvironmentVariable(instance.environment, field.name)}
+                  idPrefix={`provider-instance-${instanceId}`}
+                  onCommit={updateEnvironmentField}
+                  onRemove={removeEnvironmentField}
+                />
+              ))}
+            </div>
           </SettingsSection>
         ) : null}
-
-        <SettingsSection
-          title="Runtime"
-          inert={readOnly}
-          aria-disabled={readOnly || undefined}
-          className={readOnly ? "opacity-50 select-none" : undefined}
-        >
-          {/* Scient: the managed runtime is a row of this section, not a framed card inside it. */}
-          {usesScientManagedRuntime && liveProvider ? (
-            <ProviderRuntimeSection
-              displayName={displayName}
-              environmentId={environmentId}
-              provider={liveProvider}
-              presentation="row"
-            />
-          ) : null}
-          {driverOption ? (
-            <ProviderSettingsForm
-              definition={driverOption}
-              value={instance.config}
-              idPrefix={`provider-instance-${instanceId}`}
-              variant="settings"
-              onChange={updateConfig}
-            />
-          ) : (
-            <SettingsRow
-              title="Driver"
-              description={
-                <span>
-                  This instance uses{" "}
-                  <code className="text-foreground">{String(instance.driver)}</code>, which is not
-                  available in this build. Its configuration is preserved.
-                </span>
-              }
-            />
-          )}
-        </SettingsSection>
+        {instance.driver === "codex" && readCodexSetupMode(instance.config) === "managed" ? (
+          <div
+            inert={readOnly}
+            aria-disabled={readOnly || undefined}
+            className={readOnly ? "opacity-50 select-none" : undefined}
+          >
+            <FoldedSettingsSection
+              key={instanceId}
+              id={`provider-instance-${instanceId}-runtime`}
+              title="Runtime"
+              headerPlacement="outside"
+            >
+              {runtime ?? runtimeFields}
+            </FoldedSettingsSection>
+          </div>
+        ) : usesScientManagedRuntime ||
+          !driverOption ||
+          deriveProviderSettingsFields(driverOption).length > 0 ? (
+          <SettingsSection
+            title="Runtime"
+            inert={readOnly}
+            aria-disabled={readOnly || undefined}
+            className={readOnly ? "opacity-50 select-none" : undefined}
+          >
+            {/* Scient: the managed runtime is a row of this section, not a framed card inside it. */}
+            {usesScientManagedRuntime && liveProvider ? (
+              <ProviderRuntimeSection
+                displayName={displayName}
+                environmentId={environmentId}
+                provider={liveProvider}
+                presentation="row"
+              />
+            ) : null}
+            {runtimeFields}
+          </SettingsSection>
+        ) : null}
 
         <SettingsSection
           title="Environment"
@@ -1062,11 +1263,24 @@ export function ProviderInstanceCard({
             title="Variables"
             description="API keys, base URLs, and other per-instance CLI settings."
           >
+            {/* SCIENT-FORK:START — dedicated driver fields are edited in Setup above. */}
             <ProviderEnvironmentSection
-              environment={instance.environment ?? []}
-              onChange={updateEnvironment}
+              environment={genericEnvironment}
+              onChange={updateGenericEnvironment}
             />
+            {/* SCIENT-FORK:END */}
           </SettingsRow>
+          {/* SCIENT-FORK:START — ACP registry session management. */}
+          {liveProvider?.driver === "acpRegistry" ? (
+            <AcpSessionManagementSection
+              environmentId={environmentId}
+              instanceId={instanceId}
+              provider={liveProvider}
+              projects={acpProjects}
+              readOnly={readOnly}
+            />
+          ) : null}
+          {/* SCIENT-FORK:END */}
         </SettingsSection>
       </div>
 

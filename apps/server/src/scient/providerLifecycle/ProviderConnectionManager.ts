@@ -23,6 +23,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSessionManager.ts";
 import type {
   ProviderConnectionActionFailure,
   ProviderConnectionAttempt,
@@ -127,6 +128,7 @@ const makeError = (input: {
 
 export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
   const providerRegistry = yield* ProviderRegistry;
+  const providerSessions = yield* ProviderSessionManagerV2;
   const lifecycleCoordinator = yield* ProviderLifecycleCoordinator;
   const crypto = yield* Crypto.Crypto;
   const activeRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ActiveConnection>>(new Map());
@@ -849,6 +851,21 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     }
 
     return yield* Effect.gen(function* () {
+      // Ordinary provider sign-out cannot remove credentials while a native
+      // session still holds them. Account-scoped removal settles below, because
+      // an explicit rejection leaves that account's running work unchanged.
+      if (account === undefined) {
+        yield* providerSessions.closeInstance(input.instanceId).pipe(
+          Effect.mapError(() =>
+            makeError({
+              provider: target.provider,
+              instanceId: input.instanceId,
+              reason: "disconnect_failed",
+              message: "Could not stop live sessions before signing out of the provider.",
+            }),
+          ),
+        );
+      }
       const attempt = signOut.pipe(
         Effect.scoped,
         Effect.result,
@@ -862,14 +879,9 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
           ),
         ),
       );
-      // A conversation keeps the sign-in it loaded when it started. Removing an
-      // account's sign-in is therefore one step with stopping the provider's
-      // conversations: the sign-in goes first, so every process that could have
-      // read it already exists and the stop reaches it, and one that starts
-      // later finds nothing. The step is not interruptible (a client that
-      // disconnects midway must not leave conversations holding the sign-in),
-      // and it stops whichever instances are current, not the one that was
-      // current when the sign-out began.
+      // Account removal and native teardown are one uninterruptible step.
+      // Only this instance owns the removed account's state root; other
+      // instances of the same driver keep their independent credentials.
       const result =
         account === undefined
           ? yield* attempt
@@ -879,8 +891,8 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                 if (removal._tag === "Failure" && removal.failure.signInMayBeRemoved !== true) {
                   return removal;
                 }
-                const stopped = yield* providerRegistry
-                  .stopProviderSessions(target.provider)
+                const stopped = yield* providerSessions
+                  .closeInstance(input.instanceId)
                   .pipe(Effect.result);
                 return removal._tag === "Success" && stopped._tag === "Failure"
                   ? Result.fail<ProviderConnectionActionFailure>({

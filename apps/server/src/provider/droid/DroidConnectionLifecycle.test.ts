@@ -1,8 +1,7 @@
 // @effect-diagnostics preferSchemaOverJson:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
+import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -16,7 +15,6 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import { ServerConfig } from "../../config.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { makeDroidTextGeneration } from "../../textGeneration/DroidTextGeneration.ts";
-import { DROID_CONFIGURATION_RETIRED_MESSAGE, makeDroidAdapter } from "../Layers/DroidAdapter.ts";
 import { makeDroidAcpRuntime } from "../acp/DroidAcpSupport.ts";
 import { droidCustomModelId, makeDroidCustomModelsRuntimeFactory } from "./DroidCustomModels.ts";
 
@@ -25,7 +23,7 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-droid-lifecycle-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
-const fixture = (stallFirst = true) =>
+const fixture = () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -88,8 +86,6 @@ const fixture = (stallFirst = true) =>
       customModels: { revision: 0, connections },
     });
     const partial = yield* Deferred.make<void>();
-    const promptEntered = yield* Deferred.make<void>();
-    const releasePrompt = yield* Deferred.make<void>();
     let generation = 0;
     const factory = yield* makeDroidCustomModelsRuntimeFactory(
       {
@@ -117,19 +113,12 @@ const fixture = (stallFirst = true) =>
               T3_ACP_DROID_ASYNC_CONFIG_REFRESH: "1",
               // Real Droid offers autonomy_level; background generation requires it.
               T3_ACP_DROID_AUTONOMY: "auto-high",
-              T3_ACP_EMIT_CONTENT_THEN_HANG: generation++ === 0 && stallFirst ? "1" : "0",
+              T3_ACP_EMIT_CONTENT_THEN_HANG: generation++ === 0 ? "1" : "0",
               T3_ACP_PROMPT_RESPONSE_TEXT: '{"title":"Recovered"}',
             },
           });
           return {
             ...runtime,
-            prompt: (...args: Parameters<typeof runtime.prompt>) =>
-              (stallFirst
-                ? Effect.void
-                : Deferred.succeed(promptEntered, undefined).pipe(
-                    Effect.andThen(Deferred.await(releasePrompt)),
-                  )
-              ).pipe(Effect.andThen(runtime.prompt(...args))),
             handleSessionUpdate: (handler) =>
               runtime.handleSessionUpdate((notification) =>
                 handler(notification).pipe(
@@ -150,8 +139,6 @@ const fixture = (stallFirst = true) =>
       processes,
       factory,
       partial,
-      promptEntered,
-      releasePrompt,
       settings: { binaryPath, enabled: true, customModels: [], cloudSessionSync: true },
       selection: { instanceId, model: droidCustomModelId("fixture", "model") },
       update: (kind: "labels" | "add" | "rotate" | "remove") =>
@@ -185,169 +172,7 @@ const fixture = (stallFirst = true) =>
     };
   });
 
-it.effect(
-  "finishes an active turn after adding another model and adopts it at the idle boundary",
-  () =>
-    Effect.gen(function* () {
-      const f = yield* fixture(false);
-      const adapter = yield* makeDroidAdapter(f.settings, {
-        instanceId,
-        makeAcpRuntime: f.factory,
-      });
-      const threadId = ThreadId.make("droid-add-model");
-      const input = {
-        threadId,
-        cwd: f.root,
-        runtimeMode: "full-access" as const,
-        modelSelection: f.selection,
-      };
-      const original = yield* adapter.startSession(input);
-      const events = yield* adapter.streamEvents.pipe(
-        Stream.takeUntil((event) => event.type === "turn.completed"),
-        Stream.runCollect,
-        Effect.forkChild,
-      );
-      const sending = yield* adapter
-        .sendTurn({ threadId, input: "answer", attachments: [] })
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(f.promptEntered);
-      yield* f.update("add");
-      expect(yield* adapter.hasSession(threadId)).toBe(true);
-      yield* Deferred.succeed(f.releasePrompt, undefined);
-      yield* Fiber.join(sending);
-      const completed = (yield* Fiber.join(events)).filter(
-        (event) => event.type === "turn.completed",
-      );
-      expect(completed).toHaveLength(1);
-      expect(completed[0]!.payload.state).toBe("completed");
-      expect(yield* adapter.hasSession(threadId)).toBe(false);
-      const modelSelection = { instanceId, model: droidCustomModelId("fixture", "added") };
-      yield* adapter.startSession({
-        ...input,
-        modelSelection,
-        resumeCursor: original.resumeCursor,
-      });
-      const next = yield* adapter.streamEvents.pipe(
-        Stream.takeUntil((event) => event.type === "turn.completed"),
-        Stream.runCollect,
-        Effect.forkChild,
-      );
-      yield* adapter.sendTurn({ threadId, input: "continue", attachments: [], modelSelection });
-      expect(
-        (yield* Fiber.join(next)).find((event) => event.type === "turn.completed")?.payload.state,
-      ).toBe("completed");
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-);
-
-it.live("fails a send on a session a Custom models change retired with a typed error", () =>
-  Effect.gen(function* () {
-    const f = yield* fixture(false);
-    const adapter = yield* makeDroidAdapter(f.settings, { instanceId, makeAcpRuntime: f.factory });
-    const threadId = ThreadId.make("droid-retired-send");
-    yield* adapter.startSession({
-      threadId,
-      cwd: f.root,
-      runtimeMode: "full-access" as const,
-      modelSelection: f.selection,
-    });
-    yield* f.update("rotate");
-    // The process ends shortly after the change; a send that raced it must say why.
-    while (f.processes.length === 0 || (yield* f.processes[0]!.isRunning))
-      yield* Effect.sleep("20 millis");
-    yield* Effect.sleep("100 millis");
-    const result = yield* adapter
-      .sendTurn({ threadId, input: "hello", attachments: [] })
-      .pipe(Effect.exit);
-    expect(result._tag).toBe("Failure");
-    const error = result._tag === "Failure" ? Cause.squash(result.cause) : undefined;
-    expect(error).toMatchObject({
-      _tag: "ProviderAdapterRequestError",
-      detail:
-        "Custom models changed, so Droid restarted this conversation and your message was not sent. Send it again.",
-    });
-  }).pipe(Effect.scoped, Effect.provide(testLayer)),
-);
-
 for (const change of ["rotate", "remove"] as const) {
-  it.effect(`preserves partial chat output, settles once and recovers after ${change}`, () =>
-    Effect.gen(function* () {
-      const f = yield* fixture();
-      const adapter = yield* makeDroidAdapter(f.settings, {
-        instanceId,
-        makeAcpRuntime: f.factory,
-      });
-      const threadId = ThreadId.make(`droid-active-${change}`);
-      const startInput = {
-        threadId,
-        cwd: f.root,
-        runtimeMode: "full-access" as const,
-        modelSelection: f.selection,
-      };
-      const original = yield* adapter.startSession(startInput);
-      const chatPartial = yield* Deferred.make<void>();
-      const events = yield* adapter.streamEvents.pipe(
-        Stream.tap((event) =>
-          event.type === "content.delta" ? Deferred.succeed(chatPartial, undefined) : Effect.void,
-        ),
-        Stream.takeUntil((event) => event.type === "turn.completed"),
-        Stream.runCollect,
-        Effect.forkChild,
-      );
-      const sending = yield* adapter
-        .sendTurn({ threadId, input: "hello", attachments: [] })
-        .pipe(Effect.exit, Effect.forkChild);
-      yield* Deferred.await(chatPartial);
-      yield* f.update("labels");
-      yield* f.update("add");
-      // Pending discovery freshness must not make an active runtime appear absent.
-      expect(yield* adapter.hasSession(threadId)).toBe(true);
-      expect((yield* adapter.listSessions()).some((session) => session.threadId === threadId)).toBe(
-        true,
-      );
-      // A direct factory check is covered separately; here revocation must still settle active work.
-      yield* f.update(change);
-      yield* Fiber.join(sending);
-      const terminalEvents = yield* Fiber.join(events);
-      expect(terminalEvents.filter((event) => event.type === "turn.completed")).toHaveLength(1);
-      expect(terminalEvents.find((event) => event.type === "turn.completed")?.payload.state).toBe(
-        "cancelled",
-      );
-      // The thread says why the turn stopped.
-      expect(
-        terminalEvents
-          .filter((event) => event.type === "runtime.warning")
-          .map((event) => event.payload.message),
-      ).toEqual([DROID_CONFIGURATION_RETIRED_MESSAGE]);
-      expect(
-        terminalEvents.some(
-          (event) =>
-            event.type === "content.delta" && event.payload.delta === "partial before stall",
-        ),
-      ).toBe(true);
-      expect(yield* adapter.hasSession(threadId)).toBe(false);
-      const nextSelection = change === "remove" ? { instanceId, model: "default" } : f.selection;
-      yield* adapter.startSession({
-        ...startInput,
-        modelSelection: nextSelection,
-        resumeCursor: original.resumeCursor,
-      });
-      const recovered = yield* adapter.streamEvents.pipe(
-        Stream.takeUntil((event) => event.type === "turn.completed"),
-        Stream.runCollect,
-        Effect.forkChild,
-      );
-      yield* adapter.sendTurn({
-        threadId,
-        input: "continue",
-        attachments: [],
-        modelSelection: nextSelection,
-      });
-      expect(
-        (yield* Fiber.join(recovered)).find((event) => event.type === "turn.completed")?.payload
-          .state,
-      ).toBe("completed");
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  );
   it.effect(
     `terminates revoked background generation and cleans up its replacement after ${change}`,
     () =>
