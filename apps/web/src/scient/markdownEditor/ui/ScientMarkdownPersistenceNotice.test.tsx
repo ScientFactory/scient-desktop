@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { MarkdownPersistenceCoordinator } from "@scientfactory/scient-markdown";
@@ -7,6 +7,11 @@ import { EnvironmentId, ProjectWriteFileError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import type { MarkdownPersistenceLease } from "../persistence/markdownPersistenceRegistry";
 import { ScientMarkdownPersistenceNotice } from "./ScientMarkdownPersistenceNotice";
+import { MarkdownPersistenceRegistry } from "../persistence/markdownPersistenceRegistry";
+import {
+  markdownViewTransition,
+  resolveMarkdownRenderedState,
+} from "../../fileOpening/fileOpeningPolicy";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -39,6 +44,11 @@ describe("Markdown persistence feedback", () => {
         relativePath: "notes.md",
       },
       getSnapshot: coordinator.getSnapshot,
+      getPendingInput: () => null,
+      canEditPendingInput: () => true,
+      claimPendingInput: () => true,
+      releasePendingInputClaim: () => {},
+      retainPendingInput: () => true,
       subscribe: coordinator.subscribe,
       change: (source, version) => coordinator.change(source, version),
       applyEdit: coordinator.applyEdit.bind(coordinator),
@@ -70,6 +80,72 @@ describe("Markdown persistence feedback", () => {
     expect(button).toBeDefined();
     button!.click();
   }
+
+  it("returns to Rich past an outstanding source-line reveal without publishing pending input", () => {
+    const write = vi.fn(async () => ({ revision: "r1" }));
+    const registry = new MarkdownPersistenceRegistry({
+      createTransport: () => ({
+        write,
+        read: async () => ({ source: "Saved source", revision: "r0" }),
+        classifyFailure: () => "terminal",
+        subscribe: () => () => {},
+        project: () => {},
+      }),
+    });
+    const target = {
+      environmentId: EnvironmentId.make("return-rich"),
+      cwd: "/synthetic",
+      relativePath: "paper.md",
+    };
+    const lease = registry.acquire(target, {
+      relativePath: "paper.md",
+      contents: "Saved source",
+      revision: "r0",
+      byteLength: 12,
+      truncated: false,
+    })!;
+    const pending = { message: "Pending input", payload: { text: "Keep this input" } };
+    lease.retainPendingInput(pending);
+    const revealRequestId = 7;
+    function PanelViewState() {
+      const [state, setState] = useState(
+        markdownViewTransition(false, target.relativePath, revealRequestId - 1),
+      );
+      // This is the panel's actual gate for a non-null source-line reveal.
+      const revealHandled =
+        state.handledReveal?.path === target.relativePath &&
+        state.handledReveal.requestId === revealRequestId;
+      const citationRevealActive = state.dismissedCitationReveal !== revealRequestId;
+      const rich = resolveMarkdownRenderedState(
+        state.preferred,
+        citationRevealActive,
+        revealHandled,
+      );
+      return (
+        <>
+          <ScientMarkdownPersistenceNotice
+            persistence={lease}
+            onReturnToRich={() =>
+              setState(markdownViewTransition(true, target.relativePath, revealRequestId))
+            }
+          />
+          <div data-view>{rich ? "Rich editor" : "Source editor"}</div>
+        </>
+      );
+    }
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    act(() => root.render(<PanelViewState />));
+    expect(host.querySelector("[data-view]")?.textContent).toBe("Source editor");
+    act(() => click(host, "Return to Rich"));
+    expect(host.querySelector("[data-view]")?.textContent).toBe("Rich editor");
+    expect(lease.getPendingInput()).toBe(pending);
+    expect(lease.getSnapshot().draftSource).toBe("Saved source");
+    expect(write).not.toHaveBeenCalled();
+    lease.release();
+  });
 
   it("keeps both quick and slow routine saves silent, including screen readers", async () => {
     const write = deferred<{ revision: string }>();
