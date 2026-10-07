@@ -197,6 +197,10 @@ export interface ProviderSessionManagerV2Shape {
     readonly resumeFromSession?: OrchestrationV2ProviderSession;
     readonly initialNativeThreadId?: string;
     readonly initialProviderItemIdentityVersion?: 2;
+    // SCIENT-FORK:START provider-enabled-at-open
+    /** A deferred turn start refuses a provider turned off since its message was admitted. */
+    readonly requireEnabledInstance?: boolean;
+    // SCIENT-FORK:END provider-enabled-at-open
   }) => Effect.Effect<ProviderAdapterV2SessionRuntime, ProviderSessionManagerV2Error>;
   readonly get: (
     providerSessionId: ProviderSessionId,
@@ -2064,9 +2068,10 @@ export const layerWithOptions = (
                     ),
                   );
                   // SCIENT-FORK:START provider-enabled-at-open
-                  yield* requireEnabledProviderInstance(
-                    registry,
-                    input.modelSelection.instanceId,
+                  yield* (
+                    input.requireEnabledInstance === true
+                      ? requireEnabledProviderInstance(registry, input.modelSelection.instanceId)
+                      : Effect.void
                   ).pipe(
                     Effect.mapError(
                       (cause) =>

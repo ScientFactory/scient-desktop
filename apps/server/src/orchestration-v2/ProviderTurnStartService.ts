@@ -682,6 +682,9 @@ export const layer: Layer.Layer<
           : providerSessions.open({
               threadId: projection.thread.id,
               providerSessionId,
+              // SCIENT-FORK:START provider-enabled-at-open
+              requireEnabledInstance: true,
+              // SCIENT-FORK:END provider-enabled-at-open
               modelSelection: run.modelSelection,
               runtimePolicy: resolvedRuntimePolicy,
               ...(existingSessionProjection === undefined
