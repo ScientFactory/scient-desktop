@@ -70,7 +70,11 @@ import {
   type ProviderAdapterV2SteerInput,
   type ProviderAdapterV2Event,
 } from "./ProviderAdapter.ts";
-import { makeLayer } from "./ProviderAdapterRegistry.ts";
+import {
+  makeLayer,
+  ProviderAdapterRegistryMetadataError,
+  ProviderAdapterRegistryV2,
+} from "./ProviderAdapterRegistry.ts";
 import {
   makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
@@ -128,6 +132,38 @@ const promotionMcpRegistryLayer = McpSessionRegistry.layer.pipe(
 );
 
 const instanceId = ProviderInstanceId.make("omp");
+
+// The production registry also reports whether each instance is turned on.
+const withProviderEnabled = (
+  registry: Layer.Layer<ProviderAdapterRegistryV2>,
+  enabled: ((instanceId: ProviderInstanceId) => boolean) | undefined,
+) =>
+  enabled === undefined
+    ? registry
+    : Layer.effect(
+        ProviderAdapterRegistryV2,
+        Effect.map(ProviderAdapterRegistryV2, (adapters) =>
+          ProviderAdapterRegistryV2.of({
+            ...adapters,
+            getMetadata: (instanceId) =>
+              adapters.get(instanceId).pipe(
+                Effect.flatMap((adapter) =>
+                  adapter.getCapabilities().pipe(
+                    Effect.mapError(
+                      (cause) => new ProviderAdapterRegistryMetadataError({ instanceId, cause }),
+                    ),
+                    Effect.map((capabilities) => ({
+                      driver: adapter.driver,
+                      continuationKey: `${adapter.driver}:instance:${instanceId}`,
+                      enabled: enabled(instanceId),
+                      capabilities,
+                    })),
+                  ),
+                ),
+              ),
+          }),
+        ),
+      ).pipe(Layer.provide(registry));
 const modelSelection = { instanceId, model: "queue-policy-model" };
 
 interface NativeOffer {
@@ -206,6 +242,7 @@ const withNativeQueue = <A, E, R>(
     readonly decorateProjectionStore?: (
       store: ProjectionStore.ProjectionStoreV2Shape,
     ) => ProjectionStore.ProjectionStoreV2Shape;
+    readonly providerEnabled?: (instanceId: ProviderInstanceId) => boolean;
   } = {},
 ) =>
   Effect.scoped(
@@ -429,7 +466,7 @@ const withNativeQueue = <A, E, R>(
                 },
               ]
             : []),
-        ]),
+        ]).pipe((registry) => withProviderEnabled(registry, options.providerEnabled)),
         {
           configureMcp: options.mcpSessionRegistryLayer !== undefined,
           ...(options.mcpSessionRegistryLayer
@@ -2440,22 +2477,55 @@ it.live(
         decorateProjectionStore: (store) => ({
           ...store,
           getCheckpointCaptureContext: (threadId, target) =>
-            store
-              .getCheckpointCaptureContext(threadId, target)
-              .pipe(
-                Effect.map((context) =>
-                  context.scope === undefined
-                    ? context
-                    : {
-                        ...context,
-                        scope: { ...context.scope, cwd: `${context.scope.cwd}-moved` },
-                      },
-                ),
+            store.getCheckpointCaptureContext(threadId, target).pipe(
+              Effect.map((context) =>
+                context.scope === undefined
+                  ? context
+                  : {
+                      ...context,
+                      scope: { ...context.scope, cwd: `${context.scope.cwd}-moved` },
+                    },
               ),
+            ),
         }),
       },
     ),
 );
+
+it.live("a deferred start does not open a provider that was turned off after admission", () => {
+  let enabled = true;
+  return withNativeQueue(
+    "queue-native-provider-disabled-after-admission",
+    ({ orchestrator, threadId, offers, takeOffer }) =>
+      Effect.gen(function* () {
+        const worker = yield* OrchestrationEffectWorkerV2;
+        yield* send(orchestrator, threadId, "after disable");
+        const admitted = yield* orchestrator.getThreadProjection(threadId);
+        const run = admitted.runs.find((candidate) => candidate.status === "starting");
+        assert.ok(run);
+        // Settings turn the provider off before the durable start effect runs.
+        enabled = false;
+        yield* worker.drain();
+        const settled = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(offers, []);
+        assert.equal(settled.runs.find((candidate) => candidate.id === run.id)?.status, "failed");
+        const failure = settled.turnItems.find(
+          (item) => item.runId === run.id && item.type === "error",
+        );
+        assert.ok(failure?.type === "error");
+        assert.equal(failure.title, "Provider is turned off");
+        assert.match(failure.failure.message, /turned off/);
+        assert.deepEqual(settled.providerTurns, []);
+        // Turning it back on lets the next message start normally.
+        enabled = true;
+        yield* send(orchestrator, threadId, "after enable");
+        yield* worker.drain();
+        const next = yield* takeOffer;
+        assert.include(next.input.message.text, "after enable");
+      }),
+    { runEffectWorker: false, providerEnabled: () => enabled },
+  );
+});
 
 it.live(
   "native checkpoint comparison failure preserves the captured ref and reports its diagnostic",

@@ -16,6 +16,9 @@ import {
   makeStartupSessionReservations,
   registerStartupSessionReservations,
 } from "./scient-provider/StartupSessionHold.ts";
+// SCIENT-FORK:START provider-enabled-at-open
+import { requireEnabledProviderInstance } from "./scient-provider/ProviderInstanceEnabled.ts";
+// SCIENT-FORK:END provider-enabled-at-open
 import { expandComposerCitationsForProvider } from "@t3tools/shared/composerCitations";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -2060,6 +2063,21 @@ export const layerWithOptions = (
                         }),
                     ),
                   );
+                  // SCIENT-FORK:START provider-enabled-at-open
+                  yield* requireEnabledProviderInstance(
+                    registry,
+                    input.modelSelection.instanceId,
+                  ).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderSessionOpenError({
+                          instanceId: input.modelSelection.instanceId,
+                          providerSessionId: input.providerSessionId,
+                          cause,
+                        }),
+                    ),
+                  );
+                  // SCIENT-FORK:END provider-enabled-at-open
                   const prepared = yield* prepareMcpSession(
                     input.threadId,
                     input.modelSelection.instanceId,
