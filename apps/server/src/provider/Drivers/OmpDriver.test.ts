@@ -11,6 +11,8 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
+import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
@@ -21,6 +23,8 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-omp-driver-managed-actions-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(IdAllocator.layer),
+  Layer.provideMerge(ProviderContinuationRequests.layer),
   Layer.provideMerge(OmpExecutableGate.layer),
   Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
   Layer.provideMerge(ServerSettingsService.layerTest()),

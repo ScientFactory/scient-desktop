@@ -343,6 +343,7 @@ beforeEach(() => {
 });
 
 describe.each(DRIVERS)("$name composer setup", (entry) => {
+  const runtimeName = entry.driver === "cursor" ? "Cursor CLI" : entry.name;
   it("shows a ready state with a check, no inline Repair and no extra marks", () => {
     const element = view(ready(entry));
 
@@ -355,7 +356,7 @@ describe.each(DRIVERS)("$name composer setup", (entry) => {
   it("shows the provider logo while it waits for installation", () => {
     const element = view(notInstalled(entry));
 
-    expect(element.textContent).toContain(`Install ${entry.name}`);
+    expect(element.textContent).toContain(`Install ${runtimeName}`);
     expect(statusIcons(element)).toEqual(["setup"]);
     expectProviderLogo(element, entry);
     expect(strayIcons(element)).toBe(0);
@@ -364,47 +365,53 @@ describe.each(DRIVERS)("$name composer setup", (entry) => {
   it("shows installation progress with one spinner as its status icon", () => {
     const element = view(installing(entry));
 
-    expect(element.textContent).toContain(`Installing ${entry.name}`);
+    expect(element.textContent).toContain(`Installing ${runtimeName}`);
     expect(statusIcons(element)).toEqual(["spinner"]);
     expect(element.querySelectorAll(".animate-spin")).toHaveLength(1);
     expect(strayIcons(element)).toBe(0);
     expect(buttonLabels(element)).toEqual(["Cancel"]);
-    expect(accessibleNames(element)).toEqual([`Cancel ${entry.name} installation`]);
+    expect(accessibleNames(element)).toEqual([`Cancel ${runtimeName} installation`]);
   });
 
   it("offers a reviewed managed update as its primary action", () => {
     const element = view(managedUpdate(entry));
 
-    expect(element.textContent).toContain(`${entry.name} update available`);
+    expect(element.textContent).toContain(`${runtimeName} update available`);
     expect(element.textContent).toContain(MANAGED_UPDATE_COPY);
-    expect(accessibleNames(element)[0]).toBe(`Update ${entry.name}`);
+    expect(accessibleNames(element)[0]).toBe(`Update ${runtimeName}`);
   });
 
   it("shows a server-side installation failure with its error and a retry", () => {
     const element = view(installFailed(entry));
 
-    expect(element.textContent).toContain(`${entry.name} installation couldn’t finish`);
+    expect(element.textContent).toContain(`${runtimeName} installation couldn’t finish`);
     expect(element.textContent).toContain(INSTALL_ERROR);
     expect(element.querySelector('[role="alert"]')).not.toBeNull();
     expect(statusIcons(element)).toEqual(["warning"]);
     expect(buttonLabels(element)).toEqual(["Retry installation"]);
-    expect(accessibleNames(element)).toEqual([`Retry installation of ${entry.name}`]);
+    expect(accessibleNames(element)).toEqual([`Retry installation of ${runtimeName}`]);
   });
 
   it("asks for repair with the server's error", () => {
     const element = view(needsRepair(entry));
 
-    expect(element.textContent).toContain(`${entry.name} needs repair`);
+    expect(element.textContent).toContain(
+      entry.driver === "cursor" ? "Cursor needs attention" : `${runtimeName} needs repair`,
+    );
     expect(element.textContent).toContain(SERVER_ERROR);
     expect(statusIcons(element)).toEqual(["warning"]);
     expect(strayIcons(element)).toBe(0);
     // Droid re-checks a failed start only on request, so it offers one beside Repair.
     expect(buttonLabels(element)).toEqual(
-      entry.driver === "droid" ? ["Try again", "Repair Droid"] : [`Repair ${entry.name}`],
+      entry.driver === "cursor"
+        ? []
+        : entry.driver === "droid"
+          ? ["Try again", "Repair Droid"]
+          : [`Repair ${runtimeName}`],
     );
     expect(
       frameButtons(element).filter((button) => button.dataset.variant === "ghost-primary"),
-    ).toHaveLength(1);
+    ).toHaveLength(entry.driver === "cursor" ? 0 : 1);
   });
 
   it("keeps the server's error when an earlier runtime operation succeeded", () => {
@@ -416,7 +423,7 @@ describe.each(DRIVERS)("$name composer setup", (entry) => {
           status: "succeeded",
           startedAt: T0,
           finishedAt: T0,
-          message: `${entry.name} 1.2.3 was installed and verified.`,
+          message: `${runtimeName} 1.2.3 was installed and verified.`,
         },
       }),
     );
@@ -433,7 +440,9 @@ describe.each(DRIVERS)("$name composer setup", (entry) => {
         }),
       );
 
-      expect(element.textContent).toContain(`${entry.name} needs repair`);
+      expect(element.textContent).toContain(
+        entry.driver === "cursor" ? "Cursor needs attention" : `${runtimeName} needs repair`,
+      );
       expect(element.textContent).toContain(SERVER_ERROR);
       expect(element.textContent).not.toContain(`The earlier ${action} failed.`);
     }
@@ -458,8 +467,8 @@ describe.each(DRIVERS)("$name composer setup", (entry) => {
     expect(view(failed).textContent).toContain("The 1.3.0 update did not pass its smoke test.");
     const element = view(newer);
     expect(element.textContent).not.toContain("did not pass its smoke test");
-    expect(element.textContent).toContain(`${entry.name} update available`);
-    expect(accessibleNames(element)[0]).toBe(`Update ${entry.name}`);
+    expect(element.textContent).toContain(`${runtimeName} update available`);
+    expect(accessibleNames(element)[0]).toBe(`Update ${runtimeName}`);
   });
 
   it("shows a failed managed update with its error and a retry", () => {
@@ -473,19 +482,19 @@ describe.each(DRIVERS)("$name composer setup", (entry) => {
       }),
     );
 
-    expect(element.textContent).toContain(`${entry.name} couldn’t be updated`);
+    expect(element.textContent).toContain(`${runtimeName} couldn’t be updated`);
     expect(element.textContent).toContain("The reviewed update did not pass its smoke test.");
     expect(statusIcons(element)).toEqual(["warning"]);
     expect(buttonLabels(element)[0]).toBe("Try again");
-    expect(accessibleNames(element)[0]).toBe(`Try again to update ${entry.name}`);
+    expect(accessibleNames(element)[0]).toBe(`Try again to update ${runtimeName}`);
     expect(element.textContent).toContain("Runtime diagnostics");
   });
 
   it("labels its install and update actions with short verbs and names the provider", () => {
     expect(buttonLabels(view(notInstalled(entry)))).toEqual(["Install"]);
-    expect(accessibleNames(view(notInstalled(entry)))).toEqual([`Install ${entry.name}`]);
+    expect(accessibleNames(view(notInstalled(entry)))).toEqual([`Install ${runtimeName}`]);
     expect(buttonLabels(view(managedUpdate(entry)))[0]).toBe("Update");
-    expect(accessibleNames(view(managedUpdate(entry)))[0]).toBe(`Update ${entry.name}`);
+    expect(accessibleNames(view(managedUpdate(entry)))[0]).toBe(`Update ${runtimeName}`);
   });
 
   it("keeps runtime diagnostics out of healthy and first-run states", () => {
@@ -498,8 +507,11 @@ describe.each(DRIVERS)("$name composer setup", (entry) => {
     const failedWithDiagnostics = withRuntime(installFailed(entry), {
       diagnostics: ready(entry).connection!.runtime!.diagnostics!,
     });
-    for (const provider of [needsRepair(entry), failedWithDiagnostics]) {
-      expect(markupFor(provider)).toContain("Runtime diagnostics");
+    expect(markupFor(failedWithDiagnostics)).toContain("Runtime diagnostics");
+    if (entry.driver === "cursor") {
+      expect(markupFor(needsRepair(entry))).not.toContain("Runtime diagnostics");
+    } else {
+      expect(markupFor(needsRepair(entry))).toContain("Runtime diagnostics");
     }
   });
 });
@@ -552,176 +564,188 @@ describe.each(ACCOUNT_DRIVERS)("$name composer sign-in", (entry) => {
       managedVersion: null,
     });
 
-    expect(markupFor(system)).toContain(`Use Scient-managed ${entry.name}`);
+    if (entry.driver === "cursor") {
+      expect(markupFor(system)).not.toContain("Use Scient-managed");
+    } else {
+      expect(markupFor(system)).toContain(`Use Scient-managed ${entry.name}`);
+    }
     expect(markupFor(signInFailed(entry))).not.toContain("Use Scient-managed");
   });
 });
 
-describe.each(ACCOUNT_DRIVERS)("$name composer switch to the Scient-managed runtime", (entry) => {
-  let root: Root;
-  let host: HTMLDivElement;
+// Cursor SDK sign-in is independent of CLI selection. Its switch safeguards
+// are exercised through ProviderRuntimeSection, which owns the CLI controls.
+describe.each(ACCOUNT_DRIVERS.filter((entry) => entry.driver !== "cursor"))(
+  "$name composer switch to the Scient-managed runtime",
+  (entry) => {
+    let root: Root;
+    let host: HTMLDivElement;
 
-  beforeEach(() => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-  });
-  afterEach(async () => {
-    await act(() => root.unmount());
-    host.remove();
-    vi.unstubAllGlobals();
-    vi.mocked(controller.planRuntime).mockReset();
-    vi.mocked(controller.startRuntime).mockReset();
-  });
-
-  // The switch is offered where a system installation fails to sign in.
-  const system = withRuntime(signInFailed(entry), {
-    source: "system",
-    actions: ["install"],
-    managedVersion: null,
-  });
-  const older = {
-    instanceId: system.instanceId,
-    action: "install" as const,
-    target: "darwin-arm64",
-    version: "1.2.0",
-    downloadBytes: null,
-    sourceLabel: "Official release",
-    catalogRevision: "revision:older-than-system",
-    message: `Scient-managed ${entry.name} 1.2.0 is older than your installed ${entry.name} 1.2.3. Scient will use its own verified copy; your installation stays as it is.`,
-    systemVersion: "1.2.3",
-    olderThanSystem: true,
-  };
-  const notOlder = {
-    ...older,
-    version: "1.3.0",
-    catalogRevision: "revision",
-    message: `Scient will install private ${entry.name} 1.3.0 and use it instead of the system installation (1.2.3), which stays untouched.`,
-    olderThanSystem: false,
-  };
-  const stalePlan = Object.assign(new Error("The provider setup plan changed."), {
-    reason: "runtime_plan_stale",
-  });
-
-  const button = (label: string) =>
-    [...host.querySelectorAll("button")].find(
-      (element) => !element.closest("[hidden]") && element.textContent!.trim() === label,
-    );
-  const useManaged = async () => {
-    await act(() =>
-      root.render(
-        <AssistedProviderSetupHost
-          displayName={entry.name}
-          environmentId={EnvironmentId.make("local")}
-          provider={system}
-          surface="composer"
-        />,
-      ),
-    );
-    await act(async () => button(`Use Scient-managed ${entry.name}`)!.click());
-  };
-  const decisionText = () =>
-    [...host.querySelectorAll("[data-provider-onboarding-view=assisted]")]
-      .filter((frame) => !frame.closest("[hidden]"))
-      .map((frame) => frame.textContent)
-      .join("");
-
-  it("shows both versions before an older release replaces the system one", async () => {
-    vi.mocked(controller.planRuntime).mockResolvedValue(older);
-    vi.mocked(controller.startRuntime).mockResolvedValue(system);
-
-    await useManaged();
-
-    // Nothing started from the first click.
-    expect(controller.planRuntime).toHaveBeenCalledWith("install");
-    expect(controller.startRuntime).not.toHaveBeenCalled();
-    expect(decisionText()).toContain(`Use Scient-managed ${entry.name} 1.2.0?`);
-    expect(decisionText()).toContain(older.message);
-    expect(decisionText()).not.toContain("The sign-in window was closed.");
-
-    await act(async () => button("Use Scient-managed")!.click());
-    expect(controller.startRuntime).toHaveBeenCalledExactlyOnceWith(older, {
-      acceptOlderThanSystem: true,
+    beforeEach(() => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      host = document.createElement("div");
+      document.body.append(host);
+      root = createRoot(host);
     });
-    expect(decisionText()).not.toContain(older.message);
-  });
+    afterEach(async () => {
+      await act(() => root.unmount());
+      host.remove();
+      vi.unstubAllGlobals();
+      vi.mocked(controller.planRuntime).mockReset();
+      vi.mocked(controller.startRuntime).mockReset();
+    });
 
-  it("asks before a switch from a system installation whose version is unknown", async () => {
-    const unknown = {
-      ...notOlder,
-      catalogRevision: "revision:system-version-unknown",
-      message: `Scient does not know which ${entry.name} version, if any, is installed on this computer (system version unknown), so Scient-managed ${entry.name} 1.3.0 may be older than it.`,
-      systemVersion: null,
+    // The switch is offered where a system installation fails to sign in.
+    const system = withRuntime(signInFailed(entry), {
+      source: "system",
+      actions: ["install"],
+      managedVersion: null,
+    });
+    const older = {
+      instanceId: system.instanceId,
+      action: "install" as const,
+      target: "darwin-arm64",
+      version: "1.2.0",
+      downloadBytes: null,
+      sourceLabel: "Official release",
+      catalogRevision: "revision:older-than-system",
+      message: `Scient-managed ${entry.name} 1.2.0 is older than your installed ${entry.name} 1.2.3. Scient will use its own verified copy; your installation stays as it is.`,
+      systemVersion: "1.2.3",
+      olderThanSystem: true,
     };
-    vi.mocked(controller.planRuntime).mockResolvedValue(unknown);
-    vi.mocked(controller.startRuntime).mockResolvedValue(system);
-
-    await useManaged();
-
-    expect(controller.startRuntime).not.toHaveBeenCalled();
-    expect(decisionText()).toContain("system version unknown");
-
-    await act(async () => button("Use Scient-managed")!.click());
-    expect(controller.startRuntime).toHaveBeenCalledExactlyOnceWith(unknown, {
-      acceptOlderThanSystem: true,
+    const notOlder = {
+      ...older,
+      version: "1.3.0",
+      catalogRevision: "revision",
+      message: `Scient will install private ${entry.name} 1.3.0 and use it instead of the system installation (1.2.3), which stays untouched.`,
+      olderThanSystem: false,
+    };
+    const stalePlan = Object.assign(new Error("The provider setup plan changed."), {
+      reason: "runtime_plan_stale",
     });
-  });
 
-  it("returns to the setup, with nothing started, on Back", async () => {
-    vi.mocked(controller.planRuntime).mockResolvedValue(older);
+    const button = (label: string) =>
+      [...host.querySelectorAll("button")].find(
+        (element) => !element.closest("[hidden]") && element.textContent!.trim() === label,
+      );
+    const useManaged = async () => {
+      await act(() =>
+        root.render(
+          <AssistedProviderSetupHost
+            displayName={entry.name}
+            environmentId={EnvironmentId.make("local")}
+            provider={system}
+            surface="composer"
+          />,
+        ),
+      );
+      await act(async () => button(`Use Scient-managed ${entry.name}`)!.click());
+    };
+    const decisionText = () =>
+      [...host.querySelectorAll("[data-provider-onboarding-view=assisted]")]
+        .filter((frame) => !frame.closest("[hidden]"))
+        .map((frame) => frame.textContent)
+        .join("");
 
-    await useManaged();
-    await act(async () => button("Back")!.click());
+    it("shows both versions before an older release replaces the system one", async () => {
+      vi.mocked(controller.planRuntime).mockResolvedValue(older);
+      vi.mocked(controller.startRuntime).mockResolvedValue(system);
 
-    expect(controller.startRuntime).not.toHaveBeenCalled();
-    expect(decisionText()).not.toContain(older.message);
-    expect(decisionText()).toContain("The sign-in window was closed.");
-    expect(decisionText()).not.toContain("Scient could not");
-    expect(button(`Use Scient-managed ${entry.name}`)!.disabled).toBe(false);
-  });
+      await useManaged();
 
-  it("starts a release that is not older from the click, as before", async () => {
-    vi.mocked(controller.planRuntime).mockResolvedValue(notOlder);
-    vi.mocked(controller.startRuntime).mockResolvedValue(system);
+      // Nothing started from the first click.
+      expect(controller.planRuntime).toHaveBeenCalledWith("install");
+      expect(controller.startRuntime).not.toHaveBeenCalled();
+      expect(decisionText()).toContain(`Use Scient-managed ${entry.name} 1.2.0?`);
+      expect(decisionText()).toContain(older.message);
+      expect(decisionText()).not.toContain("The sign-in window was closed.");
 
-    await useManaged();
-
-    expect(controller.startRuntime).toHaveBeenCalledExactlyOnceWith(notOlder);
-    expect(decisionText()).not.toContain(notOlder.message);
-  });
-
-  it("asks when the system runtime was upgraded between the plan and the start", async () => {
-    vi.mocked(controller.planRuntime).mockResolvedValueOnce(notOlder).mockResolvedValueOnce(older);
-    vi.mocked(controller.startRuntime).mockRejectedValueOnce(stalePlan);
-
-    await useManaged();
-
-    // Not started, and not an error: the current decision.
-    expect(controller.startRuntime).toHaveBeenCalledExactlyOnceWith(notOlder);
-    expect(decisionText()).toContain(older.message);
-    expect(decisionText()).not.toContain("The provider setup plan changed.");
-
-    vi.mocked(controller.startRuntime).mockResolvedValueOnce(system);
-    await act(async () => button("Use Scient-managed")!.click());
-    expect(controller.startRuntime).toHaveBeenLastCalledWith(older, {
-      acceptOlderThanSystem: true,
+      await act(async () => button("Use Scient-managed")!.click());
+      expect(controller.startRuntime).toHaveBeenCalledExactlyOnceWith(older, {
+        acceptOlderThanSystem: true,
+      });
+      expect(decisionText()).not.toContain(older.message);
     });
-  });
-});
+
+    it("asks before a switch from a system installation whose version is unknown", async () => {
+      const unknown = {
+        ...notOlder,
+        catalogRevision: "revision:system-version-unknown",
+        message: `Scient does not know which ${entry.name} version, if any, is installed on this computer (system version unknown), so Scient-managed ${entry.name} 1.3.0 may be older than it.`,
+        systemVersion: null,
+      };
+      vi.mocked(controller.planRuntime).mockResolvedValue(unknown);
+      vi.mocked(controller.startRuntime).mockResolvedValue(system);
+
+      await useManaged();
+
+      expect(controller.startRuntime).not.toHaveBeenCalled();
+      expect(decisionText()).toContain("system version unknown");
+
+      await act(async () => button("Use Scient-managed")!.click());
+      expect(controller.startRuntime).toHaveBeenCalledExactlyOnceWith(unknown, {
+        acceptOlderThanSystem: true,
+      });
+    });
+
+    it("returns to the setup, with nothing started, on Back", async () => {
+      vi.mocked(controller.planRuntime).mockResolvedValue(older);
+
+      await useManaged();
+      await act(async () => button("Back")!.click());
+
+      expect(controller.startRuntime).not.toHaveBeenCalled();
+      expect(decisionText()).not.toContain(older.message);
+      expect(decisionText()).toContain("The sign-in window was closed.");
+      expect(decisionText()).not.toContain("Scient could not");
+      expect(button(`Use Scient-managed ${entry.name}`)!.disabled).toBe(false);
+    });
+
+    it("starts a release that is not older from the click, as before", async () => {
+      vi.mocked(controller.planRuntime).mockResolvedValue(notOlder);
+      vi.mocked(controller.startRuntime).mockResolvedValue(system);
+
+      await useManaged();
+
+      expect(controller.startRuntime).toHaveBeenCalledExactlyOnceWith(notOlder);
+      expect(decisionText()).not.toContain(notOlder.message);
+    });
+
+    it("asks when the system runtime was upgraded between the plan and the start", async () => {
+      vi.mocked(controller.planRuntime)
+        .mockResolvedValueOnce(notOlder)
+        .mockResolvedValueOnce(older);
+      vi.mocked(controller.startRuntime).mockRejectedValueOnce(stalePlan);
+
+      await useManaged();
+
+      // Not started, and not an error: the current decision.
+      expect(controller.startRuntime).toHaveBeenCalledExactlyOnceWith(notOlder);
+      expect(decisionText()).toContain(older.message);
+      expect(decisionText()).not.toContain("The provider setup plan changed.");
+
+      vi.mocked(controller.startRuntime).mockResolvedValueOnce(system);
+      await act(async () => button("Use Scient-managed")!.click());
+      expect(controller.startRuntime).toHaveBeenLastCalledWith(older, {
+        acceptOlderThanSystem: true,
+      });
+    });
+  },
+);
 
 describe.each(EXTERNAL_UPDATE_DRIVERS)("$name composer external update", (entry) => {
+  const runtimeName = entry.driver === "cursor" ? "Cursor CLI" : entry.name;
   it("says it will run the installation's own updater, not that it installs a reviewed update", () => {
     const element = view(externalUpdate(entry));
 
-    expect(element.textContent).toContain(`${entry.name} update available`);
+    expect(element.textContent).toContain(`${runtimeName} update available`);
     expect(element.textContent).toContain(
-      `${entry.name} 1.3.0 is available. Scient will run ${entry.driver} update to update the ${entry.name} installed on this Mac.`,
+      `${runtimeName} 1.3.0 is available. Scient will run ${entry.driver} update to update the ${runtimeName} installed on this Mac.`,
     );
     expect(element.querySelector("code")?.textContent).toBe(`${entry.driver} update`);
     expect(element.textContent).not.toContain("reviewed update");
     expect(element.textContent).not.toContain("remains available");
-    expect(accessibleNames(element)[0]).toBe(`Update ${entry.name}`);
+    expect(accessibleNames(element)[0]).toBe(`Update ${runtimeName}`);
   });
 
   it("keeps a truthful generic line when the updater command is unknown", () => {
@@ -732,7 +756,7 @@ describe.each(EXTERNAL_UPDATE_DRIVERS)("$name composer external update", (entry)
     });
 
     expect(element.textContent).toContain(
-      `${entry.name} 1.3.0 is available. Scient will update the ${entry.name} installed on this Mac with its own updater.`,
+      `${runtimeName} 1.3.0 is available. Scient will update the ${runtimeName} installed on this Mac with its own updater.`,
     );
     expect(element.textContent).not.toContain("remains available");
   });
@@ -756,7 +780,7 @@ describe.each(EXTERNAL_UPDATE_DRIVERS)("$name composer external update", (entry)
         ? [running({ ...externalUpdate(entry), ...signIn(entry) })]
         : []),
     ]) {
-      expect(element.textContent).toContain(`Updating ${entry.name}`);
+      expect(element.textContent).toContain(`Updating ${runtimeName}`);
       expect(element.textContent).toContain(`Running ${entry.driver} update on this Mac.`);
       expect(element.querySelector('[role="status"]')).not.toBeNull();
       expect(statusIcons(element)).toEqual(["spinner"]);
@@ -775,10 +799,10 @@ describe.each(EXTERNAL_UPDATE_DRIVERS)("$name composer external update", (entry)
       }),
     );
 
-    expect(element.textContent).toContain(`${entry.name} update didn’t take effect`);
+    expect(element.textContent).toContain(`${runtimeName} update didn’t take effect`);
     expect(element.textContent).toContain("still detects an outdated provider version");
     expect(element.querySelector('[role="alert"]')).not.toBeNull();
-    expect(accessibleNames(element)[0]).toBe(`Try again to update ${entry.name}`);
+    expect(accessibleNames(element)[0]).toBe(`Try again to update ${runtimeName}`);
   });
 
   it("shows a failed external update with a retry", () => {
@@ -792,7 +816,7 @@ describe.each(EXTERNAL_UPDATE_DRIVERS)("$name composer external update", (entry)
       }),
     );
 
-    expect(element.textContent).toContain(`${entry.name} couldn’t be updated`);
+    expect(element.textContent).toContain(`${runtimeName} couldn’t be updated`);
     expect(element.textContent).toContain("The updater exited with code 2.");
     expect(statusIcons(element)).toEqual(["warning"]);
     expect(buttonLabels(element)[0]).toBe("Try again");
@@ -826,7 +850,7 @@ describe.each(EXTERNAL_UPDATE_DRIVERS)("$name composer external update", (entry)
         ),
       );
       const button = frameButtons(host).find(
-        (element) => element.getAttribute("aria-label") === `Update ${entry.name}`,
+        (element) => element.getAttribute("aria-label") === `Update ${runtimeName}`,
       );
       await act(async () => button!.click());
     };
@@ -841,7 +865,7 @@ describe.each(EXTERNAL_UPDATE_DRIVERS)("$name composer external update", (entry)
         downloadBytes: null,
         sourceLabel: "Official release",
         catalogRevision: "revision",
-        message: `Update ${entry.name}.`,
+        message: `Update ${runtimeName}.`,
       };
       vi.mocked(controller.planRuntime).mockResolvedValueOnce(plan);
       vi.mocked(controller.startRuntime).mockResolvedValueOnce(provider);
@@ -861,7 +885,7 @@ describe.each(EXTERNAL_UPDATE_DRIVERS)("$name composer external update", (entry)
 
       expect(controller.updateExternalRuntime).toHaveBeenCalledOnce();
       expect(controller.planRuntime).not.toHaveBeenCalled();
-      expect(host.textContent).toContain(`Updating ${entry.name}`);
+      expect(host.textContent).toContain(`Updating ${runtimeName}`);
       expect(host.textContent).toContain(`Running ${entry.driver} update on this Mac.`);
       expect(host.textContent).not.toContain("Preparing");
       expect(host.textContent).not.toContain("private");

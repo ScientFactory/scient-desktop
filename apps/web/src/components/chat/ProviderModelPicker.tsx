@@ -45,6 +45,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   activeProviderIconClassName?: string;
   instanceIndicatorBackground?: string;
   size?: ComposerControlSize;
+  compact?: boolean;
   isComposerOwned?: boolean;
   disabled?: boolean;
   terminalOpen?: boolean;
@@ -60,8 +61,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   renderProviderSetup?: (entry: ProviderInstanceEntry) => ReactNode;
   renderProviderFooter?: (entry: ProviderInstanceEntry) => ReactNode;
   statusLabel?: string;
-  onForkToSwitchProvider?: () => void;
-  forkToSwitchProviderDisabled?: boolean;
+  onContinueInNewChat?: () => void;
+  continueInNewChatDisabled?: boolean;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
   const composerFloatingLayerProps = useComposerMenuProps();
@@ -230,7 +231,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             data-chat-provider-model-picker="true"
             className={cn(
               "min-w-0 shrink justify-between whitespace-nowrap",
-              !props.isComposerOwned && "max-w-48 sm:max-w-56",
+              props.compact
+                ? "max-w-42 shrink-0"
+                : !props.isComposerOwned && "max-w-48 sm:max-w-56",
               props.triggerClassName,
             )}
             disabled={props.disabled}
@@ -267,6 +270,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               driverKind={activeEntry.driverKind}
               displayName={activeEntry.displayName}
               accentColor={activeEntry.accentColor}
+              acpRegistryAgentId={activeEntry.acpRegistryAgentId}
+              acpRegistryIconUrl={activeEntry.acpRegistryIconUrl}
               showBadge={showInstanceBadge}
               className="size-4"
               iconClassName={cn("size-4", props.activeProviderIconClassName)}
@@ -352,10 +357,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           {...(props.renderProviderFooter
             ? { renderProviderFooter: props.renderProviderFooter }
             : {})}
-          {...(props.onForkToSwitchProvider
-            ? { onForkToSwitchProvider: props.onForkToSwitchProvider }
-            : {})}
-          forkToSwitchProviderDisabled={props.forkToSwitchProviderDisabled ?? false}
+          {...(props.onContinueInNewChat ? { onContinueInNewChat: props.onContinueInNewChat } : {})}
+          continueInNewChatDisabled={props.continueInNewChatDisabled ?? false}
           onInstanceModelChange={handleInstanceModelChange}
         />
         {props.selectedModels === undefined ? (

@@ -7,6 +7,23 @@ Scient requires OpenCode 1.14.19 or newer. It checks the server version before i
 starts work. If the check fails, update OpenCode or fix the server URL and password, then refresh
 the provider status. Reconnecting the client also runs the check again.
 
+## OpenCode 2
+
+Scient supports OpenCode 2.0.18 and newer. It detects the version on its own, so
+the same provider settings work for OpenCode 1.x and 2.x. OpenCode 1.x shows
+**Limited support** in its provider settings.
+
+OpenCode 2 is a separate package, `@opencode/cli`. To move from 1.x, install it
+yourself, for example `npm install -g @opencode/cli`. Then refresh provider status.
+Scient's update button updates whichever package you have installed. It never
+switches a 1.x install to 2.x.
+
+OpenCode 2 converts the shared OpenCode database to its own format the first time it
+runs. Don't run OpenCode 1.x and 2.x side by side on the same machine. Threads you
+started on 1.x continue on 2.x.
+
+Plan mode uses OpenCode's `plan` agent.
+
 ## Server authentication
 
 Without a server URL, Scient starts a local OpenCode server. The process inherits

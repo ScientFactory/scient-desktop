@@ -13,9 +13,7 @@ import {
 } from "@scientfactory/scient-sources/store";
 import * as Effect from "effect/Effect";
 import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
-import * as Option from "effect/Option";
 
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { makeSourceImportAnalytics } from "../../../telemetry/SourceImportAnalytics.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import {

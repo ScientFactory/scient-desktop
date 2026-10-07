@@ -50,7 +50,6 @@ export function buildArchivedThreadGroups(input: {
         continue;
       }
       const scopedThread = scopeThreadShell(entry.environmentId, thread);
-      if (thread.projectId === null) continue;
       const threads = threadsByProjectId.get(thread.projectId) ?? [];
       threads.push(scopedThread);
       threadsByProjectId.set(thread.projectId, threads);

@@ -26,8 +26,8 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as NodeCrypto from "node:crypto";
-import { ServerConfig } from "../config.ts";
-import { BUNDLED_MODEL_MANIFEST, ModelManifest } from "./ModelManifest.ts";
+import * as ServerConfig from "../config.ts";
+import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 
 const DRIVER = ProviderDriverKind.make("codex");
@@ -145,7 +145,7 @@ export class CodexInstallation extends Context.Service<
   static readonly layer = Layer.effect(
     CodexInstallation,
     Effect.gen(function* () {
-      const config = yield* ServerConfig;
+      const config = yield* ServerConfig.ServerConfig;
       return yield* makeCodexInstallation({
         baseDir: config.baseDir,
         initialize: SCIENT_CODEX_SUBSCRIPTION_SHARING_ENABLED,
@@ -168,7 +168,7 @@ const isRunning = (state: ProviderInstallState) =>
 export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function* (
   options: CodexInstallationOptions,
 ) {
-  const manifestService = yield* ModelManifest;
+  const manifestService = yield* ModelManifest.ModelManifest;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
@@ -272,7 +272,11 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     const manifest = yield* manifestService.current;
     return (
       resolveProviderCompatibility(manifest.compatibility, DRIVER, version) ??
-      resolveProviderCompatibility(BUNDLED_MODEL_MANIFEST.compatibility, DRIVER, version)
+      resolveProviderCompatibility(
+        ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+        DRIVER,
+        version,
+      )
     );
   });
   const resolveManaged = Effect.fn("CodexInstallation.resolveManaged")(

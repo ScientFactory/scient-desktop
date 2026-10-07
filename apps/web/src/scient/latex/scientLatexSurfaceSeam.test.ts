@@ -3,10 +3,13 @@ import * as NodeFS from "node:fs";
 
 import { describe, expect, it } from "vite-plus/test";
 
-const panelSource = NodeFS.readFileSync(
-  new URL("../../components/files/FilePreviewPanel.tsx", import.meta.url),
-  "utf8",
-);
+// The inherited panel and the Scient module that loads its surfaces.
+const panelSource = [
+  "../../components/files/FilePreviewPanel.tsx",
+  "../fileSurfaces/scientLazyFileSurfaces.tsx",
+]
+  .map((path) => NodeFS.readFileSync(new URL(path, import.meta.url), "utf8"))
+  .join("\n");
 const projectSource = NodeFS.readFileSync(
   new URL("./LatexProjectVisualEditor.tsx", import.meta.url),
   "utf8",

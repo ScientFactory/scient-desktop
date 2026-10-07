@@ -23,6 +23,7 @@ export function createPdfValidationRuntime(input: {
   readonly timeoutMs?: number;
 }): PdfValidationRuntime {
   let queue = Promise.resolve();
+  let termination = Promise.resolve();
   let closed = false;
   let activeWorker: NodeWorkerThreads.Worker | null = null;
 
@@ -66,9 +67,12 @@ export function createPdfValidationRuntime(input: {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
-        if (activeWorker === worker) activeWorker = null;
+        // Deliver the validation result promptly, but keep physical ownership
+        // until Node acknowledges exit. The next queued job and close join it.
+        termination = worker.terminate().then(() => {
+          if (activeWorker === worker) activeWorker = null;
+        });
         resolve(result);
-        void worker.terminate();
       };
       const timeout = setTimeout(
         () =>
@@ -92,10 +96,8 @@ export function createPdfValidationRuntime(input: {
       worker.once("error", () =>
         finish(rejectedPdf(profile, "worker-failed", "The PDF validation worker failed.")),
       );
-      worker.once("exit", (code) => {
-        if (code !== 0) {
-          finish(rejectedPdf(profile, "worker-failed", "The PDF validation worker stopped."));
-        }
+      worker.once("exit", () => {
+        finish(rejectedPdf(profile, "worker-failed", "The PDF validation worker stopped."));
       });
     });
 
@@ -103,8 +105,8 @@ export function createPdfValidationRuntime(input: {
     validate: (bytes, profile) => {
       const result = queue.then(() => run(bytes, profile));
       queue = result.then(
-        () => undefined,
-        () => undefined,
+        () => termination,
+        () => termination,
       );
       return result;
     },

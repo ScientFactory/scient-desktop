@@ -1,5 +1,3 @@
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
-
 interface ActivityIssuePolicy {
   readonly owner:
     | "workspace"
@@ -67,28 +65,4 @@ const policies: Readonly<Record<string, ActivityIssuePolicy>> = {
 
 export function activityIssuePolicy(kind: string | undefined): ActivityIssuePolicy | undefined {
   return kind !== undefined && Object.hasOwn(policies, kind) ? policies[kind] : undefined;
-}
-
-/** Background capability state is inspected through its feature, never an answer failure. */
-export function isBackgroundActivityIssue(kind: string): boolean {
-  const owner = activityIssuePolicy(kind)?.owner;
-  return owner === "file-history" || owner === "changes";
-}
-
-/** A failed request is hidden when its card can explain/retry it or it was resolved.
- * Unknown or expired request failures remain inspectable in the work log. */
-export function isRequestIssueOwnedByCard(
-  activity: OrchestrationThreadActivity,
-  pendingRequestIds: ReadonlySet<string>,
-): boolean {
-  const owner = activityIssuePolicy(activity.kind)?.owner;
-  if (owner !== "approval" && owner !== "question") return false;
-  const payload = activity.payload;
-  return (
-    typeof payload === "object" &&
-    payload !== null &&
-    "requestId" in payload &&
-    typeof payload.requestId === "string" &&
-    pendingRequestIds.has(payload.requestId)
-  );
 }

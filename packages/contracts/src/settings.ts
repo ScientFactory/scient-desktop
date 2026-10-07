@@ -1,9 +1,34 @@
+// SCIENT-FORK:START
+import {
+  DroidSettingsPatch,
+  makeScientProviderSettings,
+  OmpSettingsPatch,
+  ScientAgentSettingsPatch,
+} from "./scient/providerSettings.ts";
+import {
+  ScientificComputingSettings,
+  ScientificComputingSettingsPatch,
+} from "./scient/scientificComputingSettings.ts";
+import { ThreadSections, ThreadSectionsPrecondition } from "./scient/threadSections.ts";
+export {
+  DEFAULT_SCIENTIFIC_COMPUTING_LANGUAGE_SETTINGS,
+  resolveScientificComputingLanguageSettings,
+  ScientificComputingLanguageSettings,
+  ScientificComputingSettings,
+} from "./scient/scientificComputingSettings.ts";
+export {
+  threadSectionCatalogsEqual,
+  ThreadSection,
+  ThreadSectionProjectRef,
+  ThreadSections,
+  ThreadSectionsPrecondition,
+} from "./scient/threadSections.ts";
+// SCIENT-FORK:END
 import { SshDeviceHostConfigs } from "./device.ts";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { ComputeLanguageId } from "@scientfactory/compute";
 import {
   ForwardCompatibleNullable,
   ForwardCompatibleOptional,
@@ -11,7 +36,6 @@ import {
   ProjectId,
   // SCIENT-FORK:START
   NonNegativeInt,
-  ThreadSectionId,
   // SCIENT-FORK:END
   TrimmedNonEmptyString,
   TrimmedString,
@@ -26,12 +50,9 @@ import {
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
   ProviderOptionSelections,
 } from "./model.ts";
-import {
-  DEFAULT_RUNTIME_MODE,
-  ModelSelection,
-  ProjectScript,
-  RuntimeMode,
-} from "./orchestration.ts";
+import { ModelSelection } from "./modelSelection.ts";
+import { ProjectScript } from "./project.ts";
+import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
 import {
   DEFAULT_PREVIEW_APPEARANCE,
@@ -89,85 +110,6 @@ export const SidebarThreadPreviewCount = Schema.Int.check(
 );
 export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
-
-// SCIENT-FORK:START — user-defined thread sections.
-/**
- * A named group the user files threads into. Sections are independent of the
- * lifecycle shelves (pinned, active, snoozed, settled); a thread belongs to at
- * most one. The catalog lives in the primary environment's server settings so
- * every window and attached client sees the same list. Membership is stored
- * on each thread, so removing a catalog entry leaves its threads' IDs intact:
- * they read as unsectioned, and restoring the entry brings them back.
- */
-/** A physical project: the environment it lives on and its id there. */
-export const ThreadSectionProjectRef = Schema.Struct({
-  environmentId: TrimmedNonEmptyString,
-  projectId: TrimmedNonEmptyString,
-});
-export type ThreadSectionProjectRef = typeof ThreadSectionProjectRef.Type;
-
-export const ThreadSection = Schema.Struct({
-  id: ThreadSectionId,
-  name: TrimmedNonEmptyString,
-  order: NonNegativeInt,
-  /** When the section was last seen without threads; drives optional auto-delete. */
-  emptySince: Schema.optionalKey(Schema.String),
-  /**
-   * Environments that have held its threads. Optional cleanup judges a
-   * section only from a client connected to every one of them, since no
-   * single client or server sees every environment's threads.
-   */
-  environmentIds: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
-  /**
-   * The projects the section was created for: the sidebar's selected project,
-   * plus the projects of any threads filed into it on creation. A sidebar
-   * scoped to one project lists a section once that project has threads in
-   * it; while the section has no threads anywhere, it is listed only in these
-   * projects (and under All projects).
-   */
-  createdInProjects: Schema.optionalKey(Schema.Array(ThreadSectionProjectRef)),
-});
-export type ThreadSection = typeof ThreadSection.Type;
-
-export const ThreadSections = Schema.Array(ThreadSection);
-export type ThreadSections = typeof ThreadSections.Type;
-
-/**
- * The catalog a section edit was based on. Clients replace the whole catalog,
- * so a patch carrying this only applies its section keys while the stored
- * catalog still matches; otherwise they are dropped and the client, seeing its
- * edit missing from the returned settings, reapplies it to the fresh catalog.
- */
-export const ThreadSectionsPrecondition = Schema.Struct({
-  threadSections: ThreadSections,
-  threadSectionsGeneralIndex: NonNegativeInt,
-});
-export type ThreadSectionsPrecondition = typeof ThreadSectionsPrecondition.Type;
-
-/**
- * Whether two catalogs hold the same entries in the same order. Leaves out
- * `createdInProjects`: clients that predate it drop the field when they read
- * the catalog, and must still pass the write precondition. The server keeps
- * the stored refs on every write instead, since refs are only ever added.
- */
-export function threadSectionCatalogsEqual(left: ThreadSections, right: ThreadSections): boolean {
-  const sameIds = (a?: ReadonlyArray<string>, b?: ReadonlyArray<string>) =>
-    (a ?? []).length === (b ?? []).length && (a ?? []).every((id, index) => id === b?.[index]);
-  return (
-    left.length === right.length &&
-    left.every((section, index) => {
-      const other = right[index]!;
-      return (
-        section.id === other.id &&
-        section.name === other.name &&
-        section.order === other.order &&
-        section.emptySince === other.emptySince &&
-        sameIds(section.environmentIds, other.environmentIds)
-      );
-    })
-  );
-}
-// SCIENT-FORK:END
 export const MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 1;
 export const MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 90;
 export const SidebarAutoSettleAfterDays = Schema.Number.check(
@@ -512,6 +454,9 @@ export const ClientSettingsSchema = Schema.Struct({
   onboardingCompletedAt: Schema.NullOr(Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  persistComposerContextStrip: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   // Model favorites. Historically keyed by provider kind, now
   // widened to `ProviderInstanceId` so users can favorite a specific model
   // on a custom provider instance (e.g. "Codex Personal · gpt-5") without
@@ -820,23 +765,13 @@ export const CursorSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
-    binaryPath: makeBinaryPathSetting("cursor-agent").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the Cursor agent binary.",
-        providerSettingsForm: { placeholder: "cursor-agent", clearWhenEmpty: "omit" },
-      }),
+    // Keep V1's CLI configuration when V2 rewrites the shared settings file.
+    // V2's Cursor SDK does not use these fields.
+    binaryPath: Schema.optionalKey(TrimmedString).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
-    apiEndpoint: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "API endpoint",
-        description: "Override the Cursor API endpoint for this instance.",
-        providerSettingsForm: {
-          placeholder: "https://...",
-          clearWhenEmpty: "omit",
-        },
-      }),
+    apiEndpoint: Schema.optionalKey(TrimmedString).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
@@ -844,7 +779,7 @@ export const CursorSettings = makeProviderSettingsSchema(
     ),
   },
   {
-    order: ["binaryPath", "apiEndpoint"],
+    order: [],
   },
 );
 export type CursorSettings = typeof CursorSettings.Type;
@@ -875,133 +810,16 @@ export const GrokSettings = makeProviderSettingsSchema(
 );
 export type GrokSettings = typeof GrokSettings.Type;
 
-export const PiSettings = makeProviderSettingsSchema(
-  {
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(false)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    binaryPath: makeBinaryPathSetting("pi").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the Pi coding agent CLI (0.84.4 or newer).",
-        providerSettingsForm: { placeholder: "pi", clearWhenEmpty: "omit" },
-      }),
-    ),
-    customModels: Schema.Array(Schema.String).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-  },
-  { order: ["binaryPath"] },
-);
-export type PiSettings = typeof PiSettings.Type;
-
-export const OmpSettings = makeProviderSettingsSchema(
-  {
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(false)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    binaryPath: makeBinaryPathSetting("omp").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the Oh My Pi executable (18.2.8 or newer).",
-        providerSettingsForm: { placeholder: "omp", clearWhenEmpty: "omit" },
-      }),
-    ),
-    customModels: Schema.Array(CustomModelSetting).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    homePath: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Oh My Pi home",
-        description:
-          "Optional PI_CODING_AGENT_DIR for this instance. Leave empty to use the server's normal Oh My Pi home and credentials, which every empty-home instance shares. Set a directory to isolate this instance; do not combine it with a named profile.",
-        providerSettingsForm: { placeholder: "~/.omp/agent", clearWhenEmpty: "omit" },
-      }),
-    ),
-    profile: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Oh My Pi profile",
-        description:
-          "Optional OMP_PROFILE for this instance. Leave empty to use Oh My Pi's default profile. A profile name asks Oh My Pi to use that profile's agent directory; do not combine it with a custom home.",
-        providerSettingsForm: { placeholder: "work", clearWhenEmpty: "omit" },
-      }),
-    ),
-  },
-  { order: ["binaryPath", "homePath", "profile"] },
-);
+// SCIENT-FORK:START
+export const { OmpSettings, ScientAgentSettings, DroidSettings } = makeScientProviderSettings({
+  makeProviderSettingsSchema,
+  makeBinaryPathSetting,
+  CustomModelSetting,
+});
 export type OmpSettings = typeof OmpSettings.Type;
-
-/**
- * Scient Agent keeps its state in a directory this server assigns, so it has
- * no home or profile setting. It is Scient's own agent, so it is on by default.
- */
-export const ScientAgentSettings = makeProviderSettingsSchema(
-  {
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    binaryPath: makeBinaryPathSetting("scient-agent").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the Scient Agent executable (0.1.0 or newer).",
-        providerSettingsForm: { placeholder: "scient-agent", clearWhenEmpty: "omit" },
-      }),
-    ),
-    customModels: Schema.Array(CustomModelSetting).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-  },
-  { order: ["binaryPath"] },
-);
 export type ScientAgentSettings = typeof ScientAgentSettings.Type;
-
-export const DroidSettings = makeProviderSettingsSchema(
-  {
-    // Off by default (like Cursor, Grok, and OpenCode): the binding is not
-    // yet stable enough to probe on every install. Users opt in from Settings.
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(false)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    binaryPath: makeBinaryPathSetting("droid").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the Factory Droid CLI binary.",
-        providerSettingsForm: { placeholder: "droid", clearWhenEmpty: "omit" },
-      }),
-    ),
-    customModels: Schema.Array(Schema.String).pipe(
-      // Droid's ACP catalog is authoritative and rejects unknown slugs, so
-      // custom models are persisted for compatibility but never advertised.
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    // On leaves Droid's own `cloudSessionSync` setting alone (Scient writes
-    // nothing, so sync turned off in Droid stays off); off writes `false` for
-    // the processes Scient starts.
-    cloudSessionSync: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
-      Schema.annotateKey({
-        title: "Sync conversations to Factory",
-        description:
-          "On: Droid syncs conversations to Factory as its own settings say (messages and titles, also with your own custom models). Off: Scient stops Droid from syncing them; model and usage counts still reach Factory.",
-        providerSettingsForm: { control: "switch" },
-      }),
-    ),
-  },
-  {
-    order: ["binaryPath", "cloudSessionSync"],
-  },
-);
 export type DroidSettings = typeof DroidSettings.Type;
+// SCIENT-FORK:END
 
 /**
  * Antigravity ACP auth methods. Personal and Enterprise open a Google sign-in
@@ -1084,6 +902,89 @@ export const AntigravitySettings = makeProviderSettingsSchema(
   { order: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"] },
 );
 export type AntigravitySettings = typeof AntigravitySettings.Type;
+
+export const PiSettings = makeProviderSettingsSchema(
+  {
+    // Disabled by default while Pi support is Early Access.
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("pi").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the Pi coding agent binary.",
+        providerSettingsForm: { placeholder: "pi", clearWhenEmpty: "omit" },
+      }),
+    ),
+    launchArgs: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Launch arguments",
+        description: "Additional CLI arguments passed to pi --mode rpc on session start.",
+        providerSettingsForm: { clearWhenEmpty: "omit" },
+      }),
+    ),
+    customModels: Schema.Array(CustomModelSetting).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["binaryPath", "launchArgs"],
+  },
+);
+export type PiSettings = typeof PiSettings.Type;
+
+export const AcpRegistryDistributionPreference = Schema.Literals(["auto", "binary", "npx", "uvx"]);
+export type AcpRegistryDistributionPreference = typeof AcpRegistryDistributionPreference.Type;
+
+export const AcpRegistrySettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    agentId: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Registry agent ID",
+        description: "Agent identifier from the official ACP Registry, for example 'devin'.",
+        providerSettingsForm: { placeholder: "devin", clearWhenEmpty: "persist" },
+      }),
+    ),
+    commandPath: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Executable override",
+        description:
+          "Optional local executable to use instead of installing the registry distribution. Registry arguments and environment are still applied.",
+        providerSettingsForm: { placeholder: "Registry default", clearWhenEmpty: "omit" },
+      }),
+    ),
+    authMethodId: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Authentication method",
+        description:
+          "Optional ACP authentication method ID. By default, the first agent-managed method is selected.",
+        providerSettingsForm: { placeholder: "auto", clearWhenEmpty: "omit" },
+      }),
+    ),
+    distribution: AcpRegistryDistributionPreference.pipe(
+      Schema.withDecodingDefault(Effect.succeed("auto")),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["agentId", "commandPath", "authMethodId"],
+  },
+);
+export type AcpRegistrySettings = typeof AcpRegistrySettings.Type;
 
 export const OpenCodeSettings = makeProviderSettingsSchema(
   {
@@ -1204,6 +1105,15 @@ export const SourceControlWritingStyleSettings = Schema.Struct({
 });
 export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyleSettings.Type;
 
+export const BranchNamingMode = Schema.Literals(["static", "semantic", "custom"]);
+export type BranchNamingMode = typeof BranchNamingMode.Type;
+
+export interface BranchNamingOptions {
+  mode: BranchNamingMode;
+  prefix: string;
+  instructions: string;
+}
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
 
@@ -1247,39 +1157,6 @@ export const BackgroundActivitySettings = Schema.Struct({
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
 /**
- * Environment-owned preferences for one optional scientific language.
- *
- * An empty executable means automatic discovery. These are selection
- * preferences only: changing them never installs, repairs, licenses, or
- * mutates a runtime, and never rewrites an existing compute session.
- */
-export const ScientificComputingLanguageSettings = Schema.Struct({
-  // SCIENT-FORK:START — supported languages are discoverable unless explicitly disabled.
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  // SCIENT-FORK:END
-  executable: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
-});
-export type ScientificComputingLanguageSettings = typeof ScientificComputingLanguageSettings.Type;
-
-export const DEFAULT_SCIENTIFIC_COMPUTING_LANGUAGE_SETTINGS: ScientificComputingLanguageSettings =
-  Schema.decodeSync(ScientificComputingLanguageSettings)({});
-
-export const ScientificComputingSettings = Schema.Struct({
-  schemaVersion: Schema.Literal(1).pipe(Schema.withDecodingDefault(Effect.succeed(1 as const))),
-  languages: Schema.Record(ComputeLanguageId, ScientificComputingLanguageSettings).pipe(
-    Schema.withDecodingDefault(Effect.succeed({})),
-  ),
-}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
-export type ScientificComputingSettings = typeof ScientificComputingSettings.Type;
-
-/** Missing means "use the product default"; a persisted per-language choice always wins. */
-export const resolveScientificComputingLanguageSettings = (
-  settings: Pick<ScientificComputingSettings, "languages">,
-  languageId: ComputeLanguageId,
-): ScientificComputingLanguageSettings =>
-  settings.languages[languageId] ?? DEFAULT_SCIENTIFIC_COMPUTING_LANGUAGE_SETTINGS;
-
-/**
  * Server settings a project may override. Every other server setting is
  * environment-wide: providers, keybindings, observability, device hosts,
  * background activity, theme. UI, search and the write planner derive
@@ -1289,11 +1166,16 @@ export const resolveScientificComputingLanguageSettings = (
  * How assistant text reaches clients while a turn runs.
  * - `turn`: hold the whole message until the turn finishes or pauses.
  * - `paragraph`: deliver each finished paragraph or closed code block.
- * - `token`: forward every provider delta. Legacy, kept for compatibility.
  */
-export const ResponseStreamingMode = Schema.Literals(["turn", "paragraph", "token"]);
+export const ResponseStreamingMode = Schema.Literals(["turn", "paragraph"]);
 export type ResponseStreamingMode = typeof ResponseStreamingMode.Type;
 
+/**
+ * Server settings a project may override. Every other server setting is
+ * environment-wide: providers, keybindings, observability, device hosts,
+ * background activity, theme. UI, search and the write planner derive
+ * eligibility from this list, so adding a key here is the whole opt-in.
+ */
 const StorageRetentionDays = Schema.NullOr(
   Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3650 })),
 );
@@ -1328,6 +1210,9 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "textGenerationModelSelection",
   "sourceControlWriterModelSelection",
   "sourceControlWritingStyle",
+  "branchNamingMode",
+  "branchNamePrefix",
+  "branchNameInstructions",
   "pullRequestMergeMethod",
   "sidebarAutoSettleOnMerge",
   "sidebarAutoSettleAfterDays",
@@ -1355,6 +1240,9 @@ export const ProjectSettingsOverrides = Schema.Struct({
   textGenerationModelSelection: Schema.optionalKey(ModelSelection),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSettings),
+  branchNamingMode: Schema.optionalKey(BranchNamingMode),
+  branchNamePrefix: Schema.optionalKey(TrimmedString),
+  branchNameInstructions: Schema.optionalKey(TrimmedString),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
@@ -1412,10 +1300,6 @@ export const ServerSettings = Schema.Struct({
   storageCleanup: StorageCleanupSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(StorageCleanupSettings)({}))),
   ),
-  // How assistant text reaches clients during a turn. Deliberately a fresh
-  // key (was `enableLegacyTokenStreaming`, before that
-  // `enableAssistantStreaming`): decoding drops the old key, so everyone,
-  // including prior token-streaming opt-ins, resets to the paragraph default.
   responseStreamingMode: ResponseStreamingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
   ),
@@ -1492,6 +1376,9 @@ export const ServerSettings = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
+  snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Scient keeps settlement on merge opt-in; upstream flipped this default to on.
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   backgroundActivity: BackgroundActivitySettings,
   // Legacy flat fields retained for old settings files and old clients. New
@@ -1564,6 +1451,11 @@ export const ServerSettings = Schema.Struct({
       }),
     ),
   ),
+  branchNamingMode: BranchNamingMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("static" as const)),
+  ),
+  branchNamePrefix: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("t3code"))),
+  branchNameInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   sourceControlWritingStyle: SourceControlWritingStyleSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1593,9 +1485,9 @@ export const ServerSettings = Schema.Struct({
     claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    pi: PiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     droid: DroidSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    pi: PiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     omp: OmpSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     scient: ScientAgentSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     antigravity: AntigravitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -1678,6 +1570,7 @@ export const resolveProviderInstanceEnabled = (
 export const ServerSettingsOperation = Schema.Literals([
   "normalize",
   "check-exists",
+  "create-provider-instance",
   "read-file",
   "read-provider-history",
   "read-project-settings",
@@ -1697,7 +1590,9 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
     operation: ServerSettingsOperation,
     providerInstanceId: Schema.optional(Schema.String),
     environmentVariable: Schema.optional(Schema.String),
-    cause: Schema.Defect(),
+    // Validation failures (e.g. a create colliding with an existing
+    // instance) originate without an upstream defect.
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -1752,8 +1647,6 @@ const ClaudeSettingsPatch = Schema.Struct({
 
 const CursorSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  apiEndpoint: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
 
@@ -1773,6 +1666,13 @@ const AntigravitySettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
 
+const PiSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  launchArgs: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
+});
+
 const OpenCodeSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
@@ -1781,30 +1681,6 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
 
-const DroidSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
-  cloudSessionSync: Schema.optionalKey(Schema.Boolean),
-});
-
-const PiSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
-});
-
-const OmpSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  homePath: Schema.optionalKey(TrimmedString),
-  profile: Schema.optionalKey(TrimmedString),
-});
-
-const ScientAgentSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-});
 export const ServerSettingsPatch = Schema.Struct({
   // SCIENT-FORK:START — replaces the whole catalog; omitted leaves it alone.
   threadSections: Schema.optionalKey(ThreadSections),
@@ -1872,6 +1748,8 @@ export const ServerSettingsPatch = Schema.Struct({
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
+  autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),
+  snoozeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),
@@ -1889,6 +1767,9 @@ export const ServerSettingsPatch = Schema.Struct({
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  branchNamingMode: Schema.optionalKey(BranchNamingMode),
+  branchNamePrefix: Schema.optionalKey(TrimmedString),
+  branchNameInstructions: Schema.optionalKey(TrimmedString),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({
       mode: Schema.optionalKey(SourceControlWritingStyleMode),
@@ -1899,20 +1780,7 @@ export const ServerSettingsPatch = Schema.Struct({
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   // SCIENT-FORK: portable context handoff size for forks.
   scientFork: Schema.optionalKey(ScientForkSettingsPatch),
-  scientificComputing: Schema.optionalKey(
-    Schema.Struct({
-      schemaVersion: Schema.optionalKey(Schema.Literal(1)),
-      languages: Schema.optionalKey(
-        Schema.Record(
-          ComputeLanguageId,
-          Schema.Struct({
-            enabled: Schema.optionalKey(Schema.Boolean),
-            executable: Schema.optionalKey(TrimmedString),
-          }),
-        ),
-      ),
-    }),
-  ),
+  scientificComputing: Schema.optionalKey(ScientificComputingSettingsPatch),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   observability: Schema.optionalKey(
     Schema.Struct({
@@ -1935,9 +1803,9 @@ export const ServerSettingsPatch = Schema.Struct({
       claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
+      pi: Schema.optionalKey(PiSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
       droid: Schema.optionalKey(DroidSettingsPatch),
-      pi: Schema.optionalKey(PiSettingsPatch),
       omp: Schema.optionalKey(OmpSettingsPatch),
       scient: Schema.optionalKey(ScientAgentSettingsPatch),
       antigravity: Schema.optionalKey(AntigravitySettingsPatch),
@@ -2005,6 +1873,7 @@ export const ClientSettingsPatch = Schema.Struct({
   fontFamilySans: Schema.optionalKey(FontFamilyPreference),
   fontFamilyTerminal: Schema.optionalKey(FontFamilyPreference),
   fontSmoothing: Schema.optionalKey(Schema.Boolean),
+  persistComposerContextStrip: Schema.optionalKey(Schema.Boolean),
   favorites: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({

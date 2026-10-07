@@ -6,9 +6,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import * as ProjectService from "./ProjectService.ts";
 import * as ProjectSetupScriptRunner from "./ProjectSetupScriptRunner.ts";
 
 const isProjectSetupScriptOperationError = Schema.is(
@@ -26,37 +26,14 @@ const makeProject = (scripts: OrchestrationProject["scripts"]): OrchestrationPro
   deletedAt: null,
 });
 
-const makeProjectionSnapshotQueryLayer = (project: OrchestrationProject) =>
-  Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-    getUserInputActivity: () => Effect.die("unused"),
-    listActivitiesByKind: () => Effect.die("unused"),
-    getCommandReadModel: () => Effect.die("unused"),
-    getSnapshot: () => Effect.die("unused"),
-    getShellSnapshot: () => Effect.die("unused"),
-    getDeletedWorktreeThreads: () => Effect.die("unused"),
-    listThreadsWithPullRequests: () => Effect.die("unused"),
-    getArchivedShellSnapshot: () => Effect.die("unused"),
-    getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 1 }),
-    getCounts: () => Effect.die("unused"),
-    getEventReplayStats: () => Effect.die("unused"),
-    getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
+const makeProjectServiceLayer = (project: OrchestrationProject) =>
+  Layer.mock(ProjectService.ProjectService)({
+    getById: (projectId) =>
+      Effect.succeed(projectId === project.id ? Option.some(project) : Option.none()),
+    getByWorkspaceRoot: (workspaceRoot) =>
       Effect.succeed(
         workspaceRoot === project.workspaceRoot ? Option.some(project) : Option.none(),
       ),
-    getProjectShells: () => Effect.die("unused"),
-    getProjectShellById: (projectId) =>
-      Effect.succeed(projectId === project.id ? Option.some(project) : Option.none()),
-    getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
-    getImportedAgentSessionSources: () => Effect.die("unused"),
-    getThreadCheckpointContext: () => Effect.die("unused"),
-    getFullThreadDiffContext: () => Effect.die("unused"),
-    getThreadRuntimeContext: () => Effect.die("unused"),
-    getTurnStartMessage: () => Effect.die("unused"),
-    getThreadShellById: () => Effect.die("unused"),
-    getThreadHistoryPage: () => Effect.die("unused history page"),
-    getThreadDetailById: () => Effect.die("unused"),
-    getThreadDetailSnapshot: () => Effect.die("unused"),
-    searchThreads: () => Effect.succeed({ matches: [] }),
   });
 
 type TerminalOverrides = Pick<TerminalManager.TerminalManager["Service"], "open" | "write"> &
@@ -82,7 +59,7 @@ const testLayer = (
   settings = ServerSettings.layerTest(),
 ) =>
   ProjectSetupScriptRunner.layer.pipe(
-    Layer.provideMerge(makeProjectionSnapshotQueryLayer(project)),
+    Layer.provideMerge(makeProjectServiceLayer(project)),
     Layer.provideMerge(makeTerminalManagerLayer(terminal)),
     Layer.provide(settings),
   );
@@ -121,6 +98,7 @@ describe("ProjectSetupScriptRunner", () => {
         env: {
           T3CODE_PROJECT_ROOT: "/repo/project",
           T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
+          COLORTERM: "",
           NO_COLOR: "1",
           FORCE_COLOR: "0",
         },
@@ -222,10 +200,11 @@ describe("ProjectSetupScriptRunner", () => {
           cwd: "/repo/worktrees/a",
           worktreePath: "/repo/worktrees/a",
           env: {
-            NO_COLOR: "1",
-            FORCE_COLOR: "0",
             T3CODE_PROJECT_ROOT: "/repo/project",
             T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
+            COLORTERM: "",
+            NO_COLOR: "1",
+            FORCE_COLOR: "0",
           },
         });
         expect(write).toHaveBeenCalledWith({

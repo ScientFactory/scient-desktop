@@ -2,8 +2,15 @@ import { memo } from "react";
 import { type PendingApproval } from "../../session-logic";
 import { cn } from "~/lib/utils";
 
+// SCIENT-FORK:START — `responseError` is a client-local augmentation the caller
+// attaches when the approval could not be sent, so it stays available for a
+// retry. It is not a field of the V2 request entity that upstream's
+// pending-request module replaced.
+type ComposerPendingApproval = PendingApproval & { readonly responseError?: string };
+// SCIENT-FORK:END
+
 interface ComposerPendingApprovalPanelProps {
-  approval: PendingApproval;
+  approval: ComposerPendingApproval;
   pendingCount: number;
   className?: string;
 }
@@ -64,7 +71,9 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
         data-approval-detail="complete"
         tabIndex={0}
       >
-        {approval.detail || fallbackLabel}
+        {approval.responseCapability === "not_resumable"
+          ? "Provider process is gone — interrupt or restart the run to respond."
+          : approval.detail || fallbackLabel}
       </Detail>
     </span>
   );

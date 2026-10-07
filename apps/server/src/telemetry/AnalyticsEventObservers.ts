@@ -11,16 +11,6 @@ import {
   type OrchestrationEvent,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import * as Stream from "effect/Stream";
-
-import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import * as ProviderService from "../provider/Services/ProviderService.ts";
-import * as AnalyticsService from "./AnalyticsService.ts";
-import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
-import { createProviderLifecycleAnalyticsMapper } from "./ProviderLifecycleAnalytics.ts";
 
 const MAX_CORRELATED_TURNS = 1_000;
 
@@ -248,82 +238,3 @@ export function createAnalyticsEventMapper() {
   };
   return { orchestrationEvent, providerEvent, clear } as const;
 }
-
-/** Starts both hot-stream observers inside the caller's scope and returns immediately. */
-export const launchAnalyticsEventObservers = Effect.gen(function* () {
-  const analytics = yield* AnalyticsService.AnalyticsService;
-  if (!(yield* analytics.status).available) return;
-  const orchestration = yield* OrchestrationEngine.OrchestrationEngineService;
-  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  const provider = yield* ProviderService.ProviderService;
-  // Observability must not add a mandatory provider dependency to legacy/test hosts.
-  const registry = yield* Effect.serviceOption(ProviderRegistry);
-  const mapper = createAnalyticsEventMapper();
-  const lifecycleMapper = createProviderLifecycleAnalyticsMapper();
-  let observedEpoch = yield* analytics.collectionEpoch;
-  const shouldObserve = Effect.gen(function* () {
-    const epoch = yield* analytics.collectionEpoch;
-    if (epoch !== observedEpoch) {
-      mapper.clear();
-      lifecycleMapper.clear();
-      observedEpoch = epoch;
-    }
-    const status = yield* analytics.status;
-    if (status.consent !== "off") return true;
-    mapper.clear();
-    lifecycleMapper.clear();
-    return false;
-  });
-
-  const recordAll = (events: ReadonlyArray<RecordedAnalyticsEvent>) =>
-    Effect.forEach(events, (event) => analytics.record(event.name, event.properties), {
-      discard: true,
-    });
-
-  if (Option.isSome(registry)) {
-    if (yield* shouldObserve) {
-      yield* recordAll(lifecycleMapper.observe(yield* registry.value.getProviders));
-    }
-    yield* Effect.forkScoped(
-      Stream.runForEach(registry.value.streamChanges, (providers) =>
-        shouldObserve.pipe(
-          Effect.flatMap((observe) =>
-            observe ? recordAll(lifecycleMapper.observe(providers)) : Effect.void,
-          ),
-        ),
-      ),
-    );
-  }
-
-  yield* Effect.forkScoped(
-    Stream.runForEach(provider.streamEvents, (event) =>
-      shouldObserve.pipe(
-        Effect.flatMap((observe) =>
-          observe ? recordAll(mapper.providerEvent(event)) : Effect.void,
-        ),
-      ),
-    ),
-  );
-  yield* Effect.forkScoped(
-    Stream.runForEach(orchestration.streamDomainEvents, (event) =>
-      Effect.gen(function* () {
-        if (!(yield* shouldObserve)) return;
-        const refork =
-          event.type === "thread.forked"
-            ? yield* projectionSnapshotQuery.getThreadDetailById(event.payload.originThreadId).pipe(
-                Effect.map(
-                  Option.match({
-                    onNone: () => false,
-                    onSome: (origin) => origin.forkLineage != null,
-                  }),
-                ),
-                Effect.orElseSucceed(() => false),
-              )
-            : undefined;
-        yield* recordAll(
-          mapper.orchestrationEvent(event, refork === undefined ? undefined : { refork }),
-        );
-      }),
-    ),
-  );
-});

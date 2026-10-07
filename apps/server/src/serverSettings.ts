@@ -11,23 +11,19 @@
  * @module ServerSettings
  */
 import {
-  DEFAULT_TEXT_GENERATION_MODEL,
-  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
-  DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
-  CustomModelError,
-  type CustomModelSaveInput,
-  type CustomModelsSettings,
   ModelSelection,
+  ProjectId,
   ProjectScript,
-  type ProjectSettingsOverrides,
+  ProjectSettingsOverrides,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type UsageLimitSourceConfig,
   type UsageAccountingSourceConfig,
+  type ProviderInstanceMutation,
   ProviderDriverKind,
   ProviderInstanceId,
-  resolveProviderInstanceEnabled,
+  ResponseStreamingMode,
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
@@ -47,6 +43,7 @@ import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -69,14 +66,15 @@ import {
   newlyRequestedCodexSubscriptionSharing,
 } from "./scient/providerLifecycle/codexSubscriptionSharingPolicy.ts";
 import { makeCustomModelReasoning } from "./customModelReasoning.ts";
+import { withCustomModelKeyHints } from "./customModels.ts";
+// SCIENT-FORK:START — custom-model methods and text-generation fallback
 import {
-  saveCustomModel,
-  prepareCustomModelSave,
-  resolveCustomModels,
-  customModelSecretName,
-  withCustomModelKeyHints,
-  type ResolvedModelConnection,
-} from "./customModels.ts";
+  customModelsTestMethods,
+  fallbackTextGenerationProvider,
+  makeCustomModelSettingsMethods,
+  type CustomModelSettingsMethods,
+} from "./scientServerSettings.ts";
+// SCIENT-FORK:END
 
 export { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
 
@@ -165,7 +163,7 @@ function providerEnvironmentSecretName(input: {
  * environment secrets. A client that sends the marker back means "keep what
  * you have".
  */
-const SECRET_REDACTED = "••••••";
+const SECRET_REDACTED = "\u2022\u2022\u2022\u2022\u2022\u2022";
 
 function usageLimitSourceSecretName(sourceId: string): string {
   return `usage-limit-source-${Buffer.from(sourceId, "utf8").toString("base64url")}`;
@@ -236,6 +234,39 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
   return { ...settings, providerInstances, usageLimitSources, usageAccountingSources, bitbucket };
 }
 
+export function applyProviderInstanceMutation(
+  settings: ServerSettings,
+  mutation: ProviderInstanceMutation,
+): ServerSettings {
+  const providerInstances = { ...settings.providerInstances };
+  if (mutation.operation === "upsert" || mutation.operation === "create") {
+    providerInstances[mutation.instanceId] = mutation.instance;
+  } else {
+    delete providerInstances[mutation.instanceId];
+  }
+  return { ...settings, providerInstances };
+}
+
+function ensureProviderInstanceMutationAllowed(
+  settings: ServerSettings,
+  mutation: ProviderInstanceMutation,
+  settingsPath: string,
+): Effect.Effect<void, ServerSettingsError> {
+  if (
+    mutation.operation === "create" &&
+    settings.providerInstances[mutation.instanceId] !== undefined
+  ) {
+    return Effect.fail(
+      new ServerSettingsError({
+        settingsPath,
+        operation: "create-provider-instance",
+        providerInstanceId: mutation.instanceId,
+      }),
+    );
+  }
+  return Effect.void;
+}
+
 export class ServerSettingsService extends Context.Service<
   ServerSettingsService,
   {
@@ -247,28 +278,22 @@ export class ServerSettingsService extends Context.Service<
 
     /** Read the current settings. */
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
-    readonly saveCustomModel: (
-      input: CustomModelSaveInput,
-    ) => Effect.Effect<CustomModelsSettings, CustomModelError>;
-    readonly removeCustomModel: (input: {
-      readonly revision: number;
-      readonly connectionId: string;
-    }) => Effect.Effect<CustomModelsSettings, CustomModelError>;
-    readonly resolveCustomModels: (
-      instanceId: ProviderInstanceId,
-    ) => Effect.Effect<ReadonlyArray<ResolvedModelConnection>, CustomModelError>;
-    /**
-     * The custom-model catalog as last committed or reloaded, read
-     * synchronously: no keys, no settings load, no lock. A save replaces it
-     * before its old key is removed, so a check that reads it and starts a
-     * request in the same step is ordered with every committed change.
-     */
-    readonly committedCustomModels: () => CustomModelsSettings;
 
     /** Patch settings and persist. Returns the new full settings object. */
     readonly updateSettings: (
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+
+    /** Apply a patch and one provider-instance mutation against the same latest settings snapshot. */
+    readonly updateProviderInstance: (
+      mutation: ProviderInstanceMutation,
+      patch?: ServerSettingsPatch,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+
+    /** Run an effect against a settings snapshot while settings writes are paused. */
+    readonly withSettingsSnapshot: <A, E, R>(
+      use: (settings: ServerSettings) => Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E | ServerSettingsError, R>;
 
     /** Stream of settings change events. */
     readonly streamChanges: Stream.Stream<ServerSettings>;
@@ -279,7 +304,9 @@ export class ServerSettingsService extends Context.Service<
      * snapshot and a lazily started stream must not be lost.
      */
     readonly subscribeChanges: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
-  }
+    // SCIENT-FORK:START — custom-model catalog methods
+  } & CustomModelSettingsMethods
+  // SCIENT-FORK:END
 >()("t3/serverSettings/ServerSettingsService") {
   /** @deprecated Import and use `layerTest` from this module. */
   static readonly layerTest = (overrides: DeepPartial<ServerSettings> = {}) => layerTest(overrides);
@@ -300,20 +327,48 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
         : {}),
     });
     const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
+    const writeSemaphore = yield* Semaphore.make(1);
+    const getSettings = Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider));
 
-    return {
-      ...customModelsTestMethods,
-      committedCustomModels: () => Ref.getUnsafe(currentSettingsRef).customModels,
-      start: Effect.void,
-      ready: Effect.void,
-      getSettings: Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider)),
-      updateSettings: (patch) =>
+    const updateTestSettings = (
+      update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
+    ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+      writeSemaphore.withPermits(1)(
         Ref.get(currentSettingsRef).pipe(
-          Effect.map((currentSettings) => applyServerSettingsPatch(currentSettings, patch)),
+          Effect.flatMap(update),
           Effect.flatMap(normalizeServerSettings),
           Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
           Effect.map(resolveTextGenerationProvider),
         ),
+      );
+
+    return {
+      // SCIENT-FORK:START — custom-model persistence is unavailable in the test
+      // layer, but the service shape still has to satisfy these members.
+      ...customModelsTestMethods,
+      committedCustomModels: () => Ref.getUnsafe(currentSettingsRef).customModels,
+      // SCIENT-FORK:END
+      start: Effect.void,
+      ready: Effect.void,
+      getSettings,
+      updateSettings: (patch) =>
+        updateTestSettings((currentSettings) =>
+          Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
+        ),
+      updateProviderInstance: (mutation, patch = {}) =>
+        updateTestSettings((currentSettings) =>
+          Effect.gen(function* () {
+            yield* ensureProviderInstanceMutationAllowed(
+              currentSettings,
+              mutation,
+              "test settings",
+            );
+            const patched = applyServerSettingsPatch(currentSettings, patch);
+            return applyProviderInstanceMutation(patched, mutation);
+          }),
+        ),
+      withSettingsSnapshot: (use) =>
+        writeSemaphore.withPermits(1)(getSettings.pipe(Effect.flatMap(use))),
       streamChanges: Stream.empty,
       subscribeChanges: Effect.succeed(Stream.empty),
     } satisfies ServerSettingsService["Service"];
@@ -322,27 +377,39 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
 export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
   Layer.effect(ServerSettingsService, makeTest(overrides));
 
-export const customModelsTestMethods = {
-  saveCustomModel: () =>
-    Effect.fail(
-      new CustomModelError({
-        message: "Custom model persistence is unavailable in this test layer.",
-      }),
-    ),
-  removeCustomModel: () =>
-    Effect.fail(
-      new CustomModelError({
-        message: "Custom model persistence is unavailable in this test layer.",
-      }),
-    ),
-  resolveCustomModels: () => Effect.succeed([]),
-  committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
-} satisfies Pick<
-  ServerSettingsService["Service"],
-  "saveCustomModel" | "removeCustomModel" | "resolveCustomModels" | "committedCustomModels"
->;
+// SCIENT-FORK:START — custom-model test members
+export { customModelsTestMethods } from "./scientServerSettings.ts";
+// SCIENT-FORK:END
 
-const ServerSettingsJson = fromLenientJson(ServerSettings);
+// Migrate saved token delivery without accepting it in settings writes or
+// letting one retired value reset the rest of the environment's settings.
+const PersistedResponseStreamingMode = Schema.Union([
+  ResponseStreamingMode,
+  Schema.Literal("token"),
+]).pipe(
+  Schema.decodeTo(
+    ResponseStreamingMode,
+    SchemaTransformation.transform({
+      decode: (mode) => (mode === "token" ? "paragraph" : mode),
+      encode: (mode) => mode,
+    }),
+  ),
+);
+const ServerSettingsJson = fromLenientJson(
+  Schema.Struct({
+    ...ServerSettings.fields,
+    responseStreamingMode: PersistedResponseStreamingMode.pipe(
+      Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
+    ),
+    projectSettingsOverrides: Schema.Record(
+      ProjectId,
+      Schema.Struct({
+        ...ProjectSettingsOverrides.fields,
+        responseStreamingMode: Schema.optionalKey(PersistedResponseStreamingMode),
+      }),
+    ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  }),
+);
 const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
 const PersistedOptionalProviderSettings = Schema.Struct({
   providers: Schema.optionalKey(
@@ -411,71 +478,21 @@ function restoreUsedProviders(
   };
 }
 
+const ACP_REGISTRY_DRIVER = ProviderDriverKind.make("acpRegistry");
+
+/** ACP Registry instances reject every application text-generation operation. */
+function selectionSupportsTextGeneration(
+  settings: ServerSettings,
+  selection: ModelSelection,
+): boolean {
+  return settings.providerInstances[selection.instanceId]?.driver !== ACP_REGISTRY_DRIVER;
+}
+
 function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection)
+  return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection) &&
+    selectionSupportsTextGeneration(settings, settings.textGenerationModelSelection)
     ? settings
     : fallbackTextGenerationProvider(settings);
-}
-
-const LAST_RESORT_TEXT_GENERATION_DRIVER = "scient";
-
-function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  // Same precedence as isModelSelectionProviderEnabled: an explicit provider
-  // instance wins over the legacy providers map, which decodes to defaults
-  // (codex enabled) when the Providers UI has only written providerInstances.
-  const enabledBuiltIns = Object.entries(settings.providers)
-    .filter(([driver, provider]) => {
-      const instance = settings.providerInstances[ProviderInstanceId.make(driver)];
-      return instance === undefined ? provider.enabled : resolveProviderInstanceEnabled(instance);
-    })
-    .map(([driver]) => ({ instanceId: ProviderInstanceId.make(driver), driver }));
-  // Scient Agent is on by default, so its being enabled is not a choice the
-  // user made and does not say it is installed. It generates text only when
-  // nothing else is enabled.
-  const fallback =
-    enabledBuiltIns.find(({ driver }) => driver !== LAST_RESORT_TEXT_GENERATION_DRIVER) ??
-    enabledNamedInstance(settings) ??
-    enabledBuiltIns[0];
-  if (!fallback) {
-    return settings;
-  }
-
-  const driver = ProviderDriverKind.make(fallback.driver);
-  return {
-    ...settings,
-    textGenerationModelSelection: {
-      instanceId: fallback.instanceId,
-      model:
-        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
-        DEFAULT_MODEL_BY_PROVIDER[driver] ??
-        DEFAULT_TEXT_GENERATION_MODEL,
-    } satisfies ModelSelection,
-  };
-}
-
-/**
- * With no built-in instance enabled, an enabled instance under another id (a
- * second account, a named setup) generates text. Instances of a driver this
- * build does not have are skipped. The choice is stable: drivers in the
- * built-in order, then instance ids in code-point order.
- */
-function enabledNamedInstance(
-  settings: ServerSettings,
-): { readonly instanceId: ProviderInstanceId; readonly driver: string } | undefined {
-  const drivers = Object.keys(settings.providers);
-  const [first] = Object.entries(settings.providerInstances)
-    .filter(
-      ([, instance]) =>
-        drivers.includes(instance.driver) && resolveProviderInstanceEnabled(instance),
-    )
-    .toSorted(
-      ([leftId, left], [rightId, right]) =>
-        drivers.indexOf(left.driver) - drivers.indexOf(right.driver) ||
-        (leftId < rightId ? -1 : leftId > rightId ? 1 : 0),
-    );
-  return first
-    ? { instanceId: ProviderInstanceId.make(first[0]), driver: first[1].driver }
-    : undefined;
 }
 
 // Values under these keys are compared as a whole — never stripped field-by-field.
@@ -1198,18 +1215,13 @@ const make = Effect.gen(function* () {
     );
   };
 
-  const updateSettings = (
-    patch: ServerSettingsPatch,
+  const updateAndPersistSettings = (
+    update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* getSettingsFromCache;
-        // SCIENT-FORK:START — thread-section edits apply only to the catalog they were based on.
-        const updated = applyServerSettingsPatch(
-          current,
-          applyThreadSectionsPrecondition(current, patch),
-        );
-        // SCIENT-FORK:END
+        const updated = yield* update(current);
         const deferredInstance = newlyRequestedCodexSubscriptionSharing(current, updated);
         if (deferredInstance !== undefined)
           return yield* new ServerSettingsError({
@@ -1244,6 +1256,15 @@ const make = Effect.gen(function* () {
         yield* emitChange(next);
         return resolveTextGenerationProvider(materialized);
       }),
+    );
+
+  const withSettingsSnapshot: ServerSettingsService["Service"]["withSettingsSnapshot"] = (use) =>
+    writeSemaphore.withPermits(1)(
+      getSettingsFromCache.pipe(
+        Effect.flatMap(materializeProviderEnvironmentSecrets),
+        Effect.map(resolveTextGenerationProvider),
+        Effect.flatMap(use),
+      ),
     );
 
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
@@ -1314,92 +1335,44 @@ const make = Effect.gen(function* () {
     yield* Deferred.succeed(startedDeferred, undefined).pipe(Effect.orDie);
   });
 
-  const customModelFailure = () =>
-    new CustomModelError({ message: "Could not save custom models." });
-  const commitCustomModels = (current: ServerSettings, customModels: CustomModelsSettings) =>
-    Effect.gen(function* () {
-      const next = yield* normalizeServerSettings({ ...current, customModels });
-      yield* writeSettingsAtomically(next);
-      yield* cacheSettings(next);
-      yield* emitChange(next);
-    }).pipe(Effect.mapError(customModelFailure));
-
   return {
     start,
     ready: Deferred.await(startedDeferred),
-    saveCustomModel: (input) =>
-      Effect.gen(function* () {
-        const prepared = yield* writeSemaphore.withPermits(1)(
-          Effect.gen(function* () {
-            const current = yield* getSettingsFromCache.pipe(Effect.mapError(customModelFailure));
-            return yield* prepareCustomModelSave(current, input, secretStore);
-          }),
-        );
-        // Explicit setup only: slow endpoints must not block settings reads or other writes.
-        const enriched = yield* modelReasoning.prepare(
-          prepared.connection,
-          prepared.previous,
-          input.refreshModelId,
-        );
-        const metadata = new Map(
-          enriched.models.flatMap((model) =>
-            model.reasoningMetadata ? [[model.id, model.reasoningMetadata] as const] : [],
-          ),
-        );
-        return yield* writeSemaphore.withPermits(1)(
-          Effect.gen(function* () {
-            const current = yield* getSettingsFromCache.pipe(Effect.mapError(customModelFailure));
-            return yield* saveCustomModel(
-              current,
-              input,
-              secretStore,
-              (next) => commitCustomModels(current, next),
-              metadata,
-            );
-          }).pipe(Effect.uninterruptible),
-        );
-      }),
-    removeCustomModel: (input) =>
-      writeSemaphore.withPermits(1)(
-        Effect.gen(function* () {
-          const current = yield* getSettingsFromCache.pipe(Effect.mapError(customModelFailure));
-          if (current.customModels.revision !== input.revision)
-            return yield* new CustomModelError({
-              message: "Custom models changed. Reload and try again.",
-            });
-          const existing = current.customModels.connections.find(
-            (c) => c.id === input.connectionId,
-          );
-          if (!existing) return current.customModels;
-          const next = {
-            revision: input.revision + 1,
-            connections: current.customModels.connections.filter(
-              (c) => c.id !== input.connectionId,
-            ),
-          };
-          yield* commitCustomModels(current, next);
-          if (existing.credentialId)
-            yield* secretStore
-              .remove(customModelSecretName(existing.credentialId))
-              .pipe(Effect.ignore);
-          return next;
-        }).pipe(Effect.uninterruptible),
-      ),
-    resolveCustomModels: (instanceId) =>
-      writeSemaphore.withPermits(1)(
-        getSettingsFromCache.pipe(
-          Effect.mapError(() => new CustomModelError({ message: "Could not read custom models." })),
-          Effect.flatMap((settings) =>
-            resolveCustomModels(settings.customModels, instanceId, secretStore),
-          ),
-        ),
-      ),
-    committedCustomModels: () => Ref.getUnsafe(committedCustomModels),
+    // SCIENT-FORK:START — custom-model catalog methods
+    ...makeCustomModelSettingsMethods({
+      secretStore,
+      modelReasoning,
+      writeSemaphore,
+      getSettingsFromCache,
+      normalizeServerSettings,
+      writeSettingsAtomically,
+      cacheSettings,
+      emitChange,
+      committedCustomModels,
+    }),
+    // SCIENT-FORK:END
     getSettings: getSettingsFromCache.pipe(
       Effect.flatMap(materializeProviderEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
-    updateSettings,
+    updateSettings: (patch) =>
+      updateAndPersistSettings(
+        (current) =>
+          // SCIENT-FORK:START — thread-section edits apply only to the catalog they were based on.
+          Effect.succeed(
+            applyServerSettingsPatch(current, applyThreadSectionsPrecondition(current, patch)),
+          ),
+        // SCIENT-FORK:END
+      ),
+    updateProviderInstance: (mutation, patch = {}) =>
+      updateAndPersistSettings((current) =>
+        Effect.gen(function* () {
+          yield* ensureProviderInstanceMutationAllowed(current, mutation, settingsPath);
+          const patched = applyServerSettingsPatch(current, patch);
+          return applyProviderInstanceMutation(patched, mutation);
+        }),
+      ),
+    withSettingsSnapshot,
     get streamChanges() {
       return materializeChanges(Stream.fromPubSub(changesPubSub));
     },

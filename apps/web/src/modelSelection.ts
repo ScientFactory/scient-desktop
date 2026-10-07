@@ -303,6 +303,7 @@ export function resolveAppModelSelection(
   const resolvedProvider = resolveSelectableProvider(providers, provider);
   const options = getAppModelOptions(settings, providers, resolvedProvider, selectedModel);
   if (resolvedProvider === "pi" || resolvedProvider === "omp" || resolvedProvider === "scient") {
+    if (options.length === 0) return "";
     return (
       resolveSelectableModel(resolvedProvider, selectedModel, options) ??
       resolveAutomaticModel(resolvedProvider, options) ??

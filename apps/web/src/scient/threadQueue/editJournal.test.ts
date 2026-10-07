@@ -2,7 +2,14 @@ import "fake-indexeddb/auto";
 import { expect, it } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { createEmptyThreadDraft, DraftId } from "../../composerDraftStore";
-import { readQueueEditJournal, writeQueueEditJournal } from "./editJournal";
+import {
+  readQueueEditJournal,
+  writeQueueEditJournal,
+  initializeExtractedIntent,
+  updateExtractedIntent,
+  readExtractedIntent,
+  readQueueEditJournals,
+} from "./editJournal";
 
 it("migrates existing recovery journals before restoring either draft, without rewriting the saved source", async () => {
   const target = {
@@ -76,4 +83,33 @@ it("migrates existing recovery journals before restoring either draft, without r
   } finally {
     database.close();
   }
+});
+
+it("keeps a consumed semantic receipt when recovery copies and their file bytes are removed", async () => {
+  const id = "22222222-2222-4222-8222-222222222222";
+  await initializeExtractedIntent(id);
+  await updateExtractedIntent(id, (current) => ({
+    ...current!,
+    phase: "submitted-unknown",
+    packetJson: "frozen",
+  }));
+  await updateExtractedIntent(id, (current) => {
+    const { packetJson: _packet, ...receipt } = current!;
+    return { ...receipt, phase: "consumed", consumedCommandId: `extracted-intent:${id}` };
+  });
+  await writeQueueEditJournal("some-recovery-copy");
+  expect(await readExtractedIntent(id)).toMatchObject({
+    phase: "consumed",
+    consumedCommandId: `extracted-intent:${id}`,
+  });
+  expect(
+    (await readQueueEditJournals()).some((session) => session.journalKey === `intent:${id}`),
+  ).toBe(false);
+  await expect(
+    updateExtractedIntent(id, (current) => ({
+      ...current!,
+      intentId: "33333333-3333-4333-8333-333333333333",
+    })),
+  ).rejects.toThrow("identity changed");
+  expect((await readExtractedIntent(id))?.phase).toBe("consumed");
 });

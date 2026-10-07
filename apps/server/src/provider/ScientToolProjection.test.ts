@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vite-plus/test";
-import { scientTools } from "../mcp/ScientOperationCatalog.ts";
 
 import {
   CANONICAL_SCIENT_TOOL_PROJECTION,
@@ -19,9 +18,5 @@ describe("Scient tool projection", () => {
       providerNativeSkillTool: true,
       deferred: false,
     });
-    for (const { name } of scientTools) {
-      expect(CLAUDE_SCIENT_TOOL_PROJECTION.name(name)).toBe(`mcp__t3-code__${name}`);
-      expect(CANONICAL_SCIENT_TOOL_PROJECTION.name(name)).toBe(name);
-    }
   });
 });

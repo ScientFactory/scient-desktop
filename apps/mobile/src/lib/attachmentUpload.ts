@@ -8,12 +8,16 @@ import {
 } from "@t3tools/client-runtime/state/attachments";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
+  ChatAttachment,
   ChatFileAttachment,
   ChatImageAttachment,
   EnvironmentId,
   UploadChatImageAttachment,
 } from "@t3tools/contracts";
-import { PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES } from "@t3tools/contracts";
+import {
+  getProviderAttachmentLimitError,
+  PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import { appAtomRegistry } from "../state/atom-registry";
@@ -301,6 +305,21 @@ async function uploadFileBytes(
   }
 }
 
+/** Validate the current owner's whole selection before any local read or upload. */
+export function composerAttachmentLimitError(input: {
+  readonly attachments: ReadonlyArray<DraftComposerAttachment>;
+  readonly retainedAttachments?: ReadonlyArray<ChatAttachment>;
+}): string | undefined {
+  return getProviderAttachmentLimitError([
+    ...(input.retainedAttachments ?? []),
+    ...input.attachments.map((attachment) => ({
+      type: isComposerImageAttachment(attachment) ? ("image" as const) : attachment.type,
+      mimeType: composerAttachmentWireMimeType(attachment),
+      sizeBytes: attachment.sizeBytes,
+    })),
+  ]);
+}
+
 /**
  * Acquires server-side uploads for one turn's attachments and persists the
  * uploaded ids into the attachments' durable owner.
@@ -314,6 +333,8 @@ async function uploadFileBytes(
 export async function prepareTurnAttachments(input: {
   readonly environmentId: EnvironmentId;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
+  /** Server-owned queued references that remain beside the new draft attachments. */
+  readonly retainedAttachments?: ReadonlyArray<ChatAttachment>;
   /** Older environments continue to receive inline images. */
   readonly supportsImageUploads?: boolean;
   readonly signal?: AbortSignal;
@@ -324,6 +345,8 @@ export async function prepareTurnAttachments(input: {
 }): Promise<PrepareTurnAttachmentsResult> {
   const { environmentId } = input;
   if (input.signal?.aborted) return { status: "abandoned" };
+  const limitError = composerAttachmentLimitError(input);
+  if (limitError) throw new Error(limitError);
   const files = input.attachments.filter((attachment) => attachment.type === "file");
   const ready = (
     attachments: ReadonlyArray<UploadedMobileAttachment>,

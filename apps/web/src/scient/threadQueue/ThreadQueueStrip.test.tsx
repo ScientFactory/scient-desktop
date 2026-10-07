@@ -53,3 +53,107 @@ describe("queued message recovery control", () => {
     expect(render()).not.toContain(">Send</button>");
   });
 });
+
+describe("native queue MAIN presentation", () => {
+  it("keeps one composer strip with three compact reorderable rows and native steer actions", () => {
+    const html = renderToStaticMarkup(
+      <ThreadQueueStrip
+        items={[...items, { ...items[0]!, queueItemId: "native-third", text: "Third" }]}
+        error={null}
+        threadBusy
+        supportsExplicitSend={false}
+        awaitingCompletion={false}
+        paused={false}
+        dispatchingItemId={null}
+        canReorder
+        canSteer
+        onSend={() => undefined}
+        onSteer={() => undefined}
+        onEdit={() => undefined}
+        onDelete={() => undefined}
+        onReorder={() => undefined}
+        retryable={false}
+      />,
+    );
+    expect(html.match(/data-testid="thread-queue-strip"/g)).toHaveLength(1);
+    expect(html.match(/aria-label="Reorder queued message"/g)).toHaveLength(3);
+    expect(html.match(/>Steer<\/span>/g)).toHaveLength(3);
+    expect(html).toContain("rounded-t-xl");
+    expect(html).not.toContain("Collapse queued");
+  });
+  it("shows a single edit cancellation and held resume without per-row execution controls", () => {
+    const html = renderToStaticMarkup(
+      <ThreadQueueStrip
+        items={items}
+        error={null}
+        threadBusy={false}
+        supportsExplicitSend={false}
+        awaitingCompletion={false}
+        paused
+        dispatchingItemId={null}
+        held
+        onResume={() => undefined}
+        editingItemId={items[0]?.queueItemId ?? null}
+        onCancelEdit={() => undefined}
+        onSend={() => undefined}
+        onSteer={() => undefined}
+        onEdit={() => undefined}
+        onDelete={() => undefined}
+        onReorder={() => undefined}
+        retryable={false}
+      />,
+    );
+    expect(html).toContain("Queue held");
+    expect(html.match(/>Resume queue<\/button>/g)).toHaveLength(1);
+    expect(html.match(/aria-label="Cancel editing queued message"/g)).toHaveLength(1);
+    expect(html).toContain('aria-current="true"');
+    expect(html.match(/aria-label="Edit queued message"/g)).toHaveLength(1);
+    expect(html).not.toContain(">Steer</span>");
+    expect(html).not.toContain(">Send</button>");
+  });
+  it("keeps pending admission receipt-driven and the actionable recovery error visible without rows", () => {
+    const pending = renderToStaticMarkup(
+      <ThreadQueueStrip
+        items={[]}
+        error={null}
+        pendingMessages={[
+          { id: "pending", text: "Waiting", attachmentCount: 0, accepted: false },
+          { id: "accepted", text: "Accepted", attachmentCount: 1, accepted: true },
+        ]}
+        threadBusy
+        supportsExplicitSend={false}
+        awaitingCompletion={false}
+        paused={false}
+        dispatchingItemId={null}
+        onSend={() => undefined}
+        onSteer={() => undefined}
+        onEdit={() => undefined}
+        onDelete={() => undefined}
+        onReorder={() => undefined}
+        retryable={false}
+      />,
+    );
+    expect(pending).toContain("Queuing…");
+    expect(pending).toContain(">Queued</span>");
+    expect(pending).not.toContain('aria-label="Edit queued message"');
+    const error = renderToStaticMarkup(
+      <ThreadQueueStrip
+        items={[]}
+        error="Resume migration recovery"
+        threadBusy={false}
+        supportsExplicitSend={false}
+        awaitingCompletion={false}
+        paused={false}
+        dispatchingItemId={null}
+        onSend={() => undefined}
+        onSteer={() => undefined}
+        onEdit={() => undefined}
+        onDelete={() => undefined}
+        onReorder={() => undefined}
+        retryable={false}
+      />,
+    );
+    expect(error).toContain('role="alert"');
+    expect(error).toContain("Resume migration recovery");
+  });
+});

@@ -143,6 +143,9 @@ describe("DesktopPreReadyPlatform", () => {
   });
 
   it.effect("still prepares the portal entry when the bundled icon cannot be copied", () => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "");
+    vi.stubEnv("XDG_DATA_HOME", "/xdg");
+    vi.stubEnv("APPIMAGE", "/Applications/current.AppImage");
     getSwitchValueMock.mockReturnValue("");
     copyFileSyncMock.mockImplementation(() => {
       throw new Error("missing bundled icon");
@@ -153,7 +156,10 @@ describe("DesktopPreReadyPlatform", () => {
       assert.include(contents, "MimeType=x-scheme-handler/scient;");
       assert.include(contents, "Icon=");
       assert.equal(setDesktopNameMock.mock.calls.length, 1);
-    }).pipe(Effect.provideService(HostProcessPlatform, "linux"));
+    }).pipe(
+      Effect.provideService(HostProcessPlatform, "linux"),
+      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+    );
   });
 
   it.effect(

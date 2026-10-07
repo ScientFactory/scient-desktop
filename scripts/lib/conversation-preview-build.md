@@ -10,6 +10,11 @@ vcpkg revision and a `libarchive@3.8.7/policy1` dependency revision. macOS
 qualification requires `json-c@0.19/libarchive@3.8.7/policy1`; the hashed
 build script links the patched static archive from the pinned source.
 
+The digest also covers extracted helpers that emit file associations and
+serialize the staged packaging manifest. Moving those helpers out of the
+desktop builder must preserve hash coverage so installed-preview evidence
+cannot qualify changed registration or native payload settings.
+
 On Windows, set `VCPKG_ROOT` to a checkout at revision
 `9e593bb18ea69cc5095e012465dcd675a822ed0d` and pass a fresh, empty
 `BuildDirectory` to `scripts/build-conversation-preview.ps1`. The script checks

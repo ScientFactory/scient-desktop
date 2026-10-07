@@ -25,6 +25,7 @@ import {
   SERVICE_LAUNCHER_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
+  SERVICE_RESTART_PENDING_FILE,
   compareExactServiceVersions,
   parseServiceState,
   serviceStateActiveVersion,
@@ -51,6 +52,23 @@ function quoteSystemdValue(value: string): string {
   return /[\s"'\\]/.test(escaped)
     ? `"${escaped.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
     : escaped;
+}
+
+function bootServiceBaseDirOf(contents: string): string | undefined {
+  const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];
+  if (systemd !== undefined) {
+    const raw = systemd.trim();
+    const unquoted =
+      raw.startsWith('"') && raw.endsWith('"')
+        ? raw.slice(1, -1).replaceAll('\\"', '"').replaceAll("\\\\", "\\")
+        : raw;
+    return unquoted.replaceAll("%%", "%");
+  }
+  const plist = /<key>T3CODE_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
+  if (plist !== undefined) {
+    return plist.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+  }
+  return undefined;
 }
 
 export interface BootServicePlan {
@@ -416,6 +434,7 @@ const BootServiceProblem = Schema.Literals([
   "linger-disabled",
   "service-disabled",
   "service-stopped",
+  "restart-pending",
 ]);
 type BootServiceProblem = typeof BootServiceProblem.Type;
 
@@ -430,6 +449,8 @@ export function formatBootServiceProblem(problem: BootServiceProblem): string {
       return 'Lingering is disabled. Scient will stop when your last login session ends and will not start at boot. Run `sudo loginctl enable-linger "$(id -un)"` on this machine, then retry the service command as your normal user.';
     case "service-disabled":
       return "The service is not enabled to start automatically. Run `t3 service update` to repair it.";
+    case "restart-pending":
+      return "The installed version will run after the service restarts. Run `t3 service update` to restart it.";
     case "service-stopped":
       return `The service is not running. Check the service log and \`systemctl --user status ${BOOT_SERVICE_UNIT_FILE}\`, then run \`t3 service update\`.`;
   }
@@ -478,6 +499,7 @@ export interface BootServiceStatus {
   readonly installed: boolean;
   readonly current: boolean;
   readonly installedVersion?: string;
+  readonly installedBaseDir?: string;
   readonly problems?: ReadonlyArray<BootServiceProblem>;
   readonly unitPath: string;
   readonly logPath: string;
@@ -488,8 +510,10 @@ export class BootService extends Context.Service<
   {
     readonly install: (options?: {
       readonly allowDowngrade?: boolean;
+      readonly start?: boolean;
     }) => Effect.Effect<BootServicePlan, BootServiceError>;
     readonly uninstall: Effect.Effect<boolean, BootServiceError>;
+    readonly restart: Effect.Effect<boolean, BootServiceError>;
     readonly status: Effect.Effect<BootServiceStatus, BootServiceError>;
   }
 >()("t3/cloud/bootService") {}
@@ -546,6 +570,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const logPath = path.join(input.logsDir, BOOT_SERVICE_LOG_FILE);
   const launcherPath = path.join(input.baseDir, "runtime", SERVICE_LAUNCHER_FILE);
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
+  const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
   const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion);
   const launcherSourcePath =
     host.launcherSourcePath ??
@@ -692,6 +717,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
   const install = Effect.fn("cloud.boot_service.install")(function* (options?: {
     readonly allowDowngrade?: boolean;
+    readonly start?: boolean;
   }) {
     const manager = yield* requireManager;
     yield* fs
@@ -759,7 +785,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const installed = yield* fs
       .exists(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-    if (installed) {
+    const start = options?.start !== false;
+    if (installed && start) {
       yield* runSteps(manager.stop);
     }
 
@@ -788,6 +815,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* fs
         .makeDirectory(path.dirname(unitPath), { recursive: true })
         .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+      if (!start && installed) {
+        yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, { mode: 0o600 });
+      }
       yield* writeDurably(launcherPath, launcherSource);
       yield* writeDurably(
         statePath,
@@ -801,16 +831,54 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           2,
         )}\n`,
       );
+      if (!start && installed) {
+        const written = yield* fs.readFileString(statePath);
+        if (serviceStateActiveVersion(written) !== input.cliVersion) {
+          return yield* new BootServiceUpdatePendingError();
+        }
+      }
       yield* writeDurably(unitPath, manager.render(plan));
 
-      yield* runSteps(manager.activate);
+      if (start) {
+        yield* runSteps(manager.activate);
+        yield* fs.remove(restartPendingPath, { force: true });
+      }
     }).pipe(
+      Effect.mapError((cause) =>
+        cause._tag === "PlatformError" ? new BootServiceInstallError({ cause }) : cause,
+      ),
       Effect.tapError(() =>
-        installed ? runSteps(manager.restart).pipe(Effect.ignore) : Effect.void,
+        installed && start ? runSteps(manager.restart).pipe(Effect.ignore) : Effect.void,
       ),
     );
     return plan;
   });
+
+  const restart: BootService["Service"]["restart"] = Effect.gen(function* () {
+    const manager = yield* requireManager;
+    const unit = yield* fs.readFileString(unitPath).pipe(Effect.option);
+    if (Option.isNone(unit)) return false;
+    const installedBaseDir = bootServiceBaseDirOf(unit.value);
+    if (
+      installedBaseDir === undefined ||
+      path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
+    ) {
+      return false;
+    }
+    yield* runSteps(manager.stop);
+    yield* runSteps(manager.activate).pipe(
+      // Same recovery as a failed repair: a service that was running should
+      // not be left stopped because daemon-reload or enable failed.
+      Effect.tapError(() => runSteps(manager.restart).pipe(Effect.ignore)),
+    );
+    yield* fs.remove(restartPendingPath, { force: true });
+    return true;
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause._tag === "PlatformError" ? new BootServiceInstallError({ cause }) : cause,
+    ),
+    Effect.withSpan("cloud.boot_service.restart"),
+  );
 
   const uninstall: BootService["Service"]["uninstall"] = Effect.gen(function* () {
     const manager = yield* requireManager;
@@ -851,11 +919,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       detectedManager.kind === "launchd"
         ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
         : contents;
+    const installedBaseDir = bootServiceBaseDirOf(unit);
     const problems = detectedManager.kind === "systemd" ? yield* readSystemdProblems(true) : [];
+    if (yield* fs.exists(restartPendingPath)) problems.push("restart-pending");
     return {
       supported: true,
       installed: true,
       ...(installedVersion === undefined ? {} : { installedVersion }),
+      ...(installedBaseDir === undefined ? {} : { installedBaseDir }),
       problems,
       current:
         problems.length === 0 &&
@@ -874,7 +945,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     Effect.withSpan("cloud.boot_service.status"),
   );
 
-  return BootService.of({ install, uninstall, status });
+  return BootService.of({ install, restart, uninstall, status });
 });
 
 export const layer = (input: {

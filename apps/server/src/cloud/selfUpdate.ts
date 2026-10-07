@@ -14,7 +14,6 @@ import * as Effect from "effect/Effect";
 import * as HashSet from "effect/HashSet";
 import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
@@ -323,7 +322,3 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       desktopAppUpdate.commit(requestId, onHandoffAccepted),
   });
 });
-
-export const layer = Layer.effect(ServerSelfUpdate, make()).pipe(
-  Layer.provide(ProcessRunner.layer),
-);

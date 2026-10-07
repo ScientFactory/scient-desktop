@@ -1,8 +1,8 @@
 # Scient workspace authority and agent capabilities
 
-Status: Candidate implementation; not released.
+Status: Current implementation; release and runtime qualification are separate.
 Owner: Yaacov
-Last updated: 2026-09-17
+Last updated: 2026-10-06
 Doc type: Current implementation
 
 This document owns the shared capability admission and workspace-authority
@@ -18,12 +18,11 @@ bounded Skill orientation, explicit Skill-selection metadata, and verified
 workspace receipts for project operations. Existing domain services still
 perform the work.
 
-Compute and Analysis remain at main's implementation. This branch does not
-import the separate Compute toolkit work, change execution/session ownership,
-migrate scientific history, expose Compute execution tools, or alter their
-UI/settings. Earlier combined experiments remain in Git recovery history,
-not in this implementation. Adapting those consumers is separate work after
-their current foundation lands.
+The shared boundary is wired to merged orchestration V2 and the existing domain services.
+Compute's MCP tool exposes read-only runtime inventory through its existing gateway; a listed
+runtime path is not authority to install, execute or attach to a runtime or project session.
+This wiring does not migrate scientific history or qualify Compute execution/session behavior.
+Earlier combined experiments remain separate Git/state recovery material, not supported inputs.
 
 ## Ownership
 
@@ -90,7 +89,7 @@ intent through commands/events, queue delivery, and provider preparation.
 Captured text, context labels, attachments and assistant plans are not selection
 authority. The final input bound may omit automatic index entries, but rejects
 oversized requests rather than silently dropping selected context. See
-[queue draft/context ownership](./scient-thread-queue.md#composer-draft-ownership-and-recovery).
+[queue draft/context ownership](./scient-thread-queue.md#composer-draft-compatibility-and-recovery).
 
 ## Workspace authority
 
@@ -100,12 +99,12 @@ Three identities have distinct roles:
 - `.scient/project.json` provides portable logical lineage, not access authority.
 - A `WorkspaceBinding` identifies an exact server-observed physical root.
 
-The resolver reads the current thread/project and an authority-specific
-projection revision. It canonicalizes the selected root and observes optional
-filesystem identity, Scient identity, normalized repository identity and VCS
-worktree evidence. This inspection does not create or edit project files.
-Plain folders are supported; Git probe failures are not silently interpreted
-as proof of a non-repository.
+[`WorkspaceAuthorityProjection`](../../apps/server/src/scient/projectScope/WorkspaceAuthorityProjection.ts)
+reads the native V2 thread/project projection and its committed, authority-specific revision.
+Unstamped pre-cutover rows fail closed. The resolver canonicalizes the selected root and observes
+optional filesystem identity, Scient identity, normalized repository identity and VCS worktree
+evidence. This inspection does not create or edit project files. Plain folders are supported;
+Git probe failures are not silently interpreted as proof of a non-repository.
 
 An alternate worktree must prove shared repository metadata with the owning
 project. A copied UUID, matching remote, or arbitrary existing path is not that
@@ -156,29 +155,32 @@ The dispatcher is not a universal transaction, approval or filesystem framework.
 
 Scient migration 11 remains the main thread-queue migration. Migration 12 adds
 app-private workspace bindings; migration 13 adds optional filesystem identity.
-There is no Analysis history migration 14 in this branch. The migration ledger
-rejects unknown or mismatched entries rather than interpreting an old experimental
-database as a supported downgrade. Test this branch with fresh isolated state;
-do not reuse the earlier combined candidate's database containing migration 14.
+Current migration 14 is `context-transfers`, not the earlier experimental Analysis migration.
+The migration ledger rejects unknown or mismatched entries rather than interpreting a foreign
+experimental database as a supported downgrade. Use fresh isolated state for qualification;
+do not reuse the earlier combined candidate's database containing that Analysis migration 14.
 The original candidate and its state remain separate recovery material.
 
 ## Compatibility and further integration
 
-The implementation targets merged Scient main only. It does not import unmerged
-T3 orchestration work or replace the host event-sourced execution engine.
-Projection reading, provider preparation and MCP mounting are the adaptation
-points for future upstream changes; domain services stay independently owned.
+The implementation uses merged orchestration V2, not a second event-sourced host.
+Workspace authority follows native projections and committed workspace revisions.
+[`ScientToolkitRegistration`](../../apps/server/src/mcp/ScientToolkitRegistration.ts) projects
+authenticated MCP invocation context into shared admission before invoking the registered domain
+handler; provider preparation and MCP mounting retain their existing owners. Domain services
+stay independently owned.
 
-When another tool family lands, deliberately register its ownership, availability
-and provider naming, and test discovery together with existing host tools.
-The separate Compute work's read-only inventory must remain discovery-only:
-integrating it must not imply authority to install a runtime, execute code, or
-attach to a user's session. Compute execution/history integration requires its
-own ownership and compatibility review against the then-current implementation.
+When another tool family lands, deliberately register its ownership, availability and provider
+naming, and test discovery together with existing host tools. The existing
+[`Compute inventory toolkit`](../../apps/server/src/mcp/toolkits/compute/tools.ts) is discovery-only:
+it reports configured settings, managed-runtime status and candidates, not execution readiness.
+It cannot install a runtime, execute code, or attach to a user's session. Compute execution/history
+changes require their own ownership and compatibility review.
 
 Deferred work includes a capability Settings page, installable add-ons/plugins,
-native Scient-agent routing, lazy tool-schema delivery, and Compute agent
-execution. None is needed to use the current shared admission boundary.
+lazy tool-schema delivery, and Compute agent execution. None is needed to use the current
+shared admission boundary. Scient Agent's existing driver is described in
+[Provider architecture](./providers.md); it is not a future workspace-admission requirement.
 
 ## Verification boundaries
 

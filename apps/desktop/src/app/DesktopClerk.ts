@@ -100,6 +100,9 @@ export const make = Effect.gen(function* () {
   // creates that directory when the lock is acquired. The SDK bridge takes
   // the lock at creation, so userData must already point at the explicit
   // established Scient directory. T3 and retired-Scient paths are never probed.
+  // Identity resolution is synchronous: scheme registration must finish before
+  // startup yields and Electron emits ready. The pre-ready composition test
+  // exercises this layer with runSync to enforce that boundary.
   const userDataPath = yield* DesktopAppIdentity.resolveUserDataPath;
   yield* electronApp.setPath("userData", userDataPath);
 

@@ -320,7 +320,9 @@ describe("chat diagrams draw with no network access", () => {
       .querySelector('meta[http-equiv="Content-Security-Policy"]')
       ?.getAttribute("content");
     expect(policy).toContain("font-src 'self' data:");
-    const otherOrigin = window.location.origin.replace("localhost", "127.0.0.1");
+    const otherUrl = new URL(window.location.origin);
+    otherUrl.hostname = otherUrl.hostname === "localhost" ? "127.0.0.1" : "localhost";
+    const otherOrigin = otherUrl.origin;
     expect(otherOrigin).not.toBe(window.location.origin);
     // A face from another origin is refused by the frame's policy before any request.
     const frameDocument = frame.window.document;

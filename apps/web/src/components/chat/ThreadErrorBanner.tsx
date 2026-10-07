@@ -1,5 +1,6 @@
+import type { OrchestrationV2ProviderFailureClass } from "@t3tools/contracts";
 import { memo } from "react";
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
 import { MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared/model";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -31,18 +32,27 @@ export function shouldShowThreadErrorBanner(
   return getThreadErrorBannerKey(threadKey, error) !== null && !isDismissed;
 }
 
-/** A new turn supersedes the notice; persisted activity makes reloads deterministic. */
+/** A new run supersedes the notice; the persisted item survives reloads. */
 export function getTruncationNoticeKey(
   threadKey: string,
-  activities: ReadonlyArray<Pick<OrchestrationThreadActivity, "id" | "kind" | "turnId">>,
-  turnId: string | null | undefined,
+  items: ReadonlyArray<
+    | Pick<
+        Extract<OrchestrationV2TurnItem, { type: "notification" }>,
+        "id" | "type" | "runId" | "source"
+      >
+    | Pick<Exclude<OrchestrationV2TurnItem, { type: "notification" }>, "id" | "type" | "runId">
+  >,
+  runId: string | null | undefined,
   status: string | undefined,
 ): string | null {
-  if (!turnId || status === "running" || status === "starting") return null;
-  const activity = activities.findLast(
-    (entry) => entry.kind === "turn.truncated" && entry.turnId === turnId,
+  if (!runId || status === "running" || status === "starting") return null;
+  const item = items.findLast(
+    (entry) =>
+      entry.type === "notification" &&
+      entry.source?.kind === "output_truncated" &&
+      entry.runId === runId,
   );
-  return activity ? `${threadKey}\u0000truncation\u0000${activity.id}` : null;
+  return item ? `${threadKey}\u0000truncation\u0000${item.id}` : null;
 }
 
 // Session-scoped (module-level so it survives ChatView remounts, e.g. route
@@ -65,16 +75,19 @@ export function isThreadErrorBannerDismissedForSession(bannerKey: string | null)
 export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error,
   onDismiss,
+  errorClass,
   chatGptUsageLimit = false,
 }: {
   error: string | null;
+  errorClass?: OrchestrationV2ProviderFailureClass | null;
   onDismiss?: () => void;
   chatGptUsageLimit?: boolean;
 }) {
   if (!error) return null;
+  const variant = errorClass === "usage_limit" ? "warning" : "error";
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
-      <Alert variant="error" surface="glass" controlAlignment="first-line">
+      <Alert variant={variant} surface="glass" controlAlignment="first-line" data-variant={variant}>
         {chatGptUsageLimit ? (
           <OpenAI className="size-4 text-foreground!" aria-hidden="true" />
         ) : (
@@ -100,7 +113,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
             {chatGptUsageLimit ? <ChatGptUsageButton variant="default" size="sm" /> : null}
             {onDismiss ? (
               <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
-                <XIcon className="text-destructive" />
+                <XIcon />
               </Button>
             ) : null}
           </AlertAction>

@@ -18,18 +18,3 @@ export function cursorCliArgs(
     ? ["--disable-auto-update", ...args]
     : args;
 }
-
-export function hasExternalCursorAccountConfiguration(
-  settings: { readonly apiEndpoint?: string | null | undefined },
-  environment: NodeJS.ProcessEnv,
-): boolean {
-  if (settings.apiEndpoint?.trim()) return true;
-  return Object.entries(environment).some(([name, value]) => {
-    const normalized = name.toUpperCase();
-    return (
-      typeof value === "string" &&
-      value.trim() !== "" &&
-      (normalized === "CURSOR_API_KEY" || normalized === "CURSOR_AUTH_TOKEN")
-    );
-  });
-}

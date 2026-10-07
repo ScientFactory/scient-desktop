@@ -308,7 +308,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: true,
         tailscaleServePort: 8443,
       });
-      assert.equal(resolved.dbPath, join(baseDir, "userdata", "state.sqlite"));
+      assert.equal(resolved.dbPath, join(baseDir, "userdata", "statev2.sqlite"));
     }),
   );
 
@@ -350,7 +350,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
 
       expect(resolved.devUrl).toBeUndefined();
       expect(resolved.stateDir).toBe(join(baseDir, "scient-next-dev"));
-      expect(resolved.dbPath).toBe(join(baseDir, "scient-next-dev", "state.sqlite"));
+      expect(resolved.dbPath).toBe(join(baseDir, "scient-next-dev", "statev2.sqlite"));
     }),
   );
 

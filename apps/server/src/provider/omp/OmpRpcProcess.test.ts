@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -531,6 +532,8 @@ describe("Oh My Pi launch arguments", () => {
 const makeLifecycleSpawner = (input: {
   readonly exited: Deferred.Deferred<number>;
   readonly exitOnStdinEnd: boolean;
+  readonly exitOnKill?: boolean;
+  readonly killBarrier?: Deferred.Deferred<void>;
   readonly kills: Array<string>;
 }) => {
   const encoder = new TextEncoder();
@@ -552,11 +555,22 @@ const makeLifecycleSpawner = (input: {
         exitCode: isVersionProbe
           ? Effect.succeed(ChildProcessSpawner.ExitCode(0))
           : Deferred.await(input.exited).pipe(Effect.map(ChildProcessSpawner.ExitCode)),
-        isRunning: Effect.succeed(!isVersionProbe),
+        isRunning: isVersionProbe
+          ? Effect.succeed(false)
+          : Deferred.isDone(input.exited).pipe(Effect.map((done) => !done)),
         kill: (options) =>
           Effect.sync(() => {
             input.kills.push(String(options?.killSignal ?? "SIGTERM"));
-          }).pipe(Effect.andThen(Deferred.succeed(input.exited, 143)), Effect.asVoid),
+          }).pipe(
+            Effect.andThen(
+              input.killBarrier !== undefined
+                ? Deferred.await(input.killBarrier)
+                : input.exitOnKill === false
+                  ? Effect.void
+                  : Deferred.succeed(input.exited, 143),
+            ),
+            Effect.asVoid,
+          ),
         unref: Effect.succeed(Effect.void),
         stdin: Sink.drain,
         stdout: isVersionProbe ? Stream.make(encoder.encode("omp/18.3.0\n")) : Stream.never,
@@ -579,6 +593,99 @@ const makeLifecycleBinary = (label: string) => {
 };
 
 describe("Oh My Pi process shutdown", () => {
+  it.live.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "confirms real signal exit without inventing a numeric exit code",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-omp-signal-"));
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+          );
+          const binary = NodePath.join(root, "omp");
+          NodeFS.writeFileSync(
+            binary,
+            `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "18.4.8"; exit 0; fi
+printf '%s\\n' '${toJson({ type: "ready", protocolVersion: 1, supportedProtocolVersions: [1, 2], maxFrameBytes: 1048576, maxReassembledFrameBytes: 67108864 })}'
+IFS= read -r command
+kill -TERM "$$"
+`,
+            { mode: 0o700 },
+          );
+          const child = yield* makeOmpRpcProcess({
+            target: ompTarget,
+            command: binary,
+            env: { HOME: root, PATH: "/usr/bin" },
+          }).pipe(Effect.provideService(OmpExecutableGate, yield* makeOmpExecutableGate()));
+          yield* child.ready;
+          expect((yield* Effect.result(child.getState()))._tag).toBe("Failure");
+          expect(yield* child.shutdown).toMatchObject({ code: null, exited: true });
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+  for (const killNeverReturns of [false, true]) {
+    it.effect(
+      killNeverReturns
+        ? "bounds a never-returning native kill without claiming child exit"
+        : "retains uncertain shutdown until the exact child exit is observed",
+      () =>
+        Effect.gen(function* () {
+          const { root, binary } = makeLifecycleBinary(`unknown-exit-${killNeverReturns}`);
+          const exited = yield* Deferred.make<number>();
+          const killBarrier = yield* Deferred.make<void>();
+          const shutdownDone = yield* Deferred.make<void>();
+          const kills: Array<string> = [];
+          const scope = yield* Scope.make("sequential");
+          yield* Effect.addFinalizer(() =>
+            Deferred.succeed(exited, 0).pipe(
+              Effect.andThen(Deferred.succeed(killBarrier, undefined)),
+              Effect.andThen(Scope.close(scope, Exit.void)),
+              Effect.andThen(
+                Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+              ),
+            ),
+          );
+          const child = yield* makeOmpRpcProcess({
+            target: ompTarget,
+            command: binary,
+            env: { PATH: "/usr/bin" },
+          }).pipe(
+            Effect.provideService(OmpExecutableGate, yield* makeOmpExecutableGate()),
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              makeLifecycleSpawner({
+                exited,
+                exitOnStdinEnd: false,
+                exitOnKill: false,
+                ...(killNeverReturns ? { killBarrier } : {}),
+                kills,
+              }),
+            ),
+            Effect.provideService(Scope.Scope, scope),
+          );
+          // The native API never returns during the deadline. Only fixture teardown
+          // releases its barrier, so a missing deadline fails without leaking a fiber.
+          const shutdown = yield* child.shutdown.pipe(
+            Effect.tap(() => Deferred.succeed(shutdownDone, undefined)),
+            Effect.forkIn(scope),
+          );
+          yield* TestClock.adjust(killNeverReturns ? "8 seconds" : "5 seconds");
+          expect(yield* Deferred.isDone(shutdownDone)).toBe(true);
+          expect(yield* Fiber.join(shutdown)).toMatchObject({
+            code: null,
+            exited: false,
+            forced: true,
+          });
+          expect(kills).toEqual(["SIGTERM"]);
+          expect(yield* child.shutdown).toMatchObject({ code: null, exited: false });
+          yield* Deferred.succeed(exited, 0);
+          expect(yield* child.shutdown).toMatchObject({ code: null, exited: true });
+          expect(kills).toEqual(["SIGTERM"]);
+        }).pipe(Effect.provide(NodeServices.layer)),
+    );
+  }
+
   it.effect("completes a second shutdown after the first leader was interrupted", () =>
     Effect.gen(function* () {
       const { root, binary } = makeLifecycleBinary("interrupted-leader");

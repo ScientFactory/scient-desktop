@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This is the server-owned immutable artifact filesystem boundary.
+import { pdfValidationWorkerUrl } from "./pdfValidationWorkerUrl.ts";
 import {
   ArtifactAuthority,
   ArtifactId,
@@ -274,13 +275,6 @@ export class GeneratedDocumentStore extends Context.Service<
   }
 >()("t3/scient/documentArtifacts/GeneratedDocumentStore") {}
 
-function packagedPdfValidationWorkerUrl(): URL {
-  const moduleUrl = new URL(import.meta.url);
-  return moduleUrl.pathname.endsWith("/dist/bin.mjs")
-    ? new URL("./pdf-validation-worker.mjs", moduleUrl)
-    : new URL("../../pdf-validation-worker.ts", moduleUrl);
-}
-
 const makeStoreError = (
   operation: GeneratedDocumentStoreError["operation"],
   reason: GeneratedDocumentStoreError["reason"],
@@ -354,7 +348,9 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
   /** Scope-held protection counts for revisions referenced by in-flight work. */
   const pinnedRevisions = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   const validator = yield* Effect.acquireRelease(
-    Effect.sync(() => createPdfValidationRuntime({ workerUrl: packagedPdfValidationWorkerUrl() })),
+    Effect.sync(() =>
+      createPdfValidationRuntime({ workerUrl: pdfValidationWorkerUrl(import.meta.url) }),
+    ),
     (runtime) => Effect.promise(() => runtime.close()),
   );
 

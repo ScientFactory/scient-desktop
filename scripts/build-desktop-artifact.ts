@@ -1,6 +1,14 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off - Node's typed junction API avoids Windows symlink privileges while keeping the probe isolated.
 
+// SCIENT-FORK:START
+import {
+  encodeJsonString,
+  resolveWslPrebuildArch,
+  stageWslNodePtyPrebuild,
+} from "./scient/wslNodePty.ts";
+// SCIENT-FORK:END
+
 import * as NodeFSP from "node:fs/promises";
 import * as NodeCrypto from "node:crypto";
 import * as NodeModule from "node:module";
@@ -22,12 +30,6 @@ import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 import gnomeCaptureBundle from "../apps/desktop/gnome-extension/bundle.json" with { type: "json" };
-import {
-  CONVERSATION_FILE_TYPE,
-  macConversationDocumentTypes,
-  macConversationExportedTypes,
-  windowsConversationProgId,
-} from "../apps/desktop/scripts/conversation-file-type.mjs";
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
@@ -47,8 +49,6 @@ import {
   macPreviewBundleIdentifier,
   requirePreviewQualification,
   MAC_PREVIEW_BUNDLE,
-  WINDOWS_PREVIEW_APP_ID,
-  WINDOWS_PREVIEW_CLSIDS,
   WINDOWS_PREVIEW_DLL,
   type ConversationPreviewChannel,
 } from "./lib/conversation-preview-build.ts";
@@ -107,11 +107,7 @@ type StageWorkspaceConfig = typeof StageWorkspaceConfig.Type;
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
-const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeWorkspaceConfig = Schema.decodeEffect(fromYaml(WorkspaceConfig));
-const decodeNodePtyManifest = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Struct({ version: Schema.String })),
-);
 const encodeStageWorkspaceConfig = Schema.encodeEffect(fromYaml(StageWorkspaceConfig));
 
 const readWorkspaceConfig = Effect.fn("readWorkspaceConfig")(function* () {
@@ -749,17 +745,6 @@ export class DesktopBuildNoArtifactsProducedError extends Schema.TaggedError<Des
   }
 }
 
-export class WslNodePtyPrebuildMissingError extends Schema.TaggedError<WslNodePtyPrebuildMissingError>()(
-  "WslNodePtyPrebuildMissingError",
-  {
-    prebuildPath: Schema.String,
-  },
-) {
-  override get message(): string {
-    return `WSL node-pty prebuild not found at ${this.prebuildPath}.`;
-  }
-}
-
 export class WindowsServerSidecarPackError extends Schema.TaggedError<WindowsServerSidecarPackError>()(
   "WindowsServerSidecarPackError",
   {
@@ -834,18 +819,6 @@ export class WindowsPackagedPayloadValidationError extends Schema.TaggedError<Wi
       return "Windows packaged payload is missing resources/server.asar.";
     }
     return `Windows packaged application directory was not found at ${this.packagedAppDir}.`;
-  }
-}
-
-export class WslNodePtyManifestReadError extends Schema.TaggedError<WslNodePtyManifestReadError>()(
-  "WslNodePtyManifestReadError",
-  {
-    manifestPath: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Could not read node-pty version from ${this.manifestPath}.`;
   }
 }
 
@@ -1041,77 +1014,22 @@ interface StagePackageJson {
 
 export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
 export const DESKTOP_ELECTRON_LANGUAGES = ["en-US"] as const;
-// SCIENT-FORK:START — Scient conversation files open with Scient on every
-// platform. The extension and media type are the `.scic` contract's
-// (SCIC_FILE_EXTENSION, SCIC_MEDIA_TYPE in @t3tools/contracts).
-export const DESKTOP_FILE_ASSOCIATIONS = [
-  {
-    ext: CONVERSATION_FILE_TYPE.extension,
-    name: CONVERSATION_FILE_TYPE.name,
-    description: CONVERSATION_FILE_TYPE.description,
-    mimeType: CONVERSATION_FILE_TYPE.mediaType,
-    role: "Viewer",
-    icon: "icon.icns",
-  },
-] as const;
-/**
- * macOS type declarations for those files, so Finder and drags recognise a
- * `.scic` as Scient's own zip-based document rather than an unknown file.
- */
-export const DESKTOP_MAC_EXPORTED_TYPES = macConversationExportedTypes();
-
-export const WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE = "scient-conversation-association.nsh";
-
-// electron-builder 26's APP_ASSOCIATE writes the .scic extension default on
-// every install. Register an owned OpenWith ProgID instead; Windows UserChoice
-// and any existing extension default remain the user's decision.
-export function renderWindowsConversationAssociationInclude(
-  channel: "latest" | "nightly" | "preview",
-  nativePreviewEnabled = false,
-) {
-  const progId = windowsConversationProgId(channel);
-  const clsid = WINDOWS_PREVIEW_CLSIDS[channel];
-  const previewKey = "{8895b1c6-b41f-4c1c-a562-0d564250836f}";
-  return [
-    "!macro customInstall",
-    `  WriteRegNone SHELL_CONTEXT "Software\\Classes\\.scic\\OpenWithProgids" "${progId}"`,
-    `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\${progId}" "" "${CONVERSATION_FILE_TYPE.name}"`,
-    `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\${progId}\\DefaultIcon" "" '"$appExe",0'`,
-    `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\${progId}\\shell\\open\\command" "" '"$appExe" "%1"'`,
-    '  ReadRegStr $R0 SHELL_CONTEXT "Software\\Classes\\.scic" ""',
-    '  StrCmp $R0 "Scient Conversation" 0 +2',
-    `    WriteRegStr SHELL_CONTEXT "Software\\Classes\\.scic" "" "${progId}"`,
-    ...(nativePreviewEnabled
-      ? [
-          `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\CLSID\\${clsid}" "" "Scient Conversation Preview (${channel})"`,
-          `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\CLSID\\${clsid}" "AppID" "${WINDOWS_PREVIEW_APP_ID}"`,
-          `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\CLSID\\${clsid}\\InprocServer32" "" "$INSTDIR\\resources\\conversation-preview\\${WINDOWS_PREVIEW_DLL}"`,
-          `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\CLSID\\${clsid}\\InprocServer32" "ThreadingModel" "Apartment"`,
-          `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\${progId}\\shellex\\${previewKey}" "" "${clsid}"`,
-          `  WriteRegStr SHELL_CONTEXT "Software\\Microsoft\\Windows\\CurrentVersion\\PreviewHandlers" "${clsid}" "Scient Conversation Preview (${channel})"`,
-        ]
-      : []),
-    "!macroend",
-    "",
-    "!macro customUnInstall",
-    `  DeleteRegValue SHELL_CONTEXT "Software\\Classes\\.scic\\OpenWithProgids" "${progId}"`,
-    '  ReadRegStr $R0 SHELL_CONTEXT "Software\\Classes\\.scic" ""',
-    `  StrCmp $R0 "${progId}" 0 +2`,
-    '    DeleteRegValue SHELL_CONTEXT "Software\\Classes\\.scic" ""',
-    ...(nativePreviewEnabled
-      ? [
-          `  DeleteRegKey SHELL_CONTEXT "Software\\Classes\\${progId}\\shellex\\${previewKey}"`,
-          `  DeleteRegValue SHELL_CONTEXT "Software\\Microsoft\\Windows\\CurrentVersion\\PreviewHandlers" "${clsid}"`,
-          `  DeleteRegKey SHELL_CONTEXT "Software\\Classes\\CLSID\\${clsid}"`,
-        ]
-      : []),
-    `  DeleteRegKey SHELL_CONTEXT "Software\\Classes\\${progId}"`,
-    "!macroend",
-    "",
-  ].join("\n");
-}
+// SCIENT-FORK:START — Scient conversation file associations.
+import {
+  DESKTOP_FILE_ASSOCIATIONS,
+  DESKTOP_MAC_EXPORTED_TYPES,
+  macConversationDocumentTypes,
+  renderWindowsConversationAssociationInclude,
+  WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE,
+} from "./scient/conversationAssociation.ts";
+export { renderWindowsConversationAssociationInclude, WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE };
 // SCIENT-FORK:END
 export const DESKTOP_FILE_EXCLUSIONS = [
+  // Cursor finds platform assets by walking up from argv[1]. Keep them outside
+  // asar so spawning helpers and loading native addons both use real paths.
+  "!**/node_modules/@cursor/sdk-*/**/*",
+  "!apps/desktop/prod-resources/cursor-sdk",
+  "!apps/desktop/prod-resources/cursor-sdk/**/*",
   // Scient always passes the user's installed Claude executable to the SDK,
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
   // are dead weight. The trailing dash keeps the SDK's own JS package.
@@ -1162,6 +1080,10 @@ export const WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/whisper-runtime/**/*",
   "!apps/desktop/prod-resources/synctex-runtime",
   "!apps/desktop/prod-resources/synctex-runtime/**/*",
+  "!apps/desktop/resources/cursor-sdk",
+  "!apps/desktop/resources/cursor-sdk/**/*",
+  "!apps/desktop/prod-resources/cursor-sdk",
+  "!apps/desktop/prod-resources/cursor-sdk/**/*",
 ] as const;
 
 // node-pty publishes both Darwin prebuilds in one package. Single-architecture
@@ -1196,6 +1118,8 @@ export const COMPUTE_BRIDGE_ASAR_UNPACK_DIR = "apps/server/dist/scient-compute-b
 // are never spawned at runtime (and are symlinks on POSIX build hosts, which
 // the asar extraction path deliberately does not support).
 export const WINDOWS_SERVER_ASAR_IGNORE_GLOBS = [
+  "**/node_modules/@cursor/sdk-*",
+  "**/node_modules/@cursor/sdk-*/**",
   "**/node_modules/@anthropic-ai/claude-agent-sdk-*",
   "**/node_modules/@anthropic-ai/claude-agent-sdk-*/**",
   "**/node_modules/.bin",
@@ -1268,10 +1192,6 @@ export const WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES = [
   "node_modules/@yuuang/ffi-rs-win32-",
   "node_modules/@msgpackr-extract/msgpackr-extract-win32-",
 ] as const;
-// WSL runs the same CPU arch as the Windows host; universal is mac-only.
-export const resolveWslPrebuildArch = (arch: typeof BuildArch.Type): "x64" | "arm64" | undefined =>
-  arch === "x64" ? "x64" : arch === "arm64" ? "arm64" : undefined;
-
 // A packaged WSL runtime is only usable when a Linux pty.node is bundled with
 // it, so this one predicate decides both whether the archive is built and
 // whether the packaging config ships it. Without it the build would produce an
@@ -1287,6 +1207,10 @@ export const WSL_RUNTIME_EXTRA_RESOURCES = [
   WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
 ] as const;
 export const DESKTOP_EXTRA_RESOURCES = [
+  {
+    from: "apps/desktop/prod-resources/cursor-sdk",
+    to: "node_modules/@cursor",
+  },
   {
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
@@ -1577,6 +1501,58 @@ export function resolveMergedStageDependencies(input: {
     ...resolveFffNativeDependencies(input.platform, input.arch, input.fffNodeVersion),
   };
 }
+
+export class CursorSdkPlatformPackagesMissingError extends Schema.TaggedError<CursorSdkPlatformPackagesMissingError>()(
+  "CursorSdkPlatformPackagesMissingError",
+  { nodeModulesDir: Schema.String, missingPackages: Schema.Array(Schema.String) },
+) {
+  override get message(): string {
+    return `Cursor SDK platform helpers are missing from ${this.nodeModulesDir}: ${this.missingPackages.join(", ")}. Install the target platform optional dependencies before packaging.`;
+  }
+}
+
+/** Cursor's helper lookup falls through the archive to this real resources tree. */
+export const stageCursorSdkPlatformPackages = Effect.fn("stageCursorSdkPlatformPackages")(
+  function* (
+    nodeModulesDir: string,
+    destination: string,
+    target: {
+      readonly platform: typeof BuildPlatform.Type;
+      readonly arch: typeof BuildArch.Type;
+      readonly linuxServerBackend?: boolean;
+    },
+  ) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const os = target.platform === "mac" ? "darwin" : target.platform === "win" ? "win32" : "linux";
+    const architectures = target.arch === "universal" ? ["arm64", "x64"] : [target.arch];
+    const platforms = target.linuxServerBackend && os !== "linux" ? [os, "linux"] : [os];
+    const packages = platforms.flatMap((platform) =>
+      architectures.map((arch) => `sdk-${platform}-${arch}`),
+    );
+    const sdkDirectory = path.join(nodeModulesDir, "@cursor/sdk");
+    if (!(yield* fs.exists(sdkDirectory))) {
+      return yield* new CursorSdkPlatformPackagesMissingError({
+        nodeModulesDir,
+        missingPackages: packages,
+      });
+    }
+    // pnpm's isolated layout puts optional packages beside the real SDK directory.
+    const cursorDirectory = path.dirname(yield* fs.realPath(sdkDirectory));
+    const missingPackages: string[] = [];
+    for (const name of packages) {
+      if (!(yield* fs.exists(path.join(cursorDirectory, name)))) missingPackages.push(name);
+    }
+    if (missingPackages.length > 0) {
+      return yield* new CursorSdkPlatformPackagesMissingError({ nodeModulesDir, missingPackages });
+    }
+    yield* fs.makeDirectory(destination, { recursive: true });
+    for (const name of packages) {
+      const source = yield* fs.realPath(path.join(cursorDirectory, name));
+      yield* fs.copy(source, path.join(destination, name));
+    }
+  },
+);
 
 export interface ClerkPasskeyNativeArtifact {
   readonly packageName: string;
@@ -3073,7 +3049,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // in trading update bandwidth for install speed.
     buildConfig.nsis = {
       differentialPackage: true,
+      // SCIENT-FORK:START
       include: WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE,
+      // SCIENT-FORK:END
     };
     const winConfig: Record<string, unknown> = {
       target: [target],
@@ -3111,75 +3089,6 @@ const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(f
   if (platform === "win") {
     yield* stageWindowsIcons(stageResourcesDir, iconAssets.windowsIconIco);
   }
-});
-
-// Stage the prebuilt Linux node-pty binary into the packaged app so the WSL
-// backend never compiles on the user's machine. node-pty publishes no Linux
-// prebuilt and the WSL Linux Node can't load the Windows/Electron binary, so the
-// Linux CI job builds pty.node and hands it here. We drop it into the staged
-// node-pty's prebuilds/linux-<arch>/ with a t3code marker the WSL preflight
-// checks (arch + node-pty version; the binary is N-API, hence ABI-stable across
-// Node versions). A missing prebuild is a warning, not an error, so local and
-// non-Windows builds still succeed — they just won't ship a working WSL backend.
-const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (input: {
-  readonly stageAppDir: string;
-  readonly arch: typeof BuildArch.Type;
-  readonly prebuildPath: string | undefined;
-}) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-
-  if (input.prebuildPath === undefined) {
-    yield* Effect.logWarning(
-      "[desktop-artifact] No WSL node-pty prebuild provided (--wsl-prebuild / T3CODE_DESKTOP_WSL_PREBUILD); the packaged WSL backend will not start until a Linux pty.node is bundled.",
-    );
-    return;
-  }
-
-  const linuxArch = resolveWslPrebuildArch(input.arch);
-  if (linuxArch === undefined) {
-    yield* Effect.logWarning(
-      `[desktop-artifact] No WSL node-pty prebuild mapping for arch "${input.arch}"; skipping WSL backend bundling.`,
-    );
-    return;
-  }
-
-  const prebuildExists = yield* fs
-    .exists(input.prebuildPath)
-    .pipe(Effect.orElseSucceed(() => false));
-  if (!prebuildExists) {
-    return yield* new WslNodePtyPrebuildMissingError({
-      prebuildPath: input.prebuildPath,
-    });
-  }
-
-  // Resolve through the (pnpm) symlink so we write into the stage's own node-pty
-  // copy, never a shared content-addressable store.
-  const nodePtyLink = path.join(input.stageAppDir, "node_modules", "node-pty");
-  const nodePtyDir = yield* fs.realPath(nodePtyLink).pipe(Effect.orElseSucceed(() => nodePtyLink));
-
-  const manifestPath = path.join(nodePtyDir, "package.json");
-  const pkgRaw = yield* fs.readFileString(manifestPath);
-  const manifest = yield* decodeNodePtyManifest(pkgRaw).pipe(
-    Effect.mapError(
-      (cause) =>
-        new WslNodePtyManifestReadError({
-          manifestPath,
-          cause,
-        }),
-    ),
-  );
-  const nodePtyVersion = manifest.version;
-
-  const prebuildDir = path.join(nodePtyDir, "prebuilds", `linux-${linuxArch}`);
-  yield* fs.makeDirectory(prebuildDir, { recursive: true });
-  yield* fs.copyFile(input.prebuildPath, path.join(prebuildDir, "pty.node"));
-  const markerJson = yield* encodeJsonString({ arch: linuxArch, nodePtyVersion });
-  yield* fs.writeFileString(path.join(prebuildDir, "t3code-wsl-node-pty.json"), `${markerJson}\n`);
-
-  yield* Effect.log(
-    `[desktop-artifact] Staged WSL node-pty prebuild (linux-${linuxArch}, node-pty ${nodePtyVersion}).`,
-  );
 });
 
 // tar reads an `-f` target containing a colon as `host:path` and tries to reach
@@ -3268,6 +3177,24 @@ export const packWindowsServerAsar = Effect.fn("packWindowsServerAsar")(function
   }
 });
 
+/** Move spawnable Cursor resources out before the Windows packer excludes them. */
+export const stageAndPackWindowsServerAsar = Effect.fn("stageAndPackWindowsServerAsar")(
+  function* (input: {
+    readonly sourceDir: string;
+    readonly asarPath: string;
+    readonly arch: typeof BuildArch.Type;
+    readonly cursorSdkResourcesPath: string;
+  }) {
+    const path = yield* Path.Path;
+    yield* stageCursorSdkPlatformPackages(
+      path.join(input.sourceDir, "node_modules"),
+      input.cursorSdkResourcesPath,
+      { platform: "win", arch: input.arch, linuxServerBackend: true },
+    );
+    yield* packWindowsServerAsar(input);
+  },
+);
+
 export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(function* (input: {
   readonly stageRoot: string;
   readonly repoRoot: string;
@@ -3282,6 +3209,7 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   readonly wslPrebuildPath: string | undefined;
   readonly wslSyncTexRuntimePath: string | undefined;
   readonly asarPath: string;
+  readonly cursorSdkResourcesPath: string;
   readonly wslRuntimeArchivePath: string;
   readonly wslRuntimeArchiveHashPath: string;
   readonly verbose: boolean;
@@ -3355,11 +3283,13 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
     { label: "vp install --prod (server sidecar)", verbose: input.verbose },
   );
 
+  // SCIENT-FORK:START
   yield* stageWslNodePtyPrebuild({
     stageAppDir: serverStageDir,
     arch: input.arch,
     prebuildPath: input.wslPrebuildPath,
   });
+  // SCIENT-FORK:END
   // Skip the archive entirely rather than shipping one the install script must
   // extract and reject on every launch. The desktop app treats a missing
   // archive as "no WSL-local runtime" and goes straight to the mounted tree.
@@ -3373,9 +3303,10 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
 
   yield* Effect.log("[desktop-artifact] Packing server.asar...");
   yield* fs.makeDirectory(path.dirname(input.asarPath), { recursive: true });
-  yield* packWindowsServerAsar({
+  yield* stageAndPackWindowsServerAsar({
     sourceDir: serverStageDir,
     asarPath: input.asarPath,
+    cursorSdkResourcesPath: input.cursorSdkResourcesPath,
     arch: input.arch,
   });
   const packedStat = yield* fs.stat(input.asarPath);
@@ -4153,10 +4084,12 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
   if (options.platform === "win") {
+    // SCIENT-FORK:START
     yield* fs.writeFileString(
       path.join(stageResourcesDir, WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE),
       renderWindowsConversationAssociationInclude(previewChannel, nativePreviewPath !== undefined),
     );
+    // SCIENT-FORK:END
   }
 
   const configuredMacPasskeySigning =
@@ -4275,6 +4208,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   );
   yield* stageClerkPasskeyNativeBinaries(stageAppDir, options.platform, options.arch);
   yield* stageKeyringNativeBinaries(stageAppDir, options.platform, options.arch);
+  const cursorSdkResourcesPath = path.join(stageAppDir, "apps/desktop/prod-resources/cursor-sdk");
+  if (options.platform !== "win") {
+    yield* stageCursorSdkPlatformPackages(
+      path.join(stageAppDir, "node_modules"),
+      cursorSdkResourcesPath,
+      { platform: options.platform, arch: options.arch },
+    );
+  }
 
   // WSL is Windows-only, so only the Windows artifact carries the server
   // sidecar (which embeds the Linux node-pty prebuild); other platforms
@@ -4294,6 +4235,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       wslPrebuildPath: options.wslPrebuild,
       wslSyncTexRuntimePath: options.wslSyncTexRuntime,
       asarPath: windowsServerAsarPath,
+      cursorSdkResourcesPath,
       wslRuntimeArchivePath: path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE.from),
       wslRuntimeArchiveHashPath: path.join(
         stageAppDir,

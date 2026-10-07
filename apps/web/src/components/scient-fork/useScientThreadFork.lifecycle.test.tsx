@@ -3,7 +3,7 @@ import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId, RunId } from "@t3tools/contracts";
 import { ConnectionTransientError } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -411,7 +411,7 @@ describe("fork lifecycle across navigation and remounts", () => {
   });
 
   it("forks a running turn with its work in progress", async () => {
-    const runningTurn = TurnId.make("running-turn");
+    const runningTurn = RunId.make("running-turn");
     commands.options.mockResolvedValue(
       AsyncResult.success({
         available: true,
@@ -420,23 +420,23 @@ describe("fork lifecycle across navigation and remounts", () => {
         newWorktree: true,
         sourceAssistantMessageId: null,
         sourceUserMessageId: null,
-        sourceRunningTurnId: runningTurn,
+        sourceRunningRunId: runningTurn,
       }),
     );
     await render();
     await act(() =>
       hook.forkFromMessage(
-        { kind: "running-turn", turnId: runningTurn },
+        { kind: "running-turn", runId: runningTurn },
         { workspaceMode: "new-worktree" },
         "/workspace",
       ),
     );
     expect(commands.options.mock.calls[0]![0].input).toEqual({
       originThreadId: origin.id,
-      sourceRunningTurnId: runningTurn,
+      sourceRunningRunId: runningTurn,
     });
     const command = commands.dispatch.mock.calls[0]![0].input;
-    expect(command.sourceRunningTurnId).toBe(runningTurn);
+    expect(command.sourceRunningRunId).toBe(runningTurn);
     expect(command.sourceAssistantMessageId).toBeUndefined();
     expect(command.workspaceMode).toBe("new-worktree");
   });

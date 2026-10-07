@@ -1,0 +1,22 @@
+/* The rich editor's code header reuses the chat code-block chrome actions. */
+.scient-markdown-code-header [data-slot="button"] {
+  color: color-mix(in srgb, var(--contrast-foreground) 72%, transparent);
+}
+
+.scient-markdown-code-header [data-slot="button"]:hover {
+  color: var(--contrast-foreground);
+}
+
+.scient-markdown-code-header [data-slot="button"][aria-pressed="true"] {
+  color: var(--contrast-foreground);
+  background: color-mix(in srgb, var(--contrast-foreground) 8%, transparent);
+}
+
+html[data-theme-id] .scient-markdown-code-header [data-slot="button"] {
+  color: color-mix(in srgb, var(--code-foreground) 72%, transparent);
+}
+
+html[data-theme-id] .scient-markdown-code-header [data-slot="button"]:hover,
+html[data-theme-id] .scient-markdown-code-header [data-slot="button"][aria-pressed="true"] {
+  color: var(--code-foreground);
+}

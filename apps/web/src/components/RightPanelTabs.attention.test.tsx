@@ -72,7 +72,6 @@ it("offers an accessible inactive issue tab without adding routine Markdown indi
     sourcesAvailable: false,
     computeAvailable: false,
     deviceAvailable: false,
-    liveAgentCount: 0,
     children: <div>Editor</div>,
   };
   await act(() => root.render(<RightPanelTabs {...props} />));
@@ -101,4 +100,41 @@ it("offers an accessible inactive issue tab without adding routine Markdown indi
   );
   expect(host.querySelector('[aria-label*="changes need attention"]')).toBeNull();
   expect(host.textContent).toContain("notes.md");
+  const agents = { id: "agents", kind: "agents" } as const;
+  await act(() =>
+    root.render(
+      <RightPanelTabs
+        {...props}
+        surfaces={[agents, file]}
+        agentsAvailable
+        liveAgentCount={2}
+        activeSurfaceId={file.id}
+      />,
+    ),
+  );
+  expect(host.querySelector('[aria-label="2 agents working"]')?.textContent).toBe("2");
+  await act(() =>
+    root.render(
+      <RightPanelTabs
+        {...props}
+        surfaces={[agents, file]}
+        agentsAvailable
+        liveAgentCount={2}
+        activeSurfaceId={agents.id}
+      />,
+    ),
+  );
+  expect(host.querySelector('[aria-label="2 agents working"]')).toBeNull();
+  await act(() =>
+    root.render(
+      <RightPanelTabs
+        {...props}
+        surfaces={[agents, file]}
+        agentsAvailable
+        liveAgentCount={0}
+        activeSurfaceId={file.id}
+      />,
+    ),
+  );
+  expect(host.querySelector('[aria-label="0 agents working"]')).toBeNull();
 });

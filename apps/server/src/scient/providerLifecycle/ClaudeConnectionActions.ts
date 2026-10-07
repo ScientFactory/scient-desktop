@@ -10,7 +10,10 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import { makeClaudeEnvironment } from "../../provider/Drivers/ClaudeHome.ts";
-import { decodeClaudeAuthStatus } from "../../provider/Drivers/ClaudeAuthStatus.ts";
+import {
+  decodeClaudeAuthStatus,
+  hasExternalClaudeAccountConfiguration,
+} from "../../provider/Drivers/ClaudeAuthStatus.ts";
 import type {
   ProviderConnectionActions,
   ProviderConnectionActionFailure,
@@ -383,4 +386,60 @@ export const makeClaudeConnectionActions = Effect.fn("ClaudeConnectionActions.ma
   );
 
   return makeClaudeConnectionActionsFromRuntime({ startLogin, verifyLoggedIn, logout });
+});
+
+/**
+ * Account changes invalidate Claude's per-instance initialization cache before
+ * the connection manager refreshes the authoritative provider snapshot.
+ */
+export function invalidateClaudeCapabilitiesAfterAccountChange(
+  actions: ProviderConnectionActions,
+  invalidate: Effect.Effect<void>,
+): ProviderConnectionActions {
+  return {
+    ...actions,
+    start: (method) =>
+      actions.start(method).pipe(
+        Effect.map((attempt) => ({
+          ...attempt,
+          waitForCompletion: attempt.waitForCompletion.pipe(Effect.tap(() => invalidate)),
+        })),
+      ),
+    disconnect: actions.disconnect.pipe(Effect.tap(() => invalidate)),
+  };
+}
+
+/** Expose the official Claude Code account flows that the configured provider can consume. */
+export function assistedClaudeConnectionMethods(
+  providerEnvironment: NodeJS.ProcessEnv,
+): ReadonlyArray<ProviderConnectionMethod> {
+  if (hasExternalClaudeAccountConfiguration(providerEnvironment)) return [];
+  return ["claude_subscription", "claude_console"];
+}
+
+/**
+ * The instance's assisted account actions, present only when the configured
+ * provider can consume an official Claude Code account flow. Account changes
+ * invalidate the instance's capabilities cache.
+ */
+export const makeClaudeInstanceConnectionActions = Effect.fnUntraced(function* (input: {
+  readonly connectionMethods: ReadonlyArray<ProviderConnectionMethod>;
+  readonly settings: ClaudeSettings;
+  readonly environment: NodeJS.ProcessEnv;
+  readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  readonly invalidateCapabilities: Effect.Effect<void>;
+}) {
+  const providerConnectionActions =
+    input.connectionMethods.length > 0
+      ? yield* makeClaudeConnectionActions(input.settings, input.environment, input.spawner)
+      : undefined;
+  return providerConnectionActions
+    ? {
+        ...invalidateClaudeCapabilitiesAfterAccountChange(
+          providerConnectionActions,
+          input.invalidateCapabilities,
+        ),
+        methods: input.connectionMethods,
+      }
+    : undefined;
 });

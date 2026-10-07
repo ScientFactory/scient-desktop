@@ -1,6 +1,6 @@
-import { CodexInstallation } from "../CodexInstallation.ts";
-import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
-import { ServerEnvironmentIdentity } from "../../environment/ServerEnvironment.ts";
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import * as CodexInstallation from "../CodexInstallation.ts";
+import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 /**
  * Multi-instance validation slices for `ProviderInstanceRegistryLive`.
  *
@@ -53,19 +53,21 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
 import type { BuiltInDriversEnv } from "../builtInDrivers.ts";
-import { AntigravityInstallation } from "../AntigravityInstallation.ts";
-import { ServerConfig } from "../../config.ts";
+import * as AntigravityInstallation from "../AntigravityInstallation.ts";
+import * as ServerConfig from "../../config.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
-import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
-import { CodexDriver } from "../Drivers/CodexDriver.ts";
-import { CursorDriver } from "../Drivers/CursorDriver.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import { ClaudeDriver, type ClaudeDriverEnv } from "../Drivers/ClaudeDriver.ts";
+import { CodexDriver, type CodexDriverEnv } from "../Drivers/CodexDriver.ts";
+import { CursorDriver, type CursorDriverEnv } from "../Drivers/CursorDriver.ts";
 import { DroidDriver } from "../Drivers/DroidDriver.ts";
-import { GrokDriver } from "../Drivers/GrokDriver.ts";
-import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
+import { GrokDriver, type GrokDriverEnv } from "../Drivers/GrokDriver.ts";
+import { OpenCodeDriver, type OpenCodeDriverEnv } from "../Drivers/OpenCodeDriver.ts";
 import * as ModelManifest from "../ModelManifest.ts";
+import { AcpRegistryCatalogLive } from "./AcpRegistryCatalog.ts";
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
-import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
+import * as OpenCodeRuntime from "../opencodeRuntime.ts";
+import * as OpenCodeServerLedger from "../OpenCodeServerLedger.ts";
 import {
   defaultProviderContinuationIdentity,
   type AnyProviderDriver,
@@ -73,8 +75,9 @@ import {
   type ProviderInstance,
 } from "../ProviderDriver.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
+import { ProviderOrchestrationAdapterInfrastructureLive } from "./ProviderOrchestrationAdapterInfrastructure.ts";
 
 const decodeAntigravitySettingsForTest = Schema.decodeSync(AntigravitySettings);
 
@@ -145,8 +148,6 @@ const makeClaudeConfig = (overrides: Partial<ClaudeSettings>): ClaudeSettings =>
 
 const makeCursorConfig = (overrides: Partial<CursorSettings>): CursorSettings => ({
   enabled: false,
-  binaryPath: "cursor-agent",
-  apiEndpoint: "",
   customModels: [],
   ...overrides,
 });
@@ -279,29 +280,41 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
   // `NodeServices.layer` through `Layer.provideMerge` to satisfy that
   // dependency while still surfacing NodeServices to the test body (the
   // codex driver's `create` yields `ChildProcessSpawner` directly).
-  const testLayer = ServerConfig.layerTest(process.cwd(), {
+  const baseLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "provider-instance-registry-test",
   }).pipe(
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(
-      Layer.mock(CodexInstallation)({ managedDirectory: "unused-managed-installation" }),
+      Layer.mock(CodexInstallation.CodexInstallation)({
+        managedDirectory: "unused-managed-installation",
+      }),
     ),
-    Layer.provideMerge(Layer.mock(ServerSecretStore)({})),
+    Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
     Layer.provideMerge(
-      Layer.succeed(ServerEnvironmentIdentity, {
+      Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
         getEnvironmentId: Effect.succeed(
           EnvironmentId.make("00000000-0000-4000-8000-000000000001"),
         ),
       }),
     ),
     Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
-    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(TestHttpClientLive),
-    Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provideMerge(
+      Layer.succeed(
+        ProviderEventLoggers.ProviderEventLoggers,
+        ProviderEventLoggers.NoOpProviderEventLoggers,
+      ),
+    ),
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(OmpExecutableGate.layer),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
+  const testLayer = Layer.merge(
+    ProviderOrchestrationAdapterInfrastructureLive,
+    AcpRegistryCatalogLive,
+  ).pipe(Layer.provideMerge(baseLayer));
 
   it.live("boots two independent codex instances from a ProviderInstanceConfigMap", () =>
     Effect.gen(function* () {
@@ -332,7 +345,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         },
       };
 
-      const { registry } = yield* makeProviderInstanceRegistry({
+      const { registry } = yield* makeProviderInstanceRegistry<CodexDriverEnv>({
         drivers: [CodexDriver],
         configMap,
       });
@@ -351,7 +364,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       const work = yield* registry.getInstance(workId);
       expect(personal).toBeDefined();
       expect(work).toBeDefined();
-      expect(personal!.adapter).not.toBe(work!.adapter);
+      expect(personal!.orchestrationAdapter).not.toBe(work!.orchestrationAdapter);
       expect(personal!.textGeneration).not.toBe(work!.textGeneration);
       expect(personal!.snapshot).not.toBe(work!.snapshot);
 
@@ -488,7 +501,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         },
       };
 
-      const { registry } = yield* makeProviderInstanceRegistry({
+      const { registry } = yield* makeProviderInstanceRegistry<CodexDriverEnv | ClaudeDriverEnv>({
         drivers: [CodexDriver, ClaudeDriver],
         configMap,
       });
@@ -621,7 +634,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
           },
         };
 
-        const { registry } = yield* makeProviderInstanceRegistry({
+        const { registry } = yield* makeProviderInstanceRegistry<CodexDriverEnv>({
           drivers: [CodexDriver],
           configMap,
         });
@@ -654,21 +667,24 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
   // provides `OpenCodeRuntimeLive`'s deps while keeping its own outputs
   // surfaced; that merged layer then provides `ServerConfig.layerTest`'s
   // `FileSystem` dep while keeping everything else surfaced to the test.
-  const infraLayer = OpenCodeRuntimeLive.pipe(
+  const infraLayer = OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
+    Layer.provide(OpenCodeServerLedger.layerTest),
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(
-      Layer.mock(CodexInstallation)({ managedDirectory: "unused-managed-installation" }),
+      Layer.mock(CodexInstallation.CodexInstallation)({
+        managedDirectory: "unused-managed-installation",
+      }),
     ),
-    Layer.provideMerge(Layer.mock(ServerSecretStore)({})),
     Layer.provideMerge(
-      Layer.succeed(ServerEnvironmentIdentity, {
+      Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
         getEnvironmentId: Effect.succeed(
           EnvironmentId.make("00000000-0000-4000-8000-000000000001"),
         ),
       }),
     ),
   );
-  const testLayer = AntigravityInstallation.layer.pipe(
+  const baseLayer = AntigravityInstallation.AntigravityInstallation.layer.pipe(
+    Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), {
         prefix: "provider-instance-registry-all-drivers-test",
@@ -676,14 +692,23 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
     ),
     Layer.provideMerge(infraLayer),
     Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
-    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(TestHttpClientLive),
     Layer.provideMerge(TestPtyAdapterLive),
-    Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+    Layer.provideMerge(
+      Layer.succeed(
+        ProviderEventLoggers.ProviderEventLoggers,
+        ProviderEventLoggers.NoOpProviderEventLoggers,
+      ),
+    ),
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(OmpExecutableGate.layer),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
+  const testLayer = Layer.merge(
+    ProviderOrchestrationAdapterInfrastructureLive,
+    AcpRegistryCatalogLive,
+  ).pipe(Layer.provideMerge(baseLayer));
 
   it.live("boots one instance of every shipped driver from a single config map", () =>
     Effect.gen(function* () {
@@ -743,7 +768,14 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         },
       };
 
-      const { registry } = yield* makeProviderInstanceRegistry<BuiltInDriversEnv>({
+      const { registry } = yield* makeProviderInstanceRegistry<
+        | BuiltInDriversEnv
+        | CodexDriverEnv
+        | ClaudeDriverEnv
+        | CursorDriverEnv
+        | GrokDriverEnv
+        | OpenCodeDriverEnv
+      >({
         drivers: [CodexDriver, ClaudeDriver, CursorDriver, DroidDriver, GrokDriver, OpenCodeDriver],
         configMap,
       });
@@ -782,17 +814,17 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(openCode?.displayName).toBe("OpenCode");
 
       // Every instance owns its own set of closures — no sharing across
-      // drivers. `adapter` / `textGeneration` / `snapshot` are all
+      // drivers. `orchestrationAdapter` / `textGeneration` / `snapshot` are all
       // distinct references even when two instances happen to share a
       // trait (e.g. Cursor + others all use a stub-or-real
       // `textGeneration`; they must still be different object values).
       const adapters = [
-        codex!.adapter,
-        claude!.adapter,
-        cursor!.adapter,
-        droid!.adapter,
-        grok!.adapter,
-        openCode!.adapter,
+        codex!.orchestrationAdapter,
+        claude!.orchestrationAdapter,
+        cursor!.orchestrationAdapter,
+        droid!.orchestrationAdapter,
+        grok!.orchestrationAdapter,
+        openCode!.orchestrationAdapter,
       ];
       expect(new Set(adapters).size).toBe(adapters.length);
       const textGenerations = [
@@ -921,7 +953,7 @@ describe("ProviderInstanceRegistryLive — enabled resolution", () => {
           displayName: undefined,
           enabled,
           snapshot: {} as ProviderInstance["snapshot"],
-          adapter: {} as ProviderInstance["adapter"],
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
           textGeneration: {} as ProviderInstance["textGeneration"],
         } satisfies ProviderInstance;
       }),
@@ -990,6 +1022,13 @@ describe("ProviderInstanceRegistryLive — enabled resolution", () => {
       // cleanly through the real schema.
       const unavailable = yield* registry.listUnavailable;
       expect(unavailable).toEqual([]);
-    }).pipe(Effect.provide(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers))),
+    }).pipe(
+      Effect.provide(
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+      ),
+    ),
   );
 });

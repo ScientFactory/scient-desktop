@@ -256,12 +256,12 @@ const runCursorLifecycleCommand = Effect.fn("CursorConnectionActions.runCommand"
   args: ReadonlyArray<string>,
 ) {
   const resolved = yield* resolveSpawnCommand(
-    settings.binaryPath,
+    settings.binaryPath?.trim() || "cursor-agent",
     cursorCliArgs(args, environment),
     { env: environment, extendEnv: false },
   );
   return yield* spawnAndCollect(
-    settings.binaryPath,
+    settings.binaryPath?.trim() || "cursor-agent",
     ChildProcess.make(resolved.command, resolved.args, {
       env: environment,
       extendEnv: false,
@@ -304,7 +304,7 @@ export const makeCursorConnectionActions = Effect.fn("CursorConnectionActions.ma
   const startLogin: CursorAuthRuntime["startLogin"] = Effect.gen(function* () {
     const loginEnvironment = { ...accountEnvironment, NO_OPEN_BROWSER: "1" };
     const resolved = yield* resolveSpawnCommand(
-      settings.binaryPath,
+      settings.binaryPath?.trim() || "cursor-agent",
       cursorCliArgs(["login"], loginEnvironment),
       { env: loginEnvironment, extendEnv: false },
     ).pipe(
@@ -444,3 +444,10 @@ export const makeCursorConnectionActions = Effect.fn("CursorConnectionActions.ma
     makeCursorConnectionActionsFromRuntime({ startLogin, verifyLoggedIn, logout }),
   );
 });
+
+export function assistedCursorConnectionMethods(
+  environment: NodeJS.ProcessEnv,
+): ReadonlyArray<ProviderConnectionMethod> {
+  // CLI endpoints and tokens do not own the SDK's account.
+  return environment.CURSOR_API_KEY?.trim() ? [] : ["cursor_browser"];
+}

@@ -163,6 +163,26 @@ adopted were not working on 58.0.0. Mobile publication stayed held, so no public
 build carried that breakage. The `expo-modules-core` thread-safety regression
 above is untouched by this range and its two harnesses still fail locally.
 
+The Orchestration V2 alignment is recorded in
+[its receipt](docs/internals/t3-upstream-sync-20261003-ca7df394ed.md) and
+`upstream-state.json` ([Scient PR #466](https://github.com/ScientFactory/scient-desktop/pull/466)).
+It integrates 15 first-parent official commits through
+`ca7df394ed8151fa77f856beefa90bc60a785d60` onto owned base
+`ad215fd9157e86252a2ee1187e746b65c8b003be`. Upstream merge
+`b8fbae4ffa84414b02461cf42a0afa4b10a03fcc` retains that exact target as its second
+parent. The qualified tree was first proposed in #465, whose history the provenance
+check rejects; it is republished unchanged on checkable history, and the original
+lanes remain at tag `archive/v2-alignment-lanes-20261006`.
+
+The alignment restores the permissions-registry synchronization at
+`expo-modules-core@58.0.11` and preserves pending notification responses at
+`expo-notifications@58.0.11`. Both packages are overridden to those exact versions
+so a fresh resolution cannot pick a newer release and silently drop the patches.
+Its updated harness compiles the installed manager and its actual Mutex backport
+against the upgraded notification protocol. The native ThreadSanitizer,
+reentrant-callback, registration-during-delivery and replay checks pass. Mobile
+publication remains held.
+
 Two Scient compositions matter here. Upstream's beta Working shelf folds working
 and monitoring threads out of the inbox, but Scient's sidebar has two mutually
 exclusive layouts, `status` and `sections`, and the Sections view replaces the
@@ -566,6 +586,14 @@ does not mint a credential or advertise MCP-delivered Skills. Managed OpenCode
 opts in; an externally managed OpenCode server does not.
 See [workspace authority and agent capabilities](docs/internals/scient-workspace-binding.md).
 
+Scient's injected MCP connection is named `scient`, and the omitted-history
+reader is `scient_thread_read`. Tool descriptions, provider-qualified names,
+generated handoff instructions and activity presentation use Scient identity.
+Preserve this public boundary when adopting upstream toolkits. Historical
+`t3-code`/`t3_` activity identities are normalized only for display; they are not
+callable aliases. Credentials, capability grants, operation IDs, storage and
+compatibility environment-variable names are unchanged.
+
 Explicit Skill selections travel as optional `selectedScientSkillNames`
 metadata through composer, turn commands/events, queue and provider preparation.
 Do not infer them from augmented prompts, captured text or assistant plans.
@@ -574,25 +602,36 @@ Keep main's typed message context and legacy readers; queue support advertises
 Preserve queue snapshot/journal migrations and attachment identity. Oversized
 requests may omit optional Skill index entries, not selected user context.
 
-This foundation does not import the separate Compute toolkit branch or change
-Compute/Analysis runtime, UI or history ownership. Future consumers must
-deliberately reconcile workspace authority and tool ownership against their
-current implementation. No unmerged Orchestration V2 code is imported.
+The current native V2 projection supplies workspace authority and committed
+revisions through `scient/projectScope/WorkspaceAuthorityProjection.ts`; missing
+pre-cutover revision stamps fail closed. MCP projects authenticated context into
+the shared domain admission boundary rather than reviving a V1 execution owner.
+`scient_compute_inventory` is wired to the existing Compute gateway as bounded,
+read-only discovery: it does not install, execute, select or attach a runtime or
+project session, and a listed executable is not authority to launch it.
+This adaptation does not merge the separate experimental Compute toolkit or
+Analysis migration ledger, change scientific runtime/session/UI/history
+ownership, or import unmerged V2 experiments.
 
-Oh My Pi's external provider is a Scient-owned seam. `packages/effect-omp-rpc` is the wire client.
-`apps/server/src/provider/omp`, `Drivers/OmpDriver.ts`, `Layers/OmpAdapter.ts`,
-`Layers/OmpProvider.ts`, and `textGeneration/OmpTextGeneration.ts` own process, cursor, and turn
-mapping; `OmpManagedRuntimeActions.ts`, `managedOmpRuntime.ts` and `ompManifest.ts` own its managed
-runtime and version cap. Everything else is a mount: upstream files (driver registration, settings
-and model contracts, server and ws wiring, the MCP transport export, the shared provider environment
-predicate and update-command formatting, the model manifest, icons, the provider picker and
-open-url activity) as `upstreamMounts`, and shared Scient files (awareness and skill delivery, the
-Pi extension generator, the managed-runtime catalog, policy and workflows, custom models) as
-anchored `scientMounts`, so none of them is claimed as OMP-owned. Analytics sends OMP as the
-gateway's existing `other` provider and is not a mount. `scient-omp-seams.json` is the inventory;
-`scripts/scient-seam-check.mjs --base --head` checks it with the onboarding, skills, analysis, and
-LaTeX seams in the upstream-provenance workflow. Do not fold this provider into Pi's RPC client,
-and do not add an Orchestration V2 adapter until that upstream work is in the official range.
+Oh My Pi's external provider and Scient Agent share a Scient-owned RPC seam.
+`packages/effect-omp-rpc` owns the wire client without Scient orchestration types.
+`apps/server/src/provider/omp` owns process transport and session helpers;
+`apps/server/src/provider/scient` owns Scient Agent's separate product target.
+`apps/server/src/provider/Drivers/OmpDriver.ts` and `ScientAgentDriver.ts` create
+`apps/server/src/orchestration-v2/Adapters/OmpAdapterV2.ts`, which adapts native
+sessions and turns to V2. `apps/server/src/provider/Layers/OmpProvider.ts` owns
+provider discovery and status; `apps/server/src/textGeneration/OmpTextGeneration.ts`
+handles separate text-generation requests. `OmpManagedRuntimeActions.ts`,
+`managedOmpRuntime.ts` and `ompManifest.ts` retain Oh My Pi's managed-runtime and
+version-cap ownership. Sharing the RPC implementation does not merge the two
+products' executable identities or state.
+
+`scient-omp-seams.json` inventories owned code and the anchored `upstreamMounts`
+and shared `scientMounts`; shared integration points are not wholly OMP-owned.
+Analytics sends OMP as the gateway's existing `other` provider and is not a mount.
+`scripts/scient-seam-check.mjs --base --head` checks this inventory with the
+onboarding, skills, analysis and LaTeX seams in the upstream-provenance workflow.
+Keep this RPC client separate from Pi's RPC client.
 
 Review previews preserve the source Git index timestamp when preparing a temporary
 index for untracked files. A freshly timestamped copy can bypass Git's racy-clean

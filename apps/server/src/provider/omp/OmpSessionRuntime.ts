@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -127,7 +129,7 @@ export type OmpSessionUpdate =
   | { readonly type: "session-settled" }
   | { readonly type: "background-work"; readonly pending: boolean }
   /** OMP injected a finished background job's result into the open turn's run. */
-  | { readonly type: "background-result"; readonly detail?: string }
+  | { readonly type: "background-result"; readonly id: string; readonly detail?: string }
   | { readonly type: "model-changed"; readonly model?: string; readonly thinkingLevel?: string }
   | { readonly type: "warning"; readonly message: string }
   | { readonly type: "error"; readonly message: string }
@@ -974,8 +976,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         if (isBackgroundResultMessage(event.message)) {
           // Marks where OMP resumed with a background job's result, since
           // that run can also carry the answer to a newer message.
-          const detail = detailText(event.message);
-          yield* publish({ type: "background-result", ...(detail ? { detail } : {}) });
+          const detail = messageText(event.message);
+          if (!detail) return;
+          // Native deliveries include their job IDs in the content. Hash the complete
+          // receipt before redaction: repeated frames reuse an item without merging jobs.
+          const id = `background-result:${NodeCrypto.createHash("sha256").update(detail).digest("hex")}`;
+          yield* publish({ type: "background-result", id, detail });
           return;
         }
         if (!isAssistantMessage(event.message)) return;

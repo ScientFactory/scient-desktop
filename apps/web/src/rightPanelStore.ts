@@ -21,13 +21,27 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
 import {
   normalizeScientRightPanelSurface,
-  scientArtifactSurface,
   type ScientRightPanelSurface,
 } from "./scient/rightPanel/surfaces";
+import type { PreviewStaticImageSurfaceDescriptor } from "./previewStaticImageSurface";
+// SCIENT-FORK:START
 import {
-  previewStaticImageDescriptorKey,
-  type PreviewStaticImageSurfaceDescriptor,
-} from "./previewStaticImageSurface";
+  type HtmlFilePresentationRequest,
+  type LatexFilePresentationRequest,
+  type OpenFileOptions,
+  scientFileSurfaceRequests,
+  scientPersistedLatexRootRelativePath,
+  scientRightPanelActions,
+  withoutTransientFileRequests,
+} from "./scient/rightPanel/scientRightPanelStore";
+export type {
+  HtmlFilePresentationRequest,
+  LatexFilePresentationRequest,
+  OpenFileOptions,
+} from "./scient/rightPanel/scientRightPanelStore";
+// SCIENT-FORK:END
+
+import type { ThreadPanelPresentation } from "./rightPanelLayout";
 
 const RIGHT_PANEL_KINDS = [
   "diff",
@@ -42,24 +56,6 @@ const RIGHT_PANEL_KINDS = [
   "scient",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
-
-export interface LatexFilePresentationRequest {
-  readonly id: number;
-  readonly mode: "split" | "visual";
-}
-
-export interface HtmlFilePresentationRequest {
-  readonly id: number;
-  readonly mode: "source";
-}
-
-export interface OpenFileOptions {
-  readonly fileCitation?: FileCitation;
-  readonly htmlPreviewMode?: HtmlFilePresentationRequest["mode"];
-  readonly latexPreviewMode?: LatexFilePresentationRequest["mode"];
-  /** Root retained when SyncTeX navigates from a multi-file PDF to a source. */
-  readonly latexRootRelativePath?: string;
-}
 
 export interface DeviceTabTarget {
   hostId: string;
@@ -134,6 +130,7 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v17 also preserves explicit Compute context ids from the parallel v16 Compute candidate.
 // v18 carries the selected LaTeX document root across source navigation.
 const RIGHT_PANEL_STORAGE_VERSION = 18;
+
 /** A fixed workspace-level ref: each PR surface carries its own real environment. */
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),
@@ -152,9 +149,15 @@ export interface ThreadRightPanelState {
   dismissedDeviceSurfaceIds?: string[];
 }
 
+export interface ThreadPanelVisibility {
+  inlineOpen: boolean;
+  popoverOpen: boolean;
+}
+
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
   restoreThreadState: (ref: ScopedThreadRef, state: ThreadRightPanelState) => void;
+  threadPanelVisibilityByThreadKey: Record<string, ThreadPanelVisibility>;
   /** Session-only count of user panel choices per thread. Automatic updates do not advance it. */
   userActionRevisionByThreadKey: Record<string, number>;
   getUserActionRevision: (ref: ScopedThreadRef) => number;
@@ -240,6 +243,12 @@ interface RightPanelStoreState {
     ref: ScopedThreadRef,
     kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "scient">,
   ) => void;
+  setThreadPanelOpen: (
+    ref: ScopedThreadRef,
+    presentation: ThreadPanelPresentation,
+    open: boolean,
+  ) => void;
+  toggleThreadPanel: (ref: ScopedThreadRef, presentation: ThreadPanelPresentation) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
 
@@ -247,6 +256,11 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
   isOpen: false,
   activeSurfaceId: null,
   surfaces: [],
+};
+
+const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
+  inlineOpen: true,
+  popoverOpen: false,
 };
 
 const singletonSurface = (
@@ -282,29 +296,9 @@ const fileSurface = (
   relativePath,
   revealLine,
   revealRequestId,
-  ...(options?.fileCitation ? { fileCitation: options.fileCitation } : {}),
-  ...(options?.latexRootRelativePath === undefined
-    ? {}
-    : { latexRootRelativePath: options.latexRootRelativePath }),
-  ...(options?.htmlPreviewMode === undefined
-    ? {}
-    : {
-        htmlPresentationRequest: {
-          id: revealRequestId,
-          mode: options.htmlPreviewMode,
-        },
-      }),
-  ...(options?.latexPreviewMode === undefined
-    ? {}
-    : {
-        latexPresentationRequest: {
-          id: revealRequestId,
-          mode: options.latexPreviewMode,
-        },
-      }),
-  ...(typeof options?.latexRootRelativePath === "string"
-    ? { latexRootRelativePath: options.latexRootRelativePath }
-    : {}),
+  // SCIENT-FORK:START — citation reveal and presentation requests
+  ...scientFileSurfaceRequests(revealRequestId, options),
+  // SCIENT-FORK:END
 });
 
 const attachmentSurface = (attachment: ChatFileAttachment): RightPanelSurface => ({
@@ -366,6 +360,7 @@ const upsertSurface = (
   surface: RightPanelSurface,
   activate = true,
 ): ThreadRightPanelState => ({
+  ...current,
   isOpen: true,
   surfaces: current.surfaces.some((entry) => entry.id === surface.id)
     ? current.surfaces
@@ -373,7 +368,7 @@ const upsertSurface = (
   activeSurfaceId: activate ? surface.id : current.activeSurfaceId,
 });
 
-const updateThread = (
+const updateThreadStateMap = (
   byThreadKey: Record<string, ThreadRightPanelState>,
   threadKey: string,
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
@@ -394,6 +389,62 @@ const updateThread = (
   return { ...byThreadKey, [threadKey]: next };
 };
 
+const updateThreadPanelVisibilityMap = (
+  byThreadKey: Record<string, ThreadPanelVisibility>,
+  threadKey: string,
+  updater: (current: ThreadPanelVisibility) => ThreadPanelVisibility,
+): Record<string, ThreadPanelVisibility> => {
+  const current = byThreadKey[threadKey] ?? DEFAULT_THREAD_PANEL_VISIBILITY;
+  const next = updater(current);
+  if (next.inlineOpen && !next.popoverOpen) {
+    if (!(threadKey in byThreadKey)) return byThreadKey;
+    const { [threadKey]: _removed, ...rest } = byThreadKey;
+    return rest;
+  }
+  if (next === current) return byThreadKey;
+  return { ...byThreadKey, [threadKey]: next };
+};
+
+type RightPanelStoreData = Pick<
+  RightPanelStoreState,
+  "byThreadKey" | "threadPanelVisibilityByThreadKey"
+>;
+
+/**
+ * Applies a real right-panel mutation and its thread-panel transition atomically.
+ * This is the only path real panel actions use, so visibility never has to be
+ * reconciled after the fact in React.
+ */
+const updateThread = (
+  state: RightPanelStoreData,
+  threadKey: string,
+  updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
+): RightPanelStoreData => {
+  const current = state.byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
+  const byThreadKey = updateThreadStateMap(state.byThreadKey, threadKey, updater);
+  const next = byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
+  let threadPanelVisibilityByThreadKey = state.threadPanelVisibilityByThreadKey;
+
+  if (!current.isOpen && next.isOpen) {
+    threadPanelVisibilityByThreadKey = updateThreadPanelVisibilityMap(
+      threadPanelVisibilityByThreadKey,
+      threadKey,
+      (visibility) => (visibility.popoverOpen ? { ...visibility, popoverOpen: false } : visibility),
+    );
+  } else if (current.isOpen && !next.isOpen) {
+    threadPanelVisibilityByThreadKey = updateThreadPanelVisibilityMap(
+      threadPanelVisibilityByThreadKey,
+      threadKey,
+      (visibility) =>
+        visibility.popoverOpen && !visibility.inlineOpen
+          ? { ...visibility, inlineOpen: true }
+          : visibility,
+    );
+  }
+
+  return { byThreadKey, threadPanelVisibilityByThreadKey };
+};
+
 // Every store action is a user choice unless it goes through `automaticUpdate`.
 // Only `openProactive` and resource reconciliation are automatic, so a new
 // action counts as a user choice by default.
@@ -402,7 +453,7 @@ const automaticUpdate = (
   threadKey: string,
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
 ): Partial<RightPanelStoreState> => ({
-  byThreadKey: updateThread(state.byThreadKey, threadKey, updater),
+  ...updateThread(state, threadKey, updater),
 });
 
 const userAction = (
@@ -410,21 +461,20 @@ const userAction = (
   threadKey: string,
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
 ): Partial<RightPanelStoreState> => ({
-  byThreadKey: updateThread(state.byThreadKey, threadKey, (current) => {
+  ...updateThread(state, threadKey, (current) => {
     const next = updater(current);
-    const removed = current.surfaces.filter(
+    if (next === current) return current;
+    const removedDevices = current.surfaces.filter(
       (surface) =>
-        surface.kind === "device" &&
-        surface.target &&
-        !next.surfaces.some((entry) => entry.id === surface.id),
+        surface.kind === "device" && !next.surfaces.some((entry) => entry.id === surface.id),
     );
-    if (removed.length === 0) return next;
+    if (removedDevices.length === 0) return next;
     return {
       ...next,
       dismissedDeviceSurfaceIds: [
         ...new Set([
           ...(next.dismissedDeviceSurfaceIds ?? []),
-          ...removed.map((surface) => surface.id),
+          ...removedDevices.map((surface) => surface.id),
         ]),
       ],
     };
@@ -442,9 +492,10 @@ function normalizeRevealLine(line: number | undefined): number | null {
 
 export function migratePersistedRightPanelState(persistedState: unknown): {
   byThreadKey: Record<string, ThreadRightPanelState>;
+  threadPanelVisibilityByThreadKey: Record<string, ThreadPanelVisibility>;
 } {
   if (!persistedState || typeof persistedState !== "object") {
-    return { byThreadKey: {} };
+    return { byThreadKey: {}, threadPanelVisibilityByThreadKey: {} };
   }
   const byThreadKey =
     "byThreadKey" in persistedState &&
@@ -458,9 +509,9 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 threadState && typeof threadState === "object" ? threadState : null;
               const surfaces = Array.isArray(validThreadState?.surfaces)
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
-                    // Dropped surface kind: plans now render inline in the
-                    // transcript (v9).
-                    if ((surface as { kind?: string }).kind === "plan") return [];
+                    // Removed surfaces: plans render inline, agents in thread lineage.
+                    const kind = (surface as { kind?: string }).kind;
+                    if (kind === "plan" || kind === "agents") return [];
                     if (surface.kind === "file") {
                       const {
                         htmlPresentationRequest: _transientHtmlPresentationRequest,
@@ -480,15 +531,9 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         surface.revealRequestId >= 0
                           ? surface.revealRequestId
                           : 0;
-                      const latexRootRelativePath =
-                        typeof persistedLatexRootRelativePath === "string" &&
-                        persistedLatexRootRelativePath.length > 0 &&
-                        persistedLatexRootRelativePath.length <= 4_096 &&
-                        !persistedLatexRootRelativePath.includes("\0") &&
-                        !/^(?:[\\/]|[A-Za-z]:)/u.test(persistedLatexRootRelativePath) &&
-                        !persistedLatexRootRelativePath.split(/[\\/]/u).includes("..")
-                          ? persistedLatexRootRelativePath
-                          : undefined;
+                      const latexRootRelativePath = scientPersistedLatexRootRelativePath(
+                        persistedLatexRootRelativePath,
+                      );
                       return [
                         {
                           ...persistentSurface,
@@ -579,9 +624,11 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                   : persistedActiveSurfaceId !== null);
               // An open panel needs an active surface: if migration dropped
               // the persisted one (e.g. plan was active), fall back to the
-              // first survivor instead of rendering an open empty panel.
+              // first survivor instead of rendering an open empty panel. Removed
+              // agents selections also keep a survivor ready while the panel is closed.
               const activeSurfaceId =
-                persistedActiveSurfaceId ?? (isOpen ? (surfaces[0]?.id ?? null) : null);
+                persistedActiveSurfaceId ??
+                (isOpen || rawActiveSurfaceId === "agents" ? (surfaces[0]?.id ?? null) : null);
               return [
                 threadKey,
                 {
@@ -601,7 +648,22 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
             }),
         )
       : {};
-  return { byThreadKey };
+  const threadPanelVisibilityByThreadKey =
+    "threadPanelVisibilityByThreadKey" in persistedState &&
+    persistedState.threadPanelVisibilityByThreadKey &&
+    typeof persistedState.threadPanelVisibilityByThreadKey === "object"
+      ? Object.fromEntries(
+          Object.entries(
+            persistedState.threadPanelVisibilityByThreadKey as Record<string, unknown>,
+          ).flatMap(([threadKey, value]) => {
+            if (!value || typeof value !== "object" || !("inlineOpen" in value)) return [];
+            return value.inlineOpen === false
+              ? [[threadKey, { inlineOpen: false, popoverOpen: false }]]
+              : [];
+          }),
+        )
+      : {};
+  return { byThreadKey, threadPanelVisibilityByThreadKey };
 }
 
 export const useRightPanelStore = create<RightPanelStoreState>()(
@@ -610,8 +672,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       byThreadKey: {},
       restoreThreadState: (ref, restored) =>
         set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), () => restored),
+          ...updateThread(state, scopedThreadKey(ref), () => restored),
         })),
+      threadPanelVisibilityByThreadKey: {},
       userActionRevisionByThreadKey: {},
       getUserActionRevision: (ref) =>
         get().userActionRevisionByThreadKey[scopedThreadKey(ref)] ?? 0,
@@ -707,67 +770,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               : next;
           }),
         ),
-      openScient: (ref, surface) =>
-        set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
-            const next = upsertSurface(current, surface);
-            if (!current.surfaces.some((entry) => entry.id === surface.id)) return next;
-            return {
-              ...next,
-              surfaces: current.surfaces.map((entry) =>
-                entry.id === surface.id ? surface : entry,
-              ),
-            };
-          }),
-        ),
-      updateScientGeneratedPdf: (ref, surface) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
-            if (!current.surfaces.some((entry) => entry.id === surface.id)) return current;
-            return {
-              ...current,
-              surfaces: current.surfaces.map((entry) =>
-                entry.id === surface.id ? surface : entry,
-              ),
-            };
-          }),
-        })),
-      openScientArtifact: (ref, artifact) =>
-        set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
-            const surface = scientArtifactSurface(artifact);
-            const existing = current.surfaces.some((entry) => entry.id === surface.id);
-            return {
-              isOpen: true,
-              activeSurfaceId: surface.id,
-              surfaces: existing
-                ? current.surfaces.map((entry) => (entry.id === surface.id ? surface : entry))
-                : [...current.surfaces, surface],
-            };
-          }),
-        ),
-      updateScientArtifact: (ref, artifact) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
-            const surface = scientArtifactSurface(artifact);
-            const existing = current.surfaces.find((entry) => entry.id === surface.id);
-            if (!existing || existing.kind !== "scient" || existing.module !== "artifact") {
-              return current;
-            }
-            if (
-              previewStaticImageDescriptorKey(existing.artifact) ===
-              previewStaticImageDescriptorKey(artifact)
-            ) {
-              return current;
-            }
-            return {
-              ...current,
-              surfaces: current.surfaces.map((entry) =>
-                entry.id === surface.id ? surface : entry,
-              ),
-            };
-          }),
-        })),
+      // SCIENT-FORK:START — Scient surfaces and file presentation requests
+      ...scientRightPanelActions(set, { updateThread, upsertSurface, userAction }),
+      // SCIENT-FORK:END
       openFile: (ref, requestedPath, line, options) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
@@ -794,6 +799,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               options,
             );
             return {
+              ...current,
               isOpen: true,
               activeSurfaceId: surface.id,
               surfaces: existing
@@ -804,50 +810,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             };
           }),
         ),
-      consumeLatexPresentationRequest: (ref, relativePath, requestId) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
-            let changed = false;
-            const surfaces = current.surfaces.map((surface): RightPanelSurface => {
-              if (
-                surface.kind !== "file" ||
-                surface.relativePath !== relativePath ||
-                surface.latexPresentationRequest?.id !== requestId
-              ) {
-                return surface;
-              }
-              changed = true;
-              const {
-                latexPresentationRequest: _consumedLatexPresentationRequest,
-                ...remainingSurface
-              } = surface;
-              return remainingSurface;
-            });
-            return changed ? { ...current, surfaces } : current;
-          }),
-        })),
-      consumeHtmlPresentationRequest: (ref, relativePath, requestId) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
-            let changed = false;
-            const surfaces = current.surfaces.map((surface): RightPanelSurface => {
-              if (
-                surface.kind !== "file" ||
-                surface.relativePath !== relativePath ||
-                surface.htmlPresentationRequest?.id !== requestId
-              ) {
-                return surface;
-              }
-              changed = true;
-              const {
-                htmlPresentationRequest: _consumedHtmlPresentationRequest,
-                ...remainingSurface
-              } = surface;
-              return remainingSurface;
-            });
-            return changed ? { ...current, surfaces } : current;
-          }),
-        })),
       openAttachment: (ref, attachment) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
@@ -1118,19 +1080,48 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             return upsertSurface(current, singletonSurface(kind));
           }),
         ),
+      setThreadPanelOpen: (ref, presentation, open) =>
+        set((state) => ({
+          threadPanelVisibilityByThreadKey: updateThreadPanelVisibilityMap(
+            state.threadPanelVisibilityByThreadKey,
+            scopedThreadKey(ref),
+            (visibility) => {
+              const key = presentation === "inline" ? "inlineOpen" : "popoverOpen";
+              return visibility[key] === open ? visibility : { ...visibility, [key]: open };
+            },
+          ),
+        })),
+      toggleThreadPanel: (ref, presentation) =>
+        set((state) => ({
+          threadPanelVisibilityByThreadKey: updateThreadPanelVisibilityMap(
+            state.threadPanelVisibilityByThreadKey,
+            scopedThreadKey(ref),
+            (visibility) =>
+              presentation === "inline"
+                ? { ...visibility, inlineOpen: !visibility.inlineOpen }
+                : { ...visibility, popoverOpen: !visibility.popoverOpen },
+          ),
+        })),
       removeThread: (ref) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           if (
             !(threadKey in state.byThreadKey) &&
+            !(threadKey in state.threadPanelVisibilityByThreadKey) &&
             !(threadKey in state.userActionRevisionByThreadKey)
           ) {
             return state;
           }
-          const { [threadKey]: _removed, ...rest } = state.byThreadKey;
+          const { [threadKey]: _removed, ...byThreadKey } = state.byThreadKey;
+          const { [threadKey]: _visibility, ...threadPanelVisibilityByThreadKey } =
+            state.threadPanelVisibilityByThreadKey;
           const { [threadKey]: _revision, ...userActionRevisionByThreadKey } =
             state.userActionRevisionByThreadKey;
-          return { byThreadKey: rest, userActionRevisionByThreadKey };
+          return {
+            byThreadKey,
+            threadPanelVisibilityByThreadKey,
+            userActionRevisionByThreadKey,
+          };
         }),
     }),
     {
@@ -1147,18 +1138,17 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               threadKey,
               {
                 ...threadState,
-                surfaces: threadState.surfaces.map((surface): RightPanelSurface => {
-                  if (surface.kind !== "file") return surface;
-                  const {
-                    htmlPresentationRequest: _transientHtmlPresentationRequest,
-                    latexPresentationRequest: _transientLatexPresentationRequest,
-                    fileCitation: _transientFileCitation,
-                    ...persistentSurface
-                  } = surface;
-                  return persistentSurface;
-                }),
+                // SCIENT-FORK:START — file presentation requests are transient
+                surfaces: threadState.surfaces.map(withoutTransientFileRequests),
+                // SCIENT-FORK:END
               },
             ]),
+        ),
+        threadPanelVisibilityByThreadKey: Object.fromEntries(
+          Object.entries(state.threadPanelVisibilityByThreadKey).flatMap(
+            ([threadKey, visibility]) =>
+              visibility.inlineOpen ? [] : [[threadKey, { inlineOpen: false, popoverOpen: false }]],
+          ),
         ),
       }),
       migrate: migratePersistedRightPanelState,
@@ -1172,6 +1162,23 @@ export function selectThreadRightPanelState(
 ): ThreadRightPanelState {
   if (!ref) return EMPTY_THREAD_STATE;
   return byThreadKey[scopedThreadKey(ref)] ?? EMPTY_THREAD_STATE;
+}
+
+function selectThreadPanelVisibility(
+  byThreadKey: Record<string, ThreadPanelVisibility>,
+  ref: ScopedThreadRef | null | undefined,
+): ThreadPanelVisibility {
+  if (!ref) return DEFAULT_THREAD_PANEL_VISIBILITY;
+  return byThreadKey[scopedThreadKey(ref)] ?? DEFAULT_THREAD_PANEL_VISIBILITY;
+}
+
+export function selectThreadPanelOpen(
+  byThreadKey: Record<string, ThreadPanelVisibility>,
+  ref: ScopedThreadRef | null | undefined,
+  presentation: ThreadPanelPresentation,
+): boolean {
+  const visibility = selectThreadPanelVisibility(byThreadKey, ref);
+  return presentation === "inline" ? visibility.inlineOpen : visibility.popoverOpen;
 }
 
 export function selectActiveRightPanel(

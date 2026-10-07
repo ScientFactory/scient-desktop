@@ -58,7 +58,11 @@ describe("compute result surface seam", () => {
   });
 
   it("keys standalone controls by their owner and preserves producing result generations", () => {
-    const chat = NodeFS.readFileSync(NodePath.join(here, "../../components/ChatView.tsx"), "utf8");
+    // ChatView mounts the compute panel from the owned right-panel content module.
+    const chat = [
+      NodeFS.readFileSync(NodePath.join(here, "../../components/ChatView.tsx"), "utf8"),
+      NodeFS.readFileSync(NodePath.join(here, "../rightPanel/ScientRightPanelContent.tsx"), "utf8"),
+    ].join("\n");
     expect(chat).toContain(
       "key={`${activeThreadRef.environmentId}:${activeThreadRef.threadId}:${renderedRightPanelSurface.id}`}",
     );

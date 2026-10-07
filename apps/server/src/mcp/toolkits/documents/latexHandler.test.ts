@@ -19,7 +19,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
 
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { GeneratedDocumentStore } from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as LatexBuildService from "../../../scient/latex/LatexBuildService.ts";
 import { resolveLatexDocument } from "../../../scient/latex/LatexProjectIndex.ts";
@@ -142,28 +141,26 @@ const makeThread = (input: {
 const makeQuery = (input: {
   readonly thread: OrchestrationThreadShell | null;
   readonly project: OrchestrationProjectShell | null;
-}) =>
-  ProjectionSnapshotQuery.ProjectionSnapshotQuery.of({
-    getThreadShellById: () =>
-      Effect.succeed(input.thread === null ? Option.none() : Option.some(input.thread)),
-    getProjectShellById: () =>
-      Effect.succeed(input.project === null ? Option.none() : Option.some(input.project)),
-  } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape);
+}) => ({
+  getThreadShellById: () =>
+    Effect.succeed(input.thread === null ? Option.none() : Option.some(input.thread)),
+  getProjectShellById: () =>
+    Effect.succeed(input.project === null ? Option.none() : Option.some(input.project)),
+});
 
 const makeDynamicQuery = (input: {
   readonly thread: (threadId: ThreadId) => OrchestrationThreadShell | null;
   readonly project: (projectId: ProjectId) => OrchestrationProjectShell | null;
-}) =>
-  ProjectionSnapshotQuery.ProjectionSnapshotQuery.of({
-    getThreadShellById: (threadId: ThreadId) => {
-      const thread = input.thread(threadId);
-      return Effect.succeed(thread === null ? Option.none() : Option.some(thread));
-    },
-    getProjectShellById: (projectId: ProjectId) => {
-      const project = input.project(projectId);
-      return Effect.succeed(project === null ? Option.none() : Option.some(project));
-    },
-  } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape);
+}) => ({
+  getThreadShellById: (threadId: ThreadId) => {
+    const thread = input.thread(threadId);
+    return Effect.succeed(thread === null ? Option.none() : Option.some(thread));
+  },
+  getProjectShellById: (projectId: ProjectId) => {
+    const project = input.project(projectId);
+    return Effect.succeed(project === null ? Option.none() : Option.some(project));
+  },
+});
 
 const makeBinding = (input: {
   readonly threadId: ThreadId;
@@ -188,7 +185,7 @@ const makeBinding = (input: {
 });
 
 const makeResolverForQuery = (
-  query: ProjectionSnapshotQuery.ProjectionSnapshotQueryShape,
+  query: ReturnType<typeof makeDynamicQuery>,
 ): WorkspaceBindingResolver["Service"] => {
   const resolveThread: WorkspaceBindingResolver["Service"]["resolveThread"] = Effect.fn(
     "TestLatexWorkspaceBindingResolver.resolveThread",
@@ -341,7 +338,7 @@ function runBuild(
   effect: ReturnType<typeof buildScientLatexForInvocation>,
   input: {
     readonly invocation: AgentInvocationContext.AgentInvocationScope;
-    readonly query: ProjectionSnapshotQuery.ProjectionSnapshotQueryShape;
+    readonly query: ReturnType<typeof makeDynamicQuery>;
     readonly resolver?: WorkspaceBindingResolver["Service"];
     readonly builds: LatexBuildService.LatexBuildService["Service"];
     readonly store: GeneratedDocumentStore["Service"];
@@ -350,7 +347,6 @@ function runBuild(
 ) {
   return effect.pipe(
     Effect.provideService(AgentInvocationContext.AgentInvocationContext, input.invocation),
-    Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, input.query),
     Effect.provideService(
       WorkspaceBindingResolver,
       input.resolver ?? makeResolverForQuery(input.query),

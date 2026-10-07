@@ -6,24 +6,24 @@
   "officialDefaultBranch": "main",
   "updateMode": "thin-fork-merge",
   "candidateStatus": "active-public-desktop",
-  "integrationBase": "54084ae1e6c32809db040e4fa571c80fdf2d8ae4",
-  "reviewedThrough": "54084ae1e6c32809db040e4fa571c80fdf2d8ae4",
-  "reviewedAt": "2026-10-02",
-  "reviewRecord": "docs/internals/2026-10-02-upstream-sync-54084ae1e6.md",
+  "integrationBase": "ca7df394ed8151fa77f856beefa90bc60a785d60",
+  "reviewedThrough": "ca7df394ed8151fa77f856beefa90bc60a785d60",
+  "reviewedAt": "2026-10-07",
+  "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md",
   "verifiedBaseline": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTipAtBootstrap": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTagAtBootstrap": "v0.0.32-nightly.20260806.1012",
   "bootstrapBranch": "agent/d4-bootstrap-20260806",
   "bootstrapMerge": "3e8f7bc0e18be4a42c23b021e68bf30e3690bc4d",
   "bootstrapRecord": "docs/internals/scient-next-d4-bootstrap.md",
-  "lastRefreshBase": "af07bfc0bd1838e9f2e569cde6e3263e49951225",
-  "lastRefreshPreviousOfficialTip": "a3abb5266080c15b2a675d7f92b517b567c427e2",
-  "lastRefreshOfficialTip": "54084ae1e6c32809db040e4fa571c80fdf2d8ae4",
-  "lastRefreshOfficialTag": "v0.0.45-nightly.20260930.2493",
-  "lastRefreshRangeCount": 12,
-  "lastRefreshMerge": "0b0fba47a69b381bbbdf4f7061e69ec952749de6",
-  "lastRefreshBranch": "codex/t3-sync-54084ae1e6-20261002",
-  "lastRefreshVerifiedAt": "2026-10-02T13:43:03Z",
+  "lastRefreshBase": "ad215fd9157e86252a2ee1187e746b65c8b003be",
+  "lastRefreshPreviousOfficialTip": "54084ae1e6c32809db040e4fa571c80fdf2d8ae4",
+  "lastRefreshOfficialTip": "ca7df394ed8151fa77f856beefa90bc60a785d60",
+  "lastRefreshOfficialTag": null,
+  "lastRefreshRangeCount": 15,
+  "lastRefreshMerge": "b8fbae4ffa84414b02461cf42a0afa4b10a03fcc",
+  "lastRefreshBranch": "codex/t3-sync-ca7df394ed-20261007",
+  "lastRefreshVerifiedAt": "2026-10-07T06:11:07Z",
   "historicalExceptions": [
     {
       "id": "t3-pr-5822-projectless-threads",
@@ -44,6 +44,6 @@
       "replacementMerge": null
     }
   ],
-  "lastRefreshOwnedMain": "af07bfc0bd1838e9f2e569cde6e3263e49951225",
-  "lastRefreshOwnedMainMerge": null
+  "lastRefreshOwnedMain": "33ab8e307afbabda3e155c439d89bc788148d379",
+  "lastRefreshOwnedMainMerge": "794ff29ed2120ac2d2ee13f30488e68b17402cb7"
 }

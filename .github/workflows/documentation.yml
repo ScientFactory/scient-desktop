@@ -64,7 +64,9 @@ jobs:
           done < <(git diff --name-only -z --diff-filter=ACMR "$START_SHA" "$HEAD_SHA" -- "*.md" "docs/**" ':!.repos' ':!.macroscope/ignore.md')
 
           if (( ${#markdown_files[@]} > 0 )); then
-            npx --yes oxfmt@0.57.0 --config .github/oxfmt-documentation.json --check "${markdown_files[@]}"
+            # Match the oxfmt bundled with vite-plus (pnpm-lock.yaml), which the
+            # commit hook runs; versions disagree on long TypeScript unions.
+            npx --yes oxfmt@0.70.0 --config .github/oxfmt-documentation.json --check "${markdown_files[@]}"
             node scripts/check-markdown-links.mjs "${markdown_files[@]}"
           fi
 

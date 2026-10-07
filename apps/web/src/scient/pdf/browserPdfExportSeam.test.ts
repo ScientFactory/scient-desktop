@@ -28,7 +28,10 @@ describe("browser PDF export seams", () => {
   });
 
   it("keeps server publication behind one inherited RPC mount", () => {
-    const ws = read("../../../../server/src/ws.ts");
+    const ws = [
+      read("../../../../server/src/ws.ts"),
+      read("../../../../server/src/scient/documentExport/DocumentPdfRpcHandlers.ts"),
+    ].join("\n");
     const publication = read(
       "../../../../server/src/scient/documentArtifacts/BrowserPdfExportPublication.ts",
     );

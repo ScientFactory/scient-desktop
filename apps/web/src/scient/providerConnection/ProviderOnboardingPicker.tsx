@@ -18,6 +18,7 @@ import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import { BlocksIcon, ChevronRightIcon, SearchIcon, SettingsIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { ModelPickerNewChatFooter } from "../../components/chat/ModelPickerNewChatFooter";
 import { ComposerControl, ComposerControlChevron } from "../../components/chat/ComposerControl";
 import { composerFloatingLayerProps } from "../../components/chat/composerEventScope";
 import {
@@ -122,6 +123,8 @@ export function ProviderOnboardingPicker(props: {
   readonly fallbackSelection?: ModelSelection | null | undefined;
   readonly onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   readonly autoSelectReadyProvider?: boolean;
+  readonly onContinueInNewChat?: () => void;
+  readonly continueInNewChatDisabled?: boolean;
 }) {
   const navigate = useNavigate();
   const reconnectEntry = props.reconnectEntry;
@@ -388,6 +391,16 @@ export function ProviderOnboardingPicker(props: {
                   onManage={openSettings}
                 />
               )}
+              {props.onContinueInNewChat ? (
+                <ModelPickerNewChatFooter
+                  disabled={props.continueInNewChatDisabled ?? false}
+                  onFork={() => {
+                    if (props.continueInNewChatDisabled) return;
+                    setOpen(false);
+                    props.onContinueInNewChat?.();
+                  }}
+                />
+              ) : null}
             </section>
           </div>
         </PopoverPopup>

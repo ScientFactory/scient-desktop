@@ -122,7 +122,10 @@ export class ProjectFaviconResolver extends Context.Service<
     readonly resolvePath: (
       cwd: string,
       faviconPath?: string,
+      options?: { readonly refresh?: boolean },
     ) => Effect.Effect<string | null, ProjectFaviconResolutionError>;
+    /** Clears a cached hit or miss without performing filesystem work. */
+    readonly invalidate: (cwd: string, faviconPath?: string) => Effect.Effect<void>;
   }
 >()("t3/project/ProjectFaviconResolver") {}
 
@@ -312,8 +315,9 @@ export const make = Effect.gen(function* () {
 
   const resolvePath: ProjectFaviconResolver["Service"]["resolvePath"] = Effect.fn(
     "ProjectFaviconResolver.resolvePath",
-  )(function* (cwd, faviconPath) {
+  )(function* (cwd, faviconPath, options) {
     const key = faviconCacheKey(cwd, faviconPath);
+    if (options?.refresh === true) yield* Cache.invalidate(faviconCache, key);
     const cached = yield* Cache.get(faviconCache, key);
     if (cached === null) {
       return null;
@@ -341,7 +345,11 @@ export const make = Effect.gen(function* () {
     return yield* Cache.get(faviconCache, key);
   });
 
-  return ProjectFaviconResolver.of({ resolvePath });
+  const invalidate: ProjectFaviconResolver["Service"]["invalidate"] = Effect.fn(
+    "ProjectFaviconResolver.invalidate",
+  )((cwd, faviconPath) => Cache.invalidate(faviconCache, faviconCacheKey(cwd, faviconPath)));
+
+  return ProjectFaviconResolver.of({ resolvePath, invalidate });
 });
 
 export const layer = Layer.effect(ProjectFaviconResolver, make);
