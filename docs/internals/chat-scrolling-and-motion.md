@@ -50,9 +50,13 @@ Owner: the restore effect in `chat/MessagesTimeline.tsx`; storage in
 - **Coming back to a thread you left while the follow was still going** (saved
   as the followed prompt's id; resting at the end alone is not following): you
   land where the follow would be now, not where you left.
-  - **Everything since your message fits:** the bottom.
+  - **Everything since your message fits:** the end of its response (the
+    bottom, unless a later message was sent from elsewhere meanwhile).
   - **It doesn't fit:** your message at the top margin.
-  - **Your message is at the top but the latest answer's first lines would still be below the screen:** that answer's start goes at the top margin instead.
+  - **Your message is at the top but its latest answer's first lines would still be below the screen:** that answer's start goes at the top margin instead.
+  - **A later message sent from elsewhere** while you were away, and what
+    follows it, never move it further, whether your message's run is still
+    working or has finished.
   - **Never** past the bottom. While that prompt's run still works, the follow carries on from there.
 - **Any scroll, key, touch or click** during a restore cancels it and leaves
   you where you are.
@@ -95,7 +99,8 @@ Owner: `chat/responseFollow.ts` (the one owner of the follow, called from
 - **A queued message counts as "delivered"** when V2 marks the delivered
   prompt so (`queued_turn`, or `promoted_queued_to_steer`). It keeps its
   message id, so this window's own queued send counts too, even when the
-  delivery arrives before the send's receipt. A message sent directly from
+  delivery arrives before the send's receipt. A message promoted to a steer
+  is followed with the run it went into. A message sent directly from
   another window is never followed.
 
 ## How the follow moves

@@ -38,8 +38,10 @@ reset at admission; V2 reports that phase as connecting).
 Preserve the existing first-message framing. One controller in ChatView owns the send follow
 (`chat/responseFollow.ts`): eligible sends, and queued prompts the server delivers while the
 reader is at the end (V2's `queued_turn`/`promoted_queued_to_steer` input intent on the
-delivered prompt, which keeps its message id), start it; it settles from that prompt's own V2
-run, never from the thread looking busy. It reveals the prompt and the start of its response's latest
+delivered prompt, which keeps its message id), start it; it settles from the V2 run answering
+that prompt (the run its message belongs to, so a promoted steer follows the run it went into,
+not its cancelled queue run), never from the thread looking busy. A prompt's response ends at the
+next prompt. It reveals the prompt and the start of its response's latest
 message through `chat/useBoundedAnswerFollow.ts` (for a later prompt, `followResponse`
 follows the whole response's end, traces and tools included, at a calmer pace): capped at the prompt's first line
 reaching the top margin, past it only to show a message pushed below the fold, never
@@ -52,9 +54,10 @@ transitions only. The existing Scroll to end button is a one-shot action with an
 unread badge counting responses, not a follow toggle, and it ends the follow. Do not add a
 second navigation button. A reader who leaves while the follow is still going (saved as
 `followingPromptId`; never inferred from resting at the end) comes back to where the follow
-would be now (`chat/liveFollowOffset.ts`): the end if everything since their prompt fits, else the
-prompt at the top margin, or the latest message's start there if it would be below the screen;
-the follow then carries on while that prompt's run works. Reading positions resolve by message/turn identity, load up to two pages of missing
+would be now for that saved prompt (`chat/liveFollowOffset.ts`): its response's end if it all
+fits, else the prompt at the top margin, or its latest message's start there if it would be below
+the screen; a later prompt (from another window) never moves it further. The follow then carries
+on while that prompt's run works. Reading positions resolve by message/turn identity, load up to two pages of missing
 history before falling back to a neighbor or the end, and
 survive same-window reloads; never restore an unrelated absolute pixel offset.
 Capture native scroll positions synchronously before Legend's deferred callbacks;
