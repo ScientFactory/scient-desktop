@@ -69,6 +69,7 @@ import {
 } from "./scient-fork/ConversationForkNativeSource.ts";
 // SCIENT-FORK:START — Scient orchestration modules
 import { dispatchCheckpointRollbackComplete } from "./scient-fork/CheckpointRollbackCompletion.ts";
+import { isIdleQueueHead, isQueueUsageLimited } from "@t3tools/shared/scientQueueHeadSend";
 import {
   ownerPreservingSwitchPlan,
   settingExecutionOwnerOf,
@@ -9990,16 +9991,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Thread ${command.threadId} is not active.`,
           });
         }
-        const sessionError =
-          projection.providerSessions
-            .filter(
-              (session) => session.providerInstanceId === projection.thread.providerInstanceId,
-            )
-            .toSorted(
-              (left, right) =>
-                DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-            )[0]?.lastError ?? null;
-        if (usageLimitBlockedRun(projection.runs, projection.turnItems, sessionError) !== null) {
+        // SCIENT-FORK:START queue-head-send-rule — the queue strip offers Send by this rule.
+        const usageLimited = isQueueUsageLimited(projection);
+        // SCIENT-FORK:END queue-head-send-rule
+        if (usageLimited) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
@@ -10013,7 +10008,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
         const head = nextQueuedRun({ ...projection, messages: queueMessages.messages });
         if (command.runId !== undefined) {
-          if (head?.id !== command.runId || projection.runs.some(isBlockingRun)) {
+          // SCIENT-FORK:START queue-head-send-rule
+          const idleHead = isIdleQueueHead(
+            { runs: projection.runs, messages: queueMessages.messages },
+            command.runId,
+          );
+          // SCIENT-FORK:END queue-head-send-rule
+          if (!idleHead) {
             return yield* new OrchestratorDispatchError({
               commandId: command.commandId,
               commandType: command.type,

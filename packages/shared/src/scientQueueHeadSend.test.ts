@@ -1,0 +1,108 @@
+import type { RunId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import { describe, expect, it } from "vite-plus/test";
+
+import { canSendQueueHead, isIdleQueueHead, queueDeliveryHead } from "./scientQueueHeadSend.ts";
+
+const at = (iso: string) => DateTime.makeUnsafe(iso);
+const runId = (id: string) => id as RunId;
+
+function run(id: string, ordinal: number, status: string, extra: object = {}) {
+  return {
+    id,
+    ordinal,
+    status,
+    userMessageId: `message:${id}`,
+    queuePosition: status === "queued" ? ordinal : null,
+    queueHeld: status === "queued",
+    rootNodeId: `node:${id}`,
+    startedAt: status === "queued" ? null : at("2026-10-07T00:00:00.000Z"),
+    ...extra,
+  };
+}
+
+function projection(input: {
+  readonly runs: ReadonlyArray<object>;
+  readonly messages?: ReadonlyArray<object>;
+  readonly turnItems?: ReadonlyArray<object>;
+  readonly providerSessions?: ReadonlyArray<object>;
+}) {
+  return {
+    thread: { providerInstanceId: "codex" },
+    runs: input.runs,
+    messages: input.messages ?? [],
+    turnItems: input.turnItems ?? [],
+    providerSessions: input.providerSessions ?? [],
+  } as never;
+}
+
+const usageLimitError = {
+  id: "item:limit",
+  type: "error",
+  runId: "run:limited",
+  nodeId: "node:run:limited",
+  status: "failed",
+  ordinal: 1,
+  updatedAt: at("2026-10-07T00:00:01.000Z"),
+  failure: { class: "usage_limit", message: "Usage limit reached." },
+};
+
+describe("canSendQueueHead", () => {
+  it("allows the idle queue head and nothing else", () => {
+    const idle = projection({
+      runs: [run("run:done", 1, "completed"), run("run:a", 2, "queued"), run("run:b", 3, "queued")],
+    });
+    expect(canSendQueueHead(idle, runId("run:a"))).toBe(true);
+    expect(canSendQueueHead(idle, runId("run:b"))).toBe(false);
+  });
+
+  it.each(["preparing", "starting", "running", "waiting"])(
+    "refuses while a %s run owns the thread",
+    (status) => {
+      const busy = projection({
+        runs: [run("run:active", 1, status), run("run:a", 2, "queued")],
+      });
+      expect(canSendQueueHead(busy, runId("run:a"))).toBe(false);
+    },
+  );
+
+  it("refuses after the usage limit stopped the thread", () => {
+    const limited = projection({
+      runs: [run("run:limited", 1, "failed"), run("run:a", 2, "queued")],
+      turnItems: [usageLimitError],
+    });
+    expect(isIdleQueueHead(limited, runId("run:a"))).toBe(true);
+    expect(canSendQueueHead(limited, runId("run:a"))).toBe(false);
+  });
+
+  it("allows Send when a newer session error supersedes the limit", () => {
+    const recovered = projection({
+      runs: [run("run:limited", 1, "failed"), run("run:a", 2, "queued")],
+      turnItems: [usageLimitError],
+      providerSessions: [
+        {
+          providerInstanceId: "codex",
+          updatedAt: at("2026-10-07T00:00:02.000Z"),
+          lastError: "The provider process exited.",
+        },
+      ],
+    });
+    expect(canSendQueueHead(recovered, runId("run:a"))).toBe(true);
+  });
+
+  it("refuses the first visible row while a delegated completion goes first", () => {
+    const delegated = projection({
+      runs: [run("run:a", 2, "queued"), run("run:automatic", 3, "queued", { queueHeld: false })],
+      messages: [
+        { id: "message:run:a" },
+        {
+          id: "message:run:automatic",
+          delegatedCompletion: { parentRunId: "run:parent", generation: 1, taskIds: ["task"] },
+        },
+      ],
+    });
+    expect(queueDeliveryHead(delegated)?.id).toBe("run:automatic");
+    expect(canSendQueueHead(delegated, runId("run:a"))).toBe(false);
+    expect(canSendQueueHead(delegated, runId("run:automatic"))).toBe(true);
+  });
+});

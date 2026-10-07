@@ -24,7 +24,22 @@ const state = vi.hoisted(() => ({
   strip: null as Parameters<typeof ThreadQueueStrip>[0] | null,
 }));
 vi.mock("../../state/entities", () => ({
-  useThreadProjection: () => ({ projection: { messages: [], turnItems: [] } }),
+  useThreadProjection: () => ({
+    projection: {
+      thread: { providerInstanceId: "codex" },
+      runs: ["first", "last"].map((name, index) => ({
+        id: `run:${name}`,
+        userMessageId: `message:${name}`,
+        status: "queued",
+        queueHeld: true,
+        ordinal: index + 1,
+        queuePosition: index + 1,
+      })),
+      providerSessions: [],
+      messages: [],
+      turnItems: [],
+    },
+  }),
 }));
 vi.mock("@t3tools/client-runtime/state/thread-workflows", () => ({
   deriveThreadQueueWorkflowState: () => state.workflow,

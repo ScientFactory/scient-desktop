@@ -4,6 +4,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
+import { canSendQueueHead, isQueueUsageLimited } from "@t3tools/shared/scientQueueHeadSend";
 import type { ChatAttachment, EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
 import { useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import { useAssetUrls } from "../../assets/assetUrls";
@@ -68,6 +69,14 @@ export function QueuedRunsControl({
         item.runId === queued[0]?.run.id &&
         item.failure.code === "queued_start_failed",
     ) === true;
+  // SCIENT-FORK:START queue-head-send-rule — a held queue offers only what queue.resume accepts.
+  const heldProjection = workflow?.isHeld === true && projection != null ? projection : null;
+  const queueResumable = heldProjection !== null && !isQueueUsageLimited(heldProjection);
+  const headSendable =
+    heldProjection !== null &&
+    queued[0] !== undefined &&
+    canSendQueueHead(heldProjection, queued[0].run.id);
+  // SCIENT-FORK:END queue-head-send-rule
   const items = queued.map(({ run, text, attachments }) => ({
     queueItemId: run.id,
     runId: run.id,
@@ -166,7 +175,7 @@ export function QueuedRunsControl({
           : null)
       }
       threadBusy={workflow?.activeRun != null}
-      supportsExplicitSend={workflow?.isHeld === true}
+      supportsExplicitSend={workflow?.isHeld === true && headSendable}
       awaitingCompletion={workflow?.isHeld === true}
       paused={false}
       held={workflow?.isHeld === true}
@@ -196,7 +205,7 @@ export function QueuedRunsControl({
         );
       }}
       onSteer={(item) => steer(item.runId)}
-      retryable={failedHead}
+      retryable={failedHead && headSendable}
       onRetry={() => {
         const head = queued[0];
         if (head)
@@ -207,11 +216,15 @@ export function QueuedRunsControl({
             }),
           );
       }}
-      onResume={() => {
-        void perform("resume", () =>
-          resume({ environmentId: props.environmentId, input: { threadId: props.threadId } }),
-        );
-      }}
+      onResume={
+        queueResumable
+          ? () => {
+              void perform("resume", () =>
+                resume({ environmentId: props.environmentId, input: { threadId: props.threadId } }),
+              );
+            }
+          : undefined
+      }
       onReorder={(ids) => {
         if (!workflow?.canReorder || busyRef.current) return;
         const movement = resolveNativeQueuedReorder(

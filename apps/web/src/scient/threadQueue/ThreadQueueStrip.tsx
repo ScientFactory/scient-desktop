@@ -210,7 +210,8 @@ export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueIte
   readonly onCancelEdit?: () => void;
   readonly attachmentUrls?: ReadonlyMap<string, string>;
   readonly held?: boolean;
-  readonly onResume?: () => void;
+  /** Absent while the server would refuse to resume, for example at a usage limit. */
+  readonly onResume?: (() => void) | undefined;
   readonly error: string | null;
   readonly threadBusy: boolean;
   readonly supportsExplicitSend: boolean;
