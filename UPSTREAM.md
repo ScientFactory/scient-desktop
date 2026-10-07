@@ -163,15 +163,25 @@ adopted were not working on 58.0.0. Mobile publication stayed held, so no public
 build carried that breakage. The `expo-modules-core` thread-safety regression
 above is untouched by this range and its two harnesses still fail locally.
 
-The [Orchestration V2 alignment candidate](docs/internals/t3-upstream-sync-20261003-ca7df394ed.md)
-([Scient PR #465](https://github.com/ScientFactory/scient-desktop/pull/465))
-restores the permissions-registry synchronization at `expo-modules-core@58.0.11`
-and preserves pending notification responses at `expo-notifications@58.0.11`.
+The Orchestration V2 alignment is recorded in
+[its receipt](docs/internals/t3-upstream-sync-20261003-ca7df394ed.md) and
+`upstream-state.json` ([Scient PR #466](https://github.com/ScientFactory/scient-desktop/pull/466)).
+It integrates 15 first-parent official commits through
+`ca7df394ed8151fa77f856beefa90bc60a785d60` onto owned base
+`ad215fd9157e86252a2ee1187e746b65c8b003be`. Upstream merge
+`b8fbae4ffa84414b02461cf42a0afa4b10a03fcc` retains that exact target as its second
+parent. The qualified tree was first proposed in #465, whose history the provenance
+check rejects; it is republished unchanged on checkable history, and the original
+lanes remain at tag `archive/v2-alignment-lanes-20261006`.
+
+The alignment restores the permissions-registry synchronization at
+`expo-modules-core@58.0.11` and preserves pending notification responses at
+`expo-notifications@58.0.11`. Both packages are overridden to those exact versions
+so a fresh resolution cannot pick a newer release and silently drop the patches.
 Its updated harness compiles the installed manager and its actual Mutex backport
 against the upgraded notification protocol. The native ThreadSanitizer,
-reentrant-callback, registration-during-delivery and replay checks pass. This is
-local repair evidence; full alignment qualification and manual review remain open,
-and mobile publication remains held.
+reentrant-callback, registration-during-delivery and replay checks pass. Mobile
+publication remains held.
 
 Two Scient compositions matter here. Upstream's beta Working shelf folds working
 and monitoring threads out of the inbox, but Scient's sidebar has two mutually

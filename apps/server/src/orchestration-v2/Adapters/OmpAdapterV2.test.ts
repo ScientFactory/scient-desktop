@@ -599,6 +599,126 @@ const capturedTurn = Effect.fnUntraced(function* (name: OmpCaptureName, interrup
 });
 
 it.layer(TestLayer)("OmpAdapterV2", (it) => {
+  for (const target of [ompTarget, scientAgentTarget]) {
+    it.effect(
+      `${target.name} publishes only real content blocks and settles reasoning before turn end`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const peer = scriptedOmpRpc({
+              models: [{ provider: "test", id: "selected", input: ["text"] }],
+              initial: { provider: "test", id: "selected" },
+            });
+            const h = yield* harness(false, { target, makeProcess: peer.makeProcess });
+            yield* h.runtime.startTurn(h.input);
+            yield* peer.promptDelivered();
+            const envelope = { role: "assistant", responseId: "answer-response", content: [] };
+            const update = (type: string, contentIndex: number, content: string) => ({
+              type: "message_update",
+              messageId: "answer",
+              message: envelope,
+              assistantMessageEvent: {
+                type,
+                contentIndex,
+                ...(type.endsWith("delta") ? { delta: content } : { content }),
+              },
+            });
+            const end = {
+              type: "message_end",
+              messageId: "answer",
+              message: {
+                ...envelope,
+                stopReason: "stop",
+                content: [
+                  { type: "thinking", thinking: "Reason" },
+                  { type: "text", text: "Final answer" },
+                  { type: "text", text: "Snapshot only" },
+                ],
+              },
+            };
+            yield* peer.emit([
+              { type: "agent_start" },
+              {
+                type: "message_start",
+                messageId: "tool-envelope",
+                message: { role: "assistant", content: [{ type: "toolCall" }] },
+              },
+              {
+                type: "message_end",
+                messageId: "tool-envelope",
+                message: {
+                  role: "assistant",
+                  content: [{ type: "toolCall" }],
+                  stopReason: "toolUse",
+                },
+              },
+              nativeToolStart("read", "read", { path: "fixture.txt" }),
+              nativeToolEnd("read", "read", { content: [{ type: "text", text: "File" }] }),
+              { type: "message_start", messageId: "answer", message: envelope },
+              update("thinking_delta", 0, "Reason"),
+              update("thinking_end", 0, "Reason"),
+              update("text_delta", 1, "Draft"),
+              update("text_end", 1, "Final answer"),
+              update("text_end", 2, "Snapshot only"),
+              end,
+              end,
+              update("text_delta", 1, "LATE"),
+            ]);
+            yield* h.takeUntil(
+              (e) =>
+                e.type === "message.updated" &&
+                e.message.text === "Snapshot only" &&
+                !e.message.streaming,
+            );
+            assert.isFalse(h.recorded.some((e) => e.type === "turn.terminal"));
+            assert.isTrue(
+              h.recorded.some(
+                (e) =>
+                  e.type === "turn_item.updated" &&
+                  e.turnItem.type === "reasoning" &&
+                  !e.turnItem.streaming,
+              ),
+            );
+            yield* peer.finish();
+            yield* h.takeUntil((e) => e.type === "turn.terminal");
+            const latestMessages = [
+              ...new Map(
+                h.recorded.flatMap((e) =>
+                  e.type === "message.updated" ? [[e.message.id, e.message] as const] : [],
+                ),
+              ).values(),
+            ];
+            assert.deepEqual(
+              latestMessages.map((m) => [m.text, m.streaming]),
+              [
+                ["Final answer", false],
+                ["Snapshot only", false],
+              ],
+            );
+            assert.isFalse(
+              h.recorded.some((e) => e.type === "message.updated" && e.message.text.length === 0),
+            );
+            const latestItems = [
+              ...new Map(
+                h.recorded.flatMap((e) =>
+                  e.type === "turn_item.updated" ? [[e.turnItem.id, e.turnItem] as const] : [],
+                ),
+              ).values(),
+            ];
+            assert.deepEqual(
+              latestItems.map((item) => [item.type, item.ordinal, item.status]),
+              [
+                ["dynamic_tool", 101, "completed"],
+                ["reasoning", 102, "completed"],
+                ["assistant_message", 103, "completed"],
+                ["assistant_message", 104, "completed"],
+              ],
+            );
+          }),
+        ),
+    );
+  }
+
   it.effect("retains an unobserved writer lock through manager scope finalization", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1004,7 +1124,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     {
       name: "auth-401",
       text: "",
-      statuses: ["failed"],
+      statuses: [],
       warningCount: 0,
       status: "failed",
       error: "401 Incorrect API key provided",
@@ -1012,7 +1132,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     {
       name: "provider-model-not-found",
       text: "",
-      statuses: ["failed"],
+      statuses: [],
       warningCount: 0,
       status: "failed",
       error: "404 The model `stub-model` does not exist",
@@ -1020,14 +1140,14 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     {
       name: "retry-recovered-session",
       text: "Recovered after session retry",
-      statuses: ["failed", "completed"],
+      statuses: ["completed"],
       warningCount: 1,
       status: "completed",
     },
     {
       name: "retry-exhausted",
       text: "",
-      statuses: ["failed", "failed", "failed"],
+      statuses: [],
       warningCount: 2,
       status: "failed",
       error:
@@ -1061,7 +1181,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     {
       name: "tool-call",
       text: "The file says: stub fixture content.",
-      statuses: ["completed", "completed"],
+      statuses: ["completed"],
       warningCount: 0,
       status: "completed",
       tool: true,
@@ -1091,14 +1211,18 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
               [...scenario.statuses],
             );
             assert.isTrue(
-              h.assistant.every((item) => item.title === null && item.streaming === false),
+              h.assistant.every(
+                (item) => item.title === null && item.streaming === false && item.text.length > 0,
+              ),
             );
             assert.lengthOf(h.warnings, scenario.warningCount);
             if (scenario.name === "retry-recovered-session")
               assert.include(h.warnings[0]?.output ?? "", "attempt 1 of 2");
             if ("reasoning" in scenario)
               assert.isTrue(
-                h.latestItems.some((item) => item.type === "reasoning" && item.text.length > 0),
+                h.latestItems.some(
+                  (item) => item.type === "reasoning" && item.text.length > 0 && !item.streaming,
+                ),
               );
             if ("error" in scenario) {
               const failure = h.terminal[0]?.failure;

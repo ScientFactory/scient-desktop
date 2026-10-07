@@ -22,7 +22,14 @@ function documentOutline(doc: ProseMirrorNode): ScientMarkdownOutlineState {
     items.push({
       level: Number(node.attrs.level),
       position,
-      text: node.textContent.trim(),
+      // Math has no text of its own; its TeX keeps "Estimating $\beta$" readable.
+      text: node
+        .textBetween(0, node.content.size, "", (leaf) =>
+          leaf.type.name === "inline_math"
+            ? String(leaf.attrs.tex)
+            : (leaf.type.spec.leafText?.(leaf) ?? ""),
+        )
+        .trim(),
     });
   });
   return { items };

@@ -7,6 +7,7 @@ import {
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 
 import { findScientBackslashMathSpans } from "~/scient/math/scientMathText";
+import { makeFaithfulMarkdownParse } from "./faithfulParse";
 import {
   scientMarkdownParser,
   scientMarkdownSchema,
@@ -88,6 +89,71 @@ function footnoteDefinitionBlock(block: MarkdownSourceBlock): ProseMirrorNode | 
   return nodeType.create({ label: match[1], source: block.source, sourceId: block.id });
 }
 
+const parseFaithfully = makeFaithfulMarkdownParse(scientMarkdownParser);
+
+const NODE_NAMES_BY_BLOCK_KIND: Partial<Record<MarkdownSourceBlock["kind"], ReadonlySet<string>>> =
+  {
+    blockquote: new Set(["blockquote"]),
+    code: new Set(["code_block"]),
+    heading: new Set(["heading"]),
+    list: new Set(["bullet_list", "ordered_list"]),
+    paragraph: new Set(["paragraph"]),
+    table: new Set(["table"]),
+    thematicBreak: new Set(["horizontal_rule"]),
+  };
+
+// Blocks that carry a text direction; a `<div dir>` around anything else
+// would be dropped the next time the block is rewritten.
+const DIRECTABLE_BLOCK_KINDS = new Set<MarkdownSourceBlock["kind"]>([
+  "heading",
+  "paragraph",
+  "table",
+]);
+
+/** Whether the rich node is the kind of block the source ledger found. */
+function matchesBlockKind(block: MarkdownSourceBlock, node: ProseMirrorNode): boolean {
+  // A `<div dir>` region is one ledger "paragraph" around the block it directs.
+  const kind = block.directionWrappedKind ?? block.kind;
+  if (block.directionWrappedKind && !DIRECTABLE_BLOCK_KINDS.has(kind)) return false;
+  const names = NODE_NAMES_BY_BLOCK_KIND[kind];
+  return !names || names.has(node.type.name);
+}
+
+// Nested syntax the rich document cannot carry. Inside a quote or list it
+// would be dropped or escaped the next time the container is rewritten, so
+// such a container stays editable source.
+const SOURCE_ONLY_NESTED_KINDS = new Set([
+  "definition",
+  "footnoteDefinition",
+  "html",
+  "math",
+  "toml",
+  "yaml",
+]);
+
+// A heading is one line in Markdown. An atom or mark whose source spans lines
+// (a multi-line equation, citation or link title) cannot be written back into
+// it, at the top level or inside a quote or list.
+function headingsAreOneLine(node: ProseMirrorNode): boolean {
+  let oneLine = true;
+  const checkAttrs = (attrs: ProseMirrorNode["attrs"]) => {
+    for (const value of Object.values(attrs)) {
+      if (typeof value === "string" && /[\r\n]/u.test(value)) oneLine = false;
+    }
+  };
+  const check = (heading: ProseMirrorNode) =>
+    heading.forEach((child) => {
+      checkAttrs(child.attrs);
+      for (const mark of child.marks) checkAttrs(mark.attrs);
+    });
+  if (node.type.name === "heading") check(node);
+  node.descendants((descendant) => {
+    if (descendant.type.name === "heading") check(descendant);
+    return oneLine;
+  });
+  return oneLine;
+}
+
 function parseBlock(
   block: MarkdownSourceBlock,
   environment: MarkdownParseEnvironment,
@@ -98,9 +164,17 @@ function parseBlock(
   const footnote = footnoteDefinitionBlock(block);
   if (footnote) return footnote;
   if (!COMMONMARK_BLOCK_KINDS.has(block.kind)) return rawBlock(block);
-  const parsed = parseWithContext(block.source, environment);
-  if (parsed.childCount !== 1) return rawBlock(block);
-  return withMarkdownSourceId(parsed.child(0), block.id);
+  // A block the rich editor cannot show faithfully stays editable source: a
+  // dropped node, a different kind of block, or nested syntax it cannot carry
+  // would hide content that a later edit then removes from the file.
+  if (block.nestedBlockKinds.some((kind) => SOURCE_ONLY_NESTED_KINDS.has(kind))) {
+    return rawBlock(block);
+  }
+  const parsed = parseFaithfully(block.source, { references: { ...environment.references } });
+  if (!parsed || parsed.childCount !== 1) return rawBlock(block);
+  const node = parsed.child(0);
+  if (!matchesBlockKind(block, node) || !headingsAreOneLine(node)) return rawBlock(block);
+  return withMarkdownSourceId(node, block.id);
 }
 
 export function createScientMarkdownProjection(source: string): ScientMarkdownProjection {
@@ -411,6 +485,8 @@ interface ProjectionCache {
     ProseMirrorNode,
     { readonly original: MarkdownSourceBlock | undefined; readonly source: string }
   >;
+  readonly verified: WeakMap<ProseMirrorNode, string>;
+  islandContext?: string;
   referenceSources?: readonly string[];
 }
 
@@ -436,6 +512,7 @@ function projectionCache(projection: ScientMarkdownProjection): ProjectionCache 
       ]),
     ),
     sources: new WeakMap(),
+    verified: new WeakMap(),
   };
   projectionCaches.set(projection.baselineDocument, cache);
   return cache;
@@ -477,14 +554,19 @@ export function projectScientMarkdownSource(
           : original && baseline
             ? hasSameProjectedContent(baseline, node)
             : false;
-    const source =
-      cached?.original === original && cached !== undefined
-        ? cached.source
-        : sourceUnchanged && original
-          ? original.source
-          : ((original && baseline
-              ? minimallyPatchedTextBlock(original, baseline, node, projection.parseEnvironment)
-              : null) ?? serializeNode(node, projection.ledger.lineEnding));
+    let source: string;
+    if (cached?.original === original && cached !== undefined) source = cached.source;
+    else if (sourceUnchanged && original) source = original.source;
+    else {
+      const patched =
+        original && baseline
+          ? minimallyPatchedTextBlock(original, baseline, node, projection.parseEnvironment)
+          : null;
+      source = patched ?? serializeNode(node, projection.ledger.lineEnding);
+      // The narrow path already proved the changed text/row and its context.
+      // Reuse that evidence instead of reparsing a large table on each key.
+      if (patched !== null) cache.verified.set(node, source);
+    }
     cache.sources.set(node, { original, source });
     const from = output.length;
     output += source;
@@ -497,6 +579,166 @@ export function projectScientMarkdownSource(
       : inferredSeparator(projection.ledger, index, nodes.length);
   });
   return { source: output, blockRanges };
+}
+
+function hasSameWritebackContent(before: ProseMirrorNode, after: ProseMirrorNode): boolean {
+  const metadata = new Set([
+    "sourceId",
+    "sourceCopyId",
+    "referenceLabel",
+    "referenceHref",
+    "referenceTitle",
+  ]);
+  const canonical = (node: ProseMirrorNode, trimEnd = false, trimStart = false): unknown => {
+    const attrs = Object.fromEntries(
+      Object.entries(node.attrs).filter(
+        ([name]) =>
+          !metadata.has(name) &&
+          !(name === "tight" && ["bullet_list", "ordered_list"].includes(node.type.name)),
+      ),
+    );
+    if (node.type.name === "image") attrs.alt = attrs.alt ?? "";
+    const children = Array.from({ length: node.childCount }, (_, i) =>
+      canonical(
+        node.child(i),
+        ["paragraph", "heading"].includes(node.type.name) && i === node.childCount - 1,
+        ["paragraph", "heading"].includes(node.type.name) && i === 0,
+      ),
+    );
+    return {
+      type: node.type.name,
+      attrs,
+      text: node.isText
+        ? (trimStart ? node.text?.replace(/^ +/u, "") : node.text)?.replace(
+            trimEnd ? / +$/u : /$^/u,
+            "",
+          )
+        : node.text,
+      marks: node.marks.map((mark) => ({
+        type: mark.type.name,
+        attrs: Object.fromEntries(
+          Object.entries(mark.attrs).filter(([name]) => !metadata.has(name)),
+        ),
+      })),
+      content: children,
+    };
+  };
+  return JSON.stringify(canonical(before)) === JSON.stringify(canonical(after));
+}
+
+export function discardScientMarkdownReferenceRefresh(projection: ScientMarkdownProjection): void {
+  delete projectionCache(projection).referenceSources;
+}
+
+export type ScientMarkdownWritebackResult =
+  | { readonly status: "accepted"; readonly projected: ScientMarkdownProjectedSource }
+  | { readonly status: "refused"; readonly reason: string; readonly proposedSource: string };
+
+/** Prepare source without publishing a rich edit that changes meaning on reopening. */
+export function prepareScientMarkdownSource(
+  projection: ScientMarkdownProjection,
+  document: ProseMirrorNode,
+  projected = projectScientMarkdownSource(projection, document),
+): ScientMarkdownWritebackResult {
+  const refuse = (reason: string): ScientMarkdownWritebackResult => ({
+    status: "refused",
+    reason,
+    proposedSource: projected.source,
+  });
+  if (projected.source === projection.ledger.source && document.eq(projection.baselineDocument))
+    return { status: "accepted", projected };
+  if (/[\uD800-\uDFFF]/u.test(projected.source))
+    return refuse(
+      "This edit splits a Unicode character. Your input is kept; undo the change and select the complete character.",
+    );
+  const cache = projectionCache(projection);
+  const environment = projection.parseEnvironment;
+  const nodes = Array.from({ length: document.childCount }, (_, index) => document.child(index));
+  // Only source islands can make correctly serialized neighbouring blocks
+  // disappear. Reparse their whole context when their source or order changes.
+  const islandContext = JSON.stringify([
+    nodes.length,
+    nodes.flatMap((node, index) =>
+      ["raw_block", "footnote_definition"].includes(node.type.name)
+        ? [
+            [
+              index,
+              projected.source.slice(
+                projected.blockRanges[index]!.from,
+                projected.blockRanges[index]!.to,
+              ),
+            ],
+          ]
+        : [],
+    ),
+  ]);
+  const hasIslands = nodes.some((node) =>
+    ["raw_block", "footnote_definition"].includes(node.type.name),
+  );
+  const context =
+    hasIslands && cache.islandContext !== islandContext
+      ? createMarkdownSourceLedger(projected.source)
+      : null;
+  let failure: string | null = null;
+  let contextIndex = 0;
+  document.forEach((node, _offset, index) => {
+    if (failure) return;
+    const range = projected.blockRanges[index]!;
+    if (context) {
+      while (
+        contextIndex < context.blocks.length &&
+        context.blocks[contextIndex]!.contentEnd <= range.from
+      )
+        contextIndex += 1;
+      for (
+        let i = contextIndex;
+        i < context.blocks.length && context.blocks[i]!.start < range.to;
+        i += 1
+      ) {
+        const block = context.blocks[i]!;
+        if (block.start < range.from || block.contentEnd > range.to) {
+          failure =
+            "This edit changes the boundary of neighbouring content. Your input is kept; finish the source or undo the change.";
+          return;
+        }
+      }
+    }
+    if (node.type.name === "raw_block") return;
+    const source = projected.source.slice(range.from, range.to);
+    if (cache.verified.get(node) === source) return;
+    const id = sourceIdOf(node) ?? sourceCopyIdOf(node);
+    const original = id ? cache.blockById.get(id) : undefined;
+    const baseline = id ? cache.baselineById.get(id) : undefined;
+    if (
+      original &&
+      baseline &&
+      original.source === source &&
+      hasSameProjectedContent(node, baseline)
+    )
+      return;
+    if (
+      node.type.name === "paragraph" &&
+      node.textContent.trim() === "" &&
+      node.childCount <= 1 &&
+      (!node.firstChild || node.firstChild.isText) &&
+      source.trim() === ""
+    )
+      return;
+    const local = createMarkdownSourceLedger(source);
+    if (local.blocks.length !== 1) {
+      failure =
+        "This edit cannot be represented faithfully in Markdown. Your input is kept; correct it or undo the change.";
+      return;
+    }
+    const reopened = parseBlock(local.blocks[0]!, environment);
+    if (!hasSameWritebackContent(node, reopened)) {
+      failure =
+        "This edit would read back differently from what you entered. Your input is kept; correct it or undo the change.";
+    } else cache.verified.set(node, source);
+  });
+  if (failure) return refuse(failure);
+  cache.islandContext = islandContext;
+  return { status: "accepted", projected };
 }
 
 export function serializeScientMarkdownProjection(

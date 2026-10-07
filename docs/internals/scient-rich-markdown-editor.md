@@ -173,7 +173,7 @@ by a citation or grant new workspace permissions.
 
 | Node                          | Rendered-editor behavior                                                     | Markdown authority                                                      |
 | ----------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Paragraph and heading         | Direct rich editing with stable typography                                   | Preserve original marks and delimiters until edited                     |
+| Paragraph and heading         | Direct rich editing with stable typography; headings hold math and citations | Preserve original marks and delimiters until edited                     |
 | Bulleted, numbered, task list | Rich list editing; Enter/Tab/Shift-Tab change structure                      | Preserve bullet/delimiter style for untouched items                     |
 | Table                         | Editable cells; contextual row, column, and alignment actions                | GFM table with one header row; preserve cell content on save and reopen |
 | Link and `[[wiki link]]`      | Underlined label; click follows, while drag/double-click selects for editing | Keep explicit, reference, GFM-autolink, relative, and wiki syntax       |
@@ -743,8 +743,30 @@ Preservation is range-based, not a claim that a semantic editor never serializes
   This provenance is owned by the Scient parser/schema adapter, not the generic T3 renderer.
 - Save acknowledgement updates only the persistence baseline. The source ledger stays paired
   with its parsed document and stable identities, including through repeated structural saves.
+- A block is projected as rich content only when its parsed form keeps every source construct.
+  Headings may hold inline math, citations, wiki links, and footnote references. A block the
+  parser would drop or partly empty opens as an exact-source raw island instead, as does a quote
+  or list holding nested source-only syntax (reference definitions, HTML blocks or inline HTML
+  such as comments, display math, footnote definitions), a heading whose inline atom or link
+  title spans lines, and a malformed or nested text-direction wrapper.
+- Every rich source change is prepared before publication, including changed-block serialization,
+  object fields, source islands and appended structural transactions. Changed content must reopen
+  with the intended meaning. Reference provenance and derived list spacing are distinguished from
+  semantic content; existing in-progress boundary spaces remain permitted. Unicode surrogate halves
+  must never be separated by emitted syntax. Source islands are verified in document context when
+  their bytes or placement change, so an unfinished comment cannot consume neighbouring content.
 - A structurally changed block is serialized from the edited ProseMirror node; normalization is
-  confined to that changed block.
+  confined to that changed block. Direct Source editing remains literal source authoring and does
+  not require rich representability.
+- If rich write-back is refused, the live editor keeps the input, selection and undo history while
+  the accepted source remains unchanged. A nonmodal notice offers Undo and copying lossless
+  recovery data. The file-session registry retains the interaction across view remounts and defers
+  outside-source adoption, publication and departure until it is corrected or undone. Exactly one
+  view owns that interaction and shows its notice, Undo and recovery data; competing views, even
+  ones mounted at the same moment, stay read-only and cannot overwrite it. This pending interaction
+  is held in memory, not in the acknowledged source checkpoint; it does not survive an application
+  restart. The notice states that boundary. Resolving it resumes verification of current disk
+  source before another write.
 - Unsupported syntax is retained as an owned raw node and reuses its original source while
   unchanged.
 - Invalid mappings, including Unicode boundary hazards, fall back to changed-block serialization

@@ -13,6 +13,30 @@ export function resolveHtmlRenderedState(
   return preferred;
 }
 
+export function resolveMarkdownRenderedState(
+  preferred: boolean,
+  citationRevealActive: boolean,
+  revealHandled: boolean,
+): boolean {
+  return (preferred || citationRevealActive) && revealHandled;
+}
+
+/** Explicit view changes finish the current source-line reveal without changing the file. */
+export function markdownViewTransition(
+  preferred: boolean,
+  relativePath: string | null,
+  revealRequestId: number,
+) {
+  return {
+    preferred,
+    dismissedCitationReveal: revealRequestId,
+    handledReveal:
+      preferred && relativePath !== null
+        ? { path: relativePath, requestId: revealRequestId }
+        : null,
+  };
+}
+
 /**
  * Files Scient opens in the integrated browser when the runtime supports it.
  * Source remains available from the file tree's context menu.

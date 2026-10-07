@@ -71,6 +71,175 @@ describe("MarkdownPersistenceRegistry", () => {
     vi.useRealTimers();
   });
 
+  it("retains unconverted input through released views and blocks publication and departure cleanup", async () => {
+    const { registry, transport } = setup({ cleanTtlMs: 1, cleanLimit: 0 });
+    const first = registry.acquire(target, initial)!;
+    const pending = { message: "Cannot safely write this edit.", payload: { text: "Unconverted" } };
+    const notify = vi.fn();
+    const unsubscribe = first.subscribe(notify);
+    first.retainPendingInput(pending);
+    expect(notify).toHaveBeenCalled();
+    expect(registry.getSnapshot()[0]).toMatchObject({ pending: true, attention: true });
+    expect(first.change("Unsafe", 0)).toBe(false);
+    expect(
+      first.applyEdit({
+        basedOnVersion: 0,
+        patches: [{ start: 0, end: 1, replacement: "Unsafe", expected: "A" }],
+      }),
+    ).toEqual({ accepted: false, reason: "unavailable" });
+    expect(await first.flushNow()).toBe(false);
+    expect(await registry.flushTarget(target)).toBe(false);
+    expect(await registry.flushWorkspace(target.environmentId, target.cwd)).toBe(false);
+    expect(first.holdForRename()).toBeNull();
+    expect(registry.forgetClean(target)).toBe(false);
+    unsubscribe();
+    first.release();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(registry.has(target)).toBe(true);
+    const reopened = registry.acquire(target, null)!;
+    expect(reopened.getPendingInput()).toBe(pending);
+    expect(reopened.getSnapshot().draftSource).toBe("A");
+    expect(transport.write).not.toHaveBeenCalled();
+    expect(reopened.claimPendingInput()).toBe(true);
+    reopened.retainPendingInput(null);
+    expect(registry.getSnapshot()[0]).toMatchObject({ pending: false, attention: false });
+    reopened.release();
+  });
+
+  it("keeps outside source out of a pending rich input and verifies it before publishing a correction", async () => {
+    const { registry, transport, externalChange } = setup();
+    const lease = registry.acquire(target, initial)!;
+    lease.retainPendingInput({ message: "Pending input", payload: {} });
+    externalChange("Agent");
+    lease.noteFreshnessHint();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(lease.getSnapshot().draftSource).toBe("A");
+    expect(transport.read).not.toHaveBeenCalled();
+    lease.retainPendingInput(null);
+    expect(lease.change("Corrected", 0)).toBe(true);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(lease.getSnapshot()).toMatchObject({
+      draftSource: "Corrected",
+      conflict: { externalSource: "Agent", externalRevision: "rAgent" },
+    });
+    expect(transport.write).not.toHaveBeenCalled();
+    lease.release();
+  });
+
+  it("protects a pending buffer from another lease and hands it off only after its owner releases", () => {
+    const { registry } = setup();
+    const first = registry.acquire(target, initial)!;
+    const second = registry.acquire(target, null)!;
+    const original = { message: "First pending", payload: { text: "First" } };
+    const newer = { message: "Newer pending", payload: { text: "Newer" } };
+    expect(first.retainPendingInput(original)).toBe(true);
+    expect(second.canEditPendingInput()).toBe(false);
+    expect(second.claimPendingInput()).toBe(false);
+    expect(second.retainPendingInput(null)).toBe(false);
+    expect(second.retainPendingInput(newer)).toBe(false);
+    expect(first.retainPendingInput(newer)).toBe(true);
+    expect(second.getPendingInput()).toBe(newer);
+    first.release();
+    expect(second.canEditPendingInput()).toBe(true);
+    expect(second.retainPendingInput(null)).toBe(false);
+    expect(second.claimPendingInput()).toBe(true);
+    expect(first.retainPendingInput(null)).toBe(false);
+    expect(second.getPendingInput()).toBe(newer);
+    expect(second.retainPendingInput(null)).toBe(true);
+    expect(registry.getSnapshot()[0]).toMatchObject({ pending: false, attention: false });
+    second.release();
+  });
+
+  it("protects pending input between rich editors sharing one lease and releases the claim without discarding input", () => {
+    const { registry } = setup();
+    const lease = registry.acquire(target, initial)!;
+    const firstEditor = {};
+    const secondEditor = {};
+    const pending = { message: "Pending", payload: {} };
+    expect(lease.retainPendingInput(pending, firstEditor)).toBe(true);
+    expect(lease.canEditPendingInput(secondEditor)).toBe(false);
+    expect(lease.claimPendingInput(secondEditor)).toBe(false);
+    expect(lease.retainPendingInput(null, secondEditor)).toBe(false);
+    lease.releasePendingInputClaim(secondEditor);
+    expect(lease.canEditPendingInput(secondEditor)).toBe(false);
+    lease.releasePendingInputClaim(firstEditor);
+    expect(lease.getPendingInput()).toBe(pending);
+    expect(lease.claimPendingInput(secondEditor)).toBe(true);
+    expect(lease.retainPendingInput(null, firstEditor)).toBe(false);
+    expect(lease.retainPendingInput(null, secondEditor)).toBe(true);
+    lease.release();
+  });
+
+  it("releases only the old hold when a clear observer synchronously retains newer input", async () => {
+    const { registry, transport } = setup();
+    const lease = registry.acquire(target, initial)!;
+    const first = { message: "First", payload: {} };
+    const next = { message: "Newer", payload: {} };
+    lease.retainPendingInput(first);
+    const unsubscribe = lease.subscribe(() => {
+      if (lease.getPendingInput() === null) lease.retainPendingInput(next);
+    });
+    expect(lease.retainPendingInput(null)).toBe(true);
+    expect(lease.getPendingInput()).toBe(next);
+    expect(await lease.flushNow()).toBe(false);
+    expect(transport.read).not.toHaveBeenCalled();
+    unsubscribe();
+    lease.retainPendingInput(null);
+    const settled = vi.fn();
+    const flush = lease.flushNow().then(settled);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toHaveBeenCalledExactlyOnceWith(true);
+    await flush;
+    expect(transport.read).toHaveBeenCalledOnce();
+    lease.release();
+  });
+
+  it("isolates a throwing pending-input observer and still releases its hold", async () => {
+    const { registry } = setup();
+    const lease = registry.acquire(target, initial)!;
+    lease.retainPendingInput({ message: "Pending", payload: {} });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const unsubscribe = lease.subscribe(() => {
+      throw new Error("Observer failed");
+    });
+    expect(() => lease.retainPendingInput(null)).not.toThrow();
+    unsubscribe();
+    const settled = vi.fn();
+    const flush = lease.flushNow().then(settled);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toHaveBeenCalledExactlyOnceWith(true);
+    await flush;
+    expect(log).toHaveBeenCalled();
+    log.mockRestore();
+    lease.release();
+  });
+
+  it("exposes initial pending input consistently and refuses mutation before its hold is owned", async () => {
+    const { registry } = setup();
+    const lease = registry.acquire(target, initial)!;
+    const first = { message: "Initial", payload: {} };
+    const next = { message: "Reentrant", payload: {} };
+    let attempted = false;
+    const observed = vi.fn();
+    const unsubscribe = lease.subscribe(() => {
+      if (attempted) return;
+      attempted = true;
+      observed(lease.getPendingInput(), lease.retainPendingInput(next));
+    });
+    expect(lease.retainPendingInput(first)).toBe(true);
+    expect(observed).toHaveBeenCalledExactlyOnceWith(first, false);
+    expect(lease.getPendingInput()).toBe(first);
+    unsubscribe();
+    expect(lease.retainPendingInput(next)).toBe(true);
+    lease.retainPendingInput(null);
+    const settled = vi.fn();
+    const flush = lease.flushNow().then(settled);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toHaveBeenCalledExactlyOnceWith(true);
+    await flush;
+    lease.release();
+  });
+
   it("prepares every mounted projection before committing and respects a veto", async () => {
     const { registry, externalChange } = setup();
     const base = "First\n\nSecond\n";
