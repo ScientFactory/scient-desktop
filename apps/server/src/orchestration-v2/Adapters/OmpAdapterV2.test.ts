@@ -818,9 +818,11 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
             message: {
               ...h.input.message,
               text: "Long request".repeat(1000),
+              // The file reference still lists every external image path. Long
+              // names keep it over the limit however short the temp directory is.
               attachments: yield* Effect.forEach(
                 Array.from({ length: 8 }, (_, i) => i),
-                (i) => h.image(`frame-${i}`, 8192),
+                (i) => h.image(`frame-${i}-${"x".repeat(120)}`, 8192),
               ),
             },
           }),
