@@ -212,6 +212,74 @@ const harness = Effect.fnUntraced(function* (
 });
 
 it.layer(TestLayer)("NativeSessionAdapterV2", (it) => {
+  it.effect(
+    "content settlement never invents replies or ordinals and snapshots replace deltas",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, true, false, true);
+          yield* h.start;
+          yield* h.publish({ type: "text-completed", id: "tool-only" });
+          yield* h.publish({ type: "text", id: "empty", delta: "" });
+          yield* h.publish({ type: "text-snapshot", id: "empty", text: "" });
+          yield* h.publish({ type: "text", id: "reason", delta: "Reason", reasoning: true });
+          yield* h.publish({ type: "text-completed", id: "reason" });
+          yield* h.publish({ type: "text-completed", id: "reason" });
+          yield* h.publish({ type: "text", id: "reason", delta: "late", reasoning: true });
+          yield* h.publish({ type: "text", id: "answer", delta: "Draft" });
+          yield* h.publish({ type: "text-snapshot", id: "answer", text: "Final answer" });
+          yield* h.publish({ type: "text-completed", id: "answer" });
+          yield* h.publish({ type: "text", id: "answer", delta: "late" });
+          yield* h.publish({ type: "terminal", status: "completed" });
+          yield* h.takeUntil((e) => e.type === "turn.terminal");
+          const snapshot = yield* h.runtime.readThreadSnapshot({
+            providerThread: h.providerThread,
+          });
+          assert.deepEqual(
+            snapshot.messages.map((m) => [m.text, m.streaming]),
+            [["Final answer", false]],
+          );
+          const items = [
+            ...new Map(
+              h.recorded.flatMap((e) =>
+                e.type === "turn_item.updated" ? [[e.turnItem.id, e.turnItem] as const] : [],
+              ),
+            ).values(),
+          ];
+          assert.deepEqual(
+            items.map((item) => [item.type, item.ordinal, item.status]),
+            [
+              ["reasoning", 101, "completed"],
+              ["assistant_message", 102, "completed"],
+            ],
+          );
+          assert.equal(
+            h.recorded.filter(
+              (e) => e.type === "turn_item.updated" && e.turnItem.type === "reasoning",
+            ).length,
+            2,
+          );
+          assert.isFalse(
+            h.recorded.some((e) => e.type === "message.updated" && e.message.text.length === 0),
+          );
+        }),
+      ),
+  );
+
+  it.effect("fails rather than reinterpreting an existing content identity", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness();
+        yield* h.start;
+        yield* h.publish({ type: "text", id: "shared", delta: "Reason", reasoning: true });
+        yield* h.publish({ type: "text-snapshot", id: "shared", text: "Answer" });
+        const terminal = yield* h.takeUntil((e) => e.type === "turn.terminal");
+        assert.equal(terminal.type === "turn.terminal" && terminal.status, "failed");
+        assert.isFalse(h.recorded.some((e) => e.type === "message.updated"));
+      }),
+    ),
+  );
+
   it.effect("seals a confirmed breaking interrupt after the complete receipt prefix", () =>
     Effect.scoped(
       Effect.gen(function* () {

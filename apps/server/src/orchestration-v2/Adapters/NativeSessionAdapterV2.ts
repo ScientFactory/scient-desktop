@@ -58,6 +58,13 @@ export type NativeSessionUpdate =
       readonly reasoning?: boolean;
     }
   | {
+      readonly type: "text-snapshot";
+      readonly id: string;
+      readonly text: string;
+      readonly reasoning?: boolean;
+      readonly status?: "completed" | "failed";
+    }
+  | {
       readonly type: "text-completed";
       readonly id: string;
       readonly status?: "completed" | "failed";
@@ -733,6 +740,7 @@ export function makeNativeSessionAdapterV2(
                 if (
                   running.turn.nativeAcceptance === "pending" &&
                   (update.type === "text" ||
+                    update.type === "text-snapshot" ||
                     update.type === "tool" ||
                     update.type === "subagent" ||
                     update.type === "question")
@@ -758,6 +766,54 @@ export function makeNativeSessionAdapterV2(
                     ? `${running.input.providerThread.id}:subagent:${update.id}`
                     : `${running.turn.id}:${update.id}`;
                 const previous = items.get(nativeId);
+                // Content completion settles an existing block; it cannot create
+                // a reply, allocate an ordinal, or reopen settled content.
+                if (
+                  update.type === "text" ||
+                  update.type === "text-snapshot" ||
+                  update.type === "text-completed"
+                ) {
+                  if (update.type === "text" && update.delta.length === 0) return;
+                  if (update.type === "text-snapshot" && update.text.length === 0) return;
+                  if (update.type === "text-completed" && !previous) return;
+                  const reasoning =
+                    update.type === "text-completed"
+                      ? previous?.type === "reasoning"
+                      : update.reasoning === true;
+                  if (
+                    previous &&
+                    previous.type !== (reasoning ? "reasoning" : "assistant_message")
+                  ) {
+                    yield* finish({
+                      type: "terminal",
+                      status: "failed",
+                      broken: true,
+                      failureClass: "provider_error",
+                      detail:
+                        "The native provider reused a content identity for a different item kind.",
+                    });
+                    return;
+                  }
+                  if (
+                    update.type === "text" &&
+                    previous?.status !== undefined &&
+                    previous.status !== "running"
+                  )
+                    return;
+                  if (
+                    update.type === "text-completed" &&
+                    previous?.status === (update.status ?? "completed")
+                  )
+                    return;
+                  if (
+                    update.type === "text-snapshot" &&
+                    previous &&
+                    (previous.type === "assistant_message" || previous.type === "reasoning") &&
+                    previous.text === update.text &&
+                    previous.status === (update.status ?? "completed")
+                  )
+                    return;
+                }
                 const owner = subagentOwners.get(nativeId) ?? running.input;
                 if (update.type === "subagent" && !previous) subagentOwners.set(nativeId, owner);
                 const base = {
@@ -781,24 +837,29 @@ export function makeNativeSessionAdapterV2(
                   completedAt: null,
                 };
                 let item: OrchestrationV2TurnItem;
-                if (update.type === "text" || update.type === "text-completed") {
+                if (
+                  update.type === "text" ||
+                  update.type === "text-snapshot" ||
+                  update.type === "text-completed"
+                ) {
                   const reasoning =
-                    update.type === "text"
+                    update.type !== "text-completed"
                       ? update.reasoning === true
                       : previous?.type === "reasoning";
                   const text =
-                    (previous?.type === "assistant_message" || previous?.type === "reasoning"
-                      ? previous.text
-                      : "") + (update.type === "text" ? update.delta : "");
+                    update.type === "text-snapshot"
+                      ? update.text
+                      : (previous?.type === "assistant_message" || previous?.type === "reasoning"
+                          ? previous.text
+                          : "") + (update.type === "text" ? update.delta : "");
                   const streaming = update.type === "text";
                   const common = {
                     ...base,
                     title: null,
-                    status: streaming
-                      ? ("running" as const)
-                      : update.type === "text-completed"
-                        ? (update.status ?? "completed")
-                        : ("completed" as const),
+                    status:
+                      update.type === "text"
+                        ? ("running" as const)
+                        : (update.status ?? "completed"),
                     completedAt: streaming ? null : now,
                     text,
                     streaming,

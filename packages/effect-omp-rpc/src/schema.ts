@@ -162,6 +162,7 @@ export const OmpRpcEvent = Schema.Struct({
   yielded: maybeBoolean,
   agentInvoked: maybeBoolean,
   assistantMessageEvent: maybeUnknown,
+  messageId: maybeString,
   model: maybeUnknown,
   thinkingLevel: maybeString,
   message: maybeUnknown,
@@ -222,6 +223,8 @@ export type OmpRpcEvent = typeof OmpRpcEvent.Type;
 
 export const OmpAgentMessage = Schema.Struct({
   role: Schema.String,
+  responseId: maybeString,
+  timestamp: maybeNumber,
   /** A `custom` message's kind, for example `async-result` for a background job's result. */
   customType: maybeString,
   content: Schema.optional(Schema.Unknown),
@@ -238,12 +241,14 @@ export type OmpAgentMessage = typeof OmpAgentMessage.Type;
 
 export const OmpMessageStartEvent = Schema.Struct({
   type: Schema.Literal("message_start"),
+  messageId: maybeString,
   message: OmpAgentMessage,
 });
 export type OmpMessageStartEvent = typeof OmpMessageStartEvent.Type;
 
 export const OmpMessageUpdateEvent = Schema.Struct({
   type: Schema.Literal("message_update"),
+  messageId: maybeString,
   message: OmpAgentMessage,
   assistantMessageEvent: Schema.Unknown,
 });
@@ -251,6 +256,7 @@ export type OmpMessageUpdateEvent = typeof OmpMessageUpdateEvent.Type;
 
 export const OmpMessageEndEvent = Schema.Struct({
   type: Schema.Literal("message_end"),
+  messageId: maybeString,
   message: OmpAgentMessage,
 });
 export type OmpMessageEndEvent = typeof OmpMessageEndEvent.Type;
