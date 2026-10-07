@@ -813,3 +813,65 @@ it("keeps the reveal of a first prompt as it was: traces do not move it", async 
   // Without whole-response following, the traces are left below the view.
   expect(toEnd()).toBeGreaterThan(100);
 });
+
+for (const followed of ["running", "completed"] as const)
+  it(`brings a reader back to the prompt they followed across rows never rendered (${followed})`, async () => {
+    const key = `follow:return-virtualized-${followed}`;
+    const { history, runs } = await answeredThread(key);
+    const prompt = message(10, "user", { text: "Followed prompt", runId: "run-10" });
+    chat.sendAtEnd("message-10");
+    render(
+      key,
+      [...history, prompt, ...steps(1, "run-10")],
+      [...runs, run("run-10", "message-10", "running")],
+    );
+    await playUntil(() => toEnd() <= 1);
+    await expect.poll(() => readTimelinePosition(key)?.followingPromptId).toBe("message-10");
+    await visitElsewhere(`${key}-elsewhere`);
+    // While away: many steps and an answer for the followed prompt, then a
+    // later prompt from elsewhere with many more rows. On return, the followed
+    // response's end has never been rendered.
+    const answer = message(11, "assistant", {
+      text: "The followed response. ".repeat(20),
+      runId: "run-10",
+    });
+    const laterRun = followed === "running" ? "run-10" : "run-30";
+    const later = message(30, "user", {
+      text: "Later prompt",
+      runId: laterRun,
+      inputIntent: followed === "running" ? "steer" : "turn_start",
+    });
+    render(
+      key,
+      [
+        ...history,
+        prompt,
+        ...steps(20, "run-10"),
+        answer,
+        later,
+        ...steps(40, laterRun).map((row) => ({ ...row, id: `later-${row.id}` })),
+        message(31, "assistant", { text: "Latest answer", runId: laterRun }),
+      ],
+      [
+        ...runs,
+        run("run-10", "message-10", followed),
+        ...(followed === "completed" ? [run("run-30", "message-30", "running")] : []),
+      ],
+    );
+    // Back at the followed response's end: its answer shows, resting above
+    // the composer, and the later prompt stays below the view.
+    await playUntil(() => {
+      const bottom = answerBottom("message-11");
+      return Number.isFinite(bottom) && Math.abs(bottom - (readingBottom() - 16)) <= 2;
+    });
+    await play(160);
+    expect(Math.abs(answerBottom("message-11") - (readingBottom() - 16))).toBeLessThanOrEqual(2);
+    expect(toEnd()).toBeGreaterThan(400);
+    // The later prompt starts at the composer's edge, at most its first line showing.
+    expect(
+      Number.isNaN(promptTextTop("message-30")) ||
+        promptTextTop("message-30") > readingBottom() - 40,
+    ).toBe(true);
+    if (followed === "running") await playUntil(() => chat.followPromptId === "message-10");
+    else expect(chat.followPromptId).toBeNull();
+  });

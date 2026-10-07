@@ -13,14 +13,18 @@ const FIRST_LINES_PX = 48;
  * latest prompt). Otherwise the prompt rests at the top of the reading area,
  * unless its response's latest message's start would then be below the
  * screen: that start rests at the top instead. A later prompt and its
- * response never move it further. Null when the list cannot be measured.
+ * response never move it further.
+ *
+ * When a row this needs has never been rendered (outside the list's window),
+ * it says which row to bring into view first, so it can be measured. Null
+ * when the list cannot be measured or the prompt is not in the loaded rows.
  */
 export function liveFollowOffset(
   list: LegendListRef,
   rows: readonly MessagesTimelineRow[],
   composerInset: number,
   promptId: string,
-): number | null {
+): { offset: number } | { mount: number } | null {
   const viewport = list.getScrollableNode();
   if (!viewport) return null;
   const state = list.getState();
@@ -50,13 +54,13 @@ export function liveFollowOffset(
     const size = element?.isConnected
       ? element.getBoundingClientRect().height
       : state.sizeAtIndex(lastIndex);
-    if (lastTop === null || size === undefined) return null;
+    if (lastTop === null || size === undefined) return { mount: lastIndex };
     end = Math.min(bottom, Math.max(0, lastTop + size - (readingHeight - END_GAP)));
   }
   const promptTop = rowTop(promptIndex, '[data-user-message-body="true"]');
-  if (promptTop === null) return null;
+  if (promptTop === null) return { mount: promptIndex };
   const promptAtTop = Math.max(0, promptTop - CHAT_TIMELINE_ANCHOR_OFFSET);
-  if (end <= promptAtTop) return end;
+  if (end <= promptAtTop) return { offset: end };
   let latestIndex = -1;
   for (let index = lastIndex; index > promptIndex; index -= 1) {
     const row = rows[index];
@@ -65,18 +69,21 @@ export function liveFollowOffset(
       break;
     }
   }
-  if (latestIndex < 0) return promptAtTop;
+  if (latestIndex < 0) return { offset: promptAtTop };
   const latestTop = rowTop(latestIndex);
-  if (latestTop === null) return promptAtTop;
+  if (latestTop === null) return { mount: latestIndex };
   // Its first lines already show below the prompt: stay with the prompt.
-  if (latestTop + FIRST_LINES_PX <= promptAtTop + readingHeight) return promptAtTop;
-  return Math.min(end, Math.max(promptAtTop, latestTop - CHAT_TIMELINE_ANCHOR_OFFSET));
+  if (latestTop + FIRST_LINES_PX <= promptAtTop + readingHeight) return { offset: promptAtTop };
+  return {
+    offset: Math.min(end, Math.max(promptAtTop, latestTop - CHAT_TIMELINE_ANCHOR_OFFSET)),
+  };
 }
 
 /**
  * Brings a reader who left while following `promptId` back to where its
  * follow would be now: to the end first, then to `liveFollowOffset` until it
- * holds for two frames (at most 60). Frames go through `nextFrame`, so the caller's restore
+ * holds for two frames (at most 60 frames). A needed row the list has not
+ * rendered yet is scrolled into view first and measured there. Frames go through `nextFrame`, so the caller's restore
  * cleanup cancels them; `done` runs once it holds, or when it gives up.
  */
 export function returnToLiveFollow(input: {
@@ -96,15 +103,24 @@ export function returnToLiveFollow(input: {
     let remainingFrames = 60;
     const settle = () => {
       if (cancelled()) return;
-      const offset = liveFollowOffset(list, rows, composerInset, promptId);
+      const target = liveFollowOffset(list, rows, composerInset, promptId);
       const element = list.getScrollableNode();
-      if (offset === null || !element || --remainingFrames <= 0) {
+      if (target === null || !element || --remainingFrames <= 0) {
         done();
         return;
       }
-      if (Math.abs(element.scrollTop - offset) > 1) {
+      if ("mount" in target) {
         stableFrames = 0;
-        void list.scrollToOffset({ offset, animated: false }).then(() => {
+        void Promise.resolve(
+          list.scrollToIndex({ index: target.mount, animated: false, viewPosition: 1 }),
+        ).then(() => {
+          if (!cancelled()) nextFrame(settle);
+        });
+        return;
+      }
+      if (Math.abs(element.scrollTop - target.offset) > 1) {
+        stableFrames = 0;
+        void list.scrollToOffset({ offset: target.offset, animated: false }).then(() => {
           if (!cancelled()) nextFrame(settle);
         });
         return;

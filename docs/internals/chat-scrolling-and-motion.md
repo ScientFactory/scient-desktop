@@ -57,6 +57,9 @@ Owner: the restore effect in `chat/MessagesTimeline.tsx`; storage in
   - **A later message sent from elsewhere** while you were away, and what
     follows it, never move it further, whether your message's run is still
     working or has finished.
+  - **Rows not rendered yet** (a long response grew while you were away) are
+    scrolled into view and measured first, within the same bounded settling.
+    If your message itself is not in the loaded history, you land at the end.
   - **Never** past the bottom. While that prompt's run still works, the follow carries on from there.
 - **Any scroll, key, touch or click** during a restore cancels it and leaves
   you where you are.
