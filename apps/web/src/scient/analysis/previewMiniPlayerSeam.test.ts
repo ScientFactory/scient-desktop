@@ -8,13 +8,21 @@ const readSource = (relativePath: string) =>
 
 describe("analysis preview mini-player seam", () => {
   it("keeps the shared floating preview generic while preserving its reusable chrome", () => {
-    const componentSource = readSource("../../components/preview/ThreadPreviewMiniPlayer.tsx");
+    // The inherited player and the Scient parts its marked lines call.
+    const componentSource = [
+      readSource("../../components/preview/ThreadPreviewMiniPlayer.tsx"),
+      readSource("../../components/preview/ScientMiniPlayerParts.tsx"),
+    ].join("\n");
     const imageSurfaceSource = readSource("../../components/preview/PreviewImageSurface.tsx");
     const assetImageSurfaceSource = readSource(
       "../../components/preview/StaticAssetImageSurface.tsx",
     );
     const layoutSource = readSource("../../components/preview/previewMiniPlayerLayout.ts");
-    const storeSource = readSource("../../previewMiniPlayerStore.ts");
+    // The inherited store and the Scient artifact reducers its marked lines call.
+    const storeSource = [
+      readSource("../../previewMiniPlayerStore.ts"),
+      readSource("../../scientPreviewMiniPlayerArtifacts.ts"),
+    ].join("\n");
     const descriptorSource = readSource("../../previewStaticImageSurface.ts");
     const sharedSources = [
       componentSource,

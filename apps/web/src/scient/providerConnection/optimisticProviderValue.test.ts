@@ -51,5 +51,8 @@ describe("currentOptimisticProviderValue", () => {
     expect(isManagedRuntimeActionDurablySettled("remove", missingRuntime)).toBe(true);
     expect(isManagedRuntimeActionDurablySettled("remove", managedRuntime)).toBe(false);
     expect(isManagedRuntimeActionDurablySettled("repair", managedRuntime)).toBe(false);
+    const registryRuntime = { ...managedRuntime, source: "registry" as const };
+    expect(isManagedRuntimeActionDurablySettled("install", registryRuntime)).toBe(true);
+    expect(isManagedRuntimeActionDurablySettled("remove", registryRuntime)).toBe(false);
   });
 });

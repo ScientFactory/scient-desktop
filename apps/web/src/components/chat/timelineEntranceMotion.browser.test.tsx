@@ -1,5 +1,5 @@
 import "../../index.css";
-import { EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { createRef } from "react";
 import { flushSync } from "react-dom";
@@ -21,21 +21,33 @@ function entry(index: number, text = `Message ${index}\n\n${"Readable paragraph.
       id: MessageId.make(`message-${index}`),
       role: "user" as const,
       text,
-      turnId: TurnId.make(`turn-${index}`),
+      runId: RunId.make(`run-${index}`),
       createdAt: date,
       updatedAt: date,
       streaming: false,
     },
   };
 }
+/** The answer to prompt 1, in that prompt's run. */
+function reply(index: number, text: string, streaming: boolean) {
+  const { message, ...row } = entry(index, text);
+  return {
+    ...row,
+    message: { ...message, role: "assistant" as const, runId: RunId.make("run-1"), streaming },
+  };
+}
 const base = {
   listRef,
   isWorking: false,
+  activeTurnInProgress: false,
   activeTurnStartedAt: null,
-  latestTurn: null,
-  runningTurnId: null,
+  latestRun: null,
+  runningRunId: null,
   turnDiffSummaries: [],
   onOpenTurnDiff: () => {},
+  onOpenThread: () => {},
+  onForkFromRun: () => Promise.resolve(),
+  onRollbackCheckpoint: () => {},
   supportsConversationRollback: false,
   onRevertToTurnCount: () => {},
   isRevertingCheckpoint: false,
@@ -45,8 +57,11 @@ const base = {
   resolvedTheme: "light" as const,
   timestampFormat: "locale" as const,
   workspaceRoot: undefined,
+  runs: [],
+  providerStatuses: [],
   anchorMessageId: null,
   onAnchorReady: () => {},
+  onAnchorSizeChanged: () => {},
   contentInsetEndAdjustment: 100,
   onIsAtEndChange: vi.fn(),
   onManualNavigation: () => {},
@@ -91,7 +106,7 @@ const animationsOf = (element: Element | null | undefined) =>
             animation.playState !== "finished",
         )
     : [];
-const working = { isWorking: true, runningTurnId: TurnId.make("turn-1") };
+const working = { isWorking: true, activeTurnInProgress: true, runningRunId: RunId.make("run-1") };
 
 it("gives the working label the thinking traces' live shine for as long as the turn works", async () => {
   const prompt = entry(1, "First question");
@@ -134,10 +149,7 @@ it("plays the entrance for a first prompt being placed, and for no other prompt"
 
 it("reveals a streaming answer line by line after a short wait, once, and nothing else", async () => {
   const prompt = entry(1, "Question");
-  const answer = (text: string, streaming: boolean) => ({
-    ...entry(2, text),
-    message: { ...entry(2, text).message, role: "assistant" as const, streaming },
-  });
+  const answer = (text: string, streaming: boolean) => reply(2, text, streaming);
   const text = () =>
     host!.querySelector<HTMLElement>('[data-message-role="assistant"] .chat-markdown');
   const front = () => Number.parseFloat(text()?.style.getPropertyValue("--reveal-front") || "0");
@@ -158,22 +170,23 @@ it("reveals a streaming answer line by line after a short wait, once, and nothin
   // Once the answer is done, the reveal finishes and the mask goes.
   render("motion:stream", [prompt, answer("First paragraph.\n\nSecond paragraph.", false)], {
     isWorking: false,
+    activeTurnInProgress: false,
   });
   await expect
     .poll(() => text()?.classList.contains("streamed-reveal"), { timeout: 4000 })
     .toBe(false);
   // A finished answer that was never revealed here simply shows.
-  render("motion:finished", [prompt, answer("Already done.", false)], { isWorking: false });
+  render("motion:finished", [prompt, answer("Already done.", false)], {
+    isWorking: false,
+    activeTurnInProgress: false,
+  });
   await frames(4);
   expect(text()?.classList.contains("streamed-reveal")).toBe(false);
 });
 
 it("closes a finished turn's working header gradually, so the answer slides up", async () => {
   const prompt = entry(1, "Question");
-  const answer = (streaming: boolean) => ({
-    ...entry(2, "The answer."),
-    message: { ...entry(2, "The answer.").message, role: "assistant" as const, streaming },
-  });
+  const answer = (streaming: boolean) => reply(2, "The answer.", streaming);
   render("motion:exit", [prompt, answer(true)], working);
   const answerTop = () =>
     host!.querySelector('[data-message-role="assistant"]')!.getBoundingClientRect().top;
@@ -181,7 +194,7 @@ it("closes a finished turn's working header gradually, so the answer slides up",
   await expect.poll(() => header()).not.toBeNull();
   await frames(8);
   const before = answerTop();
-  render("motion:exit", [prompt, answer(false)], { isWorking: false });
+  render("motion:exit", [prompt, answer(false)], { isWorking: false, activeTurnInProgress: false });
   // Mid-exit: still in place, the answer part of the way up.
   await new Promise((resolve) => setTimeout(resolve, 140));
   await frames(2);
@@ -198,16 +211,10 @@ it("closes a finished turn's working header gradually, so the answer slides up",
 
 it("hides Thinking while the answer's lines appear, and brings it back when the agent moves on", async () => {
   const prompt = entry(1, "Question");
-  const answer = {
-    ...entry(41, "First paragraph.\n\nSecond paragraph."),
-    message: {
-      ...entry(41, "First paragraph.\n\nSecond paragraph.").message,
-      role: "assistant" as const,
-      streaming: true,
-    },
-  };
+  const answer = reply(41, "First paragraph.\n\nSecond paragraph.", true);
+  // The row's own wrapper, inside the work-log block the timeline puts it in.
   const thinking = () =>
-    host!.querySelector('[data-timeline-row-kind="thinking"] > div') as HTMLElement | null;
+    host!.querySelector('[data-timeline-row-kind="thinking"] > div > div') as HTMLElement | null;
   render("motion:thinking", [prompt, answer], working);
   await expect.poll(() => thinking()).not.toBeNull();
   // During the short wait before any line shows, Thinking still shows the work.
@@ -225,7 +232,7 @@ it("hides Thinking while the answer's lines appear, and brings it back when the 
     entry: {
       id: "tool-after-text",
       createdAt: date,
-      turnId: TurnId.make("turn-1"),
+      runId: RunId.make("run-1"),
       label: "Run command",
       tone: "tool" as const,
       toolLifecycleStatus: "completed" as const,
@@ -245,10 +252,7 @@ it("hides Thinking while the answer's lines appear, and brings it back when the 
 it("crosses the blank space between paragraphs without pausing", async () => {
   const prompt = entry(1, "Question");
   const text = "One line.\n\nTwo line.\n\nThree line.";
-  const answer = {
-    ...entry(2, text),
-    message: { ...entry(2, text).message, role: "assistant" as const, streaming: true },
-  };
+  const answer = reply(2, text, true);
   render("motion:gaps", [prompt, answer], working);
   const root = () =>
     host!.querySelector<HTMLElement>('[data-message-role="assistant"] .chat-markdown');

@@ -7,6 +7,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -24,6 +25,7 @@ import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
  */
 const AGENT_SOURCE = String.raw`
 import * as fs from "node:fs";
+fs.writeFileSync(process.env.ACP_PID, String(process.pid));
 const plan = JSON.parse(process.env.ACP_PLAN ?? "[]");
 const state = { model: "a", autonomy_level: "normal" };
 const select = (id, values) => ({
@@ -87,12 +89,14 @@ type Step =
   | { readonly sleep: number };
 const RESPOND: Step = { respond: true };
 const APPLY: Step = { update: "requested" };
+const decodePid = Schema.decodeSync(Schema.NumberFromString);
 const encodePlan = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const scriptedRuntime = (
   plan: ReadonlyArray<ReadonlyArray<Step>>,
   settleTimeout = "30 seconds",
   configOptionTransport: "request" | "request-confirmed" = "request-confirmed",
+  onTermination?: AcpSessionRuntime.AcpSessionRuntimeOptions["onTermination"],
 ) =>
   Effect.gen(function* () {
     const directory = yield* Effect.acquireRelease(
@@ -101,25 +105,28 @@ const scriptedRuntime = (
     );
     const agent = NodePath.join(directory, "agent.mjs");
     const writes = NodePath.join(directory, "writes");
+    const pid = NodePath.join(directory, "pid");
     NodeFS.writeFileSync(agent, AGENT_SOURCE);
     NodeFS.writeFileSync(writes, "");
     const runtime = yield* AcpSessionRuntime.make({
       spawn: {
         command: process.execPath,
         args: [agent],
-        env: { ACP_PLAN: encodePlan(plan), ACP_WRITES: writes },
+        env: { ACP_PLAN: encodePlan(plan), ACP_WRITES: writes, ACP_PID: pid },
       },
       cwd: directory,
       clientInfo: { name: "t3-test", version: "0.0.0" },
       authMethodId: undefined,
       configOptionTransport,
       configOptionSettleTimeout: settleTimeout as never,
+      ...(onTermination === undefined ? {} : { onTermination }),
     });
     yield* runtime.start();
     return {
       ...runtime,
       /** The values of the writes that reached the agent. */
       writesReceived: () => NodeFS.readFileSync(writes, "utf8").split("\n").filter(Boolean),
+      childPid: () => decodePid(NodeFS.readFileSync(pid, "utf8")),
     };
   });
 
@@ -163,6 +170,80 @@ describe("unconfirmed config writes", () => {
 });
 
 describe("confirmed config writes", () => {
+  live("cleans the native child independently of a held caller observer", () =>
+    scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const observed = yield* Deferred.make<void>();
+        const runtime = yield* scriptedRuntime([[]], "400 millis", "request-confirmed", () =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.andThen(Deferred.succeed(observed, undefined)),
+            Effect.asVoid,
+          ),
+        );
+        const pid = runtime.childPid();
+        const first = yield* timed(runtime.setModel("b"));
+        expect(Exit.isFailure(first.exit)).toBe(true);
+        yield* Deferred.await(started);
+        expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
+        expect(runtime.writesReceived()).toEqual(["b"]);
+        yield* Deferred.succeed(release, undefined);
+        yield* Deferred.await(observed);
+      }),
+    ),
+  );
+  live("cancels a hanging observer only when its caller scope closes", () =>
+    scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const interrupted = yield* Deferred.make<void>();
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const runtime = yield* scriptedRuntime([[]], "400 millis", "request-confirmed", () =>
+              Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.onInterrupt(() =>
+                  Deferred.succeed(interrupted, undefined).pipe(Effect.asVoid),
+                ),
+              ),
+            );
+            yield* timed(runtime.setModel("b"));
+            yield* Deferred.await(started);
+            expect(runtime.writesReceived()).toEqual(["b"]);
+            expect(yield* Deferred.isDone(interrupted)).toBe(false);
+          }),
+        );
+        yield* Deferred.await(interrupted);
+      }),
+    ),
+  );
+  live("retires only the provider scope and preserves caller-owned resources", () =>
+    scoped(
+      Effect.gen(function* () {
+        let callerClosed = false;
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* Effect.addFinalizer(() =>
+              Effect.sync(() => {
+                callerClosed = true;
+              }),
+            );
+            const runtime = yield* scriptedRuntime([[]], "400 millis");
+            const first = yield* timed(runtime.setModel("b"));
+            expect(Exit.isFailure(first.exit)).toBe(true);
+            expect(callerClosed).toBe(false);
+            expect(runtime.writesReceived()).toEqual(["b"]);
+            const second = yield* timed(runtime.setModel("c"));
+            expect(failure(second.exit)).toEqual(failure(first.exit));
+            expect(runtime.writesReceived()).toEqual(["b"]);
+          }),
+        );
+        expect(callerClosed).toBe(true);
+      }),
+    ),
+  );
   live("confirms from the update that follows the response, back to back", () =>
     scoped(
       Effect.gen(function* () {

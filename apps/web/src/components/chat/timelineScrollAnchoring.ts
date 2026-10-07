@@ -1,9 +1,43 @@
-import { TurnId } from "@t3tools/contracts";
+import { RunAttemptId, RunId, type MessageId } from "@t3tools/contracts";
+
+export interface TimelineRunObservation {
+  readonly threadKey: string | null;
+  readonly hydrated: boolean;
+  readonly runId: RunId | null;
+}
+
+/** Opening a thread establishes a baseline; only later runs get new-turn framing. */
+export function observeTimelineRun(
+  previous: TimelineRunObservation | null,
+  input: TimelineRunObservation & {
+    readonly queued: boolean;
+    readonly messageId: MessageId | null;
+  },
+): { observation: TimelineRunObservation; anchorMessageId: MessageId | null } {
+  const observation = {
+    threadKey: input.threadKey,
+    hydrated: input.hydrated,
+    runId: input.queued ? null : input.runId,
+  };
+  if (previous?.threadKey !== input.threadKey || !previous.hydrated) {
+    return { observation, anchorMessageId: null };
+  }
+  if (
+    !input.hydrated ||
+    input.runId === null ||
+    input.queued ||
+    previous.runId === input.runId ||
+    input.messageId === null
+  ) {
+    return { observation: previous, anchorMessageId: null };
+  }
+  return { observation, anchorMessageId: input.messageId };
+}
 
 // Match the titlebar fade inset so draft promotion preserves the first row's position.
 export const CHAT_TIMELINE_ANCHOR_OFFSET = 24;
 
-export type TimelineScrollMode = "anchoring-new-turn" | "free-scrolling";
+export type TimelineScrollMode = "following-end" | "anchoring-new-turn" | "free-scrolling";
 
 export interface TimelineListMeasurementState {
   readonly data: readonly unknown[];
@@ -26,6 +60,60 @@ export function getRowBottom(state: TimelineListMeasurementState, index: number)
   }
 
   return top + Math.max(1, height);
+}
+
+export interface AnchoredTurnMetrics {
+  readonly anchorTop: number;
+  readonly lastBottom: number;
+  readonly turnHeight: number;
+  readonly usableViewportHeight: number;
+  readonly visibleUsableBottom: number;
+  readonly overflowsUsableViewport: boolean;
+  readonly targetScrollToRevealEnd: number;
+  readonly scrollDeltaToRevealEnd: number;
+}
+
+export function getAnchoredTurnMetrics({
+  state,
+  anchorIndex,
+  composerOverlayHeight,
+  anchorOffset,
+}: {
+  readonly state: TimelineListMeasurementState;
+  readonly anchorIndex: number;
+  readonly composerOverlayHeight: number;
+  readonly anchorOffset: number;
+}): AnchoredTurnMetrics | null {
+  if (state.data.length === 0) {
+    return null;
+  }
+
+  const boundedAnchorIndex = Math.max(0, Math.min(anchorIndex, state.data.length - 1));
+  const anchorTop = state.positionAtIndex(boundedAnchorIndex);
+  const lastBottom = getRowBottom(state, state.data.length - 1);
+  if (typeof anchorTop !== "number" || !Number.isFinite(anchorTop) || lastBottom === null) {
+    return null;
+  }
+
+  const usableViewportHeight = Math.max(
+    0,
+    state.scrollLength - composerOverlayHeight - anchorOffset,
+  );
+  const turnHeight = Math.max(0, lastBottom - anchorTop);
+  const visibleUsableBottom = state.scroll + usableViewportHeight;
+  const targetScrollToRevealEnd = Math.max(0, lastBottom - usableViewportHeight);
+  const scrollDeltaToRevealEnd = Math.max(0, targetScrollToRevealEnd - state.scroll);
+
+  return {
+    anchorTop,
+    lastBottom,
+    turnHeight,
+    usableViewportHeight,
+    visibleUsableBottom,
+    overflowsUsableViewport: turnHeight > usableViewportHeight,
+    targetScrollToRevealEnd,
+    scrollDeltaToRevealEnd,
+  };
 }
 
 /** Exclude reserved anchor padding when deciding whether real content is below the reader. */
@@ -80,10 +168,9 @@ export interface RememberedTimelinePosition {
    */
   readonly following?: boolean;
   readonly disclosures?: {
-    readonly turns: ReadonlySet<TurnId>;
+    readonly runs: ReadonlySet<RunId>;
     readonly workGroups: ReadonlySet<string>;
-    readonly spawnEntries: ReadonlySet<string>;
-    readonly reasoningMessages: ReadonlySet<string>;
+    readonly attempts: ReadonlySet<RunAttemptId>;
     readonly workGroupState: {
       scrollPositions: Map<string, { readonly entryId: string; readonly offset: number }>;
       expandedEntries: Set<string>;
@@ -106,10 +193,9 @@ function readDisclosures(
       ? input.filter((id): id is string => typeof id === "string").slice(0, 1000)
       : [];
   return {
-    turns: new Set(strings(value.turns).map((id) => TurnId.make(id))),
+    runs: new Set(strings(value.runs).map((id) => RunId.make(id))),
     workGroups: new Set(strings(value.workGroups)),
-    spawnEntries: new Set(strings(value.spawnEntries)),
-    reasoningMessages: new Set(strings(value.reasoningMessages)),
+    attempts: new Set(strings(value.attempts).map((id) => RunAttemptId.make(id))),
     workGroupState: {
       scrollPositions: new Map(),
       expandedEntries: new Set(strings(value.expandedEntries)),
@@ -205,10 +291,9 @@ export function flushTimelinePositions() {
               ...(disclosures
                 ? {
                     disclosures: {
-                      turns: [...disclosures.turns],
+                      runs: [...disclosures.runs],
                       workGroups: [...disclosures.workGroups],
-                      spawnEntries: [...disclosures.spawnEntries],
-                      reasoningMessages: [...disclosures.reasoningMessages],
+                      attempts: [...disclosures.attempts],
                       expandedEntries: [...disclosures.workGroupState.expandedEntries],
                     },
                   }

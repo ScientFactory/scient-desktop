@@ -10,18 +10,22 @@ import * as Context from "effect/Context";
 import type { AgentSkillScope } from "../scient/operations/AgentInvocationContext.ts";
 
 /** Authenticated external-provider transport grants, owned by the MCP host. */
-export type McpCapability =
-  | "preview"
-  | "device"
-  | "pull-requests"
-  | "documents:build"
+const ALL_MCP_CAPABILITIES = [
+  "preview",
+  "orchestration",
+  "worktree",
+  "device",
+  "pull-requests",
+  "documents:build",
   /** Read-only runtime discovery. Execution requires a separate, future authority. */
-  | "compute:inventory"
-  | "skills:read"
-  | "sources:read"
-  | "sources:write"
-  // SCIENT-THREAD-READ: read-only scient_thread_read bridge until V2's orchestrator toolkit lands.
-  | "threads:read";
+  "compute:inventory",
+  "skills:read",
+  "sources:read",
+  "sources:write",
+  // The Scient reader retains its own read-only grant alongside native orchestration tools.
+  "threads:read",
+] as const;
+export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;

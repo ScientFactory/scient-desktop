@@ -1,5 +1,5 @@
 import "../../index.css";
-import { EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { createRef } from "react";
 import { flushSync } from "react-dom";
@@ -29,7 +29,7 @@ function entry(index: number, text = `Message ${index}\n\n${"Readable paragraph.
       id: MessageId.make(`message-${index}`),
       role: "user" as const,
       text,
-      turnId: TurnId.make(`turn-${index}`),
+      runId: RunId.make(`run-${index}`),
       createdAt: date,
       updatedAt: date,
       streaming: false,
@@ -39,11 +39,15 @@ function entry(index: number, text = `Message ${index}\n\n${"Readable paragraph.
 const base = {
   listRef,
   isWorking: false,
+  activeTurnInProgress: false,
   activeTurnStartedAt: null,
-  latestTurn: null,
-  runningTurnId: null,
+  latestRun: null,
+  runningRunId: null,
   turnDiffSummaries: [],
   onOpenTurnDiff: () => {},
+  onOpenThread: () => {},
+  onForkFromRun: () => Promise.resolve(),
+  onRollbackCheckpoint: () => {},
   supportsConversationRollback: false,
   onRevertToTurnCount: () => {},
   isRevertingCheckpoint: false,
@@ -53,8 +57,11 @@ const base = {
   resolvedTheme: "light" as const,
   timestampFormat: "locale" as const,
   workspaceRoot: undefined,
+  runs: [],
+  providerStatuses: [],
   anchorMessageId: null,
   onAnchorReady: () => {},
+  onAnchorSizeChanged: () => {},
   contentInsetEndAdjustment: 100,
   onIsAtEndChange: vi.fn(),
   onManualNavigation: () => {},
@@ -236,7 +243,7 @@ it("does not apply an unrelated offset when a transient saved row disappeared", 
   const entries = Array.from({ length: 20 }, (_, i) => entry(i));
   rememberTimelinePosition("geometry:transient", {
     rowId: "working-indicator-row",
-    turnId: "turn-7",
+    turnId: "run-7",
     offsetWithinRow: 0,
     scrollOffset: 99999,
     atEnd: false,
@@ -282,7 +289,8 @@ it("waits for older history before restoring a saved reading message", async () 
   rememberTimelinePosition("geometry:paged", {
     rowId: old.id,
     messageId: old.message.id,
-    turnId: old.message.turnId,
+    // The persisted field is still named `turnId`; the timeline is keyed on runs.
+    ...(old.message.runId ? { turnId: old.message.runId } : {}),
     offsetWithinRow: 0,
     scrollOffset: 8000,
     atEnd: false,
@@ -318,7 +326,7 @@ it("manual navigation cancels restoration while history is still loading", async
   rememberTimelinePosition("geometry:cancel", {
     rowId: "gone",
     messageId: "message-1",
-    turnId: "turn-1",
+    turnId: "run-1",
     offsetWithinRow: 0,
     scrollOffset: 9000,
     atEnd: false,
@@ -396,7 +404,7 @@ function failedTool(index: number) {
     entry: {
       id: `follow-tool-${index}`,
       createdAt: date,
-      turnId: TurnId.make("turn-10"),
+      runId: RunId.make("run-10"),
       label: `Run command ${index}`,
       tone: "error" as const,
       toolLifecycleStatus: "completed" as const,
@@ -419,7 +427,7 @@ async function sendLaterPrompt(key: string, followsResponse: boolean) {
   const prompt = entry(10, "Short follow-up");
   const extra = {
     isWorking: true,
-    runningTurnId: TurnId.make("turn-10"),
+    runningRunId: RunId.make("run-10"),
     readingFollowPromptId: prompt.message.id,
     readingFollowsResponse: followsResponse,
     onIsAtEndChange,
@@ -460,19 +468,20 @@ it("follows a later prompt's whole response at the end until the prompt reaches 
   }
   expect(node.scrollTop).toBeGreaterThan(start);
   expect(promptTextTop()).toBeLessThanOrEqual(CHAT_TIMELINE_ANCHOR_OFFSET + 1);
-  // At the top it stops: later steps go below, and the end control shows.
+  // At the top it stops: later steps go below, and the end control shows. V2
+  // tool steps are compact rows, so it takes several to leave the end's band.
   const stopped = node.scrollTop;
-  render(key, rows(tools + 3), extra);
+  render(key, rows(tools + 8), extra);
   await frames(12);
   expect(Math.abs(node.scrollTop - stopped)).toBeLessThanOrEqual(1);
-  expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
+  await expect.poll(() => onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
 });
 
 it("keeps following a later prompt whose turn has not started yet when it arrives", async () => {
   const key = "geometry:follow-startup";
   const { node, extra, promptTextTop, toEnd, rows } = await sendLaterPrompt(key, true);
   // Sent, but the provider has not picked the turn up yet: nothing is running.
-  const idle = { ...extra, isWorking: false, runningTurnId: null };
+  const idle = { ...extra, isWorking: false, runningRunId: null };
   render(key, rows(0), idle);
   await expect.poll(toEnd).toBeLessThanOrEqual(1);
   await frames(12);

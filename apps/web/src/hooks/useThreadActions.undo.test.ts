@@ -1,4 +1,11 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ThreadId,
+  MessageId,
+  TurnId,
+  type ScientCompletedAnswer,
+  type OrchestrationV2RunStatus,
+} from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { useThreadActions } from "./useThreadActions";
@@ -15,6 +22,7 @@ const commands = vi.hoisted(() => ({
   unsettle: vi.fn(),
   snooze: vi.fn(),
   unsnooze: vi.fn(),
+  markUnread: vi.fn(),
 }));
 const router = vi.hoisted(() => ({
   navigate: vi.fn(async () => {}),
@@ -31,7 +39,20 @@ vi.mock("./useSettings", () => ({ useClientSettings: () => false }));
 vi.mock("./useHandleNewThread", () => ({ useNewThreadHandler: () => vi.fn() }));
 vi.mock("../composerDraftStore", () => ({ useComposerDraftStore: () => vi.fn() }));
 vi.mock("../terminalUiStateStore", () => ({ useTerminalUiStateStore: () => vi.fn() }));
-vi.mock("../uiStateStore", () => ({ useUiStateStore: () => vi.fn() }));
+const attention = vi.hoisted(() => ({
+  serverTracked: false,
+  markUnread: vi.fn(),
+  markVisited: vi.fn(),
+}));
+vi.mock("../uiStateStore", () => ({
+  useUiStateStore: (
+    selector: (state: {
+      markThreadUnread: typeof attention.markUnread;
+      markThreadVisited: typeof attention.markVisited;
+    }) => unknown,
+  ) =>
+    selector({ markThreadUnread: attention.markUnread, markThreadVisited: attention.markVisited }),
+}));
 vi.mock("../lib/archivedThreadsState", () => ({ refreshArchivedThreadsForEnvironment: vi.fn() }));
 const threadShell = vi.hoisted(() => ({
   title: "Thread",
@@ -41,9 +62,15 @@ const threadShell = vi.hoisted(() => ({
   projectId: "project",
   environmentId: "undo-env",
   session: null,
+  latestCompletedAnswer: undefined as ScientCompletedAnswer | null | undefined,
+  latestRun: {
+    status: "completed" as OrchestrationV2RunStatus,
+    completedAt: "2026-10-04T12:00:00.000Z",
+  },
 }));
 vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
+  readEnvironmentSupportsVisitedTracking: () => attention.serverTracked,
   readEnvironmentSupportsPinning: () => true,
   readEnvironmentSupportsPinReorder: () => true,
   readEnvironmentSupportsSettlement: () => true,
@@ -53,6 +80,8 @@ vi.mock("../state/entities", async (original) => ({
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) => {
     switch (command) {
+      case threadEnvironment.markUnread:
+        return commands.markUnread;
       case threadEnvironment.pin:
         return commands.pin;
       case threadEnvironment.unpin:
@@ -92,6 +121,9 @@ beforeEach(() => {
   }
   router.navigate.mockClear();
   router.state.matches[0]!.params = {};
+  attention.serverTracked = false;
+  attention.markUnread.mockReset();
+  threadShell.latestCompletedAnswer = undefined;
   threadShell.pinnedAt = null;
   threadShell.snoozedUntil = null;
 });
@@ -214,5 +246,35 @@ describe("settle and snooze Undo", () => {
       environmentId: target.environmentId,
       input: { threadId: target.threadId, reason: "user" },
     });
+  });
+});
+
+describe("local mark-unread canonical answer", () => {
+  it("rewinds against the earlier completed answer, not a later answerless run", () => {
+    threadShell.latestCompletedAnswer = {
+      turnId: TurnId.make("old-run"),
+      messageId: MessageId.make("old-answer"),
+      completedAt: "2026-10-04T10:00:00.000Z",
+    };
+    useThreadActions().markThreadUnread(target);
+    expect(attention.markUnread).toHaveBeenCalledExactlyOnceWith(
+      expect.any(String),
+      "2026-10-04T10:00:00.000Z",
+    );
+    expect(commands.markUnread).not.toHaveBeenCalled();
+  });
+  it("does not invent an answer when canonical projection is explicit null", () => {
+    threadShell.latestCompletedAnswer = null;
+    useThreadActions().markThreadUnread(target);
+    expect(attention.markUnread).toHaveBeenCalledExactlyOnceWith(expect.any(String), null);
+  });
+  it("retains the explicit server mark-unread command for tracking-capable environments", () => {
+    attention.serverTracked = true;
+    useThreadActions().markThreadUnread(target);
+    expect(commands.markUnread).toHaveBeenCalledExactlyOnceWith({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId },
+    });
+    expect(attention.markUnread).not.toHaveBeenCalled();
   });
 });

@@ -63,22 +63,41 @@ On web and desktop, a message sent during a running turn appears in the queue
 above the composer. The server keeps its order across navigation and restarts,
 then sends it after the current turn finishes successfully. Use **Steer** on a
 queued message to send it into the running turn, or edit, reorder, or delete it
-from the queue. Stopping a turn preserves queued messages until later work
-finishes successfully. When the thread is idle after a failed or stopped turn,
-**Send** on the first waiting message starts that message directly; the other
-messages keep their order. Reorder first if you want to send a different one.
+from the queue. **Stop**, interruptions, and failed starts hold the remaining
+queue until you choose **Resume**. A later successful answer does not release
+that hold. When the thread is idle, **Send** on the first waiting message starts
+only that message; the other messages stay held in order. Reorder first if you
+want to send a different one. Once resumed, the queue sends each message after
+the preceding answer finishes successfully.
 
 In **Settings → General → Follow-up behavior**, choose **Queue** to keep this
 behavior or **Steer** to send new messages immediately. **Send shortcut**
 controls whether Enter or Cmd/Ctrl+Enter sends. While a turn is running, the
-alternate shortcut performs the opposite follow-up behavior for that message.
-These settings apply to the current client. Messages already queued keep their
-place.
+alternate shortcut uses the opposite action: `Cmd+Enter` on macOS or
+`Ctrl+Enter` on Windows and Linux steers when your default is Queue and queues
+when your default is Steer. These settings apply to the current client. Messages
+already queued keep their place.
 
 Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to send
-the oldest queued message now. Change `thread.steerQueuedMessage` in
-**Settings → Shortcuts** to use another shortcut. It leaves the current draft
-in the composer and waits if the agent needs an approval or an answer.
+the oldest queued message now, as a steer into the running turn. It leaves the
+current draft in the composer and waits if the agent needs an approval or an
+answer, and it requires an active turn that supports steering. Change
+`thread.steerQueuedMessage` in **Settings → Shortcuts** to use another shortcut.
+
+Press `Option+Up` on macOS or `Alt+Up` on Windows and Linux with the cursor at the
+start of the composer to edit the most recently queued message. Change
+`thread.editQueuedMessage` in **Settings → Shortcuts** to use another shortcut.
+
+Mobile has the same choice under **Settings → Follow-ups**. While a turn is
+running the send button shows which action it will take. Long-press it to use the
+other action for a single message, or hold `Cmd` while sending from a hardware
+keyboard. The button only offers Steer when the running agent supports it.
+
+On mobile, open the queue sheet and choose **Edit** on a waiting message to load it into the
+composer without removing it from the server queue. Keep or remove its existing attachments and
+add new ones as needed. Sending from this edit mode saves the replacement in place; it does not
+send a new message. **Cancel** leaves the queued message unchanged and returns to your ordinary
+draft. If saving fails, the edit stays in the composer so you can resolve the error or retry.
 
 ## Queue messages offline on mobile
 
@@ -202,7 +221,8 @@ On web and desktop, choose **Edit from here** beneath a sent message to rewind
 the conversation to before that message. Choose **Revert and keep changes** to
 leave workspace files as they are, or **Revert files too** to restore them as well.
 File restore is only offered for threads running in a worktree, and it is
-refused when another thread or agent session also uses that directory, since
+refused when another thread or agent session also uses that directory, a folder
+inside it, or a folder that contains it, since
 restoring would erase their changes. A thread that works in the project directory
 rewinds the conversation only. The selected prompt and its attachments return to the composer for editing and
 resending. Any unsent draft stays above the restored prompt.
@@ -236,6 +256,30 @@ awake; it can sleep normally once recording stops.
 
 Transcription runs on your device. Scient deletes the temporary audio after
 transcription or cancellation; only the message text is sent when you submit.
+
+## Queued messages
+
+On web and desktop, the composer shows **Interrupt** while the agent is working and the draft is
+empty. Adding text or attachments replaces it with a steer arrow. Click it to send a message into
+the active turn, or press `Enter` on desktop. Hold `Cmd` on macOS or `Ctrl` on Windows and Linux to
+switch the button to a queue icon. Click while holding that key, or press `Cmd+Enter` or
+`Ctrl+Enter` on desktop, to queue the message for after the active turn.
+
+Queued messages appear above the composer. Rows show a thumbnail of any attached image alongside
+the text. Drag a row by its handle to reorder it, use the handle's arrow keys, promote the message
+to a steer, or remove it.
+
+If the server restarts, saved queued messages keep their order and are held. Press
+**Resume** in an empty composer on web or desktop, or **Resume queue** in the queue
+sheet on mobile, to continue. You can edit, reorder, or remove held messages without starting them.
+
+The pencil on a queued row opens that message in the composer for editing. The original message
+stays in the queue until you save, and its row is highlighted while you edit. The message's
+attachments appear above the text with a remove control, and new images can be added the usual way.
+The checkmark saves the queued message in place; **Cancel** on its row leaves it unchanged. Whatever
+you had typed in the composer before starting the edit is restored afterwards. If the queued
+message starts or is removed while you are editing, the edit ends: changed content moves into the
+composer when it is empty, and is discarded otherwise.
 
 ## Commands and skills
 
@@ -273,6 +317,13 @@ by any part of its pull request numbers. A complete number is also resolved dire
 pull request is older than the recent list. Type a single word after `#` to search pull requests in
 the repository by text. Choose a result to insert it as a chip.
 
+Another thread can be context too. Type `@` followed by part of its title to pick one from
+the same server, or on web and desktop drag a thread out of the sidebar and drop it on the
+composer; a multi-selection drops together. The chip shows the thread's current title and
+opens it when selected. Your prompt only carries a reference: the agent reads the thread's
+history on demand, so attaching a long thread costs nothing until the agent looks. Attaching a
+thread does not change it, and the agent cannot send messages to it unless you ask.
+
 Images keep their thumbnail shelf above the text and also get a chip at your cursor, so you can
 say exactly which image you mean. Deleting an image chip leaves the image on the shelf; removing
 the thumbnail asks first when the image is still mentioned in your text, then removes both. Files
@@ -281,7 +332,7 @@ exist only as chips: deleting a file's last chip removes the file from the messa
 Copy text that holds chips and paste it into another draft, in the same thread or another one,
 and the chips come along with what they point to. Images and files are fetched again from the
 environment they came from; while that happens the chip shows a dashed outline, and if it cannot
-complete T3 Code tells you and leaves the chip for you to remove or replace. A chip whose
+complete Scient tells you and leaves the chip for you to remove or replace. A chip whose
 context is no longer available shows the same dashed outline; hover it for what to do.
 
 Copying a message with the copy button, or copying text out of it, gives other apps readable
@@ -551,16 +602,17 @@ or joins the end of the queue when work is still running or other messages are
 waiting. Finishing a turn or starting another queued message does not submit
 your draft automatically. **Stash** saves it for later through the usual menu.
 
-**Stop** leaves queued messages in place. When you send another message, that
-answer runs first; the queue waits until it finishes successfully, then advances
-one message at a time. Restarting work or the server does not send queued messages
-by itself. A failed answer also leaves the remaining queue waiting for later
-successful work. You can instead click **Send** on the first waiting message;
-the rest of the queue continues after its answer succeeds. No extra **Retry**
-is needed after that answer finishes.
+**Stop**, interruptions, and failed starts leave the remaining queue held.
+You can send another ordinary message, but its successful answer does not release
+the queue. **Resume** releases it to advance automatically, one message at a time,
+after each successful answer. Restarting work or the server does not release a
+held queue. You can instead click **Send** on the first waiting message to send
+only that row; the rest stays held until you choose **Resume**. Reorder while idle
+to choose a different head.
 
-**Retry** is for a queue delivery error; it cannot bypass a running answer or
-release messages waiting after Stop. Ordinary **Send** is accepted as a new turn
+**Retry** is for a queued message whose provider failed to start; the message stays
+queued. It cannot bypass a running answer or silently release the held tail.
+Ordinary **Send** is accepted as a new turn
 or a queued message, including while the previous answer's checkpoint is settling.
 This completion race does not require sending again.
 

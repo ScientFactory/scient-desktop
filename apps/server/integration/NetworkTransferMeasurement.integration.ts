@@ -31,6 +31,54 @@ export interface HttpTransferMeasurement {
   readonly wireBytes: number;
 }
 
+/** Read-only gzip attribution for synthetic snapshots; hypothetical omissions are never sent. */
+export function attributeSnapshotTransfer(measurement: HttpTransferMeasurement) {
+  const record = Schema.Record(Schema.String, Schema.Unknown);
+  const decoded = Schema.decodeUnknownSync(Schema.fromJsonString(record))(
+    Buffer.from(measurement.decodedBody).toString("utf8"),
+  );
+  const projection = Schema.decodeUnknownSync(record)(decoded.projection);
+  const encode = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+  const gzipBytes = (value: unknown, memLevel = 8) =>
+    NodeZlib.gzipSync(encode(value), { windowBits: 15, memLevel }).byteLength;
+  const full = gzipBytes(decoded);
+  const reorderedProjection = Object.fromEntries([
+    ...["messages", "turnItems", "visibleTurnItems"].map(
+      (field) => [field, projection[field]] as const,
+    ),
+    ...Object.entries(projection).filter(
+      ([field]) => !["messages", "turnItems", "visibleTurnItems"].includes(field),
+    ),
+  ]);
+  const reordered = { ...decoded, projection: reorderedProjection };
+  const level9StartedAt = performance.now();
+  const level9Body = NodeZlib.gzipSync(encode(decoded), { windowBits: 15, level: 9 });
+  const level9CompressionMilliseconds = performance.now() - level9StartedAt;
+  return {
+    rawJsonBytes: measurement.decodedBodyBytes,
+    actualGzipBodyBytes: measurement.encodedBodyBytes,
+    reencodedGzipBodyBytes: full,
+    gzipWindowBits: 15,
+    reorderedFieldsGzipBodyBytes: gzipBytes(reordered),
+    memLevel9GzipBodyBytes: gzipBytes(decoded, 9),
+    level9GzipBodyBytes: level9Body.byteLength,
+    level9CompressionMilliseconds,
+    fields: Object.entries(projection).map(([field, value]) => ({
+      field,
+      rawJsonBytes: Buffer.byteLength(encode(value)),
+      standaloneGzipBytes: gzipBytes({ [field]: value }),
+      gzipSavingsIfOmitted:
+        full -
+        gzipBytes({
+          ...decoded,
+          projection: Object.fromEntries(
+            Object.entries(projection).filter(([key]) => key !== field),
+          ),
+        }),
+    })),
+  };
+}
+
 export const measureHttpGet = Effect.fn("TransferBudget.measureHttpGet")(function* (input: {
   readonly url: string;
   readonly headers?: Readonly<Record<string, string>>;
@@ -93,6 +141,17 @@ export interface WebSocketTransferTotals {
   readonly wireBytes: number;
   readonly decodedBytes: number;
   readonly messages: number;
+}
+
+export function transferDelta(
+  before: WebSocketTransferTotals,
+  after: WebSocketTransferTotals,
+): WebSocketTransferTotals {
+  return {
+    wireBytes: after.wireBytes - before.wireBytes,
+    decodedBytes: after.decodedBytes - before.decodedBytes,
+    messages: after.messages - before.messages,
+  };
 }
 
 export interface WebSocketTransferRecorder {
@@ -162,17 +221,6 @@ function makeWebSocketTransferRecorder(): WebSocketTransferRecorder {
         orElse: () => Effect.die(new Error("Timed out waiting for the WebSocket to open")),
       }),
     ),
-  };
-}
-
-export function transferDelta(
-  start: WebSocketTransferTotals,
-  end: WebSocketTransferTotals,
-): WebSocketTransferTotals {
-  return {
-    wireBytes: Math.max(0, end.wireBytes - start.wireBytes),
-    decodedBytes: Math.max(0, end.decodedBytes - start.decodedBytes),
-    messages: Math.max(0, end.messages - start.messages),
   };
 }
 

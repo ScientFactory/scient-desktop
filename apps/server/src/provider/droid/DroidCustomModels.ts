@@ -20,8 +20,12 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import { AcpProcessExitedError, AcpRequestError } from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
-import type { SessionConfigOption } from "effect-acp/schema";
+// SCIENT-FORK:START — legacy v1 vocabulary; see compat rationale in
+// `acp/DroidAcpSupport.ts`. Upstream moved the pre-v2 hand-written ACP module
+// from `effect-acp/schema` to `effect-acp/compat`.
+import type * as EffectAcpSchema from "effect-acp/compat";
+import type { SessionConfigOption } from "effect-acp/compat";
+// SCIENT-FORK:END
 
 import { droidCanUseKey, type ResolvedModelConnection } from "../../customModels.ts";
 import { assessModelConnections } from "../../customModelReadiness.ts";
@@ -34,7 +38,11 @@ import {
 import type { ServerSettingsService } from "../../serverSettings.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import { makeDroidAcpRuntime, type DroidAcpRuntimeFactory } from "../acp/DroidAcpSupport.ts";
-import { makeDroidKeyBroker, type DroidKeyBroker } from "./DroidKeyBroker.ts";
+import {
+  makeDroidRunBudgetStore,
+  makeDroidKeyBroker,
+  type DroidKeyBroker,
+} from "./DroidKeyBroker.ts";
 import { readDroidOrgHookPolicy, type DroidOrgHookPolicy } from "./DroidOrgPolicy.ts";
 
 const DROID_PROVIDER_BY_PROTOCOL = {
@@ -346,6 +354,7 @@ export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
+  const runBudgetStore = makeDroidRunBudgetStore();
   const readPolicy: ReadDroidOrgHookPolicy =
     readOrgHookPolicy ?? ((input) => readDroidOrgHookPolicy({ ...input, platform }));
   return ({ modelTools, ...input }: Parameters<DroidAcpRuntimeFactory>[0]) =>
@@ -428,6 +437,7 @@ export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
       return yield* Effect.gen(function* () {
         const broker = yield* makeDroidKeyBroker({
           connections,
+          runBudgetStore,
           // Checked in the step that starts each upstream request, so a
           // committed rotation or removal is either seen or after dispatch.
           isCurrent: () => !invalidated && !revokedBy(settings.committedCustomModels().connections),
@@ -481,6 +491,7 @@ export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
         return {
           ...runtime,
           beginTurn: broker.beginTurn,
+          beginRunBudget: broker.beginRunBudget,
           requestLimitBreach: broker.currentBreach,
           upstreamRetrying: broker.turnRetrying,
           assessModelConnections: (models: ReadonlyArray<ServerProviderModel>) =>

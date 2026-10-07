@@ -21,7 +21,7 @@ import {
   TextGenerationError,
 } from "@t3tools/contracts";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as ServerConfig from "../config.ts";
 import type * as AcpSessionRuntime from "../provider/acp/AcpSessionRuntime.ts";

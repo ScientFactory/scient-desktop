@@ -19,6 +19,9 @@ export interface WebSocketCatchUpMeasurement extends WebSocketTransferTotals {
 
 export interface TransferBudgetRun {
   readonly provider: ProviderDriverKind;
+  readonly startupTransport:
+    | "bounded-compact-http-with-live-cursor"
+    | "full-compact-http-with-live-cursor";
   readonly threadSnapshot: HttpTransferMeasurement;
   /** One socket holding only the thread subscription. This is the capped measurement. */
   readonly measuredTurnWebSocket: WebSocketTransferTotals;
@@ -44,16 +47,16 @@ interface ProviderTransferBudget {
   readonly measuredTurnWebSocketMessages: number;
 }
 
-// These caps leave roughly 30% headroom above the client projection of the
+// These caps leave at least 30% headroom above the client projection of the
 // deterministic 9 MB retained-result fixture. Full MCP results stay in
 // persistence, so accidentally shipping them again exceeds these caps by
 // orders of magnitude. The CI report preserves exact values for review.
 const TRANSFER_BUDGET = {
-  totalWireBytes: 15_500,
-  threadSnapshotWireBytes: 7_500,
-  measuredTurnWebSocketWireBytes: 8_000,
-  measuredTurnWebSocketDecodedBytes: 68_000,
-  measuredTurnWebSocketMessages: 21,
+  totalWireBytes: 7_000,
+  threadSnapshotWireBytes: 5_000,
+  measuredTurnWebSocketWireBytes: 2_000,
+  measuredTurnWebSocketDecodedBytes: 30_000,
+  measuredTurnWebSocketMessages: 8,
 } satisfies ProviderTransferBudget;
 
 const TRANSFER_BUDGETS: Readonly<Record<string, ProviderTransferBudget>> = {
@@ -96,9 +99,10 @@ export function formatTransferBudgetResult(runs: ReadonlyArray<TransferBudgetRun
 
   return `${JSON.stringify(
     {
-      schemaVersion: 1,
+      schemaVersion: 2,
       scenario: {
-        id: "thread-transfer-v1",
+        id: "thread-transfer-v2",
+        startupTransport: [...new Set(runs.map((run) => run.startupTransport))],
         historyTurns: TRANSFER_HISTORY_TURN_COUNT,
         historyCommandToolsPerTurn: TRANSFER_HISTORY_TOOLS_PER_TURN,
         historyMcpResultBytes: TRANSFER_HISTORY_MCP_RESULT_BYTES,
@@ -200,8 +204,8 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
     "# Scient thread transfer budget",
     "",
     "Wire values are thread data bytes read from local HTTP and WebSocket sockets. HTTP includes response headers; WebSocket measurement starts after the resumed thread subscription synchronizes. TCP/IP, TLS framing, and the WebSocket upgrade are excluded. WebSocket permessage-deflate is negotiated.",
-    "The measured turn is observed on three sockets at once: one with only the thread subscription (the capped rows), one with only the shell subscription, and a second client holding both. Server egress is the sum of the three. After the turn the second client disconnects and resubscribes from the cursor it held before the turn, which is the cursor a backgrounded phone would hold. SQL statements are `sql.execute` spans counted across the orchestration runtime and the WebSocket handlers.",
-    `Scenario: ${TRANSFER_HISTORY_TURN_COUNT} historical turns with ${TRANSFER_HISTORY_TOOLS_PER_TURN} command tools and one retained ${formatBytes(TRANSFER_HISTORY_MCP_RESULT_BYTES)} MCP result each, followed by one measured turn with ${TRANSFER_MEASURED_TOOLS} command tools and a retained ${formatBytes(TRANSFER_MEASURED_MCP_RESULT_BYTES)} MCP result. Payload sizes are calibrated from heavy local Codex and Claude histories and contain no user data.`,
+    "The measured turn is observed on three sockets at once: one with only the thread subscription (the capped rows), one with only the shell subscription, and a second client holding both. Server egress is the sum of the three. After the turn the second client disconnects and new sockets resubscribe from the cursor it held before the turn, which is the cursor a backgrounded phone would hold. SQL statements are `sql.execute` spans counted across V2 persistence and the HTTP/WebSocket handlers.",
+    `Scenario: ${TRANSFER_HISTORY_TURN_COUNT} historical turns with ${TRANSFER_HISTORY_TOOLS_PER_TURN} command tools and one retained ${formatBytes(TRANSFER_HISTORY_MCP_RESULT_BYTES)} MCP result each, followed by one measured turn with ${TRANSFER_MEASURED_TOOLS} command tools and a retained ${formatBytes(TRANSFER_MEASURED_MCP_RESULT_BYTES)} MCP result. Synthetic V2 domain events exercise persistence, wire projection, and production HTTP/subscription handlers; this does not measure provider adapter ingestion. Payloads contain no user data.`,
     "",
     "| Provider | Total thread wire | Budget | Result |",
     "| --- | ---: | ---: | --- |",
@@ -215,6 +219,12 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
     }),
     "",
     "## Detailed measurements",
+    "",
+    ...[...new Set(runs.map((run) => run.startupTransport))].map((transport) =>
+      transport === "bounded-compact-http-with-live-cursor"
+        ? "Startup measures the shared client's bounded compact HTTP snapshot and live cursor. Earlier pages are requested separately and verified to reconstruct the complete retained history."
+        : "Startup measures the shared client's full compact HTTP snapshot and live cursor. The complete projection is checked against the default legacy response on the same endpoint.",
+    ),
     "",
     "| Provider | Phase | Metric | Observed | Budget | Result |",
     "| --- | --- | --- | ---: | ---: | --- |",

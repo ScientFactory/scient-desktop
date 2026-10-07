@@ -90,6 +90,7 @@ import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { useStreamingBlockEntrance } from "./chat/useStreamingBlockEntrance";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import remarkGfm from "remark-gfm";
+import { remarkKeepWindowsPathDestinations } from "../markdown-windows-path-destinations";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
 import {
   artifactTemplateFromHastProperties,
@@ -168,7 +169,6 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { projectEnvironment } from "../state/projects";
 import {
-  claimWorkspaceBasenameLookup,
   needsWorkspaceBasenameLookup,
   pickWorkspaceBasenameMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
@@ -188,7 +188,6 @@ import {
 } from "./files/filePathClipboard";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import { isAbsolutePath, resolvePathLinkTarget } from "../terminal-links";
-import { workspaceFileHostPath } from "./files/filePath";
 import {
   openFileInPreview,
   openUrlInPreview,
@@ -197,31 +196,24 @@ import {
   BrowserSettingsReadError,
 } from "../browser/openFileInPreview";
 import {
-  resolveStreamingMarkdownDirection,
   resolvePlainTextBoxDirection,
   resolveFenceDirection,
   type ContentDirection,
   type FixedContentDirection,
 } from "../scient/bidi/contentDirection";
-import { useContentDirection } from "../scient/bidi/ContentDirectionScope";
+import { useChatContentDirection } from "../scient/bidi/useChatContentDirection";
 import { rehypeScientBidi } from "../scient/bidi/rehypeScientBidi";
 import "../scient/bidi/scient-bidi.css";
 import {
   resolveScientRichFenceKind,
   ScientRichFence,
 } from "../scient/presentation/ScientRichFence";
-import {
-  ScientInlineWorkspaceImage,
-  ScientPendingWorkspaceImage,
-} from "../scient/images/ScientInlineWorkspaceImage";
 import { ScientDirectImageFigure } from "../scient/images/ScientDirectImageFigure";
-// SCIENT-FORK:START — web images render as a referenced link until the user loads one
-import { hasRemoteSrcSet, remoteImageAddress } from "../scient/presentation/remoteImageAddress";
 import {
-  ScientRemoteImageLoadedContext,
-  ScientRemoteImageReference,
-} from "../scient/presentation/ScientRemoteImageReference";
-// SCIENT-FORK:END
+  ScientMarkdownSource,
+  scientWorkspaceImageCard,
+  useScientRemoteImageReference,
+} from "../scient/images/scientMarkdownImage";
 import {
   inlineWorkspaceImageMarkdownSource,
   inlineWorkspaceImageResource,
@@ -244,17 +236,10 @@ import {
 } from "../scient/math/scientMathText";
 // SCIENT-FORK:END
 import { ScientDisplayMath, ScientInlineMath } from "../scient/math/ScientMath";
-import { openEnvironmentFileInPreview } from "../scient/fileOpening/openEnvironmentFileInPreview";
 import {
-  chatFileLinkResolveInput,
-  chatFileOpenPlan,
-  claimLinkClick,
-  clientPlacedLinkPath,
-  linkOpenLocation,
-  workspaceLocatorAskPath,
-  settleWithin,
-  type ChatFileOpenPlan,
-} from "../scient/fileOpening/chatFileLinkResolution";
+  useChatEnvironmentHtmlPreview,
+  useChatFileLinkOpening,
+} from "../scient/fileOpening/useChatFileLinkOpening";
 import { environmentFileLinkResolution } from "../scient/fileOpening/environmentFileState";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
@@ -345,19 +330,6 @@ export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
   return input.canOpenInBrowser;
 }
 
-/**
- * Marks a chat link click as the user's latest intent for the thread's panel:
- * a newer link click, or anything done in the panel, supersedes it.
- */
-function claimFileLinkClick(threadRef: ScopedThreadRef): () => boolean {
-  return claimLinkClick({
-    claimLatest: claimWorkspaceBasenameLookup,
-    readUserActionRevision: () => useRightPanelStore.getState().getUserActionRevision(threadRef),
-  });
-}
-
-// Longer than the environment's own search bound, so a slow search still answers.
-const FILE_LINK_RESOLVE_WAIT_MS = 3_000;
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
 
@@ -594,6 +566,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkScientMath,
   remarkScientSingleDollarMath,
   remarkScientMathRefinements,
+  remarkKeepWindowsPathDestinations,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -606,6 +579,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkScientMath,
   remarkScientSingleDollarMath,
   remarkScientMathRefinements,
+  remarkKeepWindowsPathDestinations,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -2187,40 +2161,15 @@ function useChatMarkdownState({
     [extraRemarkPlugins, incrementalParsing, lineBreaks],
   );
   const remarkPlugins = useScientMathRemarkPlugins(baseRemarkPlugins, textProp);
-  const scopedContentDirection = useContentDirection();
-  const effectiveContentDirection = contentDirection ?? scopedContentDirection;
-  const streamingDirectionRef = useRef<{
-    messageId: MessageId | null;
-    direction: FixedContentDirection;
-  } | null>(null);
-  if (
-    isStreaming &&
-    effectiveContentDirection === "auto" &&
-    streamingDirectionRef.current?.messageId !== (messageId ?? null)
-  ) {
-    streamingDirectionRef.current = {
-      messageId: messageId ?? null,
-      direction: resolveStreamingMarkdownDirection({
-        markdown: text,
-        requestedDirection: effectiveContentDirection,
-        messageDirectionHint: directionHint,
-        isStreaming: true,
-      }),
-    };
-  }
-  const frozenDirection =
-    effectiveContentDirection === "auto" &&
-    streamingDirectionRef.current?.messageId === (messageId ?? null)
-      ? streamingDirectionRef.current.direction
-      : null;
-  const resolvedContentDirection = resolveStreamingMarkdownDirection({
-    markdown: text,
-    requestedDirection: effectiveContentDirection,
-    messageDirectionHint: directionHint,
-    frozenDirection,
+  // SCIENT-FORK:START — message direction, held while an auto message streams
+  const { effectiveContentDirection, resolvedContentDirection } = useChatContentDirection({
+    text,
+    contentDirection,
+    messageId,
+    directionHint,
     isStreaming,
   });
-  if (!isStreaming) streamingDirectionRef.current = null;
+  // SCIENT-FORK:END
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
   const markdownRef = useRef<HTMLDivElement>(null);
@@ -2492,29 +2441,14 @@ function useChatMarkdownState({
     },
     [createAssetUrl, cwd, openPreview, preparedConnection, threadRef],
   );
-  const openEnvironmentHtmlInPreview = useCallback(
-    (path: string) => {
-      if (!threadRef || preparedConnection._tag === "None") {
-        return Promise.resolve(
-          AsyncResult.failure<void, BrowserPreviewUnavailableError>(
-            Cause.fail(
-              new BrowserPreviewUnavailableError({
-                message: "Environment is not connected.",
-              }),
-            ),
-          ),
-        );
-      }
-      return openEnvironmentFileInPreview({
-        threadRef,
-        path,
-        httpBaseUrl: preparedConnection.value.httpBaseUrl,
-        createAssetUrl,
-        openPreview,
-      });
-    },
-    [createAssetUrl, openPreview, preparedConnection, threadRef],
-  );
+  // SCIENT-FORK:START — pages outside the workspace open in the integrated browser
+  const openEnvironmentHtmlInPreview = useChatEnvironmentHtmlPreview({
+    threadRef,
+    preparedConnection,
+    createAssetUrl,
+    openPreview,
+  });
+  // SCIENT-FORK:END
   const findWorkspaceBasenameMatch = useCallback(
     async (workspaceRelativePath: string) => {
       if (!cwd || environmentId === null || !needsWorkspaceBasenameLookup(workspaceRelativePath)) {
@@ -2535,131 +2469,23 @@ function useChatMarkdownState({
     },
     [cwd, environmentId, searchProjectEntries],
   );
-  // Asks the environment that owns the files what a link means; see
-  // resolveEnvironmentFileLink on the server. `location` is where the link
-  // opens when it opens as written: the client's own placement, except for a
-  // home-relative link, which opens where the environment says it is. When
-  // the environment could not be asked, the link opens as the client placed it.
-  const planFileLinkOpen = useCallback(
-    async (
-      askedPath: string,
-      clientPath: string,
-    ): Promise<{ readonly plan: ChatFileOpenPlan; readonly location: string }> => {
-      const input = chatFileLinkResolveInput({
-        linkPath: askedPath,
-        workspaceRoot: cwd,
-        changedPaths: changedFiles?.map((file) => file.path) ?? [],
-      });
-      if (input === null || environmentId === null) {
-        return { plan: chatFileOpenPlan(null), location: clientPath };
-      }
-      const resolution = await settleWithin(
-        resolveEnvironmentFileLink({ environmentId, input }).then((result) =>
-          result._tag === "Success" ? result.value : null,
-        ),
-        FILE_LINK_RESOLVE_WAIT_MS,
-        null,
-      );
-      return {
-        plan: chatFileOpenPlan(resolution),
-        location: linkOpenLocation({ resolution, askedPath, clientPath, workspaceRoot: cwd }),
-      };
-    },
-    [changedFiles, cwd, environmentId, resolveEnvironmentFileLink],
-  );
-  // Opens the file a chat link means. A link whose location does not exist
-  // opens the one workspace file it meant, when there is exactly one; without
-  // a single answer it opens as written and the file panel offers the choices.
-  // `panelPath` is the client's placement of the link: a workspace locator or
-  // a host path. For a link authored from the home folder it is that authored
-  // `~/` spelling instead, which only the environment can place.
-  const openLinkInPanel = useCallback(
-    (panelPath: string, line: number | undefined, authoredHomeRelative: boolean) => {
-      if (!threadRef) return;
-      const isCurrentClick = claimFileLinkClick(threadRef);
-      void (async () => {
-        const { plan, location } = await planFileLinkOpen(
-          authoredHomeRelative ? panelPath : workspaceLocatorAskPath(panelPath, cwd),
-          authoredHomeRelative ? clientPlacedLinkPath(panelPath, cwd) : panelPath,
-        );
-        if (!isCurrentClick()) return;
-        useRightPanelStore
-          .getState()
-          .openFile(threadRef, plan.kind === "resolved" ? plan.path : location, line);
-      })();
-    },
-    [cwd, planFileLinkOpen, threadRef],
-  );
-  const openFileInPanel = useCallback(
-    (panelPath: string, line: number | undefined) => openLinkInPanel(panelPath, line, false),
-    [openLinkInPanel],
-  );
-  const openHomeRelativeLinkInPanel = useCallback(
-    (panelPath: string, line: number | undefined) => openLinkInPanel(panelPath, line, true),
-    [openLinkInPanel],
-  );
-  // Outside media opens in the media viewer when its file exists. A missing
-  // one gets the same treatment as any other link, in the file panel.
-  const openMarkdownMediaLink = useCallback(
-    (mediaPath: string, filePath: string, homeRelativePath?: string) => {
-      if (!threadRef) {
-        openMarkdownMedia(mediaPath, filePath);
-        return;
-      }
-      const isCurrentClick = claimFileLinkClick(threadRef);
-      void (async () => {
-        const { plan, location } = await planFileLinkOpen(homeRelativePath ?? filePath, filePath);
-        if (!isCurrentClick()) return;
-        if (plan.kind === "as-written") {
-          // A home-relative link opens from where the environment says it is:
-          // in the files panel when that is inside the workspace, like any
-          // other workspace media, otherwise in the media viewer.
-          if (location === filePath) openMarkdownMedia(mediaPath, filePath);
-          else if (isAbsolutePath(location)) openMarkdownMedia(location, location);
-          else useRightPanelStore.getState().openFile(threadRef, location);
-          return;
-        }
-        useRightPanelStore
-          .getState()
-          .openFile(threadRef, plan.kind === "resolved" ? plan.path : location);
-      })();
-    },
-    [openMarkdownMedia, planFileLinkOpen, threadRef],
-  );
-  // An HTML link opens in the integrated browser: the page the link names, or
-  // the one workspace page it meant. With no single answer it goes to the file
-  // panel, which explains and offers the choices.
-  const openHtmlLinkInBrowser = useCallback(
-    async (
-      filePath: string,
-      workspaceRelativePath: string | null,
-      homeRelativePath?: string,
-    ): Promise<AtomCommandResult<unknown, unknown>> => {
-      const superseded = AsyncResult.success<void, never>(undefined);
-      if (!threadRef) return openEnvironmentHtmlInPreview(filePath);
-      const isCurrentClick = claimFileLinkClick(threadRef);
-      const clientPath = workspaceRelativePath ?? filePath;
-      const { plan, location } = await planFileLinkOpen(homeRelativePath ?? filePath, clientPath);
-      if (!isCurrentClick()) return superseded;
-      if (plan.kind === "missing") {
-        useRightPanelStore.getState().openFile(threadRef, location);
-        return superseded;
-      }
-      if (plan.kind === "resolved" && cwd) {
-        return openMarkdownFileInPreview(workspaceFileHostPath(plan.path, cwd), plan.path);
-      }
-      if (location !== clientPath) {
-        // A home-relative page, opened where the environment says it is.
-        return cwd && !isAbsolutePath(location)
-          ? openMarkdownFileInPreview(workspaceFileHostPath(location, cwd), location)
-          : openEnvironmentHtmlInPreview(location);
-      }
-      return cwd && workspaceRelativePath
-        ? openMarkdownFileInPreview(filePath, workspaceRelativePath)
-        : openEnvironmentHtmlInPreview(filePath);
-    },
-    [cwd, openEnvironmentHtmlInPreview, openMarkdownFileInPreview, planFileLinkOpen, threadRef],
-  );
+  // SCIENT-FORK:START — every file link asks the environment what it means
+  const {
+    openFileInPanel,
+    openHomeRelativeLinkInPanel,
+    openMarkdownMediaLink,
+    openHtmlLinkInBrowser,
+  } = useChatFileLinkOpening({
+    threadRef,
+    cwd,
+    environmentId,
+    changedFiles,
+    resolveEnvironmentFileLink,
+    openMarkdownMedia,
+    openMarkdownFileInPreview,
+    openEnvironmentHtmlInPreview,
+  });
+  // SCIENT-FORK:END
   const revealMarkdownFileInFileManager = useCallback(
     async (fileLinkMeta: MarkdownFileLinkMeta) => {
       const workspaceRelativePath = fileLinkMeta.workspaceRelativePath;
@@ -2931,48 +2757,31 @@ const CHAT_MARKDOWN_COMPONENTS = {
         : null;
     const useScientImageCard = Boolean(node?.properties?.dataScientImageCard);
     // SCIENT-FORK:START — web images render as a referenced link until the user loads one.
-    // Inside a link the card is the link's content and the link keeps working.
-    const remoteImage =
-      directUri === null || use(ScientRemoteImageLoadedContext)
-        ? null
-        : remoteImageAddress(resolveProtocolRelativeMediaUrl(directUri));
-    const remoteImageReference =
-      remoteImage === null ? null : (
-        <ScientRemoteImageReference
-          address={remoteImage}
-          alt={altText}
-          kind={kind}
-          copyMarkdown={markdownSource}
-          id={props.id}
-          insideLink={use(MarkdownLinkContext)}
-        >
-          <MarkdownImg node={node} alt={alt} src={src} title={title} {...props} />
-        </ScientRemoteImageReference>
-      );
+    const remoteImageReference = useScientRemoteImageReference({
+      directUri,
+      altText,
+      kind,
+      markdownSource,
+      id: props.id,
+      MarkdownLinkContext,
+      renderImage: () => <MarkdownImg node={node} alt={alt} src={src} title={title} {...props} />,
+    });
     // SCIENT-FORK:END
-    if (useScientImageCard && image && markdownSource && threadRef && !isStreaming) {
-      return (
-        <ScientInlineWorkspaceImage
-          image={image}
-          markdownSource={markdownSource}
-          threadRef={threadRef}
-          srcFragment={srcFragment}
-          filePresentation={imageCaptions}
-          caption={imageCaptions ? authoredTitle : undefined}
-          authoredAlt={altText}
-          authoredSource={srcString}
-        />
-      );
-    }
-    if (useScientImageCard && image && markdownSource) {
-      return (
-        <ScientPendingWorkspaceImage
-          image={image}
-          markdownSource={markdownSource}
-          reason={isStreaming ? "streaming" : "unavailable"}
-        />
-      );
-    }
+    // SCIENT-FORK:START — standalone workspace images render as Scient image cards
+    const workspaceImageCard = scientWorkspaceImageCard({
+      useScientImageCard,
+      image,
+      markdownSource,
+      threadRef,
+      isStreaming,
+      srcFragment,
+      imageCaptions,
+      authoredTitle,
+      altText,
+      srcString,
+    });
+    if (workspaceImageCard !== null) return workspaceImageCard;
+    // SCIENT-FORK:END
     if (
       githubMedia &&
       cwd !== undefined &&
@@ -3084,12 +2893,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <ChatMarkdownImageFallback alt={altText} copyMarkdown={markdownSource} kind={kind} />;
   },
   // SCIENT-FORK:START — a <picture> source never fetches a web address; its <img> is gated
-  source: function MarkdownSource({ node: _node, ...props }) {
-    const remote =
-      hasRemoteSrcSet(props.srcSet) ||
-      (typeof props.src === "string" && remoteImageAddress(props.src) !== null);
-    return remote ? null : <source {...props} />;
-  },
+  source: ScientMarkdownSource,
   // SCIENT-FORK:END
   div: function MarkdownDiv({ node, children, ...props }) {
     const { onUseArtifactTemplate } = use(ChatMarkdownRendererContext);

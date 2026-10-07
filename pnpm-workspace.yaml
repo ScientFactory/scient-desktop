@@ -164,6 +164,11 @@ overrides:
   "@exodus/bytes>@noble/hashes": "1.8.0"
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
   "@react-navigation/core": 7.21.13
+  # The thread-safety and pending-response patches below apply to these exact
+  # versions; a fresh resolution would otherwise pick a newer patch release and
+  # silently drop them. Bump only together with re-qualified patches.
+  expo-modules-core: 58.0.11
+  expo-notifications: 58.0.11
   # The dbus-next patch drops usocket from the package, but pnpm resolves from the
   # registry manifest, so the edge has to be cut here as well.
   "dbus-next>usocket": "-"
@@ -221,6 +226,12 @@ overrides:
   "@tailwindcss/vite": "catalog:"
   "@types/node": "catalog:"
   effect: "catalog:"
+  # OpenCode 2's protocol and schema packages hard-pin an older Effect rc as a
+  # dependency, and their schemas fail to decode under a second Effect copy.
+  # The `effect` override above already collapses them; these name the edge so it
+  # stays pinned on its own. OpenCode2Client.live.test.ts re-proves it on bumps.
+  "@opencode/protocol>effect": "catalog:"
+  "@opencode/schema>effect": "catalog:"
   node-abi: 4.33.0
   lightningcss: "catalog:"
   tailwindcss: "catalog:"
@@ -280,12 +291,20 @@ patchedDependencies:
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
   react-native-screens@4.28.0: patches/react-native-screens@4.28.0.patch
   uniwind@1.11.0: patches/uniwind@1.11.0.patch
+  expo-modules-core@58.0.11: patches/expo-modules-core@58.0.11.patch
+  expo-notifications@58.0.11: patches/expo-notifications@58.0.11.patch
 
 peerDependencyRules:
   allowAny:
     - vite
   allowedVersions:
     vite: "*"
+
+# @cursor/sdk finds its platform package (sandbox helper, rg, tree-sitter) by
+# walking up from the entry script for node_modules/@cursor/sdk-<platform>-<arch>.
+# pnpm keeps optional deps inside the virtual store, so hoist it to the root.
+publicHoistPattern:
+  - "@cursor/sdk-*"
 
 supportedArchitectures:
   cpu: [current, x64]

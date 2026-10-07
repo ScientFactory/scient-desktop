@@ -91,6 +91,78 @@ it.each([false, true])(
   },
 );
 
+it.each([
+  { animation: "pending", navigationFails: false },
+  { animation: "pending", navigationFails: true },
+  { animation: "cancelled", navigationFails: false },
+  { animation: "cancelled", navigationFails: true },
+] as const)(
+  "removes an accepted fork dialog before navigation with a $animation animation (retry: $navigationFails)",
+  async ({ animation, navigationFails }) => {
+    let closedAnimationReads = 0;
+    Object.defineProperty(Element.prototype, "getAnimations", {
+      configurable: true,
+      value(this: Element) {
+        if (this.getAttribute("data-slot") !== "dialog-popup") return [];
+        if (animation === "cancelled") {
+          if (!this.hasAttribute("data-closed") || closedAnimationReads++ > 0) return [];
+          // CSS transitions can be cancelled without a replacement animation.
+          return [{ finished: Promise.reject(new DOMException("Cancelled", "AbortError")) }];
+        }
+        return [{ finished: new Promise<never>(() => {}), playState: "running" }];
+      },
+    });
+    let completeSetup!: () => void;
+    const setup = new Promise<void>((resolve) => {
+      completeSetup = resolve;
+    });
+    const handoff = vi.fn();
+    function Probe() {
+      const [open, setOpen] = useState(true);
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState<string | null>(null);
+      return (
+        <ScientForkWorkspaceModeDialog
+          open={open}
+          disabled={busy}
+          source="this-response"
+          proposedTitle="My fork"
+          titleOverrideSupported
+          worktreeAvailability={{ available: true }}
+          error={error}
+          onOpenChange={setOpen}
+          onConfirm={async (_, closeBeforeNavigate) => {
+            setBusy(true);
+            await setup;
+            const closed = await closeBeforeNavigate();
+            handoff(closed, document.querySelector('[data-slot="dialog-popup"]'));
+            if (navigationFails) setError("The fork is ready. Retry to open it.");
+            else setOpen(false);
+            setBusy(false);
+          }}
+        />
+      );
+    }
+    await act(() => root.render(<Probe />));
+    await act(() => {
+      document
+        .querySelector("form")!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(document.querySelector('[data-slot="dialog-popup"]')).not.toBeNull();
+    expect(handoff).not.toHaveBeenCalled();
+    await act(async () => completeSetup());
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(handoff).toHaveBeenCalledExactlyOnceWith(true, null);
+    });
+    if (navigationFails) {
+      expect(document.querySelector('[role="alert"]')?.textContent).toContain("Retry");
+      expect(document.querySelector("input")?.value).toBe("My fork");
+    } else expect(document.querySelector('[data-slot="dialog-popup"]')).toBeNull();
+  },
+);
+
 it.each([false, true])(
   "can be closed while the fork is being made, and then does not move the user (reopened: %s)",
   async (reopened) => {

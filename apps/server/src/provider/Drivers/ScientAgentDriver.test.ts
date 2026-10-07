@@ -21,6 +21,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
 import { ScientAgentDriver } from "./ScientAgentDriver.ts";
+import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -30,6 +31,7 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-scient-driver-managed-actions-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(Layer.succeed(HostProcessPlatform, "darwin")),
   Layer.provideMerge(Layer.succeed(HostProcessArchitecture, "arm64")),
   Layer.provideMerge(OmpExecutableGate.layer),
@@ -72,6 +74,8 @@ it.layer(testLayer)("ScientAgentDriver", (it) => {
         config: ScientAgentDriver.defaultConfig(),
       });
       expect(instance.managedRuntimeActions).toBeDefined();
+      expect(instance.orchestrationAdapter.driver).toBe(ScientAgentDriver.driverKind);
+      expect(instance.orchestrationAdapter.instanceId).toBe(instance.instanceId);
       const snapshot = yield* instance.snapshot.getSnapshot;
       expect(snapshot.connection?.runtime).toMatchObject({ source: "missing", actions: [] });
       expect(snapshot.connection?.runtime?.message).toContain("release");

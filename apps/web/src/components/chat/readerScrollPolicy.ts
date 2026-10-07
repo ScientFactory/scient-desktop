@@ -5,6 +5,7 @@ import {
   type TimelineListMeasurementState,
   withRealTimelineEnd,
 } from "./timelineScrollAnchoring";
+import type { RunId } from "@t3tools/contracts";
 
 /** Where a row's readable content ends; trailing file lists and controls come after it. */
 const READING_END_SELECTOR = '[data-reading-end], [data-user-message-body="true"]';
@@ -182,54 +183,58 @@ export function canApplySendAnchor(input: {
   );
 }
 
-function readingRowTurnId(row: MessagesTimelineRow): string | undefined {
-  if ("message" in row) return row.message.turnId ?? undefined;
-  if ("turnId" in row) return row.turnId ?? undefined;
-  if (row.kind === "work-live") return row.entry.turnId ?? undefined;
-  if (row.kind === "work") return row.groupedEntries[0]?.turnId ?? undefined;
+/**
+ * The run that owns a row. The timeline is keyed on runs: neither `ChatMessage`
+ * nor any `MessagesTimelineRow` carries a turn id any more, so every grouping
+ * below resolves a `runId`. The persisted position still spells the field
+ * `turnId` — `timelineScrollAnchoring` owns that shape and reads it back
+ * unchanged — so what is stored and compared here is a run id end to end.
+ */
+function readingRowRunId(row: MessagesTimelineRow): string | undefined {
+  if ("message" in row) return row.message.runId ?? undefined;
+  if ("runId" in row) return row.runId ?? undefined;
+  if (row.kind === "work-live") return row.entry.runId ?? undefined;
+  if (row.kind === "work") return row.groupedEntries[0]?.runId ?? undefined;
   return undefined;
 }
 
 function isDurableRow(row: MessagesTimelineRow) {
-  return (
-    row.kind !== "working" &&
-    row.kind !== "thinking" &&
-    !(row.kind === "activity-group" && row.active) &&
-    row.kind !== "worktree-setup"
-  );
+  return row.kind !== "working" && row.kind !== "thinking" && row.kind !== "worktree-setup";
 }
 
-/** Render-only indicators belong to their turn, never to a reusable UI row ID. */
+/** Render-only indicators belong to their run, never to a reusable UI row ID. */
 export function readingIdentity(
   rows: readonly MessagesTimelineRow[],
   index: number,
-  runningTurnId?: string | null,
+  runningRunId?: RunId | null,
 ) {
   const row = rows[index];
   if (!row) return null;
-  const neighbors: Array<{ id: string; turnId: string | null }> = [];
+  const neighbors: Array<{ id: string; runId: RunId | null }> = [];
   for (let distance = 0; neighbors.length < 8 && distance < rows.length; distance++) {
     for (const i of distance === 0 ? [index] : [index - distance, index + distance]) {
       const candidate = rows[i];
       if (candidate?.kind === "message")
-        neighbors.push({ id: candidate.message.id, turnId: candidate.message.turnId });
+        neighbors.push({ id: candidate.message.id, runId: candidate.message.runId });
     }
   }
-  const turnId =
-    readingRowTurnId(row) ??
-    (!isDurableRow(row) ? runningTurnId : undefined) ??
-    neighbors.find((neighbor) => neighbor.turnId)?.turnId ??
+  const runId =
+    readingRowRunId(row) ??
+    (!isDurableRow(row) ? runningRunId : undefined) ??
+    neighbors.find((neighbor) => neighbor.runId)?.runId ??
     undefined;
   return {
     rowId: isDurableRow(row) ? row.id : "",
     ...("message" in row ? { messageId: row.message.id } : {}),
-    ...(turnId ? { turnId } : {}),
+    // `turnId` is the persisted field name timelineScrollAnchoring still owns;
+    // the value it carries is the row's run id (see readingRowRunId).
+    ...(runId ? { turnId: runId } : {}),
     ...("createdAt" in row && row.createdAt ? { createdAt: row.createdAt } : {}),
     neighborMessageIds: neighbors.slice(0, 8).map((neighbor) => neighbor.id),
   };
 }
 
-/** Exact content first; a missing render wrapper can fall back within its turn. */
+/** Exact content first; a missing render wrapper can fall back within its run. */
 export function resolveReadingRow(
   rows: readonly MessagesTimelineRow[],
   position: RememberedTimelinePosition,
@@ -241,7 +246,7 @@ export function resolveReadingRow(
       (position.messageId
         ? "message" in row && row.message.id === position.messageId
         : row.id === position.rowId &&
-          (!position.turnId || readingRowTurnId(row) === position.turnId)),
+          (!position.turnId || readingRowRunId(row) === position.turnId)),
   );
   if (index >= 0) return { index, exact: true };
   if (position.turnId) {
@@ -250,11 +255,11 @@ export function resolveReadingRow(
       (row) =>
         row.kind === "message" &&
         row.message.role === "assistant" &&
-        row.message.turnId === position.turnId,
+        readingRowRunId(row) === position.turnId,
     );
     if (index < 0)
       index = rows.findIndex(
-        (row) => isDurableRow(row) && readingRowTurnId(row) === position.turnId,
+        (row) => isDurableRow(row) && readingRowRunId(row) === position.turnId,
       );
     if (index >= 0) return { index, exact: false };
   }
@@ -267,7 +272,6 @@ export function resolveReadingRow(
   return null;
 }
 
-/** The server delivers a queued prompt under this message id prefix (threadQueue Worker). */
 /**
  * Whether a newly arrived prompt gets the same reveal as a direct send: only
  * a queued prompt the server delivered (not one sent from another window),

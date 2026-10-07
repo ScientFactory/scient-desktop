@@ -110,6 +110,23 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
       }).pipe(Effect.provide(TestClock.layer())),
     );
 
+    it.effect("clears a cached miss when clone completion adds a favicon", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const unrelated = yield* makeTempDir;
+        expect(yield* resolver.resolvePath(cwd)).toBeNull();
+        expect(yield* resolver.resolvePath(unrelated)).toBeNull();
+        yield* writeTextFile(cwd, "favicon.svg", "<svg>cloned</svg>");
+        yield* writeTextFile(unrelated, "favicon.svg", "<svg>unrelated</svg>");
+        expect(yield* resolver.resolvePath(cwd)).toBeNull();
+        yield* resolver.invalidate(cwd);
+        expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "favicon.svg"));
+        expect(yield* resolver.resolvePath(unrelated)).toBeNull();
+      }),
+    );
+
     it.effect("prefers well-known favicon files", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;

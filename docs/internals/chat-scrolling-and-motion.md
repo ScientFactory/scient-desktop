@@ -1,7 +1,7 @@
 # Chat scrolling and motion
 
 How the chat timeline scrolls and moves, in every situation, as it behaves
-today on the PR #462 branch. Use it to decide what to change: each section
+today on the PR #462 branch (on T3 Orchestration V2). Use it to decide what to change: each section
 states the rule in plain words, then the numbers and the code that owns it.
 Paths are under `apps/web/src/components/` unless they start with
 `packages/`. Open questions and candidates for change are collected at the end.
@@ -92,7 +92,8 @@ Owner: `ChatView.tsx` (`captureSendReadingPosition`, `frameSubmittedMessage`),
   3. After that it only shows the first lines (48px) of a newer message
      pushed below the screen, and never follows an answer down to its end.
 - **A queued message counts as "delivered"** when this window saw it waiting
-  in the queue, or the server gave it a `queue:` id.
+  in the thread's V2 queue: a queued run's message keeps its id when it is
+  delivered.
 
 ## How the follow moves
 
@@ -114,8 +115,8 @@ Owner: `ChatView.tsx` (`captureSendReadingPosition`, `frameSubmittedMessage`),
 - **Far behind** (more than a screen to go): it skips all but the last screen
   at once, then glides.
 - **When it ends:** once the response has settled and been revealed, or when
-  you scroll up. While the thread is still starting (acknowledged but not yet
-  picked up), it waits rather than ending.
+  you scroll up. While the send's run has not started yet, it waits rather
+  than ending.
 
 ## While the agent works
 
@@ -130,7 +131,8 @@ Owners: `chat/MessagesTimeline.tsx` (`WorkingTimelineRow`,
   under the previous answer and then jumps below your message. The exception
   is a worktree being set up, which shows at once.
 - **It doesn't flicker out** between the server accepting your message and
-  the agent starting the turn. That gap is bridged for up to 15s.
+  the agent starting its run: the send stays busy until V2 reports the run
+  running.
 - **When the turn finishes,** the header fades out while its space closes
   (320ms, even ease), so the answer slides up instead of snapping up about 43px.
 - **"Thinking" row** (below the content):
@@ -170,7 +172,7 @@ clipped.
 
 ## Keeping the end in view while idle
 
-`keepReadingEndInView` and `idleEndKeeping` in `chat/MessagesTimeline.tsx`
+`keepReadingEndInView` and `idleEndKeeping` in `chat/readerScrolling.ts`
 
 - **When you rest at the end** (by the rule above) and content above the end
   grows (an image or diagram finishes loading, the window or a panel resizes),
@@ -280,7 +282,6 @@ clipped.
 | Composer glide (first send)               | 260ms, cubic-bezier(0.2, 0, 0, 1)                   | `chat/draftHeroTransition.ts`                                |
 | First message entrance                    | 300ms after 100ms                                   | `chat/MessagesTimeline.tsx`                                  |
 | Working header exit                       | 320ms, cubic-bezier(0.45, 0, 0.55, 1)               | `chat/workingRowExit.ts`                                     |
-| Turn-start bridge                         | up to 15s                                           | `chat/timelineWorkingState.ts`                               |
 | Thinking fade                             | 300ms                                               | `chat/MessagesTimeline.tsx`                                  |
 | Shines                                    | 4.5rem band, 2.2s                                   | `index.css`                                                  |
 | Interaction settle / disclosure settle    | 400ms / 2 frames                                    | `chat/MessagesTimeline.tsx`                                  |
@@ -302,7 +303,7 @@ Recorded in `UPSTREAM.md`:
   - the working header shine and exit;
   - the Thinking fade;
   - the line-by-line answer reveal;
-  - the working-row timing (waits for your message, bridges the startup gap);
+  - the working-row timing (waits for your message);
   - the return-to-following position.
 - **Unchanged from T3:** the first-message reserved room, and the shared
   `resolveChatListAnchoredEndSpace`, which mobile also uses.

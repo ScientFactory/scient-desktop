@@ -16,6 +16,9 @@ model picker can open the same compact setup flow. On mobile, open
 **Settings > Environments** and choose **Set up Antigravity** for the host
 environment.
 
+Once the runtime is installed, you can also sign in from **Settings > Provider accounts** in the
+mobile app.
+
 1. If Antigravity is missing, choose **Install Antigravity**. Scient downloads
    the qualified official runtime into private app storage, checks the archive
    and executable, and activates it only after validation succeeds.
@@ -114,23 +117,16 @@ Skills for every project go in `~/.gemini/config/skills` or
 `~/.gemini/antigravity-cli/skills`. Antigravity does not read `~/.agents/skills`,
 so a skill there only appears when the project itself is your home directory.
 
-Antigravity accepts images, PDFs, text files, and supported audio formats directly.
-Its limits are 1 MiB per text file, 10 MiB per image, 20 MiB per audio clip, and
-50 MiB total native attachments per message. PDFs, text, and audio that exceed
-their native limits or the remaining native budget are passed as file paths
-for the agent to inspect with tools. ZIP archives and videos also use file paths.
-These files do not count toward the native attachment budget or enable native video input.
-Unsupported image formats are rejected. The native limits can be lower than
-the general upload limit.
+Antigravity receives images directly. Every other attachment, including PDFs,
+text, audio, archives, and videos, is passed as a saved file path for the agent
+to inspect with its tools. A video path does not enable native video input.
 
 Use Antigravity's native `/plan` command to request a plan. Scient's separate
 Plan mode control is unavailable when the protocol cannot support it.
 
-Antigravity receives supported workspace files and message attachments through
-the ACP protocol, including images, PDFs, text, and audio. Its file edits,
-shell commands, and web actions use Scient's normal permission surfaces.
-Provider questions with fixed choices remain interactive even in **Full
-access**. See [Permission modes](./permission-modes.md).
+File edits, shell commands, and web actions use Scient's normal permission surfaces.
+Provider questions with fixed choices remain interactive even in **Full access**. See
+[Permission modes](./permission-modes.md).
 
 Antigravity does not support conversation rewind. Reverting a thread or editing
 and resubmitting an earlier turn is therefore unavailable; send a follow-up or
@@ -165,7 +161,7 @@ until a session, a refresh, or a sign-out reports something new.
 
 To check access and reload models, use **Refresh provider status** in web or desktop
 provider settings, or **Refresh models** in mobile thread settings. If asked to
-sign in again, use setup on web or desktop.
+sign in again, use provider settings on web or desktop, or **Provider accounts** on mobile.
 
 Legacy `agy` credentials use the older provider-owned credential store and are
 kept for legacy-session compatibility. Removing the ACP runtime does not erase

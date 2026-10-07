@@ -1,6 +1,6 @@
 import { ScientAgentSettings, type ServerProvider, type ServerSettings } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import type * as Crypto from "effect/Crypto";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -20,7 +20,9 @@ import {
 import { makeScientAgentManagedRuntimeResolution } from "../../scient/providerLifecycle/ScientAgentManagedRuntimeActions.ts";
 import { makeOmpTextGeneration } from "../../textGeneration/OmpTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
+import { makeOmpAdapterV2 } from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
+import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
+import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
 import {
   checkOmpProviderStatus,
   makePendingOmpProvider,
@@ -54,6 +56,7 @@ export type ScientAgentDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
+  | IdAllocatorV2
   | OmpExecutableGate
   | Path.Path
   | ProviderEventLoggers
@@ -160,21 +163,22 @@ export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentD
           },
         };
       };
-      const adapter = yield* makeOmpAdapter({
+      const orchestrationAdapter = makeOmpAdapterV2({
         target: scientAgentTarget,
-        binaryPath: launchConfig.binaryPath,
-        providerInstanceId: instanceId,
-        stateDir: serverConfig.stateDir,
-        attachmentsDir: serverConfig.attachmentsDir,
-        environment: processEnv,
-        makeProcess: makeRpcClient,
-        // The resume identity: a cursor written under another root is refused.
+        instanceId,
+        settings: launchConfig,
         homePath: root,
+        environment: processEnv,
+        spawner,
+        fileSystem: fs,
+        path,
+        crypto: yield* Crypto.Crypto,
+        serverConfig,
+        makeProcess: makeRpcClient,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-      );
+        idAllocator: yield* IdAllocatorV2,
+        continuations: yield* ProviderContinuationRequests,
+      });
       const textGeneration = yield* makeOmpTextGeneration(
         scientAgentTarget,
         launchConfig,
@@ -227,8 +231,8 @@ export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentD
             }),
         ),
       );
-      // Signing out also stops this provider's conversations; the lifecycle
-      // manager does that, so it holds for whichever instance is current.
+      // Account removal settles this exact instance's native conversations;
+      // other instances own independent account roots and remain live.
       const connectionActions = makeScientAgentConnectionActions({ open: openSignIn });
       // Scient Agent has no updater of its own; Scient replaces the executable.
       const maintenance = makeManualOnlyProviderMaintenanceCapabilities({
@@ -263,7 +267,7 @@ export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentD
         enabled,
         snapshot,
         snapshotForCwd: checkProvider,
-        adapter,
+        orchestrationAdapter,
         textGeneration,
         connectionActions,
         managedRuntimeActions: managedRuntime.actions,

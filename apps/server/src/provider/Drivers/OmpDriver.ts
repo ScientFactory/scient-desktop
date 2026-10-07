@@ -20,6 +20,9 @@ import { BackgroundPolicy } from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeOmpManagedRuntimeResolution } from "../../scient/providerLifecycle/OmpManagedRuntimeActions.ts";
+import { makeOmpAdapterV2 } from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
+import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
+import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
 import { makeOmpCustomModelsClientFactory } from "../omp/OmpCustomModels.ts";
 import { sweepStaleOmpExtensionFiles } from "../omp/OmpExtensionBootstrap.ts";
 import type { OmpExecutableGate } from "../omp/OmpExecutableGate.ts";
@@ -27,7 +30,6 @@ import { ompTarget } from "../omp/OmpTarget.ts";
 import { customModelDiscoverySnapshot } from "../../customModelCapabilities.ts";
 import { makeOmpTextGeneration } from "../../textGeneration/OmpTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { checkOmpProviderStatus, makePendingOmpProvider } from "../Layers/OmpProvider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -58,6 +60,7 @@ export type OmpDriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
+  | IdAllocatorV2
   | OmpExecutableGate
   | Path.Path
   | ProviderEventLoggers
@@ -153,24 +156,21 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
           runtime: managedRuntime.summary,
         },
       });
-      const adapter = yield* makeOmpAdapter({
+      const orchestrationAdapter = makeOmpAdapterV2({
         target: ompTarget,
-        binaryPath: launchConfig.binaryPath,
-        providerInstanceId: instanceId,
-        stateDir: serverConfig.stateDir,
-        attachmentsDir: serverConfig.attachmentsDir,
+        instanceId,
+        settings: launchConfig,
         environment: processEnv,
+        spawner,
+        fileSystem: fs,
+        path,
+        crypto: yield* Crypto.Crypto,
+        serverConfig,
         makeProcess: makeRpcClient,
-        homePath: home || undefined,
-        profile: profile || undefined,
-        // The shared native provider event log, written from the adapter so a
-        // native agent's raw protocol frames stay diagnosable like every other
-        // provider's.
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-      );
+        idAllocator: yield* IdAllocatorV2,
+        continuations: yield* ProviderContinuationRequests,
+      });
       const textGeneration = yield* makeOmpTextGeneration(
         ompTarget,
         launchConfig,
@@ -288,7 +288,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
             Effect.provideService(Path.Path, path),
             Effect.map(stamp),
           ),
-        adapter,
+        orchestrationAdapter,
         textGeneration,
         managedRuntimeActions: managedRuntime.actions,
       } satisfies ProviderInstance;

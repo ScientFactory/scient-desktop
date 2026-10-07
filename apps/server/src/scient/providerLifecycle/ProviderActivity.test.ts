@@ -1,93 +1,89 @@
-import { assert, it } from "@effect/vitest";
-import {
-  ProviderDriverKind,
-  type OrchestrationThreadShell,
-  type ProviderSession,
-  ThreadId,
-  TurnId,
-} from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
+import { describe, expect, it } from "vite-plus/test";
+import { NodeId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { hasProviderActivity } from "./ProviderActivity.ts";
 
-import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ProviderService } from "../../provider/Services/ProviderService.ts";
-import {
-  ProviderSessionDirectory,
-  type ProviderRuntimeBindingWithMetadata,
-} from "../../provider/Services/ProviderSessionDirectory.ts";
-import { make, ProviderActivity } from "./ProviderActivity.ts";
+const codex = ProviderDriverKind.make("codex");
+const omp = ProviderDriverKind.make("omp");
+const first = ProviderInstanceId.make("codex-first");
+const second = ProviderInstanceId.make("codex-second");
+const other = ProviderInstanceId.make("omp-instance");
+const idle = {
+  provider: codex,
+  driverByInstance: new Map([
+    [first, codex],
+    [second, codex],
+    [other, omp],
+  ]),
+  runs: [],
+  sessions: [],
+  threads: [],
+} satisfies Parameters<typeof hasProviderActivity>[0];
 
-const CODEX = ProviderDriverKind.make("codex");
-const THREAD = ThreadId.make("thread-1");
+describe("V2 provider runtime activity", () => {
+  it("guards both instances of a driver without blocking another driver", () => {
+    expect(
+      hasProviderActivity({ ...idle, runs: [{ providerInstanceId: second, status: "running" }] }),
+    ).toBe(true);
+    expect(
+      hasProviderActivity({ ...idle, runs: [{ providerInstanceId: other, status: "running" }] }),
+    ).toBe(false);
+  });
 
-function isBusy(input: {
-  readonly sessions?: ReadonlyArray<Partial<ProviderSession>>;
-  readonly thread?: Partial<OrchestrationThreadShell>;
-  readonly failDirectory?: boolean;
-}) {
-  const binding = { threadId: THREAD, provider: CODEX, lastSeenAt: "2026-09-26T00:00:00.000Z" };
-  return Effect.gen(function* () {
-    const activity = yield* ProviderActivity;
-    return yield* activity.isBusy(CODEX);
-  }).pipe(
-    Effect.provideServiceEffect(ProviderActivity, make),
-    Effect.provideService(ProviderService, {
-      listSessions: () =>
-        Effect.succeed(
-          (input.sessions ?? []).map(
-            (session) =>
-              ({
-                provider: CODEX,
-                status: "ready",
-                threadId: THREAD,
-                ...session,
-              }) as ProviderSession,
-          ),
-        ),
-    } as unknown as ProviderService["Service"]),
-    Effect.provideService(ProviderSessionDirectory, {
-      listBindings: () =>
-        input.failDirectory
-          ? Effect.die("directory unavailable")
-          : Effect.succeed([binding as ProviderRuntimeBindingWithMetadata]),
-    } as unknown as ProviderSessionDirectory["Service"]),
-    Effect.provideService(ProjectionSnapshotQuery, {
-      getThreadShellById: () =>
-        Effect.succeed(
-          input.thread ? Option.some(input.thread as OrchestrationThreadShell) : Option.none(),
-        ),
-    } as unknown as ProjectionSnapshotQuery["Service"]),
-  );
-}
+  it("guards preparing, starting, and waiting work before a native session exists", () => {
+    for (const status of ["preparing", "starting", "waiting"] as const) {
+      expect(hasProviderActivity({ ...idle, runs: [{ providerInstanceId: first, status }] })).toBe(
+        true,
+      );
+    }
+  });
 
-it.effect("is idle when no session of the provider is working", () =>
-  Effect.gen(function* () {
-    assert.strictEqual(yield* isBusy({ sessions: [{ status: "ready" }] }), false);
-  }),
-);
+  it("allows idle sessions and terminal runs", () => {
+    for (const status of [
+      "queued",
+      "completed",
+      "failed",
+      "cancelled",
+      "interrupted",
+      "rolled_back",
+    ] as const) {
+      expect(
+        hasProviderActivity({
+          ...idle,
+          runs: [{ providerInstanceId: first, status }],
+          sessions: [{ driver: codex, status: "ready" }],
+        }),
+      ).toBe(false);
+    }
+  });
 
-it.effect("is busy while a session starts or runs a turn", () =>
-  Effect.gen(function* () {
-    assert.strictEqual(yield* isBusy({ sessions: [{ status: "running" }] }), true);
-    assert.strictEqual(yield* isBusy({ sessions: [{ status: "connecting" }] }), true);
-    assert.strictEqual(
-      yield* isBusy({ sessions: [{ status: "ready", activeTurnId: TurnId.make("turn-1") }] }),
-      true,
-    );
-  }),
-);
+  it("guards a native starting session even without a run", () => {
+    expect(
+      hasProviderActivity({ ...idle, sessions: [{ driver: codex, status: "starting" }] }),
+    ).toBe(true);
+  });
 
-it.effect("is busy while a settled turn's background work still runs", () =>
-  Effect.gen(function* () {
-    assert.strictEqual(
-      yield* isBusy({ thread: { id: THREAD, backgroundLiveness: "monitoring", session: null } }),
-      true,
-    );
-  }),
-);
+  it("guards background work owned by an older provider thread after the selected instance changes", () => {
+    expect(
+      hasProviderActivity({
+        ...idle,
+        runs: [{ providerInstanceId: other, status: "completed" }],
+        threads: [
+          {
+            driver: codex,
+            status: "idle",
+            pendingBackgroundTasks: [{ kind: "subagent", taskId: NodeId.make("child") }],
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
 
-it.effect("counts as busy when activity cannot be read", () =>
-  Effect.gen(function* () {
-    assert.strictEqual(yield* isBusy({ failDirectory: true }), true);
-  }),
-);
+  it("treats an unavailable instance with unsettled work as busy", () => {
+    expect(
+      hasProviderActivity({
+        ...idle,
+        runs: [{ providerInstanceId: ProviderInstanceId.make("removed"), status: "running" }],
+      }),
+    ).toBe(true);
+  });
+});

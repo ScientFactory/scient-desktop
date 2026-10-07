@@ -1,0 +1,19 @@
+@layer base {
+  /* Explicit font-medium/semibold/bold utilities still own emphasis. */
+  pre,
+  code,
+  kbd,
+  samp,
+  .font-mono,
+  diffs-container,
+  .scient-markdown-code-block,
+  .scient-markdown-source-island-editor,
+  .scient-markdown-reference-source,
+  .scient-markdown-math-source {
+    font-weight: var(--font-weight-monospace, inherit);
+  }
+  b,
+  strong {
+    font-weight: var(--font-weight-emphasis, bolder);
+  }
+}

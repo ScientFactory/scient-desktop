@@ -1,0 +1,37 @@
+/* The stage background remains a component-layer class; register its name
+   for the upstream unknown-class check without moving its theme rules. */
+@utility scient-stage-art {
+  --scient-semantic-hook: 1;
+}
+
+/* Semantic hook for the shared rich-math source toolbar. */
+@utility scient-math-source-toolbar {
+  --scient-semantic-hook: 1;
+}
+
+/* Small semantic utilities retained from Scient's established visual language. */
+@utility tracking-subtle {
+  letter-spacing: -0.005em;
+}
+
+@utility leading-compact {
+  line-height: 1.45;
+}
+
+@utility backdrop-blur-px {
+  backdrop-filter: blur(1px);
+}
+
+@utility ease-drawer {
+  transition-timing-function: var(--ease-drawer);
+}
+
+@utility text-4xs {
+  font-size: 0.4375rem;
+  line-height: 1;
+}
+
+@utility text-xl-scient {
+  font-size: 1.4rem;
+  line-height: 1.75rem;
+}

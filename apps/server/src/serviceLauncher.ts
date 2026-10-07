@@ -25,6 +25,7 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
   SERVICE_STOP_MARKER_FILE,
+  SERVICE_RESTART_PENDING_FILE,
 } from "./cloud/serviceProtocol.ts";
 import { isEntrypoint } from "./entrypoint.ts";
 
@@ -602,13 +603,16 @@ export class Launcher {
   }
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const baseDir = process.env.T3CODE_HOME?.trim();
   if (baseDir === undefined || baseDir === "") {
     throw new Error("T3CODE_HOME is required by the Scient service launcher.");
   }
   const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
   const state = await readServiceState(statePath);
+  await NodeFSP.rm(NodePath.join(baseDir, "runtime", SERVICE_RESTART_PENDING_FILE), {
+    force: true,
+  });
   await new Launcher(baseDir, state).run();
 }
 

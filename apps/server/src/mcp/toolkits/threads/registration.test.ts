@@ -4,22 +4,22 @@ import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts"
 import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import { McpSchema, McpServer, Tool } from "effect/unstable/ai";
 
 import { ScientThreadsToolkitRegistrationLive } from "../../McpHttpServer.ts";
 import { scientOperationCatalog } from "../../ScientOperationCatalog.ts";
+import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
+import { LegacyV1ThreadImporter } from "../../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import { McpInvocationContext, type McpCapability } from "../../McpInvocationContext.ts";
-import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import { workspaceResolverForTest } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
 import { ScientThreadReadTool } from "./tools.ts";
 
 const TestLayer = ScientThreadsToolkitRegistrationLive.pipe(
+  Layer.provide(Layer.mock(ProjectionStoreV2)({ getThreadShell: () => Effect.succeed(null) })),
   Layer.provide(
-    Layer.mock(ProjectionSnapshotQuery)({
-      getThreadShellById: () => Effect.succeed(Option.none()),
-      getThreadDetailById: () => Effect.succeed(Option.none()),
+    Layer.mock(LegacyV1ThreadImporter)({
+      ensureTranscript: () => Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
     }),
   ),
   Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
@@ -81,12 +81,17 @@ it("admits scient_thread_read only with the threads:read session grant", () => {
 it.effect(
   "dispatches the renamed reader, rejects the retired name, and honors revoked grants",
   () => {
-    const lookup = vi.fn(() => Effect.succeedNone);
+    const lookup = vi.fn(() => Effect.succeed(null));
     const layer = ScientThreadsToolkitRegistrationLive.pipe(
       Layer.provide(
-        Layer.mock(ProjectionSnapshotQuery)({
-          getThreadShellById: () => Effect.succeedNone,
-          getThreadDetailById: lookup,
+        Layer.mock(ProjectionStoreV2)({
+          getThreadShell: lookup,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(LegacyV1ThreadImporter)({
+          ensureTranscript: () =>
+            Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
         }),
       ),
       Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
@@ -122,7 +127,7 @@ it.effect(
       const granted = new Set<McpCapability>();
       granted.add("threads:read");
       yield* call("scient_thread_read", granted);
-      expect(lookup).toHaveBeenCalledExactlyOnceWith(threadId, { activityKinds: [] });
+      expect(lookup).toHaveBeenCalledExactlyOnceWith(threadId);
 
       const retired = yield* Effect.flip(call("t3_thread_read", granted));
       expect(retired._tag).toBe("InvalidParams");

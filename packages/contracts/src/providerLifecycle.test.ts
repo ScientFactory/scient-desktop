@@ -16,6 +16,8 @@ const decodeAuthorizationCode = Schema.decodeUnknownSync(
 );
 const decodeConnectionOperation = Schema.decodeUnknownSync(ProviderConnectionOperation);
 const decodeRuntimeSummary = Schema.decodeUnknownSync(ProviderRuntimeSummary);
+const decodeTypedRuntimeSummary = Schema.decodeSync(ProviderRuntimeSummary);
+const encodeRuntimeSummary = Schema.encodeSync(ProviderRuntimeSummary);
 
 describe("ProviderConnectionSubmitAuthorizationCodeInput", () => {
   it("accepts a bounded one-time provider code", () => {
@@ -126,6 +128,41 @@ describe("ProviderRuntimeSummary", () => {
         .availableManagedVersion,
     ).toBe("0.156.1");
   });
+
+  for (const distribution of ["binary", "npx", "uvx"] as const) {
+    it(`round-trips ${distribution} registry ownership without credentials or invented historical installers`, () => {
+      const installation = {
+        agentId: "example-agent",
+        distribution,
+        version: "1.2.3",
+        installRoot: `/owned/example/${distribution}`,
+        executablePath: `/owned/example/${distribution}/agent`,
+        ...(distribution === "binary"
+          ? {}
+          : {
+              installer: "/tools/package-manager",
+              packageSpec: "example@1.2.3",
+              packageVersion: "1.2.3",
+            }),
+      };
+      const decoded = decodeRuntimeSummary({
+        ...summary,
+        source: "registry",
+        actions: ["remove"],
+        installation: { ...installation, credential: "must-not-cross-the-wire" },
+      });
+      expect(decoded.installation).toEqual(installation);
+      expect(decodeTypedRuntimeSummary(encodeRuntimeSummary(decoded))).toEqual(decoded);
+      if (distribution === "binary") expect(decoded.installation).not.toHaveProperty("installer");
+      expect(() =>
+        decodeRuntimeSummary({
+          ...summary,
+          source: "registry",
+          installation: { ...installation, installer: "" },
+        }),
+      ).toThrow();
+    });
+  }
 
   it("decodes display-only runtime diagnostics without credential fields", () => {
     expect(

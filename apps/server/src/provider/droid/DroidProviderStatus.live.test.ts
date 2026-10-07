@@ -12,6 +12,8 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { beforeAll } from "vite-plus/test";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
+import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { DroidDriver } from "../Drivers/DroidDriver.ts";
@@ -62,7 +64,11 @@ const layer = Layer.mergeAll(
     ),
   ),
   Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(
+  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(IdAllocator.layer),
+  Layer.provideMerge(ProviderContinuationRequests.layer),
+);
 
 const sessionFiles = (home: string): ReadonlyArray<string> => {
   const directory = NodePath.join(home, ".factory", "sessions");

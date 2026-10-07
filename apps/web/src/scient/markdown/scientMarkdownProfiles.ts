@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 
 import { remarkGithubAlerts } from "../../markdown-github-alerts";
 import { remarkNormalizeListItemIndentation } from "../../markdown-list-indentation";
+import { remarkKeepWindowsPathDestinations } from "../../markdown-windows-path-destinations";
 import { remarkScientMath, remarkScientMathRefinements } from "../math/remarkScientMath";
 import { remarkScientSingleDollarMath } from "../math/scientSingleDollarMath";
 
@@ -29,6 +30,7 @@ export const SCIENT_MARKDOWN_GRAMMAR_REMARK_PLUGINS: RemarkPlugins = [
   remarkScientMath,
   remarkScientSingleDollarMath,
   remarkScientMathRefinements,
+  remarkKeepWindowsPathDestinations,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
 ];

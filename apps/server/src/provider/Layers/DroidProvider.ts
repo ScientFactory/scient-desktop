@@ -14,7 +14,10 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+// SCIENT-FORK:START — legacy v1 adapter vocabulary; see compat rationale in
+// `acp/DroidAcpSupport.ts`.
+import type * as EffectAcpSchema from "effect-acp/compat";
+// SCIENT-FORK:END
 
 import * as AcpSessionRuntimeType from "../acp/AcpSessionRuntime.ts";
 import { HttpClient } from "effect/unstable/http";

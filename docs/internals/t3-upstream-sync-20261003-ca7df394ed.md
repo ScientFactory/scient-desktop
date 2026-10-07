@@ -1,0 +1,1315 @@
+# T3 upstream sync through ca7df394ed
+
+> Maintainer receipt. Product workflows live in [docs/user](../user/).
+
+**Final integration closeout, 2026-10-07: required source, documentation,
+strict provenance and local qualification are complete.** Qualified candidate
+`47ff6dc0987e902a9eafaff23a44e2f72ce19fc3` is managed-delivered in the existing
+alignment app and is the exact macOS arm64 artifact source. Available final
+browser functional subcases pass; native/screenshot visual subcases remain
+explicitly unverified. The closing receipt below distinguishes these boundaries.
+
+**Republished 2026-10-07 on checkable history.** The required provenance check
+rejected the original pull request's history; the qualified tree now lands on
+`codex/t3-sync-ca7df394ed-20261007` as #466, superseding #465. See
+[republication](#republication-on-checkable-history--2026-10-07).
+
+The earlier source qualification checkpoint
+`1249a2d1ab29ef75830f0db1a43550bf9f6f0146` has the exact qualified whole
+tree `73b838f17ff6e9d26c2786d99905f442430b6b68`, identical to preserved
+ordinary-hook publication `5a51ef8036e966ab6c7e4d85de3c83830f839d3e`.
+It retains cleaner `3d44a4e667b1d79be68c8d5c8ebb2c06d4000108`, caret
+`99eb14cb828944b461466d3da92769160c07e2e6`, Claude's delivered capacity
+`f835e5adf9b33725f20dcc92bc44c77ed0a8fcdc`, the obsolete provider errors cut
+and reviewed mobile/workspace/Droid/OMP repairs. Its four literal two-parent
+merges are recorded below; original source checkpoints and failures survive.
+
+V1 execution service, directory, metrics, queue and snapshot owners, the old
+Query/facade and orphan V1 adapter fixtures/contract are retired. Current native
+V2 adapters, canonical public contracts, historical event codecs, migrations
+and legacy import/recovery readers remain. Transactional event publication
+and import completion share one owned publication boundary; pending-start
+reservations protect session acquisition and generation-fence idle re-arming.
+See [architecture](./overview.md), [provider lifecycle](./provider-lifecycle.md)
+and [migration guidance](./legacy-orchestration-migration.md) for their actual
+owners and limits.
+
+The complete server run on tree
+`2c2f443c698795d87fbc43ae24c62254927faaa4` records **11,146 passed, five failed
+and 182 skipped cases across 963 files**. Its failures are two Droid FIFO
+cases, one queued-workspace case and two OMP preparation cases. Reviewed
+fixtures now join the exact successor's durable admission before manually
+draining a disabled worker; assertions, native payloads and deadlines remain
+intact. Their three complete files pass **74 cases** on composed tree
+`d4ed913c834988507f2d908a45ee1a820afffba7`; the actual canonical mobile attachment
+consumer also passes **34 cases**, with scoped formatting and lint passing.
+All five observed failures are repaired on that candidate. The original
+failed full run is preserved, not relabeled as green; unchanged passing files
+are reused, not rerun to establish a stability claim.
+
+Completed continuation gates record web unit **10,344**, mobile **1,929**,
+desktop **1,606** passing cases and a passing scripts cohort. All 32 package
+typechecks passed on tree `905f217491837f87690cbf7c81cf7b4820570cf6`. Formatting,
+lint, brand and intended-upstream seam checks passed on the preceding frozen
+source. Direct public-codec and real migrated SQLite smokes passed, including
+concurrent publication to both buses, SQL rollback and the next writer.
+The first recursive test invocation aborted on concurrent lazy Electron
+installation; serial completion of the actual dependency installation
+resolved that environment prerequisite. Its failure log remains intact.
+
+The full build and actual macOS arm64 DMG/ZIP packaging passed on tree
+`06b3e055bb6562258dd2fc1698e786675e3f3576`. The DMG checksum is valid; independent
+inspection matches the packaged PDF workers to that build and identifies the
+native Cursor, voice and SyncTeX resources. That artifact has this exact source
+scope, not an implied final-commit or release qualification. The newer complete
+workspace build passes all six tasks without cache hits on current qualified
+tree `73b838f17ff6e9d26c2786d99905f442430b6b68`, at preserved source `5a51`.
+Its bundler warnings remain recorded; a build is not packaged-app execution.
+The earlier artifact is not promoted to this newer source scope.
+
+The first existing
+`knip:check` fails on 26 unused-file findings before its export phase. The finite
+repair is composed on tree `3da0abfcea28c54e6788b3f5f929f3869720b565`:
+22 dependency-cleared receipt/schema/fork/detail/settlement/title and legacy
+projection-facade modules retire; current V2 owners and direct legacy SQL readers,
+tables, migrations and canonical codecs remain. Four real dynamic/documented
+test/tool entries are preserved explicitly, not ignored. The first finite tree's
+files/dependencies phase passes, but its export phase genuinely reports
+**48 unused exports**. Their completed repair, including the newly disconnected
+Cursor helper and inert legacy notification wiring, is published in the current
+`73b838f17ff6e9d26c2786d99905f442430b6b68` tree. Both existing Knip phases,
+all 32 compilers without cache hits, owned formatting/lint, **486 cases across
+38 complete affected server files** and **25 client pending-request cases**
+pass. Direct public-codec and actual migrated-SQL publication/rollback/both-bus
+smokes also pass on that exact tree. Independent completed source review finds
+no actionable blocker. The original unused-file and export failures remain
+intact; no blanket ignore, new baseline or strict-CI activation is introduced.
+
+The four-case `V1ImportBoundary.test.ts` source-file/import/SQL-string inventory
+and its test-only lexer exercise are retired rather than re-pinned to removed
+paths, under the existing source-text/wiring-test rule. This does not remove
+real importer, SQL, native ownership or codec assertions. The original complete
+server report still records the static cases that existed at its exact source.
+
+The existing alignment app is managed-delivered at `f835e5adf9`; the newer
+receiving composition has not yet replaced it. Its profile and unrelated agent
+compiler configuration are protected. Final managed delivery must use an idle,
+verified boundary. The user has authorized the consolidated visual/functional
+run-through after delivery; root owns the nine-surface check on disposable
+fixtures. An unavailable or locked screen is an explicit acceptance gap, not
+proof of a passing surface. No new app or separate smoke-window launch is
+claimed here. Prior UI captures remain dated candidate evidence. Linux
+physical-reader/cgroup, native mobile, remote SSH and unexercised provider
+combinations retain separate limits. No push, PR, release or completed manual
+acceptance is claimed.
+
+### Historical source-separation receipt — 6ced to f835
+
+The released documentation receipt
+`bd3b4865099471e70eafddb4b6c251293a2fdddb` records thirteen reviewed extraction
+merges between `6ced7918d858ba35aec6b4f85d2ba6b2bf15436e` and
+`f835e5adf9b33725f20dcc92bc44c77ed0a8fcdc`, measured against official
+`ca7df394ed8151fa77f856beefa90bc60a785d60`. Its historical host-line measure
+falls from **53,855 to 37,432 lines in 702 upstream files**: the extraction
+merges remove 17,358 lines, while other changes in that range add 935, for a
+net reduction of 16,423. Advisory inventory records marked findings
+231 → 375, new debt 10,542 → 10,046, and unresolved findings 102 → 102.
+These are different source measures, not behavior results, current receiving
+inventory, or permission to enable a strict ratchet or advance the qualified
+upstream cursor. The
+[reproducible measurement and continuation rules](./upstream-alignment-protocol.md#keep-scient-implementation-outside-upstream-hosts)
+preserve their exact inputs; the
+[current extracted-owner map](./scient-fork-divergence.md#extracted-owners-and-host-mounts)
+reflects the receiving source rather than freezing the older mounts.
+
+The receipt's queue-order, timeline-link and general idle-timer observations
+remain historical, owner-scoped findings. Later exact-admission fixture repairs
+and startup-reservation checks have their own evidence above; neither source
+separation nor those bounded checks establishes general timer uniqueness,
+physical reader cleanup, or manual acceptance.
+
+### Historical early integration checkpoint
+
+The following candidate, ancestry and dated execution records preserve the
+earlier integration history. The early `d7b4042e3d` checkpoint plus reviewed
+`7ef738fb31` composition reported 11,928 passed, 21 failed and 152 skipped cases
+across 890 files, with all 32 package typechecks passing. Earlier isolated app
+evidence at `802e278c28`, `3564658e28` and later dated sections below remains
+limited to those exact revisions. The current status above supersedes their
+then-open repair descriptions; it does not rewrite their outcomes.
+
+## Republication on checkable history — 2026-10-07
+
+The hosted `Verify upstream provenance` check on #465 (head
+`3f71ce747b444627140cd2dae0f23be5a7b661b0`) failed with 169 rejected merge
+parents. From owned main `33ab8e307afbabda3e155c439d89bc788148d379`, that history
+introduces 122 merges whose extra parents are neither official T3 nor owned
+main, including octopus merges of 3 to 20 parents. The receipts the branch
+added admit only exact two-parent edges, so no receipt set could pass. The
+earlier strict passes below covered only the later
+`99eb14cb828944b461466d3da92769160c07e2e6` range; they did not qualify the
+range the required check inspects.
+
+Everything through owned-main checkpoint
+`794ff29ed2120ac2d2ee13f30488e68b17402cb7` passes unchanged: it contains only the
+literal official merge and the main catch-up. Republication therefore:
+
+- commits the exact qualified tree on that checkpoint as `2a48f8bac2`; its diff
+  against `3f71ce747b` is empty, so the qualification evidence for that tree
+  carries over unchanged;
+- keeps the original lanes reachable through tag
+  `archive/v2-alignment-lanes-20261006` (= `3f71ce747b`);
+- removes the now-unused `ownedIntegrationMerges` receipts and restores owned
+  main's provenance verifier, so no exemption path remains; and
+- advances `upstream-state.json` to `ca7df394ed8151fa77f856beefa90bc60a785d60`
+  with upstream merge `b8fbae4ffa84414b02461cf42a0afa4b10a03fcc`, which also lets
+  the seam check resolve V2 mounts against the adopted upstream instead of
+  `54084ae1e6`.
+
+Later commits on the republished branch repair the hosted gates the provenance
+failure had hidden or that failed independently; they are recorded below.
+
+## Candidate and ancestry
+
+| Boundary                    | Identity                                                             |
+| --------------------------- | -------------------------------------------------------------------- |
+| Owned starting base         | `ad215fd9157e86252a2ee1187e746b65c8b003be`                           |
+| Previous qualified upstream | `54084ae1e6c32809db040e4fa571c80fdf2d8ae4`                           |
+| Adopted upstream            | `ca7df394ed8151fa77f856beefa90bc60a785d60` — 15 commits              |
+| Literal upstream merge      | `b8fbae4ffa84414b02461cf42a0afa4b10a03fcc`                           |
+| Frozen owned-main catch-up  | `33ab8e307afbabda3e155c439d89bc788148d379` — 70 commits              |
+| Owned-main merge checkpoint | `794ff29ed2120ac2d2ee13f30488e68b17402cb7`                           |
+| Branch / upstream push      | `codex/t3-sync-ca7df394ed-20261003` / `DISABLED`                     |
+| Target tag relationship     | No exact local tag; nearest ancestor `v0.0.45-nightly.20260930.2493` |
+| Integration worktree        | `ScientFactory-worktrees/scient-t3-sync-ca7df394ed-20261003`         |
+
+The upstream merge has exact parents `ad215fd9157e86252a2ee1187e746b65c8b003be`
+and `ca7df394ed8151fa77f856beefa90bc60a785d60`. The catch-up has exact parents
+`b8fbae4ffa84414b02461cf42a0afa4b10a03fcc` and the frozen owned-main commit. Neither
+history is squash-replayed. `upstream-state.json` retains the previous qualified
+cursor until final acceptance. No push, PR, release or manual acceptance is claimed.
+
+### Reviewed owned source publications — 2026-10-06
+
+These ordered parents are literal local Git topology, not squash equivalents
+or permission to import arbitrary non-official history:
+
+- Cleaner source checkpoint `3d44a4e667b1d79be68c8d5c8ebb2c06d4000108`,
+  tree `dfa983d68580830242b756090a13f638bf44cb21`, has parents
+  `7238163eabeb697959f87f7d071f19816530f050`,
+  `b16ea34be44f85d4bbe4d5125e1b6aeaea7dc7c5`,
+  `93ac3a1c6e3efffa33a2992ce7a602f0132c1697`,
+  `bc2ca56c3104e8c61958c1b254c5880574b07e38`,
+  `2fca2fd7c7a9e9eab92bda43a0b66c4acedb0413`.
+  Its codec/SQL/source qualification is bounded separately from later native,
+  artifact and app acceptance.
+- Delivered startup repair `f835e5adf9b33725f20dcc92bc44c77ed0a8fcdc`
+  has parents `7238163eabeb697959f87f7d071f19816530f050` and
+  `b5467e986ca6bd7f84eb2fdf75d760d9e0d9c254`. The final donor's complete owner
+  cohort passes 366 cases across 25 files; its completed different review and
+  actual delivered-composition selected server cohort (7,159 passing cases)
+  remain distinct evidence scopes. Only this exact reviewed edge is added to
+  the existing machine-readable owned-merge receipts.
+- Receiving source checkpoint `d74644f50e3142e9a7ea62fa59ca9e78812890b6`,
+  tree `d4ed913c834988507f2d908a45ee1a820afffba7`, has parents
+  `99eb14cb828944b461466d3da92769160c07e2e6`,
+  `f835e5adf9b33725f20dcc92bc44c77ed0a8fcdc`,
+  `5e28723441ac924b39d897585cd2a39b6ba378c4`,
+  `1768be85e3b25f338ac4b9500f11a20a79693846`,
+  `1ac9e21f76d0d02898fbec9df4e1846a4fe1ad1f`.
+  Ordinary hooks preserve the exact qualified source tree. The existing
+  introduced-history verifier passes from exact receiving base99e to this
+  exact head against literal officialca7, with its existing owned-head mode
+  and exact delivered-startup receipt; no checker policy or qualified cursor
+  is changed.
+
+The verifier's successful `99e` → `d746` result applies only to that exact
+introduced range and current-head exemption. It is not a successful check of
+`99e` → any later receiving head. Its owned-merge receipt validator still
+requires exactly two parents; the five-parent source publications above are
+audited literal composition boundaries, not new machine-receipt exceptions.
+Later qualification must record its own actual base, head and mode, alongside
+these preserved source proofs. No checker relaxation, rewritten ancestry or
+advance of the qualified `54084ae1e6c32809db040e4fa571c80fdf2d8ae4` cursor follows
+from scoped source qualification.
+
+The direct no-window startup-policy smoke uses the actual delivered policy
+with seeded runtime identities and real Effect refs, scopes and fibers:
+nested holds preserve generation7, last release re-arms generation8, and a
+replacement runtime retains its own timer. It does not exercise the full
+manager, a vendor process, physical reader release or UI.
+
+## Architecture and protected decisions
+
+Production execution uses native V2 admission, deciders, durable events, projections,
+workers and recovery. Retained section and clicked-message fork payloads call V2
+services. V1 libraries are retained only where historical import or compatibility
+tests consume them. Dead V1 production layers and unused parallel readers were
+removed after checking their callers; preservation means preserving behavior.
+
+- **MCP authority:** credentials bind exactly the issuer's requested capabilities.
+  Native session creation requests Scient document, compute, Sources and history
+  capabilities explicitly, alongside orchestration/worktree/PR capabilities. Browser
+  and device access remain conditional. Skill delivery requires the configured
+  adapter's actual host-injection channel and exact `skills:read` scope. Native tool
+  support alone does not prove that channel exists. Credential reuse compares the
+  whole grant; exact live and pending owners control reclamation.
+- **History versus inspection:** `scient_thread_read` is read-only, paginated and
+  same-project under `threads:read`. `scient_thread_inspect` uses `orchestration`,
+  accepts user-attached context and acknowledges a direct child's complete terminal
+  result. Both read native projections. Attached-thread guidance names inspection.
+  Canonical tools use `scient_`; historical aliases and private MCP/profile/package
+  identities remain compatible.
+- **RPC compatibility:** one `orchestration.dispatchCommand` registration accepts
+  both payload families and preserves `forkDisposition`. Fields distinguish the two
+  fork shapes. No retained command is routed into a V1 execution engine.
+- **ACP configuration:** missing or null inventory remains distinct from an explicit
+  empty array in both wire generations. The production compatibility codec is
+  lenient. Transport termination composes prompt cleanup and caller notification.
+  Generated ACP schema files were not regenerated from mutable remote inputs.
+- **Selection authority:** selected skills are durable message data, not inferred
+  from prompt text. Queued edits replace them atomically; `[]` clears selection.
+  Context omission retains the old value; explicit null clears both the message
+  and its queued turn item. Removed queue edits recover into ordinary drafts.
+- **Migration ledger:** released Scient migration identities remain immutable.
+  `059_OrchestrationV2.ts` is byte-identical to upstream `055_OrchestrationV2.ts`;
+  upstream's next migration is composed at 060. Structured slot-collision refusal
+  runs before the opaque migrator error. Foreign ledgers are not rewritten.
+- **Data and execution:** historical activity, tools, plans, system messages and
+  approvals survive import. Approvals remain inert; history grants no provider-native
+  continuation, approval or fork authority. Native held admission follows durable
+  receipts, then retires only the accepted legacy queue source. Original V1 data
+  remains recoverable. [Migration evidence](../operations/orchestration-v2-migration-verification.md)
+  describes both databases, queue files and attachment recovery.
+- **Projects and workspaces:** V2 requires project identity. Scratch/internal projects
+  remain explicit identities. Workspace transition planning reads SQL ProjectStore,
+  detaches the exact old binding before delivery and preserves portable history and
+  held order. A process is shared across workspaces only when both per-thread cwd
+  and multiple-thread capabilities explicitly allow it; instance identity always
+  remains a guard.
+- **Providers:** adapters own native differences. OMP, Droid, Pi and legacy
+  Antigravity use native V2 transports. Scient Agent is an independent product,
+  backed by its target-aware RPC adapter, managed executable and instance-owned
+  state root. Product version is distinct from OMP runtime version. Sign-out and
+  managed-runtime changes tear down the exact configured instance, preserving peers.
+- **Released compatibility:** OpenCode 1 remains valid below Scient 0.6.18; OpenCode 2
+  starts there. Pi retains Scient's shipped 0.0.42 minimum and 0.84.4 supported
+  version. Unstamped development-build opt-in remains a separate policy.
+- **Transport:** opt-in `item-refs-v1` HTTP snapshots reference only byte-equivalent
+  canonical items. Unmarked responses keep the old shape; the shared decoder
+  restores visibility, provenance and history before ingestion. Invalid references
+  fail. Transfer ceilings and fixture entropy were not weakened.
+- **Product boundaries:** cloud, telemetry, updater, signing and mobile publication
+  controls are preserved. Public language is Scient. Compatibility-sensitive paths,
+  environment variables, package names and license notices are retained. SSH adopts
+  upstream's archive runner while retaining Scient's pinned-package default.
+- **Mobile native concurrency:** the installed Expo 58 permissions registry keeps
+  Scient's synchronized registration/read boundary. Notification replay removes
+  only its delivered snapshot, and registration during delivery sees the pending
+  response before callbacks run. Version-pinned package patches preserve these
+  guarantees without rolling back SDK 58 or activating mobile distribution.
+
+## Preservation acceptance map
+
+These rows identify implementation and reproducible proof owners. Full-candidate
+requalification is still required; live providers and other operating systems are
+separate acceptance boundaries.
+
+| Criterion                                           | Named proof / owner                                                                                                                                                                                                           |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| B1–B2: lineage and complete inert historical import | `LegacyScientHistory.test.ts`, `LegacyV1ThreadImporter.test.ts`, `LegacyV1Cutover.integration.test.ts`; [migration handoff](../operations/orchestration-v2-migration-verification.md)                                         |
+| B3: native OMP and instance routing                 | `OmpAdapterV2.test.ts`, `OmpProviderHandoff.integration.test.ts`, `OmpNativeProcess.integration.test.ts`: native model/continuation, default executable/RPC startup, exact child Stop, recovered transcript and held FIFO     |
+| B4: Droid ACP supervision                           | `DroidAdapterV2.test.ts`, `AcpAdapterV2.test.ts`: confirmed autonomy, explicit specification approval, refusal before delivery                                                                                                |
+| B5 + E8: Pi native selection and Scient delivery    | `PiAdapterV2.test.ts`, `PiCustomModels.test.ts`, Pi orchestrator replays: canonical model/effort, instance authority and native skill commands                                                                                |
+| B6 + B11: tool inventory, ownership and dispatch    | Native adapter owner tests, actual MCP catalog/dispatch tests, manager-issued capability/skill tests; actual producer-to-SQL workflow lifetime regressions                                                                    |
+| B7: workspace transitions                           | `WorkspaceRelocation.integration.test.ts`, native manager lifetime tests and `OmpProviderHandoff.integration.test.ts`: immediate/held, live/dead old binding, exact MCP ownership                                             |
+| B8: continuation identity                           | `ProviderContinuationIdentity.integration.test.ts`, `ProviderSwitchService.test.ts`, OMP cursor cases: instance/account/home/target boundaries                                                                                |
+| B9: delegation and thread creation                  | `DelegatedCompletionDelivery.test.ts`, native subagent tests, MCP orchestration integration; [Agents receipt](../operations/orchestration-v2-agents-parity.md)                                                                |
+| B12: Scient Agent                                   | `ScientAgentDriver.test.ts`, exact-account lifecycle tests, both targets in `OmpProviderHandoff.integration.test.ts`                                                                                                          |
+| B13: provenance and removal                         | Registry catalog/driver, shared runtime manager, contracts and presentation:167 unique passing cases/seven complete files; exact installation and removal races independently reviewed. Final app acceptance remains required |
+| Legacy queue cutover and recovery                   | `LegacyQueueAdmission.test.ts`, `LegacyQueueCompatibility.clone.test.ts`: held-only admission, accepted receipt replay, attachment bytes, explicit release and clone guard                                                    |
+| Stream, replay and transfer invariants              | Actual `server.test.ts` HTTP/WS cases: held ACK, coalescing, interleaving, high-water replay, fairness, retry, deletion, capture race and bounded transfer                                                                    |
+
+B10 was recovered from original conversation item `779f0aa9-b862-4570-b78d-1911059a1d54`
+(position11656): coordinate with the existing migration-proof-059 worktree rather
+than duplicate it. Its current clean head is `4f283566c57530db5caf3e3790dc556054606786`;
+the integration candidate's 059/060 migration bytes match that worktree and the
+frozen upstream 055/056 exactly (`recovered-B10-existing-migration-proof.json`).
+This is a read-only identity comparison, not a new migration qualification.
+Queue cutover remains its separate explicit criterion above.
+
+Native workflow presentation preserves observed role, phases, usage and member
+slots without granting child-thread or continuation authority. Historical rows
+remain display-only. The follow-up closes late producer progress, runless workflow routing, lifetime
+cleanup/transfer and historical live-count gaps. Actual producer-to-SQL and exact
+subscriber-release regressions pass; earlier SQL-to-wire tests alone did not
+qualify these paths.
+
+## Reviewer findings
+
+All eleven supplied findings have implementation and scoped evidence. A further
+packaging review found missing Linux Cursor helpers in the Windows WSL fallback
+tree and incomplete target validation; both corrections pass their scoped suite.
+Final gates must cover the combined candidate, including the owned-main catch-up.
+
+| Finding                           | Corrected source paths                                                                                                                                                                                                        | Named behavioral proof                                                                                                                                                                                                                                                                    | Scoped evidence log                                                                                                                                                                                                                                                                                                              |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| V1/V2 dispatch collision          | `packages/contracts/src/rpc.ts`: one combined wire registration                                                                                                                                                               | `packages/contracts/src/rpc.test.ts`: “accepts retained section commands through the shared dispatch registration”; actual retained fork and V2 creation use that registration in `apps/server/src/server.test.ts`                                                                        | `rpc-acp-regressions.txt`: 42 tests / three files; actual WS acceptance below                                                                                                                                                                                                                                                    |
+| Lost fork disposition             | `packages/contracts/src/orchestrationDispatch.ts`, `packages/contracts/src/rpc.ts`: richer shared error transport                                                                                                             | `packages/contracts/src/rpc.test.ts`: “preserves every fork disposition through the registered error codec”; `apps/server/src/server.test.ts`: “rejects exact-boundary fork reuse of a deleted identity and preserves its history” asserts transported `rejected`                         | `rpc-acp-regressions.txt`; `fork-identities-round2.txt`: eight selected cases / two files                                                                                                                                                                                                                                        |
+| Retained commands on V2 threads   | `apps/server/src/ws.ts`, `apps/server/src/orchestration-v2/ThreadManagementService.ts`, `apps/server/src/orchestration-v2/scient-fork/ConversationForkService.ts`: native section and exact-boundary services                 | `apps/server/src/server.test.ts`: “dispatches V2 creation, section assignment and exact-boundary forks through the real shared websocket RPC”                                                                                                                                             | `server-v2-streams-round4.txt`: 20 acceptance cases; same actual WS case requalified in `fork-identities-round2.txt`                                                                                                                                                                                                             |
+| Missing production Cursor helpers | `scripts/build-desktop-artifact.ts`: production staging and `stageAndPackWindowsServerAsar`; exact target and WSL fallback resources                                                                                          | `scripts/build-desktop-artifact.test.ts`: “stages Cursor helpers and extracts the actual Windows archive for WSL fallback”, plus target-validation cases; `scripts/cursor-wsl-packaging.integration.test.mjs` exercises the packaged fallback                                             | `provider-cursor-packaging-tests-final.txt`: 99 tests / three files. Controlled Windows ASAR extraction is covered; the complete production macOS ARM64 ZIP also passes SDK/helper inspection (`final-desktop-artifact-inspection.json`, `final-desktop-asar-inspection.json`). Full Windows Electron startup remains unverified |
+| Strict ACP compatibility response | `packages/effect-acp/src/rpc.ts`: lenient `CompatSetSessionConfigOptionResponse` used by production registration                                                                                                              | `packages/effect-acp/src/rpc.test.ts`: “uses the lenient codec in the production compatibility registration” covers missing, null, empty, both wire generations and malformed inventories                                                                                                 | `rpc-acp-regressions.txt`; later complete ACP suite                                                                                                                                                                                                                                                                              |
+| ACP termination callback override | `packages/effect-acp/src/client.ts`: prompt cleanup precedes caller notification without overriding it                                                                                                                        | `packages/effect-acp/src/client.test.ts`: “settles an acknowledged V2 prompt when transport closes with a termination observer” and “cleans pending prompts before a blocked/defect/throw termination observer”                                                                           | `rpc-acp-regressions.txt`; later complete ACP suite                                                                                                                                                                                                                                                                              |
+| Missing completed-answer metadata | `apps/server/src/orchestration-v2/ProjectionStore.ts`, `packages/shared/src/orchestrationV2ThreadShell.ts`, `packages/client-runtime/src/state/models.ts`: native answer producer and preserved absence/null distinction      | `apps/server/src/orchestration-v2/ProjectionStore.test.ts`: “SQL shell preserves the completed answer until it is rolled back” and matching memory case; `apps/web/src/scient/answerAttention/completion.test.ts`: “falls back only for old servers and only for successful answers”      | `discovery-answer-projection-round1.txt`: 34 tests / two files; complete web suite                                                                                                                                                                                                                                               |
+| Mobile dispatch mode lost         | `apps/mobile/src/state/thread-outbox-start-turn.ts`, `apps/mobile/src/state/use-thread-outbox-drain.ts`: captured mode forwarded; missing legacy mode queues                                                                  | `apps/mobile/src/state/thread-outbox-start-turn.test.ts`: “replays captured %s after storage round-trip” and “keeps always-queue behavior for old rows without a dispatch choice”                                                                                                         | `mobile-outbox-regressions.txt`: 33 tests / two files; complete mobile suite                                                                                                                                                                                                                                                     |
+| Mobile initial title seed lost    | `apps/mobile/src/state/thread-outbox-start-turn.ts`, `apps/mobile/src/state/use-thread-outbox-drain.ts`: citation-aware first-message title seed                                                                              | `apps/mobile/src/state/thread-outbox-start-turn.test.ts`: “seeds the first message from readable citation text” and “seeds attachment-only first messages from prepared attachment names”                                                                                                 | `mobile-outbox-regressions.txt`; complete mobile suite. Native device interaction remains separate                                                                                                                                                                                                                               |
+| Obsolete queued skill selections  | `packages/client-runtime/src/operations/commands.ts`, `apps/web/src/components/ChatView.tsx`, `apps/server/src/orchestration-v2/Orchestrator.ts`: atomic replacement; omitted retains and `[]` clears                         | `packages/client-runtime/src/operations/commands.test.ts`: “dispatches V2-native relationship and queue commands without compatibility shaping”; `apps/server/src/orchestration-v2/runtimeLayer.test.ts`: “edits and removes queued runs” asserts replacement and explicit empty clearing | `queue-answer-regressions.txt`: 110 tests / four files; complete server qualification                                                                                                                                                                                                                                            |
+| Removed queued context retained   | `packages/client-runtime/src/operations/commands.ts`, `apps/web/src/components/ChatView.tsx`, `apps/server/src/orchestration-v2/Orchestrator.ts`: omitted retains; explicit null clears both existing durable representations | `apps/server/src/orchestration-v2/runtimeLayer.test.ts`: “retains omitted queued context and clears both historical message and user item” uses actual EventSink state; “edits and removes queued runs” preserves native queue admission without a timeline item                          | `queue-answer-regressions.txt`; `final-auth-and-queue-round1.txt`: 60 tests / two complete files, including the historical-item regression                                                                                                                                                                                       |
+
+## Independent early-pass handoff and final review
+
+The owner's early-pass handoff reviews frozen `1a10d3f872`, excluding `apps/web`.
+The source report and synthesis are in `ScientFactory/reviews/alignment-review-20261004/`.
+Each item is checked against the current tree before correction. Unconfirmed reports
+are pending inspection, not accepted defects. Fixes follow the supplied group order
+and remain on V2 authority. Tests exercise the owning adapter, service, transport or
+persisted projection; prior green gates do not close these additional findings.
+
+| Group      | Item                                                | Current-tree disposition and qualification                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1          | S1 scheduled task permission ceiling                | Confirmed in `mcp/OrchestratorMcpService.ts`. Edit/rebind/unbind check captured launch modes and the current bound V2 thread; creation already inherits caller modes. Real MCP toolkit regressions cover Supervised/Plan denial, unchanged storage, bound-thread escalation, creation inheritance and safe unbind. `final-security-group1-round3.txt`: 25/25 across two complete files; `final-security-group1-typecheck-round2.txt`: uncached server TypeScript/Effect exit 0; scoped fmt/lint pass. Committed at `2fc3bed568`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 1          | S2 live CLI lifecycle gate                          | Confirmed duplicate CLI definitions. `bin.ts` is a thin entry and tests import live `binCli.ts`. The Scient safety envelope excludes inherited service, preflight, standalone update, uninstall and service launcher commands; owned desktop updater is unchanged. Same complete 25-test Group 1 run and uncached server compiler qualification as S1; scoped fmt/lint pass. Committed at `2fc3bed568`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 2          | L1 awareness delivery                               | Confirmed and corrected native prompt delivery for Claude, Grok, Droid, OpenCode, OpenCode2, Pi and Codex. Only actual session capabilities grant tool guidance; disabled/external channels retain core awareness. Claude effective query identity includes grant-dependent awareness and Codex restores it after compaction. `group2-provider-tests-round3.txt`: 485/485 across 11 complete files; `group2-codex-recorded-integration-round1.txt`: 23/23 recorded orchestrator cases (101 unrelated skipped). Uncached combined server compiler and scoped fmt/lint pass. Scripted native peers establish transport behavior, not live-account compatibility.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 2          | L2 generated images                                 | Confirmed and corrected native `imageGeneration` ingestion: confined provider-thread sources, deterministic immutable attachment bytes, attachments on both assistant message and turn item, and persisted notice on missing/foreign/failed sources. All five outcome cases exercise real native frames, EventIngestor, SQLite EventSink/event/projection storage and independent stored-event rebuild. Duplicate receipts and active-turn replay after source removal preserve identical durable bytes. Same complete 485-test Group 2 run and combined server compiler qualification; no late-event ownership weakening.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 2          | L5 Pi model slug encoding                           | Confirmed raw discovery slugs rejected slash-containing model IDs. Actual discovery now uses the canonical percent encoder; selection roundtrips slash, space and percent literals while preserving reasoning metadata and deduplication. Included in the complete 485-test Group 2 run; combined uncached server compiler and scoped fmt/lint pass.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 2          | M2 legacy reasoning                                 | Confirmed and corrected: inert completed/interrupted reasoning, repeat-safe repair of completed imports, and partial-batch recovery. A controlled real EventSink interleaving reproduced stale-payload overwrite; sink-transaction repair now retains current V2 edits. Replay folds events before restoring final unique positions, avoiding reproduced transient collisions while invalid final positions still roll back. `final-review-group2-reasoning-race-round3.txt`: 55/55 across three complete files; scoped formatting/lint pass. `group2-server-typecheck-round2.txt`: combined uncached server TypeScript/Effect exit 0.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 3          | L3 search citations                                 | Confirmed missing native citation resolution. The V2 Codex adapter resolves streaming/final web-search citations into durable source links; unresolved evidence retains its safe fallback. Actual native frame/adapter regressions and affected provider lanes pass 240 unique cases in 11 complete files (`group3-provider-native-round2.txt`, `group3-provider-affected-round2.txt`); scoped formatting/lint pass. Root independently reviewed the producer/consumer path. Final combined server compiler passes (`group3-combined-server-typecheck-round3.txt`), with no hard errors or Effect warnings.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 3          | L4 managed executable/environment                   | Confirmed native factories discarded resolved executable/environment. Codex receives the resolved binary while its native factory alone owns shared/auth-overlay layout; Claude receives managed executable/environment with isolated roots; Grok receives resolved ACP executable. Actual desktop/web driver → native factory/spawn tests and unchanged shadow-home regression pass in the 240-case provider batch. Final combined server compiler passes (`group3-combined-server-typecheck-round3.txt`), with no hard errors or Effect warnings.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 3          | L6 Pi connection bootstrap/invalidation             | Confirmed discovery omitted Scient connection bootstrap and instance-filtered invalidation. Production discovery now uses the existing typed custom-connection factory, preserving readiness/labels/bootstrap and model refresh. Actual driver/native HTTP bootstrap regressions pass in the provider batch. Full PiRpcError channel and fixture process typing are repaired; 19/19 cases across four complete Pi files pass afterward (`group3-provider-pi-type-repair-round1.txt`), scoped formatting/lint pass. Final combined server compiler passes (`group3-combined-server-typecheck-round3.txt`), with no hard errors or Effect warnings.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 3          | L7 Pi runtime envelope                              | Confirmed snapshots lacked the connection.runtime envelope. Initial, refresh and cwd snapshots expose the instance managed-runtime summary and existing native connection operations. Actual Pi driver lifecycle tests pass in the provider batch and final 19-case Pi rerun; scoped formatting/lint pass. Final combined server compiler passes (`group3-combined-server-typecheck-round3.txt`), with no hard errors or Effect warnings.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 3          | M1 ordinary assistant fork eligibility              | Confirmed actual ACP/SQL assistant nodes are direct children of the run root. The planner accepts only an owned direct assistant-message child with matching thread/run/parent/root; nested, foreign and unknown identities remain rejected. Actual native answer → SQL → retained fork/idempotency proof passes (`group3-M1-final-round2.txt`: 9/9 in three complete files), and the final seven-file system/history fork batch passes 39/39; scoped formatting/lint pass. Root independently reviewed ownership guards. Final combined server compiler passes (`group3-combined-server-typecheck-round3.txt`), with no hard errors or Effect warnings.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 3          | M3 system-message export                            | Confirmed portable system-row loss. A reserved typed inert marker maps system text/context/files into the actual snapshot/SCIC production reader; Malformed historical fields now degrade safely under the F3 provenance repair below. Human-readable Markdown intentionally omits system rows in protected MAIN/current presentation, so no renderer change was made. Actual source deletion additionally reproduced a system-only attachment ownership gap; the fork now remaps message/context identities and copies destination-owned bytes, with real SCIC export/reparse proof. History batch: 66 unique cases/seven complete files; final fork/export/helper batch: 39/39/seven files; final callback/export rerun: 26/26/two files. Scoped formatting/lint pass. Final combined server compiler passes (`group3-combined-server-typecheck-round3.txt`), with no hard errors or Effect warnings.                                                                                                                                                                                                                                                                                 |
+| 3          | M4 historical turn identity                         | Confirmed missing legacy turn grouping. Imports carry turn_id only as inert historyTurnId; completed-import missing-only repairs reread current payload and association atomically, preserving V2 edits. Actual hydrated SQL assistant/user fork boundaries and controlled repair-race tests pass in the 66-case/seven-file history batch and final fork/export regression batch; scoped formatting/lint pass. Final combined server compiler passes (`group3-combined-server-typecheck-round3.txt`), with no hard errors or Effect warnings.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 3          | M5 native fork continuity                           | Confirmed and implemented frozen typed native proof with inclusive native fork rechecks and destination-owned portable fallback. Four complete files pass16/16 (group3-M5-authority-followup-round17.txt), including actual source append/rollback/deletion, instance change, file-backed restart and rejected native clone. Successful clone → first turn failure → retry exposed duplicated inherited history; exact persisted consumed-clone ownership now suppresses only that duplicate prefix. Same clone resumes with local delta only. Final shared format/compiler/integration gates pending.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 3          | M6 question-answer handoff                          | Confirmed native callback answers were omitted. Completed callback items provide inert user history with exact questions/answers and safe file descriptors; message-mode, pending and cancelled records are excluded. Actual Claude callback → SQL → retained fork → first child SDK offer preserves the full 3KB answer, while budget1024 proves bounded selected history and exact omitted IDs. History batch: 66 unique cases/seven files; final callback/export rerun: 26/26/two complete files (`final-review-group3-history-round5.txt`), scoped formatting/lint have zero diagnostics. Final combined server compiler passes (`group3-combined-server-typecheck-round3.txt`), with no hard errors or Effect warnings.                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 4          | S3 clone discard                                    | Confirmed. Shared V2 ProjectService.delete now discards clones only after accepted deletion; WS duplicate removed. Actual MCP project toolkit → shared service/EventSink → real tracker and filesystem test proves rejected deletion leaves clone/root intact and accepted deletion cancels owned fiber/removes partial checkout. Complete five-case deletion file passes in root 32-case/five-file batch (group4-root-authority-cleanup-roster-round2.txt). Affected compiler/final gates pending.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 4          | M7 native queue limits                              | Confirmed and corrected: native admission, edit and legacy intake share the complete 20-item/64 MiB bound, count real owned attachment bytes and validate foreign attachment ownership. Actual serialized intake/admission/edit plus complete runtime qualification passes 96 tests across five files (group4-M7-M8-queue-budget-handoff.md). Final candidate gates remain pending.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 4          | M8 queued composer snapshot                         | Confirmed and corrected: accepted queued edits rebuild or explicitly clear the captured composer snapshot with the prompt/context/skill replacement. Actual held edit/list/restore and invalid-edit atomicity pass in the same 96-test/five-file qualification; final candidate gates remain pending.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 4          | M9 forked historical task roster                    | Confirmed copied migration IDs hid inherited task rows. Client validates immutable inherited item identity plus inert ownership, namespaces original source and retains zero live tasks. Actual legacy SQL import → V2 fork → client roster passes alongside A1/cleanup in 32-case/five-file root batch. Standalone client regression passes in root61-case/six-file qualification; compiler/gates pending.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 4          | L8 Pi context guard                                 | Confirmed and implemented protected final serialized system/tools/messages/images budget guard in the actual loaded Pi context extension, including MCP-disabled delivery, compact-once retry, hidden continuation and final overflow. Complete provider batch passes 218 cases/five files (group4-provider-native-round1.txt); owned fmt/lint pass. Final compiler/gates pending.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 4          | L9 provider revoked sign-in/setup                   | Claude revoked/unrefreshable sign-in confirmed and fixed through private manager-consumed event → exact ProviderRegistry instance invalidation after authoritative terminal failure, query retired once. Actual SDK/worker/SQL/Registry/rebuild and live peer preservation pass;395 unique cases/seven complete provider files, ownedfmt/lint pass (group4-provider-l9-f4-f5-handoff.md). Cursor reported targeting/install defects do not hold in current tree: prior SDK-targeted login and no CLI install dependency are retained. No speculative Cursor change. Combined compiler/gates pending.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 4          | C1 APT install lifecycle                            | Confirmed unawaited duplicate APT job. Removed orphan background install and redundant mirror step; the remaining foreground library install finishes before tests. YAML decodes and all APT steps are confirmed foreground; formatting/final gates pending. No hosted CI claim.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 4          | M10 archived fork titles                            | Confirmed after correcting the earlier disposition: archive-only snapshots put siblings in archivedThreads while threads is empty. The real service regression reproduced Conversation(2) instead of Conversation(3), then passed after reading archived.archivedThreads (`group4-M10-archived-fork-title-baseline.txt`, `group3-M5-positive-round8.txt`). The fix is committed in `5635539d0bf60bf25d419a8a4b11662159fbdb8d`; later whole-candidate typechecking passes. Final repaired-app acceptance remains pending.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 4          | M11 lazy migration/fork hydration                   | Confirmed. Fork service now hydrates imported transcript before options/boundary admission (actual lazy3 plusM5batch). Migration020 adds durable history repair generation2, stamped only after missing-only history/citation batches finish; already-completed timestamps and V2 edits remain intact. Fresh importer trace proves subsequent startups avoid full traversal, generation-stamp failure retries safely. Complete five-file history/importer/Foundation/schema/initV2 suite106/106 qualifies across final scoped runs; ownedlint passes. External group4-history-handoff.md records exact commands and earlier failures. Combined compiler/gates pending.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 4          | L10 MCP server naming                               | Confirmed active native Codex config uses t3-code. Active key is now scient; historical aliases remain presentation-compatible. Actual native start/resume/inclusive-fork protocol asserts source and destination credentials and server namespace. Complete provider batch218/5PASS; scoped fmt/lint pass; combined compiler pending.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Additional | A1 MCP/Compute workspace authority                  | Confirmed actual native EventSink failures from V1 authority reads. Canonical workspace stamps plus atomic project-row revision fold and explicit repeat-safe migration019 now supply native authority without global-cursor inference. Nine real SQL/filesystem cases pass including actual resolver and ComputeRpcGateway admission, root round trips, cursor holes, compaction/rebuild and transaction rollback (group4-root-authority-cleanup-roster-round2.txt). Actual MCP document workspace admission/publication fence and Compute gateway stale-scope rejection also pass. This qualifies workspace admission, not PDF rendering or a real provider. Migration manifest/compiler/final gates pending.                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Additional | Dead V1 runtime receipt wording                     | Not present in the current receipt/tree. Production `server.ts` imports `OrchestrationV2ProductionLayerLive`; `ws.ts` routes retained commands to V2 services. The dead V1 runtime layer is absent and the current architecture text already describes native V2 authority. The early snapshot wording is superseded; no implementation change made.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Additional | JSONC implementation missing from cold bundle       | Confirmed by actual clean server bundle at `78cffe04b4`: cold CLI fails resolving `./impl/format` from the inlined JSONC UMD factory. Claude skill discovery now uses the public package entry for direct Node loading, with the production build alias selecting the static ESM closure. The earlier deep ESM source import was superseded after native Node qualification exposed its extensionless implementation imports. The isolated production bundle probe executes the real skill settings writer on synthetic commented settings, retaining comments and unrelated values. `final-clean-bundle-jsonc-round1.txt`: 44/44 across three complete files; focused fmt/lint pass. Combined uncached server compiler passes (`group2-server-typecheck-round2.txt`); Full clean server bundle and cold CLI pass at committed `6b2c7348f9` with `NODE_PATH` unset and `--no-global-search-paths` (`final-clean-bundle-build-round2.txt`, `final-clean-bundle-startup-jsonc-round2.txt`).                                                                                                                                                                                               |
+| Additional | Captured ordinary-send permission/interaction modes | Confirmed omitted client/RPC modes and mutable thread fallback. Dispatch carries optional backward-compatible modes; all native admissions persist them on runs, worker delivery resolves captured policy, queued admission leaves active thread metadata unchanged and promotion restores captured choice. Mode-changing active steer uses controlled restart/replacement, including unknown older active policy. `captured-modes-qualified-round4.txt`: 48/48 across complete client command and SQL/worker/controlled-adapter restart files; owned lint pass. Nullable fixture event node corrected; final combined server, client-runtime and contracts compilers pass (`group3-combined-server-typecheck-round3.txt`, `group3-client-typecheck-round1.txt`, `group3-contracts-typecheck-round1.txt`) with no hard errors or Effect warnings. Initial fixture used UI label supervised instead of canonical approval-required; this was corrected before transport qualification.                                                                                                                                                                                                   |
+| Additional | Cold bundle startup                                 | Reproduced `ERR_MODULE_NOT_FOUND: zod` on the isolated clean install with `NODE_PATH` unset (`final-clean-bundle-startup-before-fix.txt`). Global Cursor JavaScript externals leaked bundled Droid/Claude dependencies. Corrected importer-specific bundling preserves the SDK's installed disk tree and distinct schema versions. The actual Droid SDK schema and Cursor catalog isolated-package probe passes (21 tests/two files), complete scripts pass 577 with existing skip, scripts compiler and focused lint pass (`final-clean-bundle-packaging-round2.txt`, `final-clean-bundle-scripts-round1.txt`, `final-clean-bundle-scripts-typecheck-round1.txt`, `final-clean-bundle-lint-round1.txt`). Actual managed app startup at clean `6b2c7348f9` now reaches backend readiness and main-window creation, owns both listeners, returns HTTP 200 on backend/web and remains alive after launch. Fresh synthetic profile has 11 disabled providers and no usage sources. Exact identities and evidence: `final-clean-dev-readiness-round2.md`. Final candidate refresh and artifact requalification still pending; runtime readiness is separate from feature/manual acceptance. |
+
+### Review addendum and dev-app acceptance
+
+The 2026-10-04 handoff addendum and `reviews/alignment-review-20261004/DEV-APP-FINDINGS.md` were reread. The former M10 nonconfirmation was wrong: source inspection overlooked the producer’s separate archive list. The real regression confirms the defect.
+
+| Item                                        | Current disposition                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A2 native queue keyboard shortcuts          | Confirmed legacy list is empty under native queues. Native steer-next/edit-latest now route through the mounted native control and its captured command arguments. Actual mounted shortcut and unavailable/repeat tests pass within the 280-test/eight-file UI/mobile qualification (addendum-ui-handoff.md). Current native Scient strip integration also passes the separate 82-case/seven-file queue consumer qualification. Repaired-app acceptance remains open.                                                                                                                                                                                                                                                                                                     |
+| A3 mobile creation provenance               | Confirmed bootstrap omitted mobile creationSource. Immediate and outbox creation share the corrected first-turn builder, whose attachment-only regression verifies the field. Included in the 280-test/eight-file scoped qualification; current mobile compiler passes. Native device acceptance remains separate.                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| A4 optional runtime hook order              | Confirmed and repaired: hooks run before the absent-runtime return and unavailable metadata cannot admit a runtime operation. Real mounted Cursor/Droid missing-present-missing rerenders and the complete 90-case affected unit/browser checkpoint pass (`final-runtime-optional-summary-round4.txt`). Final integrated application acceptance remains separate.                                                                                                                                                                                                                                                                                                                                                                                                         |
+| A5 fork seam markers                        | Confirmed orphan END markers in ws.ts, ChatView and ThreadQueueStrip. The unmatched markers are corrected; scoped formatting/lint and prior seam checkpoint pass. Final candidate seam check remains required.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| OWN-2 model-picker fork footer              | Confirmed old footer depended on a provider lock that V2 handoff intentionally removed. The bottom Continue in a new chat/Fork action now appears for existing committed/inherited history through both available and unavailable provider pickers, while empty/held-queue-only histories omit it. It opens Scient’s existing dialog and preserves the ordinary draft and File bytes. In-place provider switching remains unlocked. Complete affected units pass74/74 across nine files and Chromium passes13/13 across two files; canonical web typecheck, owned formatting and lint pass (existing warnings remain). Committed in `afbed1c6e7`; actual repaired-app acceptance remains open.                                                                            |
+| DEV-001 fork presentation                   | Source/component correction qualified; repaired-app acceptance remains open. One V2-owned Scient exact-boundary interaction retains the prior icon/separator; local duplicate incoming native boundaries are suppressed only when the Scient separator is visible. Unloaded, inherited and outgoing history remains visible. Actual repaired-app ordinary-answer, exact-boundary and fork-of-fork retests are still required.                                                                                                                                                                                                                                                                                                                                             |
+| DEV-002 imported permissions/live approvals | Source and automated execution correction qualified; repaired-app acceptance remains open. Fresh-render composer handlers bind late live requests to the current thread/session and suppress duplicate responses. Native callback submission now stages the decision/answers before synchronous native resolution can detach ingestion; failed unobserved submissions restore the prior pending request. Complete adapter, imported-history/live-approval, question sink and recovery qualification passes 26/26 (`group5-DEV002-live-approval-round5.txt`), including inert historical approvals, mode replacement, foreign-owner refusal and once-only accept/reject persistence. Browser refresh/reopen and composer acceptance on the repaired build remain required. |
+
+The root integrated Group3 regression batch also passes 100/100 across eight complete files (`group3-root-integrated-regressions-round1.txt`), on the pre-M5/A1 candidate. These checks do not qualify the newer in-flight changes.
+
+`final-sol-review-round1.md` records the complete immutable review of `6f830ddc`:
+two source-proven findings (captured modes and ordinary assistant fork ancestry), with
+no runtime checks rerun. Its broader inspected paths are scoped review evidence,
+not blanket approval or closure of the owner's early-pass list.
+
+## Evidence and remaining gates
+
+Logs are retained outside source at
+`ScientFactory/reviews/orchestration-v2-alignment-20261003/`.
+All databases, transports and attachments used for local qualification are
+synthetic/disposable. No live profile or provider credentials were copied.
+
+Relevant checkpoints, each superseded when its path changes:
+
+The immutable review of `5635539d0bf60bf25d419a8a4b11662159fbdb8d`
+identified five additional defects. Each was confirmed in the working tree;
+none is waived by the earlier package results. Their corrections and final
+requalification are tracked here:
+
+| Finding                                             | Correction and current proof                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scheduled-task rebinding permission ceiling         | A new destination binding is checked against the caller's captured runtime and interaction policy before persistence. The registered MCP toolkit with real SQLite reproduced the failure before the fix, then both complete toolkit scenarios passed (`final-scheduled-rebind-baseline-red.txt`, `final-pdf-scheduled-rebind-round1.txt`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Portable resume/fork history preparation exhaustion | All pre-start history reads now use fenced final-attempt settlement with intermediate retry. Actual SQLite/outbox/worker qualification proves five failed resume/history attempts, truthful held settlement and explicit recovery without losing bytes or selection. The dedicated actual Codex clone-refusal → fallback-create → malformed portable-prefix branch also passes, with five failed preparation attempts and no child provider offer. Its unchanged follow-up remains queued and held (`final-sol-clone-history-round6.txt`: four cases/two complete files). The fixture drives the actual provisioning worker while the public fork dispatch awaits its durable receipt; prior setup timeouts are retained as fixture failures, not passing evidence.                                                                |
+| Steering completion-race skill selection            | Redispatch the durable message's selection, preserving omitted and explicitly empty values. Three actual SQLite/production-worker cases pass for nonempty, empty and omitted selections after a completed-before-steer receipt, with exactly one follow-up native start (`final-sol-start-steer-replay-round4.txt`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Imported queued-item extraction policy              | Resolve captured modes and source plan through the native run and legacy payload before transfer to the ordinary draft. The complete IndexedDB/extraction/stash-recovery file passes 19 cases; native precedence, legacy fallback, explicit empty skills and source-plan retention are covered (`pdf-worker-and-queue-extraction-handoff.md`). Web typechecking and scoped formatting/lint pass.                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Premature queued-plan completion                    | Consume the selected source-plan content only with the owned native acceptance receipt; queue admission, extraction and pre-start failure must leave it reusable. The exact native root receipt appends plan consumption in the same SQLite transaction, fenced by current run/attempt/session ownership and a SHA-256 fingerprint of selected semantic plan content. Complete plan/native/recovery/admission/helper files pass 50 cases, including transaction rollback/rebuild, extraction/resubmission and pre-start Retry. Full strict replay and both uncached server/contracts compilers pass (`final-source-plan-native-round2.txt`, `final-source-plan-recovery-round2.txt`, `final-replay-all-variants-round9.txt`, `final-source-plan-server-typecheck-round3.txt`, `final-source-plan-contracts-typecheck-round1.txt`). |
+
+The fingerprint is content identity, not a monotonic revision counter: status and
+consumption metadata do not change it, and recreating exactly the same identified
+content is semantically unchanged. A retry may reuse a completed plan only when
+its persisted consumer is that same run and the content still matches. Old
+candidate-only eager-completion rows without consumption proof remain fail-closed;
+the fix does not invent their ownership or reactivate them.
+
+The queued-plan and strict replay corrections are committed in `721bba7a6b`. The strict full provider replay collection now passes all 124 native orchestrator
+variants plus six canonical-owner reload and OpenCode permission helper cases, 130 cases across three complete files (`final-replay-all-variants-round9.txt`). The final normalized-workspace OpenCode rerun also passes 20 cases (`final-replay-normalized-cwd-round10.txt`).
+Six older Codex follow-up recordings required an explicitly declared native resume
+before their second turn after app-owned provider-thread rebinding. Recorded native
+payloads, approval correlations and strict matchers remain intact. OpenCode's older
+recordings now declare and confirm their scenario's captured permission rules.
+Targeted safe diagnostics recorded method/cursor differences without protocol
+parameters or credentials. These are recorded-transport integration results;
+physical vendor sessions and rebuilt-app acceptance remain separate. The complete registered MCP toolkit also passes two cases. Across these overlapping focused files, 179 unique cases pass; the final server compiler has no hard errors or Effect warnings, with 269 Effect suggestions. Scoped formatting and lint pass.
+
+Two subsequent owner-observed regressions were also confirmed:
+
+- PDF validation resolved its worker relative to the old fixed `bin.mjs`
+  entry. The new lazy CLI chunk selected a missing source worker. Resolution
+  now uses the emitted sibling worker for bundled modules. Seven focused
+  cases pass, including actual development-worker acceptance and malformed
+  output rejection (`final-pdf-scheduled-rebind-round1.txt`). The existing
+  hashed bundle separately reproduced the owner's exact error, while the
+  corrected resolver with that bundle's actual worker accepted a valid PDF
+  and rejected malformed bytes (`pdf-bundled-worker-red-green.txt`). Actual
+  rebuilt desktop `802e278c28` now passes Export → native Cancel → Retry → Save.
+  The saved one-page PDF contains both messages and was rendered/inspected
+  (`final-native-pdf-provider-acceptance-round1.md`, external evidence directory).
+- Provider settings hid untouched disabled slots. Supported default settings
+  rows are visible again, preserving their enabled state and exact environment
+  instance ownership. All 26 component routing cases pass, including selecting
+  and enabling a formerly hidden default instance without changing other settings
+  (`final-provider-settings-roster-round2.txt`). Scoped formatting/lint pass with
+  three existing warnings. The actual rebuilt desktop `802e278c28` shows every
+  supported built-in row, including untouched disabled OpenCode, Droid, Pi,
+  Oh My Pi, Cursor and Grok. Their existing disabled state remains visible;
+  no vendor login, install or physical session was exercised.
+
+- Current-candidate uncached typechecking passes all 32 packages with no hard
+  errors or Effect warnings (`final-candidate-typecheck-round1.txt`), before
+  the subsequent test-only replay repairs. Complete contracts qualification
+  passes 741 tests across 54 files (`final-candidate-core-tests-round1.txt`);
+  client-runtime passes 2,158 across 130, and web unit passes 10,250 across 865
+  (`final-candidate-core-tests-round2.txt`). The initial client performance
+  failure compared the historical baseline with newly captured mode fields.
+  Its fixture now uses the recorded former command shape, keeps all byte and
+  ratio limits unchanged, and asserts the new fields on the current command.
+  Scoped formatting/lint and client typechecking also pass after that correction.
+- The remaining 27 package suites pass 6,728 tests across 616 passing files,
+  with 46 intentionally skipped cases (`final-candidate-other-tests-round2.txt`,
+  `final-candidate-other-tests-round3.txt`, and their deduplicated summary).
+  The combined server run remains incomplete: Codex MCP and OpenCode replay
+  mismatches were exposed, and the owned worker was stopped after a stalled
+  OpenCode replay. Source confirmation found missing expected native permission
+  confirmation frames in that old OpenCode fixture. Strict replay repair and
+  the complete server rerun remain required; this interrupted run is not a pass.
+- A separate clean review worktree is prepared at the committed integration
+  snapshot. Final build, packaging, Chromium layout, immutable technical review
+  and actual repaired-app acceptance remain required. The user's existing
+  review app is preserved throughout these checks.
+
+- The complete uncached static gate passes all 32 package TypeScript/Effect
+  checks (`final-typecheck-round2.txt`), with no hard errors or Effect warnings.
+  The final browser-fixture changes also pass the web compiler
+  (`layout-fixture-typecheck-round2.txt`). Whole-tree formatting, Knip, branding
+  and all five protected-seam checks pass (`final-format-round4.txt`,
+  `final-knip-round3.txt`, `final-brand-round3.txt`, `final-seams-round3.txt`).
+  Whole-tree lint passes with zero errors and 1,066 warnings
+  (`final-lint-round3.txt`); this is not a warning-free claim. No assertion or lint
+  exception was widened during this final qualification pass. Later browser
+  fixtures pass scoped format and lint checks.
+- Complete desktop tests pass 1,588 cases across 130 files, with 43 cases in four
+  files intentionally skipped (`final-desktop-tests-round4.txt`). Mobile passes
+  1,886 cases across 213 files, and the remaining recursive package lanes pass
+  (`final-tests-round3.txt`). Scripts pass 577 cases across 44 files, with one
+  intentionally skipped case/file (`final-scripts-tests-round4.txt`), including
+  the actual transfer-report producer/consumer contract.
+- Complete web unit qualification: 10,227 tests across 862 files pass in
+  `final-web-tests-round8.txt`. The later optional-runtime hook-order correction
+  passes 90 cases across the complete runtime-control unit and real React browser
+  files (`final-runtime-optional-summary-round4.txt`). Server and web typechecks
+  pass uncached after that correction (`final-affected-typecheck-round6.txt`).
+  Runs clear inherited app URL and state selectors and use one worker. Browser
+  layout, integrated desktop interaction and the owner's visual acceptance remain
+  separate gates.
+- Complete server qualification reached 11,650 passing cases, 152 intentional skips,
+  and one Cursor maintenance failure across 860 files (`final-server-tests-round6.txt`).
+  All 88 earlier failures are cleared. The remaining failure exposed an implicit CLI
+  update target on SDK-default instances. Maintenance now uses the original configured
+  path: SDK defaults are manual-only; explicit external CLI targets retain native update,
+  and private copies retain managed replacement. The affected Cursor, registry,
+  maintenance and full-transfer matrix passes 317 cases across 24 complete files
+  (`final-cursor-and-transfer-round4.txt`). This is composed qualification after the
+  narrow correction, not a claim that the earlier full command exited successfully.
+- The server repair checkpoint passes 69 cases across six complete queue,
+  migration, boundary and transfer files (`server-owned-final-round14.txt`).
+  Native V2 imports the pure queue admission module rather than the retained
+  V1 control module. The source boundary scanner distinguishes comments,
+  type-only imports and executable dynamic imports; its complete scan passes
+  without increasing the Node heap. Project and relay regressions pass, and
+  the actual clone/favicon case executes separately. Full server requalification
+  is covered by the later complete server run and affected-path matrix.
+- The dedicated full-snapshot transfer fixture now measures the compact codec
+  requested by the shared client on the same full HTTP endpoint. It retains
+  20 messages and 80 timeline items, including 50 commands and ten MCP results,
+  and compares the entire decoded projection and cursor with the legacy response.
+  HTTP wire bytes are 4,365/4,374 for Codex/Claude; total traffic is 5,707/5,726
+  (`final-full-transfer-report.md`, `final-full-transfer-report.json`). The 5,000/7,000-byte limits are unchanged.
+  The legacy default remains compatible but exceeds the modern snapshot ceiling
+  at 5,839/5,850 bytes; that separate measurement is disclosed. The bounded
+  startup scenario remains a separate proof rather than replacing this fixture.
+- Transfer reporting now emits schema version 2 with a closed startup-transport
+  enum. The trusted publisher accepts historical version 1 artifacts and refuses
+  misleading comparisons across full, bounded or unspecified startup transports.
+  Its dependency-free Node suite passes nine cases (`transfer-report-parser-round1.txt`).
+  The actual producer/consumer probe belongs to the repository scripts suite;
+  the write-capable publisher still checks out and executes only trusted scripts.
+  The actual producer probe passes (`transfer-report-contract-round1.txt`);
+  the final full-fixture result is separately retained and passes the trusted schema validator.
+  The complete server run also produces a separately identified bounded-startup result
+  (`final-transfer-report.json`), so its last report cannot be mistaken for full-history proof.
+- Source review found identity reuse in both exact-boundary and native run forks:
+  shell reads hid tombstones, and the native planner omitted destination admission.
+  Both producers now check the durable destination under their existing command
+  lock, accepting absence only through the typed not-found error. Accepted receipt
+  retries remain unchanged. Actual SQLite live/deleted/self and WS history-preservation
+  regressions pass eight cases across two files (`fork-identities-round2.txt`).
+  Their first run exposed
+  fixture errors: a stale worker hint and the legitimate outgoing fork relation
+  omitted from success expectations. The revised fixtures use durable creation
+  receipts and preserve exact historical state. The scoped review with blob
+  identities is `nonprovider-integration-source-review-round16.md`.
+- Provider repair qualification passes 407 cases across 21 complete files:
+  82 ACP cases and 325 native cases across 14 files. This covers native config
+  generations, model/effort confirmation, caller/runtime lifetime separation,
+  safe process-exit classification, containment and workspace replacement.
+  The OpenCode replay harness broadcasts one native event feed to independent
+  subscribers; it no longer makes simultaneous subscriptions steal events.
+  Full server and final compiler qualification remain separate gates.
+- Independent migration review and recovery follow-up: 54 distinct tests across
+  seven complete files, covering missing-versus-explicit-null metadata repair,
+  pre/post-commit interruption, ambiguous receipts, raced attachment copies,
+  immutable accepted attachment ownership after queued edits, and visible recovery
+  refusal. Exact logs and commands are in the migration handoff. Server compiler,
+  scoped lint and formatting pass.
+- Mobile native recovery: 15 tests across four files in
+  `mobile-native-recovery-round2.txt`. The actual installed Objective-C permissions
+  registry and Swift notification manager/Mutex run under ThreadSanitizer; the
+  dependency ceiling remains unchanged. The outbox command builder now lives with
+  its state owner. Frozen lockfile installation passes. Native simulator/device
+  interaction and mobile distribution remain separate boundaries.
+- Migration/recovery: 74 tests across 12 files in `queue-migration-final-round11.txt`.
+  Native queue/clone: 19 in `queue-cutover-final-round14.txt`; startup/CLI/runtime:
+  97 in `startup-bin-runtime-round2.txt`.
+- Actual server HTTP/WS: 232 in `server-full-round4.txt`; later queue case separately
+  qualified. Codex/Claude cold snapshots were 4,463/4,473 wire bytes against 5,000,
+  total thread traffic 5,805/5,794 against 7,000 (`server-transfer-final-round2.json`).
+- Provider protocols/lifetime: 430 distinct tests across ten files in provider
+  rounds 27–31; owned-main provider integration: 94 / four files, with the affected
+  OMP file's 18 cases repeated after fixture correction.
+- Native MCP channel/credential policy: 659 distinct cases qualified across 15
+  files by `provider-mcp-lifetime-tests-round1.txt` plus affected ACP/Cursor/OpenCode
+  reruns in rounds 2–3. The first run had one stale product-copy assertion; all
+  169 affected cases pass after correction. Totals are not added across reruns.
+  Production-issued token/catalog/history/skill delivery, exact grant rotation,
+  live/pending peer retention, final owner cleanup and disabled native Codex
+  injection are exercised. Scoped lint round3 has zero warnings/errors; compiler
+  round2 passes with suggestions only. Concurrent Claude workflow changes still
+  require final dependency requalification.
+- Actual native OMP/Scient Agent service handoff: six cases in
+  `omp-fullservice-tests-round4.txt`; target warning regression in
+  `provider-final-target-warning-round2.txt`.
+- Native history reader: six real SQLite cases in `native-thread-reader-tests-round1.txt`.
+  Canonical attached-thread guidance: `composer-thread-inspection-tests-round1.txt`.
+- Native skill-use labels: 108 cases across complete timeline and shared tool-name
+  suites in `native-skill-label-tests-round1.txt`. Native input/status preserves
+  concise load/use/failure labels across provider prefixes and immutable release
+  names; foreign tool identities remain generic. Scoped formatter and lint pass.
+- Agents producer, presentation, history and transport checkpoints are recorded in
+  [their receipt](../operations/orchestration-v2-agents-parity.md). The 14 production
+  workflow lifetime cases pass in `workflow-runtime-tests-round6.txt`. The later
+  count/reopen/routing selection passes 26 cases across six files; complete small
+  consumer and actual SDK-to-SQLite suites pass 62 across six files. Server and web
+  compiler checkpoints pass. Complete Claude and run-execution suites remain part
+  of the final gate.
+- Complete Chromium layout passes 219 cases across 25 files
+  (`final-web-layout-round5.txt`). The simultaneous late-growth assertion originally
+  mixed a rendered viewport at 2,175 px with the virtualizer's stale requested scroll
+  at 2,287 px. Both measurements now use rendered geometry, with the same 2 px
+  tolerance and required reading-end marker. Diagnostic traces show actual end drift
+  of 0.265625 px; all temporary instrumentation was removed. Native subagent fixtures,
+  sidebar capability mocking and a cross-origin Mermaid probe replace stale assumptions.
+- Cursor's runtime controls and user/lifecycle guidance identify separate CLI management.
+  Missing, system, custom and private CLI labels no longer describe the bundled SDK's
+  execution prerequisites; CLI actions remain available. The default SDK needs no CLI
+  install or update target.
+- Optional runtime summaries no longer change React's hook order. A real mounted
+  component is rerendered without, with, and without metadata for Cursor and Droid;
+  controls recover without launching an operation. Explicit initial actions wait for
+  metadata, and unavailable summaries cannot admit a runtime operation. Independent
+  read-only review found no remaining defect in the correction. The complete Chromium
+  layout suite passes 221 cases across 25 files (`final-web-layout-round6.txt`); the
+  subsequent callback-dependency cleanup passes the 90-case affected matrix above.
+- The uncached whole-workspace build passes (`final-build-round1.txt`). The repository's
+  Electron smoke gate passes with a fresh synthetic profile, all eleven provider
+  instances disabled, usage sources empty, and the safety envelope enabled
+  (`final-desktop-smoke-round1.txt`, `final-desktop-smoke-profile.json`). This eight-second
+  fatal-load check is distinct from persistent candidate readiness and UI acceptance.
+
+- Production unsigned macOS ARM64 packaging passes (`final-desktop-artifact-round1.txt`).
+  The resulting `Scient-0.0.45-arm64.zip` contains SDK 1.0.31 JavaScript in `app.asar`
+  and the matching sandbox, ripgrep and parser native helpers in the external resources
+  tree. All inspected native files are ARM64 Mach-O binaries with executable permissions;
+  packaged ripgrep starts successfully. Artifact SHA-256 is
+  `a8c2be0665077b8ec302700747582a773694379d7cadbd5e8b74c67b5661dd35`
+  (`final-desktop-artifact-inspection.json`, `final-desktop-asar-inspection.json`).
+  No signing or publication was performed; complete Windows Electron packaging/startup
+  remains distinct from controlled Windows/WSL archive extraction tests.
+
+- Final formatting passes all 7,300 candidate files (`final-format-round6.txt`),
+  excluding only the unrelated untracked `apps/server/tsconfig.agentfixcheck.json`,
+  which is preserved and excluded from the commit. Lint passes with zero errors and
+  1,056 warnings (`final-lint-round4.txt`). Knip, branding, all five configured seam
+  entry points and diff whitespace checks pass (`final-knip-round4.txt`,
+  `final-brand-round4.txt`, `final-*-seams-round4.txt`, `final-diff-check-round4.txt`).
+  The final complete Cursor driver rerun also passes (`final-cursor-driver-round5.txt`).
+
+Still required before presenting the candidate as ready for manual review:
+
+1. Run read-only Codex Sol 6.1 review on the complete immutable diff, address all
+   findings and requalify affected paths.
+2. Launch a fresh isolated development candidate, exercise changed surfaces, capture
+   screenshots and perform visual review. Preserve it for the owner's manual review.
+
+The earlier built-in Browser availability check failed. A later `preview_open`
+successfully attached the Scient Browser; repaired-candidate interaction and
+screenshot review remain required. Automated Chromium component/layout cases
+remain separate evidence; they do not close that gate.
+
+Local scripted/native replay acceptance does not establish hosted provider sessions,
+Windows/Linux process behavior, signing, remote SSH or native mobile interaction.
+The owner's manual acceptance and hosted CI are distinct from local qualification.
+No publication is authorized by this receipt.
+
+See [upstream-alignment-protocol.md](./upstream-alignment-protocol.md) and
+[scient-fork-divergence.md](./scient-fork-divergence.md) for the preserved contract.
+
+### Committed-fix review addendum 2
+
+The independent committed-code review found no P0/P1 in its eight-commit scope and confirmed the guarded ordering/turn-identity repairs and rebuild rollback. It built and ran nothing; its static verdict is separate from final candidate qualification.
+
+| Item                                            | Current disposition                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F1 direct-send permission transition            | Confirmed: ordinary admission wrote modes before planning against the live session. Plan now reads the prior projection with executionThread as target before metadata changes. Actual idle Grok-capability session replacement regression passes: prior session detach receipt, close once, native identity retained and new process/turn policy agree. Final root batch qualifies61 unique cases/six complete files (group4-root-f1-authority-round3.txt plus unchanged four files in round2); root scopedfmt/lint pass. Combined compiler/gates pending. |
+| F2 migrated Codex citations                     | Confirmed raw V1 assistant text bypasses legacy citation projection. Guarded missing-only repair uses retained same-turn search evidence and durable inert ownership, preserves concurrent V2 edits and survives original-event compaction. New/old completed, race, replay/rebuild and native-identity rejection cases pass in106-case/five-file migration qualification; ownedlint passes. Combined compiler/gates pending.                                                                                                                               |
+| F3 malformed system history/tool-name collision | Confirmed tool name alone could trigger strict history decode and fail export/fork. Interpretation now requires inert migration identity; valid text survives invalid attachment/context fields, unrecognizable records remain generic activity. Native name collision and malformed text/attachment/context safety regressions pass in real planner and snapshot/SCIC paths; no invalid attachment bytes are adopted. Root61-case/six-file qualification and scopedfmt/lint pass; combined compiler/gates pending.                                         |
+| F4 generated-image diagnostics                  | Confirmed discarded causes; redacted cause categories are logged without raw path/credential leakage or weaker file confinement. Native Codex full suite passes with actual warning capture; provider qualification395 unique/sevenfiles, scopedfmt/lint pass (group4-provider-l9-f4-f5-handoff.md). Combined compiler/gates pending.                                                                                                                                                                                                                       |
+| F5 Codex without MCP runtime guidance           | Confirmed missing runtime model/effort entry; runtime model/effort entry restored; actual no-MCP start and post-compaction guidance delivery pass in full Codex suite. Provider qualification395 unique/sevenfiles plus scopedfmt/lint pass. Combined compiler/gates pending.                                                                                                                                                                                                                                                                               |
+| F6 older active-run steering                    | Confirmed intentional conservative restart when a pre-upgrade run lacks captured permission policy. Unknown process permissions cannot be inferred from current thread labels. Actual same-label older-run regression proves one restart and subsequent steer reuses captured policy (group4-root-f1-authority-round3.txt). No speculative steering relaxation.                                                                                                                                                                                             |
+
+Independent dirty-tree causal review found no further confirmed A1/F1/F3 defect, but exposed an S3 accepted-delete cancellation gap. Bounded commit → cleanup ownership and actual interrupted-publication/filesystem regressions subsequently pass in the S3 checkpoint below. The retained Foundation stream-filter test also caught invalid-JSON evaluation in the new workspace classifier; guarded CASE classification fixes it without changing that test. Complete Foundation39 and native authority9 pass (`group4-root-foundation-authority-round1.txt`).
+
+### Follow-up review addendum 3 and native queue presentation
+
+These corrections are against the dirty candidate based on `6030c9fcf93e312fbde2f5b8bec3d56d9322950d`. Earlier final-gate and packaged-app results above predate these changes and do not qualify this candidate. Current complete server and web compilation pass; whole-candidate gates and repaired-app acceptance remain required.
+
+| Item                               | Confirmation and qualification                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AR2-01 MCP execution permissions   | Confirmed mutable thread defaults granted authority to an already-running provider. The live manager resolves issued credentials against the exact thread, instance, native session and captured active run/attempt; registered orchestration and project mutation guards use that captured policy. Both complete toolkit scenarios pass future-default escalation, weaker ceilings, safe inheritance and foreign credential/instance/thread refusal. The recorded-peer scenario uses actual issued credentials and awaits the native interrupted receipt before explicitly resuming held work (`group5-root-recovery-mcp-round3.txt`). Combined final gates remain required.                               |
+| AR2-02 OpenCode 1 permissions      | Confirmed resume fetched the old native session without replacing its rules. The adapter now writes and confirms the exact captured permission rule list before prompt admission, under serialized admission. Complete OpenCode adapter suite passes 53 cases, including both mode directions, reopened sessions and failed/mismatched confirmation (`group5-provider-native-round2.txt`). Combined gates pending.                                                                                                                                                                                                                                                                                          |
+| AR2-03 queued checkpoint workspace | Confirmed ordinary native release reused the admission-time checkpoint folder after project relocation. Release now re-resolves delivery policy and validates scope cwd and run/node/provider ownership. The real SQLite/orchestrator regression consumes that scope through production Git baseline, capture, diff and restore: destination changes are restored, and the old folder and checkpoint refs remain untouched. The second round relocates through the production project-event and command-receipt transaction (`group5-AR2-03-relocation-round2.txt`: one complete integration case). Provider execution is deliberately paused in this test; broader runtime qualification remains required. |
+| AR2-04 completed question answers  | Confirmed recovery selectors omit typed completed question items; legacy submitted answers lack an inert typed companion. Completed typed questions now enter recovery; exact-owner native lifecycle settlement preserves the committed answer in the durable event, and generation-two historical import adds missing inert answer companions without overwriting V2 edits. 66 server cases across five complete files pass, including actual callback → failed resume → portable recovery and migrated exact-boundary fork after source deletion (`group5-AR204-native-queue-handoff.md`). Historical approvals retain inert ownership. Combined gates pending.                                           |
+| AR2-05 native fork of Scient fork  | Confirmed native run-fork copies old source metadata without destination-owned facts/transfer proof. Forks now freeze destination-owned history and attachment bytes; causal lineage and exact source points remain without mutable source-projection dependence. Actual ordinary/MCP native fork of a Scient fork survives source/file deletion and retains question answers, context, skills and receipt reuse. The AR2-05/06 handoff records 50 unique passing tests across seven complete files, including bounded concurrent fork/delete cases. Combined final qualification remains pending.                                                                                                          |
+| AR2-06 Claude native boundary      | Confirmed weak completed-turn cursors exclude Claude native forks; producer can also advance the root cursor from a child message. Only exact completed root-owned assistant UUID evidence scoped to the native query/session admits the optimization; all other weak references remain portable. The consumer now uses the canonical `claudeAgent` driver identity. Actual SDK forkSession/upToMessageId execution after source deletion passes in the same 50-test/seven-file qualification (`group5-AR205-AR206-fork-handoff.md`). Combined final qualification remains pending.                                                                                                                         |
+| Owner queue/composer decision      | Native V2 is the only queue authority and Scient MAIN's strip and send/stop appearance are the presentation. Preserve edit, reorder, steer, hold/resume and keyboard behavior, with one visible queue surface. Actual repaired-app screenshots and DEV-001/DEV-002 retests remain open.                                                                                                                                                                                                                                                                                                                                                                                                                     |
+
+The S3 interrupted-delete publication and checkout-cleanup tests now pass with the real project service, SQL event path, clone tracker and controlled native clone. Tracker/deletion 16 and Claude authentication 2 cases pass in `group5-provider-native-round1.txt`; initial fixture failures and the separate OpenCode rerun are retained in evidence. No source check, mocked transport or markup assertion is treated as real-provider or visual acceptance.
+
+### Queue addendum 4 acceptance
+
+The newly appended handoff adds native queue extraction for edits, persisted edit journals and Web Locks, stashing an existing draft, retryable failed starts, and Send on the head held row. These now use native commands and receipts, preserving legacy journals as recovery data. Scoped IndexedDB, native ownership and queue-policy tests are recorded below; actual repaired-app interaction remains required. The native limits already have 96 focused passing cases across queue-budget, admission and runtime files; final candidate requalification remains pending. The owner chose explicit Resume after Stop, holding on interruptions and setup failures, and allowing drag reorder while idle. MAIN already held after Stop or failed admission and allowed idle reorder, but a later successful foreground answer could release its awaiting-completion hold. V2 must retain the hold until explicit Resume or Send on the held head; this stronger hold rule is the deliberate behavior change. Normal successful completion continues to advance an unheld queue automatically after finalization; Resume applies only to an existing Stop/interruption/failure hold. The four real native queue-policy scenarios recorded below qualify the runtime rules; their repaired-app interaction and final candidate rerun remain pending.
+
+The provider addendum qualification passes 171 cases across complete Claude adapter, provider-start and effect-worker files, plus 44 cases across six complete Codex RPC package files. These include exact root-assistant UUID producer gates, stale-attempt start fencing before provider setup, and strict replay drift rejection (`group5-provider-progress.md`). The native-Claude consumer is separately qualified above. Actual-worker tests exposed a Stop race: native acceptance precedes the SQL provider-turn receipt. The correction preserves the running start and records a durable interrupt that resolves the exact owned receipt; it does not fabricate native identity or declare the run stopped early. All 33 cases across complete control, worker, outbox-completion, native queue policy and queued-start recovery files pass (`group5-pending-stop-and-retry-round1.txt`). The four native policy cases prove normal FIFO auto-drain, persistent failure holds, deterministic delayed-delivery Stop followed by idle reorder/head Send, and non-user interruption holds. Stale attempt, root, session, archived/deleted owner and replacement binding cases reject native interruption. Scoped formatter/lint pass without warnings.
+
+The combined server compiler passes with no hard errors or Effect warnings (`group5-server-typecheck-round7.txt`); contracts, client-runtime and mobile compilers also pass. These results precede the new combined imported-approval and file-backed migration acceptance fixtures. Root's runtime batch qualifies 80 unchanged cases across complete run-execution, provider-start, selection-restart and queued-checkpoint files. The initial broader batch found two stale fixture expectations after the Stop correction: recovery omitted the new process-bound effect, and the MCP test treated a queue-hold receipt as proof of native settlement. The complete recovery/MCP rerun passes all 15 cases after retaining the full cancellation list and awaiting actual native interruption (`group5-root-recovery-mcp-round3.txt`). Root's final fork run passes 43 cases across seven complete files including lazy hydration; the complete planner file remains a separate required rerun. Whole-candidate gates and repaired-app acceptance remain open.
+
+The current whole web compiler passes with fresh external build information (`group5-web-typecheck-round4.txt`), with no hard errors or Effect warnings. The native queue strip keeps schema-derived legacy optional flags and skips image previews without a stored attachment ID. The obsolete in-place queued-attachment owner and Update queued message action were removed: extraction journals owned file bytes before transferring into the ordinary composer draft, and submission follows ordinary captured dispatch policy. All 49 cases across eight complete queue/composer files pass (`group5-root-web-queue-round1.txt`), covering the native control, shortcuts, strip, edit session/journal, restored image bytes and composer snapshots. The combined server compiler also passes after composing the existing command-receipt singleton into the replay harness (`group5-DEV002-server-typecheck-round2.txt`); it includes the new imported-approval and file-backed migration fixtures. Whole-candidate gates and repaired-app acceptance remain separate.
+
+Final file-backed recovery acceptance confirmed an additional native queue cutover defect: distinct migrated app-owned provider-thread rows can refer to the same resumed native conversation, but the session load cache omitted the app-owned ID. It then skipped the second adapter rebind, and the exact native ownership guard correctly rejected delivery (`final-migration-recovery-acceptance-diagnostic-round2.txt`). The cache now includes the app-owned provider-thread ID, preserving exact guards and ordinary same-row reuse. All 53 cases across the complete manager suite and actual migration/restart/backup/native-FIFO fixture pass (`final-migration-recovery-acceptance-round3.txt`). The full migration battery passes 157 cases across 13 complete files (`final-migration-full-battery-round2.txt`); combined with the manager suite, this is 209 unique cases across 14 files. Its two initially failing plan-preflight expectations were repaired after confirming the deliberate ordinary failed-start hold contract: queued status, original payload/position, real failure item, zero native/title effects and unchanged source plan remain asserted. Scoped formatting and lint pass.
+
+Independent source review of the current server candidate confirmed a further startup failure path: a fallible recovery-history read after the running commit and before native execution can leave a run without a native receipt; a retried start then returns success without settlement (`group5-independent-server-source-review.md`). The actual SQLite/worker regression reproduces that orphan before the fix. History preparation now finishes before the running commit; retryable reads retain starting ownership, and final failure settles truthfully through the existing guarded failed-start hold path. Explicit retry after restoring the history succeeds without losing files, skills or position. All 23 cases across four complete lifecycle files pass, with scoped formatting/lint passing (`group5-start-history-failure-handoff.md`). Whole-candidate compilation and gates must include this repair.
+
+Independent web source review confirmed three additional native queue integration defects (`group5-independent-web-source-review.md`): pending admission previews also entered the actual conversation timeline, a definitive native extraction rejection left an edit journal blocking ordinary submission, and an unopened imported held queue could not reorder without a provider session. Both actual timeline producers now filter admission previews; exact initial/replayed durable rejection survives the shared RPC codec and releases only an untransferred edit intent; native idle reorder uses app-owned queue state. Arbitrary RPC/storage failures remain ambiguous and retain their recovery token and bytes. Qualification passes 152 unique cases across 14 complete files, including actual native delivery/SQL refusal, failed rejection-receipt storage, IndexedDB recovery, real timeline/workflow consumers and Chromium layout. Four affected canonical package typechecks and scoped formatter/lint pass; scoped warnings match the earlier baseline. The startup history inference error exposed during this batch was corrected without narrowing its failure channel. Independent source review of these three repairs found no confirmed defect and records exact blobs (`queue-repairs-independent-source-review.md`). Whole-candidate gates and repaired-app acceptance remain separate.
+
+The private controlled ACP fixture passes its bounded protocol smoke on Node 24.19.0: six prompt/idle pairs, hold/release, one cancellation, two permission responses, config confirmation and resume. The owned peer exits cleanly (`controlled-acp-peer-smoke-20261004-round1/qualification.json`). This qualifies the simulated stdio peer only; production application, browser and vendor compatibility acceptance are separate. The additional provider source review found no confirmed defect in its inspected scope and labels the reviewer's prior provider changes as self-review (`provider-source-review-current-vs-6030.md`).
+
+Fresh serialized complete suites for the other 27 packages pass 6,728 cases across 616 files, with 46 intentionally skipped cases (`final-candidate-other-tests-summary.json`, `final-candidate-other-tests-round2.txt`, `final-candidate-other-tests-round3.txt`). This includes desktop, mobile, shared, ACP, Codex, OMP, SSH, scripts and Scient capability packages. Server, web, contracts and client-runtime require their final complete rerun after the latest shared queue correction. The first command rejected an incompatible runner flag before executing tests; the next glob selected only unscoped package names, so the remaining named packages were run explicitly. Repeated relay results are counted once.
+
+### Handoff completeness and current qualification
+
+The complete handoff, including Addenda 1–6, was reread on 2026-10-04. Group order and the owner’s queue decisions remain binding. Normal completion automatically advances an unheld queue; Stop, interruptions and failures retain a hold until explicit Resume or Send on the head.
+
+**Addendum 6 — separately owned V1 removal:** the lane at `scient-v1-removal-20261004`, branch `claude/alignment-v1-removal-20261004`, owns removal. This integration pass does not remove or modify its V1 files. No delivery notice or merge is recorded yet. When delivered, the resulting patch requires source review and affected-path qualification against the combined candidate.
+
+At `1082cdbd48`, the uncached compiler passes all 32 package checks with zero hard errors and zero Effect warnings; 323 suggestions remain (`final-candidate-typecheck-round2.txt`). Whole-tree lint exits successfully with 1,111 warning lines (`final-lint-round5.txt`); no warning-free claim is made. The two narrowly classified native steering/extraction skill seams pass the skills, LaTeX and alignment checks at `856b5e9ecf`, alongside the frozen owned-main/upstream provenance check (`final-*-round6.txt`).
+
+The provider-switch suite now explicitly awaits the failure hold before Resume and retains payload, order, exact cancellation version and native ownership assertions. All 65 cases pass after the actual queued message version guard correction, with scoped formatting/lint and the canonical server compiler passing (`final-provider-switch-hold-handoff.md`, round 4). This test-only correction is committed at `802e278c28`. The earlier full server round 3 was interrupted with exit 130 after exposing stale automatic-recovery expectations; it is not a passing suite.
+
+The clean detached review worktree at `802e278c28` passes the uncached whole build and desktop smoke (`final-clean-candidate-build-round3.txt`, `final-clean-candidate-desktop-smoke-round2.txt`). Its private profile and workspace contain synthetic data only. Unsigned macOS ARM64 artifact packaging also passes (`final-clean-candidate-artifact-round3.txt`). The exact packaged Electron 44.4.2 executable loads the real validation worker and PDF.js closure from `app.asar`, accepting a valid one-page fixture and rejecting malformed bytes (`final-packaged-pdf-worker-round1.json`). This is separate from native Export/Save acceptance. Complete test suites and repaired-app acceptance remain open.
+
+The independent immutable Sol review of `1082cdbd48` reports four source-proven conditional defects (`final-sol-review-round3.md`). Immediate/deferred source-plan consumption and synthetic running-turn events mistaken for native acceptance remain under repair, including synchronous native-send failures before event ingestion persists. Exhausted recovery-projection reads are repaired with current-owner terminal fencing: five actual SQL cases pass (`final-sol-recovery-projection-handoff.md`). Native Droid finite idle supervision is repaired: sixteen real stdio/SQL cases pass, including actual owned-process retirement and a held undelivered queue (`final-droid-watchdog-handoff.md`). Parent source review has inspected both frozen repairs; combined compiler, complete suites, fresh immutable review and app qualification remain open. Passing historical compilers, build and smoke do not close them.
+
+### Current native-acceptance and fork-navigation qualification
+
+The full handoff and all six addenda were re-read, together with DEV-001/DEV-002. Independent coverage audit found no further omitted production requirement (`remaining-acceptance-checklist-18a0.md`). Separate V1 removal remains owned by its dedicated lane; its last observed head is still `856b5e9ecf`, with no delivery notice. No removal work was inferred from the worktree's presence.
+
+Immediate, deferred and queued source-plan admission now retains the selected semantic fingerprint until an exact native acknowledgement. EventSink consumes the active plan in the same current-owner transaction as the accepted provider-turn receipt; local installation, unknown delivery, historical absent metadata and displaced attempts do not consume it. Typed synchronous start failures retain their exact observed receipt before ingestion is interrupted. Independent final source review confirmed two additional edges before commit: Codex's request-error capsule discarded an already observed native `turn/started` acknowledgement, and OpenCode 2's dedicated nonexistent-session handler bypassed the definitive refusal reset. Both are repaired on the actual native path. Codex retains the exact accepted identity for the bounded request lifetime, including terminal-before-error; OpenCode 2 restores pending only for the same unaccepted turn and preserves prior native acceptance. Four Codex and one definite-refusal cases fail before repair; all six native protocol cases then pass. Complete affected adapter/core files qualify 258 unique cases, including an already-ingested accepted SQL row that keeps its single ordinal identity after synchronous failure. Combined unchanged and requalified complete-file evidence is 675 unique tests across thirteen files (639 adapter plus 36 SQL/core), with real SQLite worker/outbox fences and blocked-ingestion failures (`source-plan-native-final-handoff-v2.md`, exact 24-file hashes in its manifest). Scoped server/contracts typechecks, formatting and lint pass; no warnings in the changed native scope. Whole-candidate and repaired-app qualification remain separate.
+
+The combined uncached typecheck passes all 32 package tasks with zero hard errors and zero Effect warnings; 323 nonblocking suggestions remain (`final-candidate-typecheck-round6.txt`). Droid fixture APIs were repaired without changing production behavior and both complete supervision files pass16/16 (`final-candidate-droid-round5.txt`). This run includes both final native receipt edge repairs; complete suites and app qualification remain open.
+
+Actual clean `802e278c28` app interaction passes ordinary completed-answer fork creation, destination navigation, exact retained prefix and a single Scient fork separator. Picker continuation successfully creates a destination-owned fork of that fork, but browser navigation remains blocked after the dialog reaches its closed state. Source/RPC tracing confirms navigation incorrectly depends on an animation callback that can fail to arrive. The feature now removes the accepted dialog subtree and settles its close promise after the layout commit, retaining dismissal/unmount guards and retry state. The regression fails before repair with no handoff under a never-finishing animation; four complete fork lifecycle files then pass54/54 (`final-candidate-web-red-round6.txt`, `final-candidate-web-green-round5.txt`). Native/browser refreshed-candidate acceptance remains open. See `final-native-fork-acceptance-round2.md` and `actual-fork-navigation-close-gate-802e.md`; no sidebar delivery defect was separately confirmed.
+
+The remaining visual comparison must capture all six MAIN/candidate states: empty composer; one queued item; three queued items; extracted queue edit; running Stop action; held queue. Fresh native acceptance must also cover edited text and attachment bytes through Stop/reload/second window, ordinary draft stash recovery, picker continuation draft/file transfer, and DEV-002 imported permission changes plus exactly-once live approval responses with historical approvals inert. Component tests, controlled peers and historical app builds do not replace these interactions or whole-candidate gates.
+
+### Actual native desktop acceptance and edit-journal correction
+
+The clean detached `802e278c28` review app passes native PDF Export → Cancel → Retry → Save, producing a one-page PDF with both synthetic messages. The actual file parses, extracts and renders correctly; its SHA256 is `e9870c806ff0df8bfd66f123685cd880813d12161bf5af0e2ec80f51fadeb9b6`. The same app visibly lists Scient, Codex, Claude, Antigravity, OpenCode, Droid, Pi, Oh My Pi, Cursor and Grok plus the controlled fixture. Existing disabled/enabled provider preferences remain intact. Evidence and boundaries: `final-native-pdf-provider-acceptance-round1.md`. This does not qualify vendor sign-in/live models or every export option.
+
+Normal unheld queue FIFO also passes through the native composer: after the foreground completes, q1/q2/q3 start and complete in order without Resume. Canonical `orchestration_events` sequences are foreground completion88, then queued completions113/138/163; the corresponding projected native run facts agree. A transient stale accessibility/screenshot frame later converged; no stream loss was confirmed. This is separate from Stop/edit/reload acceptance (`desktop-queue-readonly-disposition-802e.md`).
+
+That Stop/edit/reload test confirmed an additional **open dev-app regression**: extracting q2 correctly stashed the ordinary draft, but reloading lost text typed after extraction. The journal subscription compared methods from old/new Zustand snapshots; both methods close over the live store, so their returned draft references always matched. The repair compares immutable draft entries at the exact key installed by extraction/recovery. A real IndexedDB regression fails before repair with the original queued text, then passes without an explicit flush, preserving rapid typing, permission selection, attachment bytes and the ordinary stash. Both complete journal/recovery files pass21 cases; scoped formatting/lint pass with two existing spread warnings (`queue-edit-autosave-red-round2.txt`, `queue-edit-autosave-green-round1.txt`, `queue-edit-autosave-lint-round1.txt`). Native repaired-app reload, Stop and second-window acceptance remain required before closing this item. No existing test was weakened.
+
+### Final-candidate review and refreshed interaction checkpoint
+
+The full external handoff was reread at 276 lines, including all six addenda. Original reviewer items, DEV-001/DEV-002 and the owner's queue/fork decisions remain part of acceptance; the separate V1-removal lane has not delivered a patch. The immutable source review of `3564658e28` finds three additional defects (`final-sol-review-round4.md`); it did not build or run anything.
+
+| Item                                                           | Current evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Restored ordinary stash inherits the extracted source plan     | Confirmed in the journal restoration and actual send consumer. The new real IndexedDB ordinary-side regression fails with `source-plan`; the active target-edit control already passes. Ordinary restoration now discards extracted item/native retry provenance only when no target edit exists. Edited-side restoration and active target edits retain their own provenance. Three complete edit/journal/recovery files pass24 tests, web typechecking passes with five suggestions, and scoped formatting/lint pass with two existing spread warnings (`final-stash-provenance-red-round1.txt`, `final-stash-provenance-green-round1.txt`, `final-stash-recovery-green-round1.txt`). The green runner contains one nonexistent extra test selector; it executed exactly two files/23 tests, supplemented by the actual recovery file/one test. No test was weakened.                 |
+| Returning failed queued start exceeds admission limits         | Confirmed: promotion removes the queue head from budget measurement while an undelivered failure can restore it. Four actual starting-session preparation cases fail on the committed budget. Queue-origin runs now retain their slot until the exact native receipt or retirement prevents held restoration; old/unknown receipt policy stays conservative. The actual queued-edit and legacy-intake read selectors include provider turns. Five complete affected files pass54/54, including real 31+32MiB attachment bytes, denied enlargement, five preparation refusals preserving held payload, and acceptance releasing the reservation. Canonical server typecheck and scoped formatting/lint/diff checks pass (`queue-reservation-handoff.md`, exact three-path manifest). Root reviewed the predicate against terminal restoration. Complete candidate gates remain required. |
+| Oversized historical tasks lose their structured wire envelope | Confirmed through the legacy producer, HTTP/WS compaction and client Agents decoder. Two actual decoder regressions fail on the committed wire projection; the repair preserves validated inert migration identity, terminal classification, usage and workflow structure while bounding UTF-8 display text. The complete wire suite passes28/28 and the real SQL/EventSink → bounded HTTP/WS snapshot/replay → historical decoder case passes1/1, with unchanged stored source bytes and no live authority. Scoped formatter/lint pass without diagnostics (`historical-task-wire-repair-handoff.md`). Root reviewed the producer/consumer guards. Combined compiler and complete server/transfer gates remain required.                                                                                                                                                               |
+
+The clean detached `3564658e28` app passes picker continuation of an existing Scient fork: destination navigation completes immediately, the accepted dialog is absent, the inherited prefix has one Scient separator, and the ordinary draft/file chip remain. A full same-origin reload retains them. An actual composer send through the controlled ACP peer then completes exactly one native run; the destination-owned stored file matches all 88 expected bytes, SHA256 `52e0ef677717c2887ea9cd156b1b83225f9bdeb480bdd00df5d57953799547a7` (`final-picker-fork-byte-proof-3564.json`). File input was exercised through the real DOM change handler with synthetic bytes, not an OS file chooser. Earlier preview-click attempts had no effect; direct DOM button activation worked, and `/api/auth/session` returned authenticated. No independent connectivity defect was confirmed.
+
+The same browser extracts a held queued item into the composer and stashes an ordinary authored draft. Changed text and newly attached bytes autosave through the real journal subscription; a full reload retains the edited text, file chip, remaining held queue and original stash. Read-only IndexedDB inspection confirms the exact new file bytes and both draft sides. This qualifies same-window browser reload, not native Stop during editing, a second-window interaction or the required six-state screenshot comparison. Those and DEV-002 live/imported approval interactions remain open.
+
+Actual browser composer approval acceptance also passes at `3564658e28`: Supervised offers a live no-op request; Approve reaches the controlled ACP callback once and resolves the exact durable request. A second request survives a full reload; Decline then reaches its callback once and resolves. Selecting Full access survives reload, and the next native turn captures `full-access`, replaces the prior process and automatically allows the controlled callback without an actionable composer request. Read-only SQL and peer audit record four completed runs, two resolved live requests and exactly three native responses (`final-browser-live-approval-proof-3564.json`). The peer deliberately performs no command and finishes after either reply; this is response-routing proof, not vendor permission enforcement or imported historical-approval acceptance. DEV-002 remains open for the actual imported-conversation flow and repaired native app retest.
+
+Current static gates, clean build and desktop smoke pass against `3564658e28`: formatter, lint, Knip, branding, protected seams, provenance and diff checks (`final-native-closure-*-round1.txt`, `final-clean-candidate-build-round4.txt`, `final-clean-candidate-desktop-smoke-round3.txt`). Full lint reports1,111 warnings. Full server round5 reports failing native-continuity, steering-attachment, memory and replay cases before being deliberately interrupted with exit130 to repair them; this is incomplete failing evidence, not a passing full suite. Scoped fixes, complete server/rest/layout reruns, refreshed packaging, immutable review and repaired-app acceptance remain required.
+
+The deep JSONC ESM import previously used for cold bundling is also confirmed to fail direct Node loading because its relative implementation imports omit extensions. Source now uses the public package entry; the shared production/probe pack alias selects its statically visible ESM closure only at build time. The seven actual direct-Node memory cases pass, and the two complete cold bundle/dependency-policy files pass21/21: the emitted isolated package executes the real Claude JSONC settings writer with no checkout/global resolution, retaining comments and unrelated preferences. Scoped formatting/lint and canonical scripts typecheck pass (`final-node-jsonc-*-round1.txt`, `final-provider-failure-repair-handoff.md`). The clean combined backend/artifact rebuild still needs requalification. Independent source review finds no further confirmed defect in the stash or JSONC boundary repairs and records their exact inspected blobs (`stash-jsonc-independent-source-review-3564658.md`).
+
+The renewed read-only coverage audit at `f7099c3384` finds no omitted named requirement or falsely closed acceptance gate across the original eleven findings, Groups 1–4 and all six addenda (`handoff-closure-audit-f7099c.md`). Current JSONC wording is corrected above; the subsequent bounded canonical conversation lookup recovered historical B10 and the exact existing migration bytes are compared above. Native continuity/replay fixture corrections qualify 59 unique cases across seven complete files, retaining strict protocol matching and actual attachment bytes (`final-provider-failure-repair-handoff.md`). The inherited-routing unit fixture now explicitly exercises retryable preparation rather than expecting a final failure to escape truthful settlement; all 17 unit and five actual SQLite lifecycle cases pass, with unchanged production failure and displaced-owner guards (`provider-start-retry-fixture-final-handoff.md`). These are scoped results. OpenCode 2 fork replay was still unqualified at that checkpoint; its later complete qualification is recorded below. Final gates and imported/native visual acceptance remain open.
+
+Both V2 fork entry points now persist one deterministic destination-owned boundary item after the frozen prefix. Its run, node, provider-turn and native identity remain absent; causal lineage does not restore mutable source execution authority. User boundaries name the exact message before it, historical runless assistant boundaries name the message after it, and proven run boundaries retain their exact run pointer. Message boundaries encode as an existing inert notice for older clients and round-trip to a fork on current clients; Type and JSON validation reject live ownership on decoding and encoding. Web suppresses only the local incoming item when its Scient separator is visible, preserving inherited, outgoing and unloaded boundaries. Actual mobile feed and Chromium navigation consumers retain the boundary and source link. Real SQLite source deletion, rebuild and repeated receipts preserve it exactly once, including the omitted optional provider-thread field whose SQL binding previously failed. The final focused battery passes440 unique tests across17 complete files; four canonical package typechecks and scoped formatting/lint pass with zero warnings (`frozen-fork-boundary-handoff.md`, exact19-path manifest). Independent source review finds no confirmed defect in the final production blobs (`persisted-fork-boundary-independent-source-review-f7099c.md`). Full-candidate and actual dev-app acceptance remain separate.
+
+The exact MAIN reference now has six authentic native captures: empty composer, running Stop, one queued item, three queued items, extracted queued edit and held queue (`main-six-state-reference-33ab8e.json`). These use the clean `33ab8e307a` reference app and its private simulated ACP peer; a new disposable comparison conversation preserves the existing conversation and stash. The second row is extracted and returned through MAIN's real controls, then Stop leaves three queued rows. Final-candidate captures and comparison remain required. The peer audit contains additional HOLD admissions in separate sessions; they have not been classified as duplicate user execution or a candidate regression. These images establish the visual reference only, not final acceptance or vendor behavior.
+
+The owner reports an additional fork presentation defect: a same-provider portable fork shows both the Scient fork boundary and a generic Context handoff row. Current source confirms that fork initialization creates a handoff item consumed by the generic lifecycle renderer. Its durable fork context transfer already records the exact target thread/run and handoff identity; display must use that causal fact to avoid a duplicate initialization row while retaining the provider history delivery and later genuine provider changes, recovery, imports and merge-back. The correction is qualified below; actual refreshed-app verification remains open. It is part of DEV-001, not a reason to hide all handoffs in forked conversations.
+
+The full alignment definition of done remains broader than the external handoff: native provider and tool parity, migration/queue cutover, transport and streaming coverage, whole-candidate checks, clean build/smoke/artifact, independent source review and the specified manual interactions all remain qualification gates. The existing final-review app is now being used for manual review and remains untouched. A separate clean detached acceptance checkout (`scient-v2-alignment-acceptance-20261004`) is prepared from the committed candidate for future final-source build and synthetic-data interactions; its frozen dependencies are installed without lockfile changes, but it has not been seeded or launched. It will be advanced only while unlaunched and clean. No existing profile, credentials or user conversation is copied into it.
+
+The broader audit at `f7099c3384` found E3/B13 incomplete: registry instance lifetime/credential cleanup did not establish app-installed runtime provenance or removal of Registry-owned npx/uvx installs. That snapshot omitted Registry provenance/shared management and intentionally retained package installs during binary-only removal (`full-alignment-open-gates-f7099c.md`). The correction and its later qualification are recorded below and in the current B13 acceptance row. Claude user guidance communicates the accepted connected-tool permission re-prompt after the `t3-code` → `scient` rename, and ACP guidance uses Scient product wording while preserving literal hosted-service references and storage compatibility.
+
+The E8 wording audit also confirms visible inherited product labels in mobile navigation, authentication-client presentation, notifications, diagnostics, the theme selector and several Help pages. These now use Scient; the compact mobile header reuses the existing Scient asset rather than the inherited T3 wordmark. Package, native-module, route, theme, client, storage and release identifiers are unchanged. Existing historical crash-stack bytes and upstream sample-project titles remain source evidence. The mobile release hold remains in force. The subsequent mobile checks and branding proof are recorded below; final composed qualification remains required.
+
+The fork initialization presentation correction is now qualified in 368 tests across six complete files: shared predicate, actual web rendering/timeline, mobile cached feed and real SQLite/native continuity and prefix fixtures. Context artifacts and the exact fork transfer remain persisted and delivered; only the matching local initialization row is hidden. Missing metadata, inherited handoffs, later provider changes, imports, recovery and merge-back retain visible handoff rows. Canonical client-runtime/web/mobile typechecks pass; server checking reports only unrelated moving registry/provider diagnostics at that observation boundary. Scoped formatting/lint pass, with113 warnings at unchanged HEAD source sites. The display battery overlaps the prior440 boundary battery; their deduplicated458-case/18-file inventory is not a claim all18 files ran on the final combined dependency graph (`fork-initialization-display-handoff.md`, final27-path manifest). Actual repaired-app acceptance remains open. Source review confirms the causal transfer guard and live memo/cache forwarding without a further confirmed defect (`fork-display-mobile-branding-source-review.md`).
+
+OpenCode 2's complete native-fork qualification confirms two actual defects. The adapter discarded its native acknowledgement of the offered prompt ID, retaining a weak locally chosen boundary; it now promotes only the exact acknowledged session/message/attempt owner, preserving terminal state when completion precedes the response. Its inclusive fork then used later app turns that frozen evidence intentionally excludes; the fork-only path now reads complete ordered native history and resolves the exclusive next prompt, refusing absent, duplicate or unconfirmed boundaries. Existing rollback behavior and strict original protocol recordings remain. All95 adapter and13 orchestration cases pass, including the recorded `before SECOND` cut and retained `ONE` prefix. Scoped formatter/lint/diff checks pass without warnings; the canonical server compiler has no OC2 diagnostics but remains red on four moving registry error-channel diagnostics (`final-oc2-native-boundary-handoff.md`, exact three blobs). This is native protocol/host proof, not live-vendor acceptance.
+
+The broader wording repair passes74 mobile tests across four complete files and18 branding-guard cases, canonical mobile/scripts typechecks, scoped formatting/lint and the brand check across3,024 selected product surfaces. Ten lint warnings map to unchanged source sites, not a rerun claim about historical output. The guard includes the newly Scient-owned mobile presentation paths without treating captured upstream fixtures or native/store IDs as product copy. Independent source review caught and corrected OS Settings guidance: it names the actual configured native app rather than assuming a renamed operating-system label. Mobile's release hold is grounded in the disabled production workflow; retained local build and runtime update configuration are not newly disabled (`root-branding-*-round1.txt`, warning-site proof and source review). Final native mobile interaction and publication remain outside this local presentation proof.
+
+A broader current-source audit found two active composer Help descriptions still promising the retained V1 rule that a later successful foreground answer releases a stopped queue. Both now describe the accepted native V2 policy: normal successful completion automatically drains an unheld queue; Stop, interruptions and failed starts hold the tail until explicit Resume. Head Send releases only that row, and idle reorder remains available. Actual `NativeQueueHoldPolicy.integration.test.ts` and `Orchestrator` ownership agree with this correction; the separately labeled V1 recovery documentation retains its historical semantics. Help is runtime-loaded content, so final build/app qualification covers the revised text.
+
+The original E3/B13 Registry requirement is now implemented against the existing catalog and shared management owner. Registry installations report actual recorded installer, location and version; older confined binary caches truthfully omit unknown installer facts. Read-only status does not reinstall removed packages. Explicit preparation and native admission retain installation behavior. The released cleanup method now removes validated app-owned binary, npm and Python roots, with shared-instance, active-operation, exact-configuration and installation-identity guards. Foreign tools and account credentials remain outside removal. User ACP Help describes these controls and boundaries.
+
+Qualification passes167 unique cases across seven complete files:165 at the frozen seven-file boundary, then the complete39-case catalog suite including two added real filesystem/action interleavings. Independent review found and the author corrected a declined-removal false-success race: the action retains the exact reviewed installation across asynchronous reporting and requires actual `removed:true`. Prepared reservations and replaced receipts now fail truthfully and retain executable bytes. Canonical server, web and contracts typechecks, fifteen-path formatting and lint pass; three unchanged UI warnings remain. The final independent review matches all fifteen author blobs and finds no remaining confirmed defect in that scope (`registry-managed-handoff.md`, `registry-management-independent-source-review-final.md`). Controlled installer/transport fixtures qualify local ownership and service behavior, not live Registry network installation or manual Settings acceptance. Whole-candidate gates and the clean repaired app remain required.
+
+The final runner audit confirmed that both collected transfer scenarios wrote the same CI report paths, contrary to the single-writer artifact contract. Bounded startup now uses distinct optional `T3CODE_BOUNDED_TRANSFER_BUDGET_*` report paths; the full-endpoint integration scenario remains the sole canonical CI writer. Measurements, deadlines and budget assertions are unchanged. The next complete server gate records both full-endpoint and bounded-startup reports separately. The audit also caught that a clean desktop checkout alone does not isolate the ordinary smoke profile; the external smoke runner now allocates a disposable HOME and state root with disabled providers. Fresh build, smoke, archive-helper/PDF inspection and local release smoke remain explicit gates (`final-runner-coverage-audit-c2ff7e.md`).
+
+The production-process OMP gate also exposed a native queue ordering defect beyond the supplied review: a checkpoint receipt repeated an already interrupted run after an accepted Resume and held the tail again. The terminal reactor now derives hold authority from the original exact-attempt terminal transition, each current queued row's original admission, and accepted `queue.resume` receipts in the existing V2 event store. Reads are finite, restricted to run events for the thread, and occur only when a failed/interrupted terminal reaction has unheld user queue candidates. No second queue ledger or restart-dependent memory authority is added. Older checkpoint/cleanup echoes cannot undo Resume or hold newer admissions; genuinely newer failures still hold the tail.
+
+All21 cases in the complete native hold-policy file pass, including four actual delegated-child lock interleavings and a fresh runtime over the same disposable file-backed SQLite database with a pending old checkpoint. Whole Resume, head-only Send, accepted receipt replay, newer failure and post-Resume admission remain distinct. The initial causal red run reached accepted Resume and then observed the old tail held, rather than failing fixture setup. Canonical server TypeScript/Effect, owned formatting and lint pass with no errors or warnings. Independent source review confirms the original cause, durable reconstruction, receipt fences and retained run-event history. Exact frozen blobs and evidence are recorded in the queue terminal-ordering handoff; the full candidate and actual OMP process rerun remain separate gates.
+
+The original E2/B3 gate now qualifies47 cases across three complete files:25 adapter,20 process and two actual default-process/native SQL cases. The test executable is deliberately simulated, but production executable version admission, process factory, stdio/RPC, provider manager, EventSink, SQLite, interruption and saved-transcript Resume are exercised. Normal successful completion drains the unheld queue; Stop confirms the owned child is gone, retains the original transcript prefix once, and Resume delivers each queued user/assistant exactly once through the replacement process. Every opened peer PID exits. The previous actual-process red result was caused by the durable queue-ordering defect corrected above.
+
+OMP locks now release only after observing the exact owned child exit, including signal termination without a numeric exit code. An uncertain shutdown keeps the lock; a later observation may confirm that same child exited. Finalizers retain exact-token guards against a replacement owner. A separately confirmed native kill-await gap now has a finite deadline: two seconds of stdin grace, three for the native kill and three for exit lookup. Deadline expiry is not exit proof. Removing only this deadline makes the controlled-clock regression fail at its original bound and cleanly tear down; restoring it passes. Canonical server TypeScript/Effect, six-path formatting and lint pass without errors or warnings. The constructor still relies on the existing scoped process/spawner cleanup before handing over its process; compounded OS kill failure in interrupted construction is not newly qualified. Exact source manifests, causal red/green logs and native-process evidence are in the final E2 OMP handoff. This proves local host integration with controlled peers, not live vendor/account compatibility.
+
+### Final review and composed-gate repairs
+
+The immutable full-diff review at `c4aad71535` found one confirmed P2: OpenCode 2
+marked the offered turn accepted before checking its typed prompt response and
+exact owner. Foreign response IDs or sessions could therefore consume a source
+plan without native acceptance evidence. The adapter now validates response,
+registered session, provider thread, active turn and latest attempt/root/native
+cursor before promotion. A genuine native execution event remains independent
+acceptance evidence; terminal-before-response status and usage are retained.
+
+The causal baseline fails both foreign-response cases through the actual adapter
+and SQLite EventSink, while exact acknowledgement and displaced-attempt guards
+pass. The corrected complete four-file batch passes 132 unique cases; the final
+four-case SQL file also passes after a test-only nullable-node correction.
+Canonical server TypeScript/Effect and three-file formatting/lint pass without
+errors or warnings. The permission fixture now uses one subscriber to route
+actual request and terminal events, avoiding competing consumers of its unicast
+queue. Existing permission, retry, fork and usage assertions remain. Independent
+source review finds no remaining confirmed defect in the bounded adapter repair.
+Exact manifests and causal logs are recorded in `oc2-ack-final-handoff.md`.
+Combined qualification and vendor/manual acceptance remain separate.
+
+The complete server checkpoint exposed outdated fixture assumptions for explicit
+Resume after setup failure, attempt-specific queue-release command IDs, newly
+registered Scient migrations, Cursor CLI setup copy and Grok's Scient guidance.
+The startup-failure observer also discarded guarded writes in its mock; production
+already commits failure before refreshing pull requests. Historical boundary
+declarations must name the existing inert migration guards and hydration readers.
+These corrections retain attachment bytes, checkpoint workspace, native ownership,
+permission argv and ordering assertions. The corrected seven complete files pass
+151 cases, and the canonical server TypeScript/Effect check passes with no hard
+diagnostics or warnings. Scoped formatting/lint/diff checks pass. Qualification
+also removed the obsolete V1-reader exemption for the now-native workspace
+authority service and verified the exact twenty-entry Scient migration ledger.
+Two fixture typing errors found by the compiler were repaired without changing
+asserted behavior. The new controlled OMP subprocess fixture is classified by
+its exact path; final composed seam/provenance gates remain required. Evidence:
+`root-server-gate-repairs-*-round3.txt`; earlier failed rounds remain retained.
+
+Answer-attention Addendum 7 now uses one canonical completed-answer selector
+for web acknowledgment, SQL/in-memory Unicode whitespace and binary ID-ordering
+parity, and web/mobile read watermarks based on the exact loaded foreground
+answer. General thread activity no longer publishes an answer-read watermark.
+Explicit null stays authoritative; successful legacy fallback requires absent
+canonical metadata. Same-conversation mark-unread remains sticky, changing
+conversation resets dedupe, and failed visits retry only on a later foreground
+signal with exact-dispatch fencing. Seven complete files pass312 cases; shared,
+server, web and mobile compilers and scoped formatting/lint pass. The104 retained
+lint warnings are at unchanged declaration sites. Independent final source review
+matches all sixteen integrated blobs and finds no remaining bounded defect
+(`addendum7-answer-attention-qualified-handoff.md`,
+`addendum7-answer-attention-final-independent-integration-review.md`). Whole
+candidate and actual foreground/reload/second-window acceptance remain open.
+
+### Reviewed seam cleanup integration
+
+The committed cleanup batch `7ef738fb31` is merged with literal lane history
+preserved. Its eight extractions retain host exports, construction timing,
+capability behavior and build phase ownership. Native-preview qualification now
+hashes the extracted association and packaging helpers, so prior evidence cannot
+silently cover changed inputs. Independent immutable seventeen-file review found
+no production behavior regression, but confirmed a missing OMP classification
+for the new provider-settings leaf. The actual composed seam checker reproduces
+that exact failure; only the leaf is added to owned files, retaining the host
+mount and all detection rules. Final seam/provenance gates remain required.
+
+The batch's reported scoped evidence covers433 unique tests across nine complete
+files and32 passing compiler tasks. Its final lint log contains13 retained warnings,
+correcting the earlier four-warning summary. Its older production build precedes
+the final hash repair and merge; it does not certify this combined candidate.
+Independent source and evidence review:
+`full-seam-batch-independent-integration-review-7ef738.md`. Other cleanup lanes,
+full runtime/build/archive checks and manual acceptance remain open.
+
+The composed provenance gate rejects both new owned merges because their second
+parents are newer than the frozen owned-main base. Exact reviewed owned merge
+receipts now record the ordered parents of `7ef738fb31` and `7a4fedcbbe`, with this
+committed maintainer record. The checker validates full IDs, unique receipts,
+actual ordered two-parent identity, inspected-history ancestry and a regular
+committed review record. It exempts only those exact edges; nested unapproved
+donor merges remain rejected. Official target, integration cursor, original base,
+historical donor exceptions and workflow admission modes remain unchanged.
+The complete eighteen-case provenance suite passes, including actual temporary
+Git histories proving reviewed-edge acceptance, exact-parent displacement, nested
+foreign rejection and untracked/symlink report refusal. Scripts compilation,
+scoped formatting/lint/diff and the actual provenance gate against original
+owned main and exact official target pass (`owned-merge-provenance-*-round1.txt`).
+The earlier static-round10 failure is retained as causal evidence. Final composed
+gates remain required after later integrations.
+
+The original D3 requirement now has actual WebSocket endpoint proof rather than
+only a URL predicate test. Absent, older, newer and malformed query protocols
+receive the exact HTTP 426 upgrade response before the live authentication service
+or V2 intake runs; a current HTTP header does not substitute for the required
+query. The positive control reaches actual authentication and an authenticated
+`server.getConfig` WebSocket RPC. The unchanged production admission gate already
+enforced this order. The complete server route file passes 242 cases, with scoped
+formatting/lint and whitespace checks clean. Round1 compilation passed before
+the final same-typed future-version test row; final combined compilation remains
+required. Independent review matches the exact final test and production blobs
+(`d3-ws-protocol-qualified-handoff-round2.md`,
+`d3-ws-protocol-independent-review-round2.md`). Installed-client upgrade and
+remote/mobile acceptance remain separate from this controlled endpoint proof.
+
+### Reviewed architecture and boundary composition
+
+The coordinator composition retains 37 independently reviewed maintainer Markdown
+paths, the owned OpenCode acknowledgement fix and canonical loaded-answer attention
+across server/web/mobile. The architecture documentation explicitly distinguishes
+live V2 execution from old-data readers; inherited test origin is determined from
+Scient-added assertions and fixture/parameter conditions, not title or filename.
+The branch keeps every upstream and owned parent. The skills-release mount repair
+classifies the actual Scient catalog and inherited workspace-manifest fixture,
+without weakening any seam checker or changing runtime behavior.
+
+The composed boundary qualification passes 463 focused cases across server, shared,
+web and mobile, all 32 compiler tasks and scoped formatting/lint. The separate OC2
+owned acknowledgement group passes 100 cases plus its compiler/style checks. Web
+logs retain existing React warnings. The current full seam suite passes after the
+previous two unclassified skills-release references were classified. The final
+provenance/WebSocket composition passes 18 provenance and 242 actual server-route
+cases, scripts/server compilers, scoped formatting/lint and whitespace. Independent
+frozen source reviews accept both incoming patches and the exact resolved tree
+`c6e81605ca603ac82e03099d142cd98c15583b5c`. These are bounded local evidence, not
+whole-candidate, vendor/platform or manual acceptance.
+
+Exact reviewed owned merge edges are recorded below and in upstream-state.json.
+Only their complete ordered vectors are admitted; nested ancestry remains audited.
+The original owned base, official target, integration cursor, historical exceptions
+and trusted workflow flags are unchanged. No runtime qualification is inferred
+from a provenance receipt.
+
+| Merge                                      | First parent                               | Second parent                              |
+| ------------------------------------------ | ------------------------------------------ | ------------------------------------------ |
+| `6dc7de1d74a288c404b9481874c6a77b1986e580` | `7ef738fb31cf7595142254dc8fe6dfd47523aa35` | `b180c89867f74fa67ef4cd008fd913c2292cb5e5` |
+| `649a9caa1e0a7eba51942bf84e475c3d9931a71e` | `6dc7de1d74a288c404b9481874c6a77b1986e580` | `2a672bd865b89e20768476643925b3e85fc2d90f` |
+| `7992b26bef3b9636e2a547c28d1393c8bc4749ac` | `649a9caa1e0a7eba51942bf84e475c3d9931a71e` | `238eb3d822faefa29aef40b1ef70193111b00f16` |
+| `a61371f826c605c8202267cee8a15cc3c7ecce83` | `3911b36ee87de0c827465a1886e0685aad495a74` | `d3bc827adf4fb19ca916355e9f07c6fab86dfac7` |
+
+V1 removal and remaining provider/context/queue preservation fixes still require
+reviewed composition. Final complete checks/build/smoke/package, independent full
+review, current documentation refresh and actual app/manual acceptance remain open.
+
+The broader maintainer review also confirms two stale explanations already in
+this candidate. Accepted fork navigation uses dialog-subtree removal followed
+by a layout commit, preserving source-leaving and retry guards even if an
+animation callback never arrives. Current V2 conversation export is supported;
+offline recovery of the untouched original V1 database is a separate procedure.
+The two paragraphs now match those boundaries. Independent source review:
+`docs-boundaries-independent-integration-review-3911b36.md`. The reviewed architecture-documentation batch is composed here; remaining
+migration guidance still needs a final refresh after core ports and deletion.
+These paragraph corrections do not qualify the whole guide or runtime acceptance.
+
+The desktop smoke gate previously reported success after its launched process
+exited early with code7 and no fatal text. The actual CLI reproduces that false
+pass. The repaired gate requires survival until requested shutdown, accepts only
+the intended graceful exit, rejects forced termination, and evaluates output
+after stream closure. Incomplete inherited pipes cause a bounded failure. The
+original eight-second survival and two-second grace limits are unchanged.
+Eleven real controlled subprocess cases pass, including early exits, launch
+failure, late fatal output and exact descendant cleanup; scoped lint and
+formatting pass without warnings. Independent review matches both integrated
+blobs (`desktop-smoke-gate-qualified-handoff.md`,
+`desktop-smoke-gate-independent-frozen-review.md`). Desktop compilation passes
+but excludes these standalone JavaScript files; actual execution and lint
+qualify them. This proves gate honesty on macOS controlled children, not
+Electron/backend/renderer readiness or Windows execution. Fresh built-app and
+packaged smoke remain required.
+
+The actual original-base provenance gate exposed one additional owned docs-lane
+synchronization edge already in the reviewed architecture ancestry. Record only
+`df7866c8d98f1d9bee15b17f033fa8ed1406d848`, ordered parents
+`fde2233486a4f03ad5577e89a858bcb38cbf88fd` and
+`c4aad71535abbd98c38659711b2cc47b1ab2fe5d`. Its non-documentation blobs
+match that retained alignment parent; nested history remains audited. The failed
+actual gate is retained as evidence, and must pass again on the final composition.
+
+The reviewed smoke/documentation composition retains both parents at
+`c1d9a5ea1d498403b5dc257286bf24f85c838353`, ordered
+`fbbfdd58c28fbc6988aee22d842452c94026d2fe` and
+`736d7c02183a978102b5a0bd2af92537be2b9ff8`. Exact resolved tree
+`8c6831d6cabbeed1ac36a70ce2fd6170f9c6ed28` passes eleven real controlled
+smoke-gate cases, scoped formatting/lint/whitespace and the complete seam path
+classification against frozen upstream `ca7df394ed8151fa77f856beefa90bc60a785d60`.
+The first seam invocation used the old stored cursor and refused V2 mount
+classification; the corrected explicit target/index check passes without changing
+any manifest or checker. Independent frozen composition review preserves all
+rich V2 migration/fork rules and matches both smoke script blobs. Actual final
+ancestry qualification, built-app/packaged smoke and manual acceptance are
+separate gates; none is inferred from this merge receipt.
+
+The independently reviewed divergence inventory is integrated at `687b37199c8f322dfe6d155c7fe0f8ed25c0b42f`, with ordered parents `19efc756b53128a4b94dea5d011746b3ddc26d13` and `66f598c48ee968e27b1a53ed1316a3d98549fdcc`. Its three new script/test/guide blobs match the reviewed donor; the maintainer index adds one guide link. Exact composed qualification passes 29 Node regressions, scripts typecheck, scoped formatting/lint and whitespace checks. Executable-alias invocation and required source-blob validation retain their fail-closed regression coverage. The inventory remains advisory: unresolved scope and historical debt stay visible, and no reviewed-debt baseline or CI activation is introduced. This metadata-only delivery preserves the existing development-signing repair and changes no runtime behavior or upstream cursor. Final composed qualification and application acceptance remain separate.
+
+### Whole-alignment client quality and controlled app acceptance
+
+The reviewed client composition reaches `c988124a4d7862dc343bd0da196c428bbeabe66d`
+(tree `a717c541ef5640ad3ef4fcce6c141412a0e130b7`), retaining the preceding
+`f026c5b906df4b45c5a2bb2e7566e73de3db3271` unused V1 registry removal. All
+fourteen integrated client blobs equal their independently reviewed donors;
+unrelated compiler configuration is preserved. This work extends the original
+alignment quality scope beyond the defect handoff.
+
+- Compute and slow-request receipts honor the saved clock preference, retain
+  local date/year where required, and omit malformed times. Donor
+  `6e2f7ff8e02b8faa29823290ff20cfd4ceabbf9c` has 73 passing cases across three
+  complete files, a passing web compiler and formatting checks. Executed baseline
+  comparison confirms the same 17 existing lint warnings, with none added.
+- Mobile shows an unsupported requested access mode without inventing a selected
+  effective mode or changing server permission policy. Outbox and option-memory
+  consumers use canonical model-selection equality: equivalent option ordering
+  or omitted/empty options cause no redundant metadata update; real changes still
+  synchronize before delivery. Donor
+  `c75fbdd2c16d7f5248d58b99cc57f5a95ad2ce9e` has 100 passing cases across eight
+  complete files, passing mobile/shared compilers and formatting, and no new lint
+  warnings. Actual mounted settings and outbox delivery paths are covered;
+  native mobile interaction remains separate.
+
+The separate synthetic app stays frozen at
+`19efc756b53128a4b94dea5d011746b3ddc26d13`. Actual browser actions through
+production V2 persistence and controlled ACP stdio establish the following bounded
+conditions; they do not qualify the newer composition or live vendor accounts:
+
+- An ordinary-answer fork shows one Scient boundary and no redundant initial
+  generic handoff. A later explicit provider-instance change shows its handoff.
+  Backend context delivery remains intact.
+- Actual SCIC upload/preview/import, application export and reimport retain inert
+  historical approval/tool/plan/reasoning/system history. New current-owner live
+  approval requests survive reload and settle once through Approve/Decline;
+  changing future permissions is exercised independently of historical authority.
+- Successful unheld work drains automatically in FIFO order. Stop retains a hold
+  across reload and later foreground completion; idle keyboard reorder, held-head
+  Send and explicit whole-queue Resume are exercised. Text-only queued-edit
+  extraction, Stop/reload recovery and ordinary-draft stash restoration pass.
+- A real controlled-peer transport closure fails the running turn while holding
+  its queued successor across reload. One explicit Resume receipt releases it;
+  bounded SQL through sequence787 and one native completion prove delivery with
+  captured Supervised permissions unchanged. The earlier custom error-marker
+  simulation remains unqualified as failure evidence.
+
+External evidence and independent audits are in
+`reviews/orchestration-v2-alignment-20261003/`: `interim-browser-acceptance-19ef.md`,
+`queue-real-transport-failure-19ef.md`,
+`queue-transport-failure-edit-stop-independent-evidence-audit-19ef.md`,
+`receipt-clock-qualified-handoff.md`, and
+`mobile-policy-equality-local-commit-handoff.md`. These task records are in the
+umbrella workspace, not product runtime inputs.
+
+The startup wrapper timed out awaiting owned log markers; separate process,
+endpoint and browser observations establish the live app, not a passing startup
+marker gate. Current native window/PDF Save, screenshots, pointer drag, multiwindow
+edit ownership, final-source scientific surfaces and full app acceptance remain
+unqualified. The earlier successful native PDF proof belongs to its older exact
+candidate. Aggregate attachment preflight, remaining core/provider composition,
+dependency-ordered cleanup, final documentation/catalog refresh, complete local
+gates/build/artifact checks and independent final review remain active. No whole
+alignment or manual-review readiness is inferred from these scoped results.
+
+### Repeated forks, archived routes, and remaining final gates
+
+Aggregate attachment preflight is integrated at
+`283cc1b56b1cef8704b9a16ed4461b6c1f3bd966`. Its root composition passes
+541 tests across 21 complete files, fresh web/mobile compilers, scoped style and
+strict original-base provenance. Admission covers compressed/native-picked and
+pasted attachments, retained queued references and background outbox uploads;
+recovery bytes remain preserved. Evidence is
+`root-attachment-delivery-adoption.json` and
+`root-attachment-composition-qualification-1791165296923253000.json` in the
+external alignment review directory. This is source qualification; unchanged
+process identities do not establish renderer quiescence or final device acceptance.
+
+The isolated composition `c60296de15f2a14ae412f11762c435ddab2b3b59`
+(tree `ba717d336cb4867470cf4319335b74d094acff49`) combines seventeen reviewed
+paths. Its production-config web run passes 333 tests across ten complete files.
+Another 181 tests across ten files are carried from unchanged server/shared/mobile
+source at `6d62e1abc1dec6774ac339eff1a03a9d3b82606d`; 514 unique cases across
+twenty files are represented, not freshly rerun. Web/client compilers are fresh;
+four other package compilers remain exact prior-source proofs. Formatting,
+whitespace and strict provenance pass. Lint retains one reproduced inherited
+dialog warning; compiler suggestions and renderer/act fixture warnings are
+recorded. The earlier web wrapper failed Babel resolution from root cwd; the
+corrected apps/web cwd passed without a source change. See
+`root-fork-archive-composition-qualified-c602.json` and
+`root-archived-route-independent-preservation-review-c602.md`.
+
+- Fork initialization carries optional inert original transfer/handoff/thread/run
+  provenance through V2 persistence and inherited history. Exact matching
+  initialization has no second handoff divider; genuine later switches remain
+  visible and backend context delivery remains intact. Two real registered
+  NativeSessionAdapterV2/Orchestrator/EventSink/SQLite cases cover child, grandchild
+  and great-grandchild, source deletion, rebuild and the next portable native
+  offer. The typed transport is controlled, not a vendor process/account. Older
+  already-copied rows with lost causal facts remain visible; the retained old
+  GRAND is not retroactively repaired. See
+  `fork-handoff-provenance-qualified-handoff.md`.
+- Title preview consumes the real shell's source lineage and existing same-scope
+  archive subscription. Untouched previews leave allocation to the server;
+  authored titles and accepted retries remain protected. Mounted fixtures prove
+  delayed archive data, not the actual archive subscription lifecycle. See
+  `fork-title-preview-qualified-handoff-283cc.md`.
+- Archived routes mount the existing detail consumer before an active-shell row
+  arrives. Explicit/canonical deletion controls cleanup; reserved drafts retain
+  their wait. Eight mounted route cases exercise actual shared atoms and HTTP/RPC
+  codecs, including tombstones, transient fallback and promotion identity. They
+  replace heavy ChatView presentation, not its complete behavior. See
+  `archived-route-qualified-handoff-283cc.md`.
+
+Delivery of this seventeen-path composition is **not performed**. Independent
+review found delivery Vite PID15693 on port5879 watching the actual checkout;
+source changes can HMR its renderer. Seven stable process identities and an
+unchanged backend entry are insufficient to authorize refresh over active work.
+The retained review apps remain untouched. See
+`root-fork-archive-delivery-independent-safety-review-c602.md`.
+
+Actual browser observations still belong to frozen
+`19efc756b53128a4b94dea5d011746b3ddc26d13`. The separately reviewed text-only
+multiwindow edit/Stop/reload/Stash sequence and generic-file edit sequence are
+bounded proofs: the latter retains exact 116-byte resource contents in the actual
+emitted SCIC, without a cancelled-source duplicate. They do not jointly prove
+multiwindow file editing or native Save. Its archived GRAND direct route remains
+blank and its inherited initialization remains visible; zero dividers in a blank
+view is no acceptance result. See
+`queue-two-window-edit-independent-evidence-audit-19ef.md`,
+`queue-file-edit-independent-evidence-review-19ef.md` and
+`fork-of-fork-browser-regression-19ef.md`.
+
+The full alignment still requires remaining core/provider composition and
+retirement, final-source documentation/catalog refresh, complete applicable
+checks/layout/build, current archive/helper/PDF-worker inspection, independent
+immutable review and actual repaired-app/manual acceptance. The scientific UI
+matrix covers Compute, documents/PDF, Sources, annotations, LaTeX, reader tabs,
+voice and analysis artifacts; it is prepared, not executed. Current native PDF
+Export/Cancel/Retry/Save, roster/runtime management, queue visual comparison and
+relevant installed-client/platform/vendor paths remain separate gates. Historical
+native PDF evidence and controlled peers do not close them. Final runner audit
+also requires explicit candidate identity, private environments, serialized
+admission and source-to-build-output attestation before fresh final execution.
+See `scientific-ui-acceptance-matrix-prepared-6d62.md` and
+`final-runner-readiness-audit-c602.md`. No full alignment or manual-review readiness
+is claimed by these scoped results.
+
+### Final receiving topology and exact source equivalence — 2026-10-06
+
+The original receiving ref preserves source checkpoints
+`d74644f50e3142e9a7ea62fa59ca9e78812890b6` and
+`5a51ef8036e966ab6c7e4d85de3c83830f839d3e`. The first scoped `99e` → `d746`
+provenance check passed with the current-head exemption. The later full
+`99e` → `5a51` check genuinely failed: the four non-first parents of the
+five-parent `d746` checkpoint were rejected below HEAD. That failure is
+preserved; the range and checker are not narrowed or relaxed.
+
+The new owned `codex/v1-final-two-parent-20261006` ref starts at
+`99eb14cb828944b461466d3da92769160c07e2e6` and composes the same reviewed
+donors through these literal ordinary merges, in order:
+
+| Merge                                      | Ordered first parent                       | Ordered second parent / reviewed donor     |
+| ------------------------------------------ | ------------------------------------------ | ------------------------------------------ |
+| `8d3d0743105556397c77d6c8fecadd1a148d744e` | `99eb14cb828944b461466d3da92769160c07e2e6` | `f835e5adf9b33725f20dcc92bc44c77ed0a8fcdc` |
+| `0ef256e3dbdd04f04fdc11b56d183765db3bf143` | `8d3d0743105556397c77d6c8fecadd1a148d744e` | `5e28723441ac924b39d897585cd2a39b6ba378c4` |
+| `32cdcc102fea25cfda3584c40c18880cc9a5a384` | `0ef256e3dbdd04f04fdc11b56d183765db3bf143` | `1768be85e3b25f338ac4b9500f11a20a79693846` |
+| `36a69606455b2b52a7bf28835e3de260d2bccf19` | `32cdcc102fea25cfda3584c40c18880cc9a5a384` | `1ac9e21f76d0d02898fbec9df4e1846a4fe1ad1f` |
+
+Every merge uses ordinary hooks. The already-qualified receiving delta then
+publishes as `1249a2d1ab29ef75830f0db1a43550bf9f6f0146`, with the exact whole
+tree `73b838f17ff6e9d26c2786d99905f442430b6b68` before topology metadata or
+final documentation is added. This is byte-identical to qualified `5a51`;
+its existing source/check/build evidence is reused at that exact tree, not
+promoted across a product-code change. The original refs and failures survive,
+and the delivered `f835` head remains an ancestor for guarded fast-forward.
+
+Only the four exact ordered merge receipts and this review record are added
+after that equality proof. The existing two-parent receipt validation, nested
+merge checks, official ancestry rules and qualified
+`54084ae1e6c32809db040e4fa571c80fdf2d8ae4` cursor remain unchanged. Final
+introduced-history, documentation, artifact, app and consolidated acceptance
+receipts must report their actual later boundaries.
+
+Ordinary metadata publication `d99fca6a70c537c415986912637157caca1e5908`,
+tree `a4567e4dbef951db0363b913afbcc740b0da3c61`, changes only
+`upstream-state.json` and this canonical review appendix from the identical
+source checkpoint. The unchanged verifier now passes the complete introduced
+`99eb14cb828944b461466d3da92769160c07e2e6` →
+`d99fca6a70c537c415986912637157caca1e5908` range against literal official
+`ca7df394ed8151fa77f856beefa90bc60a785d60`, without owned-head or merge-queue
+exemptions. Official ancestry, delivered-app fast-forward ancestry, metadata
+formatting and committed whitespace checks also pass. The original failing
+range remains separately recorded, not relabeled as green.
+
+### Final integrated delivery and available acceptance — 2026-10-07
+
+Ordinary documentation publication
+`47ff6dc0987e902a9eafaff23a44e2f72ce19fc3`, tree
+`9903d974de95fd942408ac1e21cac9b23786c136`, receives corrected independent
+documentation commit `1da738624a1c8bede4729b936bcb4316dec69d79` as a
+single-parent commit after `d99f`. All 17 documents equal the completed
+immutable review, with no remaining finding. Its only differences from qualified
+whole source tree `73b838f17ff6e9d26c2786d99905f442430b6b68` are those 17
+documents and the previously accepted four-parent-vector metadata. Runtime code
+is byte-identical, so the exact-source Knip/typecheck/behavioral/public-codec and
+migrated SQLite evidence remains valid at this boundary.
+
+All ten final-head gates complete with exit 0 and verified log hashes:
+the complete introduced `99eb14cb828944b461466d3da92769160c07e2e6` → `47ff`
+range passes the unchanged strict provenance verifier without exemptions;
+literal official and delivered-app ancestry, complete docs/metadata formatting,
+committed whitespace, brand and intended seams pass. The whole six-task build
+has zero cache hits. Actual macOS arm64 DMG/ZIP production and `hdiutil verify`
+pass; existing bundler and upstream native compiler warnings remain recorded.
+The exact final qualification receipt is
+`reviews/v1-removal-20261004/checks/integration-composed-final-head-20261007-results.json`
+in the project evidence workspace.
+
+The final version `0.0.45` archive embeds `t3codeCommitHash: 47ff6dc0987e`.
+ZIP SHA-256 is
+`07ea8acdddf8f46a5e791fc09e9c31ea932835bf18fbc61cb28264954853670a`;
+DMG SHA-256 is
+`0a199ce116c2d872ec5fedd12f50e557270da9d3f71db63e5e0a7da38a0c9285`.
+The three actual ASAR PDF workers match the frozen final build. Independent
+artifact review accepts inspected resource layout, source/build correspondence,
+Cursor SDK `1.0.31` payloads, and voice/SyncTeX native arm64 resource integrity.
+The generated Cursor `rg` shim's staging-metadata caveat remains disclosed;
+its actual relative executable target is present. Resource inspection and DMG
+structural integrity are not packaged runtime or vendor-authenticity proof.
+Old artifacts and their narrower source scopes are preserved separately.
+
+Authorized idle managed stop → exact fast-forward → managed start each pass
+for the existing `scient-t3-sync-ca7df394ed-20261003` alignment app. Actual new
+runner/app/backend PIDs are `52478` / `53254` / `53634`; the backend starts at
+`2026-10-06T21:27:57.838Z`. Web port `5879` and the canonical backend
+`/.well-known/t3/environment` on port `13919` return HTTP 200, and current
+native spans record backend ready and main window created. The existing profile,
+protected untracked compiler configuration and separate installed August
+launcher remain intact. Readiness does not stand in for functional acceptance.
+
+Alignment root completes the user-authorized nine-family run-through using
+ordinary product UI, the real delivered server/storage/ACP transport, a
+disposable project and two explicitly labelled no-op simulated providers.
+Available subcases pass: automatic FIFO; Stop retaining the hold through a
+foreground answer; idle keyboard reorder/head Send/Resume; attachment-exclusive
+queued edit, reload and Cancel-stash recovery; row and shortcut Steer; fresh SCIC
+logical ordering, rendered citations and inert historical approvals; persisted
+access mode and one-shot fresh approvals; ordinary/inherited forks, continuation
+and reload; a later real provider-instance switch producing a distinct handoff;
+all ten configured built-ins in Settings; actual source-editor input/disk/reload;
+and LaTeX EOF autosave/rebuild with the expected immutable PDF text.
+Transport audit verifies all 20 expected admissions exactly once, the original
+queued text absent, only the replacement attachment, and live permission
+responses exactly once. ACP fixture interrupt/restart is not vendor-native
+steering. Browser PDF dialog/cancel passes; it explicitly requires desktop for
+native PDF export.
+
+Final native/screenshot appearance, native PDF Save/Open, pointer drag, physical
+caret and permanent disposable-source deletion are unverified. Screenshot
+capture/native access was unavailable; the browser remained non-visible. Earlier
+exact-candidate visual/native evidence is retained, not promoted to final proof.
+There is no Linux host/cgroup/physical-reader, native mobile, remote SSH, other
+OS/vendor combination, packaged startup, signing/notarization, hosted-CI, main
+merge or release claim. The original five full-server failures retain their
+historical result and actual bounded repairs, not a fabricated full-green rerun.
+The final acceptance report and nine-family checklist are in
+`reviews/orchestration-v2-alignment-20261003/root-final-overnight-20261006/final-acceptance-20261007.md`
+and `reviews/orchestration-v2-alignment-20261003/final-user-run-through-20261006.md`
+in the project evidence workspace.
+
+Root disables both disposable providers through Settings; all 11 fixture PIDs
+have exited and the original ten provider-enable states remain unchanged. It
+releases source/index/ref/lifecycle ownership for this factual documentation-only
+closeout. This later receipt commit changes no runtime source and does not
+promote the artifact's embedded head: the existing app and actual artifacts
+remain literally `47ff`. No receipt-induced rebuild, restart or app-ref update
+is performed. After publication, the eventual closing receipt head must pass
+the unchanged strict verifier over the same complete introduced history;
+its actual result must be recorded separately, not presumed by this receipt.

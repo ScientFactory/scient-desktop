@@ -14,7 +14,12 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+// SCIENT-FORK:START — legacy v1 adapter vocabulary.
+// Upstream replaced `effect-acp/schema` with the generated ACP v2 wire types
+// and moved the pre-v2 hand-written module to `effect-acp/compat`. This
+// adapter was written against the pre-v2 module, so it imports `compat`.
+import type * as EffectAcpSchema from "effect-acp/compat";
+// SCIENT-FORK:END
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import type { CustomModelReasoning } from "../../customModelCapabilities.ts";
@@ -121,6 +126,7 @@ export type DroidAcpRuntime = AcpSessionRuntime.AcpSessionRuntime["Service"] & {
    * continue a turn (steers) keep its budget, so a breach sticks for the turn.
    */
   readonly beginTurn?: Effect.Effect<void>;
+  readonly beginRunBudget?: (threadId: string, runId: string) => Effect.Effect<void>;
   /** Set when Scient ended the current turn at its custom-model request limit. */
   readonly requestLimitBreach?: () => DroidRequestLimitBreach | undefined;
   /**
@@ -437,13 +443,36 @@ export function buildDroidModelsFromConfigOptions(
 export function findDroidAutonomyOption(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
 ): EffectAcpSchema.SessionConfigOption | undefined {
-  return findSelectOption(
-    configOptions,
-    (option) =>
-      option.id.trim().toLowerCase() === DROID_AUTONOMY_CONFIG_ID ||
-      option.category?.trim().toLowerCase() === "mode",
+  // An ordinary mode picker can precede the dedicated autonomy option.
+  // Prefer its identity before falling back to the provider's category.
+  return (
+    findSelectOption(
+      configOptions,
+      (option) => option.id.trim().toLowerCase() === DROID_AUTONOMY_CONFIG_ID,
+    ) ??
+    findSelectOption(configOptions, (option) => option.category?.trim().toLowerCase() === "mode")
   );
 }
+
+/** Droid can change autonomy itself; confirm its reported level before each prompt. */
+export const confirmDroidAutonomy = Effect.fn("DroidAcpSupport.confirmAutonomy")(function* (
+  runtime: Pick<DroidAcpRuntime, "getConfigOptions" | "setConfigOption">,
+  requestedId: string,
+) {
+  const refuse = (detail: string) =>
+    new EffectAcpErrors.AcpRequestError({ code: -32603, errorMessage: detail });
+  const option = findDroidAutonomyOption(yield* runtime.getConfigOptions);
+  if (!option)
+    return yield* refuse(
+      `Droid does not offer an autonomy level, so the message was not sent at "${requestedId}".`,
+    );
+  if (option.currentValue !== requestedId) yield* runtime.setConfigOption(option.id, requestedId);
+  const applied = findDroidAutonomyOption(yield* runtime.getConfigOptions)?.currentValue;
+  if (applied !== requestedId)
+    return yield* refuse(
+      `Droid reported the "${String(applied)}" autonomy level instead of "${requestedId}", so the message was not sent.`,
+    );
+});
 
 /**
  * Resolves a select-type config option by id or category, case-insensitively.
@@ -457,11 +486,16 @@ export function findSelectDroidConfigOption(
   const categoryId = input.category?.trim().toLowerCase();
   const optionId = input.id?.trim().toLowerCase();
   if (!categoryId && !optionId) return undefined;
-  return findSelectOption(
-    configOptions,
-    (option) =>
-      (optionId !== undefined && option.id.trim().toLowerCase() === optionId) ||
-      (categoryId !== undefined && option.category?.trim().toLowerCase() === categoryId),
+  return (
+    (optionId === undefined
+      ? undefined
+      : findSelectOption(configOptions, (option) => option.id.trim().toLowerCase() === optionId)) ??
+    (categoryId === undefined
+      ? undefined
+      : findSelectOption(
+          configOptions,
+          (option) => option.category?.trim().toLowerCase() === categoryId,
+        ))
   );
 }
 

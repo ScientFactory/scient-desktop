@@ -43,8 +43,6 @@ import {
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
   isProviderRuntimePresentedAsInstalled,
-  managedRuntimeRepairMessage,
-  needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
 } from "./providerConnectionPresentation";
@@ -62,7 +60,7 @@ type PendingAction =
 
 function runtimeStage(operation: ProviderRuntimeOperation | null): string {
   const message = operation?.message.trim();
-  return message && message.length > 0 ? message : "Preparing Cursor…";
+  return message && message.length > 0 ? message : "Preparing Cursor CLI…";
 }
 
 function accountDescription(provider: ServerProvider): string {
@@ -142,7 +140,10 @@ export function CursorInlineSetup(props: {
     pendingAction === "external-update",
   );
   const needsRuntimeRepair =
-    !props.managedRuntimePresentedExternally && needsManagedRuntimeRecovery(props.provider);
+    !props.managedRuntimePresentedExternally &&
+    runtime?.actions.includes("repair") === true &&
+    runtimeOperation?.status === "failed" &&
+    runtimeOperation.action === "repair";
 
   const run = async (
     action: Exclude<PendingAction, null>,
@@ -175,21 +176,21 @@ export function CursorInlineSetup(props: {
     run(
       "install",
       () => startReviewedCursorRuntimeAction(props.controller, "install"),
-      "Scient could not install Cursor.",
+      "Scient could not install Cursor CLI.",
       true,
     );
   const update = () =>
     run(
       updateOffer?.path === "external" ? "external-update" : "update",
       () => updateCursorRuntime(props.controller, props.provider),
-      "Scient could not update Cursor.",
+      "Scient could not update Cursor CLI.",
       true,
     );
   const repair = async () => {
     const provider = await run(
       "repair",
       () => startReviewedCursorRuntimeAction(props.controller, "repair"),
-      "Scient could not repair Cursor.",
+      "Scient could not repair Cursor CLI.",
       true,
     );
     if (
@@ -227,7 +228,7 @@ export function CursorInlineSetup(props: {
 
   const runtimeDiagnostics = (
     <AssistedSetupDiagnostics
-      displayName={props.displayName}
+      displayName={`${props.displayName} CLI`}
       presentedExternally={props.managedRuntimePresentedExternally}
       provider={props.provider}
     />
@@ -248,15 +249,15 @@ export function CursorInlineSetup(props: {
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
           title={
             action === "update"
-              ? "Updating Cursor"
+              ? "Updating Cursor CLI"
               : action === "repair"
-                ? "Repairing Cursor"
-                : "Installing Cursor"
+                ? "Repairing Cursor CLI"
+                : "Installing Cursor CLI"
           }
         />
         <AssistedSetupActions>
           <Button
-            aria-label={cancelRuntimeActionLabel("Cursor", action)}
+            aria-label={cancelRuntimeActionLabel("Cursor CLI", action)}
             disabled={!activeRuntimeOperation || pendingAction === "cancel-runtime"}
             onClick={() => void cancelRuntime()}
             size="sm"
@@ -279,7 +280,7 @@ export function CursorInlineSetup(props: {
     return (
       <SetupFrame>
         <AssistedSetupUpdateStatus
-          name="Cursor"
+          name="Cursor CLI"
           provider={props.provider}
           trailing={props.accountAction}
           update={externalProviderUpdate(props.provider)}
@@ -290,19 +291,18 @@ export function CursorInlineSetup(props: {
   }
 
   if (needsRuntimeRepair) {
-    const error =
-      localError ?? managedRuntimeRepairMessage(props.provider, "Cursor", runtimeOperation);
+    const error = localError ?? runtimeOperation?.message ?? "The Cursor CLI operation failed.";
     return (
       <SetupFrame>
         <AssistedSetupStatus
           body={error}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role="alert"
-          title="Cursor needs repair"
+          title="Cursor CLI needs repair"
         />
         <AssistedSetupActions>
           <Button onClick={() => void repair()} size="sm" type="button" variant="ghost-primary">
-            <RefreshCwIcon aria-hidden /> Repair Cursor
+            <RefreshCwIcon aria-hidden /> Repair Cursor CLI
           </Button>
         </AssistedSetupActions>
         {runtimeDiagnostics}
@@ -319,8 +319,8 @@ export function CursorInlineSetup(props: {
           body={
             error ??
             (canInstall
-              ? `Cursor is not installed on ${providerRuntimeComputerLabel(props.provider)}.`
-              : `Assisted installation is not available for ${providerRuntimeComputerLabel(props.provider)}. You can use an existing Cursor installation.`)
+              ? `Cursor CLI is not installed on ${providerRuntimeComputerLabel(props.provider)}.`
+              : `Assisted installation is not available for ${providerRuntimeComputerLabel(props.provider)}. You can use an existing Cursor CLI installation.`)
           }
           icon={
             error ? (
@@ -330,12 +330,12 @@ export function CursorInlineSetup(props: {
             )
           }
           role={error ? "alert" : undefined}
-          title={error ? "Cursor installation couldn’t finish" : "Install Cursor"}
+          title={error ? "Cursor CLI installation couldn’t finish" : "Install Cursor CLI"}
         />
         {canInstall ? (
           <AssistedSetupActions>
             <Button
-              aria-label={error ? "Retry installation of Cursor" : "Install Cursor"}
+              aria-label={error ? "Retry installation of Cursor CLI" : "Install Cursor CLI"}
               onClick={() => void install()}
               size="sm"
               type="button"
@@ -417,14 +417,14 @@ export function CursorInlineSetup(props: {
         <SetupFrame>
           <AssistedSetupUpdateStatus
             issue={issue}
-            name="Cursor"
+            name="Cursor CLI"
             provider={props.provider}
             update={updateOffer}
           />
           <AssistedSetupActions>
             {props.accountAction}
             <AssistedSetupUpdateButton
-              name="Cursor"
+              name="Cursor CLI"
               onClick={() => void update()}
               retry={issue !== null}
             />
@@ -438,6 +438,17 @@ export function CursorInlineSetup(props: {
         accountAction={props.accountAction}
         body={accountDescription(props.provider)}
         title="Cursor is ready"
+      />
+    );
+  }
+
+  if (props.provider.status === "error" && props.provider.auth.status === "unknown") {
+    return (
+      <StatusFrame
+        accountAction={props.accountAction}
+        body={props.provider.message ?? "Cursor's account or model check did not finish."}
+        title="Cursor needs attention"
+        warning
       />
     );
   }
@@ -471,15 +482,6 @@ export function CursorInlineSetup(props: {
 
   const signInError =
     localError ?? (connectionOperation?.status === "failed" ? connectionOperation.message : null);
-  const canInstallManaged =
-    !props.managedRuntimePresentedExternally && (runtime?.actions.includes("install") ?? false);
-  const useManaged = () =>
-    run(
-      "install",
-      () => startReviewedCursorRuntimeAction(props.controller, "install"),
-      "Scient could not switch to managed Cursor.",
-      true,
-    );
   return (
     <SetupFrame>
       <AssistedSetupStatus
@@ -511,9 +513,7 @@ export function CursorInlineSetup(props: {
       </AssistedSetupActions>
       {signInError && !props.managedRuntimePresentedExternally ? (
         <AssistedSetupDiagnostics
-          displayName={props.displayName}
-          managedActionBusy={pendingAction !== null}
-          onUseManaged={canInstallManaged ? () => void useManaged() : undefined}
+          displayName={`${props.displayName} CLI`}
           provider={props.provider}
         />
       ) : null}

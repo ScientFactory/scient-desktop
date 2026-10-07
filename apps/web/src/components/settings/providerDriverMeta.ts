@@ -1,4 +1,5 @@
 import {
+  AcpRegistrySettings,
   AntigravitySettings,
   ClaudeSettings,
   CodexSettings,
@@ -14,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
 import {
+  ACPRegistryIcon,
   AntigravityIcon,
   ClaudeAI,
   CursorIcon,
@@ -31,6 +33,15 @@ type ProviderSettingsSchema = {
   readonly fields: Readonly<Record<string, Schema.Top>>;
 } & Schema.Top;
 
+/** One dedicated credential row rendered inside the instance's environment section. */
+export interface ProviderEnvironmentFieldDefinition {
+  readonly name: string;
+  readonly label: string;
+  readonly description?: string;
+  readonly placeholder?: string;
+  readonly sensitive?: boolean;
+}
+
 /**
  * Browser-safe provider definition. This is deliberately shaped like the
  * future provider package client export: the core web app gets a schema with
@@ -44,11 +55,19 @@ export interface ProviderClientDefinition {
   readonly settingsSchema: ProviderSettingsSchema;
   /** False when model definitions must come from the native provider catalog. */
   readonly supportsCustomModels?: boolean;
+  readonly environmentFields?: readonly ProviderEnvironmentFieldDefinition[];
+  /** Whether this driver has a built-in default instance backed by legacy settings. */
+  readonly hasDefaultInstance?: boolean;
   /**
    * Optional short label rendered as a `variant="warning"` badge next to
    * the instance title. The flag is a property of the driver kind (not a
    * specific instance), so every instance of that driver — built-in default
    * or custom — advertises the same marker.
+   *
+   * SCIENT-FORK:START — no driver sets this. Upstream badges Pi and ACP
+   * Registry "Early Access"; the fork moved that signal to the model picker's
+   * `pickerSidebarBadge` instead (see `providerOrdering.test.ts`).
+   * SCIENT-FORK:END
    */
   readonly badgeLabel?: string;
   /**
@@ -107,6 +126,15 @@ const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[]
     label: "Cursor",
     icon: CursorIcon,
     settingsSchema: CursorSettings,
+    environmentFields: [
+      {
+        name: "CURSOR_API_KEY",
+        label: "Cursor API key",
+        description: "Optional. Overrides browser sign-in for this provider.",
+        placeholder: "Paste API key",
+        sensitive: true,
+      },
+    ],
   },
   {
     value: ProviderDriverKind.make("grok"),
@@ -139,6 +167,14 @@ const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[]
     searchAliases: ["google", "gemini"],
     icon: AntigravityIcon,
     settingsSchema: AntigravitySettings,
+    supportsCustomModels: false,
+  },
+  {
+    value: ProviderDriverKind.make("acpRegistry"),
+    label: "ACP Registry",
+    icon: ACPRegistryIcon,
+    settingsSchema: AcpRegistrySettings,
+    hasDefaultInstance: false,
     supportsCustomModels: false,
   },
 ];

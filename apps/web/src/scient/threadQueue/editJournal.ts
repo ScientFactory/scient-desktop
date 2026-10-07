@@ -1,13 +1,24 @@
-import type { ScopedThreadRef, ScientThreadQueueItem } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import { ThreadId, PlanId } from "@t3tools/contracts";
+import type { ScopedThreadRef, ScientThreadQueueItem, RunId, MessageId } from "@t3tools/contracts";
 import type { ComposerThreadDraftState, DraftId } from "../../composerDraftStore";
 import { migrateQueueComposerContext } from "./composerSnapshot";
 
+/** Local recovery payload; native run IDs never pass through the legacy queue codec. */
+export type QueueEditItem = Omit<ScientThreadQueueItem, "queueItemId"> & {
+  readonly queueItemId: string;
+};
 export type QueueEditSession = {
   key: string;
   journalKey: string;
   stashed?: boolean;
   transferred?: boolean;
-  extractedItem?: ScientThreadQueueItem | undefined;
+  intentId?: string | undefined;
+  extractedItem?: QueueEditItem | undefined;
+  /** Native extraction retries target the exact captured revision and command receipt. */
+  nativeRun?:
+    | { readonly runId: RunId; readonly messageId: MessageId; readonly expectedUpdatedAt: string }
+    | undefined;
   composerSeparated?: boolean | undefined;
   originalTarget: ScopedThreadRef | DraftId;
   editTarget: ScopedThreadRef | DraftId;
@@ -149,10 +160,14 @@ async function decode(session: StoredSession): Promise<QueueEditSession> {
 }
 export async function readQueueEditJournals(): Promise<QueueEditSession[]> {
   const database = await db();
-  const entries: StoredSession[] = await result(
+  const entries: (StoredSession | ExtractedIntentRecord)[] = await result(
     database.transaction("edits", "readonly").objectStore("edits").getAll(),
   );
-  return Promise.all(entries.filter((entry) => !entry.stashed).map(decode));
+  return Promise.all(
+    entries
+      .filter((entry): entry is StoredSession => !("kind" in entry) && !entry.stashed)
+      .map(decode),
+  );
 }
 export async function readQueueEditJournal(key: string): Promise<QueueEditSession | undefined> {
   const database = await db();
@@ -160,4 +175,79 @@ export async function readQueueEditJournal(key: string): Promise<QueueEditSessio
     database.transaction("edits", "readonly").objectStore("edits").get(key),
   );
   return entry ? decode(entry) : undefined;
+}
+
+const ExtractedIntentRecordSchema = Schema.Struct({
+  kind: Schema.Literal("extracted-intent"),
+  journalKey: Schema.String,
+  intentId: Schema.String.check(Schema.isPattern(/^[a-f0-9-]{36}$/)),
+  phase: Schema.Literals(["active", "preparing", "submitted-unknown", "consumed"]),
+  sourceProposedPlan: Schema.optionalKey(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
+  packetJson: Schema.optionalKey(Schema.String),
+  draftFingerprint: Schema.optionalKey(Schema.String),
+  boundJournalKey: Schema.optionalKey(Schema.String),
+  consumedCommandId: Schema.optionalKey(Schema.String),
+});
+export type ExtractedIntentRecord = typeof ExtractedIntentRecordSchema.Type;
+const decodeIntent = Schema.decodeUnknownSync(ExtractedIntentRecordSchema);
+
+/** Same existing IDB store, not another queue ledger. Atomic updates serialize
+ * phase/packet changes across tabs. Browser locks own the live writer. */
+export async function updateExtractedIntent(
+  intentId: string,
+  update: (current: ExtractedIntentRecord | undefined) => ExtractedIntentRecord,
+): Promise<ExtractedIntentRecord> {
+  const database = await db();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction("edits", "readwrite");
+    const entries = transaction.objectStore("edits");
+    const request = entries.get(`intent:${intentId}`);
+    let saved: ExtractedIntentRecord;
+    let failure: unknown;
+    request.addEventListener("success", () => {
+      try {
+        saved = decodeIntent(
+          update(request.result === undefined ? undefined : decodeIntent(request.result)),
+        );
+        if (saved.intentId !== intentId || saved.journalKey !== `intent:${intentId}`)
+          throw new Error("The extracted intent identity changed. Recovery has been kept.");
+        entries.put(saved);
+      } catch (cause) {
+        failure = cause;
+        transaction.abort();
+      }
+    });
+    transaction.addEventListener("complete", () => resolve(saved));
+    transaction.addEventListener("error", () => reject(failure ?? transaction.error));
+    transaction.addEventListener("abort", () =>
+      reject(failure ?? transaction.error ?? new Error("Intent storage was interrupted.")),
+    );
+  });
+}
+export async function readExtractedIntent(
+  intentId: string,
+): Promise<ExtractedIntentRecord | undefined> {
+  const database = await db();
+  const value: unknown = await result(
+    database.transaction("edits", "readonly").objectStore("edits").get(`intent:${intentId}`),
+  );
+  if (value === undefined) return undefined;
+  const record = decodeIntent(value);
+  if (record.intentId !== intentId || record.journalKey !== `intent:${intentId}`)
+    throw new Error("The extracted intent storage identity is invalid. Recovery has been kept.");
+  return record;
+}
+export async function initializeExtractedIntent(intentId: string, sourceProposedPlan?: unknown) {
+  return updateExtractedIntent(
+    intentId,
+    (current) =>
+      current ??
+      decodeIntent({
+        kind: "extracted-intent",
+        journalKey: `intent:${intentId}`,
+        intentId,
+        phase: "active",
+        ...(sourceProposedPlan ? { sourceProposedPlan } : {}),
+      }),
+  );
 }

@@ -1,111 +1,24 @@
+// SCIENT-FORK:START — Scient desktop bridge members live in a Scient module.
 import type {
-  VoiceModelDownloadRequest,
-  VoiceModelDownloadProgress,
-  VoiceModelOperationRequest,
-  VoiceModelRemoveRequest,
-  VoiceModelsSnapshot,
-  VoiceMicrophoneAccessStatus,
-  VoiceTranscribeRequest,
-  VoiceCancelTranscriptionRequest,
-  VoiceTranscript,
-} from "./voice.ts";
-import type {
-  VcsCreateRefInput,
-  VcsCreateRefResult,
-  VcsCreateWorktreeInput,
-  VcsCreateWorktreeResult,
-  VcsInitInput,
-  VcsListRefsInput,
-  VcsListRefsResult,
-  VcsPullInput,
-  VcsPullResult,
-  VcsRemoveWorktreeInput,
-  VcsSwitchRefInput,
-  VcsSwitchRefResult,
-  GitPreparePullRequestThreadInput,
-  GitPreparePullRequestThreadResult,
-  GitPullRequestRefInput,
-  GitResolvePullRequestResult,
-  VcsStatusInput,
-  VcsStatusResult,
-} from "./git.ts";
-import type {
-  ReviewDiffFileContentsInput,
-  ReviewDiffFileContentsResult,
-  ReviewDiffPreviewInput,
-  ReviewDiffPreviewResult,
-} from "./review.ts";
-import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
-import type { EnvironmentFilePrepareInput, EnvironmentFilePrepareResult } from "./fileOpening.ts";
-import type { AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
-import type {
-  DesktopDocumentPageRenderInput,
-  DesktopDocumentPageRenderOutcome,
-} from "./scientDocumentExport.ts";
-import type {
-  ProjectListDirectoryInput,
-  ProjectListDirectoryResult,
-  ProjectListEntriesInput,
-  ProjectListEntriesResult,
-  ProjectReadFileInput,
-  ProjectReadFileResult,
-  ProjectSearchEntriesInput,
-  ProjectSearchEntriesResult,
-  ProjectWriteFileInput,
-  ProjectWriteFileResult,
-} from "./project.ts";
-import type {
-  TerminalAttachInput,
-  TerminalAttachStreamEvent,
-  TerminalClearInput,
-  TerminalCloseInput,
-  TerminalMetadataStreamEvent,
-  TerminalOpenInput,
-  TerminalResizeInput,
-  TerminalRestartInput,
-  TerminalSessionSnapshot,
-  TerminalWriteInput,
-} from "./terminal.ts";
+  DesktopAssetCopyRequest,
+  DesktopAssetCopyResult,
+  ScientDesktopBridge,
+} from "./scient/desktopBridge.ts";
+// SCIENT-FORK:END
 import * as Schema from "effect/Schema";
-import type {
-  DiscoveredLocalServerList,
-  PreviewCloseInput,
-  PreviewEvent,
-  PreviewListInput,
-  PreviewListResult,
-  PreviewNavigateInput,
-  PreviewOpenInput,
-  PreviewRefreshInput,
-  PreviewReportStatusInput,
-  PreviewResizeInput,
-  PreviewSessionSnapshot,
-} from "./preview.ts";
+
 import {
   PreviewAutomationClickInput,
   PreviewAutomationEvaluateInput,
-  PreviewAutomationHost,
-  PreviewAutomationHostFocus,
   PreviewAutomationPressInput,
-  PreviewAutomationResponse,
   PreviewAutomationScrollInput,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
-  PreviewAutomationStreamEvent,
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
 } from "./previewAutomation.ts";
-import type {
-  ClientOrchestrationCommand,
-  OrchestrationGetFullThreadDiffInput,
-  OrchestrationGetFullThreadDiffResult,
-  OrchestrationGetTurnDiffInput,
-  OrchestrationGetTurnDiffResult,
-  OrchestrationShellSnapshot,
-  OrchestrationShellStreamItem,
-  OrchestrationSubscribeThreadInput,
-  OrchestrationThreadStreamItem,
-} from "./orchestration.ts";
-import { SnapShotSource } from "./orchestration.ts";
+// Upstream deleted orchestration.ts and moved this schema to chatAttachment.ts.
+import { SnapShotSource } from "./chatAttachment.ts";
 import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 import type {
@@ -118,29 +31,12 @@ import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
-// SCIENT-FORK:START — conversation files the OS opened with Scient.
+// SCIENT-FORK:START — Scient preview PDF export artifacts.
 import type {
-  DesktopConversationFileReleaseRequest,
-  DesktopConversationFileUploadCancelRequest,
-  DesktopConversationFileUploadRequest,
-  DesktopConversationFileUploadResult,
-  DesktopOpenedConversationFile,
-} from "./scientConversationImport.ts";
+  DesktopControlledHtmlPdfRenderArtifact,
+  DesktopPreviewPdfExportArtifact,
+} from "./scient/desktopPreview.ts";
 // SCIENT-FORK:END
-import type {
-  SourceControlCloneRepositoryInput,
-  SourceControlCloneRepositoryResult,
-  SourceControlPublishRepositoryInput,
-  SourceControlPublishRepositoryResult,
-  SourceControlRepositoryInfo,
-  SourceControlRepositoryLookupInput,
-} from "./sourceControl.ts";
-import {
-  AssetCopyRequest,
-  AssetCopyResult,
-  type AssetCopyRequest as AssetCopyRequestType,
-  type AssetCopyResult as AssetCopyResultType,
-} from "@scientfactory/document-artifacts";
 import type {
   DesktopAppActivationRequest,
   DesktopAppActivationResponse,
@@ -638,10 +534,13 @@ export const PickFolderOptionsSchema = Schema.Struct({
   targetEnvironmentId: Schema.optionalKey(Schema.String),
 });
 
-export const DesktopAssetCopyRequestSchema = AssetCopyRequest;
-export type DesktopAssetCopyRequest = AssetCopyRequestType;
-export const DesktopAssetCopyResultSchema = AssetCopyResult;
-export type DesktopAssetCopyResult = AssetCopyResultType;
+// SCIENT-FORK:START — Scient asset copy contracts live in scient/desktopBridge.ts.
+export {
+  DesktopAssetCopyRequestSchema,
+  DesktopAssetCopyResultSchema,
+} from "./scient/desktopBridge.ts";
+export type { DesktopAssetCopyRequest, DesktopAssetCopyResult };
+// SCIENT-FORK:END
 
 /**
  * A file returned by the desktop theme-file picker. Oversized files carry an
@@ -787,27 +686,6 @@ export const DesktopPreviewAutomationStatusSchema = Schema.Struct({
   tabId: Schema.NullOr(DesktopPreviewTabIdSchema),
 });
 export type DesktopPreviewAutomationStatus = typeof DesktopPreviewAutomationStatusSchema.Type;
-
-export const DesktopPreviewNavStatusSchema = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal("Idle") }),
-  Schema.Struct({
-    kind: Schema.Literal("Loading"),
-    url: Schema.String,
-    title: Schema.String,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("Success"),
-    url: Schema.String,
-    title: Schema.String,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("LoadFailed"),
-    url: Schema.String,
-    title: Schema.String,
-    code: Schema.Number,
-    description: Schema.String,
-  }),
-]);
 
 export interface DesktopPreviewPointerEvent {
   tabId: string;
@@ -959,81 +837,19 @@ export const DesktopPreviewScreenshotArtifactSchema: Schema.Codec<DesktopPreview
     createdAt: Schema.String,
   });
 
-export interface DesktopPreviewPdfExportSourceSignals {
-  bodyTextLength: number;
-  imageCount: number;
-  brokenImageCount: number;
-  canvasCount: number;
-  videoCount: number;
-  iframeCount: number;
-  scrollWidth: number;
-  scrollHeight: number;
-}
-
-export const DesktopPreviewPdfExportSourceSignalsSchema = Schema.Struct({
-  bodyTextLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  imageCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  brokenImageCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  canvasCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  videoCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  iframeCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  scrollWidth: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  scrollHeight: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-});
-
-export interface DesktopPreviewPdfExportArtifact {
-  data: Uint8Array;
-  sourceUrl: string;
-  title: string;
-  profile: "document-layout";
-  media: "print";
-  warnings: ReadonlyArray<string>;
-  sourceSignals: DesktopPreviewPdfExportSourceSignals;
-}
-
-export const DesktopPreviewPdfExportArtifactSchema: Schema.Codec<DesktopPreviewPdfExportArtifact> =
-  Schema.Struct({
-    data: Schema.Uint8Array,
-    sourceUrl: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32_768)),
-    title: Schema.String.check(Schema.isMaxLength(512)),
-    profile: Schema.Literal("document-layout"),
-    media: Schema.Literal("print"),
-    warnings: Schema.Array(Schema.String.check(Schema.isMaxLength(256))).check(
-      Schema.isMaxLength(32),
-    ),
-    sourceSignals: DesktopPreviewPdfExportSourceSignalsSchema,
-  });
-
-export interface DesktopControlledHtmlPdfRenderInput {
-  sourceUrl: string;
-}
-
-export const DesktopControlledHtmlPdfRenderInputSchema = Schema.Struct({
-  sourceUrl: Schema.String.check(
-    Schema.isTrimmed(),
-    Schema.isNonEmpty(),
-    Schema.isMaxLength(32_768),
-  ),
-});
-
-export interface DesktopControlledHtmlPdfRenderArtifact extends DesktopPreviewPdfExportArtifact {
-  /** Requests denied because they escaped the signed document capability. */
-  blockedRequestCount: number;
-}
-
-export const DesktopControlledHtmlPdfRenderArtifactSchema: Schema.Codec<DesktopControlledHtmlPdfRenderArtifact> =
-  Schema.Struct({
-    data: Schema.Uint8Array,
-    sourceUrl: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32_768)),
-    title: Schema.String.check(Schema.isMaxLength(512)),
-    profile: Schema.Literal("document-layout"),
-    media: Schema.Literal("print"),
-    warnings: Schema.Array(Schema.String.check(Schema.isMaxLength(256))).check(
-      Schema.isMaxLength(32),
-    ),
-    sourceSignals: DesktopPreviewPdfExportSourceSignalsSchema,
-    blockedRequestCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  });
+// SCIENT-FORK:START — Scient preview PDF export contracts.
+export {
+  DesktopControlledHtmlPdfRenderArtifactSchema,
+  DesktopControlledHtmlPdfRenderInputSchema,
+  DesktopPreviewPdfExportArtifactSchema,
+  DesktopPreviewPdfExportSourceSignalsSchema,
+} from "./scient/desktopPreview.ts";
+export type {
+  DesktopControlledHtmlPdfRenderArtifact,
+  DesktopPreviewPdfExportArtifact,
+  DesktopPreviewPdfExportSourceSignals,
+} from "./scient/desktopPreview.ts";
+// SCIENT-FORK:END
 
 /**
  * Single stack frame captured by react-grab's `getElementContext`. We surface
@@ -1355,24 +1171,8 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access", "microphone"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
-export interface DesktopBridge {
-  /** Scient: macOS conversations with unread completed answers; zero clears the badge. */
-  setUnreadAnswerCount?: (count: number) => Promise<boolean>;
-  // SCIENT-FORK:START — conversation files the OS opened with Scient.
-  /** Scient: removes and returns the `.scic` files opened with Scient that await import. */
-  takeOpenedConversationFiles?: () => Promise<ReadonlyArray<DesktopOpenedConversationFile>>;
-  /** Scient: called when the OS opens another `.scic` with Scient; then take them. */
-  onConversationFilesOpened?: (listener: () => void) => () => void;
-  /** Scient: streams an opened `.scic` to a signed import upload URL. */
-  uploadOpenedConversationFile?: (
-    request: DesktopConversationFileUploadRequest,
-  ) => Promise<DesktopConversationFileUploadResult>;
-  /** Scient: stops one upload attempt, or keeps it from starting; that attempt ends `cancelled`. */
-  cancelOpenedConversationFileUpload?: (
-    request: DesktopConversationFileUploadCancelRequest,
-  ) => Promise<void>;
-  /** Scient: gives up an opened `.scic`; its token then fails `file-unavailable`. */
-  releaseOpenedConversationFile?: (request: DesktopConversationFileReleaseRequest) => Promise<void>;
+// SCIENT-FORK:START — Scient members live in ScientDesktopBridge (scient/desktopBridge.ts).
+export interface DesktopBridge extends ScientDesktopBridge {
   // SCIENT-FORK:END
   getAppBranding: () => DesktopAppBranding | null;
   /** The desktop client's OS platform, read from Electron's preload process. */
@@ -1451,16 +1251,6 @@ export interface DesktopBridge {
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   /** Optional while older desktop shells can host a newer web client. */
   pickProjectFavicon?: (initialPath?: string) => Promise<string | null>;
-  saveAssetCopy: (request: DesktopAssetCopyRequest) => Promise<DesktopAssetCopyResult>;
-  /** Optional while older desktop shells can host a newer web client. */
-  revealSavedAsset?: (path: string) => Promise<void>;
-  /**
-   * Print one captured Scient document page in a hidden, isolated window.
-   * Optional while older desktop shells can host a newer web client.
-   */
-  renderDocumentPagePdf?: (
-    input: DesktopDocumentPageRenderInput,
-  ) => Promise<DesktopDocumentPageRenderOutcome>;
   /**
    * Multi-select JSON file picker that opens in the VS Code extensions
    * directory when one exists. Optional: older desktop builds lack it, and
@@ -1470,8 +1260,6 @@ export interface DesktopBridge {
   /** Resolve the absolute path of an OS-dropped file or folder in Electron. */
   getPathForFile?: (file: File) => string | null;
   setTheme: (theme: DesktopTheme) => Promise<void>;
-  /** Write an already-encoded PNG image to the native system clipboard. */
-  copyPngToClipboard?: (png: Uint8Array) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },
@@ -1495,10 +1283,6 @@ export interface DesktopBridge {
   /** Present when the desktop shell can perform an ordered plain-text paste. */
   pasteAsText?: () => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
-  /** Optional while older desktop shells can host a newer web client. */
-  reloadMainWindow?: (ignoreCache: boolean) => Promise<boolean>;
-  /** Optional while older desktop shells can host a newer web client. */
-  onReloadBlocked?: (listener: () => void) => () => void;
   onSnapShotEvent?: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
   /**
    * Quit-confirmation hint pushes. Optional: older desktop builds never emit
@@ -1524,47 +1308,11 @@ export interface DesktopBridge {
    * Electron desktop build; web builds have `preview === undefined`.
    */
   preview?: DesktopPreviewBridge;
-  /**
-   * Desktop-only local voice transcription surface. Present iff the renderer is
-   * hosted by the Electron desktop build; web builds have `voice === undefined`.
-   */
-  voice?: DesktopVoiceBridge;
 }
 
-/**
- * Desktop-only local voice transcription bridge. All audio and the whisper
- * runtime stay on-device; nothing here reaches the network except the one-time
- * model download performed by the main process.
- */
-export interface DesktopVoiceBridge {
-  /**
-   * Ask the native host to establish microphone consent before Chromium opens
-   * the capture device. Optional while older desktop shells host a newer UI.
-   */
-  requestMicrophoneAccess?: () => Promise<VoiceMicrophoneAccessStatus>;
-  /** Current catalog, selection and install/download state. */
-  getModelsState: () => Promise<VoiceModelsSnapshot>;
-  /** Download + verify one model, optionally selecting it after verification. */
-  downloadModel: (request: VoiceModelDownloadRequest) => Promise<VoiceModelsSnapshot>;
-  /** Cancel the matching in-flight model download, preserving partial data. */
-  cancelModelDownload: (request: VoiceModelOperationRequest) => Promise<void>;
-  /** Select an already-installed model for the next transcription. */
-  selectModel: (request: VoiceModelOperationRequest) => Promise<VoiceModelsSnapshot>;
-  /** Remove one model and optionally select a confirmed fallback. */
-  removeModel: (request: VoiceModelRemoveRequest) => Promise<VoiceModelsSnapshot>;
-  /** Transcribe one validated clip. Rejects with a safe, user-facing message. */
-  transcribe: (request: VoiceTranscribeRequest) => Promise<VoiceTranscript>;
-  /** Legacy cancellation, restricted to requests without an identity. */
-  cancelTranscription: () => Promise<void>;
-  /** Optional on older hosts. Never fall back to legacy global cancellation. */
-  cancelTranscriptionRequest?: (request: VoiceCancelTranscriptionRequest) => Promise<void>;
-  /**
-   * Observe model-download progress. Implemented by polling `getModelsState`
-   * from the preload bridge, so it needs no dedicated push channel. Returns an
-   * unsubscribe function.
-   */
-  onModelDownloadProgress: (listener: (progress: VoiceModelDownloadProgress) => void) => () => void;
-}
+// SCIENT-FORK:START — the local voice bridge lives in scient/desktopVoiceBridge.ts.
+export type { DesktopVoiceBridge } from "./scient/desktopVoiceBridge.ts";
+// SCIENT-FORK:END
 
 /** Renderer callback invoked by Electron with a fresh user gesture before display-media capture. */
 export const DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER = "__t3DesktopPreviewRecordingCapture";
@@ -1703,139 +1451,5 @@ export interface LocalApi {
   persistence: {
     getClientSettings: () => Promise<ClientSettings | null>;
     setClientSettings: (settings: ClientSettings) => Promise<void>;
-  };
-}
-
-/**
- * APIs bound to a specific backend environment connection.
- *
- * These operations must always be routed with explicit environment context.
- * They represent remote stateful capabilities such as orchestration, terminal,
- * project, VCS, and provider operations. In multi-environment mode, each environment gets
- * its own instance of this surface, and callers should resolve it by
- * `environmentId` rather than reaching through the local desktop bridge.
- */
-export interface EnvironmentApi {
-  terminal: {
-    open: (input: typeof TerminalOpenInput.Encoded) => Promise<TerminalSessionSnapshot>;
-    attach: (
-      input: typeof TerminalAttachInput.Encoded,
-      callback: (event: TerminalAttachStreamEvent) => void,
-      options?: {
-        onResubscribe?: () => void;
-      },
-    ) => () => void;
-    write: (input: typeof TerminalWriteInput.Encoded) => Promise<void>;
-    resize: (input: typeof TerminalResizeInput.Encoded) => Promise<void>;
-    clear: (input: typeof TerminalClearInput.Encoded) => Promise<void>;
-    restart: (input: typeof TerminalRestartInput.Encoded) => Promise<TerminalSessionSnapshot>;
-    close: (input: typeof TerminalCloseInput.Encoded) => Promise<void>;
-    onMetadata: (
-      callback: (event: TerminalMetadataStreamEvent) => void,
-      options?: {
-        onResubscribe?: () => void;
-      },
-    ) => () => void;
-  };
-  projects: {
-    listDirectory: (input: ProjectListDirectoryInput) => Promise<ProjectListDirectoryResult>;
-    listEntries: (input: ProjectListEntriesInput) => Promise<ProjectListEntriesResult>;
-    readFile: (input: ProjectReadFileInput) => Promise<ProjectReadFileResult>;
-    searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
-    writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
-  };
-  filesystem: {
-    browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;
-    prepareFileOpen: (input: EnvironmentFilePrepareInput) => Promise<EnvironmentFilePrepareResult>;
-  };
-  assets: {
-    createUrl: (input: AssetCreateUrlInput) => Promise<AssetCreateUrlResult>;
-  };
-  sourceControl: {
-    lookupRepository: (
-      input: SourceControlRepositoryLookupInput,
-    ) => Promise<SourceControlRepositoryInfo>;
-    cloneRepository: (
-      input: SourceControlCloneRepositoryInput,
-    ) => Promise<SourceControlCloneRepositoryResult>;
-    publishRepository: (
-      input: SourceControlPublishRepositoryInput,
-    ) => Promise<SourceControlPublishRepositoryResult>;
-  };
-  vcs: {
-    listRefs: (input: VcsListRefsInput) => Promise<VcsListRefsResult>;
-    createWorktree: (input: VcsCreateWorktreeInput) => Promise<VcsCreateWorktreeResult>;
-    removeWorktree: (input: VcsRemoveWorktreeInput) => Promise<void>;
-    createRef: (input: VcsCreateRefInput) => Promise<VcsCreateRefResult>;
-    switchRef: (input: VcsSwitchRefInput) => Promise<VcsSwitchRefResult>;
-    init: (input: VcsInitInput) => Promise<void>;
-    pull: (input: VcsPullInput) => Promise<VcsPullResult>;
-    refreshStatus: (input: VcsStatusInput) => Promise<VcsStatusResult>;
-    onStatus: (
-      input: VcsStatusInput,
-      callback: (status: VcsStatusResult) => void,
-      options?: {
-        onResubscribe?: () => void;
-      },
-    ) => () => void;
-  };
-  git: {
-    resolvePullRequest: (input: GitPullRequestRefInput) => Promise<GitResolvePullRequestResult>;
-    preparePullRequestThread: (
-      input: GitPreparePullRequestThreadInput,
-    ) => Promise<GitPreparePullRequestThreadResult>;
-  };
-  review: {
-    getDiffPreview: (input: ReviewDiffPreviewInput) => Promise<ReviewDiffPreviewResult>;
-    getDiffFileContents: (
-      input: ReviewDiffFileContentsInput,
-    ) => Promise<ReviewDiffFileContentsResult>;
-  };
-  orchestration: {
-    dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;
-    getTurnDiff: (input: OrchestrationGetTurnDiffInput) => Promise<OrchestrationGetTurnDiffResult>;
-    getFullThreadDiff: (
-      input: OrchestrationGetFullThreadDiffInput,
-    ) => Promise<OrchestrationGetFullThreadDiffResult>;
-    getArchivedShellSnapshot: () => Promise<OrchestrationShellSnapshot>;
-    subscribeShell: (
-      callback: (event: OrchestrationShellStreamItem) => void,
-      options?: {
-        onResubscribe?: () => void;
-      },
-    ) => () => void;
-    subscribeThread: (
-      input: OrchestrationSubscribeThreadInput,
-      callback: (event: OrchestrationThreadStreamItem) => void,
-      options?: {
-        onResubscribe?: () => void;
-      },
-    ) => () => void;
-  };
-  preview: {
-    open: (input: typeof PreviewOpenInput.Encoded) => Promise<PreviewSessionSnapshot>;
-    navigate: (input: typeof PreviewNavigateInput.Encoded) => Promise<PreviewSessionSnapshot>;
-    resize: (input: typeof PreviewResizeInput.Encoded) => Promise<PreviewSessionSnapshot>;
-    refresh: (input: typeof PreviewRefreshInput.Encoded) => Promise<void>;
-    close: (input: typeof PreviewCloseInput.Encoded) => Promise<void>;
-    list: (input: typeof PreviewListInput.Encoded) => Promise<PreviewListResult>;
-    reportStatus: (input: typeof PreviewReportStatusInput.Encoded) => Promise<void>;
-    automation: {
-      connect: (
-        input: PreviewAutomationHost,
-        callback: (event: PreviewAutomationStreamEvent) => void,
-        options?: { onResubscribe?: () => void },
-      ) => () => void;
-      respond: (response: PreviewAutomationResponse) => Promise<void>;
-      focusHost: (input: PreviewAutomationHostFocus) => Promise<void>;
-    };
-    onEvent: (
-      callback: (event: PreviewEvent) => void,
-      options?: { onResubscribe?: () => void },
-    ) => () => void;
-    subscribePorts: (
-      callback: (servers: DiscoveredLocalServerList) => void,
-      options?: { onResubscribe?: () => void },
-    ) => () => void;
   };
 }

@@ -477,6 +477,90 @@ describe("Markdown source persistence integration", () => {
     lease.release();
   });
 
+  it("keeps the caret on live source rows after replacing and regrowing a document", async () => {
+    const source = "first\nsecond\nthird\nfourth";
+    const registry = new MarkdownPersistenceRegistry({
+      createTransport: () => ({
+        write: async () => ({ revision: "saved" }),
+        read: async () => ({ source, revision: "initial" }),
+        classifyFailure: () => "terminal",
+        subscribe: () => () => {},
+        project: () => {},
+      }),
+    });
+    const lease = registry.acquire(target, {
+      relativePath: target.relativePath,
+      contents: source,
+      revision: "initial",
+      byteLength: source.length,
+      truncated: false,
+    })!;
+    let attached!: () => void;
+    const receipt = new Promise<void>((resolve) => {
+      attached = resolve;
+    });
+    mocks.attached.mockImplementation(() => attached());
+    await act(async () =>
+      root.render(
+        <MarkdownSourceSurface
+          persistence={lease}
+          {...target}
+          composerDraftTarget={threadRef}
+          resolvedTheme="light"
+          revealRequestId={0}
+          wordWrap={false}
+          onPostRender={() => {}}
+        />,
+      ),
+    );
+    await act(async () => receipt);
+    const editor = mocks.editors.at(-1)!;
+    const selection = window.getSelection()!;
+    const setBaseAndExtent = selection.setBaseAndExtent.bind(selection);
+    const liveAnchors: boolean[] = [];
+    let phase = "initial-selection";
+    const detachedAnchors: Array<{
+      phase: string;
+      anchorConnected: boolean;
+      focusConnected: boolean;
+      source: string;
+      stack: string | undefined;
+    }> = [];
+    vi.spyOn(selection, "setBaseAndExtent").mockImplementation(
+      (anchor, anchorOffset, focus, focusOffset) => {
+        liveAnchors.push(anchor.isConnected && focus.isConnected);
+        if (!anchor.isConnected || !focus.isConnected)
+          detachedAnchors.push({
+            phase,
+            anchorConnected: anchor.isConnected,
+            focusConnected: focus.isConnected,
+            source: editor.getText(),
+            stack: new Error("Detached source selection").stack,
+          });
+        setBaseAndExtent(anchor, anchorOffset, focus, focusOffset);
+      },
+    );
+    const end = { line: 3, character: 6 };
+    await act(async () => {
+      editor.setSelections([{ start: end, end, direction: "none" }]);
+      phase = "replace-document";
+      editor.applyEdits([{ range: { start: { line: 0, character: 0 }, end }, newText: "x" }]);
+      phase = "regrow-document";
+      editor.applyEdits([
+        {
+          range: { start: { line: 0, character: 1 }, end: { line: 0, character: 1 } },
+          newText: "\ny\nz\nw",
+        },
+      ]);
+    });
+    expect(editor.getText()).toBe("x\ny\nz\nw");
+    expect(liveAnchors.length).toBeGreaterThan(0);
+    if (detachedAnchors.length > 0)
+      console.error("Detached source selection before fixture cleanup", detachedAnchors);
+    expect(liveAnchors.every(Boolean)).toBe(true);
+    lease.release();
+  });
+
   it("does not dismiss a detached source editor during a rename hold", async () => {
     const registry = new MarkdownPersistenceRegistry({
       createTransport: () => ({

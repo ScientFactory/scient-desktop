@@ -1,5 +1,7 @@
 # T3 upstream alignment through `dd8332da`
 
+Historical record; implementation paths and checks describe its dated snapshot, not current V2 architecture.
+
 Date: 2026-09-26
 
 This receipt records a bounded, history-preserving alignment of the official

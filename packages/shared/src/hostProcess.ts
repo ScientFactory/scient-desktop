@@ -53,6 +53,12 @@ export const HostProcessArguments = Context.Reference<ReadonlyArray<string>>(
   },
 );
 
+/** The spelling used to invoke the process, before resolving a launcher symlink. */
+export const HostProcessInvokedAs = Context.Reference<string>(
+  "@t3tools/shared/hostProcess/HostProcessInvokedAs",
+  { defaultValue: () => process.argv0 },
+);
+
 /**
  * Whether this process is a Node single executable rather than a script run
  * by a Node installation on the machine.

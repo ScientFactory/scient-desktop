@@ -159,6 +159,7 @@ describe("Scient awareness", () => {
   it("requires an explicit delivery decision for every built-in provider", () => {
     const builtInKinds = BUILT_IN_DRIVERS.map((driver) => String(driver.driverKind)).toSorted();
     expect(Object.keys(SCIENT_AWARENESS_DELIVERY).toSorted()).toEqual(builtInKinds);
+    expect(SCIENT_AWARENESS_DELIVERY.acpRegistry).toBe("unsupported-no-private-system-seam");
     expect(SCIENT_AWARENESS_DELIVERY.antigravity).toBe("unsupported-no-private-system-seam");
     expect(SCIENT_AWARENESS_DELIVERY.cursor).toBe("unsupported-no-private-system-seam");
     // Oh My Pi uses Pi's session-local extension hook, appended to its string[] prompt.

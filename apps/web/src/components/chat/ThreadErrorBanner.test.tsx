@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 import { MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared/model";
-import { EventId, TurnId } from "@t3tools/contracts";
+import { RunId, TurnItemId } from "@t3tools/contracts";
 
 import {
   dismissThreadErrorBannerForSession,
@@ -14,30 +14,32 @@ import {
 } from "./ThreadErrorBanner";
 
 describe("ThreadErrorBanner", () => {
-  it("uses persisted activity independently of copy, without development-only aliases", () => {
-    const activities = [
-      { id: EventId.make("limit-one"), kind: "turn.truncated", turnId: TurnId.make("one") },
+  it("supersedes a truncated response notice when a newer run starts", () => {
+    const items = [
+      {
+        id: TurnItemId.make("limit-one"),
+        type: "notification" as const,
+        source: { kind: "output_truncated" as const, stopReason: "length" },
+        runId: RunId.make("one"),
+      },
     ];
-    const first = getTruncationNoticeKey("typed", activities, "one", "ready");
+    const first = getTruncationNoticeKey("typed", items, "one", "completed");
     expect(first).not.toBeNull();
-    expect(getTruncationNoticeKey("typed", activities, "one", "running")).toBeNull();
-    expect(getTruncationNoticeKey("typed", activities, "one", "starting")).toBeNull();
-    expect(getTruncationNoticeKey("typed", activities, "two", "ready")).toBeNull();
-    expect(getTruncationNoticeKey("typed", activities, null, "ready")).toBeNull();
+    expect(getTruncationNoticeKey("typed", items, "one", "running")).toBeNull();
+    expect(getTruncationNoticeKey("typed", items, "one", "starting")).toBeNull();
+    expect(getTruncationNoticeKey("typed", items, "two", "completed")).toBeNull();
+    expect(getTruncationNoticeKey("typed", items, null, "completed")).toBeNull();
     expect(isTokenLimitError(null)).toBe(false);
     expect(isTokenLimitError("Unrelated failure")).toBe(false);
-    expect(
-      isTokenLimitError("Response reached its token limit. Continue, or adjust the model limits."),
-    ).toBe(false);
     dismissThreadErrorBannerForSession(first);
     expect(
       isThreadErrorBannerDismissedForSession(
-        getTruncationNoticeKey("typed", [...activities], "one", "ready"),
+        getTruncationNoticeKey("typed", [...items], "one", "completed"),
       ),
     ).toBe(true);
     expect(
       isThreadErrorBannerDismissedForSession(
-        getTruncationNoticeKey("other-thread", activities, "one", "ready"),
+        getTruncationNoticeKey("other-thread", items, "one", "completed"),
       ),
     ).toBe(false);
   });

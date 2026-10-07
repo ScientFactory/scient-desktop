@@ -8,11 +8,10 @@ import {
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   UploadChatAttachment,
   ChatAttachment,
-  ThreadTurnStartCommand,
-  ModelSelection,
-  RuntimeMode,
-  ProviderInteractionMode,
-} from "./orchestration.ts";
+} from "./chatAttachment.ts";
+import { ModelSelection } from "./modelSelection.ts";
+import { RuntimeMode, ProviderInteractionMode } from "./providerPolicy.ts";
+import { SourceProposedPlanReference } from "./scientConversationView.ts";
 
 /**
  * Server-owned waiting payloads. Admission consumes an item atomically with its
@@ -35,7 +34,7 @@ export type ScientThreadQueueItemId = typeof ScientThreadQueueItemId.Type;
 export const ScientThreadQueueItem = Schema.Struct({
   messageId: Schema.optional(MessageId),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
-  sourceProposedPlan: ThreadTurnStartCommand.fields.sourceProposedPlan,
+  sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   // Versioned client edit snapshot. The server preserves this bounded opaque
   // JSON alongside delivery text; it never interprets it as agent authority.
   composerSnapshot: Schema.optional(Schema.String.check(Schema.isMaxLength(4 * 1024 * 1024))),
@@ -60,6 +59,8 @@ export const ScientThreadQueueItem = Schema.Struct({
 export type ScientThreadQueueItem = typeof ScientThreadQueueItem.Type;
 
 export const ScientThreadQueueSnapshot = Schema.Struct({
+  /** Native run projections own this queue; modern clients use their V2 controls. */
+  nativeQueue: Schema.optional(Schema.Boolean),
   unchanged: Schema.optional(Schema.Boolean),
   threadId: ThreadId,
   revision: Schema.optional(Schema.Number),
