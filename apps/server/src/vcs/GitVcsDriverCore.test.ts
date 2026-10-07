@@ -20,7 +20,7 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   GitCommandError,
@@ -31,6 +31,7 @@ import {
 import * as ServerConfig from "../config.ts";
 import { gitCommandDuration } from "../observability/Metrics.ts";
 import {
+  windowsLongPathConfigEnv,
   makeGitVcsDriverCore,
   parseGitCheckoutProgressLine,
   splitNullSeparatedGitStdoutPaths,
@@ -254,50 +255,51 @@ it.effect.each([{ timeoutMs: null }, { timeoutMs: 30_001 }])(
     }).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
-for (const location of ["root", "nested", "worktree"] as const) {
-  it.effect(
-    `skips clean filters while the ${location} index is locked and resumes after unlock`,
-    () =>
-      Effect.gen(function* () {
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const repository = yield* makeTmpDir();
-        yield* initRepoWithCommit(repository);
-        const cwd = location === "worktree" ? yield* makeTmpDir() : repository;
-        if (location === "worktree") {
-          yield* git(repository, ["worktree", "add", "--detach", cwd]);
-        }
-        yield* git(cwd, ["config", "filter.probe.clean", "echo clean >> .filter-runs; cat"]);
-        yield* writeTextFile(cwd, ".gitattributes", "asset.bin filter=probe\n");
-        yield* writeTextFile(cwd, ".gitignore", ".filter-runs\n");
-        yield* writeTextFile(cwd, "asset.bin", "original\n");
-        yield* git(cwd, ["add", "."]);
-        yield* git(cwd, ["commit", "-m", "filtered asset"]);
-        NodeFS.utimesSync(path.join(cwd, "asset.bin"), 1, 1);
-        const runsPath = path.join(cwd, ".filter-runs");
-        yield* fs.remove(runsPath, { force: true });
-        const indexPath = yield* git(cwd, ["rev-parse", "--git-path", "index"]);
-        const lockPath = `${path.resolve(cwd, indexPath)}.lock`;
-        yield* fs.writeFileString(lockPath, "");
-        const statusCwd = location === "nested" ? path.join(cwd, "nested") : cwd;
-        yield* fs.makeDirectory(statusCwd, { recursive: true });
+it.effect.each(
+  (["root", "nested", "worktree"] as const).map((location) => ({
+    caseTitle: `skips clean filters while the ${location} index is locked and resumes after unlock`,
+    location,
+  })),
+)("$caseTitle", ({ location }) =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const repository = yield* makeTmpDir();
+    yield* initRepoWithCommit(repository);
+    const cwd = location === "worktree" ? yield* makeTmpDir() : repository;
+    if (location === "worktree") {
+      yield* git(repository, ["worktree", "add", "--detach", cwd]);
+    }
+    yield* git(cwd, ["config", "filter.probe.clean", "echo clean >> .filter-runs; cat"]);
+    yield* writeTextFile(cwd, ".gitattributes", "asset.bin filter=probe\n");
+    yield* writeTextFile(cwd, ".gitignore", ".filter-runs\n");
+    yield* writeTextFile(cwd, "asset.bin", "original\n");
+    yield* git(cwd, ["add", "."]);
+    yield* git(cwd, ["commit", "-m", "filtered asset"]);
+    NodeFS.utimesSync(path.join(cwd, "asset.bin"), 1, 1);
+    const runsPath = path.join(cwd, ".filter-runs");
+    yield* fs.remove(runsPath, { force: true });
+    const indexPath = yield* git(cwd, ["rev-parse", "--git-path", "index"]);
+    const lockPath = `${path.resolve(cwd, indexPath)}.lock`;
+    yield* fs.writeFileString(lockPath, "");
+    const statusCwd = location === "nested" ? path.join(cwd, "nested") : cwd;
+    yield* fs.makeDirectory(statusCwd, { recursive: true });
 
-        for (let poll = 0; poll < 3; poll++) {
-          const result = yield* driver.statusDetailsLocal(statusCwd).pipe(Effect.result);
-          assert.isTrue(Result.isFailure(result));
-          if (Result.isFailure(result)) assert.include(result.failure.detail, "index is locked");
-        }
-        assert.isFalse(yield* fs.exists(runsPath));
-        assert.isTrue(yield* fs.exists(lockPath));
+    for (let poll = 0; poll < 3; poll++) {
+      const result = yield* driver.statusDetailsLocal(statusCwd).pipe(Effect.result);
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) assert.include(result.failure.detail, "index is locked");
+    }
+    assert.isFalse(yield* fs.exists(runsPath));
+    assert.isTrue(yield* fs.exists(lockPath));
 
-        yield* fs.remove(lockPath);
-        const status = yield* driver.statusDetailsLocal(statusCwd);
-        assert.isFalse(status.hasWorkingTreeChanges);
-        assert.include(yield* fs.readFileString(runsPath), "clean");
-      }).pipe(Effect.provide(TestLayer)),
-  );
-}
+    yield* fs.remove(lockPath);
+    const status = yield* driver.statusDetailsLocal(statusCwd);
+    assert.isFalse(status.hasWorkingTreeChanges);
+    assert.include(yield* fs.readFileString(runsPath), "clean");
+  }).pipe(Effect.provide(TestLayer)),
+);
 
 it.effect("uses stable diagnostics for every parsed non-repository command", () => {
   const commands: Array<{ readonly args: ReadonlyArray<string>; readonly lcAll?: string }> = [];
@@ -822,116 +824,121 @@ it.effect("backs off and logs failed fetch attempts across linked worktrees", ()
   ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
-for (const scenario of [
-  {
-    name: "HTTPS credentials",
-    stderr: "fatal: Authentication failed for",
-    expected: "could not authenticate",
-  },
-  {
-    name: "SSH credentials",
-    stderr: "git@example.com: Permission denied (publickey).",
-    expected: "could not authenticate",
-  },
-  {
-    name: "disabled prompts",
-    stderr: "fatal: could not read Username: terminal prompts disabled",
-    expected: "could not authenticate",
-  },
-  {
-    name: "DNS failure",
-    stderr: "fatal: Could not resolve host: example.com",
-    expected: "could not reach the remote",
-  },
-  {
-    name: "connection failure",
-    stderr: "ssh: connect to host example.com port 22: Connection refused",
-    expected: "could not reach the remote",
-  },
-  {
-    name: "missing remote",
-    stderr: "remote: Repository not found.",
-    expected: "could not access the remote repository",
-  },
-  {
-    name: "invalid remote",
-    stderr: "fatal: remote does not appear to be a git repository",
-    expected: "could not access the remote repository",
-  },
-  {
-    name: "reference lock",
-    stderr: "error: cannot lock ref 'refs/remotes/origin/main': is at abc but expected def",
-    expected: "could not update a local reference",
-  },
-  {
-    name: "lock file",
-    stderr: "fatal: Unable to create '/repo/.git/FETCH_HEAD.lock': File exists.",
-    expected: "could not update a local reference",
-  },
-  {
-    name: "unrelated remote chatter",
-    stderr:
-      "remote: Help: authentication failed, connection refused, cannot lock ref\nremote: unrelated service error",
-    expected: "git fetch origin failed",
-  },
-  {
-    name: "HTTPS DNS failure",
-    stderr:
-      "fatal: unable to access 'https://example.com/repo.git/': Could not resolve host: example.com",
-    expected: "could not reach the remote",
-  },
-  {
-    name: "unknown failure",
-    stderr: "fatal: unexpected remote failure",
-    expected: "git fetch origin failed",
-  },
-] as const) {
-  it.effect(`reports ${scenario.name} during fetch without retaining remote output`, () =>
-    Effect.gen(function* () {
-      const secret = "secret-fetch-token";
-      const stderr = `${scenario.stderr}\nhttps://user:${secret}@example.com/private?token=${secret}`;
-      const attempts = yield* Ref.make(0);
-      const spawner = ChildProcessSpawner.make((command) =>
-        Effect.gen(function* () {
-          if (!ChildProcess.isStandardCommand(command))
-            return yield* Effect.die("expected Git command");
-          if (command.args[0] !== "fetch") return makeNonRepositoryHandle();
-          assert.deepEqual(command.args, ["fetch", "--quiet", "origin"]);
-          assert.equal(command.options.env?.LC_ALL, "C");
-          assert.equal(command.options.env?.GIT_TERMINAL_PROMPT, "0");
-          yield* Ref.update(attempts, (count) => count + 1);
-          return ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(1),
-            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(128)),
-            isRunning: Effect.succeed(false),
-            kill: () => Effect.void,
-            unref: Effect.succeed(Effect.void),
-            stdin: Sink.drain,
-            stdout: Stream.encodeText(Stream.make(secret)),
-            stderr: Stream.encodeText(Stream.make(stderr)),
-            all: Stream.empty,
-            getInputFd: () => Sink.drain,
-            getOutputFd: () => Stream.empty,
-          });
-        }),
-      );
-      const driver = yield* makeGitVcsDriverCore().pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      );
-      const cwd = yield* makeTmpDir();
-      const error = yield* driver.fetchRemote({ cwd, remoteName: "origin" }).pipe(Effect.flip);
-      assert.include(error.detail, scenario.expected);
-      assert.equal(error.exitCode, 128);
-      assert.equal(error.stderrLength, stderr.length);
-      assert.equal(error.stdoutLength, secret.length);
-      assert.notInclude(error.message, secret);
-      assert.notInclude(yield* encodeGitCommandError(error), secret);
-      assert.notProperty(error, "stderr");
-      assert.notProperty(error, "args");
-      assert.equal(yield* Ref.get(attempts), 1);
-    }).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
-  );
-}
+it.effect.each(
+  (
+    [
+      {
+        name: "HTTPS credentials",
+        stderr: "fatal: Authentication failed for",
+        expected: "could not authenticate",
+      },
+      {
+        name: "SSH credentials",
+        stderr: "git@example.com: Permission denied (publickey).",
+        expected: "could not authenticate",
+      },
+      {
+        name: "disabled prompts",
+        stderr: "fatal: could not read Username: terminal prompts disabled",
+        expected: "could not authenticate",
+      },
+      {
+        name: "DNS failure",
+        stderr: "fatal: Could not resolve host: example.com",
+        expected: "could not reach the remote",
+      },
+      {
+        name: "connection failure",
+        stderr: "ssh: connect to host example.com port 22: Connection refused",
+        expected: "could not reach the remote",
+      },
+      {
+        name: "missing remote",
+        stderr: "remote: Repository not found.",
+        expected: "could not access the remote repository",
+      },
+      {
+        name: "invalid remote",
+        stderr: "fatal: remote does not appear to be a git repository",
+        expected: "could not access the remote repository",
+      },
+      {
+        name: "reference lock",
+        stderr: "error: cannot lock ref 'refs/remotes/origin/main': is at abc but expected def",
+        expected: "could not update a local reference",
+      },
+      {
+        name: "lock file",
+        stderr: "fatal: Unable to create '/repo/.git/FETCH_HEAD.lock': File exists.",
+        expected: "could not update a local reference",
+      },
+      {
+        name: "unrelated remote chatter",
+        stderr:
+          "remote: Help: authentication failed, connection refused, cannot lock ref\nremote: unrelated service error",
+        expected: "git fetch origin failed",
+      },
+      {
+        name: "HTTPS DNS failure",
+        stderr:
+          "fatal: unable to access 'https://example.com/repo.git/': Could not resolve host: example.com",
+        expected: "could not reach the remote",
+      },
+      {
+        name: "unknown failure",
+        stderr: "fatal: unexpected remote failure",
+        expected: "git fetch origin failed",
+      },
+    ] as const
+  ).map((scenario) => ({
+    caseTitle: `reports ${scenario.name} during fetch without retaining remote output`,
+    scenario,
+  })),
+)("$caseTitle", ({ scenario }) =>
+  Effect.gen(function* () {
+    const secret = "secret-fetch-token";
+    const stderr = `${scenario.stderr}\nhttps://user:${secret}@example.com/private?token=${secret}`;
+    const attempts = yield* Ref.make(0);
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        if (!ChildProcess.isStandardCommand(command))
+          return yield* Effect.die("expected Git command");
+        if (command.args[0] !== "fetch") return makeNonRepositoryHandle();
+        assert.deepEqual(command.args, ["fetch", "--quiet", "origin"]);
+        assert.equal(command.options.env?.LC_ALL, "C");
+        assert.equal(command.options.env?.GIT_TERMINAL_PROMPT, "0");
+        yield* Ref.update(attempts, (count) => count + 1);
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(128)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.encodeText(Stream.make(secret)),
+          stderr: Stream.encodeText(Stream.make(stderr)),
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+      }),
+    );
+    const driver = yield* makeGitVcsDriverCore().pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+    const cwd = yield* makeTmpDir();
+    const error = yield* driver.fetchRemote({ cwd, remoteName: "origin" }).pipe(Effect.flip);
+    assert.include(error.detail, scenario.expected);
+    assert.equal(error.exitCode, 128);
+    assert.equal(error.stderrLength, stderr.length);
+    assert.equal(error.stdoutLength, secret.length);
+    assert.notInclude(error.message, secret);
+    assert.notInclude(yield* encodeGitCommandError(error), secret);
+    assert.notProperty(error, "stderr");
+    assert.notProperty(error, "args");
+    assert.equal(yield* Ref.get(attempts), 1);
+  }).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
 
 it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   describe("process environment", () => {
@@ -1491,88 +1498,95 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         }),
     );
 
-    for (const splitIndex of [false, true]) {
-      it.effect(`keeps the preceding second cached in review previews (split: ${splitIndex})`, () =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTmpDir();
-          yield* initRepoWithCommit(cwd);
-          const driver = yield* GitVcsDriver.GitVcsDriver;
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          yield* writeTextFile(cwd, ".gitattributes", "stable.txt filter=probe\n");
-          yield* writeTextFile(cwd, "stable.txt", "unchanged\n");
-          yield* writeTextFile(
-            cwd,
-            ".git/filter.cjs",
-            'require("node:fs").appendFileSync(".git/filter-runs", "read\\n"); process.stdin.pipe(process.stdout);',
-          );
-          yield* git(cwd, ["config", "filter.probe.clean", "node .git/filter.cjs"]);
-          yield* fs.utimes(path.join(cwd, "stable.txt"), 1_699_999_999.5, 1_699_999_999.5);
-          yield* git(cwd, ["add", "."]);
-          yield* git(cwd, ["commit", "-m", "cache stable file"]);
-          if (splitIndex) yield* git(cwd, ["update-index", "--split-index"]);
-          const indexPath = path.join(cwd, ".git", "index");
-          yield* fs.utimes(indexPath, 1_700_000_000, 1_700_000_000);
-          const originalIndex = yield* fs.readFile(indexPath);
-          const originalMtime = (yield* fs.stat(indexPath)).mtime;
-          yield* writeTextFile(cwd, ".git/filter-runs", "");
-          yield* writeTextFile(cwd, "untracked.txt", "new\n");
-          const preview = yield* driver.getReviewDiffPreview({ cwd });
-          assert.deepStrictEqual(
-            preview.sources.find((source) => source.kind === "working-tree")!.files,
-            [{ path: "untracked.txt", previousPath: null, additions: 1, deletions: 0 }],
-          );
-          assert.strictEqual(yield* fs.readFileString(path.join(cwd, ".git/filter-runs")), "");
-          assert.deepStrictEqual(yield* fs.readFile(indexPath), originalIndex);
-          assert.deepStrictEqual((yield* fs.stat(indexPath)).mtime, originalMtime);
-        }),
-      );
-    }
+    it.effect.each(
+      [false, true].map((splitIndex) => ({
+        caseTitle: `keeps the preceding second cached in review previews (split: ${splitIndex})`,
+        splitIndex,
+      })),
+    )("$caseTitle", ({ splitIndex }) =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, ".gitattributes", "stable.txt filter=probe\n");
+        yield* writeTextFile(cwd, "stable.txt", "unchanged\n");
+        yield* writeTextFile(
+          cwd,
+          ".git/filter.cjs",
+          'require("node:fs").appendFileSync(".git/filter-runs", "read\\n"); process.stdin.pipe(process.stdout);',
+        );
+        yield* git(cwd, ["config", "filter.probe.clean", "node .git/filter.cjs"]);
+        yield* fs.utimes(path.join(cwd, "stable.txt"), 1_699_999_999.5, 1_699_999_999.5);
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "cache stable file"]);
+        if (splitIndex) yield* git(cwd, ["update-index", "--split-index"]);
+        const indexPath = path.join(cwd, ".git", "index");
+        yield* fs.utimes(indexPath, 1_700_000_000, 1_700_000_000);
+        const originalIndex = yield* fs.readFile(indexPath);
+        const originalMtime = (yield* fs.stat(indexPath)).mtime;
+        yield* writeTextFile(cwd, ".git/filter-runs", "");
+        yield* writeTextFile(cwd, "untracked.txt", "new\n");
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+        assert.deepStrictEqual(
+          preview.sources.find((source) => source.kind === "working-tree")!.files,
+          [{ path: "untracked.txt", previousPath: null, additions: 1, deletions: 0 }],
+        );
+        assert.strictEqual(yield* fs.readFileString(path.join(cwd, ".git/filter-runs")), "");
+        assert.deepStrictEqual(yield* fs.readFile(indexPath), originalIndex);
+        assert.deepStrictEqual((yield* fs.stat(indexPath)).mtime, originalMtime);
+      }),
+    );
 
-    for (const [timestamp, splitIndex] of [
-      [1_700_000_000, false],
-      [1_700_000_000.9999, false],
-      [1_700_000_000, true],
-      [1_700_000_000.9999, true],
-    ] as const) {
-      it.effect(
-        `preserves same-size edits with a racy review index (${timestamp}, split: ${splitIndex})`,
-        () =>
-          Effect.gen(function* () {
-            const cwd = yield* makeTmpDir();
-            yield* initRepoWithCommit(cwd);
-            const driver = yield* GitVcsDriver.GitVcsDriver;
-            const fileSystem = yield* FileSystem.FileSystem;
-            const path = yield* Path.Path;
-            const filePath = path.join(cwd, "tracked.txt");
-            const indexPath = path.join(cwd, ".git", "index");
-            // Reproduce a same-timestamp edit without relying on filesystem clock resolution.
-            yield* git(cwd, ["config", "core.trustctime", "false"]);
-            yield* writeTextFile(cwd, "tracked.txt", "before\n");
-            yield* fileSystem.utimes(filePath, timestamp, timestamp);
-            yield* git(cwd, ["add", "tracked.txt"]);
-            yield* git(cwd, ["commit", "-m", "record racy file"]);
-            if (splitIndex) yield* git(cwd, ["update-index", "--split-index"]);
-            yield* fileSystem.utimes(indexPath, timestamp, timestamp);
-            const originalIndex = yield* fileSystem.readFile(indexPath);
-            const originalIndexMtime = (yield* fileSystem.stat(indexPath)).mtime;
-            yield* writeTextFile(cwd, "tracked.txt", "after!\n");
-            yield* fileSystem.utimes(filePath, timestamp, timestamp);
-            yield* writeTextFile(cwd, "untracked.txt", "new\n");
+    it.effect.each(
+      (
+        [
+          [1_700_000_000, false],
+          [1_700_000_000.9999, false],
+          [1_700_000_000, true],
+          [1_700_000_000.9999, true],
+        ] as const
+      ).map(([timestamp, splitIndex]) => ({
+        caseTitle: `preserves same-size edits with a racy review index (${timestamp}, split: ${splitIndex})`,
+        timestamp,
+        splitIndex,
+      })),
+    )("$caseTitle", ({ timestamp, splitIndex }) =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const filePath = path.join(cwd, "tracked.txt");
+        const indexPath = path.join(cwd, ".git", "index");
+        // Reproduce a same-timestamp edit without relying on filesystem clock resolution.
+        yield* git(cwd, ["config", "core.trustctime", "false"]);
+        yield* writeTextFile(cwd, "tracked.txt", "before\n");
+        yield* fileSystem.utimes(filePath, timestamp, timestamp);
+        yield* git(cwd, ["add", "tracked.txt"]);
+        yield* git(cwd, ["commit", "-m", "record racy file"]);
+        if (splitIndex) yield* git(cwd, ["update-index", "--split-index"]);
+        yield* fileSystem.utimes(indexPath, timestamp, timestamp);
+        const originalIndex = yield* fileSystem.readFile(indexPath);
+        const originalIndexMtime = (yield* fileSystem.stat(indexPath)).mtime;
+        yield* writeTextFile(cwd, "tracked.txt", "after!\n");
+        yield* fileSystem.utimes(filePath, timestamp, timestamp);
+        yield* writeTextFile(cwd, "untracked.txt", "new\n");
 
-            const preview = yield* driver.getReviewDiffPreview({ cwd });
-            const dirty = preview.sources.find((source) => source.kind === "working-tree")!;
-            assert.deepStrictEqual(dirty.files, [
-              { path: "tracked.txt", previousPath: null, additions: 1, deletions: 1 },
-              { path: "untracked.txt", previousPath: null, additions: 1, deletions: 0 },
-            ]);
-            assert.include(dirty.diff, "-before");
-            assert.include(dirty.diff, "+after!");
-            assert.deepStrictEqual(yield* fileSystem.readFile(indexPath), originalIndex);
-            assert.deepStrictEqual((yield* fileSystem.stat(indexPath)).mtime, originalIndexMtime);
-          }),
-      );
-    }
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+        const dirty = preview.sources.find((source) => source.kind === "working-tree")!;
+        assert.deepStrictEqual(dirty.files, [
+          { path: "tracked.txt", previousPath: null, additions: 1, deletions: 1 },
+          { path: "untracked.txt", previousPath: null, additions: 1, deletions: 0 },
+        ]);
+        assert.include(dirty.diff, "-before");
+        assert.include(dirty.diff, "+after!");
+        assert.deepStrictEqual(yield* fileSystem.readFile(indexPath), originalIndex);
+        assert.deepStrictEqual((yield* fileSystem.stat(indexPath)).mtime, originalIndexMtime);
+      }),
+    );
 
     it.effect("keeps complete stats for files beyond the combined patch limit", () =>
       Effect.gen(function* () {
@@ -2984,64 +2998,67 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("remote operations", () => {
-    for (const failure of ["offline", "auth", "timeout"] as const) {
-      it.effect(`does not retry a scoped fetch after ${failure}`, () =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTmpDir();
-          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const started = yield* Deferred.make<void>();
-          const attempts: Array<ReadonlyArray<string>> = [];
-          const spawner = ChildProcessSpawner.make((command) =>
-            Effect.gen(function* () {
-              if (!ChildProcess.isStandardCommand(command))
-                return yield* Effect.die("unexpected command");
-              if (command.args[0] !== "fetch") return yield* delegate.spawn(command);
-              attempts.push(command.args);
-              yield* Deferred.succeed(started, undefined);
-              return ChildProcessSpawner.makeHandle({
-                ...makeNonRepositoryHandle(),
-                exitCode:
-                  failure === "timeout"
-                    ? Effect.never
-                    : Effect.succeed(ChildProcessSpawner.ExitCode(128)),
-                stderr: Stream.encodeText(
-                  Stream.make(
-                    failure === "auth"
-                      ? "fatal: Authentication failed"
-                      : "fatal: Could not resolve host",
-                  ),
+    it.effect.each(
+      (["offline", "auth", "timeout"] as const).map((failure) => ({
+        caseTitle: `does not retry a scoped fetch after ${failure}`,
+        failure,
+      })),
+    )("$caseTitle", ({ failure }) =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const started = yield* Deferred.make<void>();
+        const attempts: Array<ReadonlyArray<string>> = [];
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (!ChildProcess.isStandardCommand(command))
+              return yield* Effect.die("unexpected command");
+            if (command.args[0] !== "fetch") return yield* delegate.spawn(command);
+            attempts.push(command.args);
+            yield* Deferred.succeed(started, undefined);
+            return ChildProcessSpawner.makeHandle({
+              ...makeNonRepositoryHandle(),
+              exitCode:
+                failure === "timeout"
+                  ? Effect.never
+                  : Effect.succeed(ChildProcessSpawner.ExitCode(128)),
+              stderr: Stream.encodeText(
+                Stream.make(
+                  failure === "auth"
+                    ? "fatal: Authentication failed"
+                    : "fatal: Could not resolve host",
                 ),
-              });
-            }),
+              ),
+            });
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(ServerConfigLayer),
+        );
+        const fetching = yield* driver
+          .fetchRemote({ cwd, remoteName: "origin", refName: "main" })
+          .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(started);
+        if (failure === "timeout") {
+          yield* TestClock.adjust("31 seconds");
+          yield* TestClock.adjust("31 seconds");
+        }
+        const result = yield* Fiber.join(fetching);
+        assert.isTrue(Result.isFailure(result));
+        assert.equal(attempts.length, 1);
+        if (Result.isFailure(result)) {
+          assert.equal(
+            result.failure.detail,
+            failure === "timeout"
+              ? "Git command timed out."
+              : failure === "offline"
+                ? "Git could not reach the remote. Check the server's network connection and remote host, then retry."
+                : "Git could not authenticate with the remote. Check Git credentials or SSH access on the server, then retry.",
           );
-          const driver = yield* makeGitVcsDriverCore().pipe(
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            Effect.provide(ServerConfigLayer),
-          );
-          const fetching = yield* driver
-            .fetchRemote({ cwd, remoteName: "origin", refName: "main" })
-            .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
-          yield* Deferred.await(started);
-          if (failure === "timeout") {
-            yield* TestClock.adjust("31 seconds");
-            yield* TestClock.adjust("31 seconds");
-          }
-          const result = yield* Fiber.join(fetching);
-          assert.isTrue(Result.isFailure(result));
-          assert.equal(attempts.length, 1);
-          if (Result.isFailure(result)) {
-            assert.equal(
-              result.failure.detail,
-              failure === "timeout"
-                ? "Git command timed out."
-                : failure === "offline"
-                  ? "Git could not reach the remote. Check the server's network connection and remote host, then retry."
-                  : "Git could not authenticate with the remote. Check Git credentials or SSH access on the server, then retry.",
-            );
-          }
-        }),
-      );
-    }
+        }
+      }),
+    );
 
     it.effect("creates a worktree from the latest fetched remote commit", () =>
       Effect.gen(function* () {
@@ -3398,5 +3415,96 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.notEqual(originMain.exitCode, 0);
       }),
     );
+  });
+});
+
+describe("Windows long path configuration", () => {
+  const readGitConfig = Effect.fn("readGitConfig")(function* (
+    platform: NodeJS.Platform,
+    key: string,
+  ) {
+    const layer = GitVcsDriver.layer.pipe(
+      Layer.provide(ServerConfigLayer),
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(Layer.succeed(HostProcessPlatform, platform)),
+    );
+    return yield* Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir("git-longpath-test-");
+      const result = yield* driver.execute({
+        operation: "GitVcsDriverTest.readGitConfig",
+        cwd,
+        args: ["config", "--get", key],
+        // Replaces the suite's own core.longpaths=true so it cannot mask a
+        // missing injection. Entry 2 sits past the count and must stay unread.
+        env: {
+          GIT_CONFIG_COUNT: "2",
+          GIT_CONFIG_KEY_0: "user.name",
+          GIT_CONFIG_VALUE_0: "inherited-name",
+          GIT_CONFIG_KEY_1: "core.longpaths",
+          GIT_CONFIG_VALUE_1: "false",
+          GIT_CONFIG_KEY_2: "user.name",
+          GIT_CONFIG_VALUE_2: "outside-count",
+        },
+      });
+      return result.stdout.trim();
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.effect("enables long paths for every Git command on Windows", () =>
+    Effect.gen(function* () {
+      assert.equal(yield* readGitConfig("win32", "core.longpaths"), "true");
+      assert.equal(yield* readGitConfig("win32", "user.name"), "inherited-name");
+    }),
+  );
+
+  it.effect("leaves Git config untouched on other platforms", () =>
+    Effect.gen(function* () {
+      assert.equal(yield* readGitConfig("linux", "core.longpaths"), "false");
+      assert.equal(yield* readGitConfig("linux", "user.name"), "inherited-name");
+    }),
+  );
+
+  it("extends an inherited count spelled in a different case", () => {
+    // Two spellings collapse to one on spawn (the uppercase one wins), so the
+    // count must be bumped under the spelling that is already there.
+    assert.deepStrictEqual(windowsLongPathConfigEnv("win32", { git_config_count: "2" }), {
+      git_config_count: "3",
+      GIT_CONFIG_KEY_2: "core.longpaths",
+      GIT_CONFIG_VALUE_2: "true",
+    });
+  });
+
+  it("appends after inherited entries, parsing the count as Git does", () => {
+    for (const [count, next] of [
+      [undefined, 0],
+      ["", 0],
+      ["0", 0],
+      ["-0", 0],
+      ["2", 2],
+      [" 2", 2],
+      ["+2", 2],
+      ["02", 2],
+    ] as const) {
+      assert.deepStrictEqual(
+        windowsLongPathConfigEnv("win32", count === undefined ? {} : { GIT_CONFIG_COUNT: count }),
+        {
+          GIT_CONFIG_COUNT: String(next + 1),
+          [`GIT_CONFIG_KEY_${next}`]: "core.longpaths",
+          [`GIT_CONFIG_VALUE_${next}`]: "true",
+        },
+        `GIT_CONFIG_COUNT=${JSON.stringify(count)}`,
+      );
+    }
+  });
+
+  it("leaves a count Git would reject for Git to report", () => {
+    for (const count of ["nope", "2x", "-1", "1.5", "  ", "1 "]) {
+      assert.deepStrictEqual(
+        windowsLongPathConfigEnv("win32", { GIT_CONFIG_COUNT: count }),
+        {},
+        `GIT_CONFIG_COUNT=${JSON.stringify(count)}`,
+      );
+    }
   });
 });

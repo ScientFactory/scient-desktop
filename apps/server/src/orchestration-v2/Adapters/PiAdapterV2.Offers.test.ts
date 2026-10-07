@@ -21,123 +21,123 @@ import {
 } from "./PiAdapterV2.fixture.ts";
 
 describe("PiAdapterV2", () => {
-  for (const rejectPrompt of [false, true]) {
-    it.effect(
-      `cancels an unacknowledged native offer before a late prompt ack, rejection=${rejectPrompt}`,
-      () =>
-        Effect.gen(function* () {
-          const fake = yield* makeFakePi;
-          const { runtime, takeEvent, observed } = yield* openRuntime(fake);
-          const providerThread = yield* runtime.ensureThread({
-            threadId: THREAD_ID,
-            modelSelection: modelSelection("default"),
-            runtimePolicy,
-          });
-          yield* startTurn(runtime, providerThread, "default", [], "/extension-command");
-          yield* fake.takeRequest("prompt");
-          const pending = yield* takeEvent((e) => e.type === "provider_turn.updated");
-          if (pending.type !== "provider_turn.updated") return;
-          assert.equal(pending.providerTurn.nativeAcceptance, "unknown");
-          assert.isUndefined(pending.providerTurn.acceptedAt);
-          yield* runtime.interruptTurn({
-            providerThread,
-            providerTurnId: pending.providerTurn.id,
-            requestRuntimeRestart: true,
-          });
-          const terminal = yield* takeEvent((e) => e.type === "turn.terminal");
-          assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "interrupted");
-          yield* fake.emit({
-            type: "response",
-            command: "prompt",
-            success: !rejectPrompt,
-            ...(rejectPrompt ? { error: "closed by Stop" } : {}),
-          });
-          yield* fake.emit({ type: "agent_settled" });
-          yield* Effect.yieldNow;
-          assert.lengthOf(
-            observed.filter((e) => e.type === "turn.terminal"),
-            1,
-          );
-          assert.isFalse(
-            observed.some(
-              (e) =>
-                e.type === "provider_turn.updated" &&
-                e.providerTurn.nativeAcceptance === "accepted",
-            ),
-          );
-          assert.isFalse(
-            observed.some((e) => e.type === "turn_item.updated" && e.turnItem.type === "error"),
-          );
-          const stopped = observed
-            .flatMap((e) => (e.type === "provider_turn.updated" ? [e.providerTurn] : []))
-            .at(-1);
-          assert.equal(stopped?.nativeAcceptance, "unknown");
-          assert.isUndefined(stopped?.acceptedAt);
-          assert.equal(fake.allRequests().filter((r) => r.type === "abort").length, 1);
-        }).pipe(Effect.scoped, Effect.provide(testLayer)),
-    );
-  }
+  it.effect.each(
+    [false, true].map((rejectPrompt) => ({
+      caseTitle: `cancels an unacknowledged native offer before a late prompt ack, rejection=${rejectPrompt}`,
+      rejectPrompt,
+    })),
+  )("$caseTitle", ({ rejectPrompt }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent, observed } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread, "default", [], "/extension-command");
+      yield* fake.takeRequest("prompt");
+      const pending = yield* takeEvent((e) => e.type === "provider_turn.updated");
+      if (pending.type !== "provider_turn.updated") return;
+      assert.equal(pending.providerTurn.nativeAcceptance, "unknown");
+      assert.isUndefined(pending.providerTurn.acceptedAt);
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: pending.providerTurn.id,
+        requestRuntimeRestart: true,
+      });
+      const terminal = yield* takeEvent((e) => e.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "interrupted");
+      yield* fake.emit({
+        type: "response",
+        command: "prompt",
+        success: !rejectPrompt,
+        ...(rejectPrompt ? { error: "closed by Stop" } : {}),
+      });
+      yield* fake.emit({ type: "agent_settled" });
+      yield* Effect.yieldNow;
+      assert.lengthOf(
+        observed.filter((e) => e.type === "turn.terminal"),
+        1,
+      );
+      assert.isFalse(
+        observed.some(
+          (e) =>
+            e.type === "provider_turn.updated" && e.providerTurn.nativeAcceptance === "accepted",
+        ),
+      );
+      assert.isFalse(
+        observed.some((e) => e.type === "turn_item.updated" && e.turnItem.type === "error"),
+      );
+      const stopped = observed
+        .flatMap((e) => (e.type === "provider_turn.updated" ? [e.providerTurn] : []))
+        .at(-1);
+      assert.equal(stopped?.nativeAcceptance, "unknown");
+      assert.isUndefined(stopped?.acceptedAt);
+      assert.equal(fake.allRequests().filter((r) => r.type === "abort").length, 1);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
 
-  for (const hardStop of [false, true]) {
-    it.effect(
-      `interrupts steering held in native preflight without offering it, hard Stop=${hardStop}`,
-      () =>
-        Effect.gen(function* () {
-          const fake = yield* makeFakePi;
-          const { runtime, takeEvent, observed } = yield* openRuntime(fake);
-          const providerThread = yield* runtime.ensureThread({
-            threadId: THREAD_ID,
-            modelSelection: modelSelection("default"),
-            runtimePolicy,
-          });
-          yield* startTurn(runtime, providerThread);
-          yield* fake.takeRequest("prompt");
-          yield* fake.emit({ type: "response", command: "prompt", success: true });
-          yield* fake.emit({ type: "agent_start" });
-          const accepted = yield* takeEvent(
-            (e) =>
-              e.type === "provider_turn.updated" && e.providerTurn.nativeAcceptance === "accepted",
-          );
-          if (accepted.type !== "provider_turn.updated") return;
-          fake.deferNextState();
-          const steering = yield* runtime
-            .steerTurn({
-              threadId: THREAD_ID,
-              runId: RunId.make(`run:${THREAD_ID}:1`),
-              providerThread,
-              providerTurnId: accepted.providerTurn.id,
-              message: {
-                messageId: MessageId.make("held-steer"),
-                text: "steer",
-                attachments: [],
-                createdBy: "user",
-                creationSource: "web",
-              },
-            })
-            .pipe(Effect.exit, Effect.forkScoped);
-          yield* fake.takeRequest("get_state");
-          yield* runtime.interruptTurn({
-            providerThread,
-            providerTurnId: accepted.providerTurn.id,
-            requestRuntimeRestart: hardStop,
-          });
-          if (!hardStop) yield* fake.resolveDeferredState(recordedIdleState(FAKE_SESSION_FILE));
-          const result = yield* Fiber.join(steering);
-          assert.isTrue(Exit.isFailure(result) && Cause.hasInterruptsOnly(result.cause));
-          if (!hardStop) yield* fake.emit({ type: "agent_settled" });
-          const terminal = yield* takeEvent((e) => e.type === "turn.terminal");
-          assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "interrupted");
-          assert.equal(fake.allRequests().filter((r) => r.type === "prompt").length, 1);
-          assert.lengthOf(
-            observed.filter((e) => e.type === "turn.terminal"),
-            1,
-          );
-          assert.isFalse(
-            observed.some((e) => e.type === "turn_item.updated" && e.turnItem.type === "error"),
-          );
-        }).pipe(Effect.scoped, Effect.provide(testLayer)),
-    );
-  }
+  it.effect.each(
+    [false, true].map((hardStop) => ({
+      caseTitle: `interrupts steering held in native preflight without offering it, hard Stop=${hardStop}`,
+      hardStop,
+    })),
+  )("$caseTitle", ({ hardStop }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent, observed } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      yield* fake.emit({ type: "agent_start" });
+      const accepted = yield* takeEvent(
+        (e) => e.type === "provider_turn.updated" && e.providerTurn.nativeAcceptance === "accepted",
+      );
+      if (accepted.type !== "provider_turn.updated") return;
+      fake.deferNextState();
+      const steering = yield* runtime
+        .steerTurn({
+          threadId: THREAD_ID,
+          runId: RunId.make(`run:${THREAD_ID}:1`),
+          providerThread,
+          providerTurnId: accepted.providerTurn.id,
+          message: {
+            messageId: MessageId.make("held-steer"),
+            text: "steer",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* fake.takeRequest("get_state");
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: accepted.providerTurn.id,
+        requestRuntimeRestart: hardStop,
+      });
+      if (!hardStop) yield* fake.resolveDeferredState(recordedIdleState(FAKE_SESSION_FILE));
+      const result = yield* Fiber.join(steering);
+      assert.isTrue(Exit.isFailure(result) && Cause.hasInterruptsOnly(result.cause));
+      if (!hardStop) yield* fake.emit({ type: "agent_settled" });
+      const terminal = yield* takeEvent((e) => e.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "interrupted");
+      assert.equal(fake.allRequests().filter((r) => r.type === "prompt").length, 1);
+      assert.lengthOf(
+        observed.filter((e) => e.type === "turn.terminal"),
+        1,
+      );
+      assert.isFalse(
+        observed.some((e) => e.type === "turn_item.updated" && e.turnItem.type === "error"),
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
 
   it.effect("contains a blocked native steering write without waiting for command acceptance", () =>
     Effect.gen(function* () {

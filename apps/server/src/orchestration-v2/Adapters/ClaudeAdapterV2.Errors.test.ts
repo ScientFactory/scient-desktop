@@ -600,67 +600,72 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  for (const terminalReason of [
-    "api_error",
-    "malformed_tool_use_exhausted",
-    "budget_exhausted",
-    "structured_output_retry_exhausted",
-    "tool_deferred_unavailable",
-    "turn_setup_failed",
-    "blocking_limit",
-    "rapid_refill_breaker",
-    "prompt_too_long",
-    "image_error",
-    "model_error",
-    "overloaded_status",
-  ] as const) {
-    it.effect(`fails a success-shaped Claude result with ${terminalReason}`, () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const harness = yield* makeWakeHarness;
-          const now = yield* DateTime.now;
-          yield* harness.runtime.startTurn(
-            makeClaudeTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now,
-              attemptId: RunAttemptId.make("attempt-structured-terminal-failure"),
-              text: "Complete the task.",
-              attachments: [],
-            }),
-          );
-          yield* Queue.offer(
-            harness.sdkMessages,
-            makeResultFrame({
-              uuid: "00000000-0000-4000-8000-000000000205",
-              result: "Provider failure details.",
-              isError: false,
-              ...(terminalReason === "overloaded_status"
-                ? { apiErrorStatus: 529 }
-                : { terminalReason }),
-            }),
-          );
-          const terminal = yield* Queue.take(harness.terminalReceipts);
-          assert.equal(terminal.status, "failed");
-          if (terminal.status !== "failed") return;
-          assert.isNotEmpty(terminal.failure.message);
-          assert.equal(
-            terminal.failure.class,
-            terminalReason === "blocking_limit" ? "usage_limit" : "provider_error",
-          );
-          assert.isFalse(
-            harness.events.some(
-              (event) =>
-                event.type === "message.updated" &&
-                event.message.text === "Provider failure details.",
-            ),
-          );
-          assert.equal(
-            terminal.failure.code,
-            terminalReason === "overloaded_status" ? "api_error_529" : terminalReason,
-          );
-        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
-      ),
-    );
-  }
+  it.effect.each(
+    (
+      [
+        "api_error",
+        "malformed_tool_use_exhausted",
+        "budget_exhausted",
+        "structured_output_retry_exhausted",
+        "tool_deferred_unavailable",
+        "turn_setup_failed",
+        "blocking_limit",
+        "rapid_refill_breaker",
+        "prompt_too_long",
+        "image_error",
+        "model_error",
+        "overloaded_status",
+      ] as const
+    ).map((terminalReason) => ({
+      caseTitle: `fails a success-shaped Claude result with ${terminalReason}`,
+      terminalReason,
+    })),
+  )("$caseTitle", ({ terminalReason }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-structured-terminal-failure"),
+            text: "Complete the task.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000205",
+            result: "Provider failure details.",
+            isError: false,
+            ...(terminalReason === "overloaded_status"
+              ? { apiErrorStatus: 529 }
+              : { terminalReason }),
+          }),
+        );
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        if (terminal.status !== "failed") return;
+        assert.isNotEmpty(terminal.failure.message);
+        assert.equal(
+          terminal.failure.class,
+          terminalReason === "blocking_limit" ? "usage_limit" : "provider_error",
+        );
+        assert.isFalse(
+          harness.events.some(
+            (event) =>
+              event.type === "message.updated" &&
+              event.message.text === "Provider failure details.",
+          ),
+        );
+        assert.equal(
+          terminal.failure.code,
+          terminalReason === "overloaded_status" ? "api_error_529" : terminalReason,
+        );
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
 });

@@ -83,6 +83,9 @@ function makeExecutorLayer(input: {
   readonly events: Ref.Ref<ReadonlyArray<string>>;
   readonly failFirstStart?: Ref.Ref<boolean>;
   readonly rollbackFails?: boolean;
+  readonly interrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interrupt"];
+  readonly continueAfterRestart?: boolean;
+  readonly threads?: Partial<ThreadManagementService.ThreadManagementServiceShape>;
   readonly pendingInterrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interruptPendingStart"];
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
@@ -93,7 +96,7 @@ function makeExecutorLayer(input: {
         interruptPendingStart:
           input.pendingInterrupt ??
           (() => Effect.die("Pending-start interruption is not used in this fixture.")),
-        interrupt: () => Effect.void,
+        interrupt: input.interrupt ?? (() => Effect.void),
         steer: () => Effect.void,
         interruptAndAwaitTerminal: (request) =>
           record(
@@ -171,16 +174,19 @@ function makeExecutorLayer(input: {
       }),
     ),
   );
-  return EffectWorker.executorLayer.pipe(
+  return EffectWorker.layerExecutor.pipe(
     Layer.provide(
       Layer.mergeAll(
         dependencies,
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           dispatch: (command) =>
             record(command.type).pipe(Effect.as({ sequence: 1, storedEvents: [] })),
+          ...input.threads,
         }),
         Layer.mock(ConversationForkService)({}),
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest({
+          continueThreadsAfterServerUpdate: input.continueAfterRestart ?? false,
+        }),
       ),
     ),
   );
@@ -911,5 +917,84 @@ it.effect("a stale pending Stop never settles background work on its former thre
       yield* executor.execute(effect);
     }).pipe(Effect.provide(layer));
     assert.deepEqual(yield* Ref.get(events), []);
+  }),
+);
+
+it.effect("settles a stopped run when its adapter has already lost the native turn", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const layer = makeExecutorLayer({
+      events,
+      interrupt: () =>
+        new ProviderTurnControlService.ProviderTurnControlError({
+          threadId,
+          operation: "interrupt",
+          providerTurnId,
+          cause: "Provider turn is not active.",
+        }),
+      threads: {
+        dispatch: (command) =>
+          Ref.update(events, (current) => [...current, command.type]).pipe(
+            Effect.as({ sequence: 1, storedEvents: [] }),
+          ),
+      },
+    });
+    yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      yield* executor.execute({
+        ...restartEffect(now, { type: "detach" }),
+        request: {
+          type: "provider-turn.interrupt",
+          providerSessionId: oldSessionId,
+          providerThreadId,
+          providerTurnId,
+        },
+      });
+    }).pipe(Effect.provide(layer));
+    assert.deepEqual(yield* Ref.get(events), ["thread.background-work.settle"]);
+  }),
+);
+
+it.effect("settles a delegated child once its restart continuation fails for good", () =>
+  Effect.gen(function* () {
+    const timestamp = DateTime.formatIso(yield* DateTime.now);
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const recovered = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
+    const layer = makeExecutorLayer({
+      events,
+      continueAfterRestart: true,
+      threads: {
+        getThreadRecords: () => Effect.fail(new Error("provider instance removed") as never),
+        recoverDelegatedTask: (childThreadId) =>
+          Ref.update(recovered, (ids) => [...ids, childThreadId]),
+      },
+    });
+    const effect: EffectOutbox.OrchestrationEffectV2 = {
+      id: `effect:restart-continuation:${runId}`,
+      commandId: CommandId.make("command:restart-continuation-failure"),
+      threadId,
+      request: { type: "provider-runtime.continue", sourceRunId: runId },
+      status: "running",
+      attemptCount: 1,
+      availableAt: timestamp,
+      leaseOwner: "test-worker",
+      leaseExpiresAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null,
+      lastError: null,
+    };
+    yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      assert.isTrue(
+        Exit.isFailure(yield* Effect.exit(executor.execute(effect, { willRetry: true }))),
+      );
+      assert.deepEqual(yield* Ref.get(recovered), []);
+      assert.isTrue(
+        Exit.isFailure(yield* Effect.exit(executor.execute(effect, { willRetry: false }))),
+      );
+      assert.deepEqual(yield* Ref.get(recovered), [threadId]);
+    }).pipe(Effect.provide(layer));
   }),
 );

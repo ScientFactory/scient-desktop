@@ -47,7 +47,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import * as ServerConfig from "../../config.ts";
@@ -312,12 +312,13 @@ export const make = Effect.gen(function* () {
           }),
         ),
         Stream.run(fileSystem.sink(input.destination, { flag: "wx" })),
-        Effect.catchTag("PlatformError", (cause) =>
-          failInstall(
-            "download-failed",
-            `Scient could not save the Pandoc download: ${cause.message}`,
-          ),
-        ),
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            failInstall(
+              "download-failed",
+              `Scient could not save the Pandoc download: ${cause.message}`,
+            ),
+        }),
         Effect.timeoutOption(DOWNLOAD_TIMEOUT),
         Effect.flatMap((finished) =>
           Option.isSome(finished)
@@ -343,12 +344,13 @@ export const make = Effect.gen(function* () {
           (hash, chunk) => hash.update(chunk),
         ),
         Effect.map((hash) => hash.digest("hex")),
-        Effect.catchTag("PlatformError", (cause) =>
-          failInstall(
-            "install-failed",
-            `Scient could not read the Pandoc download: ${cause.message}`,
-          ),
-        ),
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            failInstall(
+              "install-failed",
+              `Scient could not read the Pandoc download: ${cause.message}`,
+            ),
+        }),
       );
       if (digest !== input.asset.sha256.toLowerCase()) {
         return yield* failInstall(
@@ -365,13 +367,12 @@ export const make = Effect.gen(function* () {
   }) =>
     Effect.gen(function* () {
       yield* phase("unpacking");
-      yield* fileSystem
-        .makeDirectory(input.payloadPath, { recursive: true })
-        .pipe(
-          Effect.catchTag("PlatformError", (cause) =>
+      yield* fileSystem.makeDirectory(input.payloadPath, { recursive: true }).pipe(
+        Effect.catchTags({
+          PlatformError: (cause) =>
             failInstall("install-failed", `Scient could not prepare the install: ${cause.message}`),
-          ),
-        );
+        }),
+      );
       yield* unpacker
         .unpack({
           archivePath: input.archivePath,
@@ -388,16 +389,15 @@ export const make = Effect.gen(function* () {
         );
       }
       if (platform !== "win32") {
-        yield* fileSystem
-          .chmod(executable, 0o755)
-          .pipe(
-            Effect.catchTag("PlatformError", (cause) =>
+        yield* fileSystem.chmod(executable, 0o755).pipe(
+          Effect.catchTags({
+            PlatformError: (cause) =>
               failInstall(
                 "unpack-failed",
                 `Scient could not make Pandoc executable: ${cause.message}`,
               ),
-            ),
-          );
+          }),
+        );
       }
       // Prove the binary starts, under the same isolation every conversion
       // uses, and is the pinned release, before the state file can name it.
@@ -447,9 +447,10 @@ export const make = Effect.gen(function* () {
       yield* writeFileStringAtomically({ filePath: paths.statePath, contents, durable: true });
       return installRoot;
     }).pipe(
-      Effect.catchTag("PlatformError", (cause) =>
-        failInstall("install-failed", `Scient could not finish the install: ${cause.message}`),
-      ),
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          failInstall("install-failed", `Scient could not finish the install: ${cause.message}`),
+      }),
     );
 
   /**
@@ -513,9 +514,10 @@ export const make = Effect.gen(function* () {
         ),
       );
     }).pipe(
-      Effect.catchTag("PlatformError", (cause) =>
-        failInstall("install-failed", `Scient could not prepare the install: ${cause.message}`),
-      ),
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          failInstall("install-failed", `Scient could not prepare the install: ${cause.message}`),
+      }),
       Effect.timeoutOption(INSTALL_TIMEOUT),
       Effect.flatMap((finished) =>
         Option.isSome(finished)

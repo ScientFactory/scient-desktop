@@ -30,6 +30,7 @@ describe("provider-native model catalogs", () => {
         <ProviderModelsSection
           instanceId={ProviderInstanceId.make(driver)}
           driverKind={kind}
+          canManageCustomModels
           supportsCustomModels={getDriverOption(kind)?.supportsCustomModels !== false}
           models={[
             {

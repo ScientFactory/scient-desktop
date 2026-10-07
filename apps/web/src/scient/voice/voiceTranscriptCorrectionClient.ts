@@ -65,18 +65,18 @@ export function makeVoiceTranscriptCorrectionClient<E>(
 /** Correction is deliberately fail-open: the local transcript always remains usable. */
 export async function correctVoiceTranscript(input: {
   readonly enabled: boolean;
-  readonly client: VoiceTranscriptCorrectionClient | null;
+  readonly correctionClient: VoiceTranscriptCorrectionClient | null;
   readonly environmentId: EnvironmentId | undefined;
   readonly transcript: string;
   readonly language?: VoiceTranscriptionLanguage;
   readonly signal: AbortSignal;
 }): Promise<VoiceTranscriptCorrectionOutcome> {
-  if (!input.enabled || !input.client || !input.environmentId) {
+  if (!input.enabled || !input.correctionClient || !input.environmentId) {
     return { kind: "disabled", text: input.transcript };
   }
 
   try {
-    const result = await input.client.correct({
+    const result = await input.correctionClient.correct({
       environmentId: input.environmentId,
       transcript: input.transcript,
       ...(input.language ? { language: input.language } : {}),

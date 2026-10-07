@@ -11,22 +11,22 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
 import * as Registry from "../ProviderAdapterRegistry.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as LegacyImporter from "../legacy/LegacyV1ThreadImporter.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "fixture" };
 const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
   { name: "legacy-boundary-fork" },
-  Registry.makeLayer([
+  Registry.layerFromAdapters([
     {
       instanceId,
       driver: ProviderDriverKind.make("codex"),

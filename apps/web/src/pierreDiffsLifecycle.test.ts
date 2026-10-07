@@ -37,6 +37,6 @@ describe("Pierre file instance lifecycle", () => {
 
   it("leaves editor cleanup with the shared EditProvider", () => {
     expect(filePreviewSource).not.toContain("editor.cleanUp();");
-    expect(filePreviewSource).toContain("<EditProvider editor={editor}>");
+    expect(filePreviewSource).toContain("<EditProvider createEditor={createFileEditor}>");
   });
 });

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { RegistryContext } from "@effect/atom-react";
 import { ChatAttachmentId, EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";

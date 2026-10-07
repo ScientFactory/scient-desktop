@@ -28,7 +28,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
@@ -313,49 +313,50 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
         }),
       ),
   );
-  for (const granted of [false, true]) {
-    it.effect(
-      `delivers exact Scient awareness through native Grok rules with grants ${granted}`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const capabilities = granted
-              ? new Set<McpCapability>(["documents:build", "compute:inventory", "skills:read"])
-              : undefined;
-            const h = yield* harness("1", { model: "default" }, {}, capabilities);
-            yield* h.send;
-            const args = h.arguments();
-            const rules = args[args.indexOf("--rules") + 1];
-            assert.equal(rules, buildScientAwareness(capabilities));
-            assert.include(rules ?? "", "Scient renders LaTeX math");
-            assert.equal((rules ?? "").includes("scient_pdf_build"), granted);
-            assert.equal((rules ?? "").includes("scient_skill_load"), granted);
-            assert.notInclude(rules ?? "", "preview_status");
-            assert.notInclude(rules ?? "", "device_list");
-            const launches = h.requests().filter((request) => request.method === "session/new");
-            assert.lengthOf(launches, 1);
-            const servers = yield* decodeMcpServers(launches[0]?.params?.mcpServers);
-            if (granted) {
-              assert.lengthOf(servers, 1);
-              assert.equal(servers[0]?.name, "scient");
-              // Grok generation 1 uses ACP's untagged stdio representation.
-              assert.isUndefined(servers[0]?.type);
-              assert.deepEqual(servers[0]?.env, [
-                { name: "ELECTRON_RUN_AS_NODE", value: "1" },
-                { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:43123/mcp" },
-                { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer synthetic-grok-awareness" },
-              ]);
-            } else {
-              assert.deepEqual(servers, []);
-            }
-            assert.lengthOf(
-              h.requests().filter((request) => request.method === "session/prompt"),
-              1,
-            );
-          }),
-        ),
-    );
-  }
+  it.effect.each(
+    [false, true].map((granted) => ({
+      caseTitle: `delivers exact Scient awareness through native Grok rules with grants ${granted}`,
+      granted,
+    })),
+  )("$caseTitle", ({ granted }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const capabilities = granted
+          ? new Set<McpCapability>(["documents:build", "compute:inventory", "skills:read"])
+          : undefined;
+        const h = yield* harness("1", { model: "default" }, {}, capabilities);
+        yield* h.send;
+        const args = h.arguments();
+        const rules = args[args.indexOf("--rules") + 1];
+        assert.equal(rules, buildScientAwareness(capabilities));
+        assert.include(rules ?? "", "Scient renders LaTeX math");
+        assert.equal((rules ?? "").includes("scient_pdf_build"), granted);
+        assert.equal((rules ?? "").includes("scient_skill_load"), granted);
+        assert.notInclude(rules ?? "", "preview_status");
+        assert.notInclude(rules ?? "", "device_list");
+        const launches = h.requests().filter((request) => request.method === "session/new");
+        assert.lengthOf(launches, 1);
+        const servers = yield* decodeMcpServers(launches[0]?.params?.mcpServers);
+        if (granted) {
+          assert.lengthOf(servers, 1);
+          assert.equal(servers[0]?.name, "scient");
+          // Grok generation 1 uses ACP's untagged stdio representation.
+          assert.isUndefined(servers[0]?.type);
+          assert.deepEqual(servers[0]?.env, [
+            { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+            { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:43123/mcp" },
+            { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer synthetic-grok-awareness" },
+          ]);
+        } else {
+          assert.deepEqual(servers, []);
+        }
+        assert.lengthOf(
+          h.requests().filter((request) => request.method === "session/prompt"),
+          1,
+        );
+      }),
+    ),
+  );
   it.effect("uses V1 response shape even when advertised protocol version is 2", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -414,49 +415,52 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
       }),
     ),
   );
-  for (const generation of ["1", "2"] as const) {
-    it.effect(`preserves omitted native model and effort defaults in V${generation}`, () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const h = yield* harness(generation, { model: "grok-build" });
-          yield* h.send;
-          assert.lengthOf(
-            h.requests().filter((request) => request.method.startsWith("session/set_")),
-            0,
-          );
-          assert.lengthOf(
-            h.requests().filter((request) => request.method === "session/prompt"),
-            1,
-          );
-        }),
-      ),
-    );
-  }
-  for (const generation of ["1", "2"] as const) {
-    it.effect(
-      `rejects invalid explicit reasoning in V${generation} before model writes or prompt`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const h = yield* harness(generation, {
-              model: "grok-mock-alt",
-              options: [{ id: "reasoningEffort", value: "bad effort!" }],
-            });
-            assert.isTrue(Exit.isFailure(yield* h.send.pipe(Effect.exit)));
-            assert.lengthOf(
-              h
-                .requests()
-                .filter(
-                  (request) =>
-                    request.method.startsWith("session/set_") ||
-                    request.method === "session/prompt",
-                ),
-              0,
-            );
-          }),
-        ),
-    );
-  }
+  it.effect.each(
+    (["1", "2"] as const).map((generation) => ({
+      caseTitle: `preserves omitted native model and effort defaults in V${generation}`,
+      generation,
+    })),
+  )("$caseTitle", ({ generation }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(generation, { model: "grok-build" });
+        yield* h.send;
+        assert.lengthOf(
+          h.requests().filter((request) => request.method.startsWith("session/set_")),
+          0,
+        );
+        assert.lengthOf(
+          h.requests().filter((request) => request.method === "session/prompt"),
+          1,
+        );
+      }),
+    ),
+  );
+  it.effect.each(
+    (["1", "2"] as const).map((generation) => ({
+      caseTitle: `rejects invalid explicit reasoning in V${generation} before model writes or prompt`,
+      generation,
+    })),
+  )("$caseTitle", ({ generation }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(generation, {
+          model: "grok-mock-alt",
+          options: [{ id: "reasoningEffort", value: "bad effort!" }],
+        });
+        assert.isTrue(Exit.isFailure(yield* h.send.pipe(Effect.exit)));
+        assert.lengthOf(
+          h
+            .requests()
+            .filter(
+              (request) =>
+                request.method.startsWith("session/set_") || request.method === "session/prompt",
+            ),
+          0,
+        );
+      }),
+    ),
+  );
   it.effect(
     "rejects explicit reasoning without a V1 default model before any write or prompt",
     () =>
@@ -502,25 +506,31 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
         }),
       ),
   );
-  for (const [name, options] of [
-    ["mismatched", { T3_ACP_GROK_EFFORT_MISMATCH: "1" }],
-    ["unavailable", { T3_ACP_GROK_EFFORT_UNAVAILABLE: "1" }],
-  ] as const) {
-    it.effect(`rejects ${name} explicit reasoning before any prompt`, () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const h = yield* harness(
-            "2",
-            { model: "grok-build", options: [{ id: "reasoningEffort", value: "low" }] },
-            options,
-          );
-          assert.isTrue(Exit.isFailure(yield* h.send.pipe(Effect.exit)));
-          assert.lengthOf(
-            h.requests().filter((request) => request.method === "session/prompt"),
-            0,
-          );
-        }),
-      ),
-    );
-  }
+  it.effect.each(
+    (
+      [
+        ["mismatched", { T3_ACP_GROK_EFFORT_MISMATCH: "1" }],
+        ["unavailable", { T3_ACP_GROK_EFFORT_UNAVAILABLE: "1" }],
+      ] as const
+    ).map(([name, options]) => ({
+      caseTitle: `rejects ${name} explicit reasoning before any prompt`,
+      name,
+      options,
+    })),
+  )("$caseTitle", ({ name, options }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(
+          "2",
+          { model: "grok-build", options: [{ id: "reasoningEffort", value: "low" }] },
+          options,
+        );
+        assert.isTrue(Exit.isFailure(yield* h.send.pipe(Effect.exit)));
+        assert.lengthOf(
+          h.requests().filter((request) => request.method === "session/prompt"),
+          0,
+        );
+      }),
+    ),
+  );
 });

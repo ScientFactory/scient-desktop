@@ -1,3 +1,4 @@
+import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
 import { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
 import {
   ScientLatexPdfBuildDiagnostic,
@@ -13,7 +14,7 @@ import * as Schema from "effect/Schema";
 import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { Tool, Toolkit } from "effect/unstable/ai";
+import { Tool, Toolkit } from "effect/ai";
 import { ScientOperation, type OperationMetadata } from "../../ScientOperationTool.ts";
 
 import * as ServerConfig from "../../../config.ts";
@@ -24,7 +25,7 @@ import * as LatexBuildService from "../../../scient/latex/LatexBuildService.ts";
 import * as WorkspaceBindingResolver from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
-import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
 
 const NonEmptyMessage = Schema.String.check(
   Schema.isTrimmed(),
@@ -110,8 +111,9 @@ export class ScientLatexBuildToolError extends Schema.TaggedError<ScientLatexBui
 ) {}
 
 const sharedDocumentDependencies = [
+  OrchestratorV2,
   AgentInvocationContext.AgentInvocationContext,
-  PreviewAutomationBroker.PreviewAutomationBroker,
+  DocumentHostBroker.DocumentHostBroker,
   GeneratedDocumentStore.GeneratedDocumentStore,
   WorkspaceBindingResolver.WorkspaceBindingResolver,
   FileSystem.FileSystem,

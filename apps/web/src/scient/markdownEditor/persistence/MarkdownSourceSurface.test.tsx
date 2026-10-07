@@ -1,13 +1,21 @@
 // @vitest-environment happy-dom
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import type { Editor } from "@pierre/diffs/editor";
+import { EditStateManager, type Editor } from "@pierre/diffs/edit";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 type ObservedEditor = Pick<
-  Editor<unknown>,
-  "applyEdits" | "getText" | "getFile" | "canUndo" | "undo" | "redo" | "setSelections"
+  Editor<"file", unknown, undefined>,
+  | "applyEdits"
+  | "getText"
+  | "getFile"
+  | "canUndo"
+  | "undo"
+  | "redo"
+  | "setSelections"
+  | "prepareExternalEdits"
+  | "isComposing"
 >;
 const mocks = vi.hoisted(() => ({
   editors: [] as ObservedEditor[],
@@ -17,21 +25,34 @@ const mocks = vi.hoisted(() => ({
   lateChanges: [] as Array<(source: string) => void>,
 }));
 
-vi.mock("@pierre/diffs/editor", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@pierre/diffs/editor")>();
+vi.mock("@pierre/diffs/edit", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@pierre/diffs/edit")>();
   return {
-    Editor: class<LAnnotation> extends actual.Editor<LAnnotation> {
-      constructor(options?: import("@pierre/diffs/editor").EditorOptions<LAnnotation>) {
-        super({
-          ...options,
-          onAttach: (editor, instance) => {
-            options?.onAttach?.(editor, instance);
-            mocks.attached(editor);
+    ...actual,
+    Editor: class<LAnnotation> extends actual.Editor<"file", LAnnotation, undefined> {
+      constructor(
+        type: "file",
+        options?: import("@pierre/diffs/edit").EditorOptions<"file", LAnnotation, undefined>,
+        editStateKey?: string,
+      ) {
+        super(
+          type,
+          {
+            ...options,
+            onAttach: (editor, instance) => {
+              options?.onAttach?.(editor, instance);
+              mocks.attached(editor);
+            },
           },
-        });
+          editStateKey,
+        );
         mocks.editors.push(this);
         mocks.lateChanges.push((source) =>
-          options?.onChange?.({ name: "source.md", contents: source }),
+          options?.onChange?.({
+            changes: [],
+            file: { name: "source.md", contents: source },
+            editor: this,
+          }),
         );
       }
     },
@@ -40,8 +61,38 @@ vi.mock("@pierre/diffs/editor", async (importOriginal) => {
 
 vi.mock("@pierre/diffs/react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@pierre/diffs/react")>();
+  const { useRef } = await import("react");
   return {
     ...actual,
+    File: function <LAnnotation, Caret>(
+      props: React.ComponentProps<typeof actual.File<LAnnotation, Caret>>,
+    ) {
+      const attachedEditor = useRef<
+        import("@pierre/diffs/edit").Editor<"file", LAnnotation, Caret> | undefined
+      >(undefined);
+      mocks.lateChanges.push((source) => {
+        const editor = attachedEditor.current;
+        if (editor === undefined)
+          throw new Error("The native file must attach before reporting a change.");
+        props.onEditChange?.({
+          changes: [],
+          file: { name: "source.md", contents: source },
+          editor,
+        });
+      });
+      return (
+        <actual.File
+          {...props}
+          editorOptions={{
+            ...props.editorOptions,
+            onAttach: (editor, instance) => {
+              attachedEditor.current = editor;
+              props.editorOptions?.onAttach?.(editor, instance);
+            },
+          }}
+        />
+      );
+    },
     // Geometry/virtualization is qualified in the integrated client. Keep the real
     // Pierre File and Editor here so edits, acknowledgements and undo are genuine.
     Virtualizer: ({ children }: { children: ReactNode }) => children,
@@ -289,6 +340,7 @@ describe("Markdown source persistence integration", () => {
   const target = { environmentId, cwd: "/synthetic-source", relativePath: "source.md" };
   const threadRef = { environmentId, threadId: ThreadId.make("synthetic-thread") };
   beforeEach(() => {
+    EditStateManager.clearAll();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     container = document.createElement("div");
     document.body.append(container);
@@ -389,6 +441,296 @@ describe("Markdown source persistence integration", () => {
     lease.release();
   });
 
+  async function attachNativeHistoryFixture(source: string) {
+    const registry = new MarkdownPersistenceRegistry({
+      createTransport: () => ({
+        write: async (intent) => ({ revision: `revision:${intent.source}` }),
+        read: async () => ({ source, revision: "r0" }),
+        classifyFailure: () => "terminal",
+        subscribe: () => () => {},
+        project: () => {},
+      }),
+    });
+    const lease = registry.acquire(target, {
+      relativePath: target.relativePath,
+      contents: source,
+      revision: "r0",
+      byteLength: new TextEncoder().encode(source).byteLength,
+      truncated: false,
+    })!;
+    let attached!: () => void;
+    const receipt = new Promise<void>((resolve) => {
+      attached = resolve;
+    });
+    mocks.attached.mockImplementation(() => attached());
+    await act(async () =>
+      root.render(
+        <MarkdownSourceSurface
+          persistence={lease}
+          {...target}
+          composerDraftTarget={threadRef}
+          resolvedTheme="light"
+          revealRequestId={0}
+          wordWrap={false}
+          onPostRender={() => {}}
+        />,
+      ),
+    );
+    await act(async () => receipt);
+    return { lease, editor: mocks.editors.at(-1)! };
+  }
+
+  it.each([
+    { boundary: "before", offset: 1, source: "ACB" },
+    { boundary: "after", offset: 2, source: "ABC" },
+  ])(
+    "keeps native local insertion order with an external insertion $boundary its boundary",
+    async ({ offset, source }) => {
+      const { lease, editor } = await attachNativeHistoryFixture("A");
+      await act(async () =>
+        editor.applyEdits([
+          {
+            range: { start: { line: 0, character: 1 }, end: { line: 0, character: 1 } },
+            newText: "B",
+          },
+        ]),
+      );
+      const prepared = editor.prepareExternalEdits("AB", [
+        { start: offset, end: offset, text: "C" },
+      ]);
+      expect(prepared).not.toBeNull();
+      await act(async () => prepared!());
+      expect(editor.getText()).toBe(source);
+      await act(async () => editor.undo());
+      expect(editor.getText()).toBe("AC");
+      expect(lease.getSnapshot().draftSource).toBe("AC");
+      await act(async () => editor.redo());
+      expect(editor.getText()).toBe(source);
+      expect(lease.getSnapshot().draftSource).toBe(source);
+      lease.release();
+    },
+  );
+
+  it("keeps reciprocal offsets across multiple native local and external edits", async () => {
+    const { lease, editor } = await attachNativeHistoryFixture("AD");
+    await act(async () =>
+      editor.applyEdits([
+        {
+          range: { start: { line: 0, character: 1 }, end: { line: 0, character: 1 } },
+          newText: "B",
+        },
+        {
+          range: { start: { line: 0, character: 2 }, end: { line: 0, character: 2 } },
+          newText: "E",
+        },
+      ]),
+    );
+    expect(editor.getText()).toBe("ABDE");
+    const prepared = editor.prepareExternalEdits("ABDE", [
+      { start: 0, end: 0, text: "Z" },
+      { start: 4, end: 4, text: "Y" },
+    ]);
+    expect(prepared).not.toBeNull();
+    await act(async () => prepared!());
+    expect(editor.getText()).toBe("ZABDEY");
+    await act(async () => editor.undo());
+    expect(editor.getText()).toBe("ZADY");
+    expect(lease.getSnapshot().draftSource).toBe("ZADY");
+    await act(async () => editor.redo());
+    expect(editor.getText()).toBe("ZABDEY");
+    expect(lease.getSnapshot().draftSource).toBe("ZABDEY");
+    lease.release();
+  });
+
+  it("declines intersecting native history atomically without mutating source or undo", async () => {
+    const { lease, editor } = await attachNativeHistoryFixture("A");
+    await act(async () =>
+      editor.applyEdits([
+        {
+          range: { start: { line: 0, character: 1 }, end: { line: 0, character: 1 } },
+          newText: "B",
+        },
+      ]),
+    );
+    const snapshot = lease.getSnapshot();
+    expect(editor.prepareExternalEdits("AB", [{ start: 1, end: 2, text: "C" }])).toBeNull();
+    expect(editor.getText()).toBe("AB");
+    expect(lease.getSnapshot()).toBe(snapshot);
+    expect(editor.canUndo).toBe(true);
+    await act(async () => editor.undo());
+    expect(editor.getText()).toBe("A");
+    await act(async () => editor.redo());
+    expect(editor.getText()).toBe("AB");
+    lease.release();
+  });
+
+  it("refuses native external preparation and a captured commit while composing", async () => {
+    const { lease, editor } = await attachNativeHistoryFixture("A");
+    await act(async () =>
+      editor.applyEdits([
+        {
+          range: { start: { line: 0, character: 1 }, end: { line: 0, character: 1 } },
+          newText: "B",
+        },
+      ]),
+    );
+    const edit = [{ start: 2, end: 2, text: "C" }];
+    const prepared = editor.prepareExternalEdits("AB", edit);
+    expect(prepared).not.toBeNull();
+    const snapshot = lease.getSnapshot();
+    const content = container
+      .querySelector("diffs-container")!
+      .shadowRoot!.querySelector<HTMLElement>('[data-content][contenteditable="true"]')!;
+    await act(async () => {
+      content.dispatchEvent(
+        new CompositionEvent("compositionstart", {
+          bubbles: true,
+          composed: true,
+          data: "",
+        }),
+      );
+    });
+    expect(editor.isComposing).toBe(true);
+    expect(editor.prepareExternalEdits("AB", edit)).toBeNull();
+    expect(() => prepared!()).toThrow("External editor update became stale");
+    expect(editor.getText()).toBe("AB");
+    expect(lease.getSnapshot()).toBe(snapshot);
+    await act(async () => {
+      content.dispatchEvent(
+        new CompositionEvent("compositionend", {
+          bubbles: true,
+          composed: true,
+          data: "",
+        }),
+      );
+    });
+    expect(editor.isComposing).toBe(false);
+    const resumed = editor.prepareExternalEdits("AB", edit);
+    expect(resumed).not.toBeNull();
+    await act(async () => resumed!());
+    await act(async () => editor.undo());
+    expect(editor.getText()).toBe("AC");
+    await act(async () => editor.redo());
+    expect(editor.getText()).toBe("ABC");
+    lease.release();
+  });
+
+  it("refuses a prepared native commit after a newer local edit without disturbing its history", async () => {
+    const { lease, editor } = await attachNativeHistoryFixture("A");
+    await act(async () =>
+      editor.applyEdits([
+        {
+          range: { start: { line: 0, character: 1 }, end: { line: 0, character: 1 } },
+          newText: "B",
+        },
+      ]),
+    );
+    const prepared = editor.prepareExternalEdits("AB", [{ start: 2, end: 2, text: "C" }]);
+    expect(prepared).not.toBeNull();
+    // A nonadjacent insertion starts a distinct native history group. Appending
+    // X beside B would intentionally coalesce both typed insertions into one.
+    await act(async () =>
+      editor.applyEdits([
+        {
+          range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+          newText: "X",
+        },
+      ]),
+    );
+    const snapshot = lease.getSnapshot();
+    const document = EditStateManager.get(
+      "file",
+      `scient-file:${target.environmentId}:${target.cwd}:${target.relativePath}`,
+    )!.document;
+    const history = structuredClone(document.history);
+    expect(history.undoStack).toHaveLength(2);
+    expect(() => prepared!()).toThrow("External editor update became stale");
+    expect(editor.getText()).toBe("XAB");
+    expect(lease.getSnapshot()).toBe(snapshot);
+    expect(document.history).toEqual(history);
+    await act(async () => editor.undo());
+    expect(editor.getText()).toBe("AB");
+    await act(async () => editor.redo());
+    expect(editor.getText()).toBe("XAB");
+    lease.release();
+  });
+
+  it("pauses a native restoration if the authoritative lease advances during preparation", async () => {
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const { lease, editor } = await attachNativeHistoryFixture("A");
+    await act(async () =>
+      editor.applyEdits([
+        {
+          range: { start: { line: 0, character: 1 }, end: { line: 0, character: 1 } },
+          newText: "B",
+        },
+      ]),
+    );
+    await act(async () =>
+      root.render(
+        <ScientMarkdownWorkspaceSurface persistence={lease} ariaLabel="Rich lease currentness" />,
+      ),
+    );
+    const rich = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+      (controller) => controller.view?.dom.isConnected,
+    )!;
+    await act(async () => rich.replaceUserSource("ABC"));
+    const { Editor } = await import("@pierre/diffs/edit");
+    const nativePrepare = Editor.prototype.prepareExternalEdits;
+    let preparedReceipt = false;
+    let advancedLease = false;
+    vi.spyOn(Editor.prototype, "prepareExternalEdits").mockImplementation(function (
+      this: InstanceType<typeof Editor>,
+      source,
+      edits,
+    ) {
+      const prepared = nativePrepare.call(this, source, edits);
+      if (source === "AB") {
+        preparedReceipt = prepared !== null;
+        advancedLease = lease.change("ABCX", lease.getSnapshot().editVersion);
+      }
+      return prepared;
+    });
+    let attached!: () => void;
+    const receipt = new Promise<void>((resolve) => {
+      attached = resolve;
+    });
+    mocks.attached.mockImplementation(() => attached());
+    await act(async () =>
+      root.render(
+        <MarkdownSourceSurface
+          persistence={lease}
+          {...target}
+          composerDraftTarget={threadRef}
+          resolvedTheme="light"
+          revealRequestId={0}
+          wordWrap={false}
+          onPostRender={() => {}}
+        />,
+      ),
+    );
+    await act(async () => receipt);
+    expect(preparedReceipt).toBe(true);
+    expect(advancedLease).toBe(true);
+    const snapshot = lease.getSnapshot();
+    expect(snapshot.draftSource).toBe("ABCX");
+    const retained = EditStateManager.get(
+      "file",
+      `scient-file:${target.environmentId}:${target.cwd}:${target.relativePath}`,
+    );
+    expect(retained?.document.getText()).toBe("AB");
+    expect(retained?.document.canUndo).toBe(true);
+    expect(mocks.editors.at(-1)!.getFile()).toBeUndefined();
+    const shadow = container.querySelector("diffs-container")!.shadowRoot!;
+    expect(shadow.querySelector('[data-content][contenteditable="true"]')).toBeNull();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      "Source editing is paused",
+    );
+    await act(async () => mocks.lateChanges.at(-1)!("ABx"));
+    expect(lease.getSnapshot()).toBe(snapshot);
+    lease.release();
+  });
+
   it("keeps one save ancestry across real source-rich-source edits and revokes an unmounted source callback", async () => {
     const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
     let finishFirst!: (result: { revision: string }) => void;
@@ -468,13 +810,30 @@ describe("Markdown source persistence integration", () => {
       expect.objectContaining({ source: "ABC", expectedRevision: "revision:AB" }),
     );
     expect(lease.getSnapshot().conflict).toBeNull();
+    expect(lease.getSnapshot().draftSource).toBe("ABC");
+    const retained = EditStateManager.get(
+      "file",
+      `scient-file:${target.environmentId}:${target.cwd}:${target.relativePath}`,
+    );
+    expect(retained?.document.getText()).toBe("AB");
     receipt = new Promise<void>((resolve) => {
       attached = resolve;
     });
     await act(async () => root.render(sourceView()));
     await act(async () => receipt);
     const returnedEditor = mocks.editors.at(-1)!;
+    expect(mocks.attached.mock.lastCall?.[0]).toBe(returnedEditor);
+    expect(sourceEditor.getFile()).toBeUndefined();
     expect(returnedEditor.getText()).toBe("ABC");
+    expect(returnedEditor.canUndo).toBe(true);
+    await act(async () => returnedEditor.undo());
+    expect(returnedEditor.getText()).toBe("AC");
+    expect(lease.getSnapshot().draftSource).toBe("AC");
+    await act(async () => returnedEditor.redo());
+    expect(returnedEditor.getText()).toBe("ABC");
+    expect(lease.getSnapshot().draftSource).toBe("ABC");
+    await act(async () => staleChange("late stale source after return"));
+    expect(lease.getSnapshot().draftSource).toBe("ABC");
     await act(async () =>
       returnedEditor.applyEdits([
         {
@@ -488,6 +847,200 @@ describe("Markdown source persistence integration", () => {
     });
     expect(write).toHaveBeenLastCalledWith(
       expect.objectContaining({ source: "ABCD", expectedRevision: "revision:ABC" }),
+    );
+    lease.release();
+  });
+
+  it.each([false, true])(
+    "pauses a declined overlapping source restoration without losing undo or lease ancestry (saved: %s)",
+    async (saved) => {
+      const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+      const write = vi.fn(async (intent: { source: string; expectedRevision: string }) => ({
+        revision: `revision:${intent.source}`,
+      }));
+      const registry = new MarkdownPersistenceRegistry({
+        createTransport: () => ({
+          write,
+          read: async () => ({ source: "A", revision: "r0" }),
+          classifyFailure: () => "terminal",
+          subscribe: () => () => {},
+          project: () => {},
+        }),
+      });
+      const lease = registry.acquire(target, {
+        relativePath: target.relativePath,
+        contents: "A",
+        revision: "r0",
+        byteLength: 1,
+        truncated: false,
+      })!;
+      const sourceView = () => (
+        <MarkdownSourceSurface
+          persistence={lease}
+          {...target}
+          composerDraftTarget={threadRef}
+          resolvedTheme="light"
+          revealRequestId={0}
+          wordWrap={false}
+          onPostRender={() => {}}
+        />
+      );
+      let attached!: () => void;
+      let receipt = new Promise<void>((resolve) => {
+        attached = resolve;
+      });
+      mocks.attached.mockImplementation(() => attached());
+      await act(async () => root.render(sourceView()));
+      await act(async () => receipt);
+      await act(async () =>
+        mocks.editors.at(-1)!.applyEdits([
+          {
+            range: { start: { line: 0, character: 1 }, end: { line: 0, character: 1 } },
+            newText: "B",
+          },
+        ]),
+      );
+      if (saved)
+        await act(async () => {
+          expect(await lease.flushNow()).toBe(true);
+        });
+      await act(async () =>
+        root.render(
+          <ScientMarkdownWorkspaceSurface
+            persistence={lease}
+            ariaLabel="Rich overlapping source"
+          />,
+        ),
+      );
+      const rich = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+        (controller) => controller.view?.dom.isConnected,
+      )!;
+      await act(async () => rich.replaceUserSource("AC"));
+      if (saved)
+        await act(async () => {
+          expect(await lease.flushNow()).toBe(true);
+        });
+      const editVersion = lease.getSnapshot().editVersion;
+      const written = write.mock.calls.length;
+      receipt = new Promise<void>((resolve) => {
+        attached = resolve;
+      });
+      await act(async () => root.render(sourceView()));
+      await act(async () => receipt);
+      const retained = EditStateManager.get(
+        "file",
+        `scient-file:${target.environmentId}:${target.cwd}:${target.relativePath}`,
+      );
+      expect(retained?.document.getText()).toBe("AB");
+      expect(retained?.document.canUndo).toBe(true);
+      expect(mocks.editors.at(-1)!.getFile()).toBeUndefined();
+      const shadow = container.querySelector("diffs-container")!.shadowRoot!;
+      expect(shadow.querySelector('[data-content][contenteditable="true"]')).toBeNull();
+      expect(shadow.querySelector('[data-content] [data-line="1"]')?.textContent).toBe("AC");
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+        "Source editing is paused",
+      );
+      await act(async () => mocks.lateChanges.at(-1)!("ABx"));
+      expect(lease.getSnapshot().draftSource).toBe("AC");
+      expect(lease.getSnapshot().editVersion).toBe(editVersion);
+      expect(write).toHaveBeenCalledTimes(written);
+      await act(async () => {
+        expect(await lease.flushNow()).toBe(true);
+      });
+      expect(write).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          source: "AC",
+          expectedRevision: saved ? "revision:AB" : "r0",
+        }),
+      );
+      lease.release();
+    },
+  );
+
+  it("rebases a dormant native source editor at whole Unicode and CRLF boundaries without losing local undo", async () => {
+    const initial = "A😀\r\nTail";
+    const changed = "AB😁\nTail";
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const prepare = vi.spyOn(
+      (await import("@pierre/diffs/edit")).Editor.prototype,
+      "prepareExternalEdits",
+    );
+    const write = vi.fn(async (intent: { source: string; expectedRevision: string }) => ({
+      revision: `revision:${intent.source}`,
+    }));
+    const registry = new MarkdownPersistenceRegistry({
+      createTransport: () => ({
+        write,
+        read: async () => ({ source: initial, revision: "r0" }),
+        classifyFailure: () => "terminal",
+        subscribe: () => () => {},
+        project: () => {},
+      }),
+    });
+    const lease = registry.acquire(target, {
+      relativePath: target.relativePath,
+      contents: initial,
+      revision: "r0",
+      byteLength: new TextEncoder().encode(initial).byteLength,
+      truncated: false,
+    })!;
+    const sourceView = () => (
+      <MarkdownSourceSurface
+        persistence={lease}
+        {...target}
+        composerDraftTarget={threadRef}
+        resolvedTheme="light"
+        revealRequestId={0}
+        wordWrap={false}
+        onPostRender={() => {}}
+      />
+    );
+    let attached!: () => void;
+    let receipt = new Promise<void>((resolve) => {
+      attached = resolve;
+    });
+    mocks.attached.mockImplementation(() => attached());
+    await act(async () => root.render(sourceView()));
+    await act(async () => receipt);
+    const sourceEditor = mocks.editors.at(-1)!;
+    await act(async () =>
+      sourceEditor.applyEdits([
+        {
+          range: { start: { line: 0, character: 1 }, end: { line: 0, character: 1 } },
+          newText: "B",
+        },
+      ]),
+    );
+    await act(async () => {
+      expect(await lease.flushNow()).toBe(true);
+    });
+    await act(async () =>
+      root.render(<ScientMarkdownWorkspaceSurface persistence={lease} ariaLabel="Rich Unicode" />),
+    );
+    const rich = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+      (controller) => controller.view?.dom.isConnected,
+    )!;
+    await act(async () => rich.replaceUserSource(changed));
+    await act(async () => {
+      expect(await lease.flushNow()).toBe(true);
+    });
+    expect(lease.getSnapshot().draftSource).toBe(changed);
+    receipt = new Promise<void>((resolve) => {
+      attached = resolve;
+    });
+    await act(async () => root.render(sourceView()));
+    await act(async () => receipt);
+    const returnedEditor = mocks.editors.at(-1)!;
+    expect(mocks.attached.mock.lastCall?.[0]).toBe(returnedEditor);
+    expect(returnedEditor.getText()).toBe(changed);
+    expect(prepare).toHaveBeenLastCalledWith("AB😀\r\nTail", [{ start: 2, end: 6, text: "😁\n" }]);
+    await act(async () => returnedEditor.undo());
+    expect(returnedEditor.getText()).toBe("A😁\nTail");
+    expect(lease.getSnapshot().draftSource).toBe("A😁\nTail");
+    await act(async () => returnedEditor.redo());
+    expect(lease.getSnapshot().draftSource).toBe(changed);
+    expect(write).toHaveBeenLastCalledWith(
+      expect.objectContaining({ source: changed, expectedRevision: "revision:AB😀\r\nTail" }),
     );
     lease.release();
   });
@@ -700,7 +1253,10 @@ describe("Markdown source persistence integration", () => {
     });
     await act(async () => releaseHold());
     await act(async () => receipt);
-    expect(editor.getText()).toBe("A");
+    const returnedEditor = mocks.editors.at(-1)!;
+    expect(returnedEditor.getText()).toBe("A");
+    expect(editor.getFile()).toBeUndefined();
+    expect(lease.getSnapshot().draftSource).toBe("A");
     lease.release();
   });
 });

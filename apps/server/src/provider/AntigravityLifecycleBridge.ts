@@ -24,7 +24,7 @@ import { resolveAntigravityReleaseAsset } from "./antigravityRelease.ts";
 import type { AntigravityReleaseAsset } from "./antigravityRelease.ts";
 import { ANTIGRAVITY_ACP_REGISTRY_VERSION } from "../scient/providerLifecycle/antigravityAcpCatalog.ts";
 import { antigravityAuthUsesBrowser } from "./antigravityAuthSupport.ts";
-import type { ProviderAuthController } from "./Services/ProviderAuthService.ts";
+import type { ProviderAuthController } from "./ProviderAuthService.ts";
 
 function isTerminalAuthPhase(
   phase: ProviderAuthState["phase"],

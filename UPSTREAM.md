@@ -113,7 +113,7 @@ backend and client review, complete passing qualification, and the isolated nati
 visual review. No protected release, cloud, telemetry, or publication boundary is
 activated.
 
-The current alignment is [Scient PR #428](https://github.com/ScientFactory/scient-desktop/pull/428),
+The preceding alignment is [Scient PR #428](https://github.com/ScientFactory/scient-desktop/pull/428),
 recorded in [the 2026-10-01 receipt](docs/internals/2026-10-01-upstream-sync-5cc99e1c23.md)
 and `upstream-state.json`. It integrates the next 20 first-parent official commits
 through `5cc99e1c23980d7995a13c47f969b47cb68ed1be` onto owned base
@@ -143,9 +143,7 @@ ThreadSanitizer regression harnesses, which compile the permissions registry and
 notification centre straight out of the installed package, catch the resulting
 races on `-[__NSDictionaryM setObject:forKey:]`. Hosted CI stays green because both
 tests are `skipIf(platform !== "darwin")`, so this is a macOS-checkout failure
-rather than a pipeline failure. The upgrade must not be treated as qualified until
-the owner chooses between restoring the locks in a patch, holding the Expo 58
-bump, or recording an explicit exception for the two checks.
+rather than a pipeline failure. This was the qualification gap at that historical boundary; the later V2 alignment below records the restored locks and passing native harnesses.
 
 The alignment after that one is recorded in
 [the 2026-10-02 receipt](docs/internals/2026-10-02-upstream-sync-54084ae1e6.md) and
@@ -161,7 +159,7 @@ parent. Its overlap with the previous alignment is zero files.
 The Android subscription widget and the iOS Live Activity that 0.6.21 listed as
 adopted were not working on 58.0.0. Mobile publication stayed held, so no public
 build carried that breakage. The `expo-modules-core` thread-safety regression
-above is untouched by this range and its two harnesses still fail locally.
+above was untouched by that range. The later V2 alignment records its qualified repair.
 
 The Orchestration V2 alignment is recorded in
 [its receipt](docs/internals/t3-upstream-sync-20261003-ca7df394ed.md) and
@@ -619,7 +617,7 @@ Oh My Pi's external provider and Scient Agent share a Scient-owned RPC seam.
 `apps/server/src/provider/scient` owns Scient Agent's separate product target.
 `apps/server/src/provider/Drivers/OmpDriver.ts` and `ScientAgentDriver.ts` create
 `apps/server/src/orchestration-v2/Adapters/OmpAdapterV2.ts`, which adapts native
-sessions and turns to V2. `apps/server/src/provider/Layers/OmpProvider.ts` owns
+sessions and turns to V2. `apps/server/src/provider/OmpProvider.ts` owns
 provider discovery and status; `apps/server/src/textGeneration/OmpTextGeneration.ts`
 handles separate text-generation requests. `OmpManagedRuntimeActions.ts`,
 `managedOmpRuntime.ts` and `ompManifest.ts` retain Oh My Pi's managed-runtime and
@@ -847,15 +845,24 @@ the contract and client export points. Future T3 merges should preserve those
 narrow mounts rather than moving build coordination or toolchain discovery into
 inherited T3 components. See [Scient LaTeX build](docs/internals/scient-latex.md).
 
-Browser HTML-to-PDF export keeps rendering under
-`apps/desktop/src/scient/documentExport`, publication under
-`apps/server/src/scient/documentArtifacts`, and the browser action plus reader
-adapters under `apps/web/src/scient`. Agent-authored HTML builds add one
-Scient-owned MCP toolkit and reuse the authenticated preview-host rail only to
-reach a hidden controlled renderer and the existing generated-PDF surface.
-Inherited-host seams are limited to the verified preview-tab lease in
-`PreviewManager`, one browser-chrome action slot, typed IPC/preload and
-RPC/authorization registration, the two internal document-host operations,
+Browser HTML-to-PDF export prints the selected live tab through its physical owner:
+`apps/desktop/src/scient/documentExport` for native desktop tabs, or the environment's
+`ServerBrowser` for streamed server tabs. Publication remains under
+`apps/server/src/scient/documentArtifacts`, and browser actions and reader adapters
+remain under `apps/web/src/scient`. Preserve the exact tab, navigation and environment
+identity rather than reconstructing a URL in a different browser.
+
+Agent-authored HTML builds use a separate authenticated document rail to reach the
+hidden desktop renderer and generated-PDF surface. Its server owner is
+`apps/server/src/scient/documents/DocumentHostBroker.ts`; its mounted client consumer is
+`apps/web/src/scient/documentExport/documentHost.tsx`. The four typed document operations
+use `documents.hostConnect` and `documents.hostRespond`, with independent host assignment,
+pending requests and connection generations. Browser stickiness does not select a
+document host. Requests are consumed directly from the subscription, so React batching
+cannot drop requests before rendering.
+
+Inherited-host seams remain limited to live-tab capture/navigation delegation,
+browser-chrome actions, typed IPC/preload and RPC/authorization registration,
 source binding after an inherited file-open succeeds, one global lifecycle-host
 mount, one generated-PDF right-panel mount, and contract export points.
 Printing, readiness, controlled-request policy, exact-file observation, update
@@ -869,8 +876,8 @@ the printable document page under `apps/web/src/scient/documentPage` with its ow
 `scient-document.html` entry, and the hidden renderer under
 `apps/desktop/src/scient/documentExport`. Inherited-host seams are limited to the
 second Vite build input, two RPC and authorization registrations and their
-`ws.ts` delegations, one internal document-host operation and its host branch, one
-optional desktop-bridge method with its IPC channel, handler, and preload entry,
+`ws.ts` delegations, the separate document-host rail, one optional desktop-bridge
+method with its IPC channel, handler, and preload entry,
 and contract export points. Rendering, readiness, request policy, capture,
 validation, and publication must stay outside inherited T3 files. See
 [Scient document PDF export](docs/internals/scient-document-pdf-export.md).

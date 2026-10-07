@@ -2,7 +2,7 @@ import { expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import { Headers } from "effect/unstable/http";
+import { Headers } from "effect/http";
 import {
   HTTP_FAILURE_OBSERVATION_PREFIX,
   MAX_HTTP_FAILURE_OBSERVATION_BYTES,

@@ -3,7 +3,6 @@ import { RouterProvider } from "@tanstack/react-router";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ElectronBrowserHost } from "./browser/ElectronBrowserHost";
-import { PreviewAutomationHosts } from "./components/preview/PreviewAutomationHosts";
 import { QuitHoldOverlay } from "./components/QuitHoldOverlay";
 import { AppAtomRegistryProvider } from "./rpc/atomRegistry";
 import { HtmlPdfLifecycleHost } from "./scient/documentExport/HtmlPdfLifecycleHost";
@@ -18,11 +17,10 @@ describe("AppRoot", () => {
     const children = Children.toArray(
       (root as ReactElement<{ readonly children: ReactNode }>).props.children,
     );
-    expect(children).toHaveLength(5);
+    expect(children).toHaveLength(4);
     expect(isValidElement(children[0]) && children[0].type).toBe(RouterProvider);
-    expect(isValidElement(children[1]) && children[1].type).toBe(PreviewAutomationHosts);
-    expect(isValidElement(children[2]) && children[2].type).toBe(HtmlPdfLifecycleHost);
-    expect(isValidElement(children[3]) && children[3].type).toBe(ElectronBrowserHost);
-    expect(isValidElement(children[4]) && children[4].type).toBe(QuitHoldOverlay);
+    expect(isValidElement(children[1]) && children[1].type).toBe(HtmlPdfLifecycleHost);
+    expect(isValidElement(children[2]) && children[2].type).toBe(ElectronBrowserHost);
+    expect(isValidElement(children[3]) && children[3].type).toBe(QuitHoldOverlay);
   });
 });

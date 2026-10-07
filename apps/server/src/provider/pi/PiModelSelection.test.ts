@@ -34,58 +34,61 @@ it.effect("accepts supported implicit clamping and reports the effective level",
   }),
 );
 
-for (const supported of [false, true]) {
-  it.effect(
-    `allows custom models without effort controls (supported=${supported}) without claiming off`,
-    () =>
-      Effect.gen(function* () {
-        const { client, calls } = makeClient({
-          ...knownMetadata,
-          supported,
-          levels: [],
-          mode: "budget",
-        });
-        yield* client.setThinkingLevel("off");
-        calls.length = 0;
-        const noControls = { ...client, getThinkingLevels: () => Effect.succeed({ levels: [] }) };
-        const result = yield* applyPiModelSelection(noControls, selected, undefined, {
-          messageCount: 0,
-        });
-        assert.equal(result.state.thinkingLevel, "off");
-        assert.equal(result.confirmedThinkingLevel, undefined);
-        assert.deepEqual(calls, ["model:reasoner", "state"]);
-        const explicit = yield* applyPiModelSelection(noControls, selected, "off").pipe(
-          Effect.result,
-        );
-        assert.equal(explicit._tag, "Failure");
-      }),
-  );
-}
+it.effect.each(
+  [false, true].map((supported) => ({
+    caseTitle: `allows custom models without effort controls (supported=${supported}) without claiming off`,
+    supported,
+  })),
+)("$caseTitle", ({ supported }) =>
+  Effect.gen(function* () {
+    const { client, calls } = makeClient({
+      ...knownMetadata,
+      supported,
+      levels: [],
+      mode: "budget",
+    });
+    yield* client.setThinkingLevel("off");
+    calls.length = 0;
+    const noControls = { ...client, getThinkingLevels: () => Effect.succeed({ levels: [] }) };
+    const result = yield* applyPiModelSelection(noControls, selected, undefined, {
+      messageCount: 0,
+    });
+    assert.equal(result.state.thinkingLevel, "off");
+    assert.equal(result.confirmedThinkingLevel, undefined);
+    assert.deepEqual(calls, ["model:reasoner", "state"]);
+    const explicit = yield* applyPiModelSelection(noControls, selected, "off").pipe(Effect.result);
+    assert.equal(explicit._tag, "Failure");
+  }),
+);
 
-for (const messageCount of [0, 3, undefined]) {
-  it.effect(
-    `only applies an implicit model default to confirmed fresh sessions (${messageCount})`,
-    () =>
-      Effect.gen(function* () {
-        const { client, calls } = makeClient(knownMetadata);
-        yield* client.setThinkingLevel("off");
-        calls.length = 0;
-        const result = yield* applyPiModelSelection(client, selected, undefined, { messageCount });
-        assert.equal(result.confirmedThinkingLevel, messageCount === 0 ? "high" : "off");
-        assert.equal(calls.includes("thinking:high"), messageCount === 0);
-      }),
-  );
-}
+it.effect.each(
+  [0, 3, undefined].map((messageCount) => ({
+    caseTitle: `only applies an implicit model default to confirmed fresh sessions (${messageCount})`,
+    messageCount,
+  })),
+)("$caseTitle", ({ messageCount }) =>
+  Effect.gen(function* () {
+    const { client, calls } = makeClient(knownMetadata);
+    yield* client.setThinkingLevel("off");
+    calls.length = 0;
+    const result = yield* applyPiModelSelection(client, selected, undefined, { messageCount });
+    assert.equal(result.confirmedThinkingLevel, messageCount === 0 ? "high" : "off");
+    assert.equal(calls.includes("thinking:high"), messageCount === 0);
+  }),
+);
 
-for (const defaultLevel of ["high", "off"] as const) {
-  it.effect(`resolves explicit default to ${defaultLevel} even on existing sessions`, () =>
-    Effect.gen(function* () {
-      const { client } = makeClient({ ...knownMetadata, defaultLevel });
-      const result = yield* applyPiModelSelection(client, selected, "default", { messageCount: 3 });
-      assert.equal(result.confirmedThinkingLevel, defaultLevel);
-    }),
-  );
-}
+it.effect.each(
+  (["high", "off"] as const).map((defaultLevel) => ({
+    caseTitle: `resolves explicit default to ${defaultLevel} even on existing sessions`,
+    defaultLevel,
+  })),
+)("$caseTitle", ({ defaultLevel }) =>
+  Effect.gen(function* () {
+    const { client } = makeClient({ ...knownMetadata, defaultLevel });
+    const result = yield* applyPiModelSelection(client, selected, "default", { messageCount: 3 });
+    assert.equal(result.confirmedThinkingLevel, defaultLevel);
+  }),
+);
 
 it.effect("does not invent an unknown default", () =>
   Effect.gen(function* () {
@@ -254,30 +257,32 @@ it.effect("does not loop when implicit repair is ignored by the runtime", () =>
   }),
 );
 
-for (const state of [
-  {},
-  { model: { provider: "other", id: "reasoner" }, thinkingLevel: "high" },
-  { model: { provider: "test", id: "other" }, thinkingLevel: "high" },
-  { model: { provider: "test", id: "reasoner" }, thinkingLevel: "off" },
-  { model: { provider: "test", id: "reasoner" } },
-] satisfies PiRpcState[]) {
-  it.effect(`rejects runtime mismatch ${JSON.stringify(state)}`, () =>
-    Effect.gen(function* () {
-      const { client } = makeClient();
-      const result = yield* applyPiModelSelection(
-        { ...client, getState: () => Effect.succeed(state) },
-        selected,
-        "high",
-      ).pipe(Effect.result);
-      assert.equal(result._tag, "Failure");
-      if (result._tag === "Failure") {
-        assert.equal(result.failure.kind, "request");
-        assert.equal(result.failure.command, "get_state");
-        assert.match(result.failure.detail, /did not apply/);
-      }
-    }),
-  );
-}
+it.effect.each(
+  (
+    [
+      {},
+      { model: { provider: "other", id: "reasoner" }, thinkingLevel: "high" },
+      { model: { provider: "test", id: "other" }, thinkingLevel: "high" },
+      { model: { provider: "test", id: "reasoner" }, thinkingLevel: "off" },
+      { model: { provider: "test", id: "reasoner" } },
+    ] satisfies PiRpcState[]
+  ).map((state) => ({ caseTitle: `rejects runtime mismatch ${JSON.stringify(state)}`, state })),
+)("$caseTitle", ({ state }) =>
+  Effect.gen(function* () {
+    const { client } = makeClient();
+    const result = yield* applyPiModelSelection(
+      { ...client, getState: () => Effect.succeed(state) },
+      selected,
+      "high",
+    ).pipe(Effect.result);
+    assert.equal(result._tag, "Failure");
+    if (result._tag === "Failure") {
+      assert.equal(result.failure.kind, "request");
+      assert.equal(result.failure.command, "get_state");
+      assert.match(result.failure.detail, /did not apply/);
+    }
+  }),
+);
 
 it.effect("rejects invalid thinking before mutating runtime", () =>
   Effect.gen(function* () {
@@ -289,31 +294,37 @@ it.effect("rejects invalid thinking before mutating runtime", () =>
   }),
 );
 
-for (const [method, command] of [
-  ["setModel", "set_model"],
-  ["getThinkingLevels", "get_available_thinking_levels"],
-  ["setThinkingLevel", "set_thinking_level"],
-  ["getState", "get_state"],
-] as const) {
-  it.effect(`preserves RPC failure cause and command for ${method}`, () =>
-    Effect.gen(function* () {
-      const { client } = makeClient();
-      const cause = new PiRpcCommandError({
-        command,
-        requestId: "test",
-        detail: "runtime refused",
-      });
-      const result = yield* applyPiModelSelection(
-        { ...client, [method]: () => Effect.fail(cause) },
-        selected,
-        "high",
-      ).pipe(Effect.result);
-      assert.equal(result._tag, "Failure");
-      if (result._tag === "Failure") {
-        assert.equal(result.failure.kind, "request");
-        assert.equal(result.failure.command, command);
-        assert.equal(result.failure.cause, cause);
-      }
-    }),
-  );
-}
+it.effect.each(
+  (
+    [
+      ["setModel", "set_model"],
+      ["getThinkingLevels", "get_available_thinking_levels"],
+      ["setThinkingLevel", "set_thinking_level"],
+      ["getState", "get_state"],
+    ] as const
+  ).map(([method, command]) => ({
+    caseTitle: `preserves RPC failure cause and command for ${method}`,
+    method,
+    command,
+  })),
+)("$caseTitle", ({ method, command }) =>
+  Effect.gen(function* () {
+    const { client } = makeClient();
+    const cause = new PiRpcCommandError({
+      command,
+      requestId: "test",
+      detail: "runtime refused",
+    });
+    const result = yield* applyPiModelSelection(
+      { ...client, [method]: () => Effect.fail(cause) },
+      selected,
+      "high",
+    ).pipe(Effect.result);
+    assert.equal(result._tag, "Failure");
+    if (result._tag === "Failure") {
+      assert.equal(result.failure.kind, "request");
+      assert.equal(result.failure.command, command);
+      assert.equal(result.failure.cause, cause);
+    }
+  }),
+);

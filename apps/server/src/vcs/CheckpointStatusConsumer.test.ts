@@ -45,32 +45,46 @@ it.effect("consumes a valid listing larger than 16 MiB with bounded records", ()
   }),
 );
 
-for (const [name, text, limits, reason] of [
-  ["byte budget", "?? abc\0", { maxBytes: 6, maxPaths: 2, maxRecordBytes: 20 }, "path-limit"],
-  ["path budget", "?? a\0?? b\0", { maxBytes: 100, maxPaths: 1, maxRecordBytes: 20 }, "path-limit"],
-  ["record budget", "?? abc", { maxBytes: 100, maxPaths: 2, maxRecordBytes: 5 }, "path-limit"],
-  ["missing delimiter", "?? a", undefined, "filesystem-error"],
-  ["missing rename source", "R  a\0", undefined, "filesystem-error"],
-  ["POSIX traversal", "?? ../a\0", undefined, "filesystem-error"],
-  ["Windows traversal", "?? a\\..\\b\0", undefined, "filesystem-error"],
-  ["Windows drive path", "?? C:\\a\0", undefined, "filesystem-error"],
-] as const)
-  it.effect(`refuses ${name} without treating an incomplete listing as complete`, () =>
-    Effect.gen(function* () {
-      const consumer = makeCheckpointStatusConsumer({
-        cwd: "/fixture",
-        operation: "test",
-        platform: name.startsWith("Windows") ? "win32" : "darwin",
-        onPath: () => Effect.void,
-        ...(limits === undefined ? {} : { limits }),
-      });
-      const result = yield* Effect.result(
-        Effect.andThen(consumer.consume(bytes(text)), consumer.finish),
-      );
-      assert.deepInclude(result, { _tag: "Failure" });
-      if (result._tag === "Failure") assert.equal(result.failure.reason, reason);
-    }),
-  );
+it.effect.each(
+  (
+    [
+      ["byte budget", "?? abc\0", { maxBytes: 6, maxPaths: 2, maxRecordBytes: 20 }, "path-limit"],
+      [
+        "path budget",
+        "?? a\0?? b\0",
+        { maxBytes: 100, maxPaths: 1, maxRecordBytes: 20 },
+        "path-limit",
+      ],
+      ["record budget", "?? abc", { maxBytes: 100, maxPaths: 2, maxRecordBytes: 5 }, "path-limit"],
+      ["missing delimiter", "?? a", undefined, "filesystem-error"],
+      ["missing rename source", "R  a\0", undefined, "filesystem-error"],
+      ["POSIX traversal", "?? ../a\0", undefined, "filesystem-error"],
+      ["Windows traversal", "?? a\\..\\b\0", undefined, "filesystem-error"],
+      ["Windows drive path", "?? C:\\a\0", undefined, "filesystem-error"],
+    ] as const
+  ).map(([name, text, limits, reason]) => ({
+    caseTitle: `refuses ${name} without treating an incomplete listing as complete`,
+    name,
+    text,
+    limits,
+    reason,
+  })),
+)("$caseTitle", ({ name, text, limits, reason }) =>
+  Effect.gen(function* () {
+    const consumer = makeCheckpointStatusConsumer({
+      cwd: "/fixture",
+      operation: "test",
+      platform: name.startsWith("Windows") ? "win32" : "darwin",
+      onPath: () => Effect.void,
+      ...(limits === undefined ? {} : { limits }),
+    });
+    const result = yield* Effect.result(
+      Effect.andThen(consumer.consume(bytes(text)), consumer.finish),
+    );
+    assert.deepInclude(result, { _tag: "Failure" });
+    if (result._tag === "Failure") assert.equal(result.failure.reason, reason);
+  }),
+);
 
 it.effect("passes a filename that is not valid UTF-8 through unchanged", () =>
   Effect.gen(function* () {

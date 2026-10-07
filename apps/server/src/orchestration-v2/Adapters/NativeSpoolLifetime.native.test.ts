@@ -179,66 +179,69 @@ it.live(
     ),
 );
 
-for (const mode of ["cancelled-publication", "failed-open"] as const) {
-  it.live(`the actual manager disposes ${mode} native resources without a started consumer`, () =>
-    run(
-      Effect.gen(function* () {
-        const config = yield* ServerConfig.ServerConfig;
-        const entered = yield* Deferred.make<void>();
-        const peer = scriptedOmpRpc({
-          models: [],
-          initial: { provider: "test", id: "selected" },
-          ...(mode === "failed-open"
-            ? {
-                commandError: (frame: { readonly type: string }) =>
-                  frame.type === "get_state" ? "Refused synthetic native state" : undefined,
-              }
-            : {}),
-        });
-        const f = yield* nativeOmpOrchestration({
-          makeProcess: peer.makeProcess,
-          decorateEventSink: (sink) => ({
-            ...sink,
-            write: (input) =>
-              (mode === "cancelled-publication" &&
-              input.events.some((event) => event.type === "provider-session.attached")
-                ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))
-                : Effect.void
-              ).pipe(Effect.andThen(sink.write(input))),
-          }),
-        });
-        yield* f.run(() =>
-          Effect.gen(function* () {
-            const manager = yield* ProviderSessionManagerV2;
-            const allocator = yield* IdAllocatorV2;
-            const instanceId = ProviderInstanceId.make("omp-native-background-instance");
-            const id = yield* allocator.allocate.providerSession({
-              providerInstanceId: instanceId,
-              threadId: f.threadId,
-            });
-            const opening = manager.open({
-              threadId: f.threadId,
-              providerSessionId: id,
-              modelSelection: { instanceId, model: "test/selected" },
-              runtimePolicy: {
-                cwd: config.cwd,
-                runtimeMode: "full-access",
-                interactionMode: "default",
-              },
-            });
-            if (mode === "cancelled-publication") {
-              const fiber = yield* opening.pipe(Effect.forkChild);
-              yield* Deferred.await(entered).pipe(Effect.timeout("3 seconds"));
-              expect(files(config.stateDir, "events.bin")).toHaveLength(1);
-              yield* Fiber.interrupt(fiber).pipe(Effect.timeout("3 seconds"));
-            } else expect(Exit.isFailure(yield* opening.pipe(Effect.exit))).toBe(true);
-            expect(Option.isNone(yield* manager.get(id))).toBe(true);
-            expect(peer.state.shutdowns).toBe(1);
-            expect(files(config.stateDir, "events.bin")).toEqual([]);
-            expect(files(config.stateDir, ".session.lock")).toEqual([]);
-          }),
-        );
-      }),
-    ),
-  );
-}
+it.live.each(
+  (["cancelled-publication", "failed-open"] as const).map((mode) => ({
+    caseTitle: `the actual manager disposes ${mode} native resources without a started consumer`,
+    mode,
+  })),
+)("$caseTitle", ({ mode }) =>
+  run(
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const entered = yield* Deferred.make<void>();
+      const peer = scriptedOmpRpc({
+        models: [],
+        initial: { provider: "test", id: "selected" },
+        ...(mode === "failed-open"
+          ? {
+              commandError: (frame: { readonly type: string }) =>
+                frame.type === "get_state" ? "Refused synthetic native state" : undefined,
+            }
+          : {}),
+      });
+      const f = yield* nativeOmpOrchestration({
+        makeProcess: peer.makeProcess,
+        decorateEventSink: (sink) => ({
+          ...sink,
+          write: (input) =>
+            (mode === "cancelled-publication" &&
+            input.events.some((event) => event.type === "provider-session.attached")
+              ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))
+              : Effect.void
+            ).pipe(Effect.andThen(sink.write(input))),
+        }),
+      });
+      yield* f.run(() =>
+        Effect.gen(function* () {
+          const manager = yield* ProviderSessionManagerV2;
+          const allocator = yield* IdAllocatorV2;
+          const instanceId = ProviderInstanceId.make("omp-native-background-instance");
+          const id = yield* allocator.allocate.providerSession({
+            providerInstanceId: instanceId,
+            threadId: f.threadId,
+          });
+          const opening = manager.open({
+            threadId: f.threadId,
+            providerSessionId: id,
+            modelSelection: { instanceId, model: "test/selected" },
+            runtimePolicy: {
+              cwd: config.cwd,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+            },
+          });
+          if (mode === "cancelled-publication") {
+            const fiber = yield* opening.pipe(Effect.forkChild);
+            yield* Deferred.await(entered).pipe(Effect.timeout("3 seconds"));
+            expect(files(config.stateDir, "events.bin")).toHaveLength(1);
+            yield* Fiber.interrupt(fiber).pipe(Effect.timeout("3 seconds"));
+          } else expect(Exit.isFailure(yield* opening.pipe(Effect.exit))).toBe(true);
+          expect(Option.isNone(yield* manager.get(id))).toBe(true);
+          expect(peer.state.shutdowns).toBe(1);
+          expect(files(config.stateDir, "events.bin")).toEqual([]);
+          expect(files(config.stateDir, ".session.lock")).toEqual([]);
+        }),
+      );
+    }),
+  ),
+);

@@ -412,48 +412,53 @@ it("freezes weak Claude UUIDs only with completed root-owned strong assistant ev
   );
 });
 
-for (const invalid of [
-  "nested",
-  "foreign-thread",
-  "foreign-turn",
-  "synthetic",
-  "missing-node",
-  "weak-item",
-  "running-item",
-  "non-Claude",
-] as const) {
-  it(`rejects weak cursor evidence outside the exact root boundary: ${invalid}`, () => {
-    const input = claudeFixture();
-    const node = input.projection.nodes[1]!;
-    if (invalid === "nested")
-      input.projection.nodes[1] = { ...node, parentNodeId: NodeId.make("task-root") };
-    if (invalid === "foreign-thread")
-      input.projection.nodes[1] = { ...node, threadId: ThreadId.make("foreign") };
-    if (invalid === "foreign-turn")
-      input.projection.nodes[1] = { ...node, providerTurnId: ProviderTurnId.make("foreign") };
-    if (invalid === "synthetic")
-      input.projection.providerTurns[1] = {
-        ...input.projection.providerTurns[1]!,
-        nativeTurnRef: {
-          driver: ProviderDriverKind.make("claudeAgent"),
-          nativeId: "synthetic-uuid",
-          strength: "weak",
-        },
-      };
-    if (invalid === "missing-node") input.projection.nodes.splice(1, 1);
-    if (invalid === "weak-item")
-      input.retainedSourceItems[1] = {
-        ...input.retainedSourceItems[1]!,
-        nativeItemRef: {
-          driver: ProviderDriverKind.make("claudeAgent"),
-          nativeId: "00000000-0000-4000-8000-000000000002",
-          strength: "weak",
-        },
-      };
-    if (invalid === "running-item")
-      input.retainedSourceItems[1] = { ...input.retainedSourceItems[1]!, status: "running" };
-    if (invalid === "non-Claude")
-      input.projection.providerThreads[0] = { ...input.projection.providerThreads[0]!, driver };
-    assert.equal(freezeConversationForkNativeSource(input).strategy, "portable_context");
-  });
-}
+it.each(
+  (
+    [
+      "nested",
+      "foreign-thread",
+      "foreign-turn",
+      "synthetic",
+      "missing-node",
+      "weak-item",
+      "running-item",
+      "non-Claude",
+    ] as const
+  ).map((invalid) => ({
+    caseTitle: `rejects weak cursor evidence outside the exact root boundary: ${invalid}`,
+    invalid,
+  })),
+)("$caseTitle", ({ invalid }) => {
+  const input = claudeFixture();
+  const node = input.projection.nodes[1]!;
+  if (invalid === "nested")
+    input.projection.nodes[1] = { ...node, parentNodeId: NodeId.make("task-root") };
+  if (invalid === "foreign-thread")
+    input.projection.nodes[1] = { ...node, threadId: ThreadId.make("foreign") };
+  if (invalid === "foreign-turn")
+    input.projection.nodes[1] = { ...node, providerTurnId: ProviderTurnId.make("foreign") };
+  if (invalid === "synthetic")
+    input.projection.providerTurns[1] = {
+      ...input.projection.providerTurns[1]!,
+      nativeTurnRef: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        nativeId: "synthetic-uuid",
+        strength: "weak",
+      },
+    };
+  if (invalid === "missing-node") input.projection.nodes.splice(1, 1);
+  if (invalid === "weak-item")
+    input.retainedSourceItems[1] = {
+      ...input.retainedSourceItems[1]!,
+      nativeItemRef: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        nativeId: "00000000-0000-4000-8000-000000000002",
+        strength: "weak",
+      },
+    };
+  if (invalid === "running-item")
+    input.retainedSourceItems[1] = { ...input.retainedSourceItems[1]!, status: "running" };
+  if (invalid === "non-Claude")
+    input.projection.providerThreads[0] = { ...input.projection.providerThreads[0]!, driver };
+  assert.equal(freezeConversationForkNativeSource(input).strategy, "portable_context");
+});

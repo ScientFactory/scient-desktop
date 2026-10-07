@@ -71,13 +71,14 @@ export function validateVoiceTranscriptCorrectionOutput(input: {
             }),
           );
     }),
-    Effect.catchTag("SchemaError", () =>
-      Effect.fail(
-        new VoiceTranscriptCorrectionError({
-          kind: "malformed-response",
-          message: "The provider returned an invalid correction.",
-        }),
-      ),
-    ),
+    Effect.catchTags({
+      SchemaError: () =>
+        Effect.fail(
+          new VoiceTranscriptCorrectionError({
+            kind: "malformed-response",
+            message: "The provider returned an invalid correction.",
+          }),
+        ),
+    }),
   );
 }

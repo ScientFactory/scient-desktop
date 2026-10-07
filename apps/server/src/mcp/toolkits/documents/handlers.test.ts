@@ -1,3 +1,4 @@
+import * as Base64Url from "effect/encoding/Base64Url";
 // @effect-diagnostics nodeBuiltinImport:off -- Tests exercise the real project filesystem boundary.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -15,12 +16,12 @@ import {
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
+import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ProjectFaviconResolver from "../../../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../../../project/T3ProjectFileLoader.ts";
@@ -43,7 +44,7 @@ import {
 } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
-import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
 import { buildScientPdfForInvocation } from "./handlers.ts";
 
 const fixtures: string[] = [];
@@ -137,7 +138,7 @@ const renderResult = {
     scrollHeight: 1_200,
   },
   blockedRequestCount: 2,
-  bytesBase64: Encoding.encodeBase64Url(minimalPdf("controlled-render")),
+  bytesBase64: Base64Url.encode(minimalPdf("controlled-render")),
 };
 
 function makeStore(options?: {
@@ -177,7 +178,7 @@ function makeBroker(options?: {
   readonly renderResult?: unknown;
   readonly failPresentation?: boolean;
 }) {
-  const invoke = vi.fn((request: PreviewAutomationBroker.PreviewAutomationInvokeInput) =>
+  const invoke = vi.fn((request: DocumentHostBroker.DocumentHostInvokeInput) =>
     request.operation === "documentPdfRender"
       ? Effect.promise(async () => {
           await options?.onRender?.();
@@ -187,9 +188,9 @@ function makeBroker(options?: {
         ? Effect.fail({ _tag: "PreviewAutomationNoAvailableHostError" } as never)
         : Effect.succeed({}),
   );
-  const broker = PreviewAutomationBroker.PreviewAutomationBroker.of({
+  const broker = DocumentHostBroker.DocumentHostBroker.of({
     invoke,
-  } as unknown as PreviewAutomationBroker.PreviewAutomationBroker["Service"]);
+  } as unknown as DocumentHostBroker.DocumentHostBroker["Service"]);
   return { broker, invoke };
 }
 
@@ -376,7 +377,7 @@ function runBuild(
     readonly query: ReturnType<typeof makeDynamicQuery>;
     readonly resolver?: WorkspaceBindingResolver["Service"];
     readonly store: GeneratedDocumentStore["Service"];
-    readonly broker: PreviewAutomationBroker.PreviewAutomationBroker["Service"];
+    readonly broker: DocumentHostBroker.DocumentHostBroker["Service"];
   },
 ) {
   return effect.pipe(
@@ -386,8 +387,16 @@ function runBuild(
       input.resolver ?? makeResolverForQuery(input.query),
     ),
     Effect.provideService(GeneratedDocumentStore, input.store),
-    Effect.provideService(PreviewAutomationBroker.PreviewAutomationBroker, input.broker),
-    Effect.provide(assetLayer),
+    Effect.provideService(DocumentHostBroker.DocumentHostBroker, input.broker),
+    Effect.provide(
+      assetLayer.pipe(
+        Layer.provideMerge(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            dispatch: () => Effect.succeed({ sequence: 1, storedEvents: [] }),
+          }),
+        ),
+      ),
+    ),
   );
 }
 

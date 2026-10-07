@@ -32,6 +32,7 @@ import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
+import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 // SCIENT-FORK:START — conversation files the OS opened with Scient. macOS
 // delivers a launch's open-file before startup reaches its listeners, so the
 // event is captured from module load.
@@ -350,6 +351,7 @@ const scopedProgram = Effect.scoped(
     yield* Effect.annotateCurrentSpan({ scope: "desktop", runId });
 
     const shutdown = yield* DesktopShutdown.DesktopShutdown;
+    const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
 
     yield* Effect.addFinalizer(() =>
       // Stop every backend in the pool, not just the primary. The
@@ -357,7 +359,10 @@ const scopedProgram = Effect.scoped(
       // cascade, so leaving the WSL instance for its parent scope
       // finalizer means it gets hard-killed by the OS instead of
       // receiving SIGTERM + grace.
-      stopAllPoolInstances().pipe(Effect.ensuring(shutdown.markComplete)),
+      stopAllPoolInstances().pipe(
+        Effect.ensuring(rendererHistory.shutdown),
+        Effect.ensuring(shutdown.markComplete),
+      ),
     );
 
     yield* startup;

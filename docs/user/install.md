@@ -61,6 +61,15 @@ when supported, install and verify a private Scient-managed copy. See
 [AI providers](./providers.md) for setup and lifecycle details, or
 [Projects](./projects.md) for adding a workspace.
 
+### The desktop command-line tool
+
+The desktop app includes the `t3` command-line tool. To run it from any
+terminal, open **Settings → General → About** and choose **Install** next to
+**t3 command**. On macOS and Linux it adds a `t3` link to a folder on your
+`PATH`; on Windows it adds the app's command folder to your `PATH`. Open a new
+terminal afterwards. **Remove** takes it off again. If you already have `t3`
+from npm, it stays as it is.
+
 ### Open a project from a terminal
 
 With the desktop app already running on the same machine:
@@ -104,11 +113,12 @@ you can install the recommendation there. Otherwise use the provider's installer
 on the environment's machine. An unlisted version is unverified.
 
 When a provider CLI is behind its latest release, its provider card shows the
-available version. **Update now** appears only when Scient can tell which
-installer owns the CLI (its own update command, Homebrew, or a global npm, pnpm,
-bun, or Vite+ install) and runs that installer. Otherwise update the CLI the same
-way you installed it. Homebrew installs compare against the version Homebrew
-offers, which can trail the npm release by a few hours.
+available version. **Update now** runs the installer that owns the CLI
+(Homebrew, or a global npm, pnpm, Yarn, Bun, Volta, or Vite+ install), or the
+CLI's own update command when Scient cannot tell. Update a CLI installed with
+mise through mise. Cursor and Antigravity update with Scient. Homebrew installs
+compare against the version Homebrew offers, which can trail the npm release by
+a few hours.
 
 Add another provider instance for a separate account or configuration. Each
 instance can have its own environment variables, such as API keys or a custom

@@ -18,10 +18,31 @@ import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { Command } from "effect/unstable/cli";
+import * as Schema from "effect/Schema";
+import { Command } from "effect/cli";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
+import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as AzureDevOpsCli from "../sourceControl/AzureDevOpsCli.ts";
+import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
+import * as ForgejoCli from "../sourceControl/ForgejoCli.ts";
+import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as GitLabCli from "../sourceControl/GitLabCli.ts";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import { afterEach, describe, expect, vi } from "vite-plus/test";
 
 import { makeCli } from "../binCli.ts";
+import { PersistedServerRuntimeState } from "../serverRuntimeState.ts";
 
 vi.mock("node:os", async (importOriginal) => {
   const os = await importOriginal<typeof import("node:os")>();
@@ -30,12 +51,53 @@ vi.mock("node:os", async (importOriginal) => {
 
 afterEach(() => vi.mocked(NodeOS.homedir).mockReset());
 
+const encodeRuntimeState = Schema.encodeEffect(Schema.fromJsonString(PersistedServerRuntimeState));
+
+// The full command tree requires these execution authorities even when a
+// fixture invokes another subcommand. Their state belongs to a scoped test profile.
+const layerCliAuthority = Layer.mergeAll(
+  ThreadCommandExecutor.layer,
+  ProjectCloneTracker.layer.pipe(
+    Layer.provide(
+      SourceControlRepositoryService.layer.pipe(
+        Layer.provide(GitVcsDriver.layer),
+        Layer.provide(
+          SourceControlProviderRegistry.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                AzureDevOpsCli.layer,
+                BitbucketApi.layer,
+                GitHubCli.layer,
+                GitLabCli.layer,
+                ForgejoCli.layer,
+              ),
+            ),
+            Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
+          ),
+        ),
+      ),
+    ),
+    Layer.provide(GitVcsDriver.layer),
+    Layer.provide(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+    Layer.provide(VcsProcess.layer),
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(SqlitePersistence.layerMemory),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+    Layer.provide(
+      ServerConfig.layerTest("/", { prefix: "scient-cli-authority-test-" }).pipe(
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ),
+);
+
 const runCli = (args: ReadonlyArray<string>, env: Record<string, string> = {}) =>
   Command.runWith(makeCli(), { version: "0.0.0" })(args).pipe(
     Effect.provide(
       Layer.mergeAll(
         NodeServices.layer,
         NetService.layer,
+        layerCliAuthority,
         ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
       ),
     ),
@@ -130,6 +192,88 @@ const withTempDirectory = <A, E, R>(
     use,
     (root) => Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true })),
   );
+
+describe("t3 server command safety", () => {
+  it.effect("rejects unknown command words without creating a home or project", () =>
+    withTempDirectory("t3-cli-unknown-", (root) =>
+      Effect.gen(function* () {
+        const baseDir = NodePath.join(root, "home");
+        for (const word of [
+          "account",
+          "login",
+          "clients",
+          "conenct",
+          "package.json",
+          "C:new-project",
+        ]) {
+          const error = yield* runCli([word, "--base-dir", baseDir]).pipe(
+            Effect.provideService(HostProcessPlatform, "linux"),
+            Effect.flip,
+          );
+          expect(String(error)).toContain(`Unknown command "${word}"`);
+          expect(yield* pathExists(word)).toBe(word === "package.json");
+          expect(yield* pathExists(baseDir)).toBe(false);
+        }
+      }),
+    ),
+  );
+
+  it.effect("shows help without creating state", () =>
+    withTempDirectory("t3-cli-help-", (root) =>
+      Effect.gen(function* () {
+        const baseDir = NodePath.join(root, "home");
+        const help = yield* runCli(["help"], { T3CODE_HOME: baseDir }).pipe(Effect.flip);
+        expect(help).toMatchObject({ _tag: "ShowHelp", commandPath: ["t3"], errors: [] });
+        expect(yield* pathExists(baseDir)).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("refuses manual startup over a live server before creating directories", () =>
+    withTempDirectory("t3-cli-running-", (root) =>
+      Effect.gen(function* () {
+        const baseDir = NodePath.join(root, "home");
+        const stateDir = NodePath.join(baseDir, "userdata");
+        const statePath = NodePath.join(stateDir, "server-runtime.json");
+        const record = yield* encodeRuntimeState({
+          version: 1,
+          pid: process.pid,
+          port: 3773,
+          origin: "http://127.0.0.1:3773",
+          startedAt: "2026-10-01T00:00:00.000Z",
+          serviceManaged: true,
+        });
+        yield* Effect.promise(() => NodeFSP.mkdir(stateDir, { recursive: true }));
+        yield* Effect.promise(() => NodeFSP.writeFile(statePath, record));
+        const newDirectory = NodePath.join(root, "new-project");
+        const platform = yield* HostProcessPlatform;
+        for (const args of [
+          [],
+          ["start"],
+          ["."],
+          ["node_modules"],
+          ["C:new-project"],
+          [newDirectory],
+          ["start", newDirectory],
+        ]) {
+          const error = yield* runCli(args, { T3CODE_HOME: baseDir }).pipe(
+            Effect.provideService(
+              HostProcessPlatform,
+              args[0] === "C:new-project" ? "win32" : platform,
+            ),
+            Effect.flip,
+          );
+          expect(String(error)).toContain("A T3 Code server is already running");
+          expect(yield* Effect.promise(() => NodeFSP.readFile(statePath, "utf8"))).toBe(record);
+          expect(yield* pathExists(newDirectory)).toBe(false);
+          expect(yield* Effect.promise(() => NodeFSP.readdir(stateDir))).toEqual([
+            "server-runtime.json",
+          ]);
+        }
+      }),
+    ),
+  );
+});
 
 describe("t3 app", () => {
   it.effect("rejects SSH before it tries to reach a desktop app", () =>
@@ -286,8 +430,9 @@ describe("t3 app", () => {
     ),
   );
 
-  for (const responseKind of ["failure", "invalid"] as const) {
-    it.effect(`never falls back after the default desktop sends a ${responseKind} response`, () =>
+  it.effect.each(["failure", "invalid"] as const)(
+    "never falls back after the default desktop sends a %s response",
+    (responseKind) =>
       withTempDirectory("t3-app-response-test-", (root) =>
         Effect.gen(function* () {
           vi.mocked(NodeOS.homedir).mockReturnValue(root);
@@ -335,6 +480,5 @@ describe("t3 app", () => {
           }
         }).pipe(Effect.scoped),
       ),
-    );
-  }
+  );
 });

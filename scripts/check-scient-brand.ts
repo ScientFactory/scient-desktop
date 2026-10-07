@@ -38,6 +38,16 @@ const PRODUCT_SURFACE_FILES = new Set([
 ]);
 
 const EXCLUDED_ROOTS = ["apps/mobile/", "apps/marketing/"] as const;
+// Captured mock-provider output is a replay fixture, never a product surface.
+const NON_PRODUCT_FILES = new Set(["apps/server/scripts/acp-mock-agent.ts"]);
+// The timeline recognizes persisted upstream error text as well as Scient text.
+// Only this exact compatibility recognizer is exempt; nearby public copy is checked.
+const NON_PUBLIC_COMPATIBILITY_LINES = new Map([
+  [
+    "apps/web/src/components/chat/MessagesTimeline.logic.ts",
+    new Set(['const THREAD_READ_OBJECTS = [" a Scient thread", " a T3 thread"] as const;']),
+  ],
+]);
 const SOURCE_EXTENSIONS = new Set([".html", ".js", ".jsx", ".mjs", ".ts", ".tsx"]);
 const FORBIDDEN_PUBLIC_BRANDS =
   /\bT3 Code\b|\bT3 Tools\b|\bT3 threads?\b|\bT3 MCP\b|\bt3-code MCP\b|Tool\.make\(["']t3_|\bT3Wordmark\b|aria-label=["']T3["']|ScientFactory\/scient-desktop-next|github\.com\/(?:pingdotgg\/t3code|t3dotgg\/t3-code)\/releases\b/i;
@@ -102,6 +112,7 @@ function extension(path: string): string {
 }
 
 export function isProductSurface(path: string): boolean {
+  if (NON_PRODUCT_FILES.has(path)) return false;
   if (EXCLUDED_ROOTS.some((root) => path.startsWith(root)) && !PRODUCT_SURFACE_FILES.has(path))
     return false;
   if (path.includes(".test.") || path.includes(".spec.") || path.includes(".testkit."))
@@ -124,6 +135,7 @@ export function findPublicBrandViolations(
         continue;
       }
       if (!FORBIDDEN_PUBLIC_BRANDS.test(line)) continue;
+      if (NON_PUBLIC_COMPATIBILITY_LINES.get(file.path)?.has(line.trim())) continue;
       violations.push({ path: file.path, line: index + 1, text: line.trim() });
     }
   }

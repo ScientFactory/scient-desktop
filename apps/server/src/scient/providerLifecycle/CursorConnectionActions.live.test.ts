@@ -19,7 +19,7 @@ import { it } from "@effect/vitest";
 import { CursorSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { describe, expect } from "vite-plus/test";
 
 import { makeCursorConnectionActions } from "./CursorConnectionActions.ts";

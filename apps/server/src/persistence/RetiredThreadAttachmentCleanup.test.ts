@@ -1,3 +1,4 @@
+import * as Base64Url from "effect/encoding/Base64Url";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -6,9 +7,8 @@ import * as NodeCrypto from "node:crypto";
 
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { createAttachmentId } from "../attachmentStore.ts";
 import { runMigrations } from "./Migrations.ts";
@@ -46,7 +46,7 @@ layer("RetiredThreadAttachmentCleanup", (it) => {
         NodeFS.writeFileSync(survivorPath, "keep");
         const terminalPath = NodePath.join(
           terminalLogsDir,
-          `terminal_${Encoding.encodeBase64Url("thread-retired")}.log`,
+          `terminal_${Base64Url.encode("thread-retired")}.log`,
         );
         const providerPath = NodePath.join(providerLogsDir, "events.thread-retired.log.1");
         const queuePath = NodePath.join(

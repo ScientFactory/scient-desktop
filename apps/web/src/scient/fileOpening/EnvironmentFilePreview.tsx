@@ -387,7 +387,7 @@ function EnvironmentTextSurface(props: {
   const { resolvedTheme } = useTheme();
   const revealedTargetRef = useRef<string | null>(null);
   const revealTarget = `${props.file.canonicalPath}:${props.line ?? "none"}:${props.refreshToken}`;
-  const onPostRender = useCallback<NonNullable<FileOptions<unknown>["onPostRender"]>>(
+  const onPostRender = useCallback<NonNullable<FileOptions<unknown, undefined>["onPostRender"]>>(
     (container, _instance, phase) => {
       if (
         phase === "unmount" ||

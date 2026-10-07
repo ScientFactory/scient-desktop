@@ -1,13 +1,21 @@
-import type { EnvironmentId, ProjectWriteFileResult } from "@t3tools/contracts";
+import {
+  AuthFilesystemWriteScope,
+  type EnvironmentId,
+  type ProjectWriteFileResult,
+} from "@t3tools/contracts";
 import { createRef, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { FileSaveResolution } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
+import { type FileSaveResolution } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 
 import { projectEnvironment } from "~/state/projects";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { FileSaveCoordinator, type FileSaveResolutionAction } from "./fileSaveCoordinator";
-import { confirmProjectFileQueryData } from "./projectFilesQueryState";
+import {
+  confirmProjectFileQueryData,
+  getUnsavedProjectFileQueryData,
+} from "./projectFilesQueryState";
 import {
   WorkspaceFileSessionRegistry,
   type WorkspaceFileSessionLease,
@@ -54,6 +62,7 @@ export function useFileSaveCoordinator({
   onSaveResolutionApplied,
   saveResolution,
 }: FileSaveOptions): Pick<FileSaveCoordinator, "change" | "setSuspended"> {
+  const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const writeFile = useAtomCommand(projectEnvironment.writeFile);
   const latestRevision = useRef(revision);
   const latestCallbacks = useRef({
@@ -87,6 +96,7 @@ export function useFileSaveCoordinator({
         const lease = workspaceFileSessions.acquire({
           key: workspaceFileSessionKey({ environmentId, cwd, relativePath }),
           debounceMs,
+          canPersist: () => readEnvironmentScope(environmentId, AuthFilesystemWriteScope),
           initialRevision: latestRevision.current,
           persist: (nextContents, expectedRevision) =>
             writeFile({
@@ -95,7 +105,7 @@ export function useFileSaveCoordinator({
             }),
           revisionFromResult: (result) => result.revision,
           onPersisted: (confirmedContents, result) => {
-            confirmProjectFileQueryData(
+            return confirmProjectFileQueryData(
               environmentId,
               cwd,
               relativePath,
@@ -138,5 +148,18 @@ export function useFileSaveCoordinator({
   useEffect(() => {
     if (saveResolution?.relativePath === relativePath) session.resolve(saveResolution);
   }, [session, relativePath, saveResolution]);
+  useEffect(() => {
+    if (!canWriteFiles) return;
+    let cancelled = false;
+    // Replay must retire the first session before recovery queues a draft to flush.
+    queueMicrotask(() => {
+      if (cancelled) return;
+      const unsaved = getUnsavedProjectFileQueryData(environmentId, cwd, relativePath);
+      if (unsaved) session.change(unsaved.contents);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [canWriteFiles, cwd, environmentId, relativePath, session]);
   return { change: session.change, setSuspended: session.setSuspended };
 }

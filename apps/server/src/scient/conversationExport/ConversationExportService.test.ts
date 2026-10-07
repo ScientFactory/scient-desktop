@@ -29,7 +29,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as LegacyImporter from "../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
@@ -37,6 +37,7 @@ import { conversationSnapshotProjection } from "./conversationSnapshotProjection
 import { readScicPackage } from "../conversationFile/ScicReader.ts";
 import * as yauzl from "yauzl";
 
+import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import { issueAssetUrl, resolveAsset } from "../../assets/AssetAccess.ts";
 import * as NativeAppIconResolver from "../../assets/NativeAppIconResolver.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -45,7 +46,7 @@ import * as ProjectFaviconResolver from "../../project/ProjectFaviconResolver.ts
 import * as T3ProjectFileLoader from "../../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as ServerConfig from "../../config.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as ConversationExportFiles from "./ConversationExportFiles.ts";
 import * as ConversationExportService from "./ConversationExportService.ts";
 import {
@@ -71,6 +72,11 @@ import {
 const pandocBinary = pandocBinaryForTests();
 
 const THREAD = ThreadId.make("thread-1");
+// These tests resolve captured export files, not provider tool-output capabilities.
+const capturedFileLookup = Layer.mock(Orchestrator.OrchestratorV2)({
+  getTurnItem: () => Effect.die("Captured export attempted provider-item lookup"),
+});
+
 const encodeHistoricalAttachments = Schema.encodeEffect(
   Schema.fromJsonString(Schema.Array(ChatAttachment)),
 );
@@ -164,6 +170,7 @@ const exportLayer = (prefix: string, word: WordMode = { _tag: "unavailable" }) =
                 scratchRoot: word.scratchRoot,
               }),
             ),
+            Layer.provideMerge(capturedFileLookup),
             Layer.provideMerge(NodeServices.layer),
           )
         : wordLayer(word),
@@ -173,6 +180,7 @@ const exportLayer = (prefix: string, word: WordMode = { _tag: "unavailable" }) =
     Layer.provideMerge(nativeExportStorage),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
+    Layer.provideMerge(capturedFileLookup),
     Layer.provideMerge(NodeServices.layer),
   );
 const TestLayer = exportLayer("scient-convexport-");
@@ -861,7 +869,7 @@ describe("conversation export delivery", () => {
         yield* fileSystem.realPath(resolved.path),
         yield* fileSystem.realPath(written.path),
       );
-    }).pipe(Effect.provide(AssetTestLayer)),
+    }).pipe(Effect.provide(Layer.merge(AssetTestLayer, capturedFileLookup))),
   );
 
   const wordConversions: Array<DocumentBundle> = [];
@@ -958,29 +966,31 @@ describe("conversation export delivery", () => {
     }).pipe(Effect.provide(exportLayer("scient-convexport-word-", { _tag: "converts", seen: [] }))),
   );
 
-  for (const [failure, expected] of [
-    ["too-large", "too-large"],
-    ["timeout", "too-large"],
-    ["failed", "conversion-failed"],
-    ["unavailable", "format-unavailable"],
-  ] as const) {
-    it.effect(
-      `reports a Word conversion that ${failure === "failed" ? "fails" : `is ${failure}`}`,
-      () =>
-        Effect.gen(function* () {
-          yield* seedThread({ pairs: 1 });
-          const service = yield* ConversationExportService.ConversationExportService;
-          const error = yield* service.produce(request({ format: "docx" })).pipe(Effect.flip);
-          assert(error._tag === "ScientConversationExportError");
-          assert.strictEqual(error.reason, expected);
-          assert.strictEqual(error.message, `Word conversion ${failure}.`);
-        }).pipe(
-          Effect.provide(
-            exportLayer("scient-convexport-word-", { _tag: "fails", reason: failure }),
-          ),
-        ),
-    );
-  }
+  it.effect.each(
+    (
+      [
+        ["too-large", "too-large"],
+        ["timeout", "too-large"],
+        ["failed", "conversion-failed"],
+        ["unavailable", "format-unavailable"],
+      ] as const
+    ).map(([failure, expected]) => ({
+      caseTitle: `reports a Word conversion that ${failure === "failed" ? "fails" : `is ${failure}`}`,
+      failure,
+      expected,
+    })),
+  )("$caseTitle", ({ failure, expected }) =>
+    Effect.gen(function* () {
+      yield* seedThread({ pairs: 1 });
+      const service = yield* ConversationExportService.ConversationExportService;
+      const error = yield* service.produce(request({ format: "docx" })).pipe(Effect.flip);
+      assert(error._tag === "ScientConversationExportError");
+      assert.strictEqual(error.reason, expected);
+      assert.strictEqual(error.message, `Word conversion ${failure}.`);
+    }).pipe(
+      Effect.provide(exportLayer("scient-convexport-word-", { _tag: "fails", reason: failure })),
+    ),
+  );
 });
 
 const pdfTestLayer = (exports: ReturnType<typeof exportLayer>) =>
@@ -999,7 +1009,9 @@ const decodePageInput = Schema.decodeUnknownEffect(Schema.fromJsonString(ScientD
 
 const readCapturedPageInput = (inputRelativeUrl: string) =>
   Effect.gen(function* () {
-    const asset = yield* resolveAsset(inputRelativeUrl.split("/")[3]!, "document.json");
+    const asset = yield* resolveAsset(inputRelativeUrl.split("/")[3]!, "document.json").pipe(
+      Effect.provide(capturedFileLookup),
+    );
     assert(asset !== null && asset.kind === "file");
     const fileSystem = yield* FileSystem.FileSystem;
     return yield* decodePageInput(yield* fileSystem.readFileString(asset.path));

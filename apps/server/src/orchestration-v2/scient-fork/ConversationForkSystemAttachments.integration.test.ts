@@ -1,3 +1,4 @@
+import * as Hex from "effect/encoding/Hex";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -16,14 +17,13 @@ import {
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { createDeterministicAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as Exports from "../../scient/conversationExport/ConversationExportService.ts";
 import * as ExportFiles from "../../scient/conversationExport/ConversationExportFiles.ts";
 import * as Snapshots from "../../scient/conversationExport/ConversationSnapshotService.ts";
@@ -40,7 +40,7 @@ import {
   HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME,
 } from "../legacy/HistoricalSystemMessage.ts";
 import * as LegacyImporter from "../legacy/LegacyV1ThreadImporter.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
 
@@ -55,7 +55,7 @@ const decodeImportId = Schema.decodeEffect(ConversationImportId);
 const decodeDigest = Schema.decodeEffect(Sha256Digest);
 const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
   { name: "fork-system-attachments" },
-  Registry.makeLayer([
+  Registry.layerFromAdapters([
     {
       instanceId,
       driver: ProviderDriverKind.make("codex"),
@@ -225,7 +225,7 @@ it.live(
           importId: yield* decodeImportId("cimp_0f8e7d6c-5b4a-4938-8271-605f4e3d2c1b"),
           packagePath: archive.output.path,
           packageBytes: bytes.byteLength,
-          packageSha256: yield* decodeDigest(`sha256:${Encoding.encodeHex(sha256)}`),
+          packageSha256: yield* decodeDigest(`sha256:${Hex.encode(sha256)}`),
           attachmentsDirectory: importDirectory,
         });
         assert.equal(parsed.attachments.length, 1);

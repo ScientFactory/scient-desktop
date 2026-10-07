@@ -1319,7 +1319,8 @@ it.effect("sends monograms as fallback icons that old and nightly clients can de
     for (const text of ["T3", "क्ष्म", "e\u0301"]) {
       const monogram = { kind: "monogram", text, color: "violet" } as const;
       const wire = yield* encodeProjectIcon(monogram);
-      assert.deepEqual(wire, { ...fallback, monogramText: text });
+      const expectedWire = { ...fallback, monogramText: text };
+      assert.deepEqual(wire, expectedWire);
       assert.deepEqual(yield* decodeOldIcon(wire), fallback);
       assert.deepEqual(yield* decodeNightlyIcon(wire), fallback);
       assert.deepEqual(yield* decodeProjectIcon(wire), monogram);

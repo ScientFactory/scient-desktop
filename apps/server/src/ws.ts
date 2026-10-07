@@ -1,6 +1,18 @@
+import {
+  WsWorkspaceRpcGroup,
+  WsConversationRpcGroup,
+  WsServerManagementRpcGroup,
+  WsRepositoryRpcGroup,
+  WsInteractiveRpcGroup,
+  WsDeviceAndTelemetryRpcGroup,
+  WsScientificRpcGroup,
+} from "@t3tools/contracts";
+import * as DocumentHostBroker from "./scient/documents/DocumentHostBroker.ts";
+
+import { subscribeCodexAuthCallback } from "./provider/CodexAuthCallback.ts";
+import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as Crypto from "effect/Crypto";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
-import * as NodeCrypto from "node:crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -20,9 +32,12 @@ import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AcpRegistryOperationError,
   CommandId,
+  authScopeResponse,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
+  AuthOrchestrationOperateScope,
   type AuthEnvironmentScope,
+  type ScheduledTaskListResult,
   AuthSessionId,
   ClientConnectionMethod,
   ClientDeviceType,
@@ -69,6 +84,8 @@ import {
   type RelayClientInstallProgressEvent,
   type ServerSelfUpdateError,
   type ServerSelfUpdateProgressEvent,
+  type ServerConfig as ClientServerConfig,
+  type ServerConfigStreamEvent,
   type ServerLifecycleStreamEvent,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
@@ -87,14 +104,6 @@ import {
   type PullRequestRef,
   WS_METHODS,
   WsRpcGroup,
-  WsConversationRpcGroup,
-  WsServerManagementRpcGroup,
-  WsRepositoryRpcGroup,
-  WsScientificRpcGroup,
-  WsWorkspaceRpcGroup,
-  WsInteractiveRpcGroup,
-  WsDeviceAndTelemetryRpcGroup,
-  ORCHESTRATION_WS_METHODS,
   type ProjectDirectoryFailure,
   type ProjectDirectoryOperation,
   type ProjectFileErrorReason,
@@ -107,19 +116,21 @@ import {
   HttpServerRequest,
   HttpServerRespondable,
   HttpServerResponse,
-} from "effect/unstable/http";
-import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
+} from "effect/http";
+import { RpcSerialization, RpcServer } from "effect/rpc";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
+import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as SecretRequests from "./secrets/SecretRequests.ts";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -131,6 +142,7 @@ import {
   shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
   shellStreamItemsFromResumeSnapshot,
+  skipUnchangedThreadShells,
   toShellApplicationEvent,
   type ShellApplicationEvent,
 } from "./orchestration-v2/ShellStream.ts";
@@ -155,21 +167,16 @@ import {
 } from "./orchestration-v2/WireProjection.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
-import * as OrchestrationEventStore from "./persistence/Services/OrchestrationEventStore.ts";
+import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
+import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
+import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import { dispatchCommandRpcError } from "./orchestration-v2/DispatchCommandRpcError.ts";
-import {
-  observeRpcEffect as instrumentRpcEffect,
-  observeRpcStream as instrumentRpcStream,
-  observeRpcStreamEffect as instrumentRpcStreamEffect,
-} from "./observability/RpcInstrumentation.ts";
-import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
-import * as ProviderInstanceRegistry from "./provider/Services/ProviderInstanceRegistry.ts";
 import * as AcpRegistrySupport from "./provider/acp/AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./provider/acp/AcpRegistryRuntimeCoordinator.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as ProviderMaintenance from "./provider/providerMaintenance.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
-import * as ProviderAuthService from "./provider/Services/ProviderAuthService.ts";
+import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -178,6 +185,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -203,10 +211,14 @@ import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
+import * as DefectReporter from "./observability/DefectReporter.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import { requiredScopeForRpcMethod, requiredScopeForDeviceList } from "./auth/RpcAuthorization.ts";
+import { requiredScopeForDeviceList, rpcAuthorizationError } from "./auth/RpcAuthorization.ts";
+import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
+import { RpcInstrumentation, rpcInstrumentationLayer } from "./observability/RpcInstrumentation.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
@@ -217,7 +229,7 @@ import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
@@ -279,9 +291,10 @@ import * as ComputeSessionService from "./scient/compute/ComputeSessionService.t
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
 import { makeSkillRpcHandlers } from "./scient/skills/SkillRpcHandlers.ts";
 import { makeVoiceTranscriptCorrection } from "./scient/voice/VoiceTranscriptCorrection.ts";
-const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
+import { coalesceProviderStatusUpdates } from "./scient/providerLifecycle/ProviderStatusCoalescing.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
+const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
 
 const resolveDiscoveryForConfig = <A, E, R>(
   discovery: Effect.Effect<A, E, R>,
@@ -299,6 +312,94 @@ export const resolveAvailableEditorsForConfig = <A, E, R>(
 export const resolveFileManagerRevealKindForConfig = <E, R>(
   discovery: Effect.Effect<FileManagerRevealKind | undefined, E, R>,
 ) => resolveDiscoveryForConfig(discovery, () => undefined);
+
+type EditorDiscovery = Pick<
+  ExternalLauncher.ExternalLauncher["Service"],
+  "resolveAvailableEditors" | "resolveFileManagerRevealKind"
+>;
+
+// The config fields that follow from which editors are installed.
+const resolveEditorConfig = <E, R>(
+  availableEditors: ReadonlyArray<EditorId>,
+  revealKind: Effect.Effect<FileManagerRevealKind | undefined, E, R>,
+) =>
+  Effect.gen(function* () {
+    const fileManagerRevealKind = availableEditors.includes("file-manager")
+      ? yield* revealKind
+      : undefined;
+    return {
+      availableEditors,
+      ...(fileManagerRevealKind === undefined
+        ? {}
+        : {
+            shellRevealInFileManager: true,
+            shellRevealInFileManagerKind: fileManagerRevealKind,
+          }),
+    };
+  });
+
+/**
+ * Live config updates that follow a snapshot of `config`. A busy host can
+ * outlast the snapshot's discovery timeouts, which send no editors, or no
+ * reveal kind for the file manager. The scan keeps running, so once it lands
+ * this resends the config: clients replace theirs on any snapshot. The resent
+ * config is folded from the live updates already sent, so it cannot roll back
+ * a change that landed while the scan ran.
+ */
+export const withLateEditorConfig = <E, R>(
+  config: ClientServerConfig,
+  liveUpdates: Stream.Stream<ServerConfigStreamEvent, E, R>,
+  launcher: EditorDiscovery,
+) => {
+  const lateEditorConfig = Stream.fromEffect(launcher.resolveAvailableEditors()).pipe(
+    Stream.filter(
+      (editors) =>
+        editors.join() !== config.availableEditors.join() ||
+        (editors.includes("file-manager") && config.shellRevealInFileManagerKind === undefined),
+    ),
+    // Unbounded, unlike the snapshot: the reveal-kind probe is not shared, so
+    // a timeout here would cancel a probe that outlasts it every time.
+    Stream.mapEffect((editors) =>
+      resolveEditorConfig(editors, launcher.resolveFileManagerRevealKind()),
+    ),
+    Stream.filter(
+      (editorConfig) =>
+        editorConfig.availableEditors.join() !== config.availableEditors.join() ||
+        editorConfig.shellRevealInFileManagerKind !== config.shellRevealInFileManagerKind,
+    ),
+    Stream.map((editorConfig) => ({ type: "editorsResolved" as const, editorConfig })),
+  );
+
+  return Stream.merge(liveUpdates, lateEditorConfig).pipe(
+    Stream.mapAccum(
+      (): ClientServerConfig => config,
+      (current, event): readonly [ClientServerConfig, ReadonlyArray<ServerConfigStreamEvent>] => {
+        switch (event.type) {
+          case "editorsResolved": {
+            const {
+              availableEditors: _editors,
+              shellRevealInFileManager: _reveal,
+              shellRevealInFileManagerKind: _revealKind,
+              ...rest
+            } = current;
+            const next = { ...rest, ...event.editorConfig };
+            return [next, [{ version: 1, type: "snapshot", config: next }]];
+          }
+          case "keybindingsUpdated":
+            return [{ ...current, ...event.payload }, [event]];
+          case "providerStatuses":
+            return [{ ...current, providers: event.payload.providers }, [event]];
+          case "settingsUpdated":
+            return [{ ...current, settings: event.payload.settings }, [event]];
+          // Themes and usage-limit sources never ride in a snapshot; clients
+          // carry their projected values across one.
+          default:
+            return [current, [event]];
+        }
+      },
+    ),
+  );
+};
 
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
@@ -430,62 +531,18 @@ function projectFileFailureContext(
   }
 }
 
-function projectDirectoryFailureContext(
-  error: WorkspaceEntries.WorkspaceEntriesListDirectoryError,
-): {
-  readonly failure: ProjectDirectoryFailure;
-  readonly resolvedPath?: string;
-  readonly resolvedWorkspaceRoot?: string;
-  readonly operation?: ProjectDirectoryOperation;
-  readonly operationPath?: string;
-} {
-  switch (error._tag) {
-    case "WorkspaceRootNotExistsError":
-      return { failure: "workspace_root_not_found", resolvedPath: error.normalizedWorkspaceRoot };
-    case "WorkspaceRootCreateFailedError":
-      return {
-        failure: "workspace_root_create_failed",
-        resolvedPath: error.normalizedWorkspaceRoot,
-      };
-    case "WorkspaceRootStatFailedError":
-      return { failure: "workspace_root_stat_failed", resolvedPath: error.normalizedWorkspaceRoot };
-    case "WorkspaceRootNotDirectoryError":
-      return {
-        failure: "workspace_root_not_directory",
-        resolvedPath: error.normalizedWorkspaceRoot,
-      };
-    case "WorkspacePathOutsideRootError":
-      return { failure: "workspace_path_outside_root" };
-    case "WorkspaceDirectoryError":
-      return {
-        failure: error.failure,
-        ...(error.resolvedPath === undefined ? {} : { resolvedPath: error.resolvedPath }),
-        ...(error.resolvedWorkspaceRoot === undefined
-          ? {}
-          : { resolvedWorkspaceRoot: error.resolvedWorkspaceRoot }),
-        ...(error.operation === undefined ? {} : { operation: error.operation }),
-        ...(error.operationPath === undefined ? {} : { operationPath: error.operationPath }),
-      };
-    default:
-      return unexpectedCompatibilityError(error);
-  }
-}
+const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
-// SCIENT-FORK:START — provider-status coalescing lives in scient/providerLifecycle.
-import { coalesceProviderStatusUpdates } from "./scient/providerLifecycle/ProviderStatusCoalescing.ts";
+// Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 export { coalesceProviderStatusUpdates };
-// SCIENT-FORK:END
+const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
 
-const ServerWsRpcGroup = WsRpcGroup;
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
 // snapshot instead. Replaying each intervening event costs a shell refetch;
 // past this gap a single O(active-threads) snapshot is cheaper and bounded.
 // Matches the event store's default page size (DEFAULT_READ_FROM_SEQUENCE_LIMIT).
 const SHELL_RESUME_MAX_GAP = 1_000;
-
-// Thread replay counts only this thread's rows. Busy or pruned unrelated
-// streams must not force a full thread snapshot.
 // Row count alone does not bound replay memory: a few events with large tool
 // payloads can decode to gigabytes. Before replaying, sum the serialized
 // payload bytes of the range in SQL and reset with a snapshot past this budget.
@@ -502,7 +559,7 @@ function toAuthAccessStreamEvent(
         version: 1,
         revision,
         type: "pairingLinkUpserted",
-        payload: change.pairingLink,
+        payload: { ...change.pairingLink, ...authScopeResponse(change.pairingLink.scopes) },
       };
     case "pairingLinkRemoved":
       return {
@@ -518,6 +575,7 @@ function toAuthAccessStreamEvent(
         type: "clientUpserted",
         payload: {
           ...change.clientSession,
+          ...authScopeResponse(change.clientSession.scopes),
           current: change.clientSession.sessionId === currentSessionId,
         },
       };
@@ -954,15 +1012,19 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
         (stored) =>
           Effect.gen(function* () {
             if ("aggregateKind" in stored) {
+              // SCIENT-FORK:START
               return yield* projectItem(stored).pipe(
                 Effect.retry({ times: 2, schedule: Schedule.exponential(Duration.millis(25)) }),
               );
+              // SCIENT-FORK:END
             }
+            // SCIENT-FORK:START
             const shell = yield* threadManagement
               .getThreadShell(stored.event.threadId)
               .pipe(
                 Effect.retry({ times: 2, schedule: Schedule.exponential(Duration.millis(25)) }),
               );
+            // SCIENT-FORK:END
             return shellStreamItemFromThreadShell({ stored, shell });
           }),
         { concurrency: 8 },
@@ -974,6 +1036,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
         Stream.groupedWithin(512, Duration.millis(50)),
         Stream.mapEffect((events) => projectShellItems(Array.from(events))),
         Stream.flatMap(Stream.fromIterable),
+        skipUnchangedThreadShells,
       );
 
     const liveFrom = (afterSequence: number) =>
@@ -1122,15 +1185,57 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   },
 );
 
-const makeWsRpcLayer = (
+function projectDirectoryFailureContext(
+  error: WorkspaceEntries.WorkspaceEntriesListDirectoryError,
+): {
+  readonly failure: ProjectDirectoryFailure;
+  readonly resolvedPath?: string;
+  readonly resolvedWorkspaceRoot?: string;
+  readonly operation?: ProjectDirectoryOperation;
+  readonly operationPath?: string;
+} {
+  switch (error._tag) {
+    case "WorkspaceRootNotExistsError":
+      return { failure: "workspace_root_not_found", resolvedPath: error.normalizedWorkspaceRoot };
+    case "WorkspaceRootCreateFailedError":
+      return {
+        failure: "workspace_root_create_failed",
+        resolvedPath: error.normalizedWorkspaceRoot,
+      };
+    case "WorkspaceRootStatFailedError":
+      return { failure: "workspace_root_stat_failed", resolvedPath: error.normalizedWorkspaceRoot };
+    case "WorkspaceRootNotDirectoryError":
+      return {
+        failure: "workspace_root_not_directory",
+        resolvedPath: error.normalizedWorkspaceRoot,
+      };
+    case "WorkspacePathOutsideRootError":
+      return { failure: "workspace_path_outside_root" };
+    case "WorkspaceDirectoryError":
+      return {
+        failure: error.failure,
+        ...(error.resolvedPath === undefined ? {} : { resolvedPath: error.resolvedPath }),
+        ...(error.resolvedWorkspaceRoot === undefined
+          ? {}
+          : { resolvedWorkspaceRoot: error.resolvedWorkspaceRoot }),
+        ...(error.operation === undefined ? {} : { operation: error.operation }),
+        ...(error.operationPath === undefined ? {} : { operationPath: error.operationPath }),
+      };
+    default:
+      return unexpectedCompatibilityError(error);
+  }
+}
+const layerWsRpc = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  serverBrowser: ServerBrowser.ServerBrowser["Service"],
 ) =>
   Layer.unwrap(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
+      const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const intakeContext = yield* Effect.context<
         | ThreadManagementService.ThreadManagementService
@@ -1142,14 +1247,19 @@ const makeWsRpcLayer = (
       const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
       const projectStore = yield* ProjectStore.ProjectStoreV2;
       const projectService = yield* ProjectService.ProjectService;
+      // SCIENT-FORK:START
+      const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+      // SCIENT-FORK:END
       const threadSearch = yield* ThreadSearch.ThreadSearch;
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
+      const analytics = yield* AnalyticsService.AnalyticsService;
       // Client-origin attribution (#7774): every thread/turn the connecting
       // client starts is credited to its surface + app version. Best-effort:
       // attribution must never fail the user's command.
       const originProps = clientAnalyticsProps;
-      const recordV2ClientCommandAnalytics = (command: OrchestrationV2Command) => {
+      const recordClientCommandAnalytics = (command: OrchestrationV2Command) => {
         switch (command.type) {
           case "message.dispatch":
             return analytics.record("client.turn.requested", originProps).pipe(Effect.ignore);
@@ -1160,10 +1270,16 @@ const makeWsRpcLayer = (
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
-      yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
+      const secretRequests = yield* SecretRequests.SecretRequests;
+      const pullRequests = yield* PullRequestService.PullRequestService;
+      const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
+      const deviceService = yield* DeviceService.DeviceService;
+      const deviceHostContext =
+        yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
+      const orchestrationEngine = yield* Orchestrator.OrchestratorV2;
       const crypto = yield* Crypto.Crypto;
-      const sql = yield* SqlClient.SqlClient;
-      /** A reference's host-level link key; the project's own host where the ref names none. */
+      const serverCommandId = (tag: string) =>
+        randomUUID.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
       const resolvePullRequestSyncKey = (reference: PullRequestRef) =>
         reference.host !== undefined && reference.repository.includes("/")
           ? Effect.succeed(pullRequestSyncKey(reference))
@@ -1173,33 +1289,31 @@ const makeWsRpcLayer = (
               ),
               Effect.orElseSucceed(() => null),
             );
-      const orchestratorV2 = yield* Orchestrator.OrchestratorV2;
-      const conversationForks = yield* ConversationForkService;
-      const analytics = yield* AnalyticsService.AnalyticsService;
-      yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const usage = yield* UsageService.UsageService;
+      const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
+      const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+      const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      const repositoryIdentityResolver =
+        yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const agentSessionImporter = yield* AgentSessionImporter.AgentSessionImporter;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
-      const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
+      const directEndpoints = yield* DirectEndpoints.DirectEndpoints;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
-      const deviceService = yield* DeviceService.DeviceService;
-      const deviceHostContext =
-        yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const modelManifest = yield* ModelManifest.ModelManifest;
       const providerVersionCache = yield* ProviderMaintenance.ProviderVersionCache;
-      const managedRuntimeCatalog = yield* ManagedRuntimeCatalog.ManagedRuntimeCatalog;
-      const providerConnectionManager = yield* ProviderConnectionManager.ProviderConnectionManager;
-      const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
       const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
       const acpRegistryCatalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
       const acpRegistryRuntimeCoordinator =
@@ -1208,34 +1322,14 @@ const makeWsRpcLayer = (
       const providerAuth = yield* ProviderAuthService.ProviderAuthService;
       const providerInstallation = yield* makeProviderInstallation();
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+      const capturedDocumentHostBroker = yield* DocumentHostBroker.DocumentHostBroker;
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
-      const voiceTranscriptCorrection = makeVoiceTranscriptCorrection({
-        registry: providerRegistry,
-        serverSettings,
-      });
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-      const analysis = yield* AnalysisService.AnalysisService;
-      const compute = yield* ComputeSessionService.ComputeSessionService;
-      const computeGateway = makeComputeRpcGateway({
-        workspaceResolver: yield* WorkspaceBindingResolver,
-        compute,
-        serverSettings: yield* ScientificRuntimePreferences,
-        workspaceFileSystem,
-      });
-      const scientSkillManagement = yield* ScientSkillManagement.ScientSkillManagement;
-      const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
-      const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
-      const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
-      const repositoryIdentityResolver =
-        yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
-      const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
-      const generatedDocuments = yield* GeneratedDocumentStore.GeneratedDocumentStore;
-      const conversationExports = yield* ConversationExportService;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
       yield* Effect.addFinalizer(() =>
@@ -1266,39 +1360,31 @@ const makeWsRpcLayer = (
       );
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
-      const pullRequests = yield* PullRequestService.PullRequestService;
       const withPullRequestViewer = pullRequests.withRoutingCredential;
-      const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const hostResources = yield* HostResources.HostResources;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
-      const usage = yield* UsageService.UsageService;
       const relayClient = yield* RelayClient.RelayClient;
-      const authorizationError = (requiredScope: AuthEnvironmentScope) =>
-        new EnvironmentAuthorizationError({
-          message: `The authenticated token is missing required scope: ${requiredScope}.`,
-          requiredScope,
-        });
+      // A webhook URL starts agent runs, so only sessions that may operate
+      // see it; read-only sessions still see the task itself.
+      const withVisibleWebhookUrls = (result: ScheduledTaskListResult): ScheduledTaskListResult =>
+        currentSession.scopes.includes(AuthOrchestrationOperateScope)
+          ? result
+          : {
+              tasks: result.tasks.map(({ webhook: _webhook, ...task }) => task),
+            };
+      // RpcScopeAuthorization checks each RPC's declared scope before its handler
+      // runs. This covers the one RPC whose scope depends on its input.
       const authorizeEffect = <A, E, R>(
         requiredScope: AuthEnvironmentScope,
         effect: Effect.Effect<A, E, R>,
       ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
         currentSession.scopes.includes(requiredScope)
           ? effect
-          : Effect.fail(authorizationError(requiredScope));
-      const authorizeStream = <A, E, R>(
-        requiredScope: AuthEnvironmentScope,
-        stream: Stream.Stream<A, E, R>,
-      ): Stream.Stream<A, E | EnvironmentAuthorizationError, R> =>
-        currentSession.scopes.includes(requiredScope)
-          ? stream
-          : Stream.fail(authorizationError(requiredScope));
-      // SCIENT-FORK:START — read-only clients never see provider authorization material.
-      const projectProvidersForCurrentSession = providerProjectionForSession(currentSession);
-      // SCIENT-FORK:END
+          : Effect.fail(rpcAuthorizationError(requiredScope));
 
       const acpRegistryProject = Effect.fn("ws.acpRegistry.project")(function* (
         projectId: ProjectId,
@@ -1433,7 +1519,7 @@ const makeWsRpcLayer = (
               provider?.models.find((candidate) => candidate.isDefault)?.slug ??
               provider?.models[0]?.slug ??
               "default";
-            const commandId = CommandId.make(NodeCrypto.randomUUID());
+            const commandId = CommandId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie));
             const launched = yield* Effect.result(
               startup.enqueueCommand(
                 threadLaunch.launch({
@@ -1476,7 +1562,9 @@ const makeWsRpcLayer = (
               if (racedImport !== null) return { threadId, imported: false } as const;
               return yield* new AcpRegistryOperationError({
                 reason: "session_import_failed",
+                // SCIENT-FORK:START — Scient-facing copy.
                 message: "Could not create a Scient thread for the ACP session.",
+                // SCIENT-FORK:END
                 cause: launched.failure,
               });
             }
@@ -1517,8 +1605,10 @@ const makeWsRpcLayer = (
             if (importedThread !== null) {
               return yield* new AcpRegistryOperationError({
                 reason: "session_delete_failed",
+                // SCIENT-FORK:START — Scient-facing copy.
                 message:
                   "Delete the imported Scient thread before deleting its native ACP session.",
+                // SCIENT-FORK:END
               });
             }
             yield* manager.deleteSession({
@@ -1622,55 +1712,6 @@ const makeWsRpcLayer = (
         yield* providerRegistry.refreshInstance(input.instanceId);
         return { disabled: true } as const;
       });
-      const observeRpcEffect = <A, E, R>(
-        method: string,
-        effect: Effect.Effect<A, E, R>,
-        traceAttributes?: Readonly<Record<string, unknown>>,
-      ) =>
-        instrumentRpcEffect(
-          method,
-          authorizeEffect(requiredScopeForRpcMethod(method), effect),
-          traceAttributes,
-        );
-      const observeRpcStream = <A, E, R>(
-        method: string,
-        stream: Stream.Stream<A, E, R>,
-        traceAttributes?: Readonly<Record<string, unknown>>,
-      ) =>
-        instrumentRpcStream(
-          method,
-          authorizeStream(requiredScopeForRpcMethod(method), stream),
-          traceAttributes,
-        );
-      const observeRpcStreamEffect = <A, StreamError, StreamContext, EffectError, EffectContext>(
-        method: string,
-        effect: Effect.Effect<
-          Stream.Stream<A, StreamError, StreamContext>,
-          EffectError,
-          EffectContext
-        >,
-        traceAttributes?: Readonly<Record<string, unknown>>,
-      ) =>
-        instrumentRpcStreamEffect(
-          method,
-          authorizeEffect(requiredScopeForRpcMethod(method), effect),
-          traceAttributes,
-        );
-      const toDispatchCommandError = (cause: unknown, fallbackMessage: string) =>
-        isOrchestrationDispatchCommandError(cause)
-          ? cause
-          : new OrchestrationDispatchCommandError({
-              message: cause instanceof Error ? cause.message : fallbackMessage,
-              cause,
-            });
-      const randomUUID = crypto.randomUUIDv4.pipe(
-        Effect.mapError((cause) =>
-          toDispatchCommandError(cause, "Failed to generate orchestration command identifier."),
-        ),
-      );
-      const serverCommandId = (tag: string) =>
-        randomUUID.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
-
       const loadAuthAccessSnapshot = () =>
         Effect.all({
           pairingLinks: serverAuth.listPairingLinks(),
@@ -1684,7 +1725,70 @@ const makeWsRpcLayer = (
           ),
         );
 
-      // SCIENT-FORK:START — Scratch and name-only project folders follow Scient's product policy.
+      const observeRpcEffect = <A, E, R>(
+        _method: string,
+        effect: Effect.Effect<A, E, R>,
+        attributes?: Readonly<Record<string, unknown>>,
+      ) =>
+        attributes === undefined
+          ? effect
+          : Effect.annotateCurrentSpan(attributes).pipe(Effect.andThen(effect));
+      const observeRpcStream = <A, E, R>(
+        _method: string,
+        stream: Stream.Stream<A, E, R>,
+        attributes?: Readonly<Record<string, unknown>>,
+      ) =>
+        attributes === undefined
+          ? stream
+          : Stream.unwrap(Effect.annotateCurrentSpan(attributes).pipe(Effect.as(stream)));
+      const observeRpcStreamEffect = <A, SE, SR, E, R>(
+        _method: string,
+        effect: Effect.Effect<Stream.Stream<A, SE, SR>, E, R>,
+        attributes?: Readonly<Record<string, unknown>>,
+      ) =>
+        Stream.unwrap(
+          attributes === undefined
+            ? effect
+            : Effect.annotateCurrentSpan(attributes).pipe(Effect.andThen(effect)),
+        );
+      const conversationForks = yield* ConversationForkService;
+      const managedRuntimeCatalog = yield* ManagedRuntimeCatalog.ManagedRuntimeCatalog;
+      const providerConnectionManager = yield* ProviderConnectionManager.ProviderConnectionManager;
+      const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
+      const voiceTranscriptCorrection = makeVoiceTranscriptCorrection({
+        registry: providerRegistry,
+        serverSettings,
+      });
+      const analysis = yield* AnalysisService.AnalysisService;
+      const compute = yield* ComputeSessionService.ComputeSessionService;
+      const computeGateway = makeComputeRpcGateway({
+        workspaceResolver: yield* WorkspaceBindingResolver,
+        compute,
+        serverSettings: yield* ScientificRuntimePreferences,
+        workspaceFileSystem,
+      });
+      const scientSkillManagement = yield* ScientSkillManagement.ScientSkillManagement;
+      const generatedDocuments = yield* GeneratedDocumentStore.GeneratedDocumentStore;
+      const conversationExports = yield* ConversationExportService;
+      const documentHostBroker = yield* DocumentHostBroker.DocumentHostBroker;
+      const projectProvidersForCurrentSession = providerProjectionForSession(currentSession);
+      const toDispatchCommandError = (cause: unknown, fallbackMessage: string) =>
+        isOrchestrationDispatchCommandError(cause)
+          ? cause
+          : new OrchestrationDispatchCommandError({
+              message: cause instanceof Error ? cause.message : fallbackMessage,
+              cause,
+            });
+      const randomUUID = crypto.randomUUIDv4.pipe(
+        Effect.mapError((cause) =>
+          toDispatchCommandError(cause, "Failed to generate orchestration command identifier."),
+        ),
+      );
+      const forkRpc = makeConversationForkRpcHandlers({
+        observeRpcEffect,
+        startup,
+        conversationForks,
+      });
       const {
         resolveScratchWorkspaceRoot,
         ensureScratchProject,
@@ -1698,10 +1802,6 @@ const makeWsRpcLayer = (
         serverCommandId,
         toDispatchCommandError,
       });
-      // SCIENT-FORK:END
-
-      // Only clients that answer /usage-limits themselves see it in the catalogs;
-      // an older client would send the injected command to the provider.
       const loadServerConfig = (options: { readonly usageLimitsCommand: boolean }) =>
         Effect.gen(function* () {
           const keybindingsConfig = yield* keybindings.loadConfigState;
@@ -1717,14 +1817,10 @@ const makeWsRpcLayer = (
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
           const scratchWorkspaceRoot = yield* resolveScratchWorkspaceRoot;
-          const availableEditors: ReadonlyArray<EditorId> = yield* resolveAvailableEditorsForConfig(
-            externalLauncher.resolveAvailableEditors(),
+          const editorConfig = yield* resolveEditorConfig(
+            yield* resolveAvailableEditorsForConfig(externalLauncher.resolveAvailableEditors()),
+            resolveFileManagerRevealKindForConfig(externalLauncher.resolveFileManagerRevealKind()),
           );
-          const fileManagerRevealKind = availableEditors.includes("file-manager")
-            ? yield* resolveFileManagerRevealKindForConfig(
-                externalLauncher.resolveFileManagerRevealKind(),
-              )
-            : undefined;
 
           return {
             environment,
@@ -1734,12 +1830,13 @@ const makeWsRpcLayer = (
             keybindings: keybindingsConfig.keybindings,
             issues: keybindingsConfig.issues,
             providers,
-            availableEditors,
+            ...editorConfig,
             // Same discovery-with-timeout treatment as editors: a slow probe
             // must not stall server.getConfig, so it degrades to no targets.
             remoteOpenTargets: yield* resolveAvailableEditorsForConfig(
               remoteOpenTargets.resolveTargets(),
             ),
+            directEndpoints: yield* resolveAvailableEditorsForConfig(directEndpoints.resolve()),
             observability: {
               logsDirectoryPath: config.logsDir,
               localTracingEnabled: true,
@@ -1756,15 +1853,8 @@ const makeWsRpcLayer = (
             },
             settings,
             shellResumeCompletionMarker: true,
-            ...(fileManagerRevealKind === undefined
-              ? {}
-              : {
-                  shellRevealInFileManager: true,
-                  shellRevealInFileManagerKind: fileManagerRevealKind,
-                }),
             threadResumeCompletionMarker: true,
             threadSnapshotPagination: true,
-            reasoningMessages: true,
             ...(scratchWorkspaceRoot === undefined ? {} : { scratchWorkspaceRoot }),
             ...(newProjectsRoot === undefined ? {} : { newProjectsRoot }),
           };
@@ -1839,32 +1929,164 @@ const makeWsRpcLayer = (
       });
 
       const mutateProject = Effect.fn("ws.projects.mutate")(function* (mutation: ProjectMutation) {
-        return yield* projectMutationOperation(projectService, mutation);
+        const result = yield* projectMutationOperation(projectService, mutation);
+        if (mutation.type === "project.delete")
+          yield* projectCloneTracker.discard(mutation.projectId);
+        return result;
       });
 
-      // SCIENT-FORK:START — message-boundary forks use Scient's native fork service.
-      const forkRpc = makeConversationForkRpcHandlers({
-        observeRpcEffect,
-        startup,
-        conversationForks,
+      const handlers0 = WsWorkspaceRpcGroup.of({
+        [WS_METHODS.documentsHostConnect]: (input) =>
+          Stream.unwrap(documentHostBroker.connect(input)),
+        [WS_METHODS.documentsHostRespond]: (input) => documentHostBroker.respond(input),
+        [WS_METHODS.mcpAppsCallTool]: (input) => mcpAppRequests.callTool(input),
+        [WS_METHODS.mcpAppsToolInfo]: (input) => mcpAppRequests.toolInfo(input),
+        [WS_METHODS.mcpAppsUpdateModelContext]: (input) => mcpAppRequests.updateModelContext(input),
+        [WS_METHODS.mcpAppsReadResource]: (input) => mcpAppRequests.readResource(input),
+        [WS_METHODS.shellOpenInEditor]: (input) => externalLauncher.launchEditor(input),
+        [WS_METHODS.filesystemBrowse]: (input) =>
+          workspaceEntries.browse(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new FilesystemBrowseError({
+                  ...input,
+                  ...filesystemBrowseFailureContext(cause),
+                  cause,
+                }),
+            ),
+          ),
+        [WS_METHODS.attachmentsCreateUploadUrl]: (input) => issueAttachmentUploadUrl(input),
+        [WS_METHODS.attachmentsDelete]: (input) => deletePendingAttachment(input.attachmentId),
+        [WS_METHODS.agentSessionsScan]: () => agentSessionScanner.scan,
+        [WS_METHODS.agentSessionsImport]: (input) =>
+          agentSessionImporter.importRecentAgentThreads(input),
+        [WS_METHODS.assetsCreateUrl]: (input) =>
+          Effect.gen(function* () {
+            const path = yield* Path.Path;
+            if (isScientAssetResource(input.resource)) {
+              return yield* issueScientAssetUrl(
+                { resource: input.resource },
+                { analysis, compute, generatedDocuments },
+              );
+            }
+            if (
+              input.resource._tag === "environment-file" ||
+              input.resource._tag === "media-file"
+            ) {
+              return yield* issueAssetUrl({ resource: input.resource });
+            }
+            // An absolute media path can be linked from a thread on another environment.
+            if (
+              input.resource._tag === "attachment" ||
+              input.resource._tag === "native-app-icon" ||
+              input.resource._tag === "tool-output-image" ||
+              // GitHub media names the repository it authenticates through itself.
+              input.resource._tag === "github-media"
+            ) {
+              return yield* issueAssetUrl({ resource: input.resource });
+            }
+            if (input.resource._tag === "draft-workspace-file") {
+              // A project draft names its workspace directly; there is no
+              // thread to resolve one from.
+              return yield* issueAssetUrl({
+                resource: input.resource,
+                workspaceRoot: input.resource.cwd,
+              });
+            }
+            if (input.resource._tag === "project-favicon") {
+              const project = yield* projectStore
+                .findActiveByWorkspaceRoot(input.resource.cwd)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new AssetWorkspaceContextResolutionError({
+                        resource: input.resource,
+                        cause,
+                      }),
+                  ),
+                );
+              if (Option.isNone(project)) {
+                return yield* new AssetWorkspaceContextNotFoundError({
+                  resource: input.resource,
+                });
+              }
+              // A cloned project exists before its files do. Clients ask again
+              // when the clone lands (see createProjectFaviconUrlAtomFamily).
+              const clone = yield* projectCloneTracker.get(project.value.projectId);
+              return yield* issueAssetUrl({
+                resource: input.resource,
+                ...(project.value.faviconPath
+                  ? { projectFaviconPath: project.value.faviconPath }
+                  : {}),
+                projectCheckoutPending:
+                  clone !== null &&
+                  clone.phase !== "done" &&
+                  clone.destinationPath === project.value.workspaceRoot,
+              });
+            }
+            if (input.resource.cwd !== undefined && input.resource.relativePath !== undefined) {
+              return yield* issueAssetUrl({ resource: input.resource });
+            }
+            if (input.resource.threadId === undefined || input.resource.path === undefined) {
+              return yield* new AssetWorkspaceContextNotFoundError({ resource: input.resource });
+            }
+            const thread = yield* threadManagement
+              .getThreadRecords(input.resource.threadId, [])
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new AssetWorkspaceContextResolutionError({
+                      resource: input.resource,
+                      cause,
+                    }),
+                ),
+              );
+            const project = yield* projectService.getById(thread.thread.projectId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new AssetWorkspaceContextResolutionError({
+                    resource: input.resource,
+                    cause,
+                  }),
+              ),
+            );
+            if (Option.isNone(project)) {
+              return yield* new AssetWorkspaceContextNotFoundError({
+                resource: input.resource,
+              });
+            }
+            return yield* issueAssetUrl({
+              resource: input.resource,
+              workspaceRoot: thread.thread.worktreePath ?? project.value.workspaceRoot,
+            });
+          }),
+        ...makeFileOpeningRpcHandlers({ observeRpcEffect, observeRpcStream }),
+        ...makeDocumentPdfRpcHandlers({
+          observeRpcEffect,
+          generatedDocuments,
+          conversationExports,
+          serverBrowser,
+        }),
       });
-      // SCIENT-FORK:END
-      const handlers0 = WsConversationRpcGroup.of({
-        // SCIENT-FORK: message-boundary forks go to Scient's native fork service first.
-        [ORCHESTRATION_WS_METHODS.dispatchCommand]: forkRpc.route((command) =>
+      const handlers1 = WsConversationRpcGroup.of({
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: forkRpc.route((command) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
             startup
               .enqueueCommand(
-                ThreadMessageIntake.dispatchCommand(
-                  ThreadManagementService.withCreationProvenance(command, {
-                    createdBy: "user",
-                    creationSource: "creationSource" in command ? command.creationSource : "web",
-                  }),
+                (command.type === "prepared-run.retry"
+                  ? threadLaunch.retryPreparation(command)
+                  : ThreadMessageIntake.dispatchCommand(
+                      ThreadManagementService.withCreationProvenance(command, {
+                        createdBy: "user",
+                        creationSource:
+                          "creationSource" in command ? command.creationSource : "web",
+                      }),
+                    )
                 ).pipe(Effect.provide(intakeContext)),
               )
               .pipe(
-                Effect.tap(() => recordV2ClientCommandAnalytics(command)),
+                Effect.tap(() => recordClientCommandAnalytics(command)),
                 Effect.map((result) => ThreadMessageIntake.dispatchCommandReceipt(command, result)),
                 Effect.mapError((cause) => dispatchCommandRpcError(command, cause)),
               ),
@@ -1889,445 +2111,332 @@ const makeWsRpcLayer = (
           ),
         ),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
-          observeRpcEffect(
-            ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
-            readWorkflowScript({ scriptPath: input.scriptPath }),
-            { "rpc.aggregate": "orchestration" },
+          readWorkflowScript({ scriptPath: input.scriptPath }),
+        [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input) =>
+          threadManagement.getTurnItem(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2GetThreadProjectionError({
+                  threadId: input.threadId,
+                  message: "Failed to load turn item",
+                  cause,
+                }),
+            ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: (input) =>
-          observeRpcEffect(
-            ORCHESTRATION_V2_WS_METHODS.getTurnDiff,
-            checkpointDiffQuery.getTurnDiff(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationGetTurnDiffError({
-                    message: "Failed to load turn diff",
-                    cause,
-                  }),
-              ),
+          checkpointDiffQuery.getTurnDiff(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationGetTurnDiffError({
+                  message: "Failed to load turn diff",
+                  cause,
+                }),
             ),
-            { "rpc.aggregate": "orchestration" },
           ),
         [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: (input) =>
-          observeRpcEffect(
-            ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,
-            checkpointDiffQuery.getFullThreadDiff(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationGetFullThreadDiffError({
-                    message: "Failed to load full thread diff",
-                    cause,
-                  }),
-              ),
+          checkpointDiffQuery.getFullThreadDiff(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationGetFullThreadDiffError({
+                  message: "Failed to load full thread diff",
+                  cause,
+                }),
             ),
-            { "rpc.aggregate": "orchestration" },
           ),
         [ORCHESTRATION_V2_WS_METHODS.searchThreads]: (input) =>
-          observeRpcEffect(
-            ORCHESTRATION_V2_WS_METHODS.searchThreads,
-            threadSearch.search(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationSearchThreadsError({
-                    message: "Failed to search threads",
-                    cause,
-                  }),
-              ),
+          threadSearch.search(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationSearchThreadsError({
+                  message: "Failed to search threads",
+                  cause,
+                }),
             ),
-            { "rpc.aggregate": "orchestration" },
           ),
         [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
-          observeRpcEffect(
-            ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
-            getOrchestrationV2ArchivedShellSnapshot,
-            { "rpc.aggregate": "orchestration" },
-          ),
+          getOrchestrationV2ArchivedShellSnapshot,
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (input) =>
-          observeRpcEffect(
-            ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
-            // Pre-pagination clients still call this compatibility endpoint.
-            // Keep stale clients from materializing an unbounded transcript.
-            threadManagement
-              .getThreadSnapshotWindow(input.threadId, {
-                rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
-              })
-              .pipe(
-                Effect.map((snapshot) =>
-                  projectThreadProjectionForWire(
-                    buildBoundedThreadProjection({
-                      projection: snapshot.projection,
-                      snapshotSequence: snapshot.snapshotSequence,
-                    }).projection,
+          Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(
+              // Pre-pagination clients still call this compatibility endpoint.
+              // Keep stale clients from materializing an unbounded transcript.
+              threadManagement
+                .getThreadSnapshotWindow(input.threadId, {
+                  rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+                })
+                .pipe(
+                  Effect.map((snapshot) =>
+                    projectThreadProjectionForWire(
+                      buildBoundedThreadProjection({
+                        projection: snapshot.projection,
+                        snapshotSequence: snapshot.snapshotSequence,
+                      }).projection,
+                    ),
+                  ),
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationV2GetThreadProjectionError({
+                        threadId: input.threadId,
+                        message: `Failed to load orchestration V2 thread ${input.threadId}`,
+                        cause,
+                      }),
                   ),
                 ),
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationV2GetThreadProjectionError({
-                      threadId: input.threadId,
-                      message: `Failed to load orchestration V2 thread ${input.threadId}`,
-                      cause,
-                    }),
-                ),
-              ),
-            {
-              "rpc.aggregate": "orchestrationV2",
-              "orchestration_v2.thread_id": input.threadId,
-            },
+            ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input) =>
-          observeRpcEffect(
-            ORCHESTRATION_V2_WS_METHODS.launchThread,
-            startup
-              .enqueueCommand(
-                ThreadMessageIntake.launchThread({
-                  commandId: input.commandId,
-                  ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
-                  ...(input.reuseExistingThread === undefined
-                    ? {}
-                    : { reuseExistingThread: input.reuseExistingThread }),
-                  projectId: input.projectId,
-                  title: input.title,
-                  ...(input.generateTitle === undefined
-                    ? {}
-                    : { generateTitle: input.generateTitle }),
-                  modelSelection: input.modelSelection,
-                  runtimeMode: input.runtimeMode,
-                  interactionMode: input.interactionMode,
-                  workspaceStrategy: input.workspaceStrategy,
-                  ...(input.initialMessage === undefined
-                    ? {}
-                    : {
-                        initialMessage: {
-                          ...(input.initialMessage.messageId === undefined
-                            ? {}
-                            : { messageId: input.initialMessage.messageId }),
-                          text: input.initialMessage.text,
-                          ...(input.initialMessage.selectedScientSkillNames === undefined
-                            ? {}
-                            : {
-                                selectedScientSkillNames:
-                                  input.initialMessage.selectedScientSkillNames,
-                              }),
-                          ...(input.initialMessage.sourcePlanRef === undefined
-                            ? {}
-                            : { sourcePlanRef: input.initialMessage.sourcePlanRef }),
-                          attachments: input.initialMessage.attachments,
-                          ...(input.initialMessage.context === undefined
-                            ? {}
-                            : { context: input.initialMessage.context }),
-                        },
-                      }),
-                  createdBy: "user",
-                  creationSource: input.creationSource ?? "web",
-                }).pipe(Effect.provide(intakeContext)),
-              )
-              .pipe(
-                Effect.tap(() =>
-                  analytics
-                    .record("client.thread.started", originProps)
-                    .pipe(
-                      Effect.andThen(
-                        input.initialMessage === undefined
-                          ? Effect.void
-                          : analytics.record("client.turn.requested", originProps),
+          Effect.annotateCurrentSpan({
+            "orchestration_v2.command_id": input.commandId,
+            "orchestration_v2.project_id": input.projectId,
+          }).pipe(
+            Effect.andThen(
+              startup
+                .enqueueCommand(
+                  ThreadMessageIntake.launchThread({
+                    commandId: input.commandId,
+                    ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+                    ...(input.reuseExistingThread === undefined
+                      ? {}
+                      : { reuseExistingThread: input.reuseExistingThread }),
+                    projectId: input.projectId,
+                    title: input.title,
+                    ...(input.generateTitle === undefined
+                      ? {}
+                      : { generateTitle: input.generateTitle }),
+                    modelSelection: input.modelSelection,
+                    runtimeMode: input.runtimeMode,
+                    interactionMode: input.interactionMode,
+                    workspaceStrategy: input.workspaceStrategy,
+                    ...(input.initialMessage === undefined
+                      ? {}
+                      : {
+                          initialMessage: {
+                            ...(input.initialMessage.selectedScientSkillNames === undefined
+                              ? {}
+                              : {
+                                  selectedScientSkillNames:
+                                    input.initialMessage.selectedScientSkillNames,
+                                }),
+                            ...(input.initialMessage.messageId === undefined
+                              ? {}
+                              : { messageId: input.initialMessage.messageId }),
+                            text: input.initialMessage.text,
+                            attachments: input.initialMessage.attachments,
+                            ...(input.initialMessage.context === undefined
+                              ? {}
+                              : { context: input.initialMessage.context }),
+                          },
+                        }),
+                    createdBy: "user",
+                    creationSource: input.creationSource ?? "web",
+                  }).pipe(Effect.provide(intakeContext)),
+                )
+                .pipe(
+                  Effect.tap(() =>
+                    analytics
+                      .record("client.thread.started", originProps)
+                      .pipe(
+                        Effect.andThen(
+                          input.initialMessage === undefined
+                            ? Effect.void
+                            : analytics.record("client.turn.requested", originProps),
+                        ),
+                        Effect.ignore,
                       ),
-                      Effect.ignore,
-                    ),
+                  ),
+                  Effect.map((result) => ({
+                    ...result,
+                    projection: projectThreadProjectionForWire(result.projection),
+                  })),
+                  Effect.catchTags({
+                    AttachmentClaimError: (cause) =>
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message: cause.message,
+                        cause,
+                      }),
+                    ThreadLaunchError: (cause) =>
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message: "Failed to launch thread",
+                        cause,
+                      }),
+                    ServerRuntimeStartupError: (cause) =>
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message: "Failed to launch thread",
+                        cause,
+                      }),
+                  }),
                 ),
-                Effect.map((result) => ({
-                  ...result,
-                  projection: projectThreadProjectionForWire(result.projection),
-                })),
-                Effect.catchTags({
-                  AttachmentClaimError: (cause) =>
-                    new OrchestrationV2ThreadLaunchError({
-                      commandId: input.commandId,
-                      projectId: input.projectId,
-                      message: cause.message,
-                      cause,
-                    }),
-                  ThreadLaunchError: (cause) =>
-                    new OrchestrationV2ThreadLaunchError({
-                      commandId: input.commandId,
-                      projectId: input.projectId,
-                      message: "Failed to launch thread",
-                      cause,
-                    }),
-                  ServerRuntimeStartupError: (cause) =>
-                    new OrchestrationV2ThreadLaunchError({
-                      commandId: input.commandId,
-                      projectId: input.projectId,
-                      message: "Failed to launch thread",
-                      cause,
-                    }),
-                }),
-              ),
-            {
-              "rpc.aggregate": "orchestration",
-              "orchestration_v2.command_id": input.commandId,
-              "orchestration_v2.project_id": input.projectId,
-            },
+            ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: (_input) =>
-          observeRpcStreamEffect(
-            ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
-            subscribeOrchestrationV2ArchivedShell(),
-            { "rpc.aggregate": "orchestration" },
-          ),
+          Stream.unwrap(subscribeOrchestrationV2ArchivedShell()),
         [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input) =>
-          observeRpcStreamEffect(
-            ORCHESTRATION_V2_WS_METHODS.subscribeShell,
-            subscribeOrchestrationV2Shell(input),
-            {
-              "rpc.aggregate": "orchestrationV2",
-            },
-          ),
+          Stream.unwrap(subscribeOrchestrationV2Shell(input)),
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
-          observeRpcStreamEffect(
-            ORCHESTRATION_V2_WS_METHODS.subscribeThread,
-            subscribeOrchestrationV2Thread(input),
-            {
-              "rpc.aggregate": "orchestrationV2",
-              "orchestration_v2.thread_id": input.threadId,
-            },
+          Stream.unwrap(
+            Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+              Effect.andThen(subscribeOrchestrationV2Thread(input)),
+            ),
           ),
         [WS_METHODS.scheduledTasksList]: (_input) =>
-          observeRpcEffect(WS_METHODS.scheduledTasksList, scheduledTasks.list(), {
-            "rpc.aggregate": "scheduledTasks",
-          }),
+          scheduledTasks.list().pipe(Effect.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
-          observeRpcStream(WS_METHODS.scheduledTasksSubscribe, scheduledTasks.subscribeList(), {
-            "rpc.aggregate": "scheduledTasks",
-          }),
-        [WS_METHODS.scheduledTasksUpsert]: (input) =>
-          observeRpcEffect(WS_METHODS.scheduledTasksUpsert, scheduledTasks.upsert(input), {
-            "rpc.aggregate": "scheduledTasks",
-          }),
+          scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
+        [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
-          observeRpcEffect(WS_METHODS.scheduledTasksSetEnabled, scheduledTasks.setEnabled(input), {
-            "rpc.aggregate": "scheduledTasks",
-            "scheduled_task.id": input.id,
-          }),
-        [WS_METHODS.scheduledTasksDelete]: (input) =>
-          observeRpcEffect(WS_METHODS.scheduledTasksDelete, scheduledTasks.delete(input), {
-            "rpc.aggregate": "scheduledTasks",
-            "scheduled_task.id": input.id,
-          }),
-        [WS_METHODS.scheduledTasksRunNow]: (input) =>
-          observeRpcEffect(WS_METHODS.scheduledTasksRunNow, scheduledTasks.runNow(input), {
-            "rpc.aggregate": "scheduledTasks",
-            "scheduled_task.id": input.id,
-          }),
-        [WS_METHODS.serverSearchAcpRegistry]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverSearchAcpRegistry,
-            acpRegistryCatalog
-              .search(input)
-              .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError)),
-            { "rpc.aggregate": "server" },
+          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(scheduledTasks.setEnabled(input)),
           ),
+        [WS_METHODS.scheduledTasksDelete]: (input) =>
+          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(scheduledTasks.delete(input)),
+          ),
+        [WS_METHODS.scheduledTasksRunNow]: (input) =>
+          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(scheduledTasks.runNow(input)),
+          ),
+        [WS_METHODS.scheduledTasksRotateWebhookToken]: (input) =>
+          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(scheduledTasks.rotateWebhookToken(input)),
+          ),
+        [WS_METHODS.secretsAnswerRequest]: (input) =>
+          Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(secretRequests.answer(input)),
+          ),
+        [WS_METHODS.scheduledTasksListWebhookDeliveries]: (input) =>
+          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(scheduledTasks.listWebhookDeliveries(input)),
+          ),
+        [WS_METHODS.scheduledTasksGetWebhookDelivery]: (input) =>
+          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(scheduledTasks.getWebhookDelivery(input)),
+          ),
+        [WS_METHODS.serverSearchAcpRegistry]: (input) =>
+          acpRegistryCatalog
+            .search(input)
+            .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError)),
         [WS_METHODS.serverPrepareAcpRegistryAgent]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverPrepareAcpRegistryAgent,
-            acpRegistryCatalog
-              .prepare(input)
-              .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError)),
-            {
-              "rpc.aggregate": "server",
-              "acp_registry.agent_id": input.agentId,
-            },
+          Effect.annotateCurrentSpan({ "acp_registry.agent_id": input.agentId }).pipe(
+            Effect.andThen(
+              acpRegistryCatalog
+                .prepare(input)
+                .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError)),
+            ),
           ),
         [WS_METHODS.serverUninstallAcpRegistryManagedBinary]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverUninstallAcpRegistryManagedBinary,
-            serverSettings
-              .withSettingsSnapshot((settings) =>
-                acpRegistryCatalog.uninstallManagedBinary(
-                  input,
-                  Effect.succeed(
-                    Object.values(settings.providerInstances).some((instance) => {
-                      if (
-                        instance.driver !== "acpRegistry" ||
-                        instance.config === null ||
-                        typeof instance.config !== "object"
-                      ) {
-                        return false;
-                      }
-                      return (instance.config as Record<string, unknown>).agentId === input.agentId;
-                    }),
-                  ),
-                ),
-              )
-              .pipe(
-                Effect.mapError((cause) =>
-                  AcpRegistrySupport.isAcpRegistryError(cause)
-                    ? cause
-                    : new AcpRegistrySupport.AcpRegistryError({
-                        reason: "install_failed",
-                        detail: `Could not read provider settings while checking references for ACP Registry agent ${input.agentId}.`,
-                        cause,
-                      }),
-                ),
-                Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError),
-              ),
-            {
-              "rpc.aggregate": "server",
-              "acp_registry.agent_id": input.agentId,
-            },
+          Effect.annotateCurrentSpan({ "acp_registry.agent_id": input.agentId }).pipe(
+            Effect.andThen(
+              acpRegistryCatalog
+                .uninstallManagedBinary(input)
+                .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError)),
+            ),
           ),
         [WS_METHODS.serverAcceptAcpRegistryUrlAuth]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverAcceptAcpRegistryUrlAuth,
-            acpRegistryRuntimeCoordinator
-              .acceptUrlAuthentication(input)
-              .pipe(Effect.map((accepted) => ({ accepted }))),
-            {
-              "rpc.aggregate": "server",
-              "provider.instance_id": input.instanceId,
-            },
+          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+            Effect.andThen(
+              acpRegistryRuntimeCoordinator
+                .acceptUrlAuthentication(input)
+                .pipe(Effect.map((accepted) => ({ accepted }))),
+            ),
           ),
         [WS_METHODS.serverListAcpRegistrySessions]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverListAcpRegistrySessions,
-            listAcpRegistrySessions(input),
-            {
-              "rpc.aggregate": "server",
-              "provider.instance_id": input.instanceId,
-              "project.id": input.projectId,
-            },
-          ),
-        [WS_METHODS.serverImportAcpRegistrySession]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverImportAcpRegistrySession,
-            importAcpRegistrySession(input),
-            {
-              "rpc.aggregate": "server",
-              "provider.instance_id": input.instanceId,
-              "project.id": input.projectId,
-            },
-          ),
-        [WS_METHODS.serverDeleteAcpRegistrySession]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverDeleteAcpRegistrySession,
-            deleteAcpRegistrySession(input),
-            {
-              "rpc.aggregate": "server",
-              "provider.instance_id": input.instanceId,
-              "project.id": input.projectId,
-            },
-          ),
-        [WS_METHODS.serverListAcpRegistryProviders]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverListAcpRegistryProviders,
-            listAcpRegistryProviders(input),
-            {
-              "rpc.aggregate": "server",
-              "provider.instance_id": input.instanceId,
-              "project.id": input.projectId,
-            },
-          ),
-        [WS_METHODS.serverSetAcpRegistryProvider]: (input) =>
-          observeRpcEffect(WS_METHODS.serverSetAcpRegistryProvider, setAcpRegistryProvider(input), {
-            "rpc.aggregate": "server",
+          Effect.annotateCurrentSpan({
             "provider.instance_id": input.instanceId,
             "project.id": input.projectId,
-          }),
+          }).pipe(Effect.andThen(listAcpRegistrySessions(input))),
+        [WS_METHODS.serverImportAcpRegistrySession]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "project.id": input.projectId,
+          }).pipe(Effect.andThen(importAcpRegistrySession(input))),
+        [WS_METHODS.serverDeleteAcpRegistrySession]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "project.id": input.projectId,
+          }).pipe(Effect.andThen(deleteAcpRegistrySession(input))),
+        [WS_METHODS.serverListAcpRegistryProviders]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "project.id": input.projectId,
+          }).pipe(Effect.andThen(listAcpRegistryProviders(input))),
+        [WS_METHODS.serverSetAcpRegistryProvider]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "project.id": input.projectId,
+          }).pipe(Effect.andThen(setAcpRegistryProvider(input))),
         [WS_METHODS.serverDisableAcpRegistryProvider]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverDisableAcpRegistryProvider,
-            disableAcpRegistryProvider(input),
-            {
-              "rpc.aggregate": "server",
-              "provider.instance_id": input.instanceId,
-              "project.id": input.projectId,
-            },
-          ),
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "project.id": input.projectId,
+          }).pipe(Effect.andThen(disableAcpRegistryProvider(input))),
         [WS_METHODS.serverLogoutAcpRegistry]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverLogoutAcpRegistry,
-            Effect.gen(function* () {
-              const { instance, manager } = yield* acpSessionManager(input.instanceId);
-              const snapshot = yield* instance.snapshot.getSnapshot;
-              if (snapshot.auth.canLogout !== true) {
-                return yield* new AcpRegistryOperationError({
-                  reason: "logout_unsupported",
-                  message: "The ACP agent does not advertise logout.",
-                });
-              }
-              if (instance.auth) {
-                yield* providerAuth.logout(input).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new AcpRegistryOperationError({
-                        reason: "logout_failed",
-                        message: "Could not sign out of the ACP agent.",
-                        cause,
-                      }),
-                  ),
-                );
-              } else {
-                yield* providerSessionManager.closeInstance(input.instanceId).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new AcpRegistryOperationError({
-                        reason: "logout_failed",
-                        message: "Could not stop live sessions before ACP logout.",
-                        cause,
-                      }),
-                  ),
-                );
-                yield* manager.logout(config.cwd);
-              }
-              yield* providerRegistry.refreshInstance(input.instanceId);
-              return { loggedOut: true } as const;
-            }),
-            {
-              "rpc.aggregate": "server",
-              "provider.instance_id": input.instanceId,
-            },
+          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+            Effect.andThen(
+              Effect.gen(function* () {
+                const { instance, manager } = yield* acpSessionManager(input.instanceId);
+                const snapshot = yield* instance.snapshot.getSnapshot;
+                if (snapshot.auth.canLogout !== true) {
+                  return yield* new AcpRegistryOperationError({
+                    reason: "logout_unsupported",
+                    message: "The ACP agent does not advertise logout.",
+                  });
+                }
+                if (instance.auth) {
+                  yield* providerAuth.logout(input).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new AcpRegistryOperationError({
+                          reason: "logout_failed",
+                          message: "Could not sign out of the ACP agent.",
+                          cause,
+                        }),
+                    ),
+                  );
+                } else {
+                  yield* providerSessionManager.closeInstance(input.instanceId).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new AcpRegistryOperationError({
+                          reason: "logout_failed",
+                          message: "Could not stop live sessions before ACP logout.",
+                          cause,
+                        }),
+                    ),
+                  );
+                  yield* manager.logout(config.cwd);
+                }
+                yield* providerRegistry.refreshInstance(input.instanceId);
+                return { loggedOut: true } as const;
+              }),
+            ),
           ),
         [WS_METHODS.projectsMutate]: (mutation) =>
-          observeRpcEffect(
-            WS_METHODS.projectsMutate,
-            startup.enqueueCommand(mutateProject(mutation)).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectMutationError({
-                    commandId: mutation.commandId,
-                    message:
-                      cause._tag === "ProjectNotEmptyError"
-                        ? cause.message
-                        : "Failed to mutate project.",
-                    cause,
-                  }),
-              ),
+          startup.enqueueCommand(mutateProject(mutation)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectMutationError({
+                  commandId: mutation.commandId,
+                  message:
+                    cause._tag === "ProjectNotEmptyError"
+                      ? cause.message
+                      : "Failed to mutate project.",
+                  cause,
+                }),
             ),
-            { "rpc.aggregate": "orchestration" },
           ),
         [WS_METHODS.assetsPersistChatAttachments]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.assetsPersistChatAttachments,
-            persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),
-            { "rpc.aggregate": "orchestration" },
-          ),
-        // SCIENT-FORK:START — fork options for a message-boundary fork.
+          persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),
         ...forkRpc.handlers,
-        // SCIENT-FORK:END
       });
-
-      const handlers1 = WsServerManagementRpcGroup.of({
-        [WS_METHODS.serverProbe]: (_input) =>
-          observeRpcEffect(WS_METHODS.serverProbe, Effect.succeed({}), {
-            "rpc.aggregate": "server",
-          }),
-        [WS_METHODS.serverGetConfig]: (_input) =>
-          observeRpcEffect(
-            WS_METHODS.serverGetConfig,
-            loadServerConfig({ usageLimitsCommand: false }),
-            {
-              "rpc.aggregate": "server",
-            },
-          ),
+      const handlers2 = WsServerManagementRpcGroup.of({
+        [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),
+        [WS_METHODS.serverGetConfig]: (_input) => loadServerConfig({ usageLimitsCommand: false }),
         [WS_METHODS.serverRefreshProviders]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverRefreshProviders,
@@ -2412,321 +2521,178 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "server" },
           ),
-        [WS_METHODS.voiceCorrectTranscript]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.voiceCorrectTranscript,
-            voiceTranscriptCorrection.correct(input),
-            { "rpc.aggregate": "voice" },
-          ),
         [WS_METHODS.providerUploadFeedback]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.providerUploadFeedback,
-            Effect.gen(function* () {
-              const projection = yield* threadManagement.getThreadRecords(input.threadId, [
-                "providerThreads",
-              ]);
-              const providerThread =
-                projection.providerThreads.find(
-                  (candidate) => candidate.id === projection.thread.activeProviderThreadId,
-                ) ?? projection.providerThreads.at(-1);
-              const providerSessionId = providerThread?.providerSessionId ?? null;
-              if (providerThread === undefined || providerSessionId === null) {
-                return yield* Effect.fail(
-                  new ProviderUploadFeedbackError({
+          Effect.gen(function* () {
+            const projection = yield* threadManagement.getThreadRecords(input.threadId, [
+              "providerThreads",
+            ]);
+            const providerThread =
+              projection.providerThreads.find(
+                (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+              ) ?? projection.providerThreads.at(-1);
+            const providerSessionId = providerThread?.providerSessionId ?? null;
+            if (providerThread === undefined || providerSessionId === null) {
+              return yield* Effect.fail(
+                new ProviderUploadFeedbackError({
+                  threadId: input.threadId,
+                  cause: "No provider session has run in this thread yet.",
+                }),
+              );
+            }
+            const runtime = Option.getOrNull(yield* providerSessionsV2.get(providerSessionId));
+            if (runtime === null) {
+              return yield* Effect.fail(
+                new ProviderUploadFeedbackError({
+                  threadId: input.threadId,
+                  cause: "The provider session is no longer running. Send a message first.",
+                }),
+              );
+            }
+            if (runtime.uploadFeedback === undefined) {
+              return yield* Effect.fail(
+                new ProviderUploadFeedbackError({
+                  threadId: input.threadId,
+                  cause: `Provider '${runtime.driver}' does not support feedback uploads.`,
+                }),
+              );
+            }
+            return yield* runtime.uploadFeedback({
+              providerThread,
+              ...(input.reason === undefined ? {} : { reason: input.reason }),
+            });
+          }).pipe(
+            Effect.mapError((cause) =>
+              isProviderUploadFeedbackError(cause)
+                ? cause
+                : new ProviderUploadFeedbackError({
                     threadId: input.threadId,
-                    cause: "No provider session has run in this thread yet.",
+                    cause,
                   }),
-                );
-              }
-              const runtime = Option.getOrNull(yield* providerSessionsV2.get(providerSessionId));
-              if (runtime === null) {
-                return yield* Effect.fail(
-                  new ProviderUploadFeedbackError({
-                    threadId: input.threadId,
-                    cause: "The provider session is no longer running. Send a message first.",
-                  }),
-                );
-              }
-              if (runtime.uploadFeedback === undefined) {
-                return yield* Effect.fail(
-                  new ProviderUploadFeedbackError({
-                    threadId: input.threadId,
-                    cause: `Provider '${runtime.driver}' does not support feedback uploads.`,
-                  }),
-                );
-              }
-              return yield* runtime.uploadFeedback({
-                providerThread,
-                ...(input.reason === undefined ? {} : { reason: input.reason }),
-              });
-            }).pipe(
-              Effect.mapError((cause) =>
-                isProviderUploadFeedbackError(cause)
-                  ? cause
-                  : new ProviderUploadFeedbackError({
-                      threadId: input.threadId,
-                      cause,
-                    }),
-              ),
             ),
-            { "rpc.aggregate": "provider" },
           ),
         [WS_METHODS.serverUpdateProvider]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverUpdateProvider,
-            providerMaintenanceRunner.updateProvider(input),
-            {
-              "rpc.aggregate": "server",
-            },
-          ),
+          providerMaintenanceRunner.updateProvider(input),
         [WS_METHODS.providerConsumeResetCredit]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.providerConsumeResetCredit,
-            Effect.gen(function* () {
-              if ("sourceId" in input) return yield* usageLimitSources.consumeResetCredit(input);
-              const instance = yield* providerInstances.getInstance(input.instanceId);
-              // A disabled instance must not spend anything on its account.
-              if (instance === undefined || !instance.enabled) {
-                return yield* new ProviderSetupError({
-                  instanceId: input.instanceId,
-                  operation: "consume-reset-credit",
-                  detail: instance ? "This provider is disabled." : "Provider instance not found.",
-                });
-              }
-              if (instance.consumeResetCredit === undefined) {
-                return yield* new ProviderSetupError({
-                  instanceId: input.instanceId,
-                  operation: "consume-reset-credit",
-                  detail: "This provider does not bank reset credits.",
-                });
-              }
-              const outcome = yield* instance.consumeResetCredit().pipe(
-                Effect.mapError(
-                  (error) =>
-                    new ProviderSetupError({
-                      instanceId: input.instanceId,
-                      operation: "consume-reset-credit",
-                      detail: error.detail,
-                      cause: error,
-                    }),
-                ),
-              );
-              return { outcome };
-            }),
-            { "rpc.aggregate": "provider" },
-          ),
-        [WS_METHODS.providerAuthStart]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.providerAuthStart,
-            providerAuth.start(input, currentSessionId),
-            { "rpc.aggregate": "provider" },
-          ),
+          Effect.gen(function* () {
+            if ("sourceId" in input) return yield* usageLimitSources.consumeResetCredit(input);
+            const instance = yield* providerInstances.getInstance(input.instanceId);
+            // A disabled instance must not spend anything on its account.
+            if (instance === undefined || !instance.enabled) {
+              return yield* new ProviderSetupError({
+                instanceId: input.instanceId,
+                operation: "consume-reset-credit",
+                detail: instance ? "This provider is disabled." : "Provider instance not found.",
+              });
+            }
+            if (instance.consumeResetCredit === undefined) {
+              return yield* new ProviderSetupError({
+                instanceId: input.instanceId,
+                operation: "consume-reset-credit",
+                detail: "This provider does not bank reset credits.",
+              });
+            }
+            const outcome = yield* instance.consumeResetCredit().pipe(
+              Effect.mapError(
+                (error) =>
+                  new ProviderSetupError({
+                    instanceId: input.instanceId,
+                    operation: "consume-reset-credit",
+                    detail: error.detail,
+                    cause: error,
+                  }),
+              ),
+            );
+            return { outcome };
+          }),
+        [WS_METHODS.providerAuthStart]: (input) => providerAuth.start(input, currentSessionId),
         [WS_METHODS.providerAuthRespond]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.providerAuthRespond,
-            providerAuth.respond(input, currentSessionId),
-            {
-              "rpc.aggregate": "provider",
-              instanceId: input.instanceId,
-            },
+          Effect.annotateCurrentSpan({ instanceId: input.instanceId }).pipe(
+            Effect.andThen(providerAuth.respond(input, currentSessionId)),
           ),
         [WS_METHODS.providerAuthComplete]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.providerAuthComplete,
-            providerAuth.complete(input, currentSessionId),
-            { "rpc.aggregate": "provider" },
-          ),
+          providerAuth.complete(input, currentSessionId),
         [WS_METHODS.chatGptReconnectProfile]: (input) =>
           rejectCodexSubscriptionSharing(input.instanceId, "export"),
         [WS_METHODS.chatGptImportProfile]: (input) =>
           rejectCodexSubscriptionSharing(input.instanceId, "import"),
         [WS_METHODS.chatGptHandoffSubscribe]: (input) =>
           Stream.fromEffect(rejectCodexSubscriptionSharing(input.instanceId, "handoff")),
-        [WS_METHODS.codexAuthCallbackSubscribe]: (input) =>
-          observeRpcStream(
-            WS_METHODS.codexAuthCallbackSubscribe,
-            Stream.fromEffect(rejectCodexSubscriptionSharing(input.instanceId, "callback")),
-            {
-              "rpc.aggregate": "provider",
-            },
-          ),
-        [WS_METHODS.providerAuthCancel]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.providerAuthCancel,
-            providerAuth.cancel(input, currentSessionId),
-            { "rpc.aggregate": "provider" },
-          ),
-        [WS_METHODS.providerAuthLogout]: (input) =>
-          observeRpcEffect(WS_METHODS.providerAuthLogout, providerAuth.logout(input), {
-            "rpc.aggregate": "provider",
-          }),
+        [WS_METHODS.codexAuthCallbackSubscribe]: (input) => subscribeCodexAuthCallback(input),
+        [WS_METHODS.providerAuthCancel]: (input) => providerAuth.cancel(input, currentSessionId),
+        [WS_METHODS.providerAuthLogout]: (input) => providerAuth.logout(input),
         [WS_METHODS.providerAuthSubscribe]: (input) =>
-          observeRpcStream(
-            WS_METHODS.providerAuthSubscribe,
-            providerAuth.subscribe(input, currentSessionId),
-            { "rpc.aggregate": "provider" },
-          ),
-        [WS_METHODS.providerInstallStart]: (input) =>
-          observeRpcEffect(WS_METHODS.providerInstallStart, providerInstallation.start(input), {
-            "rpc.aggregate": "provider",
-          }),
-        [WS_METHODS.providerInstallCancel]: (input) =>
-          observeRpcEffect(WS_METHODS.providerInstallCancel, providerInstallation.cancel(input), {
-            "rpc.aggregate": "provider",
-          }),
-        [WS_METHODS.providerInstallSubscribe]: (input) =>
-          observeRpcStream(
-            WS_METHODS.providerInstallSubscribe,
-            providerInstallation.subscribe(input),
-            { "rpc.aggregate": "provider" },
-          ),
-        [WS_METHODS.providerInstallRemove]: (input) =>
-          observeRpcEffect(WS_METHODS.providerInstallRemove, providerInstallation.remove(input), {
-            "rpc.aggregate": "provider",
-          }),
-        [WS_METHODS.serverUpdateServer]: (input) =>
-          observeRpcEffect(WS_METHODS.serverUpdateServer, serverSelfUpdate.update(input), {
-            "rpc.aggregate": "server",
-          }),
+          providerAuth.subscribe(input, currentSessionId),
+        [WS_METHODS.providerInstallStart]: (input) => providerInstallation.start(input),
+        [WS_METHODS.providerInstallCancel]: (input) => providerInstallation.cancel(input),
+        [WS_METHODS.providerInstallSubscribe]: (input) => providerInstallation.subscribe(input),
+        [WS_METHODS.providerInstallRemove]: (input) => providerInstallation.remove(input),
+        [WS_METHODS.serverUpdateServer]: (input) => serverSelfUpdate.update(input),
         [WS_METHODS.serverUpdateServerWithProgress]: (input) =>
-          observeRpcStream(
-            WS_METHODS.serverUpdateServerWithProgress,
-            Stream.callback<ServerSelfUpdateProgressEvent, ServerSelfUpdateError>((queue) =>
-              serverSelfUpdate
-                .update(input, (stage) =>
+          Stream.callback<ServerSelfUpdateProgressEvent, ServerSelfUpdateError>((queue) =>
+            serverSelfUpdate
+              .update(input, (stage) =>
+                Queue.offer(queue, {
+                  type: "progress",
+                  stage,
+                }).pipe(Effect.asVoid),
+              )
+              .pipe(
+                Effect.flatMap((result) =>
                   Queue.offer(queue, {
-                    type: "progress",
-                    stage,
-                  }).pipe(Effect.asVoid),
-                )
-                .pipe(
-                  Effect.flatMap((result) =>
-                    Queue.offer(queue, {
-                      type: "complete",
-                      result,
-                    }),
-                  ),
-                  Effect.catchTags({
-                    ServerSelfUpdateError: (error) => Queue.fail(queue, error),
+                    type: "complete",
+                    result,
                   }),
-                  Effect.andThen(Queue.end(queue)),
-                  Effect.forkScoped,
                 ),
-            ),
-            { "rpc.aggregate": "server" },
+                Effect.catchTags({
+                  ServerSelfUpdateError: (error) => Queue.fail(queue, error),
+                }),
+                Effect.andThen(Queue.end(queue)),
+                Effect.forkScoped,
+              ),
           ),
         [WS_METHODS.serverCommitDesktopUpdate]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverCommitDesktopUpdate,
-            serverSelfUpdate.commitDesktopUpdate(input.requestId),
-            { "rpc.aggregate": "server" },
-          ),
+          serverSelfUpdate.commitDesktopUpdate(input.requestId),
         [WS_METHODS.serverUpsertKeybinding]: (rule) =>
-          observeRpcEffect(
-            WS_METHODS.serverUpsertKeybinding,
-            Effect.gen(function* () {
-              const keybindingsConfig = yield* keybindings.upsertKeybindingRule(rule);
-              return { keybindings: keybindingsConfig, issues: [] };
-            }),
-            { "rpc.aggregate": "server" },
-          ),
+          Effect.gen(function* () {
+            const keybindingsConfig = yield* keybindings.upsertKeybindingRule(rule);
+            return { keybindings: keybindingsConfig, issues: [] };
+          }),
         [WS_METHODS.serverRemoveKeybinding]: (rule) =>
-          observeRpcEffect(
-            WS_METHODS.serverRemoveKeybinding,
-            Effect.gen(function* () {
-              const keybindingsConfig = yield* keybindings.removeKeybindingRule(rule);
-              return { keybindings: keybindingsConfig, issues: [] };
-            }),
-            { "rpc.aggregate": "server" },
-          ),
+          Effect.gen(function* () {
+            const keybindingsConfig = yield* keybindings.removeKeybindingRule(rule);
+            return { keybindings: keybindingsConfig, issues: [] };
+          }),
         [WS_METHODS.serverGetSettings]: (_input) =>
-          observeRpcEffect(
-            WS_METHODS.serverGetSettings,
-            serverSettings.getSettings.pipe(
-              Effect.map(ServerSettings.redactServerSettingsForClient),
-            ),
-            {
-              "rpc.aggregate": "server",
-            },
-          ),
+          serverSettings.getSettings.pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
         [WS_METHODS.serverUpdateSettings]: ({ patch, providerInstanceMutation }) =>
-          observeRpcEffect(
-            WS_METHODS.serverUpdateSettings,
-            Effect.gen(function* () {
-              const deviceHosts = patch.deviceHosts
-                ? yield* remoteSshDeviceHosts(patch.deviceHosts).pipe(
-                    Effect.provide(deviceHostContext),
-                  )
-                : undefined;
-              const nextPatch = { ...patch, ...(deviceHosts ? { deviceHosts } : {}) };
-              const settings = yield* providerInstanceMutation === undefined
-                ? serverSettings.updateSettings(nextPatch)
-                : serverSettings.updateProviderInstance(providerInstanceMutation, nextPatch);
-              return ServerSettings.redactServerSettingsForClient(settings);
-            }),
-            {
-              "rpc.aggregate": "server",
-            },
-          ),
-        [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
-          observeRpcEffect(
-            WS_METHODS.serverDiscoverSourceControl,
-            sourceControlDiscovery.discover,
-            {
-              "rpc.aggregate": "server",
-            },
-          ),
+          Effect.gen(function* () {
+            const deviceHosts = patch.deviceHosts
+              ? yield* remoteSshDeviceHosts(patch.deviceHosts).pipe(
+                  Effect.provide(deviceHostContext),
+                )
+              : undefined;
+            const nextPatch = { ...patch, ...(deviceHosts ? { deviceHosts } : {}) };
+            const settings = yield* providerInstanceMutation === undefined
+              ? serverSettings.updateSettings(nextPatch)
+              : serverSettings.updateProviderInstance(providerInstanceMutation, nextPatch);
+            return ServerSettings.redactServerSettingsForClient(settings);
+          }),
+        [WS_METHODS.serverDiscoverSourceControl]: (_input) => sourceControlDiscovery.discover,
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
-          observeRpcEffect(
-            WS_METHODS.serverGetTraceDiagnostics,
-            TraceDiagnostics.readTraceDiagnostics({
-              traceFilePath: config.serverTracePath,
-              maxFiles: config.traceMaxFiles,
-            }),
-            {
-              "rpc.aggregate": "server",
-            },
-          ),
-        [WS_METHODS.serverGetProcessDiagnostics]: (_input) =>
-          observeRpcEffect(WS_METHODS.serverGetProcessDiagnostics, processDiagnostics.read, {
-            "rpc.aggregate": "server",
+          TraceDiagnostics.readTraceDiagnostics({
+            traceFilePath: config.serverTracePath,
+            maxFiles: config.traceMaxFiles,
           }),
-        [WS_METHODS.serverGetHostResources]: (_input) =>
-          observeRpcEffect(WS_METHODS.serverGetHostResources, hostResources.read, {
-            "rpc.aggregate": "server",
-          }),
+        [WS_METHODS.serverGetProcessDiagnostics]: (_input) => processDiagnostics.read,
+        [WS_METHODS.serverGetHostResources]: (_input) => hostResources.read,
         [WS_METHODS.serverGetProcessResourceHistory]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverGetProcessResourceHistory,
-            processResourceMonitor.readHistory(input),
-            {
-              "rpc.aggregate": "server",
-            },
-          ),
+          processResourceMonitor.readHistory(input),
         [WS_METHODS.serverGetResourceTelemetryHistory]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverGetResourceTelemetryHistory,
-            resourceTelemetry.readHistory(input),
-            {
-              "rpc.aggregate": "server",
-            },
-          ),
-        [WS_METHODS.serverGetUsageSummary]: (input) =>
-          observeRpcEffect(WS_METHODS.serverGetUsageSummary, usage.readSummary(input), {
-            "rpc.aggregate": "server",
-          }),
-        [WS_METHODS.serverRefreshUsageRates]: (_input) =>
-          observeRpcEffect(WS_METHODS.serverRefreshUsageRates, usage.refreshRates, {
-            "rpc.aggregate": "server",
-          }),
-        [WS_METHODS.serverRetryResourceTelemetry]: (_input) =>
-          observeRpcEffect(WS_METHODS.serverRetryResourceTelemetry, resourceTelemetry.retry, {
-            "rpc.aggregate": "server",
-          }),
-        [WS_METHODS.serverSignalProcess]: (input) =>
-          observeRpcEffect(WS_METHODS.serverSignalProcess, processDiagnostics.signal(input), {
-            "rpc.aggregate": "server",
-          }),
+          resourceTelemetry.readHistory(input),
+        [WS_METHODS.serverGetUsageSummary]: (input) => usage.readSummary(input),
+        [WS_METHODS.serverRefreshUsageRates]: (_input) => usage.refreshRates,
+        [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
+        [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),
         [WS_METHODS.serverReportClientActivity]: (input, metadata) =>
           Ref.update(rpcClientIds, (clientIds) => {
             const next = new Set(clientIds);
@@ -2734,61 +2700,48 @@ const makeWsRpcLayer = (
             return next;
           }).pipe(
             Effect.andThen(
-              observeRpcEffect(
-                WS_METHODS.serverReportClientActivity,
-                backgroundPolicy.reportClientActivity(
-                  currentSessionId,
-                  RpcClientId.make(metadata.client.id),
-                  input,
-                ),
-                { "rpc.aggregate": "server" },
+              backgroundPolicy.reportClientActivity(
+                currentSessionId,
+                RpcClientId.make(metadata.client.id),
+                input,
               ),
             ),
           ),
         [WS_METHODS.serverReportHostPowerState]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverReportHostPowerState,
-            backgroundPolicy.reportHostPowerState(input),
-            { "rpc.aggregate": "server" },
-          ),
-        [WS_METHODS.serverGetBackgroundPolicy]: (_input) =>
-          observeRpcEffect(WS_METHODS.serverGetBackgroundPolicy, backgroundPolicy.snapshot, {
-            "rpc.aggregate": "server",
-          }),
-        [WS_METHODS.cloudGetRelayClientStatus]: (_input) =>
-          observeRpcEffect(WS_METHODS.cloudGetRelayClientStatus, relayClient.resolve, {
-            "rpc.aggregate": "cloud",
-          }),
+          backgroundPolicy.reportHostPowerState(input),
+        [WS_METHODS.serverGetBackgroundPolicy]: (_input) => backgroundPolicy.snapshot,
+        [WS_METHODS.cloudGetRelayClientStatus]: (_input) => relayClient.resolve,
         [WS_METHODS.cloudInstallRelayClient]: (_input) =>
-          observeRpcStream(
-            WS_METHODS.cloudInstallRelayClient,
-            Stream.callback<RelayClientInstallProgressEvent, RelayClientInstallFailedError>(
-              (queue) =>
-                relayClient
-                  .installWithProgress((event) => Queue.offer(queue, event).pipe(Effect.asVoid))
-                  .pipe(
-                    Effect.flatMap((status) =>
-                      Queue.offer(queue, {
-                        type: "complete",
-                        status,
+          Stream.callback<RelayClientInstallProgressEvent, RelayClientInstallFailedError>((queue) =>
+            relayClient
+              .installWithProgress((event) => Queue.offer(queue, event).pipe(Effect.asVoid))
+              .pipe(
+                Effect.flatMap((status) =>
+                  Queue.offer(queue, {
+                    type: "complete",
+                    status,
+                  }),
+                ),
+                Effect.catchTags({
+                  RelayClientInstallError: (error) =>
+                    Queue.fail(
+                      queue,
+                      new RelayClientInstallFailedError({
+                        reason: error.reason,
+                        message: error.message,
                       }),
                     ),
-                    Effect.catchTag("RelayClientInstallError", (error) =>
-                      Queue.fail(
-                        queue,
-                        new RelayClientInstallFailedError({
-                          reason: error.reason,
-                          message: error.message,
-                        }),
-                      ),
-                    ),
-                    Effect.andThen(Queue.end(queue)),
-                    Effect.forkScoped,
-                  ),
-            ),
-            { "rpc.aggregate": "cloud" },
+                }),
+                Effect.andThen(Queue.end(queue)),
+                Effect.forkScoped,
+              ),
           ),
-        // SCIENT-FORK:START — Scient provider connection, runtime, custom model and skill handlers.
+        [WS_METHODS.voiceCorrectTranscript]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.voiceCorrectTranscript,
+            voiceTranscriptCorrection.correct(input),
+            { "rpc.aggregate": "voice" },
+          ),
         ...makeProviderConnectionRpcHandlers({
           observeRpcEffect,
           providerConnectionManager,
@@ -2807,287 +2760,131 @@ const makeWsRpcLayer = (
           scientSkillManagement,
           providerRegistry,
         }),
-        // SCIENT-FORK:END
       });
-
-      const handlers2 = WsRepositoryRpcGroup.of({
-        [WS_METHODS.pullRequestsList]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsList, pullRequests.list(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
-        [WS_METHODS.pullRequestsListStats]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsListStats, pullRequests.listStats(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
-        [WS_METHODS.pullRequestsRoutingIdentity]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsRoutingIdentity,
-            pullRequests.routingIdentity(input),
-            {
-              "rpc.aggregate": "pull-requests",
-            },
-          ),
-        [WS_METHODS.pullRequestsRouting]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsRouting, pullRequests.routing(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
+      const handlers3 = WsRepositoryRpcGroup.of({
+        [WS_METHODS.pullRequestsList]: (input) => pullRequests.list(input),
+        [WS_METHODS.pullRequestsListStats]: (input) => pullRequests.listStats(input),
+        [WS_METHODS.pullRequestsRoutingIdentity]: (input) => pullRequests.routingIdentity(input),
+        [WS_METHODS.pullRequestsRouting]: (input) => pullRequests.routing(input),
         [WS_METHODS.pullRequestsSummary]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsSummary,
-            withPullRequestViewer(input, pullRequests.summary(input)),
-            {
-              "rpc.aggregate": "pull-requests",
-            },
-          ),
+          withPullRequestViewer(input, pullRequests.summary(input)),
         [WS_METHODS.pullRequestsStack]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsStack,
-            withPullRequestViewer(input, pullRequests.stack(input)),
-            {
-              "rpc.aggregate": "pull-requests",
-            },
-          ),
+          withPullRequestViewer(input, pullRequests.stack(input)),
         [WS_METHODS.pullRequestsLinkedThreads]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsLinkedThreads,
-            resolvePullRequestSyncKey(input).pipe(
-              Effect.flatMap((key) =>
-                key === null
-                  ? Effect.succeed({ threads: [] })
-                  : listLinkedPullRequestThreads(key).pipe(
-                      Effect.provideService(SqlClient.SqlClient, sql),
-                    ),
-              ),
+          resolvePullRequestSyncKey(input).pipe(
+            Effect.flatMap((key) =>
+              key === null
+                ? Effect.succeed({ threads: [] })
+                : listLinkedPullRequestThreads(key).pipe(
+                    Effect.provideService(SqlClient.SqlClient, sql),
+                  ),
             ),
-            { "rpc.aggregate": "pull-requests" },
           ),
         [WS_METHODS.pullRequestsDetail]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsDetail,
-            withPullRequestViewer(input, pullRequests.detail(input)),
-            {
-              "rpc.aggregate": "pull-requests",
-            },
-          ),
+          withPullRequestViewer(input, pullRequests.detail(input)),
         [WS_METHODS.pullRequestsPreview]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsPreview,
-            withPullRequestViewer(input, pullRequests.preview(input)),
-            { "rpc.aggregate": "pull-requests" },
-          ),
+          withPullRequestViewer(input, pullRequests.preview(input)),
         [WS_METHODS.pullRequestsChecks]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsChecks,
-            withPullRequestViewer(input, pullRequests.checks(input)),
-            { "rpc.aggregate": "pull-requests" },
-          ),
+          withPullRequestViewer(input, pullRequests.checks(input)),
         [WS_METHODS.pullRequestsActivity]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsActivity,
-            withPullRequestViewer(input, pullRequests.activity(input)),
-            {
-              "rpc.aggregate": "pull-requests",
-            },
-          ),
+          withPullRequestViewer(input, pullRequests.activity(input)),
         [WS_METHODS.pullRequestsThreadComments]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsThreadComments,
-            withPullRequestViewer(input, pullRequests.threadComments(input)),
-            {
-              "rpc.aggregate": "pull-requests",
-            },
-          ),
+          withPullRequestViewer(input, pullRequests.threadComments(input)),
         [WS_METHODS.pullRequestsDiffFileContents]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsDiffFileContents,
-            withPullRequestViewer(input, pullRequests.diffFileContents(input)),
-            { "rpc.aggregate": "pull-requests" },
-          ),
+          withPullRequestViewer(input, pullRequests.diffFileContents(input)),
         [WS_METHODS.pullRequestsFilesViewed]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsFilesViewed,
-            withPullRequestViewer(input, pullRequests.filesViewed(input)),
-            { "rpc.aggregate": "pull-requests" },
-          ),
+          withPullRequestViewer(input, pullRequests.filesViewed(input)),
         [WS_METHODS.pullRequestsSetFilesViewed]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsSetFilesViewed,
-            withPullRequestViewer(input, pullRequests.setFilesViewed(input)),
-            { "rpc.aggregate": "pull-requests" },
-          ),
+          withPullRequestViewer(input, pullRequests.setFilesViewed(input)),
         [WS_METHODS.pullRequestsRunAction]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsRunAction,
-            withPullRequestViewer(input, pullRequests.runAction(input)).pipe(
-              Effect.tap(() =>
-                resolvePullRequestSyncKey(input).pipe(
-                  Effect.flatMap((key) =>
-                    key === null ? Effect.void : pullRequestSync.requestSync(key),
-                  ),
+          withPullRequestViewer(input, pullRequests.runAction(input)).pipe(
+            Effect.tap(() =>
+              resolvePullRequestSyncKey(input).pipe(
+                Effect.flatMap((key) =>
+                  key === null ? Effect.void : pullRequestSync.requestSync(key),
                 ),
               ),
             ),
-            { "rpc.aggregate": "pull-requests" },
           ),
         [WS_METHODS.pullRequestsUpdate]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsUpdate,
-            withPullRequestViewer(input, pullRequests.update(input)),
-            {
-              "rpc.aggregate": "pull-requests",
-            },
-          ),
+          withPullRequestViewer(input, pullRequests.update(input)),
         [WS_METHODS.pullRequestsComment]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsComment,
-            withPullRequestViewer(input, pullRequests.comment(input)),
-            {
-              "rpc.aggregate": "pull-requests",
-            },
-          ),
+          withPullRequestViewer(input, pullRequests.comment(input)),
         [WS_METHODS.pullRequestsUpdateComment]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsUpdateComment,
-            withPullRequestViewer(input, pullRequests.updateComment(input)),
-            {
-              "rpc.aggregate": "pull-requests",
-            },
-          ),
+          withPullRequestViewer(input, pullRequests.updateComment(input)),
         [WS_METHODS.pullRequestsSubmitReview]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsSubmitReview,
-            withPullRequestViewer(input, pullRequests.submitReview(input)),
-            {
-              "rpc.aggregate": "pull-requests",
-            },
-          ),
+          withPullRequestViewer(input, pullRequests.submitReview(input)),
         [WS_METHODS.pullRequestsReplyToThread]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsReplyToThread,
-            withPullRequestViewer(input, pullRequests.replyToThread(input)),
-            { "rpc.aggregate": "pull-requests" },
-          ),
+          withPullRequestViewer(input, pullRequests.replyToThread(input)),
         [WS_METHODS.pullRequestsSetThreadResolution]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsSetThreadResolution,
-            withPullRequestViewer(input, pullRequests.setThreadResolution(input)),
-            { "rpc.aggregate": "pull-requests" },
-          ),
+          withPullRequestViewer(input, pullRequests.setThreadResolution(input)),
         [WS_METHODS.pullRequestsSetReaction]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsSetReaction,
-            withPullRequestViewer(input, pullRequests.setReaction(input)),
-            {
-              "rpc.aggregate": "pull-requests",
-            },
-          ),
+          withPullRequestViewer(input, pullRequests.setReaction(input)),
         [WS_METHODS.pullRequestsInvalidate]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsInvalidate,
-            pullRequests.invalidate(input, { notifyReaders: true }).pipe(
-              // A reader asking for fresh host state also wants the thread badges it feeds to
-              // catch up, including a merged link the sweep would otherwise never revisit.
-              Effect.andThen(
-                input.reference === undefined || input.filesViewedOnly === true
-                  ? Effect.void
-                  : resolvePullRequestSyncKey(input.reference).pipe(
-                      Effect.flatMap((key) =>
-                        key === null ? Effect.void : pullRequestSync.requestSync(key),
-                      ),
+          pullRequests.invalidate(input, { notifyReaders: true }).pipe(
+            // A reader asking for fresh host state also wants the thread badges it feeds to
+            // catch up, including a merged link the sweep would otherwise never revisit.
+            Effect.andThen(
+              input.reference === undefined || input.filesViewedOnly === true
+                ? Effect.void
+                : resolvePullRequestSyncKey(input.reference).pipe(
+                    Effect.flatMap((key) =>
+                      key === null ? Effect.void : pullRequestSync.requestSync(key),
                     ),
-              ),
+                  ),
             ),
-            { "rpc.aggregate": "pull-requests" },
           ),
-        [WS_METHODS.pullRequestsSubscribeRefreshes]: () =>
-          observeRpcStream(
-            WS_METHODS.pullRequestsSubscribeRefreshes,
-            pullRequests.subscribeRefreshes,
-            { "rpc.aggregate": "pull-requests" },
-          ),
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => pullRequests.subscribeRefreshes,
         [WS_METHODS.pullRequestsReviewerCandidates]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsReviewerCandidates,
-            withPullRequestViewer(input, pullRequests.reviewerCandidates(input)),
-            { "rpc.aggregate": "pull-requests" },
-          ),
+          withPullRequestViewer(input, pullRequests.reviewerCandidates(input)),
         [WS_METHODS.pullRequestsRequestReviewers]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsRequestReviewers,
-            withPullRequestViewer(input, pullRequests.requestReviewers(input)),
-            { "rpc.aggregate": "pull-requests" },
-          ),
+          withPullRequestViewer(input, pullRequests.requestReviewers(input)),
         [WS_METHODS.pullRequestsLabelCandidates]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsLabelCandidates,
-            withPullRequestViewer(input, pullRequests.labelCandidates(input)),
-            { "rpc.aggregate": "pull-requests" },
-          ),
+          withPullRequestViewer(input, pullRequests.labelCandidates(input)),
         [WS_METHODS.pullRequestsSetLabels]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pullRequestsSetLabels,
-            withPullRequestViewer(input, pullRequests.setLabels(input)),
-            {
-              "rpc.aggregate": "pull-requests",
-            },
-          ),
+          withPullRequestViewer(input, pullRequests.setLabels(input)),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.sourceControlLookupRepository,
-            sourceControlRepositories.lookupRepository(input),
-            {
-              "rpc.aggregate": "source-control",
-            },
-          ),
+          sourceControlRepositories.lookupRepository(input),
         [WS_METHODS.sourceControlCloneRepository]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.sourceControlCloneRepository,
-            sourceControlRepositories.cloneRepository(input),
-            {
-              "rpc.aggregate": "source-control",
-            },
-          ),
+          sourceControlRepositories.cloneRepository(input),
         [WS_METHODS.projectCloneStart]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.projectCloneStart,
-            projectCloneTracker.start(input, {
-              createProject: (project) =>
-                Effect.gen(function* () {
-                  yield* projectService.create({
-                    commandId: yield* serverCommandId("project-clone-create"),
+          projectCloneTracker.start(input, {
+            createProject: (project) =>
+              projectService
+                .create({
+                  commandId: CommandId.make(`project-clone-create:${project.projectId}`),
+                  projectId: project.projectId,
+                  title: project.title,
+                  workspaceRoot: project.workspaceRoot,
+                  createWorkspaceRootIfMissing: true,
+                })
+                .pipe(
+                  Effect.asVoid,
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationDispatchCommandError({
+                        message: "Failed to create clone project.",
+                        cause,
+                      }),
+                  ),
+                ),
+            onCloned: (project) =>
+              // SCIENT-FORK:START
+              projectEnrichment.invalidate([project.workspaceRoot]).pipe(
+                Effect.andThen(
+                  repositoryIdentityResolver.resolve(project.workspaceRoot, { refresh: true }),
+                ),
+                // SCIENT-FORK:END
+                Effect.andThen(
+                  projectService.update({
+                    commandId: CommandId.make(`project-clone-done:${project.projectId}`),
                     projectId: project.projectId,
-                    title: project.title,
-                    workspaceRoot: project.workspaceRoot,
-                    createWorkspaceRootIfMissing: true,
-                  });
-                }).pipe(
-                  Effect.mapError((cause) =>
-                    toDispatchCommandError(cause, "Failed to register the cloned project."),
-                  ),
+                  }),
                 ),
-              onCloned: (project) =>
-                // The project was created against an empty directory, so its
-                // cached identity is "not a repository" until this refresh.
-                // Re-emitting the project shell carries the new identity to
-                // every client without a round trip.
-                projectEnrichment.invalidate([project.workspaceRoot]).pipe(
-                  Effect.andThen(
-                    repositoryIdentityResolver.resolve(project.workspaceRoot, { refresh: true }),
-                  ),
-                  Effect.andThen(
-                    Effect.gen(function* () {
-                      yield* projectService.update({
-                        commandId: yield* serverCommandId("project-clone-done"),
-                        projectId: project.projectId,
-                      });
-                    }),
-                  ),
-                  Effect.andThen(refreshGitStatus(project.workspaceRoot)),
-                  Effect.ignoreCause({ log: true }),
-                ),
-            }),
-            { "rpc.aggregate": "source-control" },
-          ),
+                Effect.andThen(refreshGitStatus(project.workspaceRoot)),
+                Effect.ignoreCause({ log: true }),
+              ),
+          }),
         [WS_METHODS.projectsEnsureScratch]: () =>
           observeRpcEffect(WS_METHODS.projectsEnsureScratch, ensureScratchProject, {
             "rpc.aggregate": "orchestration",
@@ -3097,36 +2894,17 @@ const makeWsRpcLayer = (
             "rpc.aggregate": "orchestration",
           }),
         [WS_METHODS.projectCloneCancel]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.projectCloneCancel,
-            projectCloneTracker
-              .cancel(input.projectId)
-              .pipe(Effect.map((applied) => ({ applied }))),
-            { "rpc.aggregate": "source-control" },
-          ),
+          projectCloneTracker.cancel(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
         [WS_METHODS.projectCloneRetry]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.projectCloneRetry,
-            projectCloneTracker.retry(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
-            { "rpc.aggregate": "source-control" },
-          ),
-        [WS_METHODS.subscribeProjectClones]: () =>
-          observeRpcStream(WS_METHODS.subscribeProjectClones, projectCloneTracker.stream, {
-            "rpc.aggregate": "source-control",
-          }),
+          projectCloneTracker.retry(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
+        [WS_METHODS.subscribeProjectClones]: () => projectCloneTracker.stream,
         [WS_METHODS.sourceControlPublishRepository]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.sourceControlPublishRepository,
-            sourceControlRepositories.publishRepository(input).pipe(
-              // A new remote can change the cached identity. Only the `cwd` entry
-              // refreshes, so after a publish from a linked worktree the project
-              // root entry waits for its TTL.
-              Effect.tap(() => repositoryIdentityResolver.resolve(input.cwd, { refresh: true })),
-              Effect.tap(() => refreshGitStatus(input.cwd)),
-            ),
-            {
-              "rpc.aggregate": "source-control",
-            },
+          sourceControlRepositories.publishRepository(input).pipe(
+            // A new remote can change the cached identity. Only the `cwd` entry
+            // refreshes, so after a publish from a linked worktree the project
+            // root entry waits for its TTL.
+            Effect.tap(() => repositoryIdentityResolver.resolve(input.cwd, { refresh: true })),
+            Effect.tap(() => refreshGitStatus(input.cwd)),
           ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
@@ -3177,21 +2955,6 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
-        [WS_METHODS.projectsListDirectory]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.projectsListDirectory,
-            workspaceEntries.listDirectory(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectListDirectoryError({
-                    ...input,
-                    ...projectDirectoryFailureContext(cause),
-                    cause,
-                  }),
-              ),
-            ),
-            { "rpc.aggregate": "workspace" },
-          ),
         [WS_METHODS.projectsReadFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsReadFile,
@@ -3214,33 +2977,6 @@ const makeWsRpcLayer = (
               ),
             ),
             { "rpc.aggregate": "workspace" },
-          ),
-        [WS_METHODS.projectsSubscribeFileChanges]: (input) =>
-          observeRpcStream(
-            WS_METHODS.projectsSubscribeFileChanges,
-            workspaceFileSystem.watchFile(input).pipe(
-              Stream.mapError(
-                (cause) =>
-                  new ProjectReadFileError({
-                    ...input,
-                    ...projectFileFailureContext(cause),
-                    cause,
-                  }),
-              ),
-            ),
-            { "rpc.aggregate": "workspace" },
-          ),
-        [WS_METHODS.subscribeDocumentBindingChanges]: (input) =>
-          observeRpcStream(
-            WS_METHODS.subscribeDocumentBindingChanges,
-            generatedDocuments.changes.pipe(
-              Stream.filter(
-                (change) =>
-                  change.authority === input.authority &&
-                  change.logicalDocumentKey === input.logicalDocumentKey,
-              ),
-            ),
-            { "rpc.aggregate": "document-artifacts" },
           ),
         [WS_METHODS.projectsWriteFile]: (input) =>
           observeRpcEffect(
@@ -3284,6 +3020,48 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.projectsListDirectory]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsListDirectory,
+            workspaceEntries.listDirectory(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectListDirectoryError({
+                    ...input,
+                    ...projectDirectoryFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsSubscribeFileChanges]: (input) =>
+          observeRpcStream(
+            WS_METHODS.projectsSubscribeFileChanges,
+            workspaceFileSystem.watchFile(input).pipe(
+              Stream.mapError(
+                (cause) =>
+                  new ProjectReadFileError({
+                    ...input,
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.subscribeDocumentBindingChanges]: (input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeDocumentBindingChanges,
+            generatedDocuments.changes.pipe(
+              Stream.filter(
+                (change) =>
+                  change.authority === input.authority &&
+                  change.logicalDocumentKey === input.logicalDocumentKey,
+              ),
+            ),
+            { "rpc.aggregate": "document-artifacts" },
+          ),
         [WS_METHODS.projectsRenameFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsRenameFile,
@@ -3301,525 +3079,178 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
-        // SCIENT-FORK:START — runtime inspection belongs to the analysis handlers.
         ...makeAnalysisRuntimeInspectionHandlers({ observeRpcEffect, analysis }),
-        // SCIENT-FORK:END
       });
-
-      // SCIENT-FORK:START — the analysis and compute handlers live in scient/analysis.
-      const handlers3 = makeScientificRpcHandlers({
-        observeRpcEffect,
-        observeRpcStreamEffect,
-        analysis,
-        computeGateway,
-      });
-      // SCIENT-FORK:END
-
-      const handlers4 = WsWorkspaceRpcGroup.of({
-        [WS_METHODS.shellOpenInEditor]: (input) =>
-          observeRpcEffect(WS_METHODS.shellOpenInEditor, externalLauncher.launchEditor(input), {
-            "rpc.aggregate": "workspace",
-          }),
-        [WS_METHODS.filesystemBrowse]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.filesystemBrowse,
-            workspaceEntries.browse(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new FilesystemBrowseError({
-                    ...input,
-                    ...filesystemBrowseFailureContext(cause),
-                    cause,
-                  }),
-              ),
-            ),
-            { "rpc.aggregate": "workspace" },
-          ),
-        // SCIENT-FORK:START — Scient file opening and document PDF handlers.
-        ...makeFileOpeningRpcHandlers({ observeRpcEffect, observeRpcStream }),
-        ...makeDocumentPdfRpcHandlers({
-          observeRpcEffect,
-          generatedDocuments,
-          conversationExports,
-        }),
-        // SCIENT-FORK:END
-        [WS_METHODS.attachmentsCreateUploadUrl]: (input) =>
-          observeRpcEffect(WS_METHODS.attachmentsCreateUploadUrl, issueAttachmentUploadUrl(input), {
-            "rpc.aggregate": "workspace",
-          }),
-        [WS_METHODS.attachmentsDelete]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.attachmentsDelete,
-            deletePendingAttachment(input.attachmentId),
-            { "rpc.aggregate": "workspace" },
-          ),
-        [WS_METHODS.agentSessionsScan]: () =>
-          observeRpcEffect(WS_METHODS.agentSessionsScan, agentSessionScanner.scan, {
-            "rpc.aggregate": "workspace",
-          }),
-        [WS_METHODS.agentSessionsImport]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.agentSessionsImport,
-            agentSessionImporter.importRecentAgentThreads(input),
-            { "rpc.aggregate": "workspace" },
-          ),
-        [WS_METHODS.assetsCreateUrl]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.assetsCreateUrl,
-            Effect.gen(function* () {
-              const path = yield* Path.Path;
-              // SCIENT-FORK:START — analysis, compute and generated-document assets.
-              if (isScientAssetResource(input.resource)) {
-                return yield* issueScientAssetUrl(
-                  { resource: input.resource },
-                  { analysis, compute, generatedDocuments },
-                );
-              }
-              // SCIENT-FORK:END
-              // An absolute media path can be linked from a thread on another environment.
-              if (
-                input.resource._tag === "attachment" ||
-                input.resource._tag === "native-app-icon" ||
-                // GitHub media names the repository it authenticates through itself.
-                input.resource._tag === "github-media" ||
-                (input.resource._tag === "media-file" && path.isAbsolute(input.resource.path))
-              ) {
-                return yield* issueAssetUrl({ resource: input.resource });
-              }
-              if (
-                input.resource._tag === "environment-file" ||
-                input.resource._tag === "media-file"
-              ) {
-                return yield* issueAssetUrl({ resource: input.resource });
-              }
-              if (input.resource._tag === "draft-workspace-file") {
-                // A project draft names its workspace directly; there is no
-                // thread to resolve one from.
-                return yield* issueAssetUrl({
-                  resource: input.resource,
-                  workspaceRoot: input.resource.cwd,
-                });
-              }
-              if (input.resource._tag === "project-favicon") {
-                const project = yield* projectStore
-                  .findActiveByWorkspaceRoot(input.resource.cwd)
-                  .pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new AssetWorkspaceContextResolutionError({
-                          resource: input.resource,
-                          cause,
-                        }),
-                    ),
-                  );
-                if (Option.isNone(project)) {
-                  return yield* new AssetWorkspaceContextNotFoundError({
-                    resource: input.resource,
-                  });
-                }
-                // A cloned project exists before its files do. Clients ask again
-                // when the clone lands (see createProjectFaviconUrlAtomFamily).
-                const clone = yield* projectCloneTracker.get(project.value.projectId);
-                return yield* issueAssetUrl({
-                  resource: input.resource,
-                  ...(project.value.faviconPath
-                    ? { projectFaviconPath: project.value.faviconPath }
-                    : {}),
-                  projectCheckoutPending:
-                    clone !== null &&
-                    clone.phase !== "done" &&
-                    clone.destinationPath === project.value.workspaceRoot,
-                });
-              }
-              // SCIENT-WORKSPACE-ASSET: a workspace file is rooted in the
-              // authenticated environment, not in the lifecycle of a chat.
-              if (input.resource.cwd !== undefined && input.resource.relativePath !== undefined) {
-                return yield* issueAssetUrl({ resource: input.resource });
-              }
-              if (input.resource.threadId === undefined || input.resource.path === undefined) {
-                return yield* new AssetWorkspaceContextNotFoundError({
-                  resource: input.resource,
-                });
-              }
-              const thread = yield* threadManagement
-                .getThreadRecords(input.resource.threadId, [])
-                .pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new AssetWorkspaceContextResolutionError({
-                        resource: input.resource,
-                        cause,
-                      }),
-                  ),
-                );
-              const project = yield* projectService.getById(thread.thread.projectId).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new AssetWorkspaceContextResolutionError({
-                      resource: input.resource,
-                      cause,
-                    }),
-                ),
-              );
-              if (Option.isNone(project)) {
-                return yield* new AssetWorkspaceContextNotFoundError({
-                  resource: input.resource,
-                });
-              }
-              return yield* issueAssetUrl({
-                resource: input.resource,
-                workspaceRoot: thread.thread.worktreePath ?? project.value.workspaceRoot,
-              });
-            }),
-            { "rpc.aggregate": "workspace" },
-          ),
-      });
-
-      const handlers5 = WsInteractiveRpcGroup.of({
+      const handlers4 = WsInteractiveRpcGroup.of({
         [WS_METHODS.subscribeVcsStatus]: (input) =>
-          observeRpcStream(
-            WS_METHODS.subscribeVcsStatus,
-            vcsStatusBroadcaster.streamStatus(input, {
-              automaticRemoteRefreshInterval: automaticGitFetchInterval,
-            }),
-            {
-              "rpc.aggregate": "vcs",
-            },
-          ),
-        [WS_METHODS.subscribeWorktreeSetup]: (input) =>
-          observeRpcStream(
-            WS_METHODS.subscribeWorktreeSetup,
-            worktreeSetupTracker.stream(input.threadId),
-            { "rpc.aggregate": "vcs" },
-          ),
+          vcsStatusBroadcaster.streamStatus(input, {
+            automaticRemoteRefreshInterval: automaticGitFetchInterval,
+          }),
+        [WS_METHODS.subscribeWorktreeSetup]: (input) => worktreeSetupTracker.stream(input.threadId),
         [WS_METHODS.worktreeSetupCancel]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.worktreeSetupCancel,
-            worktreeSetupTracker
-              .cancel(input.threadId)
-              .pipe(Effect.map((cancelled) => ({ cancelled }))),
-            { "rpc.aggregate": "vcs" },
-          ),
-        [WS_METHODS.vcsRefreshStatus]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.vcsRefreshStatus,
-            vcsStatusBroadcaster.refreshStatus(input.cwd),
-            {
-              "rpc.aggregate": "vcs",
-            },
-          ),
+          worktreeSetupTracker
+            .cancel(input.threadId)
+            .pipe(Effect.map((cancelled) => ({ cancelled }))),
+        [WS_METHODS.vcsRefreshStatus]: (input) => vcsStatusBroadcaster.refreshStatus(input.cwd),
         [WS_METHODS.vcsPull]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.vcsPull,
-            gitWorkflow.pullCurrentBranch(input.cwd).pipe(
-              Effect.matchCauseEffect({
-                onFailure: (cause) => Effect.failCause(cause),
-                onSuccess: (result) =>
-                  refreshGitStatus(input.cwd).pipe(Effect.ignore({ log: true }), Effect.as(result)),
-              }),
-            ),
-            { "rpc.aggregate": "git" },
+          gitWorkflow.pullCurrentBranch(input.cwd).pipe(
+            Effect.matchCauseEffect({
+              onFailure: (cause) => Effect.failCause(cause),
+              onSuccess: (result) =>
+                refreshGitStatus(input.cwd).pipe(Effect.ignore({ log: true }), Effect.as(result)),
+            }),
           ),
         [WS_METHODS.gitRunStackedAction]: (input) =>
-          observeRpcStream(
-            WS_METHODS.gitRunStackedAction,
-            Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
-              gitWorkflow
-                .runStackedAction(input, {
-                  actionId: input.actionId,
-                  progressReporter: {
-                    publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
-                  },
-                })
-                .pipe(
-                  Effect.matchCauseEffect({
-                    onFailure: (cause) => Queue.failCause(queue, cause),
-                    onSuccess: (result) =>
-                      (input.threadId === undefined
-                        ? Effect.void
-                        : linkCreatedPullRequest({
-                            threadId: input.threadId,
-                            result,
-                            commandId: serverCommandId("pr-created-link"),
-                          }).pipe(
-                            Effect.provideService(Orchestrator.OrchestratorV2, orchestratorV2),
-                            Effect.provideService(ProjectService.ProjectService, projectService),
-                          )
-                      ).pipe(
-                        Effect.andThen(
-                          refreshPushedPullRequests(input, result).pipe(
-                            Effect.provideService(Orchestrator.OrchestratorV2, orchestratorV2),
-                            Effect.provideService(ProjectStore.ProjectStoreV2, projectStore),
-                            Effect.provideService(
-                              PullRequestService.PullRequestService,
-                              pullRequests,
-                            ),
+          Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
+            gitWorkflow
+              .runStackedAction(input, {
+                actionId: input.actionId,
+                progressReporter: {
+                  publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
+                },
+              })
+              .pipe(
+                Effect.matchCauseEffect({
+                  onFailure: (cause) => Queue.failCause(queue, cause),
+                  onSuccess: (result) =>
+                    (input.threadId === undefined
+                      ? Effect.void
+                      : linkCreatedPullRequest({
+                          threadId: input.threadId,
+                          result,
+                          commandId: serverCommandId("pr-created-link"),
+                        }).pipe(
+                          Effect.provideService(Orchestrator.OrchestratorV2, orchestrationEngine),
+                          Effect.provideService(ProjectService.ProjectService, projectService),
+                        )
+                    ).pipe(
+                      Effect.andThen(
+                        refreshPushedPullRequests(input, result).pipe(
+                          Effect.provideService(Orchestrator.OrchestratorV2, orchestrationEngine),
+                          Effect.provideService(ProjectStore.ProjectStoreV2, projectStore),
+                          Effect.provideService(
+                            PullRequestService.PullRequestService,
+                            pullRequests,
                           ),
                         ),
-                        Effect.andThen(refreshGitStatus(input.cwd)),
-                        Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
                       ),
-                  }),
-                ),
-            ),
-            { "rpc.aggregate": "vcs" },
+                      Effect.andThen(refreshGitStatus(input.cwd)),
+                      Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
+                    ),
+                }),
+              ),
           ),
-        [WS_METHODS.gitResolvePullRequest]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.gitResolvePullRequest,
-            gitWorkflow.resolvePullRequest(input),
-            {
-              "rpc.aggregate": "git",
-            },
-          ),
+        [WS_METHODS.gitResolvePullRequest]: (input) => gitWorkflow.resolvePullRequest(input),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.gitPreparePullRequestThread,
-            gitWorkflow
-              .preparePullRequestThread(input)
-              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
-            { "rpc.aggregate": "git" },
-          ),
-        [WS_METHODS.vcsListRefs]: (input) =>
-          observeRpcEffect(WS_METHODS.vcsListRefs, gitWorkflow.listRefs(input), {
-            "rpc.aggregate": "vcs",
-          }),
+          gitWorkflow
+            .preparePullRequestThread(input)
+            .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+        [WS_METHODS.vcsListRefs]: (input) => gitWorkflow.listRefs(input),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.vcsCreateWorktree,
-            gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
-            { "rpc.aggregate": "vcs" },
-          ),
+          gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.vcsRemoveWorktree,
-            gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
-            { "rpc.aggregate": "vcs" },
-          ),
+          gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsCreateRef]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.vcsCreateRef,
-            gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
-            { "rpc.aggregate": "vcs" },
-          ),
+          gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsSwitchRef]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.vcsSwitchRef,
-            gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
-            { "rpc.aggregate": "vcs" },
-          ),
+          gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsInit]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.vcsInit,
-            vcsProvisioning
-              .initRepository(input)
-              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
-            { "rpc.aggregate": "vcs" },
-          ),
-        [WS_METHODS.reviewGetDiffPreview]: (input) =>
-          observeRpcEffect(WS_METHODS.reviewGetDiffPreview, review.getDiffPreview(input), {
-            "rpc.aggregate": "review",
-          }),
-        [WS_METHODS.reviewGetDiffFileContents]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.reviewGetDiffFileContents,
-            review.getDiffFileContents(input),
-            { "rpc.aggregate": "review" },
-          ),
-        [WS_METHODS.terminalOpen]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          vcsProvisioning.initRepository(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+        [WS_METHODS.reviewGetDiffPreview]: (input) => review.getDiffPreview(input),
+        [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
+        [WS_METHODS.terminalOpen]: (input) => terminalManager.open(input),
         [WS_METHODS.terminalAttach]: (input) =>
-          observeRpcStream(
-            WS_METHODS.terminalAttach,
-            Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
-              Effect.acquireRelease(
-                terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
-                (unsubscribe) => Effect.sync(unsubscribe),
-              ),
-            ),
-            { "rpc.aggregate": "terminal" },
+          Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
+            Effect.acquireRelease(
+              terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
+              (unsubscribe) => Effect.sync(unsubscribe),
+            ).pipe(Effect.catchCause((cause) => Queue.failCause(queue, cause))),
           ),
-        [WS_METHODS.terminalWrite]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalWrite, terminalManager.write(input), {
-            "rpc.aggregate": "terminal",
-          }),
-        [WS_METHODS.terminalResize]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalResize, terminalManager.resize(input), {
-            "rpc.aggregate": "terminal",
-          }),
-        [WS_METHODS.terminalClear]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalClear, terminalManager.clear(input), {
-            "rpc.aggregate": "terminal",
-          }),
-        [WS_METHODS.terminalRestart]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalRestart, terminalManager.restart(input), {
-            "rpc.aggregate": "terminal",
-          }),
-        [WS_METHODS.terminalClose]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalClose, terminalManager.close(input), {
-            "rpc.aggregate": "terminal",
-          }),
+        [WS_METHODS.terminalWrite]: (input) => terminalManager.write(input),
+        [WS_METHODS.terminalResize]: (input) => terminalManager.resize(input),
+        [WS_METHODS.terminalClear]: (input) => terminalManager.clear(input),
+        [WS_METHODS.terminalRestart]: (input) => terminalManager.restart(input),
+        [WS_METHODS.terminalClose]: (input) => terminalManager.close(input),
+        [WS_METHODS.terminalObserve]: (input) =>
+          Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
+            Effect.acquireRelease(
+              terminalManager.observeStream(input, (event) => Queue.offer(queue, event)),
+              (unsubscribe) => Effect.sync(unsubscribe),
+            ).pipe(Effect.catchCause((cause) => Queue.failCause(queue, cause))),
+          ),
         [WS_METHODS.subscribeTerminalEvents]: (_input) =>
-          observeRpcStream(
-            WS_METHODS.subscribeTerminalEvents,
-            Stream.callback<TerminalEvent>((queue) =>
-              Effect.acquireRelease(
-                terminalManager.subscribe((event) => Queue.offer(queue, event)),
-                (unsubscribe) => Effect.sync(unsubscribe),
-              ),
+          Stream.callback<TerminalEvent>((queue) =>
+            Effect.acquireRelease(
+              terminalManager.subscribe((event) => Queue.offer(queue, event)),
+              (unsubscribe) => Effect.sync(unsubscribe),
             ),
-            { "rpc.aggregate": "terminal" },
           ),
         [WS_METHODS.subscribeTerminalMetadata]: (_input) =>
-          observeRpcStream(
-            WS_METHODS.subscribeTerminalMetadata,
-            Stream.callback<TerminalMetadataStreamEvent>((queue) =>
-              Effect.acquireRelease(
-                terminalManager.subscribeMetadata((event) => Queue.offer(queue, event)),
-                (unsubscribe) => Effect.sync(unsubscribe),
-              ),
+          Stream.callback<TerminalMetadataStreamEvent>((queue) =>
+            Effect.acquireRelease(
+              terminalManager.subscribeMetadata((event) => Queue.offer(queue, event)),
+              (unsubscribe) => Effect.sync(unsubscribe),
             ),
-            { "rpc.aggregate": "terminal" },
           ),
-        [WS_METHODS.previewOpen]: (input) =>
-          observeRpcEffect(WS_METHODS.previewOpen, previewManager.open(input), {
-            "rpc.aggregate": "preview",
-          }),
-        [WS_METHODS.previewNavigate]: (input) =>
-          observeRpcEffect(WS_METHODS.previewNavigate, previewManager.navigate(input), {
-            "rpc.aggregate": "preview",
-          }),
-        [WS_METHODS.previewResize]: (input) =>
-          observeRpcEffect(WS_METHODS.previewResize, previewManager.resize(input), {
-            "rpc.aggregate": "preview",
-          }),
-        [WS_METHODS.previewRefresh]: (input) =>
-          observeRpcEffect(WS_METHODS.previewRefresh, previewManager.refresh(input), {
-            "rpc.aggregate": "preview",
-          }),
-        [WS_METHODS.previewClose]: (input) =>
-          observeRpcEffect(WS_METHODS.previewClose, previewManager.close(input), {
-            "rpc.aggregate": "preview",
-          }),
-        [WS_METHODS.previewList]: (input) =>
-          observeRpcEffect(WS_METHODS.previewList, previewManager.list(input), {
-            "rpc.aggregate": "preview",
-          }),
-        [WS_METHODS.previewReportStatus]: (input) =>
-          observeRpcEffect(WS_METHODS.previewReportStatus, previewManager.reportStatus(input), {
-            "rpc.aggregate": "preview",
-          }),
-        [WS_METHODS.previewAutomationConnect]: (input) =>
-          observeRpcStreamEffect(
-            WS_METHODS.previewAutomationConnect,
-            previewAutomationBroker.connect(input),
-            { "rpc.aggregate": "preview-automation" },
-          ),
-        [WS_METHODS.previewAutomationRespond]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.previewAutomationRespond,
-            previewAutomationBroker.respond(input),
-            { "rpc.aggregate": "preview-automation" },
-          ),
-        [WS_METHODS.previewAutomationFocusHost]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.previewAutomationFocusHost,
-            previewAutomationBroker.focusHost(input),
-            { "rpc.aggregate": "preview-automation" },
-          ),
-        [WS_METHODS.subscribePreviewEvents]: (_input) =>
-          observeRpcStream(WS_METHODS.subscribePreviewEvents, previewManager.events, {
-            "rpc.aggregate": "preview",
-          }),
+        [WS_METHODS.previewOpen]: (input) => previewManager.open(input),
+        [WS_METHODS.previewNavigate]: (input) => previewManager.navigate(input),
+        [WS_METHODS.previewResize]: (input) => previewManager.resize(input),
+        [WS_METHODS.previewAdjust]: (input) => previewManager.adjust(input),
+        [WS_METHODS.previewRefresh]: (input) => previewManager.refresh(input),
+        [WS_METHODS.previewClose]: (input) => previewManager.close(input),
+        [WS_METHODS.previewList]: (input) => previewManager.list(input),
+        [WS_METHODS.previewClearProfile]: (input) => serverBrowser.clearProfile(input.profileId),
+        [WS_METHODS.previewReportStatus]: (input) => previewManager.reportStatus(input),
+        [WS_METHODS.subscribePreviewEvents]: (_input) => previewManager.events,
       });
-
-      const handlers6 = WsDeviceAndTelemetryRpcGroup.of({
-        [WS_METHODS.deviceConfigure]: (input) =>
-          observeRpcEffect(WS_METHODS.deviceConfigure, deviceService.configure(input), {
-            "rpc.aggregate": "device",
-          }),
-        [WS_METHODS.deviceTestHost]: (input) =>
-          observeRpcEffect(WS_METHODS.deviceTestHost, deviceService.testHost(input), {
-            "rpc.aggregate": "device",
-          }),
+      const handlers5 = WsDeviceAndTelemetryRpcGroup.of({
+        [WS_METHODS.deviceConfigure]: (input) => deviceService.configure(input),
+        [WS_METHODS.deviceTestHost]: (input) => deviceService.testHost(input),
         [WS_METHODS.deviceList]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.deviceList,
-            input.inspectOnly && !input.updateTool
-              ? deviceService.inspect
-              : authorizeEffect(
-                  requiredScopeForDeviceList(input),
-                  input.updateTool
-                    ? deviceService.updateTool(input.updateTool)
-                    : input.retryHostId
-                      ? deviceService.retryHost(input.retryHostId)
-                      : deviceService.list,
-                ),
-            {
-              "rpc.aggregate": "device",
-            },
-          ),
-        [WS_METHODS.deviceOpen]: (input) =>
-          observeRpcEffect(WS_METHODS.deviceOpen, deviceService.open(input), {
-            "rpc.aggregate": "device",
-          }),
-        [WS_METHODS.deviceClose]: (input) =>
-          observeRpcEffect(WS_METHODS.deviceClose, deviceService.close(input), {
-            "rpc.aggregate": "device",
-          }),
-        [WS_METHODS.deviceShutdown]: (input) =>
-          observeRpcEffect(WS_METHODS.deviceShutdown, deviceService.shutdown(input), {
-            "rpc.aggregate": "device",
-          }),
-        [WS_METHODS.deviceDetail]: (input) =>
-          observeRpcEffect(WS_METHODS.deviceDetail, deviceService.detail(input), {
-            "rpc.aggregate": "device",
-          }),
-        [WS_METHODS.deviceAction]: (input) =>
-          observeRpcEffect(WS_METHODS.deviceAction, deviceService.action(input), {
-            "rpc.aggregate": "device",
-          }),
-        [WS_METHODS.subscribeDeviceState]: (_input) =>
-          observeRpcStream(
-            WS_METHODS.subscribeDeviceState,
-            DeviceService.stateStream(deviceService),
-            { "rpc.aggregate": "device" },
-          ),
+          input.inspectOnly && !input.updateTool
+            ? deviceService.inspect
+            : authorizeEffect(
+                requiredScopeForDeviceList(input),
+                input.updateTool
+                  ? deviceService.updateTool(input.updateTool)
+                  : input.retryHostId
+                    ? deviceService.retryHost(input.retryHostId)
+                    : deviceService.list,
+              ),
+        [WS_METHODS.deviceOpen]: (input) => deviceService.open(input),
+        [WS_METHODS.deviceClose]: (input) => deviceService.close(input),
+        [WS_METHODS.deviceShutdown]: (input) => deviceService.shutdown(input),
+        [WS_METHODS.deviceDetail]: (input) => deviceService.detail(input),
+        [WS_METHODS.deviceAction]: (input) => deviceService.action(input),
+        [WS_METHODS.subscribeDeviceState]: (_input) => DeviceService.stateStream(deviceService),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
-          observeRpcStream(
-            WS_METHODS.subscribeDiscoveredLocalServers,
-            Stream.callback<DiscoveredLocalServerList>((queue) =>
-              Effect.gen(function* () {
-                const configuredUrls = input.configuredUrls ?? [];
-                yield* portDiscovery.retain;
-                const initial = yield* portDiscovery.scan(configuredUrls);
-                const initialScannedAt = DateTime.formatIso(yield* DateTime.now);
-                yield* Queue.offer(queue, {
-                  servers: initial,
-                  scannedAt: initialScannedAt,
-                  configuredUrlProbing: true,
-                });
-                yield* portDiscovery.subscribe(
-                  { configuredUrls, initialSnapshot: initial },
-                  (servers) =>
-                    Effect.gen(function* () {
-                      const scannedAt = DateTime.formatIso(yield* DateTime.now);
-                      yield* Queue.offer(queue, {
-                        servers,
-                        scannedAt,
-                        configuredUrlProbing: true,
-                      });
-                    }),
-                );
-              }),
-            ),
-            { "rpc.aggregate": "preview" },
+          Stream.callback<DiscoveredLocalServerList>((queue) =>
+            Effect.gen(function* () {
+              const configuredUrls = input.configuredUrls ?? [];
+              yield* portDiscovery.retain;
+              const initial = yield* portDiscovery.scan(configuredUrls);
+              const initialScannedAt = DateTime.formatIso(yield* DateTime.now);
+              yield* Queue.offer(queue, {
+                servers: initial,
+                scannedAt: initialScannedAt,
+                configuredUrlProbing: true,
+              });
+              yield* portDiscovery.subscribe(
+                { configuredUrls, initialSnapshot: initial },
+                (servers) =>
+                  Effect.gen(function* () {
+                    const scannedAt = DateTime.formatIso(yield* DateTime.now);
+                    yield* Queue.offer(queue, {
+                      servers,
+                      scannedAt,
+                      configuredUrlProbing: true,
+                    });
+                  }),
+              );
+            }),
           ),
         [WS_METHODS.subscribeServerConfig]: (input) =>
-          observeRpcStreamEffect(
-            WS_METHODS.subscribeServerConfig,
+          Stream.unwrap(
             Effect.gen(function* () {
               const usageLimitsCommand = input.usageLimitsCommand === true;
               const config = yield* loadServerConfig({ usageLimitsCommand });
@@ -3848,12 +3279,10 @@ const makeWsRpcLayer = (
                     usageLimitsCommand ? sameUsageLimitCommandCoverage : () => true,
                   ),
                 ),
-                (providers, sources) => {
-                  const projected = projectProvidersForCurrentSession(providers);
-                  return usageLimitsCommand
-                    ? withUsageLimitsCommands(projected, sources)
-                    : projected;
-                },
+                (providers, sources) =>
+                  usageLimitsCommand
+                    ? withUsageLimitsCommands(projectProvidersForCurrentSession(providers), sources)
+                    : projectProvidersForCurrentSession(providers),
               ).pipe(
                 // Both sides replay their current value, so the first pairing normally
                 // repeats the snapshot the client already holds. Compare against that
@@ -3887,7 +3316,6 @@ const makeWsRpcLayer = (
                       })),
                     )
                   : Stream.empty;
-              // Same gate as themes: an older client dies on an unknown event.
               const usageLimitSourceUpdates =
                 input.usageLimitSources === true
                   ? usageLimitSources.streamChanges.pipe(
@@ -3920,14 +3348,12 @@ const makeWsRpcLayer = (
 
               return Stream.concat(
                 rpcInitialItems([{ version: 1 as const, type: "snapshot" as const, config }]),
-                liveUpdates,
+                withLateEditorConfig(config, liveUpdates, externalLauncher),
               );
             }),
-            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.subscribeServerLifecycle]: (_input) =>
-          observeRpcStreamEffect(
-            WS_METHODS.subscribeServerLifecycle,
+          Stream.unwrap(
             Effect.gen(function* () {
               const liveBuffer = yield* Queue.unbounded<ServerLifecycleStreamEvent>();
               yield* Effect.forkScoped(
@@ -3945,11 +3371,9 @@ const makeWsRpcLayer = (
               );
               return Stream.concat(rpcInitialItems(snapshotEvents), liveEvents);
             }),
-            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.subscribeAuthAccess]: (_input) =>
-          observeRpcStreamEffect(
-            WS_METHODS.subscribeAuthAccess,
+          Stream.unwrap(
             Effect.gen(function* () {
               const initialSnapshot = yield* loadAuthAccessSnapshot();
               const revisionRef = yield* Ref.make(1);
@@ -3979,49 +3403,62 @@ const makeWsRpcLayer = (
                 liveEvents,
               );
             }),
-            { "rpc.aggregate": "auth" },
           ),
         [WS_METHODS.subscribeBackgroundPolicy]: (_input) =>
-          observeRpcStream(
-            WS_METHODS.subscribeBackgroundPolicy,
-            Stream.unwrap(
-              Effect.map(backgroundPolicy.subscribe, ({ latest, changes }) =>
-                Stream.concat(Stream.make(latest), changes),
-              ),
+          Stream.unwrap(
+            Effect.map(backgroundPolicy.subscribe, ({ latest, changes }) =>
+              Stream.concat(Stream.make(latest), changes),
             ),
-            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.subscribeResourceTelemetry]: (_input) =>
-          observeRpcStream(
-            WS_METHODS.subscribeResourceTelemetry,
-            Stream.unwrap(
-              Effect.map(resourceTelemetry.subscribe, ({ latest, changes }) =>
-                Stream.concat(Stream.make(latest), changes),
-              ),
+          Stream.unwrap(
+            Effect.map(resourceTelemetry.subscribe, ({ latest, changes }) =>
+              Stream.concat(Stream.make(latest), changes),
             ),
-            { "rpc.aggregate": "server" },
           ),
       });
+      const handlers6 = WsScientificRpcGroup.of({
+        ...makeScientificRpcHandlers({
+          observeRpcEffect,
+          observeRpcStreamEffect,
+          analysis,
+          computeGateway,
+        }),
+      });
+      // SCIENT-FORK:START — compose typed families without a recursive global
+      // handler-map inference. Capture all services once above. Authorization and
+      // instrumentation remain on ServerWsRpcGroup in RpcServer.make: Effect's
+      // server applies the final group's middleware before executing these handlers.
+      // toLayer registers handler keys and captures context; it does not run RPCs.
       return Layer.mergeAll(
-        WsConversationRpcGroup.toLayer(handlers0),
-        WsServerManagementRpcGroup.toLayer(handlers1),
-        WsRepositoryRpcGroup.toLayer(handlers2),
-        WsScientificRpcGroup.toLayer(handlers3),
-        WsWorkspaceRpcGroup.toLayer(handlers4),
-        WsInteractiveRpcGroup.toLayer(handlers5),
-        WsDeviceAndTelemetryRpcGroup.toLayer(handlers6),
+        WsWorkspaceRpcGroup.toLayer(handlers0),
+        WsConversationRpcGroup.toLayer(handlers1),
+        WsServerManagementRpcGroup.toLayer(handlers2),
+        WsRepositoryRpcGroup.toLayer(handlers3),
+        WsInteractiveRpcGroup.toLayer(handlers4),
+        WsDeviceAndTelemetryRpcGroup.toLayer(handlers5),
+        WsScientificRpcGroup.toLayer(handlers6),
       );
+      // SCIENT-FORK:END
     }),
   );
 
-export const websocketRpcRouteLayer = Layer.unwrap(
+// A defect in a handler's effect fails only its own request. RpcServer's default
+// sends a socket-level Defect frame instead, and the client ends every pending
+// request on the socket with it. DefectReporter logs these defects.
+export const WS_RPC_SERVER_OPTIONS = {
+  disableTracing: true,
+  disableFatalDefects: true,
+} as const;
+
+export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+    const capturedDocumentHostBroker = yield* DocumentHostBroker.DocumentHostBroker;
     const pullRequests = yield* PullRequestService.PullRequestService;
-    // SCIENT-FORK:START — server-lifetime Scient services each connection's handlers use.
     const scientWsServices = yield* captureScientWsServices;
-    // SCIENT-FORK:END
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -4059,31 +3496,39 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         yield* analytics.record("client.connected", clientAnalyticsProps);
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
           const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
-          yield* RpcServer.make(ServerWsRpcGroup, { disableTracing: true }).pipe(
+          yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(
             Effect.provideService(RpcServer.Protocol, withTerminalOutputWindow(protocol)),
+            Effect.provide(
+              Layer.merge(RpcAuthorization.layer(session.scopes), rpcInstrumentationLayer),
+            ),
             Effect.forkScoped,
           );
           // @effect-diagnostics-next-line returnEffectInGen:off
           return httpEffect;
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(
+            layerWsRpc(
               session,
               clientOrigin,
               clientAnalyticsProps,
               previewAutomationBroker,
+              serverBrowser,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
+              // Request fibers run in the handlers' context, so this reporter sees
+              // their defects, not the rest of the server's.
+              Layer.provide(DefectReporter.layer),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
+              Layer.provide(scientWsServices),
+              Layer.provide(
+                Layer.succeed(DocumentHostBroker.DocumentHostBroker, capturedDocumentHostBroker),
+              ),
               Layer.provide(AgentSessionScanner.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
-              // SCIENT-FORK:START — also serves the provider maintenance runner above.
-              Layer.provide(scientWsServices),
-              // SCIENT-FORK:END
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

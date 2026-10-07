@@ -58,6 +58,10 @@ vi.mock("../state/entities", async (original) => ({
   readEnvironmentSupportsSnooze: () => true,
   readEnvironmentSupportsTitleRegeneration: () => true,
 }));
+vi.mock("../state/session", async (original) => ({
+  ...(await original<typeof import("../state/session")>()),
+  readEnvironmentScope: () => true,
+}));
 vi.mock("../state/environments", () => ({ usePrimaryEnvironmentId: () => "header-env" }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) =>

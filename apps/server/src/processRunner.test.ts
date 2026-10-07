@@ -8,7 +8,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
@@ -503,55 +503,59 @@ describe("streamed stdout consumers", () => {
   );
 });
 
-for (const mode of ["failure", "cancellation", "timeout"] as const)
-  it.live(
-    `reaps the native producer on stdout-consumer ${mode}`,
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const entered = yield* Deferred.make<number>();
-          const runner = yield* ProcessRunner.ProcessRunner;
-          const command = process.execPath;
-          const invocation = runner.run({
-            command,
-            args: ["-e", "process.stdout.write(String(process.pid));setInterval(()=>{},1000)"],
-            timeout: mode === "timeout" ? "2 seconds" : "10 seconds",
-            onStdoutChunkEffect: (chunk) =>
-              Effect.gen(function* () {
-                yield* Deferred.succeed(entered, Number(new TextDecoder().decode(chunk)));
-                if (mode === "failure")
-                  return yield* new ProcessRunner.ProcessReadError({
-                    command,
-                    argumentCount: 2,
-                    stream: "stdout",
-                    cause: "injected consumer refusal",
-                  });
-                return yield* Effect.never;
-              }),
-          });
-          const running = yield* invocation.pipe(Effect.exit, Effect.forkChild);
-          const pid = yield* Deferred.await(entered);
-          expect(Number.isInteger(pid) && pid > 0).toBe(true);
-          if (mode === "cancellation") yield* Fiber.interrupt(running);
-          else {
-            const result = yield* Fiber.join(running);
-            expect(result._tag).toBe("Failure");
+it.live.each(
+  (["failure", "cancellation", "timeout"] as const).map((mode) => ({
+    caseTitle: `reaps the native producer on stdout-consumer ${mode}`,
+    mode,
+  })),
+)(
+  "$caseTitle",
+  ({ mode }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<number>();
+        const runner = yield* ProcessRunner.ProcessRunner;
+        const command = process.execPath;
+        const invocation = runner.run({
+          command,
+          args: ["-e", "process.stdout.write(String(process.pid));setInterval(()=>{},1000)"],
+          timeout: mode === "timeout" ? "2 seconds" : "10 seconds",
+          onStdoutChunkEffect: (chunk) =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(entered, Number(new TextDecoder().decode(chunk)));
+              if (mode === "failure")
+                return yield* new ProcessRunner.ProcessReadError({
+                  command,
+                  argumentCount: 2,
+                  stream: "stdout",
+                  cause: "injected consumer refusal",
+                });
+              return yield* Effect.never;
+            }),
+        });
+        const running = yield* invocation.pipe(Effect.exit, Effect.forkChild);
+        const pid = yield* Deferred.await(entered);
+        expect(Number.isInteger(pid) && pid > 0).toBe(true);
+        if (mode === "cancellation") yield* Fiber.interrupt(running);
+        else {
+          const result = yield* Fiber.join(running);
+          expect(result._tag).toBe("Failure");
+        }
+        const alive = yield* Effect.sync(() => {
+          try {
+            process.kill(pid, 0);
+            return true;
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+            return false;
           }
-          const alive = yield* Effect.sync(() => {
-            try {
-              process.kill(pid, 0);
-              return true;
-            } catch (error) {
-              if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-              return false;
-            }
-          });
-          expect(alive).toBe(false);
-        }).pipe(
-          Effect.provide(ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
-          Effect.timeout("12 seconds"),
-        ),
+        });
+        expect(alive).toBe(false);
+      }).pipe(
+        Effect.provide(ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
+        Effect.timeout("12 seconds"),
       ),
-    15_000,
-  );
+    ),
+  15_000,
+);
 // SCIENT-FORK:END

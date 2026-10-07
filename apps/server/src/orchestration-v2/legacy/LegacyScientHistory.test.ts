@@ -6,8 +6,8 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Tracer from "effect/Tracer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as EventStore from "../EventStore.ts";
 import * as EventSink from "../EventSink.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
@@ -119,69 +119,67 @@ const seedCodexCitation = Effect.gen(function* () {
       '{"itemType":"web_search","citationSources":[{"id":"turn3view1","url":"https://wrong.example.com/","title":"Other turn"}]}', 9, '2026-01-07T07:00:00.000Z')`;
 });
 
-for (const completed of [false, true]) {
-  it.effect(
-    `renders retained Codex citations for ${completed ? "old completed" : "new"} imports and preserves V2 replay`,
-    () =>
-      Effect.gen(function* () {
-        yield* seed;
-        yield* seedCodexCitation;
-        const sql = yield* SqlClient.SqlClient;
-        const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-        const projections = yield* ProjectionStore.ProjectionStoreV2;
-        yield* migration.reconcileShells;
-        const sink = yield* EventSink.EventSinkV2;
-        const preview = (yield* projections.getThreadProjection(THREAD)).turnItems.find(
-          (row) => row.type === "assistant_message",
-        );
-        if (preview?.type !== "assistant_message") return assert.fail("Expected shell assistant");
-        yield* sink.write({
-          events: [
-            {
-              id: EventId.make("citation-existing-title-edit"),
-              type: "turn-item.updated",
-              threadId: THREAD,
-              occurredAt: preview.updatedAt,
-              payload: { ...preview, title: "Existing V2 presentation" },
-            },
-          ],
-        });
-        if (completed)
-          yield* sql`UPDATE orchestration_v2_legacy_imports
+it.effect.each(
+  [false, true].map((completed) => ({
+    caseTitle: `renders retained Codex citations for ${completed ? "old completed" : "new"} imports and preserves V2 replay`,
+    completed,
+  })),
+)("$caseTitle", ({ completed }) =>
+  Effect.gen(function* () {
+    yield* seed;
+    yield* seedCodexCitation;
+    const sql = yield* SqlClient.SqlClient;
+    const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    yield* migration.reconcileShells;
+    const sink = yield* EventSink.EventSinkV2;
+    const preview = (yield* projections.getThreadProjection(THREAD)).turnItems.find(
+      (row) => row.type === "assistant_message",
+    );
+    if (preview?.type !== "assistant_message") return assert.fail("Expected shell assistant");
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("citation-existing-title-edit"),
+          type: "turn-item.updated",
+          threadId: THREAD,
+          occurredAt: preview.updatedAt,
+          payload: { ...preview, title: "Existing V2 presentation" },
+        },
+      ],
+    });
+    if (completed)
+      yield* sql`UPDATE orchestration_v2_legacy_imports
         SET transcript_imported_at = '2026-02-01T00:00:00.000Z' WHERE thread_id = ${THREAD}`;
-        const original =
-          yield* sql`SELECT * FROM projection_thread_messages WHERE thread_id = ${THREAD} ORDER BY message_id`;
-        yield* migration.ensureTranscript(THREAD);
-        const projection = yield* projections.getThreadProjection(THREAD);
-        const message = projection.messages.find((row) => row.id === "answer");
-        const item = projection.turnItems.find((row) => row.type === "assistant_message");
-        assert.equal(
-          message?.text,
-          'Recommendation [1](<https://example.com/guideline> "Guideline")',
-        );
-        if (item?.type !== "assistant_message") return assert.fail("Expected historical assistant");
-        assert.equal(item.text, message?.text);
-        assert.equal(item.title, "Existing V2 presentation");
-        assert.equal(item.runId, null);
-        assert.equal(item.nativeItemRef, null);
-        assert.deepEqual(projection.runtimeRequests, []);
-        assert.deepEqual(projection.providerSessions, []);
-        assert.deepEqual(
-          yield* sql`SELECT * FROM projection_thread_messages WHERE thread_id = ${THREAD} ORDER BY message_id`,
-          original,
-        );
-        const sequence = yield* (yield* EventStore.EventStoreV2).latestSequence();
-        yield* Effect.gen(function* () {
-          yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
-        }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)));
-        assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
-        yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
-        const replayed = yield* projections.getThreadProjection(THREAD);
-        assert.deepEqual(replayed.messages, projection.messages);
-        assert.deepEqual(replayed.turnItems, projection.turnItems);
-      }).pipe(Effect.provide(TestLayer)),
-  );
-}
+    const original =
+      yield* sql`SELECT * FROM projection_thread_messages WHERE thread_id = ${THREAD} ORDER BY message_id`;
+    yield* migration.ensureTranscript(THREAD);
+    const projection = yield* projections.getThreadProjection(THREAD);
+    const message = projection.messages.find((row) => row.id === "answer");
+    const item = projection.turnItems.find((row) => row.type === "assistant_message");
+    assert.equal(message?.text, 'Recommendation [1](<https://example.com/guideline> "Guideline")');
+    if (item?.type !== "assistant_message") return assert.fail("Expected historical assistant");
+    assert.equal(item.text, message?.text);
+    assert.equal(item.title, "Existing V2 presentation");
+    assert.equal(item.runId, null);
+    assert.equal(item.nativeItemRef, null);
+    assert.deepEqual(projection.runtimeRequests, []);
+    assert.deepEqual(projection.providerSessions, []);
+    assert.deepEqual(
+      yield* sql`SELECT * FROM projection_thread_messages WHERE thread_id = ${THREAD} ORDER BY message_id`,
+      original,
+    );
+    const sequence = yield* (yield* EventStore.EventStoreV2).latestSequence();
+    yield* Effect.gen(function* () {
+      yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
+    }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)));
+    assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
+    yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+    const replayed = yield* projections.getThreadProjection(THREAD);
+    assert.deepEqual(replayed.messages, projection.messages);
+    assert.deepEqual(replayed.turnItems, projection.turnItems);
+  }).pipe(Effect.provide(TestLayer)),
+);
 
 it.live("retains V2 message and item edits racing a completed Codex citation repair", () =>
   Effect.gen(function* () {

@@ -15,7 +15,7 @@ import {
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { makeDroidAcpRuntime } from "../../provider/acp/DroidAcpSupport.ts";
 import { scriptedDroid } from "../../provider/testUtils/scriptedDroid.ts";
 import { makeDroidAdapterV2 } from "../Adapters/DroidAdapterV2.ts";
@@ -30,7 +30,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ServerConfig } from "../../config.ts";
-import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
+import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sqlite.ts";
 import {
   makeClaudeAdapterV2,
   type ClaudeAgentSdkQueryOpenInput,
@@ -38,10 +38,10 @@ import {
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import type { ProviderAdapterV2Event } from "../ProviderAdapter.ts";
-import { makeLayer } from "../ProviderAdapterRegistry.ts";
+import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { ProjectionStoreV2, layer as projectionStoreLayer } from "../ProjectionStore.ts";
 import {
-  makeOrchestratorV2ReplayLayerWithRegistry,
+  layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
@@ -168,6 +168,7 @@ const makeFixture = Effect.fn("nativeReading.makeFixture")(function* (
     yield* Deferred.await(receipt);
   });
   const nativeAdapter = makeClaudeAdapterV2({
+    crypto: yield* Crypto.Crypto,
     instanceId,
     settings: yield* Schema.decodeEffect(ClaudeSettings)({}),
     environment: {},
@@ -181,6 +182,8 @@ const makeFixture = Effect.fn("nativeReading.makeFixture")(function* (
         Effect.sync(() => {
           opened.push(input);
           return {
+            setPermissionMode: () =>
+              Effect.die("Permission-mode mutation is outside this fixture."),
             messages: Stream.fromQueue(sdkMessages).pipe(
               Stream.flatMap((message) =>
                 Stream.make(message).pipe(
@@ -272,10 +275,10 @@ function onPrompt(message) {
     { name: "native-reading", runtimePolicyOverride: { cwd } },
     makeLayer([adapter]),
     {
-      databaseLayer,
+      layerDatabase: databaseLayer,
       configureMcp: false,
       responseStreamingMode: "paragraph",
-      serverConfigLayer: Layer.succeed(ServerConfig, config),
+      layerServerConfig: Layer.succeed(ServerConfig, config),
     },
   );
   const create = Effect.gen(function* () {

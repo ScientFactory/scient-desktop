@@ -18,10 +18,10 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlite.ts";
 import { makeOmpCustomModelsClientFactory } from "../provider/omp/OmpCustomModels.ts";
 import { layer as gateLayer } from "../provider/omp/OmpExecutableGate.ts";
 import { ompTarget } from "../provider/omp/OmpTarget.ts";
@@ -31,10 +31,10 @@ import { EventSinkV2 } from "./EventSink.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
-import { makeLayer } from "./ProviderAdapterRegistry.ts";
+import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import {
-  makeOrchestratorV2ReplayLayerWithRegistry,
+  layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./testkit/ProviderReplayHarness.ts";
 import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
@@ -157,8 +157,8 @@ it.live(
             ]),
             {
               configureMcp: false,
-              serverConfigLayer: Layer.succeed(ServerConfig.ServerConfig, config),
-              databaseLayer: makeSqlitePersistenceLive(
+              layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
+              layerDatabase: makeSqlitePersistenceLive(
                 path.join(privateRoot, "statev2.sqlite"),
               ).pipe(Layer.provide(NodeServices.layer)),
               recoverOnStartup,

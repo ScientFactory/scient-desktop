@@ -11,7 +11,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import { spawnAndCollect } from "../providerSnapshot.ts";
@@ -315,11 +315,12 @@ export const makePiRpcTransport = Effect.fn("PiRpcClient.makeTransport")(functio
       const timed = <A>(effect: Effect.Effect<A, PiRpcError>) =>
         effect.pipe(
           Effect.timeout(Duration.millis(timeoutMs)),
-          Effect.catchTag("TimeoutError", () =>
-            close.pipe(
-              Effect.andThen(new PiRpcRequestTimeoutError({ command, requestId: id, timeoutMs })),
-            ),
-          ),
+          Effect.catchTags({
+            TimeoutError: () =>
+              close.pipe(
+                Effect.andThen(new PiRpcRequestTimeoutError({ command, requestId: id, timeoutMs })),
+              ),
+          }),
         );
       const response = yield* Effect.gen(function* () {
         // Prompt acknowledgement may wait on human extension input. Writes are
@@ -375,10 +376,9 @@ export const makePiRpcTransport = Effect.fn("PiRpcClient.makeTransport")(functio
         yield* Deferred.await(fence);
       }).pipe(
         Effect.timeout(Duration.millis(timeoutMs)),
-        Effect.catchTag(
-          "TimeoutError",
-          () => new PiRpcProtocolError({ detail: "Pi event consumer did not drain" }),
-        ),
+        Effect.catchTags({
+          TimeoutError: () => new PiRpcProtocolError({ detail: "Pi event consumer did not drain" }),
+        }),
       ),
     getState: () => request("get_state", {}, decodeState),
     getAvailableModels: () => request("get_available_models", {}, decodeModels),
@@ -416,13 +416,14 @@ export const makePiRpcTransport = Effect.fn("PiRpcClient.makeTransport")(functio
     respondToExtensionUi: (response) =>
       write({ type: "extension_ui_response", ...response }).pipe(
         Effect.timeout(Duration.millis(timeoutMs)),
-        Effect.catchTag("TimeoutError", () =>
-          close.pipe(
-            Effect.andThen(
-              new PiRpcProtocolError({ detail: "Pi extension response write timed out" }),
+        Effect.catchTags({
+          TimeoutError: () =>
+            close.pipe(
+              Effect.andThen(
+                new PiRpcProtocolError({ detail: "Pi extension response write timed out" }),
+              ),
             ),
-          ),
-        ),
+        }),
       ),
     close: () => close,
   };

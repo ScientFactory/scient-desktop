@@ -25,7 +25,7 @@ import {
 import type { AntigravityAuth } from "../AntigravityAuth.ts";
 import type { AntigravityInstallation } from "../AntigravityInstallation.ts";
 import { resolveAntigravityReleaseAsset } from "../antigravityRelease.ts";
-import { deriveProviderInstanceConfigMap } from "../Layers/ProviderInstanceRegistryHydration.ts";
+import { deriveProviderInstanceConfigMap } from "../ProviderInstanceRegistryHydration.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 
 export function usesLegacyAntigravityBackend(input: {

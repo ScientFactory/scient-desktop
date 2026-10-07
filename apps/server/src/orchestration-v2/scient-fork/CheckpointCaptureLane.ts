@@ -7,7 +7,7 @@
  * therefore also waits for every earlier checkpoint capture on its thread that
  * is still pending.
  */
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 /** An extra claim condition, appended to the outbox's candidate predicate. */
 export const checkpointCaptureLaneBarrier = (sql: SqlClient.SqlClient) => sql`

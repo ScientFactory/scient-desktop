@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Test identity fixture uses the host UUID implementation.
 // @vitest-environment happy-dom
 import * as NodeCrypto from "node:crypto";
 

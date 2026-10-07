@@ -158,20 +158,23 @@ describe("OMP v18.3.1 captures through the client", () => {
     );
   });
 
-  for (const name of captureNames) {
-    it.effect(`replays ${name} without protocol failures or decode warnings`, () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const { notifications, events } = yield* replay(name);
-          expect(notifications.filter((notification) => notification._tag !== "Event")).toEqual([]);
-          const unknown = events
-            .map((event) => event.type)
-            .filter((type) => !OMP_KNOWN_EVENT_TYPES.includes(type));
-          expect(unknown).toEqual([]);
-        }),
-      ),
-    );
-  }
+  it.effect.each(
+    captureNames.map((name) => ({
+      caseTitle: `replays ${name} without protocol failures or decode warnings`,
+      name,
+    })),
+  )("$caseTitle", ({ name }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { notifications, events } = yield* replay(name);
+        expect(notifications.filter((notification) => notification._tag !== "Event")).toEqual([]);
+        const unknown = events
+          .map((event) => event.type)
+          .filter((type) => !OMP_KNOWN_EVENT_TYPES.includes(type));
+        expect(unknown).toEqual([]);
+      }),
+    ),
+  );
 
   it.effect("success-text completes the prompt and settles the session", () =>
     Effect.scoped(

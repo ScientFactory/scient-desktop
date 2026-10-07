@@ -8,7 +8,7 @@ import { EventId, OrchestrationV2AppThreadJson } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as EventStore from "../../EventStore.ts";
 import * as ProjectStore from "../../ProjectStore.ts";
 import * as ProjectionStore from "../../ProjectionStore.ts";

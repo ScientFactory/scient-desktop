@@ -1,3 +1,4 @@
+import * as Hex from "effect/encoding/Hex";
 /**
  * Captures a `ConversationSnapshotV1` from the durable projections: the thread
  * detail with its complete history, the projection sequence, and the thread's
@@ -24,11 +25,10 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
@@ -175,7 +175,7 @@ const make = Effect.gen(function* () {
       .digest("SHA-256", new TextEncoder().encode(canonicalSnapshotContent(snapshotContent)))
       .pipe(Effect.mapError((cause) => new ConversationSnapshotReadError({ cause })));
     return {
-      snapshot: { ...snapshotContent, contentDigest: `sha256:${Encoding.encodeHex(digest)}` },
+      snapshot: { ...snapshotContent, contentDigest: `sha256:${Hex.encode(digest)}` },
       attachmentFiles,
     };
   });

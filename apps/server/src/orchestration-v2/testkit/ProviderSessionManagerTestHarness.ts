@@ -1,4 +1,5 @@
-import * as NetAddress from "effect/unstable/net/NetAddress";
+import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
+import * as NetAddress from "effect/net/NetAddress";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert } from "@effect/vitest";
 import {
@@ -24,15 +25,15 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import { HttpServer } from "effect/unstable/http";
-import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
+import { HttpServer } from "effect/http";
+import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
 import * as EventSink from "../EventSink.ts";
@@ -203,11 +204,12 @@ function makeProviderThread(input: {
   readonly threadId: ThreadId;
   readonly providerSessionId: ProviderSessionId;
   readonly now: DateTime.Utc;
+  readonly nativeThreadId?: string;
 }): OrchestrationV2ProviderThread {
   return {
     id: input.idAllocator.derive.providerThread({
       driver: CODEX_DRIVER,
-      nativeThreadId: "native-thread",
+      nativeThreadId: input.nativeThreadId ?? "native-thread",
     }),
     driver: CODEX_DRIVER,
     providerInstanceId: modelSelection.instanceId,
@@ -216,7 +218,7 @@ function makeProviderThread(input: {
     ownerNodeId: null,
     nativeThreadRef: {
       driver: CODEX_DRIVER,
-      nativeId: "native-thread",
+      nativeId: input.nativeThreadId ?? "native-thread",
       strength: "strong",
     },
     nativeConversationHeadRef: null,
@@ -251,6 +253,7 @@ function makeProviderAdapter(
     readonly mcpConfigs?: Ref.Ref<
       ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
     >;
+    readonly spawnBeforeOpen?: boolean;
     readonly beforeOpen?: (input: {
       readonly providerSessionId: ProviderSessionId;
       readonly initialProviderItemIdentityVersion?: 2;
@@ -282,7 +285,7 @@ function makeProviderAdapter(
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (input) =>
       Effect.gen(function* () {
-        if (options.beforeOpen !== undefined) {
+        if (options.spawnBeforeOpen !== true && options.beforeOpen !== undefined) {
           yield* options.beforeOpen(input);
         }
         if (options.mcpConfigs !== undefined) {
@@ -323,6 +326,10 @@ function makeProviderAdapter(
           // close before the closeCount finalizer, like a provider process
           // that never yields its message stream.
           yield* Effect.addFinalizer(() => Effect.never);
+        }
+
+        if (options.spawnBeforeOpen === true && options.beforeOpen !== undefined) {
+          yield* options.beforeOpen(input);
         }
 
         return {
@@ -413,6 +420,7 @@ function makeTestLayer(input: {
   readonly mcpConfigs?: Ref.Ref<
     ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
   >;
+  readonly spawnBeforeOpen?: boolean;
   readonly beforeOpen?: (input: {
     readonly providerSessionId: ProviderSessionId;
     readonly initialProviderItemIdentityVersion?: 2;
@@ -448,6 +456,7 @@ function makeTestLayer(input: {
     ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
     ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
     ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
+    ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
     ...(input.hasPendingBackgroundWork === undefined
       ? {}
       : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
@@ -467,7 +476,7 @@ function makeTestLayer(input: {
   const registryLayer =
     input.adapterRegistryLayer ??
     (injectionEnabled === undefined
-      ? ProviderAdapterRegistry.makeSingleLayer(configuredAdapter)
+      ? ProviderAdapterRegistry.layerSingle(configuredAdapter)
       : Layer.succeed(
           ProviderAdapterRegistry.ProviderAdapterRegistryV2,
           ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
@@ -511,7 +520,7 @@ function makeTestLayer(input: {
         ),
       ),
     ),
-  ).pipe(Layer.provide(NodeServices.layer));
+  ).pipe(Layer.provide(ThreadCommandExecutor.layer), Layer.provide(NodeServices.layer));
 }
 
 const fakeHttpServer = HttpServer.HttpServer.of({
@@ -772,6 +781,7 @@ export {
   makeProviderSession,
   makeThreadCreatedEvent,
   makeProviderThread,
+  makeBrowserAccessProject,
   makeProviderAdapter,
   makeTestLayer,
   TestLegacyImporterLayer,

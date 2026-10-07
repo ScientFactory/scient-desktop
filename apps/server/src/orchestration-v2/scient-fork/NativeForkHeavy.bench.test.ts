@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { ServerConfig } from "../../config.ts";
 import { ConversationImporter } from "../../scient/conversationImport/ConversationImporter.ts";
 import {
@@ -23,7 +23,7 @@ import {
   testLease,
 } from "../../scient/conversationImport/conversationImport.test-fixtures.ts";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
-import { makeLayer } from "../ProviderAdapterRegistry.ts";
+import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
 const layer = nativeImportRuntimeTestLayer(

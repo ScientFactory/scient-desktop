@@ -1,3 +1,4 @@
+import { isPreviewAvailableFor, previewRuntimeFor } from "~/browser/previewRuntime";
 import type {
   AnalysisArtifact,
   AnalysisRunSnapshot,
@@ -31,7 +32,6 @@ import { createPortal } from "react-dom";
 import { resolveAssetUrl, useAssetUrls } from "~/assets/assetUrls";
 import {
   applyPreviewServerSnapshot,
-  isPreviewSupportedInRuntime,
   readThreadPreviewState,
   rememberPreviewUrl,
 } from "~/previewStateStore";
@@ -308,7 +308,7 @@ export function AnalysisArtifactStrip(props: {
         }
         return;
       }
-      if (!isPreviewSupportedInRuntime()) {
+      if (!isPreviewAvailableFor(props.environmentId)) {
         reportFailure("Figure preview is unavailable");
         return;
       }
@@ -316,7 +316,13 @@ export function AnalysisArtifactStrip(props: {
       if (!url) return;
       const result = await openPreview({
         environmentId: props.environmentId,
-        input: { threadId: props.threadRef.threadId, url },
+        input: {
+          threadId: props.threadRef.threadId,
+          url,
+          ...(previewRuntimeFor(props.environmentId) === undefined
+            ? {}
+            : { runtime: previewRuntimeFor(props.environmentId) }),
+        },
       });
       if (result._tag !== "Success") {
         if (!isAtomCommandInterrupted(result)) reportFailure("Unable to open figure", result);

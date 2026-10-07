@@ -12,6 +12,7 @@
     "apps/web/src/scient/latex",
     "apps/web/src/scient/layout",
     "apps/web/src/scient/artifacts",
+    "apps/web/src/scient/previewPresentation",
     "apps/web/src/scient/fileSurfaces",
     "packages/scient-analysis",
     "packages/scient-compute",
@@ -195,9 +196,9 @@
       "purpose": "Carry authoritative file revisions through the shared file-query projection."
     },
     {
-      "path": "apps/web/src/components/preview/PreviewAutomationHosts.tsx",
-      "anchor": "selectThreadPreviewMiniPlayerTabId",
-      "purpose": "Scope automated browser mini-player transitions to browser tabs while sharing the tagged store with Scient artifacts."
+      "path": "apps/web/src/components/ChatView.tsx",
+      "anchor": "useScientBrowserPresentation({",
+      "purpose": "Consume fresh native browser presentation intents once and scope suppression to the matching browser while preserving Scient artifacts and devices."
     },
     {
       "path": "apps/web/src/components/preview/PreviewView.tsx",

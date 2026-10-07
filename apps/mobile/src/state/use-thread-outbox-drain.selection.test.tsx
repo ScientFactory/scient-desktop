@@ -14,7 +14,7 @@ import {
   presentThreadShell,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import * as Schema from "effect/Schema";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { makeRawThreadShell } from "../test-fixtures";
@@ -47,7 +47,7 @@ vi.mock("./entities", () => ({
   useThreadShells: () => calls.threads,
 }));
 vi.mock("./server", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   const { appAtomRegistry } = await import("./atom-registry");
   const configs = Atom.family(() => Atom.make<ServerConfig | null>(null).pipe(Atom.keepAlive));
   calls.writeConfig.mockImplementation((value) =>
@@ -60,7 +60,7 @@ vi.mock("./server", async () => {
   };
 });
 vi.mock("./threads", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   const { appAtomRegistry } = await import("./atom-registry");
   const shells = Atom.make<readonly EnvironmentThreadShell[]>([]).pipe(Atom.keepAlive);
   calls.writeThreadShells.mockImplementation((values) => appAtomRegistry.set(shells, values));
@@ -123,7 +123,7 @@ vi.mock("./thread-outbox", async () => {
   };
 });
 vi.mock("./use-thread-outbox", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   const { appAtomRegistry } = await import("./atom-registry");
   const { threadOutboxManager } = await import("./thread-outbox");
   return {
@@ -135,7 +135,7 @@ vi.mock("./use-thread-outbox", async () => {
   };
 });
 vi.mock("./use-composer-drafts", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   return {
     composerDraftsAtom: Atom.make({}),
     removeDeliveredCloudQueuedMessage: async () => undefined,

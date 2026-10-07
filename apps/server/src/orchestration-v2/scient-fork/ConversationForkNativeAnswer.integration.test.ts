@@ -17,7 +17,7 @@ import * as Stream from "effect/Stream";
 import { AcpRegistryOrchestratorReplayHarness } from "../Adapters/AcpRegistryAdapterV2.testkit.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
-import { makeOrchestratorV2ProviderReplayLayer } from "../testkit/ProviderReplayHarness.ts";
+import { layerProviderReplay as makeOrchestratorV2ProviderReplayLayer } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
 import {
   materializeReplayTranscriptRuntimeInstructions,

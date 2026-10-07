@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it, vi } from "@effect/vitest";
 import { CheckpointRef, CheckpointScopeId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -45,7 +46,7 @@ function makeProjection(): ProjectionCheckpointContext {
   };
 }
 
-function makeLayer(input: {
+function layerFor(input: {
   readonly projection: Effect.Effect<ProjectionCheckpointContext, OrchestratorProjectionError>;
   readonly diffCheckpoints?: CheckpointStore.CheckpointStore["Service"]["diffCheckpoints"];
   readonly hasCheckpointRef?: CheckpointStore.CheckpointStore["Service"]["hasCheckpointRef"];
@@ -62,6 +63,7 @@ function makeLayer(input: {
         }),
       ),
     ),
+    Layer.provideMerge(NodeCrypto.layer),
   );
 }
 
@@ -69,7 +71,7 @@ it.effect("computes V2 run diffs from projected checkpoint scopes", () => {
   const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
     Effect.succeed("diff --git a/file b/file"),
   );
-  const layer = makeLayer({ projection: Effect.succeed(makeProjection()), diffCheckpoints });
+  const layer = layerFor({ projection: Effect.succeed(makeProjection()), diffCheckpoints });
 
   return Effect.gen(function* () {
     const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -83,7 +85,7 @@ it.effect("computes V2 run diffs from projected checkpoint scopes", () => {
     });
     assert.deepEqual(diffCheckpoints.mock.calls[0]?.[0], {
       cwd: "/repo",
-      fromCheckpointRef: checkpointRefForScopeOrdinal({
+      fromCheckpointRef: yield* checkpointRefForScopeOrdinal({
         scopeId: firstScopeId,
         ordinalWithinScope: 0,
       }),
@@ -95,7 +97,7 @@ it.effect("computes V2 run diffs from projected checkpoint scopes", () => {
 });
 
 it.effect("preserves the typed missing-thread error contract", () => {
-  const layer = makeLayer({
+  const layer = layerFor({
     projection: Effect.fail(new OrchestratorProjectionError({ threadId })),
   });
 
@@ -114,7 +116,7 @@ it.effect("preserves the typed missing-thread error contract", () => {
 });
 
 it.effect("preserves the typed unavailable-range error contract", () => {
-  const layer = makeLayer({ projection: Effect.succeed(makeProjection()) });
+  const layer = layerFor({ projection: Effect.succeed(makeProjection()) });
 
   return Effect.gen(function* () {
     const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -135,7 +137,7 @@ it.effect("preserves the typed unavailable-range error contract", () => {
 
 it.effect("excludes ready checkpoints from rolled-back runs", () => {
   const projection = makeProjection();
-  const layer = makeLayer({
+  const layer = layerFor({
     projection: Effect.succeed({
       ...projection,
       runs: projection.runs.map((run) =>
@@ -173,7 +175,7 @@ it.effect("excludes ready checkpoints from rolled-back runs", () => {
 
 it.effect("preserves the typed missing-baseline-ref error contract", () => {
   const projection = makeProjection();
-  const layer = makeLayer({
+  const layer = layerFor({
     projection: Effect.succeed({
       ...projection,
       checkpointScopes: projection.checkpointScopes.map((scope) => ({
@@ -269,7 +271,7 @@ it.effect(
       );
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layerFor({
           projection: Effect.succeed(workspaceProjection()),
           diffCheckpoints: diff,
           hasCheckpointRef: hasRef,
@@ -279,46 +281,46 @@ it.effect(
   },
 );
 
-for (const scenario of ["missing metadata", "foreign baseline", "missing physical ref"] as const) {
-  it.effect(
-    `refuses ${scenario} without deriving a new-namespace zero or reading a foreign ref`,
-    () => {
-      const projection = workspaceProjection();
-      const diff = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
-        Effect.succeed("unexpected"),
-      );
-      const checkpoints = projection.checkpoints.map((checkpoint) =>
-        checkpoint.ref !== baselineRef
-          ? checkpoint
-          : scenario === "missing metadata"
-            ? { ...checkpoint, status: "missing" as const }
-            : scenario === "foreign baseline"
-              ? { ...checkpoint, scopeId: firstScopeId }
-              : checkpoint,
-      );
-      return Effect.gen(function* () {
-        const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
-        for (const fromTurnCount of [0, 1]) {
-          const error = yield* query
-            .getTurnDiff({ threadId, fromTurnCount, toTurnCount: 2 })
-            .pipe(Effect.flip);
-          assert.instanceOf(error, CheckpointRefUnavailableError);
-          assert.equal(error.checkpoint, "from");
-          assert.equal(error.turnCount, fromTurnCount);
-        }
-        assert.lengthOf(diff.mock.calls, 0);
-      }).pipe(
-        Effect.provide(
-          makeLayer({
-            projection: Effect.succeed({ ...projection, checkpoints }),
-            diffCheckpoints: diff,
-            hasCheckpointRef: () => Effect.succeed(scenario !== "missing physical ref"),
-          }),
-        ),
-      );
-    },
+it.effect.each(
+  (["missing metadata", "foreign baseline", "missing physical ref"] as const).map((scenario) => ({
+    caseTitle: `refuses ${scenario} without deriving a new-namespace zero or reading a foreign ref`,
+    scenario,
+  })),
+)("$caseTitle", ({ scenario }) => {
+  const projection = workspaceProjection();
+  const diff = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+    Effect.succeed("unexpected"),
   );
-}
+  const checkpoints = projection.checkpoints.map((checkpoint) =>
+    checkpoint.ref !== baselineRef
+      ? checkpoint
+      : scenario === "missing metadata"
+        ? { ...checkpoint, status: "missing" as const }
+        : scenario === "foreign baseline"
+          ? { ...checkpoint, scopeId: firstScopeId }
+          : checkpoint,
+  );
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    for (const fromTurnCount of [0, 1]) {
+      const error = yield* query
+        .getTurnDiff({ threadId, fromTurnCount, toTurnCount: 2 })
+        .pipe(Effect.flip);
+      assert.instanceOf(error, CheckpointRefUnavailableError);
+      assert.equal(error.checkpoint, "from");
+      assert.equal(error.turnCount, fromTurnCount);
+    }
+    assert.lengthOf(diff.mock.calls, 0);
+  }).pipe(
+    Effect.provide(
+      layerFor({
+        projection: Effect.succeed({ ...projection, checkpoints }),
+        diffCheckpoints: diff,
+        hasCheckpointRef: () => Effect.succeed(scenario !== "missing physical ref"),
+      }),
+    ),
+  );
+});
 
 it.effect(
   "preserves the earliest same-workspace historical baseline beside a new workspace scope",
@@ -332,7 +334,7 @@ it.effect(
       assert.equal(diff.mock.calls[0]?.[0].fromCheckpointRef, legacyRef);
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layerFor({
           projection: Effect.succeed({
             ...projection,
             checkpointScopes: projection.checkpointScopes
@@ -369,7 +371,7 @@ it.effect("checks physical availability of historical derived-zero refs", () => 
     assert.lengthOf(diff.mock.calls, 0);
   }).pipe(
     Effect.provide(
-      makeLayer({
+      layerFor({
         projection: Effect.succeed(makeProjection()),
         diffCheckpoints: diff,
         hasCheckpointRef: () => Effect.succeed(false),
@@ -388,7 +390,7 @@ it.effect("keeps equal-zero reads empty without looking up metadata or Git", () 
     );
   }).pipe(
     Effect.provide(
-      makeLayer({
+      layerFor({
         projection: Effect.die("unexpected metadata read"),
         diffCheckpoints: () => Effect.die("unexpected Git read"),
       }),
@@ -398,116 +400,120 @@ it.effect("keeps equal-zero reads empty without looking up metadata or Git", () 
 
 it.effect.each(["historical", "workspace-bound"] as const)(
   "keeps an implicit historical zero before newer explicit baseline metadata: %s",
-  (laterKind) => {
-    const projection = makeProjection();
-    const laterScopeId = laterKind === "historical" ? secondScopeId : workspaceScopeId;
-    const legacyRef = checkpointRefForScopeOrdinal({
-      scopeId: firstScopeId,
-      ordinalWithinScope: 0,
-    });
-    const diff = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
-      Effect.succeed("full historical diff"),
-    );
-    const hasRef = vi.fn(
-      (_input: Parameters<CheckpointStore.CheckpointStore["Service"]["hasCheckpointRef"]>[0]) =>
-        Effect.succeed(true),
-    );
-    return Effect.gen(function* () {
-      const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
-      assert.equal(
-        (yield* query.getFullThreadDiff({ threadId, toTurnCount: 2, ignoreWhitespace: false }))
-          .diff,
-        "full historical diff",
+  (laterKind) =>
+    Effect.gen(function* () {
+      const projection = makeProjection();
+      const laterScopeId = laterKind === "historical" ? secondScopeId : workspaceScopeId;
+      const legacyRef = yield* checkpointRefForScopeOrdinal({
+        scopeId: firstScopeId,
+        ordinalWithinScope: 0,
+      });
+      const diff = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+        Effect.succeed("full historical diff"),
       );
-      assert.deepEqual(
-        hasRef.mock.calls.map(([input]) => input),
-        [{ cwd: "/repo", checkpointRef: legacyRef }],
+      const hasRef = vi.fn(
+        (_input: Parameters<CheckpointStore.CheckpointStore["Service"]["hasCheckpointRef"]>[0]) =>
+          Effect.succeed(true),
       );
-      assert.deepEqual(
-        diff.mock.calls.map(([input]) => input),
-        [
-          {
-            cwd: "/repo",
-            fromCheckpointRef: legacyRef,
-            toCheckpointRef: secondRef,
-            fallbackFromToHead: false,
-            ignoreWhitespace: false,
-          },
-        ],
-      );
-    }).pipe(
-      Effect.provide(
-        makeLayer({
-          projection: Effect.succeed({
-            ...projection,
-            checkpointScopes: projection.checkpointScopes
-              .toReversed()
-              .map((scope) =>
-                scope.id === secondScopeId ? { ...scope, id: laterScopeId } : scope,
-              ),
-            checkpoints: [
-              {
-                scopeId: laterScopeId,
-                runId: null,
-                appRunOrdinal: null,
-                ordinalWithinScope: 1,
-                status: "ready",
-                ref: baselineRef,
-              },
-              { ...projection.checkpoints[0]!, scopeId: laterScopeId },
-            ],
+      return yield* Effect.gen(function* () {
+        const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+        assert.equal(
+          (yield* query.getFullThreadDiff({ threadId, toTurnCount: 2, ignoreWhitespace: false }))
+            .diff,
+          "full historical diff",
+        );
+        assert.deepEqual(
+          hasRef.mock.calls.map(([input]) => input),
+          [{ cwd: "/repo", checkpointRef: legacyRef }],
+        );
+        assert.deepEqual(
+          diff.mock.calls.map(([input]) => input),
+          [
+            {
+              cwd: "/repo",
+              fromCheckpointRef: legacyRef,
+              toCheckpointRef: secondRef,
+              fallbackFromToHead: false,
+              ignoreWhitespace: false,
+            },
+          ],
+        );
+      }).pipe(
+        Effect.provide(
+          layerFor({
+            projection: Effect.succeed({
+              ...projection,
+              checkpointScopes: projection.checkpointScopes
+                .toReversed()
+                .map((scope) =>
+                  scope.id === secondScopeId ? { ...scope, id: laterScopeId } : scope,
+                ),
+              checkpoints: [
+                {
+                  scopeId: laterScopeId,
+                  runId: null,
+                  appRunOrdinal: null,
+                  ordinalWithinScope: 1,
+                  status: "ready",
+                  ref: baselineRef,
+                },
+                { ...projection.checkpoints[0]!, scopeId: laterScopeId },
+              ],
+            }),
+            diffCheckpoints: diff,
+            hasCheckpointRef: hasRef,
           }),
-          diffCheckpoints: diff,
-          hasCheckpointRef: hasRef,
-        }),
-      ),
-    );
-  },
+        ),
+      );
+    }).pipe(Effect.provide(NodeCrypto.layer)),
 );
 
 it.effect.each(["historical", "workspace-bound"] as const)(
   "refuses to narrow history when an eligible implicit legacy source ref is absent: %s",
-  (laterKind) => {
-    const projection = makeProjection();
-    const laterScopeId = laterKind === "historical" ? secondScopeId : workspaceScopeId;
-    const legacyRef = checkpointRefForScopeOrdinal({
-      scopeId: firstScopeId,
-      ordinalWithinScope: 0,
-    });
-    const diff = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
-      Effect.succeed("unexpected narrowed diff"),
-    );
-    return Effect.gen(function* () {
-      const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
-      const error = yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 }).pipe(Effect.flip);
-      assert.instanceOf(error, CheckpointRefUnavailableError);
-      assert.equal(error.checkpoint, "from");
-      assert.equal(error.turnCount, 0);
-      assert.lengthOf(diff.mock.calls, 0);
-    }).pipe(
-      Effect.provide(
-        makeLayer({
-          projection: Effect.succeed({
-            ...projection,
-            checkpointScopes: projection.checkpointScopes.map((scope) =>
-              scope.id === secondScopeId ? { ...scope, id: laterScopeId } : scope,
-            ),
-            checkpoints: [
-              {
-                scopeId: laterScopeId,
-                runId: null,
-                appRunOrdinal: null,
-                ordinalWithinScope: 1,
-                status: "ready",
-                ref: baselineRef,
-              },
-              { ...projection.checkpoints[0]!, scopeId: laterScopeId },
-            ],
+  (laterKind) =>
+    Effect.gen(function* () {
+      const projection = makeProjection();
+      const laterScopeId = laterKind === "historical" ? secondScopeId : workspaceScopeId;
+      const legacyRef = yield* checkpointRefForScopeOrdinal({
+        scopeId: firstScopeId,
+        ordinalWithinScope: 0,
+      });
+      const diff = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+        Effect.succeed("unexpected narrowed diff"),
+      );
+      return yield* Effect.gen(function* () {
+        const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+        const error = yield* query
+          .getFullThreadDiff({ threadId, toTurnCount: 2 })
+          .pipe(Effect.flip);
+        assert.instanceOf(error, CheckpointRefUnavailableError);
+        assert.equal(error.checkpoint, "from");
+        assert.equal(error.turnCount, 0);
+        assert.lengthOf(diff.mock.calls, 0);
+      }).pipe(
+        Effect.provide(
+          layerFor({
+            projection: Effect.succeed({
+              ...projection,
+              checkpointScopes: projection.checkpointScopes.map((scope) =>
+                scope.id === secondScopeId ? { ...scope, id: laterScopeId } : scope,
+              ),
+              checkpoints: [
+                {
+                  scopeId: laterScopeId,
+                  runId: null,
+                  appRunOrdinal: null,
+                  ordinalWithinScope: 1,
+                  status: "ready",
+                  ref: baselineRef,
+                },
+                { ...projection.checkpoints[0]!, scopeId: laterScopeId },
+              ],
+            }),
+            diffCheckpoints: diff,
+            hasCheckpointRef: (input) => Effect.succeed(input.checkpointRef !== legacyRef),
           }),
-          diffCheckpoints: diff,
-          hasCheckpointRef: (input) => Effect.succeed(input.checkpointRef !== legacyRef),
-        }),
-      ),
-    );
-  },
+        ),
+      );
+    }).pipe(Effect.provide(NodeCrypto.layer)),
 );

@@ -15,7 +15,7 @@ import * as Path from "effect/Path";
 import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as LatexBuildService from "../../../scient/latex/LatexBuildService.ts";
 import type { AgentInvocationScope } from "../../../scient/operations/AgentInvocationContext.ts";
-import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
 import {
   assertCurrentDocumentBuildProject,
   commitStagedProjectPdfOutput,
@@ -245,7 +245,7 @@ const presentLatexDocument = Effect.fn("ScientLatexBuild.present")(function* (
   invocation: AgentInvocationScope,
   rootSourcePath: string,
 ) {
-  const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+  const broker = yield* DocumentHostBroker.DocumentHostBroker;
   return yield* broker
     .invoke({
       scope: invocation,

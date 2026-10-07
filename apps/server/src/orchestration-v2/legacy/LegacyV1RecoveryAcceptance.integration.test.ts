@@ -22,10 +22,10 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { createPendingAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
-import { layerConfig } from "../../persistence/Layers/Sqlite.ts";
+import { layerConfig } from "../../persistence/Sqlite.ts";
 import { runMigrations } from "../../persistence/Migrations.ts";
 import { legacyQueueFilePath } from "../../scient/threadQueue/Store.ts";
 import { readQueue } from "./LegacyQueueLedger.ts";
@@ -38,12 +38,12 @@ import { EventSinkV2 } from "../EventSink.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import type { ProviderAdapterV2TurnInput } from "../ProviderAdapter.ts";
-import { makeLayer } from "../ProviderAdapterRegistry.ts";
+import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as ProviderRecovery from "../ProviderRuntimeRecoveryService.ts";
 import { SCIENT_MIGRATIONS } from "../scient-fork/scientMigrator.ts";
 import {
-  makeOrchestratorV2ReplayLayerWithRegistry,
+  layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
@@ -281,7 +281,11 @@ it.live(
           const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
             { name: "migration-recovery-acceptance", runtimePolicyOverride: { cwd } },
             makeLayer([adapter]),
-            { databaseLayer, serverConfigLayer: configLayer, runEffectWorker: false },
+            {
+              layerDatabase: databaseLayer,
+              layerServerConfig: configLayer,
+              runEffectWorker: false,
+            },
           );
           const services = Layer.mergeAll(
             runtime,
@@ -303,6 +307,7 @@ it.live(
                   Effect.andThen(cutOverLegacyQueues),
                 ),
                 recover: (yield* ProviderRecovery.ProviderRuntimeRecoveryService).recover,
+                recoverDelegatedTasks: orchestrator.recoverDelegatedTasks,
                 startEffectWorker: Effect.gen(function* () {
                   assert.equal(yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain(), 0);
                   yield* EffectWorker.runDaemon.pipe(Effect.forkScoped);

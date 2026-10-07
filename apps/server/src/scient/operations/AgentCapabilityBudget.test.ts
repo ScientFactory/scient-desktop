@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Logger from "effect/Logger";
 import * as Layer from "effect/Layer";
-import { Tool } from "effect/unstable/ai";
+import { Tool } from "effect/ai";
 
 import { scientTools } from "../../mcp/ScientOperationCatalog.ts";
 import {

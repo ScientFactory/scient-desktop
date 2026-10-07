@@ -119,7 +119,7 @@ const settleWaitingRun = Effect.fnUntraced(function* (
               : null,
           ordinalWithinScope: run.ordinal,
           appRunOrdinal: run.ordinal,
-          ref: checkpointRefForScopeOrdinal({
+          ref: yield* checkpointRefForScopeOrdinal({
             scopeId: checkpointTarget.scope.id,
             ordinalWithinScope: run.ordinal,
           }),

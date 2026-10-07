@@ -1,5 +1,5 @@
 import { makeOperationRegistry } from "@scientfactory/operations";
-import type { Tool } from "effect/unstable/ai";
+import type { Tool } from "effect/ai";
 
 import { operationDefinitionForTool } from "./ScientOperationTool.ts";
 import { ScientComputeToolkit } from "./toolkits/compute/tools.ts";

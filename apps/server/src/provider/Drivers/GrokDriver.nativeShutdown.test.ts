@@ -1,3 +1,4 @@
+import * as ThreadCommandExecutor from "../../orchestration-v2/ThreadCommandExecutor.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -29,9 +30,9 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as NetAddress from "effect/unstable/net/NetAddress";
-import { HttpClient, HttpServer } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import * as NetAddress from "effect/net/NetAddress";
+import { HttpClient, HttpServer } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
@@ -47,12 +48,12 @@ import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapter
 import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
 import * as ProviderEventIngestor from "../../orchestration-v2/ProviderEventIngestor.ts";
 import * as ProviderSessionManager from "../../orchestration-v2/ProviderSessionManager.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
-import { makeProviderInstanceRegistry } from "../Layers/ProviderInstanceRegistryLive.ts";
-import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
-import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
+import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import { makeProviderInstanceRegistry } from "../ProviderInstanceRegistry.ts";
+import { ProviderInstanceRegistry } from "../ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "../ProviderRegistry.ts";
 import { GrokDriver } from "./GrokDriver.ts";
 
 const first = ProviderInstanceId.make("grok-shutdown-target");
@@ -144,7 +145,10 @@ const harness = Effect.fn("GrokShutdown.harness")(function* () {
   // The copy imports the same installed Effect/ACP implementation from the
   // fixture directory; only synthetic account behavior differs from the mock.
   yield* fs.writeFileString(agentPath, agentSource);
-  yield* fs.symlink(NodePath.join(process.cwd(), "node_modules"), path.join(root, "node_modules"));
+  yield* fs.symlink(
+    NodeURL.fileURLToPath(new URL("../../../node_modules", import.meta.url)),
+    path.join(root, "node_modules"),
+  );
   const accounts = new Map<ProviderInstanceId, string>();
   const refusalFiles = new Map<ProviderInstanceId, string>();
   const controls = {
@@ -447,370 +451,375 @@ const tokenFor = (threadId: ThreadId) =>
     "",
   );
 
-it.layer(testLayer)("Grok factory native shutdown", (it) => {
-  it.effect.skipIf(windowsHost)(
-    "awaits physical teardown before credentials, releases manager/MCP and keeps peer and fresh native delivery",
-    () =>
-      Effect.gen(function* () {
-        const h = yield* harness();
-        const target = yield* seedThread(h, first);
-        const peer = yield* seedThread(h, second);
-        const configured = yield* managerLayer(h);
-        const mcp = yield* McpSessionRegistry.McpSessionRegistry;
-        yield* Effect.gen(function* () {
-          const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-          const old = yield* manager.open(target.input);
-          const other = yield* manager.open(peer.input);
-          const targetToken = tokenFor(target.input.threadId);
-          const peerToken = tokenFor(peer.input.threadId);
-          for (const seeded of [target, peer]) {
-            const bound = McpProviderSession.readMcpProviderSession(seeded.input.threadId)!;
-            const created = (yield* h.readRequests(seeded.input.modelSelection.instanceId)).find(
-              (request) => request.method === "session/new",
+it.layer(testLayer.pipe(Layer.provideMerge(ThreadCommandExecutor.layer)))(
+  "Grok factory native shutdown",
+  (it) => {
+    it.effect.skipIf(windowsHost)(
+      "awaits physical teardown before credentials, releases manager/MCP and keeps peer and fresh native delivery",
+      () =>
+        Effect.gen(function* () {
+          const h = yield* harness();
+          const target = yield* seedThread(h, first);
+          const peer = yield* seedThread(h, second);
+          const configured = yield* managerLayer(h);
+          const mcp = yield* McpSessionRegistry.McpSessionRegistry;
+          yield* Effect.gen(function* () {
+            const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+            const old = yield* manager.open(target.input);
+            const other = yield* manager.open(peer.input);
+            const targetToken = tokenFor(target.input.threadId);
+            const peerToken = tokenFor(peer.input.threadId);
+            for (const seeded of [target, peer]) {
+              const bound = McpProviderSession.readMcpProviderSession(seeded.input.threadId)!;
+              const created = (yield* h.readRequests(seeded.input.modelSelection.instanceId)).find(
+                (request) => request.method === "session/new",
+              );
+              expect(created?.params).toEqual(
+                expect.objectContaining({
+                  mcpServers: [
+                    expect.objectContaining({
+                      name: "scient",
+                      env: expect.arrayContaining([
+                        { name: "T3_ACP_MCP_ENDPOINT", value: bound.endpoint },
+                        { name: "T3_ACP_MCP_AUTHORIZATION", value: bound.authorizationHeader },
+                      ]),
+                    }),
+                  ],
+                }),
+              );
+            }
+            const owned = h.launches.filter((launch) => launch.instanceId === first);
+            expect(owned).toHaveLength(1);
+            expect(owned[0]!.args).toEqual([
+              "--rules",
+              expect.any(String),
+              "agent",
+              "--always-approve",
+              "stdio",
+            ]);
+            expect(owned[0]!.environment.GROK_OAUTH2_REFERRER).toBe("t3code");
+            expect(yield* h.fs.exists(h.accounts.get(first)!)).toBe(true);
+            expect(yield* h.fs.exists(h.accounts.get(second)!)).toBe(true);
+            expect(h.ownedFiles.has(target.input.threadId)).toBe(true);
+            expect(h.nativeScopes.get(target.input.threadId)?.state._tag).toBe("Open");
+            let credentialSpawnObserved = false;
+            h.controls.beforeTargetSpawn = Effect.gen(function* () {
+              yield* assertClosed(h, owned);
+              for (const launch of h.launches.filter((launch) => launch.instanceId === second))
+                expect(yield* launch.handle.isRunning).toBe(true);
+              expect(yield* mcp.resolve(peerToken)).toBeDefined();
+              expect(yield* h.fs.exists(h.accounts.get(first)!)).toBe(true);
+              credentialSpawnObserved = true;
+            }).pipe(Effect.orDie);
+            yield* h.target.connectionActions!.disconnect.pipe(Effect.scoped);
+            expect(credentialSpawnObserved).toBe(true);
+            expect(yield* h.fs.exists(h.accounts.get(first)!)).toBe(false);
+            expect(yield* h.fs.exists(h.accounts.get(second)!)).toBe(true);
+            const credentialLaunches = h.launches.filter(
+              (launch) => launch.instanceId === first && !launch.args.includes("--rules"),
             );
-            expect(created?.params).toEqual(
-              expect.objectContaining({
-                mcpServers: [
-                  expect.objectContaining({
-                    name: "scient",
-                    env: expect.arrayContaining([
-                      { name: "T3_ACP_MCP_ENDPOINT", value: bound.endpoint },
-                      { name: "T3_ACP_MCP_AUTHORIZATION", value: bound.authorizationHeader },
-                    ]),
-                  }),
-                ],
-              }),
+            // Logout and the fresh verification process both use Grok's official
+            // agent stdio launcher, without the native turn's permission override.
+            expect(credentialLaunches).toHaveLength(2);
+            for (const launch of credentialLaunches) {
+              expect(launch.args).toEqual(["agent", "stdio"]);
+              expect(launch.environment.GROK_LOGIN_DEVICE_FLOW).toBe("false");
+              expect(launch.environment.GROK_HOME).toBe(owned[0]!.environment.GROK_HOME);
+              expect(yield* launch.handle.isRunning).toBe(false);
+            }
+            expect((yield* h.readRequests(first)).map((request) => request.method)).toContain(
+              "_x.ai/auth/logout",
             );
-          }
-          const owned = h.launches.filter((launch) => launch.instanceId === first);
-          expect(owned).toHaveLength(1);
-          expect(owned[0]!.args).toEqual([
-            "--rules",
-            expect.any(String),
-            "agent",
-            "--always-approve",
-            "stdio",
-          ]);
-          expect(owned[0]!.environment.GROK_OAUTH2_REFERRER).toBe("t3code");
+            yield* Deferred.await(configured.revoked);
+            expect(Option.isNone(yield* manager.get(target.input.providerSessionId))).toBe(true);
+            expect(yield* mcp.resolve(targetToken)).toBeUndefined();
+            expect(Option.isSome(yield* manager.get(peer.input.providerSessionId))).toBe(true);
+            expect(yield* mcp.resolve(peerToken)).toBeDefined();
+            const before = (yield* h.readRequests(first)).length;
+            expect((yield* Effect.result(old.ensureThread(target.input)))._tag).toBe("Failure");
+            expect((yield* h.readRequests(first)).length).toBe(before);
+            yield* turn(other, peer, 1);
+            expect((yield* h.readRequests(second)).map((request) => request.method)).toContain(
+              "session/prompt",
+            );
+            // Reconnect only this synthetic account before a permitted fresh launch.
+            yield* h.fs.writeFileString(h.accounts.get(first)!, "synthetic reconnected account");
+            const fresh = yield* seedThread(h, first, "fresh");
+            const opened = yield* manager.open(fresh.input);
+            yield* turn(opened, fresh, 1);
+            expect(opened.instanceId).toBe(first);
+            expect(opened.providerSession.cwd).toBe(h.root);
+            const freshLaunch = h.launches.findLast((launch) => launch.instanceId === first)!;
+            expect(freshLaunch.environment.GROK_SHUTDOWN_INSTANCE).toBe(first);
+            expect(freshLaunch.environment.GROK_HOME).toBe(owned[0]!.environment.GROK_HOME);
+            expect(freshLaunch.environment.T3_ACP_REQUEST_LOG_PATH).toBe(
+              owned[0]!.environment.T3_ACP_REQUEST_LOG_PATH,
+            );
+            expect(yield* freshLaunch.handle.isRunning).toBe(true);
+            expect(yield* mcp.resolve(tokenFor(fresh.input.threadId))).toBeDefined();
+            expect(
+              (yield* h.readRequests(first)).filter(
+                (request) => request.method === "session/prompt",
+              ),
+            ).toHaveLength(1);
+            expect(yield* h.registry.getInstance(first)).toBe(h.target);
+          }).pipe(Effect.provide(configured.layer), Effect.scoped);
+        }).pipe(Effect.scoped),
+      20_000,
+    );
+
+    it.effect.skipIf(windowsHost)(
+      "interrupts registered startup without a late child or MCP reservation",
+      () =>
+        Effect.gen(function* () {
+          const h = yield* harness();
+          const target = yield* seedThread(h, first);
+          const configured = yield* managerLayer(h);
+          const entered = yield* Deferred.make<void>();
+          const gate = yield* Deferred.make<void>();
+          yield* Effect.addFinalizer(() => Deferred.succeed(gate, undefined));
+          h.controls.beforeTargetSpawn = Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(gate)),
+          );
+          yield* Effect.gen(function* () {
+            const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+            const opening = yield* manager.open(target.input).pipe(Effect.exit, Effect.forkChild);
+            yield* Deferred.await(entered);
+            const token = tokenFor(target.input.threadId);
+            const mcp = yield* McpSessionRegistry.McpSessionRegistry;
+            expect(yield* mcp.resolve(token)).toBeDefined();
+            yield* h.target.connectionActions!.disconnect.pipe(Effect.scoped);
+            yield* Deferred.succeed(gate, undefined);
+            expect(Exit.isFailure(yield* Fiber.join(opening))).toBe(true);
+            yield* Deferred.await(configured.revoked);
+            expect(yield* mcp.resolve(token)).toBeUndefined();
+            expect(Option.isNone(yield* manager.get(target.input.providerSessionId))).toBe(true);
+            // Only logout and verification children launched; the cancelled native opener cannot escape.
+            const launched = h.launches.filter((launch) => launch.instanceId === first);
+            expect(launched).toHaveLength(2);
+            expect(launched.every((launch) => !launch.args.includes("--rules"))).toBe(true);
+            expect(yield* h.fs.exists(h.accounts.get(first)!)).toBe(false);
+            expect((yield* h.readRequests(first)).map((request) => request.method)).not.toContain(
+              "session/new",
+            );
+          }).pipe(Effect.provide(configured.layer), Effect.scoped);
+        }).pipe(Effect.scoped),
+      20_000,
+    );
+
+    it.effect.skipIf(windowsHost)(
+      "refuses competing opens while finalizers run and fences an old direct runtime",
+      () =>
+        Effect.gen(function* () {
+          const h = yield* harness();
+          const input = h.input(first);
+          const old = yield* h.target.orchestrationAdapter.openSession(input);
+          const events = yield* old.events.pipe(Stream.runDrain, Effect.forkChild);
+          const entered = yield* Deferred.make<void>();
+          const gate = yield* Deferred.make<void>();
+          yield* Effect.addFinalizer(() => Deferred.succeed(gate, undefined));
+          h.controls.beforeTargetFinalize = Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(gate)),
+          );
+          const closing = yield* h.target.connectionActions!.disconnect.pipe(
+            Effect.scoped,
+            Effect.forkChild,
+          );
+          yield* Deferred.await(entered);
+          expect(
+            (yield* Effect.result(
+              h.target.orchestrationAdapter.openSession(h.input(first, "racing")),
+            ))._tag,
+          ).toBe("Failure");
+          const before = (yield* h.readRequests(first)).length;
+          expect((yield* Effect.result(old.ensureThread(input)))._tag).toBe("Failure");
+          expect((yield* h.readRequests(first)).length).toBe(before);
+          yield* Deferred.succeed(gate, undefined);
+          yield* Fiber.join(closing);
+          yield* Fiber.join(events);
+          yield* assertClosed(h);
+          const fresh = yield* h.target.orchestrationAdapter.openSession(h.input(first, "fresh"));
+          expect(fresh.instanceId).toBe(first);
+          expect(fresh.providerSession.cwd).toBe(h.root);
+        }).pipe(Effect.scoped),
+      20_000,
+    );
+
+    it.effect.skipIf(windowsHost)(
+      "caller cancellation waits for admitted teardown and does not mutate credentials",
+      () =>
+        Effect.gen(function* () {
+          const h = yield* harness();
+          yield* h.target.orchestrationAdapter.openSession(h.input(first));
+          const entered = yield* Deferred.make<void>();
+          const gate = yield* Deferred.make<void>();
+          yield* Effect.addFinalizer(() => Deferred.succeed(gate, undefined));
+          h.controls.beforeTargetFinalize = Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(gate)),
+          );
+          const closing = yield* h.target.connectionActions!.disconnect.pipe(
+            Effect.scoped,
+            Effect.forkChild,
+          );
+          yield* Deferred.await(entered);
+          const cancellationRequested = yield* Deferred.make<void>();
+          const cancelled = yield* Deferred.succeed(cancellationRequested, undefined).pipe(
+            Effect.andThen(Fiber.interrupt(closing)),
+            Effect.forkChild,
+          );
+          yield* Deferred.await(cancellationRequested);
+          expect(
+            (yield* Effect.result(
+              h.target.orchestrationAdapter.openSession(h.input(first, "while-cancelled")),
+            ))._tag,
+          ).toBe("Failure");
+          yield* Deferred.succeed(gate, undefined);
+          yield* Fiber.join(cancelled);
+          const exit = yield* Fiber.await(closing);
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) expect(Cause.hasInterrupts(exit.cause)).toBe(true);
+          yield* assertClosed(h);
+          expect(yield* h.fs.exists(h.accounts.get(first)!)).toBe(true);
+          expect((yield* h.readRequests(first)).map((request) => request.method)).not.toContain(
+            "_x.ai/auth/logout",
+          );
+          expect(h.launches.filter((launch) => launch.instanceId === first)).toHaveLength(1);
+          const fresh = yield* h.target.orchestrationAdapter.openSession(
+            h.input(first, "after-cancel"),
+          );
+          expect(fresh.instanceId).toBe(first);
+        }).pipe(Effect.scoped),
+      20_000,
+    );
+
+    it.effect.skipIf(windowsHost)(
+      "retains teardown failure, refuses credentials and new opens, and preserves peer/catalog",
+      () => {
+        let assertionsCompleted = false;
+        return Effect.gen(function* () {
+          const h = yield* harness();
+          yield* h.target.orchestrationAdapter.openSession(h.input(first));
+          yield* h.target.orchestrationAdapter.openSession(h.input(first, "sibling"));
+          const peer = yield* h.peer.orchestrationAdapter.openSession(h.input(second));
+          h.controls.failTargetFinalize = true;
+          const before = h.launches.length;
+          const firstClose = yield* Effect.result(
+            h.target.connectionActions!.disconnect.pipe(Effect.scoped),
+          );
+          expect(firstClose._tag).toBe("Failure");
+          if (firstClose._tag === "Failure")
+            expect(firstClose.failure.message).toContain("stop active Grok sessions");
+          yield* assertClosed(h);
+          expect(h.launches).toHaveLength(before);
           expect(yield* h.fs.exists(h.accounts.get(first)!)).toBe(true);
           expect(yield* h.fs.exists(h.accounts.get(second)!)).toBe(true);
-          expect(h.ownedFiles.has(target.input.threadId)).toBe(true);
-          expect(h.nativeScopes.get(target.input.threadId)?.state._tag).toBe("Open");
-          let credentialSpawnObserved = false;
-          h.controls.beforeTargetSpawn = Effect.gen(function* () {
-            yield* assertClosed(h, owned);
-            for (const launch of h.launches.filter((launch) => launch.instanceId === second))
-              expect(yield* launch.handle.isRunning).toBe(true);
-            expect(yield* mcp.resolve(peerToken)).toBeDefined();
-            expect(yield* h.fs.exists(h.accounts.get(first)!)).toBe(true);
-            credentialSpawnObserved = true;
-          }).pipe(Effect.orDie);
-          yield* h.target.connectionActions!.disconnect.pipe(Effect.scoped);
-          expect(credentialSpawnObserved).toBe(true);
-          expect(yield* h.fs.exists(h.accounts.get(first)!)).toBe(false);
-          expect(yield* h.fs.exists(h.accounts.get(second)!)).toBe(true);
-          const credentialLaunches = h.launches.filter(
-            (launch) => launch.instanceId === first && !launch.args.includes("--rules"),
+          expect(
+            (yield* Effect.result(h.target.connectionActions!.disconnect.pipe(Effect.scoped)))._tag,
+          ).toBe("Failure");
+          expect(
+            (yield* Effect.result(
+              h.target.orchestrationAdapter.openSession(h.input(first, "refused")),
+            ))._tag,
+          ).toBe("Failure");
+          expect(h.launches).toHaveLength(before);
+          expect((yield* h.readRequests(first)).map((request) => request.method)).not.toContain(
+            "_x.ai/auth/logout",
           );
-          // Logout and the fresh verification process both use Grok's official
-          // agent stdio launcher, without the native turn's permission override.
-          expect(credentialLaunches).toHaveLength(2);
-          for (const launch of credentialLaunches) {
-            expect(launch.args).toEqual(["agent", "stdio"]);
-            expect(launch.environment.GROK_LOGIN_DEVICE_FLOW).toBe("false");
-            expect(launch.environment.GROK_HOME).toBe(owned[0]!.environment.GROK_HOME);
-            expect(yield* launch.handle.isRunning).toBe(false);
-          }
+          expect(yield* h.registry.getInstance(first)).toBe(h.target);
+          expect(yield* h.registry.getInstance(second)).toBe(h.peer);
+          yield* peer.ensureThread(h.input(second));
+          for (const launch of h.launches.filter((launch) => launch.instanceId === second))
+            expect(yield* launch.handle.isRunning).toBe(true);
+          // Failed teardown is sticky: no retry may treat Scope.close's no-op as cleanup.
+          // Registry retirement is separately responsible for the permanent instance.
+          assertionsCompleted = true;
+        }).pipe(
+          Effect.scoped,
+          Effect.exit,
+          Effect.map((exit) => {
+            expect(assertionsCompleted).toBe(true);
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit))
+              expect(Cause.pretty(exit.cause)).toContain("owned native fixture teardown failed");
+          }),
+        );
+      },
+      20_000,
+    );
+    it.effect.skipIf(windowsHost)(
+      "preserves Grok logout rejection after successful physical close without retiring the factory",
+      () =>
+        Effect.gen(function* () {
+          const h = yield* harness();
+          yield* h.target.orchestrationAdapter.openSession(h.input(first));
+          yield* h.fs.writeFileString(h.refusalFiles.get(first)!, "synthetic refusal");
+          const result = yield* Effect.result(
+            h.target.connectionActions!.disconnect.pipe(Effect.scoped),
+          );
+          expect(result._tag).toBe("Failure");
+          if (result._tag === "Failure")
+            expect(result.failure.message).toBe(
+              "Grok did not confirm that the account was signed out.",
+            );
+          yield* assertClosed(h);
+          expect(yield* h.fs.exists(h.accounts.get(first)!)).toBe(true);
           expect((yield* h.readRequests(first)).map((request) => request.method)).toContain(
             "_x.ai/auth/logout",
           );
-          yield* Deferred.await(configured.revoked);
-          expect(Option.isNone(yield* manager.get(target.input.providerSessionId))).toBe(true);
-          expect(yield* mcp.resolve(targetToken)).toBeUndefined();
-          expect(Option.isSome(yield* manager.get(peer.input.providerSessionId))).toBe(true);
-          expect(yield* mcp.resolve(peerToken)).toBeDefined();
-          const before = (yield* h.readRequests(first)).length;
-          expect((yield* Effect.result(old.ensureThread(target.input)))._tag).toBe("Failure");
-          expect((yield* h.readRequests(first)).length).toBe(before);
-          yield* turn(other, peer, 1);
-          expect((yield* h.readRequests(second)).map((request) => request.method)).toContain(
-            "session/prompt",
-          );
-          // Reconnect only this synthetic account before a permitted fresh launch.
-          yield* h.fs.writeFileString(h.accounts.get(first)!, "synthetic reconnected account");
-          const fresh = yield* seedThread(h, first, "fresh");
-          const opened = yield* manager.open(fresh.input);
-          yield* turn(opened, fresh, 1);
-          expect(opened.instanceId).toBe(first);
-          expect(opened.providerSession.cwd).toBe(h.root);
-          const freshLaunch = h.launches.findLast((launch) => launch.instanceId === first)!;
-          expect(freshLaunch.environment.GROK_SHUTDOWN_INSTANCE).toBe(first);
-          expect(freshLaunch.environment.GROK_HOME).toBe(owned[0]!.environment.GROK_HOME);
-          expect(freshLaunch.environment.T3_ACP_REQUEST_LOG_PATH).toBe(
-            owned[0]!.environment.T3_ACP_REQUEST_LOG_PATH,
-          );
-          expect(yield* freshLaunch.handle.isRunning).toBe(true);
-          expect(yield* mcp.resolve(tokenFor(fresh.input.threadId))).toBeDefined();
-          expect(
-            (yield* h.readRequests(first)).filter((request) => request.method === "session/prompt"),
-          ).toHaveLength(1);
           expect(yield* h.registry.getInstance(first)).toBe(h.target);
-        }).pipe(Effect.provide(configured.layer), Effect.scoped);
-      }).pipe(Effect.scoped),
-    20_000,
-  );
-
-  it.effect.skipIf(windowsHost)(
-    "interrupts registered startup without a late child or MCP reservation",
-    () =>
-      Effect.gen(function* () {
-        const h = yield* harness();
-        const target = yield* seedThread(h, first);
-        const configured = yield* managerLayer(h);
-        const entered = yield* Deferred.make<void>();
-        const gate = yield* Deferred.make<void>();
-        yield* Effect.addFinalizer(() => Deferred.succeed(gate, undefined));
-        h.controls.beforeTargetSpawn = Deferred.succeed(entered, undefined).pipe(
-          Effect.andThen(Deferred.await(gate)),
-        );
-        yield* Effect.gen(function* () {
-          const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-          const opening = yield* manager.open(target.input).pipe(Effect.exit, Effect.forkChild);
-          yield* Deferred.await(entered);
-          const token = tokenFor(target.input.threadId);
-          const mcp = yield* McpSessionRegistry.McpSessionRegistry;
-          expect(yield* mcp.resolve(token)).toBeDefined();
-          yield* h.target.connectionActions!.disconnect.pipe(Effect.scoped);
-          yield* Deferred.succeed(gate, undefined);
-          expect(Exit.isFailure(yield* Fiber.join(opening))).toBe(true);
-          yield* Deferred.await(configured.revoked);
-          expect(yield* mcp.resolve(token)).toBeUndefined();
-          expect(Option.isNone(yield* manager.get(target.input.providerSessionId))).toBe(true);
-          // Only logout and verification children launched; the cancelled native opener cannot escape.
-          const launched = h.launches.filter((launch) => launch.instanceId === first);
-          expect(launched).toHaveLength(2);
-          expect(launched.every((launch) => !launch.args.includes("--rules"))).toBe(true);
-          expect(yield* h.fs.exists(h.accounts.get(first)!)).toBe(false);
+          yield* h.fs.remove(h.refusalFiles.get(first)!);
+          const fresh = yield* h.target.orchestrationAdapter.openSession(
+            h.input(first, "after-logout-rejection"),
+          );
+          expect(fresh.instanceId).toBe(first);
+          expect(
+            yield* h.launches.findLast((launch) => launch.instanceId === first)!.handle.isRunning,
+          ).toBe(true);
+        }).pipe(Effect.scoped),
+      20_000,
+    );
+    it.effect.skipIf(windowsHost)(
+      "refuses native opening after caller or configured instance retirement",
+      () =>
+        Effect.gen(function* () {
+          const h = yield* harness();
+          const caller = yield* Scope.make();
+          yield* Scope.close(caller, Exit.void);
+          const initialCount = h.launches.length;
+          expect(
+            (yield* Effect.result(
+              h.target.orchestrationAdapter
+                .openSession(h.input(first, "closed-caller"))
+                .pipe(Effect.provideService(Scope.Scope, caller)),
+            ))._tag,
+          ).toBe("Failure");
+          expect(h.launches).toHaveLength(initialCount);
+          const old = yield* h.target.orchestrationAdapter.openSession(h.input(first));
+          const peer = yield* h.peer.orchestrationAdapter.openSession(h.input(second));
+          yield* h.mutator.reconcile({ [second]: h.configMap[second]! });
+          yield* assertClosed(h);
+          const before = h.launches.length;
+          expect(
+            (yield* Effect.result(
+              h.target.orchestrationAdapter.openSession(h.input(first, "closed-instance")),
+            ))._tag,
+          ).toBe("Failure");
+          expect((yield* Effect.result(old.ensureThread(h.input(first))))._tag).toBe("Failure");
+          expect(
+            (yield* Effect.result(h.target.connectionActions!.disconnect.pipe(Effect.scoped)))._tag,
+          ).toBe("Failure");
+          expect(h.launches).toHaveLength(before);
           expect((yield* h.readRequests(first)).map((request) => request.method)).not.toContain(
-            "session/new",
+            "_x.ai/auth/logout",
           );
-        }).pipe(Effect.provide(configured.layer), Effect.scoped);
-      }).pipe(Effect.scoped),
-    20_000,
-  );
-
-  it.effect.skipIf(windowsHost)(
-    "refuses competing opens while finalizers run and fences an old direct runtime",
-    () =>
-      Effect.gen(function* () {
-        const h = yield* harness();
-        const input = h.input(first);
-        const old = yield* h.target.orchestrationAdapter.openSession(input);
-        const events = yield* old.events.pipe(Stream.runDrain, Effect.forkChild);
-        const entered = yield* Deferred.make<void>();
-        const gate = yield* Deferred.make<void>();
-        yield* Effect.addFinalizer(() => Deferred.succeed(gate, undefined));
-        h.controls.beforeTargetFinalize = Deferred.succeed(entered, undefined).pipe(
-          Effect.andThen(Deferred.await(gate)),
-        );
-        const closing = yield* h.target.connectionActions!.disconnect.pipe(
-          Effect.scoped,
-          Effect.forkChild,
-        );
-        yield* Deferred.await(entered);
-        expect(
-          (yield* Effect.result(
-            h.target.orchestrationAdapter.openSession(h.input(first, "racing")),
-          ))._tag,
-        ).toBe("Failure");
-        const before = (yield* h.readRequests(first)).length;
-        expect((yield* Effect.result(old.ensureThread(input)))._tag).toBe("Failure");
-        expect((yield* h.readRequests(first)).length).toBe(before);
-        yield* Deferred.succeed(gate, undefined);
-        yield* Fiber.join(closing);
-        yield* Fiber.join(events);
-        yield* assertClosed(h);
-        const fresh = yield* h.target.orchestrationAdapter.openSession(h.input(first, "fresh"));
-        expect(fresh.instanceId).toBe(first);
-        expect(fresh.providerSession.cwd).toBe(h.root);
-      }).pipe(Effect.scoped),
-    20_000,
-  );
-
-  it.effect.skipIf(windowsHost)(
-    "caller cancellation waits for admitted teardown and does not mutate credentials",
-    () =>
-      Effect.gen(function* () {
-        const h = yield* harness();
-        yield* h.target.orchestrationAdapter.openSession(h.input(first));
-        const entered = yield* Deferred.make<void>();
-        const gate = yield* Deferred.make<void>();
-        yield* Effect.addFinalizer(() => Deferred.succeed(gate, undefined));
-        h.controls.beforeTargetFinalize = Deferred.succeed(entered, undefined).pipe(
-          Effect.andThen(Deferred.await(gate)),
-        );
-        const closing = yield* h.target.connectionActions!.disconnect.pipe(
-          Effect.scoped,
-          Effect.forkChild,
-        );
-        yield* Deferred.await(entered);
-        const cancellationRequested = yield* Deferred.make<void>();
-        const cancelled = yield* Deferred.succeed(cancellationRequested, undefined).pipe(
-          Effect.andThen(Fiber.interrupt(closing)),
-          Effect.forkChild,
-        );
-        yield* Deferred.await(cancellationRequested);
-        expect(
-          (yield* Effect.result(
-            h.target.orchestrationAdapter.openSession(h.input(first, "while-cancelled")),
-          ))._tag,
-        ).toBe("Failure");
-        yield* Deferred.succeed(gate, undefined);
-        yield* Fiber.join(cancelled);
-        const exit = yield* Fiber.await(closing);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) expect(Cause.hasInterrupts(exit.cause)).toBe(true);
-        yield* assertClosed(h);
-        expect(yield* h.fs.exists(h.accounts.get(first)!)).toBe(true);
-        expect((yield* h.readRequests(first)).map((request) => request.method)).not.toContain(
-          "_x.ai/auth/logout",
-        );
-        expect(h.launches.filter((launch) => launch.instanceId === first)).toHaveLength(1);
-        const fresh = yield* h.target.orchestrationAdapter.openSession(
-          h.input(first, "after-cancel"),
-        );
-        expect(fresh.instanceId).toBe(first);
-      }).pipe(Effect.scoped),
-    20_000,
-  );
-
-  it.effect.skipIf(windowsHost)(
-    "retains teardown failure, refuses credentials and new opens, and preserves peer/catalog",
-    () => {
-      let assertionsCompleted = false;
-      return Effect.gen(function* () {
-        const h = yield* harness();
-        yield* h.target.orchestrationAdapter.openSession(h.input(first));
-        yield* h.target.orchestrationAdapter.openSession(h.input(first, "sibling"));
-        const peer = yield* h.peer.orchestrationAdapter.openSession(h.input(second));
-        h.controls.failTargetFinalize = true;
-        const before = h.launches.length;
-        const firstClose = yield* Effect.result(
-          h.target.connectionActions!.disconnect.pipe(Effect.scoped),
-        );
-        expect(firstClose._tag).toBe("Failure");
-        if (firstClose._tag === "Failure")
-          expect(firstClose.failure.message).toContain("stop active Grok sessions");
-        yield* assertClosed(h);
-        expect(h.launches).toHaveLength(before);
-        expect(yield* h.fs.exists(h.accounts.get(first)!)).toBe(true);
-        expect(yield* h.fs.exists(h.accounts.get(second)!)).toBe(true);
-        expect(
-          (yield* Effect.result(h.target.connectionActions!.disconnect.pipe(Effect.scoped)))._tag,
-        ).toBe("Failure");
-        expect(
-          (yield* Effect.result(
-            h.target.orchestrationAdapter.openSession(h.input(first, "refused")),
-          ))._tag,
-        ).toBe("Failure");
-        expect(h.launches).toHaveLength(before);
-        expect((yield* h.readRequests(first)).map((request) => request.method)).not.toContain(
-          "_x.ai/auth/logout",
-        );
-        expect(yield* h.registry.getInstance(first)).toBe(h.target);
-        expect(yield* h.registry.getInstance(second)).toBe(h.peer);
-        yield* peer.ensureThread(h.input(second));
-        for (const launch of h.launches.filter((launch) => launch.instanceId === second))
-          expect(yield* launch.handle.isRunning).toBe(true);
-        // Failed teardown is sticky: no retry may treat Scope.close's no-op as cleanup.
-        // Registry retirement is separately responsible for the permanent instance.
-        assertionsCompleted = true;
-      }).pipe(
-        Effect.scoped,
-        Effect.exit,
-        Effect.map((exit) => {
-          expect(assertionsCompleted).toBe(true);
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit))
-            expect(Cause.pretty(exit.cause)).toContain("owned native fixture teardown failed");
-        }),
-      );
-    },
-    20_000,
-  );
-  it.effect.skipIf(windowsHost)(
-    "preserves Grok logout rejection after successful physical close without retiring the factory",
-    () =>
-      Effect.gen(function* () {
-        const h = yield* harness();
-        yield* h.target.orchestrationAdapter.openSession(h.input(first));
-        yield* h.fs.writeFileString(h.refusalFiles.get(first)!, "synthetic refusal");
-        const result = yield* Effect.result(
-          h.target.connectionActions!.disconnect.pipe(Effect.scoped),
-        );
-        expect(result._tag).toBe("Failure");
-        if (result._tag === "Failure")
-          expect(result.failure.message).toBe(
-            "Grok did not confirm that the account was signed out.",
-          );
-        yield* assertClosed(h);
-        expect(yield* h.fs.exists(h.accounts.get(first)!)).toBe(true);
-        expect((yield* h.readRequests(first)).map((request) => request.method)).toContain(
-          "_x.ai/auth/logout",
-        );
-        expect(yield* h.registry.getInstance(first)).toBe(h.target);
-        yield* h.fs.remove(h.refusalFiles.get(first)!);
-        const fresh = yield* h.target.orchestrationAdapter.openSession(
-          h.input(first, "after-logout-rejection"),
-        );
-        expect(fresh.instanceId).toBe(first);
-        expect(
-          yield* h.launches.findLast((launch) => launch.instanceId === first)!.handle.isRunning,
-        ).toBe(true);
-      }).pipe(Effect.scoped),
-    20_000,
-  );
-  it.effect.skipIf(windowsHost)(
-    "refuses native opening after caller or configured instance retirement",
-    () =>
-      Effect.gen(function* () {
-        const h = yield* harness();
-        const caller = yield* Scope.make();
-        yield* Scope.close(caller, Exit.void);
-        const initialCount = h.launches.length;
-        expect(
-          (yield* Effect.result(
-            h.target.orchestrationAdapter
-              .openSession(h.input(first, "closed-caller"))
-              .pipe(Effect.provideService(Scope.Scope, caller)),
-          ))._tag,
-        ).toBe("Failure");
-        expect(h.launches).toHaveLength(initialCount);
-        const old = yield* h.target.orchestrationAdapter.openSession(h.input(first));
-        const peer = yield* h.peer.orchestrationAdapter.openSession(h.input(second));
-        yield* h.mutator.reconcile({ [second]: h.configMap[second]! });
-        yield* assertClosed(h);
-        const before = h.launches.length;
-        expect(
-          (yield* Effect.result(
-            h.target.orchestrationAdapter.openSession(h.input(first, "closed-instance")),
-          ))._tag,
-        ).toBe("Failure");
-        expect((yield* Effect.result(old.ensureThread(h.input(first))))._tag).toBe("Failure");
-        expect(
-          (yield* Effect.result(h.target.connectionActions!.disconnect.pipe(Effect.scoped)))._tag,
-        ).toBe("Failure");
-        expect(h.launches).toHaveLength(before);
-        expect((yield* h.readRequests(first)).map((request) => request.method)).not.toContain(
-          "_x.ai/auth/logout",
-        );
-        expect(yield* h.registry.getInstance(first)).toBeUndefined();
-        expect(peer.instanceId).toBe(second);
-        expect(yield* h.registry.getInstance(second)).toBe(h.peer);
-        yield* peer.ensureThread(h.input(second));
-        for (const launch of h.launches.filter((launch) => launch.instanceId === second))
-          expect(yield* launch.handle.isRunning).toBe(true);
-      }).pipe(Effect.scoped),
-    20_000,
-  );
-});
+          expect(yield* h.registry.getInstance(first)).toBeUndefined();
+          expect(peer.instanceId).toBe(second);
+          expect(yield* h.registry.getInstance(second)).toBe(h.peer);
+          yield* peer.ensureThread(h.input(second));
+          for (const launch of h.launches.filter((launch) => launch.instanceId === second))
+            expect(yield* launch.handle.isRunning).toBe(true);
+        }).pipe(Effect.scoped),
+      20_000,
+    );
+  },
+);

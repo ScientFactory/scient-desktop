@@ -3,14 +3,14 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as CodexSchema from "effect-codex-app-server/schema";
 
-import { resolveCodexLaunchArgs } from "../../provider/Layers/codexLaunchArgs.ts";
+import { resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
 import {
   type CodexAppServerConnection,
   openCodexAppServerConnection,
-} from "../../provider/Layers/CodexProvider.ts";
+} from "../../provider/CodexProvider.ts";
 import { type ProviderConnectionActions } from "../../provider/ProviderDriver.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 

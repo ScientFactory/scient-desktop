@@ -1,6 +1,6 @@
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import * as Option from "effect/Option";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../../connection/catalog";
 import { environmentShell } from "../../state/shell";

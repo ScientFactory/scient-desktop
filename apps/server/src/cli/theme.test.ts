@@ -10,7 +10,26 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestConsole from "effect/testing/TestConsole";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
+import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as AzureDevOpsCli from "../sourceControl/AzureDevOpsCli.ts";
+import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
+import * as ForgejoCli from "../sourceControl/ForgejoCli.ts";
+import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as GitLabCli from "../sourceControl/GitLabCli.ts";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 
 import { cli } from "../binCli.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -20,9 +39,49 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 // cannot use to make a file unreadable, so the failure never happens there.
 const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 
+// The full command tree requires these execution authorities even when a
+// fixture invokes another subcommand. Their state belongs to a scoped test profile.
+const layerCliAuthority = Layer.mergeAll(
+  ThreadCommandExecutor.layer,
+  ProjectCloneTracker.layer.pipe(
+    Layer.provide(
+      SourceControlRepositoryService.layer.pipe(
+        Layer.provide(GitVcsDriver.layer),
+        Layer.provide(
+          SourceControlProviderRegistry.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                AzureDevOpsCli.layer,
+                BitbucketApi.layer,
+                GitHubCli.layer,
+                GitLabCli.layer,
+                ForgejoCli.layer,
+              ),
+            ),
+            Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
+          ),
+        ),
+      ),
+    ),
+    Layer.provide(GitVcsDriver.layer),
+    Layer.provide(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+    Layer.provide(VcsProcess.layer),
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(SqlitePersistence.layerMemory),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+    Layer.provide(
+      ServerConfig.layerTest("/", { prefix: "scient-cli-authority-test-" }).pipe(
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ),
+);
+
 const runCli = (args: ReadonlyArray<string>) =>
   Command.runWith(cli, { version: "0.0.0" })(args).pipe(
-    Effect.provide(Layer.mergeAll(NodeServices.layer, NetService.layer, TestConsole.layer)),
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NetService.layer, TestConsole.layer, layerCliAuthority),
+    ),
   );
 
 const makeBaseDir = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-theme-cli-"));

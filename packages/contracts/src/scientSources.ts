@@ -18,8 +18,8 @@ import {
   ZoteroLibraryPage,
 } from "@scientfactory/scient-sources";
 import * as Schema from "effect/Schema";
-import * as Multipart from "effect/unstable/http/Multipart";
-import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
+import * as Multipart from "effect/http/Multipart";
+import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 
 import { AssetCreateUrlResult } from "./assets.ts";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";

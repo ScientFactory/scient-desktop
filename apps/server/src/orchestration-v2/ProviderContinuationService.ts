@@ -74,7 +74,7 @@ function delegatedCompletionRetryKey(
  * the orchestrator selects native steering or queued delivery under its thread
  * lock. Adapter-buffered continuations still queue behind active work.
  */
-export const workerLive = Layer.effectDiscard(
+export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const ids = yield* IdAllocator.IdAllocatorV2;
     const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
@@ -156,17 +156,18 @@ export const workerLive = Layer.effectDiscard(
           });
           yield* request.dispatchIfCurrent(dispatch).pipe(
             Effect.tap(() => clearRetryAttempt(identity)),
-            Effect.catchTag("OrchestratorProviderWorkDeferredError", () =>
-              Effect.gen(function* () {
-                const delay = yield* nextRetryDelay(identity);
-                // Keep the exact offer, buffer and command identity. Re-enter
-                // the producer's generation guard on every dispatch attempt.
-                yield* Effect.sleep(`${delay} millis`).pipe(
-                  Effect.andThen(requests.offer(request)),
-                  Effect.forkScoped,
-                );
-              }),
-            ),
+            Effect.catchTags({
+              OrchestratorProviderWorkDeferredError: () =>
+                Effect.gen(function* () {
+                  const delay = yield* nextRetryDelay(identity);
+                  // Keep the exact offer, buffer and command identity. Re-enter
+                  // the producer's generation guard on every dispatch attempt.
+                  yield* Effect.sleep(`${delay} millis`).pipe(
+                    Effect.andThen(requests.offer(request)),
+                    Effect.forkScoped,
+                  );
+                }),
+            }),
           );
           return;
         }

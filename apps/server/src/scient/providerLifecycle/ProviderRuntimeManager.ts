@@ -29,7 +29,7 @@ import type {
   ProviderManagedRuntimeActions,
   ProviderManagedRuntimeProgress,
 } from "../../provider/ProviderDriver.ts";
-import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSessionManager.ts";
 import { ProviderActivity } from "./ProviderActivity.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";

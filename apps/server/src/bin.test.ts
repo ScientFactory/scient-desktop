@@ -1,3 +1,4 @@
+import * as ThreadCommandExecutor from "./orchestration-v2/ThreadCommandExecutor.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration exercises Node HTTP and filesystem boundaries.
 import * as NodeHttp from "node:http";
@@ -17,13 +18,13 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Layer from "effect/Layer";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpServer from "effect/unstable/http/HttpServer";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import * as CliError from "effect/unstable/cli/CliError";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServer from "effect/http/HttpServer";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as CliError from "effect/cli/CliError";
 import * as TestConsole from "effect/testing/TestConsole";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 
 import { cli, makeCli } from "./binCli.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
@@ -38,14 +39,14 @@ import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProviderAdapterRegistryV2 from "./orchestration-v2/ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./orchestration-v2/testkit/ProviderReplayHarness.ts";
-import { ProjectServiceLayerLive } from "./orchestration-v2/runtimeLayer.ts";
-import { projectHttpApiLayer } from "./project/http.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./orchestration-v2/testkit/ProviderReplayHarness.ts";
+import { layerProjectService as ProjectServiceLayerLive } from "./orchestration-v2/runtimeLayer.ts";
+import { layer as projectHttpApiLayer } from "./project/http.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
-import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
+import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Sqlite.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import {
   makePersistedServerRuntimeState,
@@ -54,7 +55,7 @@ import {
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import { environmentAuthenticatedAuthLayer } from "./auth/http.ts";
+import { layerAuthenticatedAuth as environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 
 import packageJson from "../package.json" with { type: "json" };
 
@@ -142,8 +143,8 @@ const makeProjectPersistenceLayer = (config: ServerConfig.ServerConfig["Service"
   );
   const replay = makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "project-cli" },
-    ProviderAdapterRegistryV2.makeLayer([]),
-    { databaseLayer: database, runEffectWorker: false },
+    ProviderAdapterRegistryV2.layerFromAdapters([]),
+    { layerDatabase: database, runEffectWorker: false },
   );
   return Layer.mergeAll(
     ProjectServiceLayerLive,
@@ -166,6 +167,7 @@ const makeProjectPersistenceLayer = (config: ServerConfig.ServerConfig["Service"
     Layer.provideMerge(database),
     Layer.provideMerge(NodeServices.layer),
     Layer.provide(ServerConfig.layer(config)),
+    Layer.provide(ThreadCommandExecutor.layer),
   );
 };
 const readPersistedSnapshot = (baseDir: string) =>
@@ -423,7 +425,7 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
       Layer.provideMerge(
         EnvironmentAuth.layer.pipe(
           Layer.provideMerge(SqlitePersistenceLayerLive),
-          Layer.provide(ServerEnvironment.identityLayer),
+          Layer.provide(ServerEnvironment.layerIdentity),
           Layer.provide(ServerSecretStore.layer),
         ),
       ),
@@ -542,7 +544,6 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const { output } = yield* captureStdout(
         runConnectCli(["connect", "status", "--base-dir", baseDir, "--json"]),
       );
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - CLI JSON output is decoded as a presentation DTO.
       const status = JSON.parse(output) as {
         readonly desired: boolean;
         readonly authenticated: boolean;
@@ -584,7 +585,6 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       NodeFS.mkdirSync(secretsDir, { recursive: true });
       NodeFS.writeFileSync(
         NodePath.join(secretsDir, "cloud-cli-oauth-token.bin"),
-        // @effect-diagnostics-next-line preferSchemaOverJson:off - Test fixture matches the persisted CLI token representation.
         JSON.stringify({
           accessToken: "access-token",
           refreshToken: "refresh-token",
@@ -598,7 +598,6 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const status = yield* captureStdout(
         runConnectCli(["connect", "status", "--base-dir", baseDir, "--json"]),
       );
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - CLI JSON output is decoded as a presentation DTO.
       const decoded = JSON.parse(status.output) as {
         readonly desired: boolean;
         readonly authenticated: boolean;
@@ -654,7 +653,6 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const createdOutput = yield* captureStdout(
         runCli(["auth", "pairing", "create", "--base-dir", baseDir, "--json"]),
       );
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const created = JSON.parse(createdOutput.output) as {
         readonly id: string;
         readonly credential: string;
@@ -662,7 +660,6 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const listedOutput = yield* captureStdout(
         runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
       );
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const listed = JSON.parse(listedOutput.output) as ReadonlyArray<{
         readonly id: string;
         readonly credential?: string;
@@ -686,7 +683,6 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const issuedOutput = yield* captureStdout(
         runCli(["auth", "session", "issue", "--base-dir", baseDir, "--json"]),
       );
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const issued = JSON.parse(issuedOutput.output) as {
         readonly sessionId: string;
         readonly token: string;
@@ -695,7 +691,6 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const listedOutput = yield* captureStdout(
         runCli(["auth", "session", "list", "--base-dir", baseDir, "--json"]),
       );
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const listed = JSON.parse(listedOutput.output) as ReadonlyArray<{
         readonly sessionId: string;
         readonly token?: string;

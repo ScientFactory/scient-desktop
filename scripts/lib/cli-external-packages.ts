@@ -30,6 +30,8 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   // installed JS dependency tree stays on disk with the SDK. Those dependency
   // names remain bundleable at other providers' locked import resolutions.
   "@cursor/sdk",
+  // Playwright reads package.json and browsers.json beside its runtime modules.
+  "playwright-core",
   "node-pty",
   // PDF.js loads this native canvas implementation through createRequire at
   // runtime, which the bundler cannot see. Keep the wrapper and its

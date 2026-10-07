@@ -1,3 +1,4 @@
+import * as Crypto from "effect/Crypto";
 import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -25,9 +26,9 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { ServerConfig } from "../config.ts";
-import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlite.ts";
 import { ClaudeAgentSdkQueryRunnerError, makeClaudeAdapterV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
@@ -35,10 +36,10 @@ import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import type { ProviderAdapterV2Event } from "./ProviderAdapter.ts";
-import { makeLayer } from "./ProviderAdapterRegistry.ts";
+import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import {
-  makeOrchestratorV2ReplayLayerWithRegistry,
+  layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
@@ -150,6 +151,7 @@ const makeFixture = Effect.fn("stopConjunction.fixture")(function* (
   >();
 
   const nativeAdapter = makeClaudeAdapterV2({
+    crypto: yield* Crypto.Crypto,
     instanceId,
     settings: yield* decodeStopSettings({}),
     environment: {},
@@ -305,6 +307,8 @@ emit({ kind: "ready" });
               .writeFileString(commands, encodeReceipt(value) + "\n", { flag: "a" })
               .pipe(Effect.orDie);
           return {
+            setPermissionMode: () =>
+              Effect.die("Permission-mode mutation is outside this fixture."),
             messages: Stream.fromQueue(messages).pipe(
               Stream.flatMap((message) =>
                 Stream.make(message).pipe(
@@ -373,10 +377,10 @@ emit({ kind: "ready" });
     { name: scenario.name, runtimePolicyOverride: { cwd } },
     makeLayer([adapter]),
     {
-      databaseLayer: makeSqlitePersistenceLive(config.dbPath).pipe(
+      layerDatabase: makeSqlitePersistenceLive(config.dbPath).pipe(
         Layer.provide(NodeServices.layer),
       ),
-      serverConfigLayer: Layer.succeed(ServerConfig, config),
+      layerServerConfig: Layer.succeed(ServerConfig, config),
       configureMcp: false,
       runEffectWorker: false,
       responseStreamingMode: "paragraph",
@@ -407,310 +411,308 @@ emit({ kind: "ready" });
   return { layer, cwd, peers, events, save, capture };
 });
 
-for (const scenario of scenarios) {
-  it.effect(
-    `public captured Stop: ${scenario.name}`,
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const h = yield* makeFixture(scenario);
-          yield* Effect.scoped(
-            Effect.gen(function* () {
-              const orchestrator = yield* OrchestratorV2;
-              const worker = yield* OrchestrationEffectWorkerV2;
-              const manager = yield* ProviderSessionManagerV2;
-              const outbox = yield* EffectOutboxV2;
-              const now = DateTime.formatIso(yield* DateTime.now);
-              yield* (yield* EventSinkV2).commitProjectCommand({
-                commandId: CommandId.make("stop:project:create"),
-                projectId,
-                commandType: "project.create",
-                acceptedAt: yield* DateTime.now,
-                event: {
-                  eventId: EventId.make("stop:project:event"),
-                  type: "project.created",
-                  aggregateKind: "project",
-                  aggregateId: projectId,
-                  occurredAt: now,
-                  commandId: null,
-                  causationEventId: null,
-                  correlationId: null,
-                  metadata: {},
-                  payload: {
-                    projectId,
-                    title: "Stop conjunction",
-                    workspaceRoot: h.cwd,
-                    defaultModelSelection: null,
-                    scripts: [],
-                    createdAt: now,
-                    updatedAt: now,
-                  },
-                },
-              });
-              yield* h.save("phase", { phase: "starting native source and peer" });
-              for (const id of [threadId, peerId]) {
-                yield* orchestrator.dispatch({
-                  type: "thread.create",
-                  commandId: CommandId.make(`${id}:create`),
-                  threadId: id,
+it.effect.each(
+  scenarios.map((scenario) => ({ caseTitle: `public captured Stop: ${scenario.name}`, scenario })),
+)(
+  "$caseTitle",
+  ({ scenario }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* makeFixture(scenario);
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const orchestrator = yield* OrchestratorV2;
+            const worker = yield* OrchestrationEffectWorkerV2;
+            const manager = yield* ProviderSessionManagerV2;
+            const outbox = yield* EffectOutboxV2;
+            const now = DateTime.formatIso(yield* DateTime.now);
+            yield* (yield* EventSinkV2).commitProjectCommand({
+              commandId: CommandId.make("stop:project:create"),
+              projectId,
+              commandType: "project.create",
+              acceptedAt: yield* DateTime.now,
+              event: {
+                eventId: EventId.make("stop:project:event"),
+                type: "project.created",
+                aggregateKind: "project",
+                aggregateId: projectId,
+                occurredAt: now,
+                commandId: null,
+                causationEventId: null,
+                correlationId: null,
+                metadata: {},
+                payload: {
                   projectId,
-                  title: String(id),
-                  modelSelection,
-                  runtimeMode: "full-access",
-                  interactionMode: "default",
-                  branch: null,
-                  worktreePath: null,
-                  createdBy: "user",
-                  creationSource: "web",
-                });
-                yield* orchestrator.dispatch({
-                  type: "message.dispatch",
-                  commandId: CommandId.make(`${id}:send`),
-                  threadId: id,
-                  messageId: MessageId.make(`${id}:message`),
-                  text: `Read ${id}`,
-                  attachments: [],
-                  dispatchMode: { type: "start_immediately" },
-                  createdBy: "user",
-                  creationSource: "web",
-                });
-                yield* worker.drain();
-                const started = yield* orchestrator.getThreadProjection(id);
-                const nativePeer = h.peers.get(started.providerThreads[0]!.providerSessionId!)!;
-                yield* Deferred.await(nativePeer.assistantProcessed);
-                // Advance only the existing display coalescer after decoder receipt.
-                // SQL ownership/prefix is still decided by the durable event stream.
-                yield* TestClock.adjust("50 millis");
-                yield* waitFor(id, (p) =>
-                  hasOwnedReply(p, id === threadId ? sourceReply : peerReply),
-                );
-              }
-              const runningSource = yield* waitFor(threadId, (p) => hasOwnedReply(p, sourceReply));
-              const peerBefore = yield* waitFor(peerId, (p) => hasOwnedReply(p, peerReply));
-              const run = runningSource.runs[0]!;
-              const turn = runningSource.providerTurns.find(
-                (turn) => turn.runAttemptId === run.activeAttemptId,
-              )!;
-              const sessionId = runningSource.providerThreads.find(
-                (t) => t.id === turn.providerThreadId,
-              )!.providerSessionId!;
-              const session = h.peers.get(sessionId)!;
-              const peerSession = h.peers.get(
-                peerBefore.providerThreads.find(
-                  (t) => t.id === peerBefore.providerTurns[0]!.providerThreadId,
-                )!.providerSessionId!,
-              )!;
-              const sourceBytes = yield* (yield* FileSystem.FileSystem).readFileString(
-                `${h.cwd}/README.md`,
-              );
+                  title: "Stop conjunction",
+                  workspaceRoot: h.cwd,
+                  defaultModelSelection: null,
+                  scripts: [],
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              },
+            });
+            yield* h.save("phase", { phase: "starting native source and peer" });
+            for (const id of [threadId, peerId]) {
               yield* orchestrator.dispatch({
-                type: "message.dispatch",
-                commandId: CommandId.make("stop:queued"),
-                threadId,
-                messageId: MessageId.make("stop:queued:message"),
-                text: "Held next question",
-                attachments: [],
-                dispatchMode: { type: "queue_after_active" },
+                type: "thread.create",
+                commandId: CommandId.make(`${id}:create`),
+                threadId: id,
+                projectId,
+                title: String(id),
+                modelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
                 createdBy: "user",
                 creationSource: "web",
               });
-              // This same persisted snapshot owns the exact reply, captured run/turn and native queue.
-              const before = yield* waitFor(
-                threadId,
-                (p) =>
-                  hasOwnedReply(p, sourceReply) &&
-                  p.runs.filter((candidate) => candidate.status === "queued").length === 1,
-              );
-              assert.equal(
-                before.runs.find((candidate) => candidate.status === "running")?.id,
-                run.id,
-              );
-              assert.equal(
-                before.providerTurns.find(
-                  (candidate) => candidate.runAttemptId === run.activeAttemptId,
-                )?.id,
-                turn.id,
-              );
-              const queued = before.runs.filter((candidate) => candidate.status === "queued");
-              assert.lengthOf(queued, 1);
-              assert.isTrue(queued.every((candidate) => candidate.queueHeld !== true));
-              assert.deepEqual(session.counts, { offers: 1, interrupts: 0, closes: 0 });
-              assert.deepEqual(peerSession.counts, { offers: 1, interrupts: 0, closes: 0 });
-              yield* h.save("phase", {
-                phase: "native replies persisted; dispatching public Stop",
-                before,
-                peerBefore,
-              });
-              const stopId = CommandId.make("stop:public");
               yield* orchestrator.dispatch({
-                type: "run.interrupt",
-                commandId: stopId,
-                threadId,
-                runId: run.id,
-                holdQueue: true,
+                type: "message.dispatch",
+                commandId: CommandId.make(`${id}:send`),
+                threadId: id,
+                messageId: MessageId.make(`${id}:message`),
+                text: `Read ${id}`,
+                attachments: [],
+                dispatchMode: { type: "start_immediately" },
+                createdBy: "user",
+                creationSource: "web",
               });
-              const accepted = yield* outbox.listByCommandId(stopId);
-              const captured = accepted.find((e) => e.request.type === "provider-turn.interrupt")!;
-              assert.deepEqual(captured.request, {
-                type: "provider-turn.interrupt",
-                providerSessionId: sessionId,
-                providerThreadId: turn.providerThreadId,
-                providerTurnId: turn.id,
-              });
-              const interrupt = yield* worker.runOnce.pipe(Effect.forkScoped);
-              yield* Deferred.await(session.interruptEntered);
-              yield* h.save("phase", {
-                phase: "native interrupt entered",
-                captured,
-                sourcePid: session.pid,
-                peerPid: peerSession.pid,
-              });
-              if (scenario.interrupt === "never") {
-                yield* TestClock.adjust("10 seconds");
-                yield* Deferred.await(session.closeFinished);
-              }
-              yield* Fiber.join(interrupt);
-              if (scenario.interrupt === "fail") {
-                for (const millis of [100, 200, 400, 800]) {
-                  yield* TestClock.adjust(millis);
-                  yield* worker.drain();
-                }
-              } else {
+              yield* worker.drain();
+              const started = yield* orchestrator.getThreadProjection(id);
+              const nativePeer = h.peers.get(started.providerThreads[0]!.providerSessionId!)!;
+              yield* Deferred.await(nativePeer.assistantProcessed);
+              // Advance only the existing display coalescer after decoder receipt.
+              // SQL ownership/prefix is still decided by the durable event stream.
+              yield* TestClock.adjust("50 millis");
+              yield* waitFor(id, (p) =>
+                hasOwnedReply(p, id === threadId ? sourceReply : peerReply),
+              );
+            }
+            const runningSource = yield* waitFor(threadId, (p) => hasOwnedReply(p, sourceReply));
+            const peerBefore = yield* waitFor(peerId, (p) => hasOwnedReply(p, peerReply));
+            const run = runningSource.runs[0]!;
+            const turn = runningSource.providerTurns.find(
+              (turn) => turn.runAttemptId === run.activeAttemptId,
+            )!;
+            const sessionId = runningSource.providerThreads.find(
+              (t) => t.id === turn.providerThreadId,
+            )!.providerSessionId!;
+            const session = h.peers.get(sessionId)!;
+            const peerSession = h.peers.get(
+              peerBefore.providerThreads.find(
+                (t) => t.id === peerBefore.providerTurns[0]!.providerThreadId,
+              )!.providerSessionId!,
+            )!;
+            const sourceBytes = yield* (yield* FileSystem.FileSystem).readFileString(
+              `${h.cwd}/README.md`,
+            );
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("stop:queued"),
+              threadId,
+              messageId: MessageId.make("stop:queued:message"),
+              text: "Held next question",
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            // This same persisted snapshot owns the exact reply, captured run/turn and native queue.
+            const before = yield* waitFor(
+              threadId,
+              (p) =>
+                hasOwnedReply(p, sourceReply) &&
+                p.runs.filter((candidate) => candidate.status === "queued").length === 1,
+            );
+            assert.equal(
+              before.runs.find((candidate) => candidate.status === "running")?.id,
+              run.id,
+            );
+            assert.equal(
+              before.providerTurns.find(
+                (candidate) => candidate.runAttemptId === run.activeAttemptId,
+              )?.id,
+              turn.id,
+            );
+            const queued = before.runs.filter((candidate) => candidate.status === "queued");
+            assert.lengthOf(queued, 1);
+            assert.isTrue(queued.every((candidate) => candidate.queueHeld !== true));
+            assert.deepEqual(session.counts, { offers: 1, interrupts: 0, closes: 0 });
+            assert.deepEqual(peerSession.counts, { offers: 1, interrupts: 0, closes: 0 });
+            yield* h.save("phase", {
+              phase: "native replies persisted; dispatching public Stop",
+              before,
+              peerBefore,
+            });
+            const stopId = CommandId.make("stop:public");
+            yield* orchestrator.dispatch({
+              type: "run.interrupt",
+              commandId: stopId,
+              threadId,
+              runId: run.id,
+              holdQueue: true,
+            });
+            const accepted = yield* outbox.listByCommandId(stopId);
+            const captured = accepted.find((e) => e.request.type === "provider-turn.interrupt")!;
+            assert.deepEqual(captured.request, {
+              type: "provider-turn.interrupt",
+              providerSessionId: sessionId,
+              providerThreadId: turn.providerThreadId,
+              providerTurnId: turn.id,
+            });
+            const interrupt = yield* worker.runOnce.pipe(Effect.forkScoped);
+            yield* Deferred.await(session.interruptEntered);
+            yield* h.save("phase", {
+              phase: "native interrupt entered",
+              captured,
+              sourcePid: session.pid,
+              peerPid: peerSession.pid,
+            });
+            if (scenario.interrupt === "never") {
+              yield* TestClock.adjust("10 seconds");
+              yield* Deferred.await(session.closeFinished);
+            }
+            yield* Fiber.join(interrupt);
+            if (scenario.interrupt === "fail") {
+              for (const millis of [100, 200, 400, 800]) {
+                yield* TestClock.adjust(millis);
                 yield* worker.drain();
-                yield* waitFor(
-                  threadId,
-                  (p) => p.runs.find((r) => r.id === run.id)?.status === "interrupted",
-                );
               }
-              if (scenario.closeFails) {
-                // Automatic exact-query close failure must be durably visible
-                // before any independent manager-close fixture probe.
-                yield* waitFor(threadId, (p) =>
-                  p.turnItems.some(
-                    (item) => item.type === "error" && item.providerTurnId === turn.id,
-                  ),
-                );
-              } else {
-                yield* waitFor(
-                  threadId,
-                  (p) => p.runs.find((r) => r.id === run.id)?.status === "interrupted",
-                );
-              }
-              const after = yield* orchestrator.getThreadProjection(threadId);
-              const stopEffects = yield* outbox.listByCommandId(stopId);
-              const publicObservation = {
-                before,
-                after,
-                stopEffects,
-                closeAttempts: session.counts.closes,
-                managerLive: Option.isSome(yield* manager.get(sessionId)),
-                closeState: yield* manager.getCloseState!(sessionId),
-                peerAfter: yield* orchestrator.getThreadProjection(peerId),
-              };
-              yield* h.save("public-observation", publicObservation);
-              yield* h.capture;
-              assert.isTrue(
-                after.runs.filter((r) => r.status === "queued").every((r) => r.queueHeld === true),
+            } else {
+              yield* worker.drain();
+              yield* waitFor(
+                threadId,
+                (p) => p.runs.find((r) => r.id === run.id)?.status === "interrupted",
               );
-              assert.deepEqual(
-                after.runs.filter((r) => r.status === "queued").map((r) => r.id),
-                queued.map((r) => r.id),
+            }
+            if (scenario.closeFails) {
+              // Automatic exact-query close failure must be durably visible
+              // before any independent manager-close fixture probe.
+              yield* waitFor(threadId, (p) =>
+                p.turnItems.some(
+                  (item) => item.type === "error" && item.providerTurnId === turn.id,
+                ),
               );
-              assert.deepEqual(
-                after.runs.map((r) => r.id),
-                before.runs.map((r) => r.id),
-                "Stop cannot create or substitute a newer root",
+            } else {
+              yield* waitFor(
+                threadId,
+                (p) => p.runs.find((r) => r.id === run.id)?.status === "interrupted",
               );
-              assert.equal(session.counts.offers, 1, "held work must never reach native SDK");
-              assert.deepEqual(publicObservation.peerAfter, peerBefore);
-              assert.deepEqual(peerSession.counts, { offers: 1, interrupts: 0, closes: 0 });
-              process.kill(peerSession.pid, 0);
-              assert.equal(
-                yield* (yield* FileSystem.FileSystem).readFileString(`${h.cwd}/README.md`),
-                sourceBytes,
-              );
-              assert.equal(
-                after.messages.find(
-                  (m) => m.id === before.messages.find((m) => m.role === "assistant")!.id,
-                )?.text,
-                sourceReply,
-              );
+            }
+            const after = yield* orchestrator.getThreadProjection(threadId);
+            const stopEffects = yield* outbox.listByCommandId(stopId);
+            const publicObservation = {
+              before,
+              after,
+              stopEffects,
+              closeAttempts: session.counts.closes,
+              managerLive: Option.isSome(yield* manager.get(sessionId)),
+              closeState: yield* manager.getCloseState!(sessionId),
+              peerAfter: yield* orchestrator.getThreadProjection(peerId),
+            };
+            yield* h.save("public-observation", publicObservation);
+            yield* h.capture;
+            assert.isTrue(
+              after.runs.filter((r) => r.status === "queued").every((r) => r.queueHeld === true),
+            );
+            assert.deepEqual(
+              after.runs.filter((r) => r.status === "queued").map((r) => r.id),
+              queued.map((r) => r.id),
+            );
+            assert.deepEqual(
+              after.runs.map((r) => r.id),
+              before.runs.map((r) => r.id),
+              "Stop cannot create or substitute a newer root",
+            );
+            assert.equal(session.counts.offers, 1, "held work must never reach native SDK");
+            assert.deepEqual(publicObservation.peerAfter, peerBefore);
+            assert.deepEqual(peerSession.counts, { offers: 1, interrupts: 0, closes: 0 });
+            process.kill(peerSession.pid, 0);
+            assert.equal(
+              yield* (yield* FileSystem.FileSystem).readFileString(`${h.cwd}/README.md`),
+              sourceBytes,
+            );
+            assert.equal(
+              after.messages.find(
+                (m) => m.id === before.messages.find((m) => m.role === "assistant")!.id,
+              )?.text,
+              sourceReply,
+            );
 
-              if (scenario.closeFails) {
-                assert.equal(
-                  publicObservation.closeAttempts,
-                  1,
-                  "automatic captured close actually failed once",
-                );
-                assert.isTrue(publicObservation.managerLive);
-                assert.isTrue(
-                  Option.isNone(publicObservation.closeState),
-                  "query failure is not a manager close receipt",
-                );
-                assert.lengthOf(
-                  after.turnItems.filter(
-                    (item) => item.type === "error" && item.providerTurnId === turn.id,
-                  ),
-                  1,
-                );
-                assert.equal(after.providerTurns.find((t) => t.id === turn.id)?.status, "running");
-                assert.lengthOf(
-                  h.events.filter(
-                    (e) => e.type === "turn.terminal" && e.providerTurnId === turn.id,
-                  ),
-                  0,
-                );
-                assert.equal(
-                  stopEffects.find((e) => e.request.type === "provider-turn.interrupt")?.status,
-                  "failed",
-                );
-                // Independently prove the negative physical-close fixture AFTER freezing
-                // the untouched public outcome. This probe cannot count as public Stop.
-                const probe = yield* manager.close(sessionId).pipe(Effect.exit);
-                const closeState = yield* manager.getCloseState!(sessionId);
-                yield* h.save("separate-close-fixture-probe", {
-                  probe,
-                  closeState,
-                  closes: session.counts.closes,
-                });
-                process.kill(session.pid, 0);
-                assert.isTrue(Exit.isFailure(probe));
-                assert.equal(Option.getOrThrow(closeState).state, "failed");
-                assert.isAtLeast(
-                  publicObservation.closeAttempts,
-                  1,
-                  "public Stop must attempt the exact owner's shutdown after interrupt failure",
-                );
-                assert.equal(
-                  after.runs.find((r) => r.id === run.id)?.status,
-                  "running",
-                  "unresolved stop must not claim a terminal release",
-                );
-                assert.isTrue(
-                  after.turnItems.some((item) => item.type === "error"),
-                  "unresolved public Stop must expose a truthful failure",
-                );
-              } else {
-                assert.equal(
-                  publicObservation.closeAttempts,
-                  1,
-                  "public Stop must close its exact SDK owner once",
-                );
-                assert.throws(() => process.kill(session.pid, 0), /ESRCH/);
-                assert.equal(after.runs.find((r) => r.id === run.id)?.status, "interrupted");
-                assert.lengthOf(
-                  h.events.filter(
-                    (event) => event.type === "turn.terminal" && event.providerTurnId === turn.id,
-                  ),
-                  1,
-                );
-                assert.isFalse(after.turnItems.some((item) => item.type === "error"));
-                assert.isTrue(after.providerSessions.every((s) => s.lastError === null));
-              }
-            }).pipe(Effect.provide(h.layer)),
-          );
-        }).pipe(Effect.provide(outer)),
-      ),
-    { timeout: 60_000 },
-  );
-}
+            if (scenario.closeFails) {
+              assert.equal(
+                publicObservation.closeAttempts,
+                1,
+                "automatic captured close actually failed once",
+              );
+              assert.isTrue(publicObservation.managerLive);
+              assert.isTrue(
+                Option.isNone(publicObservation.closeState),
+                "query failure is not a manager close receipt",
+              );
+              assert.lengthOf(
+                after.turnItems.filter(
+                  (item) => item.type === "error" && item.providerTurnId === turn.id,
+                ),
+                1,
+              );
+              assert.equal(after.providerTurns.find((t) => t.id === turn.id)?.status, "running");
+              assert.lengthOf(
+                h.events.filter((e) => e.type === "turn.terminal" && e.providerTurnId === turn.id),
+                0,
+              );
+              assert.equal(
+                stopEffects.find((e) => e.request.type === "provider-turn.interrupt")?.status,
+                "failed",
+              );
+              // Independently prove the negative physical-close fixture AFTER freezing
+              // the untouched public outcome. This probe cannot count as public Stop.
+              const probe = yield* manager.close(sessionId).pipe(Effect.exit);
+              const closeState = yield* manager.getCloseState!(sessionId);
+              yield* h.save("separate-close-fixture-probe", {
+                probe,
+                closeState,
+                closes: session.counts.closes,
+              });
+              process.kill(session.pid, 0);
+              assert.isTrue(Exit.isFailure(probe));
+              assert.equal(Option.getOrThrow(closeState).state, "failed");
+              assert.isAtLeast(
+                publicObservation.closeAttempts,
+                1,
+                "public Stop must attempt the exact owner's shutdown after interrupt failure",
+              );
+              assert.equal(
+                after.runs.find((r) => r.id === run.id)?.status,
+                "running",
+                "unresolved stop must not claim a terminal release",
+              );
+              assert.isTrue(
+                after.turnItems.some((item) => item.type === "error"),
+                "unresolved public Stop must expose a truthful failure",
+              );
+            } else {
+              assert.equal(
+                publicObservation.closeAttempts,
+                1,
+                "public Stop must close its exact SDK owner once",
+              );
+              assert.throws(() => process.kill(session.pid, 0), /ESRCH/);
+              assert.equal(after.runs.find((r) => r.id === run.id)?.status, "interrupted");
+              assert.lengthOf(
+                h.events.filter(
+                  (event) => event.type === "turn.terminal" && event.providerTurnId === turn.id,
+                ),
+                1,
+              );
+              assert.isFalse(after.turnItems.some((item) => item.type === "error"));
+              assert.isTrue(after.providerSessions.every((s) => s.lastError === null));
+            }
+          }).pipe(Effect.provide(h.layer)),
+        );
+      }).pipe(Effect.provide(outer)),
+    ),
+  { timeout: 60_000 },
+);

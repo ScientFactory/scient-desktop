@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { persistChatAttachments } from "../../AttachmentPersistence.ts";
 import { ServerConfig } from "../../config.ts";

@@ -23,13 +23,13 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
-  SqlitePersistenceMemory,
-  makeSqlitePersistenceLive,
-} from "../persistence/Layers/Sqlite.ts";
+  layerMemory as SqlitePersistenceMemory,
+  layerFromPath as makeSqlitePersistenceLive,
+} from "../persistence/Sqlite.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import * as ProviderInstances from "../provider/Services/ProviderInstanceRegistry.ts";
+import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
 import { CheckpointStore } from "../checkpointing/CheckpointStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
@@ -58,8 +58,8 @@ import {
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2TurnInput,
 } from "./ProviderAdapter.ts";
-import { makeLayerEffect } from "./ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import { layerFromAdaptersEffect as makeLayerEffect } from "./ProviderAdapterRegistry.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 
 const driver = ProviderDriverKind.make("pi");
@@ -385,7 +385,7 @@ const withInitiatedWork = <A, E, R>(
         { name: "provider-initiated-work" },
         registry,
         {
-          databaseLayer: database,
+          layerDatabase: database,
           runtimePolicyLayer,
           runContinuationWorker: true,
           configureMcp: true,
@@ -1097,7 +1097,7 @@ it.live.each(["complete", "stopped-generation", "foreign-owner", "replaced-owner
           assert.isFalse(
             yield* store.hasCheckpointRef({
               cwd: scope.cwd,
-              checkpointRef: checkpointRefForScopeOrdinal({
+              checkpointRef: yield* checkpointRefForScopeOrdinal({
                 scopeId: scope.id,
                 ordinalWithinScope: 2,
               }),

@@ -13,8 +13,8 @@ import * as TestClock from "effect/testing/TestClock";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
-import { makeLayer } from "./ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const threadId = ThreadId.make("thread:sections");
@@ -123,33 +123,36 @@ it.effect("reads native sections in archived shells and detail projections", () 
   }).pipe(Effect.provide(layer)),
 );
 
-for (const state of ["archived", "deleted", "missing"] as const) {
-  it.effect(`rejects filing a native ${state} thread without changing its projection`, () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* OrchestratorV2;
-      const store = yield* ProjectionStoreV2;
-      if (state !== "missing") {
-        yield* createThread;
-        yield* orchestrator.dispatch({
-          type: state === "archived" ? "thread.archive" : "thread.delete",
-          commandId: CommandId.make(`sections:${state}`),
-          threadId,
-        });
-      }
-      const before = state === "missing" ? null : yield* store.getThreadProjection(threadId);
-      const failure = yield* orchestrator
-        .dispatch({
-          type: "thread.section.set",
-          commandId: CommandId.make(`sections:rejected:${state}`),
-          threadId,
-          sectionId: ThreadSectionId.make("unavailable"),
-        })
-        .pipe(Effect.flip);
-      assert.equal(
-        failure._tag,
-        state === "missing" ? "OrchestratorProjectionError" : "OrchestratorDispatchError",
-      );
-      if (before !== null) assert.deepEqual(yield* store.getThreadProjection(threadId), before);
-    }).pipe(Effect.provide(layer)),
-  );
-}
+it.effect.each(
+  (["archived", "deleted", "missing"] as const).map((state) => ({
+    caseTitle: `rejects filing a native ${state} thread without changing its projection`,
+    state,
+  })),
+)("$caseTitle", ({ state }) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const store = yield* ProjectionStoreV2;
+    if (state !== "missing") {
+      yield* createThread;
+      yield* orchestrator.dispatch({
+        type: state === "archived" ? "thread.archive" : "thread.delete",
+        commandId: CommandId.make(`sections:${state}`),
+        threadId,
+      });
+    }
+    const before = state === "missing" ? null : yield* store.getThreadProjection(threadId);
+    const failure = yield* orchestrator
+      .dispatch({
+        type: "thread.section.set",
+        commandId: CommandId.make(`sections:rejected:${state}`),
+        threadId,
+        sectionId: ThreadSectionId.make("unavailable"),
+      })
+      .pipe(Effect.flip);
+    assert.equal(
+      failure._tag,
+      state === "missing" ? "OrchestratorProjectionError" : "OrchestratorDispatchError",
+    );
+    if (before !== null) assert.deepEqual(yield* store.getThreadProjection(threadId), before);
+  }).pipe(Effect.provide(layer)),
+);

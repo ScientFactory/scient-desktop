@@ -68,18 +68,21 @@ afterEach(() => {
 });
 
 describe("actual desktop smoke child lifecycle", () => {
-  for (const code of [0, 7]) {
-    it(`rejects an early exit ${code} without fatal output`, async () => {
-      const result = await runChild(
-        `process.stdout.write("ordinary early output"); process.exitCode = ${code};`,
-      );
-      assert.equal(result.passed, false);
-      assert.equal(result.code, code);
-      assert.equal(result.shutdownRequested, false);
-      assert.deepEqual(result.failures, []);
-      assert.equal(result.stdout, "ordinary early output");
-    });
-  }
+  it.each(
+    [0, 7].map((code) => ({
+      caseTitle: `rejects an early exit ${code} without fatal output`,
+      code,
+    })),
+  )("$caseTitle", async ({ code }) => {
+    const result = await runChild(
+      `process.stdout.write("ordinary early output"); process.exitCode = ${code};`,
+    );
+    assert.equal(result.passed, false);
+    assert.equal(result.code, code);
+    assert.equal(result.shutdownRequested, false);
+    assert.deepEqual(result.failures, []);
+    assert.equal(result.stdout, "ordinary early output");
+  });
 
   it.skipIf(isWindows)("accepts survival followed by the requested graceful exit", async () => {
     const result = await runChild(`

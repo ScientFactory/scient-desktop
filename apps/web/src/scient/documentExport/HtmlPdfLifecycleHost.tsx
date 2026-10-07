@@ -12,14 +12,13 @@ import type {
   ProjectFileWatchEvent,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useEffectEvent, useRef } from "react";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
 import { isCurrentPreviewRuntimeTab, previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { previewBridge } from "~/components/preview/previewBridge";
-import { waitForNavigationReadiness } from "~/components/preview/previewNavigationReadiness";
-import { randomUUID } from "~/lib/utils";
+import { waitForNavigationReadiness } from "./htmlPdfNavigationReadiness";
 import { readThreadPreviewState, useThreadPreviewState } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { assetEnvironment } from "~/state/assets";
@@ -33,7 +32,12 @@ import { trackedHtmlAssetResource } from "./htmlPdfSource";
 import { useHtmlPdfSourceStore } from "./htmlPdfSourceStore";
 import { createHtmlPdfUpdateQueue, type HtmlPdfUpdateQueue } from "./htmlPdfUpdateQueue";
 import { runHtmlPdfUpdateTransaction } from "./htmlPdfUpdateTransaction";
+import { ScientDocumentHosts } from "./documentHost";
 import { useBrowserPdfExport } from "./useBrowserPdfExport";
+import { readBrowserPdfExportLease } from "./browserPdfExportOwner";
+import { browserPdfExportEnvironment } from "~/state/browserPdfExport";
+import { useAtomCommand } from "~/state/use-atom-command";
+import { navigateLinkedHtmlPdfSource } from "./htmlPdfNavigation";
 
 type FileChange = EnvironmentFileChangeEvent | ProjectFileWatchEvent;
 
@@ -118,6 +122,9 @@ function HtmlPdfRelationObserver(props: { readonly relationId: string }) {
   const httpBaseUrl = useEnvironmentHttpBaseUrl(relation?.threadRef.environmentId ?? null);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
   const exportBrowserPdf = useBrowserPdfExport();
+  const navigateServerPage = useAtomCommand(browserPdfExportEnvironment.navigateServerPage, {
+    reportFailure: false,
+  });
   const lastFileChangeRef = useRef<object | null>(null);
   const lastManualRequestRef = useRef(relation?.manualRequestId ?? 0);
   const changeGenerationRef = useRef(0);
@@ -126,31 +133,32 @@ function HtmlPdfRelationObserver(props: { readonly relationId: string }) {
   const performUpdate = useEffectEvent(async (manual: boolean) => {
     const latest = useHtmlPdfSourceStore.getState().relations[props.relationId];
     if (!latest) return;
-    const bridge = previewBridge;
-    if (!bridge || httpBaseUrl === null) {
+    if (httpBaseUrl === null) {
       useHtmlPdfSourceStore
         .getState()
-        .setUpdateState(
-          latest.id,
-          "failed",
-          bridge
-            ? "The environment connection is unavailable."
-            : "The desktop Browser is unavailable.",
-        );
+        .setUpdateState(latest.id, "failed", "The environment connection is unavailable.");
       return;
     }
     const generation = changeGenerationRef.current;
     const currentPreview = readThreadPreviewState(latest.threadRef);
     const tabId = latest.tabId;
     const session = tabId ? currentPreview.sessions[tabId] : null;
-    const overlay = tabId ? currentPreview.desktopByTabId[tabId] : null;
-    if (!tabId || !session || !overlay?.hasWebContents) {
+    const runtimeTabId = tabId
+      ? previewRuntimeTabId(latest.threadRef, currentPreview.serverEpoch, tabId)
+      : null;
+    const lease =
+      tabId && runtimeTabId
+        ? readBrowserPdfExportLease(latest.threadRef, tabId, runtimeTabId)
+        : null;
+    if (!tabId || !session || !runtimeTabId || !lease) {
       useHtmlPdfSourceStore
         .getState()
         .setUpdateState(
           latest.id,
           "update-available",
-          "Open the HTML Browser tab to update this PDF.",
+          session
+            ? "This Browser tab cannot currently export PDFs."
+            : "Open the HTML Browser tab to update this PDF.",
         );
       return;
     }
@@ -166,15 +174,14 @@ function HtmlPdfRelationObserver(props: { readonly relationId: string }) {
       return;
     }
 
-    const runtimeTabId = previewRuntimeTabId(latest.threadRef, currentPreview.serverEpoch, tabId);
     const requestId = latest.manualRequestId;
     const isNavigationTargetCurrent = () => {
       const current = useHtmlPdfSourceStore.getState().relations[latest.id];
       const preview = readThreadPreviewState(latest.threadRef);
       return Boolean(
         current?.tabId === tabId &&
-        preview.sessions[tabId] &&
-        preview.desktopByTabId[tabId]?.hasWebContents &&
+        preview.sessions[tabId]?.runtime === session.runtime &&
+        (lease.owner === "server" || preview.desktopByTabId[tabId]?.hasWebContents) &&
         isCurrentPreviewRuntimeTab(latest.threadRef, preview.serverEpoch, tabId, runtimeTabId),
       );
     };
@@ -202,17 +209,28 @@ function HtmlPdfRelationObserver(props: { readonly relationId: string }) {
           }
           return renewedUrl;
         },
-        navigate: (authorizedUrl) => bridge.navigate(runtimeTabId, authorizedUrl),
+        navigate: (authorizedUrl) =>
+          navigateLinkedHtmlPdfSource({
+            threadRef: latest.threadRef,
+            tabId,
+            runtimeTabId,
+            lease,
+            authorizedUrl,
+            navigateNative: async (id, url) => {
+              if (!previewBridge) throw new Error("The desktop Browser is unavailable.");
+              await previewBridge.navigate(id, url);
+            },
+            navigateServer: navigateServerPage,
+          }),
         commitAuthorizedUrl: (authorizedUrl) =>
           useHtmlPdfSourceStore.getState().setAuthorizedUrl(latest.id, authorizedUrl),
         waitForReadiness: () =>
           waitForNavigationReadiness(
             latest.threadRef,
-            `html-pdf-update-${randomUUID()}`,
             tabId,
             runtimeTabId,
-            "navigate",
-            "load",
+            lease.owner,
+            useHtmlPdfSourceStore.getState().relations[latest.id]?.authorizedUrl ?? "",
             10_000,
           ),
         isNavigationTargetCurrent,
@@ -285,7 +303,12 @@ function HtmlPdfRelationObserver(props: { readonly relationId: string }) {
 
 export function HtmlPdfLifecycleHost() {
   const relations = useHtmlPdfSourceStore((state) => state.relations);
-  return Object.keys(relations).map((relationId) => (
-    <HtmlPdfRelationObserver key={relationId} relationId={relationId} />
-  ));
+  return (
+    <>
+      <ScientDocumentHosts />
+      {Object.keys(relations).map((relationId) => (
+        <HtmlPdfRelationObserver key={relationId} relationId={relationId} />
+      ))}
+    </>
+  );
 }
