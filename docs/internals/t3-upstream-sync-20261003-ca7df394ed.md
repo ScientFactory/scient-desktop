@@ -181,6 +181,24 @@ merge; its only overlaps, `FilePreviewPanel.tsx` and
 `MarkdownSourceSurface.test.tsx`, merged cleanly. The web compiler and the
 Markdown, document and file-opening suites pass on the composed candidate.
 
+Hosted runs after that catch-up exposed intermittent required-check failures with
+unchanged code, each traced and fixed at its cause rather than retried:
+
+- **Remote runtime install lock** (`packages/ssh/src/tunnel.ts`, inherited from
+  upstream): a waiter reclaiming a dead owner's lock could delete a fresh lock
+  another launch had just created, so two installs ran at once. Reclaim now
+  renames the lock away and checks the pid of the lock it actually took. The
+  race test failed 2/24 concurrent runs before and 0/72 after.
+- **Pi observed-effort fixture:** runs fell back to `process.cwd()` and
+  checkpointed the host repository (about 5 s each), and the controlled peer
+  could read a half-written control file. Runs now bind to their fixture
+  workspace and the control file is replaced atomically.
+- **Droid steering fixture:** its one-shot drain could wake up to 1 ms before a
+  `Date.now` deadline (libuv truncates its loop clock), claim nothing and stall.
+  It now waits until the effect is actually claimable; assertions are unchanged.
+  A fault injection that fires timers 2 ms early reproduced all three CI
+  signatures (5/6) and passes 33/33 after.
+
 ## Candidate and ancestry
 
 | Boundary                    | Identity                                                             |
