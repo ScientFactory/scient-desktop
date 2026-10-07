@@ -181,6 +181,31 @@ merge; its only overlaps, `FilePreviewPanel.tsx` and
 `MarkdownSourceSurface.test.tsx`, merged cleanly. The web compiler and the
 Markdown, document and file-opening suites pass on the composed candidate.
 
+Hosted runs after that catch-up exposed intermittent required-check failures with
+unchanged code, each traced and fixed at its cause rather than retried:
+
+- **Remote runtime install lock** (`packages/ssh/src/tunnel.ts`): string
+  placeholder replacement changed the shell PID `$$` to a literal `$`. Waiters
+  therefore treated a live installer as dead and could replace its runtime
+  before execution. The shared helper now inserts values literally, including
+  when launch and pairing scripts embed the runner. The rename-only workaround
+  is removed. Regression coverage preserves the generated runner and executes
+  concurrent installs while verifying a live numeric lock owner. The same
+  literal-substitution defect is tracked in upstream issue
+  [#15696](https://github.com/pingdotgg/t3code/issues/15696) and fix PR
+  [#14598](https://github.com/pingdotgg/t3code/pull/14598); reconcile the marked
+  helper with that fix when it lands. Separate stale-lock identity hazards are
+  outside this bounded repair.
+- **Pi observed-effort fixture:** runs fell back to `process.cwd()` and
+  checkpointed the host repository (about 5 s each), and the controlled peer
+  could read a half-written control file. Runs now bind to their fixture
+  workspace and the control file is replaced atomically.
+- **Droid steering fixture:** its one-shot drain could wake up to 1 ms before a
+  `Date.now` deadline (libuv truncates its loop clock), claim nothing and stall.
+  It now waits until the effect is actually claimable; assertions are unchanged.
+  A fault injection that fires timers 2 ms early reproduced all three CI
+  signatures (5/6) and passes 33/33 after.
+
 ## Candidate and ancestry
 
 | Boundary                    | Identity                                                             |

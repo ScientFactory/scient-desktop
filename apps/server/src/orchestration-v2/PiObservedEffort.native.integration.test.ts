@@ -84,14 +84,17 @@ const nativeScenario = (
           : "fixture/model",
       ...(selectionOptions === undefined ? {} : { options: selectionOptions }),
     };
-    yield* fs.writeFileString(
-      control,
-      json({
-        metadata,
-        thinkingLevel: initialLevel,
-        ...(name === "unavailable" ? { overrideLevel: "invalid-native-level" } : {}),
-      }),
-    );
+    // The peer re-reads control every 20 ms; an in-place rewrite exposes a truncated
+    // file whose JSON.parse crashes it. Publish each state with an atomic rename.
+    const writeControl = (state: unknown) =>
+      fs
+        .writeFileString(`${control}.next`, json(state))
+        .pipe(Effect.andThen(fs.rename(`${control}.next`, control)));
+    yield* writeControl({
+      metadata,
+      thinkingLevel: initialLevel,
+      ...(name === "unavailable" ? { overrideLevel: "invalid-native-level" } : {}),
+    });
     yield* fs.writeFileString(wire, "");
     yield* fs.writeFileString(
       script,
@@ -154,7 +157,9 @@ if(r.id)emit({type:'response',id:r.id,command:r.type,success:true,data});
       }).pipe(Effect.provide(outer)),
     );
     const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
-      { name: `pi-observed-${name}` },
+      // The replay policy ignores project roots; without this cwd the run (and its
+      // checkpoint capture) falls back to process.cwd(), the host repository.
+      { name: `pi-observed-${name}`, runtimePolicyOverride: { cwd } },
       registry,
       { databaseLayer: database, serverConfigLayer: configLayer, runContinuationWorker: true },
     );
@@ -233,31 +238,25 @@ if(r.id)emit({type:'response',id:r.id,command:r.type,success:true,data});
       const firstCompleted = yield* waitFor((p) => p.runs[0]?.status === "completed");
       let completed = firstCompleted;
       if (name === "unknown-next") {
-        yield* fs.writeFileString(control, json({ metadata: unknown, overrideLevel: "high" }));
+        yield* writeControl({ metadata: unknown, overrideLevel: "high" });
         yield* send(2);
         completed = yield* waitFor(
           (p) => p.runs.length === 2 && p.runs.every((r) => r.status === "completed"),
         );
       }
       if (name.startsWith("foreign")) {
-        yield* fs.writeFileString(
-          control,
-          json({
-            metadata: known,
-            foreign: true,
-            overrideLevel: name === "foreign-invalid" ? "invalid-native-level" : "high",
-          }),
-        );
+        yield* writeControl({
+          metadata: known,
+          foreign: true,
+          overrideLevel: name === "foreign-invalid" ? "invalid-native-level" : "high",
+        });
         yield* send(2);
         completed = yield* waitFor(
           (p) => p.runs.length === 2 && p.runs.some((r) => r.status === "failed"),
         );
       }
       if (name === "adopted") {
-        yield* fs.writeFileString(
-          control,
-          json({ metadata: known, overrideLevel: "high", nativeWork: true }),
-        );
+        yield* writeControl({ metadata: known, overrideLevel: "high", nativeWork: true });
         completed = yield* waitFor(
           (p) => p.runs.length === 2 && p.runs.every((r) => r.status === "completed"),
         );
