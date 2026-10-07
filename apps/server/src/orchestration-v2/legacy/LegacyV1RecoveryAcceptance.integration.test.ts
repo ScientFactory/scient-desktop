@@ -349,7 +349,7 @@ it.live(
                 migration_id: number;
                 name: string;
               }>`SELECT migration_id, name
-                FROM scient_schema_migrations WHERE migration_id IN (19, 20) ORDER BY migration_id`;
+                FROM scient_schema_migrations WHERE migration_id >= 19 ORDER BY migration_id`;
               assert.deepEqual(
                 migrationRows,
                 SCIENT_MIGRATIONS.filter((entry) => entry.id >= 19).map((entry) => ({

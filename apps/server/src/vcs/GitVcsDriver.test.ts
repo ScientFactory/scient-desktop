@@ -1,4 +1,9 @@
+// SCIENT-FORK:START — checkpoint publication and non-UTF-8 filename tests.
 import * as NodeCrypto from "node:crypto";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - FileSystem takes string paths; the non-UTF-8 test needs a byte path.
+import * as NodeFS from "node:fs";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+// SCIENT-FORK:END
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -294,6 +299,7 @@ it.effect("publishes a valid checkpoint without invoking receive hooks", () =>
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
+// SCIENT-FORK:START — incremental checkpoint publication (loose and packed transfer).
 // Objects in this repository's own object directory; in-pack counts every pack's
 // copy, so objects re-sent for a capture show up here.
 const countLocalObjects = (stats: string) =>
@@ -515,6 +521,7 @@ for (const transfer of ["loose", "pack"] as const) {
     }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
   );
 }
+// SCIENT-FORK:END
 
 it.effect("captures SHA-256 repositories with the same object format", () =>
   Effect.gen(function* () {
@@ -1546,7 +1553,16 @@ it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publi
 
     yield* captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
 
-    const writeCommands = ["add", "write-tree", "commit-tree", "unpack-objects", "fetch"];
+    // SCIENT-FORK:START — checkpoint publication may unpack loose objects.
+    const writeCommands = [
+      "add",
+      "write-tree",
+      "commit-tree",
+      "unpack-objects",
+      "update-ref",
+      "fetch",
+    ];
+    // SCIENT-FORK:END
     const writes = observedArgs.filter((args) =>
       writeCommands.some((command) => args.includes(command)),
     );
@@ -1675,33 +1691,113 @@ it.effect("tolerates a changed file deleted between enumeration and metadata loo
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
-it.effect("declines truncated path enumeration without publishing a partial checkpoint", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const liveProcess = yield* VcsProcess.VcsProcess;
-    const driver = yield* GitVcsDriver.makeVcsDriverShape();
-    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "scient-checkpoint-path-limit-" });
-    const { checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
-    const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
-      Effect.provideService(VcsProcess.VcsProcess, {
-        run: (input) =>
-          liveProcess
-            .run(input)
-            .pipe(
-              Effect.map((result) =>
-                input.args.includes("--porcelain=v1")
-                  ? { ...result, stdoutTruncated: true }
-                  : result,
+// SCIENT-FORK:START — streamed changed-path listing, including non-UTF-8 names.
+it.effect(
+  "captures complete streaming enumeration even when the diagnostic buffer is truncated",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const liveProcess = yield* VcsProcess.VcsProcess;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "scient-checkpoint-path-limit-" });
+      const { checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) =>
+            liveProcess
+              .run(input)
+              .pipe(
+                Effect.map((result) =>
+                  input.args.includes("--porcelain=v1")
+                    ? { ...result, stdoutTruncated: true }
+                    : result,
+                ),
               ),
-            ),
-      }),
-    );
-    expect(
-      yield* Effect.result(captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef })),
-    ).toMatchObject({
-      _tag: "Failure",
-      failure: { _tag: "VcsCheckpointUnavailableError", reason: "path-limit" },
-    });
-    expect(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef })).toBe(false);
-  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+        }),
+      );
+      yield* captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      expect(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef })).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
+
+it.live(
+  "native checkpoint captures a complete changed-path listing above 16 MiB",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const driver = yield* GitVcsDriver.makeVcsDriverShape();
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "scient-checkpoint-large-list-" });
+        const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+        const directory = path.join(
+          cwd,
+          ...Array.from({ length: 3 }, (_, n) => String(n) + "d".repeat(179)),
+        );
+        yield* fs.makeDirectory(directory, { recursive: true });
+        // Many empty files exercise listing size without nearing the file-byte budget.
+        // The records share long directories; a chunk never needs to hold the whole list.
+        const count = 24_000;
+        yield* Effect.forEach(
+          Array.from({ length: count }, (_, n) => n),
+          (n) =>
+            fs.writeFileString(
+              path.join(directory, String(n).padStart(6, "0") + "f".repeat(194)),
+              "",
+            ),
+          { concurrency: 8, discard: true },
+        );
+        let listedBytes = 0;
+        yield* driver.execute({
+          operation: "large-list.test",
+          cwd,
+          args: ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+          outputMode: "truncate",
+          maxOutputBytes: 4096,
+          onStdoutChunk: (chunk) => {
+            listedBytes += chunk.byteLength;
+          },
+        });
+        expect(listedBytes).toBeGreaterThan(16 * 1024 * 1024);
+        yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+        let capturedPaths = 0;
+        yield* driver.execute({
+          operation: "large-list.tree",
+          cwd,
+          args: ["ls-tree", "-r", "--name-only", "-z", checkpointRef],
+          outputMode: "truncate",
+          maxOutputBytes: 4096,
+          onStdoutChunk: (chunk) => {
+            for (const byte of chunk) if (byte === 0) capturedPaths += 1;
+          },
+        });
+        expect(capturedPaths).toBe(count + 1);
+        expect((yield* git(["show", `${checkpointRef}:file.txt`])).stdout).toBe("unstaged\n");
+      }).pipe(Effect.provide(GitContractLayer), Effect.timeout("80 seconds")),
+    ),
+  90_000,
+);
+
+it.effect.skipIf(HostProcessPlatform.defaultValue() !== "linux")(
+  "captures a changed file whose name is not valid UTF-8",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "scient-checkpoint-latin1-" });
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      // "café.txt" in Latin-1, as an extracted archive can leave it; Linux accepts
+      // any bytes but "/" and NUL in a name, and Git lists them unquoted with -z.
+      NodeFS.writeFileSync(
+        Buffer.concat([Buffer.from(`${cwd}/caf`), Buffer.from([0xe9]), Buffer.from(".txt")]),
+        "latin-1\n",
+      );
+
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      assert.include(
+        (yield* git(["ls-tree", "-r", "--name-only", checkpointRef])).stdout,
+        '"caf\\351.txt"',
+      );
+    }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+// SCIENT-FORK:END

@@ -300,6 +300,13 @@ for (const scenario of [
     title: "cancels the capture waiter before SQL finishes without hanging or publishing a child",
   },
   {
+    mode: "timeout-retry",
+    streaming: "turn",
+    clean: false,
+    control: "timeout",
+    title: "expires a stalled real text consumer without stopping the source and retries safely",
+  },
+  {
     mode: "cancel-ordinary",
     streaming: "paragraph",
     clean: false,
@@ -671,6 +678,7 @@ for (const scenario of [
         const releaseEmission = yield* Deferred.make<void>();
         const captureQueued = yield* Deferred.make<void>();
         const releaseCapture = yield* Deferred.make<void>();
+        const expireCapture = yield* Deferred.make<void>();
         const captureCommitted = yield* Deferred.make<void>();
         const filteredItemCommitted = yield* Deferred.make<void>();
         let rawCaptureCount = 0;
@@ -1086,7 +1094,25 @@ for (const scenario of [
               yield* sql.unsafe(`CREATE TRIGGER reject_buffer_item BEFORE INSERT ON orchestration_events
               WHEN NEW.event_type = 'turn-item.updated' AND json_extract(NEW.payload_json, '$.type') = 'assistant_message'
               BEGIN SELECT RAISE(ABORT, 'controlled raw-item SQL failure'); END`);
-            let forking = yield* forks.dispatch(command).pipe(Effect.forkScoped);
+            const timeoutClock: Clock.Clock = {
+              ...realClock,
+              currentTimeMillisUnsafe: () => realClock.currentTimeMillisUnsafe(),
+              currentTimeNanosUnsafe: () => realClock.currentTimeNanosUnsafe(),
+              monotonicTimeNanosUnsafe: () => realClock.monotonicTimeNanosUnsafe(),
+              sleep: (duration) =>
+                Duration.toMillis(duration) === 90_000
+                  ? Deferred.await(expireCapture)
+                  : realClock.sleep(duration),
+            };
+            let forking = yield* forks
+              .dispatch(command)
+              .pipe(
+                Effect.provideService(
+                  Clock.Clock,
+                  scenario.control === "timeout" ? timeoutClock : realClock,
+                ),
+                Effect.forkScoped,
+              );
             yield* Effect.raceFirst(
               Deferred.await(
                 ["eof", "pre-delta", "detach", "cancel-ordinary"].includes(scenario.control)
@@ -1415,9 +1441,28 @@ for (const scenario of [
                 ),
               );
             }
-            if (scenario.control === "cancel") {
+            if (scenario.control === "cancel" || scenario.control === "timeout") {
               yield* capture("beforeCancel", { rawCaptureCount });
-              yield* Fiber.interrupt(forking).pipe(Effect.timeout("15 seconds"));
+              if (scenario.control === "cancel")
+                yield* Fiber.interrupt(forking).pipe(Effect.timeout("15 seconds"));
+              else {
+                yield* Deferred.succeed(expireCapture, undefined);
+                const refused = yield* Fiber.join(forking).pipe(
+                  Effect.exit,
+                  Effect.timeout("15 seconds"),
+                );
+                assert.equal(refused._tag, "Failure");
+                if (refused._tag === "Failure") {
+                  const error = Cause.findErrorOption(refused.cause);
+                  assert.isTrue(Option.isSome(error));
+                  if (Option.isSome(error))
+                    assert.deepInclude(error.value, { forkDisposition: "rejected" });
+                }
+                assert.equal(
+                  (yield* orchestrator.getThreadProjection(threadId)).runs[0]?.status,
+                  "running",
+                );
+              }
               yield* capture("afterCancel", { rawCaptureCount });
               assert.isTrue(
                 Option.isNone(yield* (yield* CommandReceiptStoreV2).getByCommandId(forkCommandId)),
@@ -1471,7 +1516,7 @@ for (const scenario of [
               yield* sql.unsafe("DROP TRIGGER reject_buffer_item");
               forking = yield* forks.dispatch(command).pipe(Effect.forkScoped);
             }
-            if (scenario.control === "cancel") {
+            if (scenario.control === "cancel" || scenario.control === "timeout") {
               yield* Deferred.await(captureCommitted).pipe(Effect.timeout("15 seconds"));
               assert.equal(
                 (yield* (yield* ProjectionStoreV2).getThread(forkId).pipe(Effect.exit))._tag,

@@ -13,6 +13,9 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import * as ProcessRunner from "./processRunner.ts";
+// SCIENT-FORK:START — real child processes for the streamed stdout consumer tests.
+import * as NodeServices from "@effect/platform-node/NodeServices";
+// SCIENT-FORK:END
 
 type ChildProcessCommand = {
   readonly command: string;
@@ -319,6 +322,7 @@ describe("runProcess", () => {
     }),
   );
 
+  // SCIENT-FORK:START — binary stdin for checkpoint object transfer.
   it.effect("writes binary stdin bytes unchanged", () =>
     Effect.gen(function* () {
       // Invalid UTF-8 would not survive a round trip through text encoding.
@@ -350,7 +354,7 @@ describe("runProcess", () => {
       expect(result.code).toBe(0);
     }),
   );
-
+  // SCIENT-FORK:END
   it.effect("returns output for non-zero exit codes", () =>
     Effect.gen(function* () {
       const spawner = makeSpawner(() => Effect.succeed(makeHandle({ stderr: "boom", code: 2 })));
@@ -452,3 +456,102 @@ describe("commandName", () => {
     expect(ProcessRunner.commandName("git")).toBe("git");
   });
 });
+// SCIENT-FORK:START — the awaited stdout consumer used by checkpoint enumeration.
+
+describe("streamed stdout consumers", () => {
+  it.effect("awaits each consumer before reading the next chunk", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let reads = 0;
+      const spawner = makeSpawner(() =>
+        Effect.succeed(
+          makeHandle({
+            stdout: Stream.make(new Uint8Array([1]), new Uint8Array([2])).pipe(
+              Stream.tap(() =>
+                Effect.sync(() => {
+                  reads += 1;
+                }),
+              ),
+            ),
+          }),
+        ),
+      );
+      let consumed = 0;
+      const running = yield* runWith(spawner)({
+        command: "fake",
+        args: [],
+        outputMode: "truncate",
+        maxOutputBytes: 1,
+        onStdoutChunkEffect: () =>
+          Effect.gen(function* () {
+            consumed += 1;
+            if (consumed === 1) {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(release);
+            }
+          }),
+      }).pipe(Effect.forkChild);
+      yield* Deferred.await(entered);
+      expect(reads).toBe(1);
+      yield* Deferred.succeed(release, undefined);
+      const result = yield* Fiber.join(running);
+      expect(reads).toBe(2);
+      expect(consumed).toBe(2);
+      expect(result.stdoutTruncated).toBe(true);
+    }),
+  );
+});
+
+for (const mode of ["failure", "cancellation", "timeout"] as const)
+  it.live(
+    `reaps the native producer on stdout-consumer ${mode}`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const entered = yield* Deferred.make<number>();
+          const runner = yield* ProcessRunner.ProcessRunner;
+          const command = process.execPath;
+          const invocation = runner.run({
+            command,
+            args: ["-e", "process.stdout.write(String(process.pid));setInterval(()=>{},1000)"],
+            timeout: mode === "timeout" ? "2 seconds" : "10 seconds",
+            onStdoutChunkEffect: (chunk) =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(entered, Number(new TextDecoder().decode(chunk)));
+                if (mode === "failure")
+                  return yield* new ProcessRunner.ProcessReadError({
+                    command,
+                    argumentCount: 2,
+                    stream: "stdout",
+                    cause: "injected consumer refusal",
+                  });
+                return yield* Effect.never;
+              }),
+          });
+          const running = yield* invocation.pipe(Effect.exit, Effect.forkChild);
+          const pid = yield* Deferred.await(entered);
+          expect(Number.isInteger(pid) && pid > 0).toBe(true);
+          if (mode === "cancellation") yield* Fiber.interrupt(running);
+          else {
+            const result = yield* Fiber.join(running);
+            expect(result._tag).toBe("Failure");
+          }
+          const alive = yield* Effect.sync(() => {
+            try {
+              process.kill(pid, 0);
+              return true;
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+              return false;
+            }
+          });
+          expect(alive).toBe(false);
+        }).pipe(
+          Effect.provide(ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
+          Effect.timeout("12 seconds"),
+        ),
+      ),
+    15_000,
+  );
+// SCIENT-FORK:END

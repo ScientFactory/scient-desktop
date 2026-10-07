@@ -190,6 +190,7 @@ export class ProviderTextSnapshotError extends Schema.TaggedError<ProviderTextSn
       "newer-delta",
       "consumer-ended",
       "capture-failed",
+      "timed-out",
     ]),
     cause: Schema.optional(Schema.Defect()),
   },

@@ -66,7 +66,11 @@ import * as RuntimeRequestService from "../RuntimeRequestService.ts";
 import * as ThreadForkService from "../ThreadForkService.ts";
 import * as ConversationForks from "../scient-fork/ConversationForkService.ts";
 import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
-import { ScientForkCheckpointBaselineLive } from "../scient-fork/ForkCheckpointBaseline.ts";
+import {
+  ScientForkCheckpointBaseline,
+  ScientForkCheckpointBaselineLive,
+  type ScientForkCheckpointBaselineShape,
+} from "../scient-fork/ForkCheckpointBaseline.ts";
 import { ScientForkAttachmentCopierLive } from "../scient-fork/ForkAttachmentCopier.ts";
 import { layer as threadCommandExecutorLayer } from "../ThreadCommandExecutor.ts";
 import {
@@ -328,6 +332,10 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     readonly decorateProjectionStore?: (
       store: ProjectionStore.ProjectionStoreV2Shape,
     ) => ProjectionStore.ProjectionStoreV2Shape;
+    /** Gate actual Git capture without replacing publication or admission. */
+    readonly decorateForkCheckpointBaseline?: (
+      baseline: ScientForkCheckpointBaselineShape,
+    ) => ScientForkCheckpointBaselineShape;
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
       | MigrationError
@@ -628,11 +636,18 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         commandReceiptStoreProvided,
         threadCommandExecutorLayer,
         legacyImporterProvided,
-        ScientForkCheckpointBaselineLive,
+        options.decorateForkCheckpointBaseline === undefined
+          ? ScientForkCheckpointBaselineLive
+          : Layer.effect(
+              ScientForkCheckpointBaseline,
+              Effect.map(ScientForkCheckpointBaseline, options.decorateForkCheckpointBaseline),
+            ).pipe(Layer.provide(ScientForkCheckpointBaselineLive)),
         options.forkAttachmentCopierLayer ?? ScientForkAttachmentCopierLive,
       ),
     ),
-    Layer.provide(Layer.mergeAll(checkpointStoreLayer, serverConfigLayer, VcsProcess.layer)),
+    Layer.provide(
+      Layer.mergeAll(checkpointStoreLayer, serverConfigLayer, VcsProcess.layer, databaseLayer),
+    ),
   );
   const effectExecutorProvided = EffectWorker.executorLayer.pipe(
     Layer.provide(
