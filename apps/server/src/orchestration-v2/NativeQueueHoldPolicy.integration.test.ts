@@ -203,6 +203,9 @@ const withNativeQueue = <A, E, R>(
     readonly controlStartupFailures?: boolean;
     readonly nativeSteering?: boolean;
     readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
+    readonly decorateProjectionStore?: (
+      store: ProjectionStore.ProjectionStoreV2Shape,
+    ) => ProjectionStore.ProjectionStoreV2Shape;
   } = {},
 ) =>
   Effect.scoped(
@@ -482,6 +485,9 @@ const withNativeQueue = <A, E, R>(
           ...(options.runtimePolicyLayer === undefined
             ? {}
             : { runtimePolicyLayer: options.runtimePolicyLayer }),
+          ...(options.decorateProjectionStore === undefined
+            ? {}
+            : { decorateProjectionStore: options.decorateProjectionStore }),
         },
       ).pipe(
         Layer.provideMerge(options.mcpSessionRegistryLayer ?? McpSessionRegistryTestkit.layer),
@@ -2387,6 +2393,68 @@ it.live("a real checkpoint capture failure settles the native answer and drains 
         assert.deepEqual(offers, ["foreground", "first"]);
       }),
   ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "a checkpoint capture that fails on every attempt completes the answered run and drains the queue",
+  () =>
+    withNativeQueue(
+      "queue-native-capture-precondition-failure",
+      ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
+        Effect.gen(function* () {
+          yield* send(orchestrator, threadId, "foreground");
+          const foreground = yield* takeOffer;
+          yield* send(orchestrator, threadId, "first", true);
+          yield* foreground.answer("Answer before an uncapturable checkpoint");
+          yield* foreground.settle("completed");
+          // Every capture attempt fails before Git runs; the worker retries, then gives up.
+          const next = yield* takeOffer.pipe(Effect.option);
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          const run = after.runs.find((candidate) => candidate.id === foreground.input.runId);
+          assert.equal(run?.status, "completed");
+          assert.isTrue(Option.isSome(next));
+          if (Option.isNone(next)) return;
+          assert.equal(next.value.input.message.text, "first");
+          const checkpoint = after.checkpoints.find((row) => row.id === run?.checkpointId);
+          assert.equal(checkpoint?.status, "error");
+          assert.deepEqual(checkpoint?.files, []);
+          assert.equal(
+            after.nodes.find((node) => node.id === foreground.input.rootNodeId)?.status,
+            "completed",
+          );
+          assert.equal(
+            after.messages.find(
+              (row) => row.runId === foreground.input.runId && row.role === "assistant",
+            )?.text,
+            "Answer before an uncapturable checkpoint",
+          );
+          yield* next.value.settle("completed");
+          yield* waitFor((projection) =>
+            projection.runs.every((candidate) => candidate.status === "completed"),
+          );
+          assert.deepEqual(offers, ["foreground", "first"]);
+        }),
+      {
+        // The stored workspace no longer matches the checkpoint scope's identity,
+        // a precondition the capture checks before it touches Git.
+        decorateProjectionStore: (store) => ({
+          ...store,
+          getCheckpointCaptureContext: (threadId, target) =>
+            store
+              .getCheckpointCaptureContext(threadId, target)
+              .pipe(
+                Effect.map((context) =>
+                  context.scope === undefined
+                    ? context
+                    : {
+                        ...context,
+                        scope: { ...context.scope, cwd: `${context.scope.cwd}-moved` },
+                      },
+                ),
+              ),
+        }),
+      },
+    ),
 );
 
 it.live(

@@ -31,6 +31,9 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
+// SCIENT-FORK:START checkpoint-capture-final-attempt
+import { CheckpointCaptureFinalAttempt } from "./scient-fork/CheckpointCaptureFinalAttempt.ts";
+// SCIENT-FORK:END checkpoint-capture-final-attempt
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
@@ -598,6 +601,9 @@ export const executorLayer: Layer.Layer<
                 scopeId: effect.request.scopeId,
               })
               .pipe(
+                // SCIENT-FORK:START checkpoint-capture-final-attempt
+                Effect.provideService(CheckpointCaptureFinalAttempt, !willRetry),
+                // SCIENT-FORK:END checkpoint-capture-final-attempt
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
