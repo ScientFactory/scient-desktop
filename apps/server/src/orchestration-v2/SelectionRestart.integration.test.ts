@@ -1204,8 +1204,10 @@ it.live.each(
     { olderRun: true, sameModes: false },
     { olderRun: true, sameModes: true },
   ].map(({ olderRun, sameModes }) => {
-    const requestedMode = sameModes ? "full-access" : "approval-required";
-    const requestedInteraction = sameModes ? "default" : "plan";
+    const requestedMode: "full-access" | "approval-required" = sameModes
+      ? "full-access"
+      : "approval-required";
+    const requestedInteraction: "default" | "plan" = sameModes ? "default" : "plan";
 
     return {
       caseTitle: `restarts active steering with captured modes (older run ${olderRun}, same modes ${sameModes})`,

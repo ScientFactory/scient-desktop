@@ -814,8 +814,9 @@ it("keeps the reveal of a first prompt as it was: traces do not move it", async 
   expect(toEnd()).toBeGreaterThan(100);
 });
 
-for (const followed of ["running", "completed"] as const)
-  it(`brings a reader back to the prompt they followed across rows never rendered (${followed})`, async () => {
+it.each(["running", "completed"] as const)(
+  "brings a reader back to the prompt they followed across rows never rendered (%s)",
+  async (followed) => {
     const key = `follow:return-virtualized-${followed}`;
     const { history, runs } = await answeredThread(key);
     const prompt = message(10, "user", { text: "Followed prompt", runId: "run-10" });
@@ -874,4 +875,5 @@ for (const followed of ["running", "completed"] as const)
     ).toBe(true);
     if (followed === "running") await playUntil(() => chat.followPromptId === "message-10");
     else expect(chat.followPromptId).toBeNull();
-  });
+  },
+);

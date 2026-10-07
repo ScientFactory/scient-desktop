@@ -497,7 +497,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           : []),
       ];
     }),
-  )("$caseTitle", ({ run }) => run());
+  )("$caseTitle", ({ run }) =>
+    Effect.gen(function* () {
+      yield* run();
+    }),
+  );
 
   // The app-server exits after the root turn, before the command's own
   // item/completed (Codex always sends one, so only a lost notification or a
