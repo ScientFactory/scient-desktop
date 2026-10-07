@@ -4,7 +4,17 @@ import { mathArrayCellSelector } from "./mathEditingGuides";
 export function positionEquationNumbers(root: HTMLElement, rowCount: number): () => void {
   const math = root.querySelector("math-field");
   const shadow = math?.shadowRoot;
-  if (!math || !shadow) return () => {};
+  if (!math || !shadow) {
+    let dispose: (() => void) | undefined;
+    const mounted = () => {
+      dispose = positionEquationNumbers(root, rowCount);
+    };
+    root.addEventListener("scient-latex-math-mounted", mounted, { once: true });
+    return () => {
+      root.removeEventListener("scient-latex-math-mounted", mounted);
+      dispose?.();
+    };
+  }
   let frame = 0;
   const update = () => {
     frame = 0;

@@ -385,6 +385,12 @@ This is requested functionality; detailed placement and implementation remain pe
 
 ## Nested selection and navigation (2026-10-07)
 
+Symbols opens explicitly from **Math → Symbols** or **Alt+I, then S**.
+The local implementation replaces the Ctrl+Space default and consumes palette
+open requests once, so returning to an equation does not replay a dismissed
+panel. Existing custom shortcuts remain user-owned. Interaction qualification
+is pending.
+
 Local decision: use smooth ordinary cursor movement, visible editing scope, and
 explicit parent navigation (choice B). This changes selection behavior and status
 feedback; it adds no buttons or explanatory content to the Scient menus.
@@ -412,9 +418,16 @@ feedback; it adds no buttons or explanatory content to the Scient menus.
 - Basic and styled frame contents stay editable on paper, including nested tables,
   split box regions and framed listings. Unsupported box source remains editable
   in place; its source field can shrink to one line without discarding text.
-- Math formatting commands such as `\textbf` and `\mathbf` complete with a
+- Math formatting commands such as `\text`, `\textbf`, `\mathbf`, `\mathbb`
+  and `\mathcal` complete with a
   braced empty argument and focus its editable slot. Keyboard acceptance and
-  suggestion clicks share this behavior. Empty formatting slots are restored
+  suggestion clicks share this behavior. Symbols insertion wraps selected
+  content or opens an empty slot, with text/math mode matching the command.
+  Formatting arguments retain an editable scope instead of becoming flat font
+  runs. Insertion shows a caret inside the argument, typing retains its alphabet,
+  and Enter formatting/Leave parent cross its boundary. Nested formatting remains
+  separate Ctrl+A steps. Native interaction qualification for this correction is pending.
+  Empty formatting slots are restored
   when loading source, and placeholder tokens stay out of saved LaTeX. Custom
   document macros retain their own definitions and completion behavior.
 - Carets use local text color and size, with one thin stroke. Inside an accent

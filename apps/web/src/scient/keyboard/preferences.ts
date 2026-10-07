@@ -18,11 +18,12 @@ const LEGACY_KEY = "scient.mathInputBindings.v1";
  * 3: the Markdown editor's keys for Text, the first three headings and the
  *    two lists, beside the key sequences.
  * 4: Select the current LaTeX editing scope, then each parent (mod+a).
+ * 5: Open math Symbols with the Insert sequence (alt+i s).
  */
-const WRITING_PRESET_VERSION = 4;
+const WRITING_PRESET_VERSION = 5;
 export interface KeyboardPreferences {
   readonly version: 1;
-  readonly writingPresetVersion?: 1 | 2 | 3 | 4;
+  readonly writingPresetVersion?: 1 | 2 | 3 | 4 | 5;
   readonly customMath?: readonly CustomMathCommand[];
   readonly overrides: Readonly<Record<string, readonly string[]>>;
   readonly mathPreset: "lyx" | "minimal";

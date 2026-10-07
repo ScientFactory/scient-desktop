@@ -57,7 +57,7 @@ export function defaultMathBindings(mac: boolean): readonly MathBinding[] {
     { keys: "mod+m", command: "math.inline" },
     { keys: "alt+=", command: "math.inline" },
     { keys: "mod+shift+m", command: "math.display" },
-    { keys: "ctrl+space", command: "math.palette" },
+    { keys: "alt+i s", command: "math.palette" },
     ...MATH_COMMANDS.flatMap((command) =>
       (command.lyx ?? []).map((sequence) => ({
         keys: `${prefix} ${sequence}`,

@@ -31,6 +31,212 @@ export const MATH_FORMATTING_ARGUMENTS: Readonly<Record<string, "text" | "math">
   bm: "math",
 };
 
+const formattingStyles: Readonly<Record<string, Style>> = {
+  text: {},
+  textbf: { fontSeries: "b" },
+  textmd: { fontSeries: "m" },
+  textit: { fontShape: "it" },
+  textup: { fontShape: "n" },
+  textsl: { fontShape: "sl" },
+  textsc: { fontShape: "sc" },
+  textnormal: { fontShape: "n", fontSeries: "m" },
+  textrm: { fontFamily: "roman" },
+  textsf: { fontFamily: "sans-serif" },
+  texttt: { fontFamily: "monospace" },
+  mathbf: { variant: "normal", variantStyle: "bold" },
+  mathit: { variant: "main", variantStyle: "italic" },
+  mathrm: { variant: "normal", variantStyle: "up" },
+  mathsf: { variant: "sans-serif", variantStyle: "up" },
+  mathtt: { variant: "monospace", variantStyle: "up" },
+  mathnormal: { variant: "normal", variantStyle: "italic" },
+  mathbfit: { variant: "main", variantStyle: "bolditalic" },
+  mathbb: { variant: "double-struck" },
+  mathcal: { variant: "calligraphic" },
+  mathfrak: { variant: "fraktur" },
+  mathscr: { variant: "script" },
+  boldsymbol: { variantStyle: "bold" },
+  bm: { variantStyle: "bold" },
+};
+const scopeMarker = "scient-format=";
+
+function formattingScopeStyle(command: string, inherited: Style): Style {
+  const style = { ...inherited, ...formattingStyles[command] };
+  if (["mathbb", "mathcal", "mathfrak", "mathscr"].includes(command))
+    style.variantStyle = String(inherited.variantStyle ?? "").includes("bold") ? "bold" : "up";
+  return style;
+}
+
+/** Screen-only wrappers keep a font argument editable instead of flattening it. */
+export function mathFormattingScopeCommand(atom: {
+  readonly command?: string;
+  readonly args?: readonly unknown[];
+}): string | null {
+  if (atom.command !== "\\htmlData" || typeof atom.args?.[0] !== "string") return null;
+  const marker = atom.args[0];
+  if (!marker.startsWith(scopeMarker)) return null;
+  const command = marker.slice(scopeMarker.length);
+  return Object.hasOwn(MATH_FORMATTING_ARGUMENTS, command) ? command : null;
+}
+
+function formattingScopesInput(source: string, customCommands?: Readonly<Record<string, unknown>>) {
+  if (customCommands?.htmlData) return source;
+  const commands = latexSourceCommands(source);
+  const wrapped = new Set<number>();
+  for (const command of commands) {
+    if (command.name !== "htmlData") continue;
+    const marker = latexSourceArgument(source, command.to);
+    const body = marker && latexSourceArgument(source, marker.end);
+    if (body && mathFormattingScopeCommand({ command: "\\htmlData", args: [marker!.value] }))
+      wrapped.add(body.from);
+  }
+  for (const command of commands.toReversed()) {
+    if (
+      !Object.hasOwn(MATH_FORMATTING_ARGUMENTS, command.name) ||
+      customCommands?.[command.name] ||
+      wrapped.has(command.from)
+    )
+      continue;
+    const body = latexSourceArgument(source, command.to);
+    if (!body) continue;
+    const content = source.slice(command.from, body.end);
+    source =
+      source.slice(0, command.from) +
+      `\\htmlData{${scopeMarker}${command.name}}{${content}}` +
+      source.slice(body.end);
+  }
+  return source;
+}
+
+type FormattingSerialization = {
+  defaultMode?: "math" | "text" | "latex";
+  skipStyles?: boolean;
+};
+interface FormattingAtom {
+  readonly type?: string;
+  readonly command?: string;
+  readonly args?: readonly unknown[];
+  readonly body?: readonly FormattingAtom[];
+  readonly parent?: FormattingAtom;
+  readonly rightSibling?: FormattingAtom;
+  style: Style;
+  bodyToLatex(options: FormattingSerialization): string;
+  supsubToLatex(options: FormattingSerialization): string;
+  _serialize(options: FormattingSerialization): string;
+}
+interface FormattingController {
+  readonly model: {
+    readonly atoms: readonly FormattingAtom[];
+    at(offset: number): FormattingAtom;
+    offsetOf(atom: FormattingAtom): number;
+    getValue(...args: unknown[]): string;
+  };
+  readonly defaultStyle: Style;
+  readonly styleBias: string;
+}
+
+/** Preserve native font scopes, insertion style, and portable source through undo. */
+export function installMathFormattingScopes(math: MathfieldElement) {
+  const controller = (math as unknown as { _mathfield?: FormattingController })._mathfield;
+  if (!controller) return { dispose: () => {} };
+  const model = controller.model;
+  const getValue = model.getValue;
+  const insertStyle = math.onInsertStyle;
+  const patched = new WeakSet<FormattingAtom>();
+  const refresh = () => {
+    for (const atom of model.atoms) {
+      const command = mathFormattingScopeCommand(atom);
+      if (!command || patched.has(atom)) continue;
+      atom._serialize = (options) => {
+        const inherited = atom.style;
+        // Native math serialization compares children with their parent style.
+        // Supply the argument's context only while serializing its body, so the
+        // outer run does not wrap the owner in a second copy of the same font.
+        atom.style = formattingScopeStyle(command, inherited);
+        let body: string;
+        try {
+          body = atom.bodyToLatex({
+            ...options,
+            defaultMode: MATH_FORMATTING_ARGUMENTS[command]!,
+          });
+        } finally {
+          atom.style = inherited;
+        }
+        // Text serialization repeats its font even within the same context.
+        if (MATH_FORMATTING_ARGUMENTS[command] === "text" && body.startsWith(`\\${command}{`)) {
+          const repeated = latexSourceArgument(body, command.length + 1);
+          if (repeated?.end === body.length) body = repeated.value;
+        }
+        return `${options.skipStyles ? body : `\\${command}{${body}}`}${atom.supsubToLatex(options)}`;
+      };
+      patched.add(atom);
+    }
+  };
+  model.getValue = function (...args) {
+    refresh();
+    return getValue.apply(this, args);
+  };
+  math.onInsertStyle = (sender, at, info) => {
+    refresh();
+    if (insertStyle) return insertStyle(sender, at, info);
+    if (insertStyle === null || math.mode === "latex") return {};
+    const bias = controller.styleBias;
+    const adjacent = model.at(bias === "right" ? info.after : info.before);
+    let scope = model.at(at)?.parent;
+    while (scope && !mathFormattingScopeCommand(scope)) scope = scope.parent;
+    if (scope) {
+      const scopeStyle = formattingScopeStyle(mathFormattingScopeCommand(scope)!, scope.style);
+      return {
+        ...scopeStyle,
+        ...adjacent?.style,
+        ...controller.defaultStyle,
+        ...(scopeStyle.variant ? { variant: scopeStyle.variant } : {}),
+      };
+    }
+    if (bias === "none" || !adjacent) return controller.defaultStyle;
+    return math.mode === "math"
+      ? { ...adjacent.style, variant: "normal", ...controller.defaultStyle }
+      : adjacent.style;
+  };
+  math.addEventListener("input", refresh);
+  return {
+    dispose: () => {
+      math.removeEventListener("input", refresh);
+      model.getValue = getValue;
+      math.onInsertStyle = insertStyle;
+    },
+  };
+}
+
+/** Show an insertion caret inside the new argument rather than selecting its slot. */
+export function enterMathFormattingArgument(math: MathfieldElement, adjacent = false): boolean {
+  const model = (math as unknown as { _mathfield?: FormattingController })._mathfield?.model;
+  if (!model || math.readOnly) return false;
+  const range = math.selection.ranges[0];
+  const atom = model.at(math.position);
+  const next = atom?.rightSibling;
+  const owner = mathFormattingScopeCommand(atom)
+    ? atom
+    : adjacent && next && mathFormattingScopeCommand(next)
+      ? next
+      : atom?.parent;
+  const command = owner && mathFormattingScopeCommand(owner);
+  if (!command) return false;
+  if (math.selectionIsCollapsed && owner === atom && atom.body?.length)
+    math.position = model.offsetOf(atom.body.at(-1)!);
+  else if (math.selectionIsCollapsed && owner === next && next?.body?.length)
+    math.position = model.offsetOf(next.body[0]!);
+  else if (
+    range &&
+    math.selection.ranges.length === 1 &&
+    range[1] - range[0] === 1 &&
+    atom.type === "placeholder"
+  )
+    math.position = range[0];
+  else return false;
+  math.executeCommand(["switchMode", MATH_FORMATTING_ARGUMENTS[command]!]);
+  return true;
+}
+
 /** Recreate vacant font slots on load; source serialization omits the placeholders. */
 function emptyFormattingInput(
   source: string,
@@ -114,8 +320,10 @@ export function mathTextFormattingInput(
   customCommands?: Readonly<Record<string, unknown>>,
 ): string {
   source = emptyFormattingInput(source, customCommands);
-  if (customCommands?.mathbfit || customCommands?.mathit) return source;
-  if (!source.includes("\\boldsymbol") && !source.includes("\\bm")) return source;
+  if (customCommands?.mathbfit || customCommands?.mathit)
+    return formattingScopesInput(source, customCommands);
+  if (!source.includes("\\boldsymbol") && !source.includes("\\bm"))
+    return formattingScopesInput(source, customCommands);
   for (const command of latexSourceCommands(source).toReversed()) {
     if (command.name !== "boldsymbol" && command.name !== "bm") continue;
     if (customCommands?.[command.name]) continue;
@@ -126,5 +334,5 @@ export function mathTextFormattingInput(
     if (text && !body.value.slice(text.end).trim())
       source = source.slice(0, command.from) + `\\mathbfit{${text.value}}` + source.slice(body.end);
   }
-  return source;
+  return formattingScopesInput(source, customCommands);
 }

@@ -1,10 +1,12 @@
 import type { MathfieldElement, Style } from "mathlive";
+import { mathFormattingScopeCommand } from "./mathTextFormatting";
 
 interface MathAtom {
   readonly id?: string;
   readonly type?: string;
   readonly style?: Readonly<Record<string, string | number | undefined>>;
   readonly command?: string;
+  readonly args?: readonly unknown[];
   readonly skipBoundary?: boolean;
   readonly isRoot?: boolean;
   readonly environmentName?: string;
@@ -250,12 +252,17 @@ export function unwrapEmptyMathCell(math: MathfieldElement): boolean {
   while (child.parent && !child.parent.isRoot) {
     const parent: MathAtom = child.parent;
     if (
+      Boolean(mathFormattingScopeCommand(parent)) ||
       ["array", "genfrac", "surd", "leftright", "overunder", "box", "enclose"].includes(
         parent.type ?? "",
       )
     ) {
       const branch = parent.branch?.(child.parentBranch);
       if (branch?.length) {
+        if (mathFormattingScopeCommand(parent) && branch.every(emptyMathSlot)) {
+          wrapper = parent;
+          break;
+        }
         const from = model.offsetOf(branch[0]!);
         const to = model.offsetOf(branch[branch.length - 1]!);
         if (
@@ -411,9 +418,10 @@ function mathModel(math: MathfieldElement): MathModel | null {
 
 function isMathFormattingScope(atom: MathAtom): boolean {
   return (
-    atom.type === "group" &&
-    (atom.skipBoundary === true ||
-      /^\\(?:text|math)(?:bf|it|tt|rm|sf|sc|sl|up)?$/u.test(atom.command ?? ""))
+    Boolean(mathFormattingScopeCommand(atom)) ||
+    (atom.type === "group" &&
+      (atom.skipBoundary === true ||
+        /^\\(?:text|math)(?:bf|it|tt|rm|sf|sc|sl|up)?$/u.test(atom.command ?? "")))
   );
 }
 
@@ -477,6 +485,16 @@ const mathScopeLabels: Readonly<Record<string, string>> = {
   texttt: "Monospace",
   mathtt: "Monospace",
   text: "Text",
+  mathcal: "Calligraphic",
+  mathbb: "Blackboard bold",
+  mathfrak: "Fraktur",
+  mathscr: "Script",
+  mathrm: "Roman",
+  mathsf: "Sans serif",
+  mathnormal: "Math",
+  mathbfit: "Bold italic",
+  boldsymbol: "Bold",
+  bm: "Bold",
 };
 
 /** Innermost first; formatting participates in explicit scope commands only. */
@@ -596,7 +614,7 @@ export function mathEditingScopes(math: MathfieldElement): MathEditingScope[] {
       }
     } else {
       const contents = owner.branch?.(branch);
-      const command = owner.command?.replace(/^\\/u, "");
+      const command = mathFormattingScopeCommand(owner) ?? owner.command?.replace(/^\\/u, "");
       const label =
         mathScopeLabels[command ?? ""] ?? mathScopeLabels[owner.type ?? ""] ?? command ?? "Group";
       if (contents?.length && after >= before) {
@@ -606,7 +624,21 @@ export function mathEditingScopes(math: MathfieldElement): MathEditingScope[] {
         ];
         const whole: [number, number] = [before, after];
         if (isMathFormattingScope(owner)) {
-          if (command && !result.some((scope) => scope.label === label && scope.kind === "format"))
+          if (command && mathFormattingScopeCommand(owner)) {
+            const styled = result.findIndex(
+              (scope) =>
+                scope.label === label &&
+                scope.kind === "format" &&
+                scope.range[0] === range[0] &&
+                scope.range[1] === range[1],
+            );
+            const scope: MathEditingScope = { label, kind: "format", range, exit: whole };
+            if (styled >= 0) result[styled] = scope;
+            else result.push(scope);
+          } else if (
+            command &&
+            !result.some((scope) => scope.label === label && scope.kind === "format")
+          )
             result.push({ label, kind: "format", range, exit: whole });
         } else {
           const slotLabel =

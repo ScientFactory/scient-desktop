@@ -3,6 +3,9 @@ import { getKeyboardPreferences, subscribeKeyboardPreferences } from "../keyboar
 import { mathCommand } from "../math/input/catalog";
 import { MathfieldElement, type MacroDictionary } from "mathlive";
 import {
+  MATH_FORMATTING_ARGUMENTS,
+  enterMathFormattingArgument,
+  installMathFormattingScopes,
   mathTextFormatActive,
   mathTextFormattingInput,
   mathTextFormattingSource,
@@ -20,6 +23,7 @@ import {
 } from "react";
 import { LatexDraftContext, restoredLatexFieldDraft } from "./LatexTextField";
 import { afterEditorPaint } from "./afterEditorPaint";
+import { scheduleMathFieldMount } from "./mathFieldMountQueue";
 import "mathlive/fonts.css";
 import { installMathEditingGuides } from "./mathEditingGuides";
 import { editableMathMacros, installMathMacroEditing } from "./mathMacroEditing";
@@ -134,6 +138,7 @@ export const LatexMathField = forwardRef<
 ) {
   const host = useRef<HTMLSpanElement>(null);
   const field = useRef<MathfieldElement | null>(null);
+  const mountField = useRef<() => void>(() => {});
   const viewport = useRef<ReturnType<typeof installLatexMathViewport> | null>(null);
   const viewportEditing = useRef(editing);
   useLayoutEffect(() => {
@@ -205,12 +210,22 @@ export const LatexMathField = forwardRef<
   useImperativeHandle(
     forwardedRef,
     () => ({
-      focus: () => field.current?.focus(),
-      flush: () => flush.current(),
-      isEmpty: () => Boolean(field.current && mathFieldIsEmpty(field.current)),
+      focus: () => {
+        mountField.current();
+        field.current?.focus();
+      },
+      flush: () => {
+        mountField.current();
+        return flush.current();
+      },
+      isEmpty: () => {
+        mountField.current();
+        return Boolean(field.current && mathFieldIsEmpty(field.current));
+      },
       clearSelection: () => clearSelection.current(),
       cancelPointerSelection: () => cancelPointerSelection.current(),
       toggleTextFormat: (format) => {
+        mountField.current();
         const math = field.current;
         if (!math || math.readOnly || math.mode === "latex") return false;
         toggleMathTextFormat(math, format);
@@ -223,6 +238,7 @@ export const LatexMathField = forwardRef<
         return Boolean(math && math.mode !== "latex" && mathTextFormatActive(math, format));
       },
       command: (command) => {
+        mountField.current();
         const math = field.current;
         if (!math || math.readOnly) return false;
         if (["addRowAfter", "removeRow", "addColumnAfter", "removeColumn"].includes(command)) {
@@ -240,22 +256,36 @@ export const LatexMathField = forwardRef<
         return math.executeCommand(command);
       },
       insert: (latex) => {
+        mountField.current();
         const math = field.current;
         if (!math || math.readOnly) return;
-        const reason = latex.includes("#0") ? mathSelectionWrapReason(math) : null;
+        const command = /^\\([A-Za-z]+)(?:\{(?:#0|#\?)?\})?$/u.exec(latex.trim())?.[1];
+        const formatting =
+          command &&
+          Object.hasOwn(MATH_FORMATTING_ARGUMENTS, command) &&
+          !Object.hasOwn(initialMacros.current, command)
+            ? MATH_FORMATTING_ARGUMENTS[command]
+            : undefined;
+        const insertion = formatting ? `\\${command}{#0}` : latex;
+        const emptyArgument =
+          formatting && !math.getValue(math.selection, "latex-without-placeholders").trim();
+        const reason = insertion.includes("#0") ? mathSelectionWrapReason(math) : null;
         if (reason) {
           shortcutHint.current(reason);
           return;
         }
         math.insert(
-          mathLiveFontDeclarations(mathTextFormattingInput(latex, initialMacros.current)),
+          mathTextFormattingInput(mathLiveFontDeclarations(insertion), initialMacros.current),
           {
             focus: true,
             format: "latex",
             insertionMode: "replaceSelection",
             selectionMode: "placeholder",
+            ...(formatting ? { mode: "math" as const } : {}),
           },
         );
+        if (formatting === "text" && emptyArgument) math.executeCommand(["switchMode", "text"]);
+        enterMathFormattingArgument(math);
       },
     }),
     [],
@@ -265,10 +295,11 @@ export const LatexMathField = forwardRef<
     if (!container) return;
     let frame = 0;
     let dispose: (() => void) | undefined;
+    let queued: ReturnType<typeof scheduleMathFieldMount> | undefined;
     const initialize = () => {
       const math = new MathfieldElement();
       math.id = `scient-latex-math-${draftId}`;
-      host.current?.append(math);
+      container.append(math);
       const mathViewport = installLatexMathViewport(math, container);
       viewport.current = mathViewport;
       mathViewport.setEditing(
@@ -283,6 +314,7 @@ export const LatexMathField = forwardRef<
       );
       const removeEditingGuides = installMathEditingGuides(math);
       const macroEditing = installMathMacroEditing(math);
+      const formattingScopes = installMathFormattingScopes(math);
       // Use native caret placement and command completion inside the formula.
       // Scient supplies the surrounding toolbar instead of a second menu/keyboard.
       // MathLive's option setters require the custom element to be connected.
@@ -314,7 +346,7 @@ export const LatexMathField = forwardRef<
       lastAcknowledged.current = currentConfiguration.current.value;
       const recovered = restoredLatexFieldDraft(journalKey.current, lastAcknowledged.current);
       math.setValue(
-        mathLiveFontDeclarations(mathTextFormattingInput(recovered, initialMacros.current)),
+        mathTextFormattingInput(mathLiveFontDeclarations(recovered), initialMacros.current),
         {
           silenceNotifications: true,
         },
@@ -336,7 +368,7 @@ export const LatexMathField = forwardRef<
       };
       applyPreferences();
       const unsubscribe = subscribeKeyboardPreferences(applyPreferences);
-      const detachShortcuts = attachShortcutHost(host.current!, ["math", "latex"], {
+      const detachShortcuts = attachShortcutHost(container, ["math", "latex"], {
         capture: true,
         feedback: (text) => shortcutHint.current(text),
         accepts: (_event, id) =>
@@ -379,7 +411,10 @@ export const LatexMathField = forwardRef<
           );
           if (custom) {
             math.insert(
-              custom.latex.replaceAll("${selection}", "#0").replaceAll("${cursor}", "#?"),
+              mathTextFormattingInput(
+                custom.latex.replaceAll("${selection}", "#0").replaceAll("${cursor}", "#?"),
+                initialMacros.current,
+              ),
               {
                 format: "latex",
                 insertionMode: "replaceSelection",
@@ -387,14 +422,18 @@ export const LatexMathField = forwardRef<
                 focus: true,
               },
             );
+            enterMathFormattingArgument(math);
             return true;
           }
           const command = mathCommand(id);
           if (!command) return false;
           math.insert(
-            command.template
-              .replaceAll("@", math.selectionIsCollapsed ? "#?" : "#0")
-              .replaceAll("|", "#?"),
+            mathTextFormattingInput(
+              command.template
+                .replaceAll("@", math.selectionIsCollapsed ? "#?" : "#0")
+                .replaceAll("|", "#?"),
+              initialMacros.current,
+            ),
             {
               format: "latex",
               insertionMode: "replaceSelection",
@@ -402,6 +441,7 @@ export const LatexMathField = forwardRef<
               focus: true,
             },
           );
+          enterMathFormattingArgument(math);
           return true;
         },
       });
@@ -996,7 +1036,7 @@ export const LatexMathField = forwardRef<
         event.preventDefault();
         event.stopImmediatePropagation();
         math.insert(
-          mathLiveFontDeclarations(mathTextFormattingInput(parsed, initialMacros.current)),
+          mathTextFormattingInput(mathLiveFontDeclarations(parsed), initialMacros.current),
           {
             format: "latex",
             insertionMode: "replaceSelection",
@@ -1037,6 +1077,7 @@ export const LatexMathField = forwardRef<
         mathViewport.dispose();
         viewport.current = null;
         journal();
+        formattingScopes.dispose();
         macroEditing.dispose();
         reportDraft(draftId, false);
         flush.current = () => true;
@@ -1068,11 +1109,21 @@ export const LatexMathField = forwardRef<
         frame = requestAnimationFrame(connect);
         return;
       }
-      dispose = initialize();
+      queued = scheduleMathFieldMount(() => {
+        if (!container.isConnected) {
+          frame = requestAnimationFrame(connect);
+          return;
+        }
+        dispose = initialize();
+        container.dispatchEvent(new CustomEvent("scient-latex-math-mounted", { bubbles: true }));
+      });
+      mountField.current = queued.flush;
     };
     connect();
     return () => {
       cancelAnimationFrame(frame);
+      queued?.cancel();
+      mountField.current = () => {};
       dispose?.();
     };
   }, [draftId, reportDraft]);
@@ -1084,7 +1135,22 @@ export const LatexMathField = forwardRef<
       if (math.mode === "latex" || signature === appliedMacroSignature.current) return;
       // MathLive reparses silently and preserves the command spelling and selection.
       // Start from built-ins each time so removed document definitions do not linger.
+      const source = math.getValue("latex");
+      const selection = math.selection;
+      const mode = math.mode;
       math.macros = { ...baseMacros.current, ...editableMathMacros(documentMacros) };
+      restoreMathFieldValue(
+        math,
+        mathTextFormattingInput(mathLiveFontDeclarations(source), documentMacros),
+      );
+      math.selection = {
+        ...selection,
+        ranges: selection.ranges.map(([from, to]) => [
+          Math.min(from, math.lastOffset),
+          Math.min(to, math.lastOffset),
+        ]),
+      };
+      math.executeCommand(["switchMode", mode]);
       appliedMacroSignature.current = signature;
     };
     apply();
@@ -1108,7 +1174,7 @@ export const LatexMathField = forwardRef<
       clearSelection.current();
       restoreMathFieldValue(
         field.current,
-        mathLiveFontDeclarations(mathTextFormattingInput(value, initialMacros.current)),
+        mathTextFormattingInput(mathLiveFontDeclarations(value), initialMacros.current),
       );
       field.current.resetUndo();
       const end = field.current.lastOffset;

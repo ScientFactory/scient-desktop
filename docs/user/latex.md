@@ -246,8 +246,10 @@ document; an unlabelled nonfloating table does not create a reference target.
 
 **Symbols** groups Common, Structures, Labels, Greek, Operators, Sets,
 Relations, Arrows, Calculus, Accents, Brackets, Functions, Alphabets, Spacing and
-More. The Macros category appears when the document declares supported math
-macros. Search accepts names, LaTeX commands, Unicode and common descriptions.
+More. Open it from **Math → Symbols** or press **Alt+I, then S**. Returning to
+an equation leaves a dismissed Symbols panel closed. The Macros category appears
+when the document declares supported math macros. Search accepts names, LaTeX
+commands, Unicode and common descriptions.
 Tiles are equal squares with minimal mathematical previews; layout-only commands
 use small diagrams, and package symbols can use bundled TeX glyph outlines.
 Hover or focus a tile to see its command and your effective keyboard shortcuts.
@@ -269,9 +271,17 @@ within the label selects its text; an ordinary click places the caret.
 
 Plain typing is not expanded into commands. Start a command with `\`.
 Inside Visual math, argument braces are paired while typing a command. Accepting
-an argument command such as `\text`, `\textbf`, `\textit` or `\mathbf` with
+an argument command such as `\text`, `\textbf`, `\textit`, `\mathbf`, `\mathbb` or `\mathcal` with
 Tab or Enter supplies braces and enters an empty editable slot. Choosing a
-suggestion does the same. Existing empty formatting arguments regain their
+suggestion does the same. Choosing these formatting commands in Symbols wraps
+selected content, or creates an empty slot when nothing is selected. Typing in
+`\text{}` uses text mode; `\mathbb{}` and `\mathcal{}` use math mode.
+Formatting arguments keep their own editing scope: insertion places a caret
+inside, typing retains the chosen font, and arrow movement can cross its
+boundary. **Enter formatting** also enters an adjacent math formatting argument;
+**Leave parent before/after** returns to the surrounding formula. Repeated Ctrl+A
+includes each nested formatting argument before its containing structure.
+Existing empty formatting arguments regain their
 slots when reopened; placeholder markers never enter saved LaTeX. Type
 `\begin{bmat` to choose `bmatrix`; Up/Down select and Tab or Enter accepts. The
 matching end and editable cells are inserted together. Existing argument text is

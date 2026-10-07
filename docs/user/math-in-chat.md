@@ -50,7 +50,7 @@ Default examples:
 
 | Action            | Keys                      |
 | ----------------- | ------------------------- |
-| Open math palette | Ctrl+Space                |
+| Open math palette | Alt+I, then S             |
 | Inline equation   | Cmd/Ctrl+M                |
 | Display equation  | Cmd/Ctrl+Shift+M          |
 | Alpha / beta      | Alt+M, then G, then A / B |

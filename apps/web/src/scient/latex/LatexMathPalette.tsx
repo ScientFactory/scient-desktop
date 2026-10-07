@@ -184,6 +184,7 @@ export function LatexMathPalette({
   sourceOpen,
   onOpen,
   openRequest = 0,
+  onOpenRequestHandled,
   picker = false,
   showTrigger = true,
   onDismiss,
@@ -193,6 +194,7 @@ export function LatexMathPalette({
   sourceOpen: boolean;
   onOpen: () => void;
   openRequest?: number;
+  onOpenRequestHandled?: (request: number) => void;
   picker?: boolean;
   showTrigger?: boolean;
   onDismiss?: () => void;
@@ -249,8 +251,10 @@ export function LatexMathPalette({
     setPortalHost(root.current?.closest(".scient-latex-reader-footer") ?? null);
   }, []);
   useEffect(() => {
-    if (openRequest) setOpen(true);
-  }, [openRequest]);
+    if (!openRequest) return;
+    setOpen(true);
+    onOpenRequestHandled?.(openRequest);
+  }, [openRequest, onOpenRequestHandled]);
   useEffect(() => {
     if (sourceOpen) setOpen(false);
   }, [sourceOpen]);

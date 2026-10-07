@@ -107,7 +107,7 @@ describe("portable keyboard preferences", () => {
   it("rejects default-shadowed sequences and sequence-shadowing direct bindings", () => {
     expect(() =>
       validateKeyboardPreferences(
-        { ...defaults, overrides: { "math.symbol.alpha": ["ctrl+space a"] } },
+        { ...defaults, overrides: { "math.symbol.alpha": ["alt+i s a"] } },
         false,
       ),
     ).toThrow(/conflict/);

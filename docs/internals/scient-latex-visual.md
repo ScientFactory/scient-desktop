@@ -523,8 +523,8 @@ cells have no slot markers. `latexTableEditingGuides` measures rendered cell and
 table borders, including CSS presets and longtable bands. A noninteractive SVG
 layer fills only missing edge segments, subtracting real rules on adjacent cells
 and merging duplicate guides. This handles partial rules and merged cells without
-overpainting actual borders. Non-scaling strokes keep the thin, short-dashed guides
-consistent at every zoom. Bounded mutation/resize observers refresh geometry,
+overpainting actual borders. The SVG viewBox uses screen coordinates so strokes
+and dash spacing stay thin and consistent at every zoom. Bounded mutation/resize observers refresh geometry,
 including page-stage transform changes that do not trigger a layout resize;
 the guide's own changes are ignored. Real rules and cell dimensions remain
 unchanged. Print and page previews omit the layer. New tables use the
@@ -1335,6 +1335,11 @@ applying a draft checks both the source generation and the original block.
 Export freshness reuses the revision-scoped dependency hashes in the build evidence.
 There is no second visual revision manifest or PDF-overlay interaction host. The
 Write editor loads lazily; Source uses the shared file editor and does not load MathLive.
+Native math fields mount in short shared batches after paint so a long manuscript
+does not initialize every equation in one blocking task. Focus, insertion and
+flush make a queued field ready immediately; removed views cancel their pending
+mounts. Queued mounts recheck attachment and use the same connected host for the
+native field and its listeners. Equation-number positioning attaches when its native field is ready.
 
 ## Adapter direction
 
@@ -1504,6 +1509,20 @@ imported row numbering are rejected without deleting selected content.
 `mathTextFormatting` to create braced placeholder arguments. Keyboard acceptance,
 native suggestion clicks and completion on blur share the argument insertion
 path. Blur accepts only the typed command and does not reclaim focus.
+The math field's explicit insertion adapter normalizes bare formatting commands
+and vacant single-argument templates to selection wrappers. Without selected
+content, MathLive creates a placeholder; text commands enter text mode in that
+slot, while math alphabet commands retain math mode. Existing argument content
+and document macro overrides bypass this normalization.
+Formatting input uses marked, screen-only `htmlData` owners to retain each
+braced font argument in MathLive's atom tree. `installMathFormattingScopes`
+serializes these owners as their original commands, including empty arguments
+and scripts, and restores the adapter on atoms recreated by undo. No internal
+wrapper metadata enters source or clipboard content. Its insertion-style hook
+keeps the active argument's alphabet rather than MathLive's ordinary-math reset;
+outside those scopes the native style behavior is retained. Empty-slot insertion
+collapses the placeholder selection to a caret inside the argument. Scope
+navigation recognizes these owners, including adjacent entry and empty removal.
 `mathTextFormattingInput` restores placeholders in empty formatting arguments
 on load; the existing `latex-without-placeholders` save/clipboard projection
 retains the formatting braces without exporting the editing slots. Document

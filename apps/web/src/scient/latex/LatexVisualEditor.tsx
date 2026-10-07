@@ -398,11 +398,10 @@ const LatexFooterPositionContext = createContext<(position: string | null) => vo
 const LatexMathEditingContext = createContext<{
   draftKey: string;
   get: () => ActiveMathEditor | null;
-  activate: (controls: ActiveMathEditor) => boolean;
+  activate: (controls: ActiveMathEditor) => void;
   update: (controls: ActiveMathEditor) => void;
   formatChanged: (id: string, state: string) => void;
   deactivate: (id: string) => void;
-  requestSymbols: (requested: boolean) => void;
 } | null>(null);
 
 function mathFieldSource(tex: string, environment: string | null): string {
@@ -622,6 +621,7 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
       }
       setEditing(false);
       setSourceOpen(false);
+      setPaletteRequest(0);
       activeMath.deactivate(activationId);
     },
     [editor, getPos, activeMath, activationId],
@@ -653,9 +653,7 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
     setDraft(attributes.tex);
     setSourceError(null);
     setEditing(true);
-    if (controls.current && activeMath.activate(controls.current)) {
-      setPaletteRequest((value) => value + 1);
-    }
+    if (controls.current) activeMath.activate(controls.current);
     if (focus) requestAnimationFrame(() => mathField.current?.focus());
   };
 
@@ -731,6 +729,7 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
     activeMath.deactivate(activationId);
     setEditing(false);
     setSourceOpen(false);
+    setPaletteRequest(0);
     const position = getPos();
     if (position === undefined || editor.isDestroyed) return;
     const current = editor.state.doc.nodeAt(position);
@@ -767,6 +766,7 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
     editor.view.dispatch(editor.state.tr.setSelection(nextSelection));
     activeMath.deactivate(activationId);
     setEditing(false);
+    setPaletteRequest(0);
     editor.view.focus();
     return true;
   };
@@ -826,6 +826,7 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
         setDragOutside(false);
         activeMath.deactivate(activationId);
         setEditing(false);
+        setPaletteRequest(0);
         editor.view.focus();
       }
     };
@@ -898,6 +899,7 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
       mathField.current?.clearSelection();
       activeMath.deactivate(activationId);
       setEditing(false);
+      setPaletteRequest(0);
       editor.view.focus();
     }
     externalSelection.current = { id: event.pointerId, anchor };
@@ -1306,6 +1308,9 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
             <LatexMathPalette
               showTrigger={false}
               openRequest={paletteRequest}
+              onOpenRequestHandled={(request) =>
+                setPaletteRequest((pending) => (pending === request ? 0 : pending))
+              }
               sourceOpen={sourceOpen}
               onOpen={() => setSourceOpen(false)}
               onInsert={(symbol) =>
@@ -4925,7 +4930,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   } | null>(null);
   const mathTarget = useRef<ActiveMathEditor | null>(null);
   const [mathFormattingState, setMathFormattingState] = useState("");
-  const openSymbolsOnFocus = useRef(false);
   const activeMath = useMemo(
     () => ({
       draftKey: props.draftKey,
@@ -4933,9 +4937,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       activate: (controls: ActiveMathEditor) => {
         mathTarget.current = controls;
         setMathActive(true);
-        const requested = openSymbolsOnFocus.current;
-        openSymbolsOnFocus.current = false;
-        return requested;
       },
       update: (controls: ActiveMathEditor) => {
         if (mathTarget.current?.id !== controls.id) return;
@@ -4954,9 +4955,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         if (mathTarget.current?.id !== id) return;
         mathTarget.current = null;
         setMathActive(false);
-      },
-      requestSymbols: (requested: boolean) => {
-        openSymbolsOnFocus.current = requested;
       },
     }),
     [props.draftKey],

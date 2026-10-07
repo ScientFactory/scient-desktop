@@ -6,6 +6,7 @@ import {
   type MathCommandCompletion,
 } from "./mathCommandCompletion";
 import "./mathCommandCompletion.css";
+import { enterMathFormattingArgument, mathTextFormattingInput } from "./mathTextFormatting";
 
 interface CommandAtom {
   readonly type?: string;
@@ -90,13 +91,19 @@ export function installMathCommandCompletion(
       math.executeCommand(["switchMode", "latex", "", completion.latex]);
       math.position -= 1;
     } else {
-      math.insert(completion.latex, {
-        format: "latex",
-        mode: "math",
-        selectionMode: "placeholder",
-        focus,
-      });
+      math.insert(
+        hasDocumentMacro("\\htmlData")
+          ? completion.latex
+          : mathTextFormattingInput(completion.latex),
+        {
+          format: "latex",
+          mode: "math",
+          selectionMode: "placeholder",
+          focus,
+        },
+      );
       if (completion.text) math.executeCommand(["switchMode", "text"]);
+      enterMathFormattingArgument(math);
     }
     if (focus) math.focus();
     refresh();

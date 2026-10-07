@@ -2295,7 +2295,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   stroke: rgba(115, 120, 128, 0.45);
   stroke-width: 1px;
   stroke-dasharray: 2 3;
-  vector-effect: non-scaling-stroke;
+  /* The guide viewBox uses screen coordinates, already compensating for zoom. */
 }
 .scient-latex-rich-preview td[data-align="center"],
 .scient-latex-rich-preview th[data-align="center"] {

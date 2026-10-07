@@ -1,4 +1,5 @@
 import type { MathfieldElement } from "mathlive";
+import { enterMathFormattingArgument } from "./mathTextFormatting";
 import { registerLatexSelection } from "./latexSelectionSession";
 import { mathEditingGuideRects } from "./mathEditingGuides";
 import { latexContainerScope } from "./latexStructuredSelection";
@@ -85,7 +86,15 @@ export function installMathSelectionSession(
     },
     command: (command) => {
       if (math.readOnly) return false;
-      if (command === "enterScope") return false;
+      if (command === "enterScope") {
+        if (!enterMathFormattingArgument(math, true)) return false;
+        history.length = 0;
+        scopeIndex = 0;
+        lastSelection = JSON.stringify(math.selection.ranges);
+        math.focus();
+        session.refresh();
+        return true;
+      }
       if (command === "selectionShrink") {
         const previous = history.pop();
         if (!previous) return false;
