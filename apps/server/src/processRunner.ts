@@ -3,6 +3,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -24,14 +25,16 @@ export interface ProcessRunInput {
   readonly timeout?: Duration.Input | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly stdin?: string | undefined;
-  /** Binary stdin. Ignored when text `stdin` is supplied. */
-  readonly stdinBytes?: Uint8Array | undefined;
   /** Receives every stdout chunk, including bytes beyond the buffered output limit. */
   readonly onStdoutChunk?: ((chunk: Uint8Array) => void) | undefined;
+  // SCIENT-FORK:START — binary stdin and an awaited stdout consumer for checkpoint capture.
+  /** Binary stdin. Ignored when text `stdin` is supplied. */
+  readonly stdinBytes?: Uint8Array | undefined;
   /** Await each chunk before reading the next; failure closes and reaps the child. */
   readonly onStdoutChunkEffect?:
     | ((chunk: Uint8Array) => Effect.Effect<void, ProcessReadError>)
     | undefined;
+  // SCIENT-FORK:END
   readonly maxOutputBytes?: number | undefined;
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly truncatedMarker?: string | undefined;
@@ -176,20 +179,25 @@ export const isWindowsCommandNotFound = Effect.fn("processRunner.isWindowsComman
   },
 );
 
-// Untraced: no attributes, and its time is the runProcessCore span. Errors fail that span.
+// SCIENT-FORK:START — an awaited stdout consumer's ProcessReadError passes through.
 const isProcessReadError = Schema.is(ProcessReadError);
+// SCIENT-FORK:END
+// Untraced: no attributes, and its time is the runProcessCore span. Errors fail that span.
 const collectText = Effect.fnUntraced(function* (input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd?: string | undefined;
   readonly spawnCwd?: string | undefined;
   readonly streamName: "stdout" | "stderr";
-  readonly stream: Stream.Stream<Uint8Array, unknown>;
+  // SCIENT-FORK:START — an awaited stdout consumer can fail with ProcessReadError.
+  readonly stream: Stream.Stream<Uint8Array, PlatformError.PlatformError | ProcessReadError>;
+  // SCIENT-FORK:END
   readonly maxOutputBytes: number;
   readonly outputMode: "error" | "truncate";
   readonly truncatedMarker: string;
 }) {
   const stream = input.stream.pipe(
+    // SCIENT-FORK:START — pass an awaited stdout consumer's ProcessReadError through unwrapped.
     Stream.mapError((cause) =>
       isProcessReadError(cause)
         ? cause
@@ -202,6 +210,7 @@ const collectText = Effect.fnUntraced(function* (input: {
             cause,
           }),
     ),
+    // SCIENT-FORK:END
   );
 
   if (input.outputMode === "truncate") {
@@ -340,6 +349,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
       ),
     );
 
+  // SCIENT-FORK:START — text or binary stdin, and an awaited stdout consumer.
   const stdin = input.stdin ?? input.stdinBytes;
   const onStdoutChunk = input.onStdoutChunk;
   const onStdoutChunkEffect = input.onStdoutChunkEffect;
@@ -362,6 +372,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
               }),
           ),
         );
+  // SCIENT-FORK:END
 
   const [stdout, stderr] = yield* Effect.all(
     [
@@ -371,6 +382,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
         cwd: input.cwd,
         spawnCwd: input.spawnCwd,
         streamName: "stdout",
+        // SCIENT-FORK:START — tap stdout for both the sync and the awaited consumer.
         stream:
           onStdoutChunk || onStdoutChunkEffect
             ? child.stdout.pipe(
@@ -381,6 +393,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
                 ),
               )
             : child.stdout,
+        // SCIENT-FORK:END
         maxOutputBytes,
         outputMode,
         truncatedMarker,

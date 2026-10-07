@@ -1,4 +1,9 @@
+// SCIENT-FORK:START — checkpoint publication and non-UTF-8 filename tests.
 import * as NodeCrypto from "node:crypto";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - FileSystem takes string paths; the non-UTF-8 test needs a byte path.
+import * as NodeFS from "node:fs";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+// SCIENT-FORK:END
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -294,6 +299,7 @@ it.effect("publishes a valid checkpoint without invoking receive hooks", () =>
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
+// SCIENT-FORK:START — incremental checkpoint publication (loose and packed transfer).
 // Objects in this repository's own object directory; in-pack counts every pack's
 // copy, so objects re-sent for a capture show up here.
 const countLocalObjects = (stats: string) =>
@@ -515,6 +521,7 @@ for (const transfer of ["loose", "pack"] as const) {
     }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
   );
 }
+// SCIENT-FORK:END
 
 it.effect("captures SHA-256 repositories with the same object format", () =>
   Effect.gen(function* () {
@@ -1546,6 +1553,7 @@ it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publi
 
     yield* captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
 
+    // SCIENT-FORK:START — checkpoint publication may unpack loose objects.
     const writeCommands = [
       "add",
       "write-tree",
@@ -1554,6 +1562,7 @@ it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publi
       "update-ref",
       "fetch",
     ];
+    // SCIENT-FORK:END
     const writes = observedArgs.filter((args) =>
       writeCommands.some((command) => args.includes(command)),
     );
@@ -1682,6 +1691,7 @@ it.effect("tolerates a changed file deleted between enumeration and metadata loo
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
+// SCIENT-FORK:START — streamed changed-path listing, including non-UTF-8 names.
 it.effect(
   "captures complete streaming enumeration even when the diagnostic buffer is truncated",
   () =>
@@ -1767,3 +1777,27 @@ it.live(
     ),
   90_000,
 );
+
+it.effect.skipIf(HostProcessPlatform.defaultValue() !== "linux")(
+  "captures a changed file whose name is not valid UTF-8",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "scient-checkpoint-latin1-" });
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      // "café.txt" in Latin-1, as an extracted archive can leave it; Linux accepts
+      // any bytes but "/" and NUL in a name, and Git lists them unquoted with -z.
+      NodeFS.writeFileSync(
+        Buffer.concat([Buffer.from(`${cwd}/caf`), Buffer.from([0xe9]), Buffer.from(".txt")]),
+        "latin-1\n",
+      );
+
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      assert.include(
+        (yield* git(["ls-tree", "-r", "--name-only", checkpointRef])).stdout,
+        '"caf\\351.txt"',
+      );
+    }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+// SCIENT-FORK:END

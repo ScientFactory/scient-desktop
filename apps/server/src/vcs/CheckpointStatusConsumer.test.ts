@@ -13,7 +13,7 @@ it.effect("handles every byte boundary, Unicode, renames, and POSIX backslashes"
       platform: "darwin",
       onPath: (path) =>
         Effect.sync(() => {
-          paths.push(path);
+          paths.push(new TextDecoder().decode(path));
         }),
     });
     for (const byte of bytes(
@@ -72,15 +72,21 @@ for (const [name, text, limits, reason] of [
     }),
   );
 
-it.effect("rejects invalid UTF-8 rather than looking up a substituted filename", () =>
+it.effect("passes a filename that is not valid UTF-8 through unchanged", () =>
   Effect.gen(function* () {
+    const paths: Uint8Array[] = [];
     const consumer = makeCheckpointStatusConsumer({
       cwd: "/fixture",
       operation: "test",
-      platform: "darwin",
-      onPath: () => Effect.die("Must not stat malformed paths"),
+      platform: "linux",
+      onPath: (path) =>
+        Effect.sync(() => {
+          paths.push(Uint8Array.from(path));
+        }),
     });
-    const result = yield* Effect.result(consumer.consume(new Uint8Array([63, 63, 32, 255, 0])));
-    assert.equal(result._tag, "Failure");
+    // "?? caf\xe9.txt" in Latin-1, as an extracted archive can leave it on Linux.
+    yield* consumer.consume(new Uint8Array([63, 63, 32, 99, 97, 102, 0xe9, 46, 116, 120, 116, 0]));
+    yield* consumer.finish;
+    assert.deepEqual(paths, [new Uint8Array([99, 97, 102, 0xe9, 46, 116, 120, 116])]);
   }),
 );

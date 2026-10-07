@@ -16,6 +16,7 @@ import {
   RunId,
   ThreadId,
   TurnItemId,
+  VcsProcessSpawnError,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
@@ -514,6 +515,56 @@ it.live(
     ),
 );
 
+it.live("Git failures reach fork clients without workspace paths or Git output", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const secret = "/private/fork-diagnostics-path";
+      const runtime = makeRuntime(gitLayer, {
+        decorateForkCheckpointBaseline: (baseline) => ({
+          ...baseline,
+          isGitRepository: () =>
+            Effect.fail(
+              new VcsProcessSpawnError({
+                operation: "test",
+                command: "git",
+                cwd: secret,
+                cause: new Error(`spawn git ENOENT in ${secret}`),
+              }),
+            ),
+        }),
+      });
+      yield* Effect.gen(function* () {
+        yield* seed();
+        const forks = yield* ConversationForkService;
+        const options = yield* forks.getOptions({
+          originThreadId: sourceId,
+          sourceAssistantMessageId: MessageId.make("workspace-a1"),
+        });
+        assert.equal(options.available, false);
+        assert.include(options.reason ?? "", "Git history");
+        assert.notInclude(options.reason ?? "", secret);
+        const result = yield* Effect.result(
+          forks.dispatch({
+            type: "thread.fork",
+            commandId: CommandId.make("git-diagnostics"),
+            originThreadId: sourceId,
+            newThreadId: ThreadId.make("git-diagnostics"),
+            sourceAssistantMessageId: MessageId.make("workspace-a1"),
+            workspaceMode: "local",
+          }),
+        );
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.include(result.failure.message, "Git history");
+          assert.notInclude(result.failure.message, secret);
+          assert.isUndefined(result.failure.cause);
+          assert.equal(result.failure.forkDisposition, "rejected");
+        }
+      }).pipe(Effect.provide(runtime));
+    }).pipe(Effect.timeout("20 seconds")),
+  ),
+);
+
 function afterCheckout(after: (path: string) => Effect.Effect<void>) {
   return Layer.effect(
     GitWorkflow.GitWorkflowService,
@@ -633,7 +684,7 @@ it.live(
                   resume: () => Effect.void,
                   interrupt: Effect.void,
                   respond: () => Effect.void,
-                  send: (input) =>
+                  send: (_input) =>
                     Effect.gen(function* () {
                       yield* fs.writeFileString(
                         NodePath.join(firstCwd, "evidence.txt"),
@@ -778,11 +829,12 @@ it.live("late SQL admission failure releases only the just-published snapshot", 
           }),
         );
         assert.equal(result._tag, "Failure");
+        // Attempt refs carry a unique suffix (`…/turn/0-<attempt>`); match them all.
         assert.equal(
           yield* git(cwd, [
             "for-each-ref",
             "--format=%(refname)",
-            checkpointRefForThreadTurn(destination, 0),
+            `${checkpointRefForThreadTurn(destination, 0)}*`,
           ]),
           "",
         );
@@ -918,7 +970,7 @@ it.live("a paused running-worktree snapshot does not block an unrelated local fo
 );
 
 it.live(
-  "file-backed recovery keeps accepted snapshots and compare-deletes rejected attempts across restart",
+  "file-backed recovery keeps accepted snapshots, compare-deletes orphans and closes every record",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -989,21 +1041,20 @@ it.live(
           }).pipe(Effect.provide(runtime)),
         );
         // Closing the first scoped runtime closes SQLite. A fresh service construction
-        // must reconcile the persisted journal before accepting another command.
+        // reconciles the persisted journal in the background; every record closes.
         for (let repeat = 0; repeat < 2; repeat++)
           yield* Effect.scoped(
             Effect.gen(function* () {
               yield* ConversationForkService;
               const sql = yield* SqlClient.SqlClient;
-              const rows = yield* sql<{
+              const remaining = sql<{
                 attempt_id: string;
               }>`SELECT attempt_id FROM scient_fork_checkpoint_ownership ORDER BY attempt_id`;
-              assert.deepEqual(
-                rows.map((row) => row.attempt_id),
-                ["accepted-uncertain", "changed"],
-              );
+              while ((yield* remaining).length > 0) yield* Effect.sleep("20 millis");
               assert.equal(yield* git(cwd, ["rev-parse", acceptedRef]), acceptedOid);
-              assert.equal(yield* git(cwd, ["rev-parse", uncertain]), acceptedOid);
+              // A retry of the accepted command was accepted with another snapshot,
+              // so this attempt's ref is an orphan.
+              assert.equal(yield* git(cwd, ["for-each-ref", "--format=%(refname)", uncertain]), "");
               assert.equal(yield* git(cwd, ["for-each-ref", "--format=%(refname)", orphan]), "");
               assert.equal(
                 yield* git(cwd, ["rev-parse", changed]),

@@ -66,9 +66,8 @@ const checkpointFileError = (cwd: string, operation: string, error: { readonly m
 // or on their ability to continue a conversation.
 export const makeCheckpointSizeCheck = (deps: {
   readonly execute: VcsDriver.VcsDriver["Service"]["execute"];
-  readonly path: Path.Path;
 }) => {
-  const { execute, path } = deps;
+  const { execute } = deps;
   return Effect.fn("GitVcsDriver.checkpoints.checkSize")(function* (
     cwd: string,
     env: NodeJS.ProcessEnv,
@@ -77,13 +76,15 @@ export const makeCheckpointSizeCheck = (deps: {
     // Porcelain v1 paths are repository-relative even when cwd is a subdirectory.
     // Scope enumeration to the same pathspec used by checkpoint staging.
     const root = yield* execute({ operation, cwd, args: ["rev-parse", "--show-toplevel"], env });
+    const rootPrefix = Buffer.from(`${root.stdout.replace(/\r?\n$/, "")}/`);
     let changedBytes = 0n;
     const consumer = makeCheckpointStatusConsumer({
       cwd,
       operation,
       platform: yield* HostProcessPlatform,
-      onPath: Effect.fnUntraced(function* (name: string) {
-        const filePath = path.join(root.stdout.replace(/\r?\n$/, ""), name);
+      onPath: Effect.fnUntraced(function* (name: Uint8Array) {
+        // Join as bytes so a filename that is not valid UTF-8 is looked up as is.
+        const filePath = Buffer.concat([rootPrefix, name]);
         // Git stores the link text, not the target bytes. lstat also preserves
         // dangling links; a following exists/stat pair incorrectly treats them as deletions.
         const info = yield* Effect.tryPromise({

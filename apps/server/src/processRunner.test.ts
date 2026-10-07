@@ -13,7 +13,9 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import * as ProcessRunner from "./processRunner.ts";
+// SCIENT-FORK:START — real child processes for the streamed stdout consumer tests.
 import * as NodeServices from "@effect/platform-node/NodeServices";
+// SCIENT-FORK:END
 
 type ChildProcessCommand = {
   readonly command: string;
@@ -320,6 +322,7 @@ describe("runProcess", () => {
     }),
   );
 
+  // SCIENT-FORK:START — binary stdin for checkpoint object transfer.
   it.effect("writes binary stdin bytes unchanged", () =>
     Effect.gen(function* () {
       // Invalid UTF-8 would not survive a round trip through text encoding.
@@ -351,7 +354,7 @@ describe("runProcess", () => {
       expect(result.code).toBe(0);
     }),
   );
-
+  // SCIENT-FORK:END
   it.effect("returns output for non-zero exit codes", () =>
     Effect.gen(function* () {
       const spawner = makeSpawner(() => Effect.succeed(makeHandle({ stderr: "boom", code: 2 })));
@@ -453,6 +456,7 @@ describe("commandName", () => {
     expect(ProcessRunner.commandName("git")).toBe("git");
   });
 });
+// SCIENT-FORK:START — the awaited stdout consumer used by checkpoint enumeration.
 
 describe("streamed stdout consumers", () => {
   it.effect("awaits each consumer before reading the next chunk", () =>
@@ -550,3 +554,4 @@ for (const mode of ["failure", "cancellation", "timeout"] as const)
       ),
     15_000,
   );
+// SCIENT-FORK:END

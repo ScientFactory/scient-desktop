@@ -16,6 +16,9 @@ import { ScientForkCheckpointBaseline } from "./ForkCheckpointBaseline.ts";
 import { randomUuidV4 } from "../RandomUuid.ts";
 import { VcsProcess } from "../../vcs/VcsProcess.ts";
 
+export const FORK_CHECKPOINT_OWNERSHIP_OPERATION = "ScientForkCheckpointOwnership";
+const RECOVERY_ROW_TIMEOUT = "30 seconds";
+
 interface Ownership {
   readonly attempt_id: string;
   readonly command_id: string;
@@ -44,11 +47,16 @@ export const makeForkCheckpointOwnership = Effect.gen(function* () {
   const vcs = yield* VcsProcess;
   const unavailable = (cwd: string, _cause: unknown) =>
     new VcsCheckpointUnavailableError({
-      operation: "ScientForkCheckpointOwnership",
+      operation: FORK_CHECKPOINT_OWNERSHIP_OPERATION,
       cwd,
       reason: "filesystem-error",
       detail: "The fork snapshot ownership record could not be persisted.",
     });
+  const forget = (row: Ownership) =>
+    sql`DELETE FROM scient_fork_checkpoint_ownership WHERE attempt_id = ${row.attempt_id}`;
+  // Every outcome but an unavailable workspace is final: the row exists only to
+  // release this attempt's own unaccepted ref, so it is dropped once that is
+  // done or once the ref is known to belong to something else.
   const reconcile = Effect.fn("ForkCheckpointOwnership.reconcile")(function* (row: Ownership) {
     const receipt = yield* receipts.getByCommandId(CommandId.make(row.command_id));
     const target = yield* projections
@@ -59,55 +67,56 @@ export const makeForkCheckpointOwnership = Effect.gen(function* () {
       receipt.value.status === "accepted" &&
       receipt.value.threadId === row.target_thread_id &&
       receipt.value.commandType === "thread.conversation.fork";
-    const destinationMatches =
-      target?.conversationFork?.commandId === row.command_id &&
-      target.conversationFork.checkpointRef === row.checkpoint_ref &&
-      target.conversationFork.checkpointOid === row.checkpoint_oid;
-    if (accepted && !destinationMatches) {
-      yield* Effect.logWarning(
-        "Accepted fork snapshot metadata changed; preserving its ownership record",
-        {
+    const destination =
+      target?.conversationFork?.commandId === row.command_id ? target.conversationFork : null;
+    if (accepted && destination !== null && destination.checkpointRef === row.checkpoint_ref) {
+      if (destination.checkpointOid !== row.checkpoint_oid)
+        yield* Effect.logWarning("Accepted fork snapshot metadata changed; preserving it", {
           attemptId: row.attempt_id,
-        },
-      );
+        });
+      return yield* forget(row);
+    }
+    // Accepted, but the destination is gone or records another command: leave
+    // the snapshot alone.
+    if (accepted && destination === null) {
+      yield* Effect.logWarning("Accepted fork destination unavailable; preserving its snapshot", {
+        attemptId: row.attempt_id,
+      });
+      return yield* forget(row);
+    }
+    // Never accepted, or accepted with another attempt's snapshot (a retry):
+    // this attempt's own ref is an orphan.
+    if (!(yield* baseline.isGitRepository(row.cwd))) {
+      // The workspace may come back (for example an unmounted volume).
+      yield* Effect.logWarning("Fork snapshot workspace unavailable; retrying on a later start", {
+        attemptId: row.attempt_id,
+      });
       return;
     }
-    if (!accepted) {
-      if (!(yield* baseline.isGitRepository(row.cwd))) {
-        yield* Effect.logWarning(
-          "Fork snapshot workspace unavailable; preserving its ownership record",
-          {
-            attemptId: row.attempt_id,
-          },
-        );
-        return;
-      }
-      const current = yield* baseline.resolveCheckpoint(
-        row.cwd,
-        CheckpointRef.make(row.checkpoint_ref),
-      );
-      if (current !== null) {
-        if (current !== row.checkpoint_oid) {
-          yield* Effect.logWarning(
-            "Fork snapshot ref changed; preserving it and its ownership record",
-            { attemptId: row.attempt_id },
-          );
-          return;
-        }
-        // Compare-and-delete protects a ref changed after the read as well.
-        yield* vcs.run({
-          operation: "ForkCheckpointOwnership.release",
-          command: "git",
-          cwd: row.cwd,
-          args: ["update-ref", "-d", row.checkpoint_ref, current],
+    const current = yield* baseline.resolveCheckpoint(
+      row.cwd,
+      CheckpointRef.make(row.checkpoint_ref),
+    );
+    if (current !== null) {
+      if (current !== row.checkpoint_oid) {
+        yield* Effect.logWarning("Fork snapshot ref changed; preserving it", {
+          attemptId: row.attempt_id,
         });
+        return yield* forget(row);
       }
+      // Compare-and-delete protects a ref changed after the read as well.
+      yield* vcs.run({
+        operation: "ForkCheckpointOwnership.release",
+        command: "git",
+        cwd: row.cwd,
+        args: ["update-ref", "-d", row.checkpoint_ref, current],
+      });
     }
-    yield* sql`DELETE FROM scient_fork_checkpoint_ownership WHERE attempt_id = ${row.attempt_id}`;
+    yield* forget(row);
   });
   const recover = Effect.fn("ForkCheckpointOwnership.recover")(function* () {
-    // Stream rows in fixed batches. A damaged or concurrently changed resource
-    // remains recorded; it must not prevent the remaining resources recovering.
+    // Stream rows in fixed batches. A damaged, slow or concurrently changed
+    // resource must not prevent the remaining resources recovering.
     let cursor = "";
     for (;;) {
       const rows = yield* sql<Ownership>`SELECT * FROM scient_fork_checkpoint_ownership
@@ -121,6 +130,7 @@ export const makeForkCheckpointOwnership = Effect.gen(function* () {
         )
           continue;
         yield* reconcile(row).pipe(
+          Effect.timeout(RECOVERY_ROW_TIMEOUT),
           Effect.catch((cause) =>
             Effect.logWarning("Fork snapshot recovery deferred", {
               attemptId: row.attempt_id,
@@ -151,8 +161,11 @@ export const makeForkCheckpointOwnership = Effect.gen(function* () {
       owner_pid: process.pid,
     };
     yield* Effect.acquireRelease(
-      sql`INSERT INTO scient_fork_checkpoint_ownership ${sql.insert({ ...row })}`.pipe(
-        Effect.tap(() => Effect.sync(() => activeAttempts.add(attempt))),
+      // Register before the row is visible, so background recovery can never
+      // mistake this live attempt for an orphan.
+      Effect.sync(() => activeAttempts.add(attempt)).pipe(
+        Effect.andThen(sql`INSERT INTO scient_fork_checkpoint_ownership ${sql.insert({ ...row })}`),
+        Effect.onError(() => Effect.sync(() => activeAttempts.delete(attempt))),
         Effect.mapError((cause) => unavailable(input.cwd, cause)),
       ),
       () =>

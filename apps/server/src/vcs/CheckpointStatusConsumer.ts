@@ -1,5 +1,7 @@
 /** Incremental porcelain-v1 -z parsing with a bounded record and work budget.
  * The consumer is awaited by ProcessRunner, so it cannot accumulate stat jobs.
+ * Paths stay raw bytes: `-z` output is unquoted, and a filename that is not
+ * valid UTF-8 (allowed on Linux) must still reach lstat unchanged.
  */
 import { VcsCheckpointUnavailableError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -10,11 +12,39 @@ const CHECKPOINT_ENUMERATION_LIMITS = {
   maxRecordBytes: 1024 * 1024,
 } as const;
 
+const SLASH = 0x2f;
+const BACKSLASH = 0x5c;
+const DOT = 0x2e;
+const COLON = 0x3a;
+const SPACE = 0x20;
+
+const isAsciiLetter = (byte: number | undefined) =>
+  byte !== undefined && ((byte >= 0x41 && byte <= 0x5a) || (byte >= 0x61 && byte <= 0x7a));
+
+const isRenameOrCopy = (byte: number | undefined) => byte === 0x52 || byte === 0x43; // R, C
+
+// Git's paths are repository relative. Do not turn malformed output into a
+// stat outside the root, including on Windows.
+const isUnsafePath = (name: Uint8Array, windows: boolean) => {
+  if (name[0] === SLASH) return true;
+  if (windows && (name[0] === BACKSLASH || (isAsciiLetter(name[0]) && name[1] === COLON)))
+    return true;
+  let segmentStart = 0;
+  for (let index = 0; index <= name.byteLength; index++) {
+    const byte = name[index];
+    if (index < name.byteLength && byte !== SLASH && !(windows && byte === BACKSLASH)) continue;
+    if (index - segmentStart === 2 && name[segmentStart] === DOT && name[segmentStart + 1] === DOT)
+      return true;
+    segmentStart = index + 1;
+  }
+  return false;
+};
+
 export const makeCheckpointStatusConsumer = <E>(input: {
   readonly cwd: string;
   readonly operation: string;
   readonly platform: NodeJS.Platform;
-  readonly onPath: (path: string) => Effect.Effect<void, E>;
+  readonly onPath: (path: Uint8Array) => Effect.Effect<void, E>;
   readonly limits?: {
     readonly maxBytes: number;
     readonly maxPaths: number;
@@ -63,26 +93,15 @@ export const makeCheckpointStatusConsumer = <E>(input: {
         );
       if (skipRenameSource) skipRenameSource = false;
       else {
-        const text = yield* Effect.try({
-          try: () => new TextDecoder("utf-8", { fatal: true }).decode(record),
-          catch: () =>
-            unavailable("filesystem-error", "A changed filename cannot be decoded safely."),
-        });
-        if (text.length < 4 || text[2] !== " ")
+        if (record.byteLength < 4 || record[2] !== SPACE)
           return yield* unavailable(
             "filesystem-error",
             "Git returned an incomplete changed-path record.",
           );
-        const name = text.slice(3);
-        // Git's paths are repository relative. Do not turn malformed output into
-        // a stat outside the root, including on Windows.
-        if (
-          name.startsWith("/") ||
-          (input.platform === "win32" && (name.startsWith("\\") || /^[A-Za-z]:/.test(name))) ||
-          name.split(input.platform === "win32" ? /[\\/]/ : /\//).includes("..")
-        )
+        const name = record.subarray(3);
+        if (isUnsafePath(name, input.platform === "win32"))
           return yield* unavailable("filesystem-error", "Git returned an unsafe changed path.");
-        skipRenameSource = /[RC]/.test(text.slice(0, 2));
+        skipRenameSource = isRenameOrCopy(record[0]) || isRenameOrCopy(record[1]);
         yield* input.onPath(name);
       }
       record = new Uint8Array(0);

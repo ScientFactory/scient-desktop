@@ -138,10 +138,12 @@ subject to the V2 ownership guard. Completed forks still retain the selected his
 
 Pre-admission file publication uses `scient_fork_checkpoint_ownership`, a separate internal
 resource journal in the V2 database. Each attempt reserves a unique ref and persists its expected
-OID before Git can publish it. Scope release and startup recovery consult the accepted V2 receipt
-and destination metadata. An unaccepted attempt can compare-delete only its own unchanged ref;
-a changed ref or uncertain/live owner is preserved for later reconciliation. Journal recovery
-does not delete branches or worktrees. Accepted retries continue using their frozen ref and OID.
+OID before Git can publish it. Scope release and background recovery at startup consult the accepted V2 receipt and
+destination metadata. An attempt that was never accepted, or whose command was accepted with
+another attempt's snapshot, compare-deletes only its own unchanged ref. A changed ref, or an
+accepted destination whose metadata no longer matches, keeps its Git ref while its journal row
+is closed. A row stays for a later start only when its workspace is unavailable or its release
+fails or times out (for example a locked ref); a live attempt is never reconciled. Journal recovery does not delete branches or worktrees. Accepted retries continue using their frozen ref and OID.
 Source/destination command locks retain their stable order. Global title serialization covers
 authoritative sibling reads and atomic admission, so another source's local fork can proceed
 during a slow file capture.
