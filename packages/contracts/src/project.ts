@@ -215,7 +215,9 @@ export const ProjectUpdatePayload = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   autoPull: Schema.optional(Schema.Boolean),
-  projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
+  // SCIENT-FORK:START — Read same-protocol older clients' monogram writes without losing their text.
+  projectIcon: Schema.optional(Schema.NullOr(StoredProjectIcon)),
+  // SCIENT-FORK:END
   faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),

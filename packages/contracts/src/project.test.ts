@@ -31,6 +31,7 @@ import {
 const decodeProjectCreatePayload = Schema.decodeUnknownSync(ProjectCreatePayload);
 const decodeProjectUpdatePayload = Schema.decodeUnknownSync(ProjectUpdatePayload);
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
+const encodeProjectMutation = Schema.encodeSync(ProjectMutation);
 const decodeSearchEntriesInput = Schema.decodeUnknownSync(ProjectSearchEntriesInput);
 const decodeSearchContentsInput = Schema.decodeUnknownSync(ProjectSearchContentsInput);
 const decodeFileWatchEvent = Schema.decodeUnknownSync(ProjectFileWatchEvent);
@@ -246,6 +247,65 @@ describe("project file paths", () => {
   });
 });
 describe("shared project payloads", () => {
+  it.each(["monogramText", "monogram"] as const)(
+    "normalizes an older client's %s project.update write without losing its monogram",
+    (field) => {
+      const envelope = {
+        type: "project.update",
+        commandId: "command",
+        projectId: "project",
+      } as const;
+      const icon = { kind: "monogram", text: "क्ष्म", color: "violet" } as const;
+      const incoming = {
+        ...envelope,
+        projectIcon: { kind: "lucide", name: "folder-code", color: "violet", [field]: icon.text },
+      };
+      const decoded = decodeProjectMutation(incoming);
+      expect(decoded).toEqual({ ...envelope, projectIcon: icon });
+      expect(encodeProjectMutation(decoded)).toEqual({ ...envelope, projectIcon: icon });
+      expect(decodeProjectUpdatePayload({ projectIcon: incoming.projectIcon })).toEqual({
+        projectIcon: icon,
+      });
+    },
+  );
+
+  it.each([
+    { kind: "lucide", name: "folder-code", color: "violet", monogramText: "" },
+    { kind: "lucide", name: "folder-code", color: "violet", monogram: "🚀" },
+    { kind: "lucide", name: "folder-code", color: "ultraviolet", monogramText: "T3" },
+    { kind: "monogram", text: "A B", color: "violet" },
+    { kind: "emoji" },
+    { kind: "image", url: "https://synthetic.example/icon.png" },
+  ])("refuses a malformed or unknown project.update icon %#", (projectIcon) => {
+    const update = { projectIcon };
+    expect(() => decodeProjectUpdatePayload(update)).toThrow();
+    expect(() =>
+      decodeProjectMutation({
+        type: "project.update",
+        commandId: "command",
+        projectId: "project",
+        ...update,
+      }),
+    ).toThrow();
+  });
+
+  it.each([
+    { kind: "lucide", name: "alarm-clock", color: "blue" },
+    { kind: "emoji", emoji: "👩🏽‍💻" },
+    { kind: "monogram", text: "T3", color: "violet" },
+    null,
+  ] as const)("preserves a canonical or cleared project.update icon %#", (projectIcon) => {
+    const incoming = {
+      type: "project.update",
+      commandId: "command",
+      projectId: "project",
+      projectIcon,
+    };
+    const decoded = decodeProjectMutation(incoming);
+    expect(decoded).toEqual(incoming);
+    expect(encodeProjectMutation(decoded)).toEqual(incoming);
+  });
+
   it("preserves omitted, false, and null values through RPC envelopes", () => {
     const create = decodeProjectCreatePayload({
       title: " Example ",
