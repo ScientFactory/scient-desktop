@@ -1,3 +1,4 @@
+import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -292,6 +293,228 @@ it.effect("publishes a valid checkpoint without invoking receive hooks", () =>
     yield* git(["fsck", "--connectivity-only", "--no-reflogs"]);
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
+
+// Objects in this repository's own object directory; in-pack counts every pack's
+// copy, so objects re-sent for a capture show up here.
+const countLocalObjects = (stats: string) =>
+  [/^count: (\d+)$/m, /^in-pack: (\d+)$/m].reduce(
+    (total, pattern) => total + Number(stats.match(pattern)?.[1]),
+    0,
+  );
+
+const checkpointTransferScenarios = [
+  "loose",
+  "packed",
+  "unborn",
+  "worktree",
+  "alternates",
+  "size-limit",
+] as const;
+
+for (const scenario of checkpointTransferScenarios) {
+  for (const transfer of ["loose", "pack"] as const) {
+    it.effect(
+      `checkpoint capture adds only missing objects (repo=${scenario}, transfer=${transfer})`,
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const liveProcess = yield* VcsProcess.VcsProcess;
+          const driver = yield* GitVcsDriver.makeVcsDriverShape();
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-transfer-" });
+          const gitIn = (cwd: string) => (args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
+            driver.execute({ operation: "checkpoint-test", cwd, args, ...(env ? { env } : {}) });
+          const source = path.join(root, scenario === "alternates" ? "source" : "repo");
+          const sourceGit = gitIn(source);
+          yield* fs.makeDirectory(path.join(source, "data"), { recursive: true });
+          yield* sourceGit(["init"]);
+          yield* sourceGit(["config", "user.name", "Test"]);
+          yield* sourceGit(["config", "user.email", "test@test.com"]);
+          // More objects than fetch.unpackLimit, so Git keeps whatever pack it receives.
+          for (let index = 0; index < 120; index++) {
+            yield* fs.writeFileString(
+              path.join(source, "data", `file-${index}`),
+              `tracked ${index}\n`,
+            );
+          }
+          yield* fs.writeFileString(path.join(source, ".gitignore"), "ignored.log\n");
+          yield* sourceGit(["add", "."]);
+          if (scenario !== "unborn") yield* sourceGit(["commit", "-m", "initial"]);
+          if (scenario === "packed") yield* sourceGit(["repack", "-adq"]);
+          let cwd = source;
+          if (scenario === "alternates") {
+            cwd = path.join(root, "repo");
+            yield* sourceGit(["clone", "--quiet", "--shared", source, cwd]);
+          }
+          if (scenario === "worktree") {
+            cwd = path.join(root, "linked");
+            yield* sourceGit(["worktree", "add", "--quiet", "--detach", cwd]);
+          }
+          const git = gitIn(cwd);
+          if (transfer === "pack") {
+            yield* git(["config", "transfer.unpackLimit", "1"]);
+            // Keep a detached repack from writing while the fixture is removed.
+            yield* git(["config", "maintenance.auto", "false"]);
+          }
+          if (scenario !== "unborn") {
+            yield* fs.writeFileString(path.join(cwd, "data/file-0"), "staged\n");
+            yield* git(["add", "data/file-0"]);
+            yield* fs.writeFileString(path.join(cwd, "data/file-0"), "working\n");
+            yield* fs.remove(path.join(cwd, "data/file-1"));
+            yield* fs.rename(path.join(cwd, "data/file-2"), path.join(cwd, "data/renamed"));
+          }
+          yield* fs.writeFileString(path.join(cwd, "untracked"), "untracked\n");
+          yield* fs.writeFileString(path.join(cwd, "ignored.log"), "ignored\n");
+          let largeFiles = 0;
+          if (scenario === "size-limit") {
+            const globalConfig = path.join(root, "global-config");
+            yield* fs.writeFileString(globalConfig, "[pack]\n\tpackSizeLimit = 1m\n");
+            yield* Effect.acquireRelease(
+              Effect.sync(() => {
+                const previous = process.env.GIT_CONFIG_GLOBAL;
+                process.env.GIT_CONFIG_GLOBAL = globalConfig;
+                return previous;
+              }),
+              (previous) =>
+                Effect.sync(() => {
+                  if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+                  else process.env.GIT_CONFIG_GLOBAL = previous;
+                }),
+            );
+            // Incompressible files that would need several 1 MiB packs.
+            for (; largeFiles < 3; largeFiles++) {
+              yield* fs.writeFile(
+                path.join(cwd, `large-${largeFiles}`),
+                NodeCrypto.randomBytes(700 * 1024),
+              );
+            }
+          }
+          const gitPath = Effect.fn(function* (name: string) {
+            const result = yield* git(["rev-parse", "--path-format=absolute", "--git-path", name]);
+            return result.stdout.trim();
+          });
+          const indexPath = yield* gitPath("index");
+          const headPath = yield* gitPath("HEAD");
+          const packDir = yield* gitPath("objects/pack");
+          const countPacks = fs
+            .readDirectory(packDir)
+            .pipe(Effect.map((names) => names.filter((name) => name.endsWith(".pack")).length));
+          const originalIndex = yield* fs.readFile(indexPath);
+          const originalIndexMtime = (yield* fs.stat(indexPath)).mtime;
+          const originalHead = yield* fs.readFileString(headPath);
+          const originalRefs = (yield* git(["for-each-ref"])).stdout;
+          const existingObjects = new Set(
+            (yield* git(["cat-file", "--batch-all-objects", "--batch-check=%(objectname)"])).stdout
+              .split("\n")
+              .filter(Boolean),
+          );
+          const objectsBefore = countLocalObjects((yield* git(["count-objects", "-v"])).stdout);
+          const packsBefore = yield* countPacks;
+          let commitOid: string | undefined;
+          const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+            Effect.provideService(VcsProcess.VcsProcess, {
+              run: (input) =>
+                liveProcess.run(input).pipe(
+                  Effect.tap((result) =>
+                    Effect.sync(() => {
+                      if (input.args.includes("commit-tree")) commitOid = result.stdout.trim();
+                    }),
+                  ),
+                ),
+            }),
+          );
+          const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/transfer");
+
+          yield* captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+          // The published ref is the commit built in staging, byte for byte.
+          assert.strictEqual((yield* git(["rev-parse", checkpointRef])).stdout.trim(), commitOid);
+          const reachable = (yield* git(["rev-list", "--objects", checkpointRef])).stdout
+            .split("\n")
+            .filter(Boolean)
+            .map((line) => line.split(" ")[0]!);
+          const missing = reachable.filter((oid) => !existingObjects.has(oid));
+          // Commit, root and data trees, and the working and untracked blobs; unborn has
+          // the 120 data blobs staged already, so only its trees, commit and untracked are new.
+          assert.strictEqual(missing.length, (scenario === "unborn" ? 4 : 5) + largeFiles);
+          assert.strictEqual(
+            countLocalObjects((yield* git(["count-objects", "-v"])).stdout) - objectsBefore,
+            missing.length,
+          );
+          // Small transfers stay loose like a small fetch; larger ones add one pack.
+          assert.strictEqual((yield* countPacks) - packsBefore, transfer === "pack" ? 1 : 0);
+          yield* git(["fsck", "--connectivity-only", "--no-reflogs"]);
+
+          assert.deepEqual(yield* fs.readFile(indexPath), originalIndex);
+          assert.deepEqual((yield* fs.stat(indexPath)).mtime, originalIndexMtime);
+          assert.strictEqual(yield* fs.readFileString(headPath), originalHead);
+          assert.strictEqual(
+            (yield* git(["for-each-ref"])).stdout
+              .split("\n")
+              .filter((line) => !line.endsWith(`\t${checkpointRef}`))
+              .join("\n"),
+            originalRefs,
+          );
+
+          // Same tree as an index built from HEAD plus every nonignored working-tree file.
+          const referenceEnv = { ...process.env, GIT_INDEX_FILE: path.join(root, "reference") };
+          if (scenario !== "unborn") yield* git(["read-tree", "HEAD"], referenceEnv);
+          yield* git(["add", "-A", "--", "."], referenceEnv);
+          assert.strictEqual(
+            (yield* git(["rev-parse", `${checkpointRef}^{tree}`])).stdout,
+            (yield* git(["write-tree"], referenceEnv)).stdout,
+          );
+          const files = (yield* git(["ls-tree", "-r", "--name-only", checkpointRef])).stdout;
+          assert.notInclude(files.split("\n"), "ignored.log");
+          if (scenario !== "unborn") {
+            assert.strictEqual(
+              (yield* git(["show", `${checkpointRef}:data/file-0`])).stdout,
+              "working\n",
+            );
+            assert.notInclude(files.split("\n"), "data/file-1");
+            assert.include(files.split("\n"), "data/renamed");
+          }
+        }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+    );
+  }
+}
+
+for (const transfer of ["loose", "pack"] as const) {
+  it.effect(`checkpoint capture repeats without changes (transfer=${transfer})`, () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-repeat-" });
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      if (transfer === "pack") {
+        yield* git(["config", "transfer.unpackLimit", "1"]);
+        yield* git(["config", "maintenance.auto", "false"]);
+      }
+      const indexPath = path.join(cwd, ".git", "index");
+      const originalIndex = yield* fs.readFile(indexPath);
+      const other = CheckpointRef.make("refs/t3/checkpoints/other");
+
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      const objectsAfterFirst = countLocalObjects((yield* git(["count-objects", "-v"])).stdout);
+      // The same ref again, then another ref, with nothing changed in between.
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: other });
+
+      const tree = (ref: string) =>
+        git(["rev-parse", `${ref}^{tree}`]).pipe(Effect.map((result) => result.stdout));
+      assert.strictEqual(yield* tree(other), yield* tree(checkpointRef));
+      assert.strictEqual((yield* git(["show", `${other}:file.txt`])).stdout, "unstaged\n");
+      // Only the new commit objects (none when the commit is identical) are added.
+      assert.isAtMost(
+        countLocalObjects((yield* git(["count-objects", "-v"])).stdout) - objectsAfterFirst,
+        2,
+      );
+      yield* git(["fsck", "--connectivity-only", "--no-reflogs"]);
+      assert.deepEqual(yield* fs.readFile(indexPath), originalIndex);
+    }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+  );
+}
 
 it.effect("captures SHA-256 repositories with the same object format", () =>
   Effect.gen(function* () {
@@ -1323,7 +1546,7 @@ it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publi
 
     yield* captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
 
-    const writeCommands = ["add", "write-tree", "commit-tree", "update-ref", "fetch"];
+    const writeCommands = ["add", "write-tree", "commit-tree", "unpack-objects", "fetch"];
     const writes = observedArgs.filter((args) =>
       writeCommands.some((command) => args.includes(command)),
     );
