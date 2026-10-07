@@ -15,7 +15,6 @@ import {
   resolveReadingRow,
 } from "./readerScrollPolicy";
 
-import { ComputerUseAppIcon } from "~/components/Icons";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } from "./WorkLog";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
@@ -132,34 +131,46 @@ import type { Root, RootContent } from "mdast";
 
 import { ThreadContextChip } from "../ThreadContextChip";
 import {
+  BlocksIcon,
+  BookOpenIcon,
   BotIcon,
-  BrainIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   ChevronUpIcon,
   CircleAlertIcon,
+  CircleXIcon,
+  CloudIcon,
   DownloadIcon,
   EyeIcon,
+  FolderOpenIcon,
   GitForkIcon,
   GlobeIcon,
+  ImageIcon,
+  LayersIcon,
   type LucideIcon,
   MessageCircleIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
   MinusIcon,
   Redo2Icon,
-  Minimize2Icon,
+  PencilIcon,
+  ScanTextIcon,
   SearchIcon,
+  ShieldCheckIcon,
   SmartphoneIcon,
-  SquarePenIcon,
-  TerminalIcon,
+  SquareMousePointerIcon,
   Undo2Icon,
   HammerIcon,
   WrenchIcon,
   XIcon,
   ZapIcon,
 } from "lucide-react";
+import {
+  SquareTerminalLowered,
+  TRACE_ICON_STROKE,
+  traceIconOverride,
+} from "../../scient/presentation/traceIcons";
 import type {
   ComposerContextId,
   ComposerContextRecord,
@@ -2272,13 +2283,13 @@ function ContextCompactionTimelineRow({
         className="relative shrink-0 overflow-hidden"
       >
         <span className="flex items-center gap-1.5">
-          <Minimize2Icon aria-hidden="true" className="size-3" />
+          <ScanTextIcon aria-hidden="true" className={cn("size-3", TRACE_ICON_STROKE)} />
           {row.label}
         </span>
         {row.active ? (
           <ActivityShimmerOverlay>
             <span className="flex items-center gap-1.5">
-              <Minimize2Icon aria-hidden="true" className="size-3" />
+              <ScanTextIcon aria-hidden="true" className={cn("size-3", TRACE_ICON_STROKE)} />
               {row.label}
             </span>
           </ActivityShimmerOverlay>
@@ -3508,7 +3519,7 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
 function CompactingLabel() {
   return (
     <span className="inline-flex items-center gap-1.5">
-      <Minimize2Icon aria-hidden="true" className="size-3" />
+      <ScanTextIcon aria-hidden="true" className={cn("size-3", TRACE_ICON_STROKE)} />
       Compacting…
     </span>
   );
@@ -4009,7 +4020,7 @@ function LiveActivityContent({
             <ToolActivityIconView
               icon={toolIcon}
               fallbackName={iconName}
-              className="block size-4 shrink-0 stroke-2"
+              className={cn("block size-4 shrink-0", TRACE_ICON_STROKE)}
               muted={!highlighted}
             />
           </span>
@@ -4028,7 +4039,10 @@ function LiveActivityContent({
       }
       trailing={
         showTrailingFailureMark ? (
-          <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
+          <CircleXIcon
+            aria-hidden
+            className={cn("size-3 shrink-0", TRACE_ICON_STROKE, failedToolIconClassName)}
+          />
         ) : null
       }
     />
@@ -4137,7 +4151,12 @@ function WorkGroupToggleTimelineRow({
   return (
     <WorkGroupHeader
       label={row.summary}
-      iconName={row.summaryToolIcon ?? row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)}
+      iconName={
+        row.summaryTraceIcon ??
+        row.summaryToolIcon ??
+        row.toolSurface ??
+        toolGroupSummaryIconName(row.summaryKind)
+      }
       toolIcon={row.toolIcon}
       failed={row.hasFailure}
       expanded={row.expanded}
@@ -4169,7 +4188,7 @@ function WorkGroupHeader(props: {
         <ToolActivityIconView
           icon={props.toolIcon}
           fallbackName={props.iconName}
-          className="size-4 shrink-0 stroke-2 text-icon-muted"
+          className={cn("size-4 shrink-0 text-icon-muted", TRACE_ICON_STROKE)}
           muted
         />
       }
@@ -4983,10 +5002,14 @@ type WorkEntryIconName =
   | "computer"
   | "device"
   | "eye"
+  | "folder"
   | "globe"
   | "hammer"
+  | "image"
   | "message-circle"
   | "search"
+  | "shield"
+  | "skill"
   | "square-pen"
   | "terminal"
   | "pull-request"
@@ -5154,6 +5177,7 @@ function ToolActivityImageIcon(props: {
   );
 }
 
+/** Scient's trace icon set: each action name maps to its Lucide drawing. */
 function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className: string }) {
   switch (name) {
     case "pull-request":
@@ -5161,11 +5185,11 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
     case "bot":
       return <BotIcon className={className} aria-hidden />;
     case "brain":
-      return <BrainIcon className={className} aria-hidden />;
+      return <CloudIcon className={className} aria-hidden />;
     case "browser":
-      return <GlobeIcon className={className} aria-hidden />;
+      return <SquareMousePointerIcon className={className} aria-hidden />;
     case "computer":
-      return <ComputerUseAppIcon className={className} />;
+      return <MousePointerClickIcon className={className} aria-hidden />;
     case "device":
       return <SmartphoneIcon className={className} aria-hidden />;
     case "t3-code":
@@ -5178,7 +5202,15 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
     case "circle-alert":
       return <CircleAlertIcon className={className} aria-hidden />;
     case "eye":
-      return <EyeIcon className={className} aria-hidden />;
+      return <BookOpenIcon className={className} aria-hidden />;
+    case "folder":
+      return <FolderOpenIcon className={className} aria-hidden />;
+    case "image":
+      return <ImageIcon className={className} aria-hidden />;
+    case "shield":
+      return <ShieldCheckIcon className={className} aria-hidden />;
+    case "skill":
+      return <LayersIcon className={className} aria-hidden />;
     case "globe":
       return <GlobeIcon className={className} aria-hidden />;
     case "hammer":
@@ -5188,13 +5220,13 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
     case "message-circle":
       return <MessageCircleIcon className={className} aria-hidden />;
     case "square-pen":
-      return <SquarePenIcon className={className} aria-hidden />;
+      return <PencilIcon className={className} aria-hidden />;
     case "terminal":
-      return <TerminalIcon className={className} aria-hidden />;
+      return <SquareTerminalLowered className={className} aria-hidden />;
     case "wrench":
-      return <WrenchIcon className={className} aria-hidden />;
+      return <BlocksIcon className={className} aria-hidden />;
     case "x":
-      return <XIcon className={className} aria-hidden />;
+      return <CircleXIcon className={className} aria-hidden />;
     case "zap":
       return <ZapIcon className={className} aria-hidden />;
   }
@@ -5319,10 +5351,11 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
         return "zap";
     }
   }
-  if (workEntry.itemType === "user_input_request" || workEntry.itemType === "approval_request") {
-    return "message-circle";
-  }
+  if (workEntry.itemType === "approval_request") return "shield";
+  if (workEntry.itemType === "user_input_request") return "message-circle";
   if (workEntry.toolSurface) return workEntry.toolSurface;
+  const override = traceIconOverride(workEntry);
+  if (override) return override;
   const toolPresentation = resolveWorkEntryToolPresentation(workEntry);
   if (toolPresentation) return toolPresentation.icon;
   const action = toolGroupAction(workEntry);
@@ -5584,7 +5617,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           <ToolActivityIconView
             icon={entryToolIcon}
             fallbackName={entryIconName}
-            className="block size-4 shrink-0 stroke-2"
+            className={cn("block size-4 shrink-0", TRACE_ICON_STROKE)}
             muted
           />
         </span>
@@ -5659,7 +5692,10 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           {showFailedIndicator &&
           !showDestructiveRowStyle &&
           !toolIconAcceptsTint(entryIconName, entryToolIcon) ? (
-            <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
+            <CircleXIcon
+              aria-hidden
+              className={cn("size-3 shrink-0", TRACE_ICON_STROKE, failedToolIconClassName)}
+            />
           ) : null}
           <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
           <span

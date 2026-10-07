@@ -2908,11 +2908,97 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Ran 2 commands");
-    expect(markup).toContain("lucide-terminal");
-    expect(markup).not.toContain("lucide-x");
+    expect(markup).toContain("lucide-square-terminal-lowered");
+    expect(markup).not.toContain("lucide-circle-x");
     expect(markup).not.toContain("text-destructive");
     // The failure stays discoverable for screen readers.
     expect(markup).toContain("tool call failed");
+  });
+
+  it.each([
+    [
+      "a command",
+      { itemType: "command_execution", command: "make build" },
+      "lucide-square-terminal-lowered",
+    ],
+    [
+      "a command that lists files",
+      { itemType: "command_execution", command: "ls -la src" },
+      "lucide-folder-open",
+    ],
+    [
+      "a tree command",
+      { itemType: "command_execution", command: "cd app && tree -L 2" },
+      "lucide-folder-open",
+    ],
+    [
+      "a find command",
+      { itemType: "command_execution", command: "find . -name '*.ts'" },
+      "lucide-folder-open",
+    ],
+    [
+      "a command that fetches from the web",
+      { itemType: "command_execution", command: "curl -s https://example.com" },
+      "lucide-globe",
+    ],
+    ["an image view", { itemType: "dynamic_tool", viewedImagePath: "chart.png" }, "lucide-image"],
+    [
+      "a Scient skill tool",
+      { itemType: "dynamic_tool", toolTitle: "mcp__t3-code__scient_skill_load" },
+      "lucide-layers",
+    ],
+    ["an approval", { itemType: "approval_request", tone: "info" }, "lucide-shield-check"],
+  ] as const)("marks %s with its trace icon", (_name, fields, iconClass) => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-trace-icon",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-trace-icon",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Tool call",
+              tone: "tool",
+              toolLifecycleStatus: "completed",
+              ...fields,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toMatch(new RegExp(`\\b${iconClass}[" ]`));
+  });
+
+  it.each([
+    ["shares one trace icon", ["ls src", "find . -name x"], "lucide-folder-open"],
+    ["mixes trace icons", ["ls src", "curl https://example.com"], "lucide-square-terminal-lowered"],
+  ] as const)("gives a folded group that %s its icon", (_name, commands, iconClass) => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={commands.map((command, index) => ({
+          id: `entry-group-${index}`,
+          kind: "work" as const,
+          createdAt: MESSAGE_CREATED_AT,
+          entry: {
+            id: `work-group-${index}`,
+            createdAt: MESSAGE_CREATED_AT,
+            label: command,
+            tone: "tool" as const,
+            itemType: "command_execution" as const,
+            command,
+            toolLifecycleStatus: "completed" as const,
+          },
+        }))}
+      />,
+    );
+
+    expect(markup).toContain("Ran 2 commands");
+    expect(markup).toMatch(new RegExp(`\\b${iconClass}[" ]`));
   });
 
   it("renders trailing tool calls as part of the terminal assistant block", () => {
@@ -3677,7 +3763,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("lucide-zap");
+    expect(markup).toContain("lucide-folder-open");
     expect(markup).toContain('aria-label="Tool call failed"');
     // Ordinary tool failures render muted, not red.
     expect(markup).not.toContain("text-destructive");

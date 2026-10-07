@@ -302,6 +302,11 @@
   ],
   "scientMounts": [
     {
+      "path": "apps/web/src/scient/presentation/traceIcons.ts",
+      "anchor": "isScientSkillTool",
+      "purpose": "Give Scient skill tool rows the skill trace icon in the conversation timeline (traceIcons.test.ts)."
+    },
+    {
       "path": "apps/mobile/src/state/thread-outbox-start-turn.ts",
       "anchor": "selectedScientSkillNames",
       "purpose": "Build mobile outbox commands with captured skill selections, dispatch and first-message title (thread-outbox-start-turn.test.ts)."

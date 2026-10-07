@@ -59,6 +59,10 @@ import { computerUseToolTitle } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { compactPathLabel } from "../../scient/presentation/compactPathLabel";
 import {
+  groupTraceIconOverride,
+  type TraceIconOverride,
+} from "../../scient/presentation/traceIcons";
+import {
   collectToolFilePaths,
   formatReadToolLabel,
   formatSearchToolLabel,
@@ -566,6 +570,7 @@ type MessagesTimelineRowContent =
       toolSurface?: WorkLogEntry["toolSurface"];
       toolIcon?: WorkLogEntry["toolIcon"];
       summaryToolIcon?: "browser" | "device" | "scient" | "t3-code" | "pull-request";
+      summaryTraceIcon?: TraceIconOverride;
       hasFailure: boolean;
     }
   | {
@@ -1701,6 +1706,7 @@ export function deriveMessagesTimelineRows(input: {
           const summaryToolIcon = usesSingleToolCallLabel
             ? resolveWorkEntryToolPresentation(singleEntry, "completed")?.icon
             : undefined;
+          const summaryTraceIcon = groupTraceIconOverride(visibleGroupedEntries);
           nextRows.push({
             kind: "work-toggle",
             id: `work-toggle:${timelineEntry.id}`,
@@ -1718,6 +1724,7 @@ export function deriveMessagesTimelineRows(input: {
             ...(groupToolSurface ? { toolSurface: groupToolSurface } : {}),
             ...(groupToolIcon ? { toolIcon: groupToolIcon } : {}),
             ...(summaryToolIcon ? { summaryToolIcon } : {}),
+            ...(summaryTraceIcon ? { summaryTraceIcon } : {}),
             hasFailure:
               latestToolEntry !== undefined &&
               workEntryDisplayIndicatesToolFailure(latestToolEntry),
@@ -2231,6 +2238,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.expanded === bw.expanded &&
         a.summary === bw.summary &&
         a.summaryKind === bw.summaryKind &&
+        a.summaryToolIcon === bw.summaryToolIcon &&
+        a.summaryTraceIcon === bw.summaryTraceIcon &&
         a.toolSurface === bw.toolSurface &&
         Equal.equals(a.toolIcon, bw.toolIcon) &&
         a.hasFailure === bw.hasFailure
