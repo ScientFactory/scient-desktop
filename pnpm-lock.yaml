@@ -37,6 +37,8 @@ catalogs:
 overrides:
   '@exodus/bytes>@noble/hashes': 1.8.0
   '@react-navigation/core': 7.21.13
+  expo-modules-core: 58.0.11
+  expo-notifications: 58.0.11
   dbus-next>usocket: '-'
   '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-arm64': '-'
   '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-x64': '-'
@@ -413,7 +415,7 @@ importers:
         specifier: ~58.0.3
         version: 58.0.3(expo@58.0.2)(react@19.3.0)
       expo-notifications:
-        specifier: ~58.0.11
+        specifier: 58.0.11
         version: 58.0.11(patch_hash=7db40176b83c90aebdee02e7d271c4d1b9fc7214a2ad91d0fdc5a348de20e969)(expo@58.0.2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)(typescript@7.0.2)
       expo-paste-input:
         specifier: ^0.1.15

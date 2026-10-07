@@ -164,6 +164,11 @@ overrides:
   "@exodus/bytes>@noble/hashes": "1.8.0"
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
   "@react-navigation/core": 7.21.13
+  # The thread-safety and pending-response patches below apply to these exact
+  # versions; a fresh resolution would otherwise pick a newer patch release and
+  # silently drop them. Bump only together with re-qualified patches.
+  expo-modules-core: 58.0.11
+  expo-notifications: 58.0.11
   # The dbus-next patch drops usocket from the package, but pnpm resolves from the
   # registry manifest, so the edge has to be cut here as well.
   "dbus-next>usocket": "-"
