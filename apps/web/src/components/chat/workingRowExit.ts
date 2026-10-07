@@ -3,7 +3,7 @@ import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 
 /** How long a finished turn's working header takes to fade out and close its space. */
-export const WORKING_ROW_EXIT_MS = 320;
+const WORKING_ROW_EXIT_MS = 320;
 /** A finished turn's working header closes evenly, without a fast start. */
 const WORKING_ROW_EXIT_EASING = "cubic-bezier(0.45, 0, 0.55, 1)";
 /**

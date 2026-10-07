@@ -19,7 +19,7 @@ const FIRST_LINES_PX = 48;
  * it says which row to bring into view first, so it can be measured. Null
  * when the list cannot be measured or the prompt is not in the loaded rows.
  */
-export function liveFollowOffset(
+function liveFollowOffset(
   list: LegendListRef,
   rows: readonly MessagesTimelineRow[],
   composerInset: number,

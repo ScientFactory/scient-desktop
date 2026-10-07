@@ -22,7 +22,7 @@ function markPlayed(key: string) {
  * A ref callback that plays an entrance on the element the first time `key`
  * mounts, unless the reader prefers reduced motion. A null key plays nothing.
  */
-export function useEntranceMotion(
+function useEntranceMotion(
   key: string | null,
   keyframes: Keyframe[],
   options: KeyframeAnimationOptions,
