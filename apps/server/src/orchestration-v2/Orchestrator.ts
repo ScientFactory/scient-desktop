@@ -9934,7 +9934,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: "Finish this fork's workspace setup before sending a message.",
           });
         yield* dispatchMessage(command, events, effects);
-        // SCIENT-FORK:START queued-run-send — a direct user message resumes a held queue.
+        // SCIENT-FORK:START queued-run-send — a direct user send resumes the queue.
         if (startsDirectUserRun(command, yield* Ref.get(events))) {
           const started = yield* getProjectionWithPendingEvents(command.threadId, events);
           const now = yield* DateTime.now;

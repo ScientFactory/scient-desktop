@@ -51,10 +51,12 @@ export function planQueuedRunSend(
 }
 
 /**
- * True when this message is one the user sent that starts a run of its own.
- * Such a message resumes a held queue. Automatic deliveries, notifications,
- * scheduled tasks, the scheduled usage-limit and restart continuations,
- * steering and queued messages leave a held queue alone.
+ * True when this message is a direct user send that starts a run of its own:
+ * an ordinary Send (`start_immediately`, no delivery intent or `auto`). Such a
+ * message resumes the queue. The original intent decides, not the resulting
+ * run: a Queue submission or a Steer that starts at once on an idle thread, a
+ * Restart, any continuation, automatic deliveries, notifications and scheduled
+ * tasks leave a held queue alone.
  */
 export function startsDirectUserRun(
   command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
@@ -62,10 +64,14 @@ export function startsDirectUserRun(
 ): boolean {
   if (
     command.createdBy !== "user" ||
+    command.dispatchMode.type !== "start_immediately" ||
+    (command.deliveryIntent !== undefined && command.deliveryIntent !== "auto") ||
     command.delegatedCompletion !== undefined ||
     command.notification !== undefined ||
     command.scheduledTaskId !== undefined ||
+    command.manualContinuationOfRunId !== undefined ||
     command.usageLimitContinuationOfRunId !== undefined ||
+    command.usageLimitRecoveryRequestId !== undefined ||
     command.restartContinuationOfRunId !== undefined
   )
     return false;

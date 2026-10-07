@@ -1490,6 +1490,95 @@ it.live("a direct send after Stop resumes the held queue, and its failure holds 
   ),
 );
 
+it.live(
+  "a manual continuation and Queue or Steer fallbacks on an idle thread leave a held queue held",
+  () =>
+    withNativeQueue(
+      "queue-policy-indirect-starts",
+      ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
+        Effect.gen(function* () {
+          yield* send(orchestrator, threadId, "foreground");
+          const foreground = yield* takeOffer;
+          yield* send(orchestrator, threadId, "first", true);
+          yield* send(orchestrator, threadId, "second", true);
+          yield* waitFor((projection) =>
+            projection.providerTurns.some(
+              (turn) =>
+                turn.runAttemptId === foreground.input.attemptId && turn.status === "running",
+            ),
+          );
+          yield* orchestrator.dispatch({
+            type: "run.interrupt",
+            threadId,
+            runId: foreground.input.runId,
+            holdQueue: true,
+            commandId: CommandId.make(`${threadId}:stop`),
+          });
+          yield* waitFor(
+            (projection) =>
+              projection.runs.some(
+                (run) => run.id === foreground.input.runId && run.status === "interrupted",
+              ) &&
+              projection.runs.filter((run) => run.status === "queued" && run.queueHeld === true)
+                .length === 2,
+          );
+          const assertHeld = (stage: string) =>
+            orchestrator.getThreadProjection(threadId).pipe(
+              Effect.map((projection) => {
+                const queued = projection.runs.filter((run) => run.status === "queued");
+                assert.equal(queued.length, 2, stage);
+                assert.isTrue(
+                  queued.every((run) => run.queueHeld === true),
+                  `${stage}: the held queue stays held`,
+                );
+              }),
+            );
+          const starts = [
+            {
+              label: "continuation",
+              manualContinuationOfRunId: foreground.input.runId,
+              dispatchMode: { type: "start_immediately" as const },
+            },
+            { label: "queue-fallback", dispatchMode: { type: "queue_after_active" as const } },
+            {
+              label: "steer-fallback",
+              deliveryIntent: "steer" as const,
+              dispatchMode: { type: "start_immediately" as const },
+            },
+          ];
+          for (const { label, ...start } of starts) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`${threadId}:send:${label}`),
+              threadId,
+              messageId: MessageId.make(`${threadId}:message:${label}`),
+              text: label,
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+              ...start,
+            });
+            const started = yield* takeOffer;
+            assert.equal(started.input.message.text, label);
+            yield* assertHeld(`${label} started`);
+            yield* started.settle("completed");
+            yield* waitFor(
+              (projection) =>
+                projection.runs.find((run) => run.id === started.input.runId)?.status ===
+                "completed",
+            );
+            yield* assertHeld(`${label} completed`);
+          }
+          assert.deepEqual(offers, [
+            "foreground",
+            "continuation",
+            "queue-fallback",
+            "steer-fallback",
+          ]);
+        }),
+    ),
+);
+
 it.live("non-user native interruption holds ordinary queued work without a holdQueue flag", () =>
   withNativeQueue(
     "queue-policy-native-interruption",
