@@ -16,6 +16,9 @@ import {
   makeStartupSessionReservations,
   registerStartupSessionReservations,
 } from "./scient-provider/StartupSessionHold.ts";
+// SCIENT-FORK:START provider-enabled-at-open
+import { requireEnabledProviderInstance } from "./scient-provider/ProviderInstanceEnabled.ts";
+// SCIENT-FORK:END provider-enabled-at-open
 import { expandComposerCitationsForProvider } from "@t3tools/shared/composerCitations";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -194,6 +197,10 @@ export interface ProviderSessionManagerV2Shape {
     readonly resumeFromSession?: OrchestrationV2ProviderSession;
     readonly initialNativeThreadId?: string;
     readonly initialProviderItemIdentityVersion?: 2;
+    // SCIENT-FORK:START provider-enabled-at-open
+    /** A deferred turn start refuses a provider turned off since its message was admitted. */
+    readonly requireEnabledInstance?: boolean;
+    // SCIENT-FORK:END provider-enabled-at-open
   }) => Effect.Effect<ProviderAdapterV2SessionRuntime, ProviderSessionManagerV2Error>;
   readonly get: (
     providerSessionId: ProviderSessionId,
@@ -2060,6 +2067,22 @@ export const layerWithOptions = (
                         }),
                     ),
                   );
+                  // SCIENT-FORK:START provider-enabled-at-open
+                  yield* (
+                    input.requireEnabledInstance === true
+                      ? requireEnabledProviderInstance(registry, input.modelSelection.instanceId)
+                      : Effect.void
+                  ).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderSessionOpenError({
+                          instanceId: input.modelSelection.instanceId,
+                          providerSessionId: input.providerSessionId,
+                          cause,
+                        }),
+                    ),
+                  );
+                  // SCIENT-FORK:END provider-enabled-at-open
                   const prepared = yield* prepareMcpSession(
                     input.threadId,
                     input.modelSelection.instanceId,

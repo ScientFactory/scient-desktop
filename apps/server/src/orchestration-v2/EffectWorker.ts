@@ -31,6 +31,12 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
+// SCIENT-FORK:START checkpoint-capture-final-attempt
+import {
+  CheckpointCaptureFinalAttempt,
+  isCheckpointSettlementPending,
+} from "./scient-fork/CheckpointCaptureFinalAttempt.ts";
+// SCIENT-FORK:END checkpoint-capture-final-attempt
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
@@ -598,6 +604,9 @@ export const executorLayer: Layer.Layer<
                 scopeId: effect.request.scopeId,
               })
               .pipe(
+                // SCIENT-FORK:START checkpoint-capture-final-attempt
+                Effect.provideService(CheckpointCaptureFinalAttempt, !willRetry),
+                // SCIENT-FORK:END checkpoint-capture-final-attempt
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
@@ -885,6 +894,10 @@ export const layerWithOptions = (
             Option.isSome(failure) &&
             isProviderRunInterruptError(failure.value.cause) &&
             failure.value.cause.reason === "receipt_pending";
+          // SCIENT-FORK:START checkpoint-capture-final-attempt
+          const checkpointSettlementPending =
+            Option.isSome(failure) && isCheckpointSettlementPending(failure.value);
+          // SCIENT-FORK:END checkpoint-capture-final-attempt
           const error = Cause.pretty(exit.cause);
           const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
           yield* deferredDroidSteer
@@ -905,6 +918,9 @@ export const layerWithOptions = (
             : uncertainDroidSteer ||
                 (effect.attemptCount >= maxAttempts &&
                   !awaitingNativeReceipt &&
+                  // SCIENT-FORK:START checkpoint-capture-final-attempt
+                  !checkpointSettlementPending &&
+                  // SCIENT-FORK:END checkpoint-capture-final-attempt
                   !deferredDroidSteer &&
                   effect.request.type !== "attachment.rollback-prune")
               ? yield* outbox

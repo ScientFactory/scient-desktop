@@ -27,7 +27,7 @@ import { ServerConfig } from "../config.ts";
 import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import * as DateTime from "effect/DateTime";
 import * as Clock from "effect/Clock";
-import { EventSinkV2 } from "./EventSink.ts";
+import { EventSinkV2, EventSinkWriteError } from "./EventSink.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
 import { OrchestrationEffectWorkerV2, runDaemonWithOptions } from "./EffectWorker.ts";
@@ -70,7 +70,11 @@ import {
   type ProviderAdapterV2SteerInput,
   type ProviderAdapterV2Event,
 } from "./ProviderAdapter.ts";
-import { makeLayer } from "./ProviderAdapterRegistry.ts";
+import {
+  makeLayer,
+  ProviderAdapterRegistryMetadataError,
+  ProviderAdapterRegistryV2,
+} from "./ProviderAdapterRegistry.ts";
 import {
   makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
@@ -128,6 +132,38 @@ const promotionMcpRegistryLayer = McpSessionRegistry.layer.pipe(
 );
 
 const instanceId = ProviderInstanceId.make("omp");
+
+// The production registry also reports whether each instance is turned on.
+const withProviderEnabled = (
+  registry: Layer.Layer<ProviderAdapterRegistryV2>,
+  enabled: ((instanceId: ProviderInstanceId) => boolean) | undefined,
+) =>
+  enabled === undefined
+    ? registry
+    : Layer.effect(
+        ProviderAdapterRegistryV2,
+        Effect.map(ProviderAdapterRegistryV2, (adapters) =>
+          ProviderAdapterRegistryV2.of({
+            ...adapters,
+            getMetadata: (instanceId) =>
+              adapters.get(instanceId).pipe(
+                Effect.flatMap((adapter) =>
+                  adapter.getCapabilities().pipe(
+                    Effect.mapError(
+                      (cause) => new ProviderAdapterRegistryMetadataError({ instanceId, cause }),
+                    ),
+                    Effect.map((capabilities) => ({
+                      driver: adapter.driver,
+                      continuationKey: `${adapter.driver}:instance:${instanceId}`,
+                      enabled: enabled(instanceId),
+                      capabilities,
+                    })),
+                  ),
+                ),
+              ),
+          }),
+        ),
+      ).pipe(Layer.provide(registry));
 const modelSelection = { instanceId, model: "queue-policy-model" };
 
 interface NativeOffer {
@@ -203,6 +239,11 @@ const withNativeQueue = <A, E, R>(
     readonly controlStartupFailures?: boolean;
     readonly nativeSteering?: boolean;
     readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
+    readonly decorateProjectionStore?: (
+      store: ProjectionStore.ProjectionStoreV2Shape,
+    ) => ProjectionStore.ProjectionStoreV2Shape;
+    readonly providerEnabled?: (instanceId: ProviderInstanceId) => boolean;
+    readonly decorateEventSink?: (sink: EventSinkV2["Service"]) => EventSinkV2["Service"];
   } = {},
 ) =>
   Effect.scoped(
@@ -426,7 +467,7 @@ const withNativeQueue = <A, E, R>(
                 },
               ]
             : []),
-        ]),
+        ]).pipe((registry) => withProviderEnabled(registry, options.providerEnabled)),
         {
           configureMcp: options.mcpSessionRegistryLayer !== undefined,
           ...(options.mcpSessionRegistryLayer
@@ -482,6 +523,12 @@ const withNativeQueue = <A, E, R>(
           ...(options.runtimePolicyLayer === undefined
             ? {}
             : { runtimePolicyLayer: options.runtimePolicyLayer }),
+          ...(options.decorateProjectionStore === undefined
+            ? {}
+            : { decorateProjectionStore: options.decorateProjectionStore }),
+          ...(options.decorateEventSink === undefined
+            ? {}
+            : { decorateEventSink: options.decorateEventSink }),
         },
       ).pipe(
         Layer.provideMerge(options.mcpSessionRegistryLayer ?? McpSessionRegistryTestkit.layer),
@@ -1276,6 +1323,96 @@ it.live("normal native completion automatically drains queued messages in FIFO o
 );
 
 it.live(
+  "a queued run's provider start follows the previous answer and checkpoint.captured with no client open",
+  () =>
+    withNativeQueue(
+      "queue-policy-delivery-barrier",
+      ({
+        orchestrator,
+        threadId,
+        takeOffer,
+        offers,
+        captureEntered,
+        releaseCapture,
+        beforeOffer,
+      }) =>
+        Effect.gen(function* () {
+          const eventStore = yield* EventStore.EventStoreV2;
+          yield* send(orchestrator, threadId, "foreground");
+          const foreground = yield* takeOffer;
+          let deliveredAfterSequence: number | undefined;
+          beforeOffer((input) =>
+            input.message.text === "next"
+              ? eventStore.latestSequence({ threadId }).pipe(
+                  Effect.map((sequence) => {
+                    deliveredAfterSequence = sequence;
+                  }),
+                  Effect.orDie,
+                )
+              : Effect.void,
+          );
+          yield* send(orchestrator, threadId, "next", true);
+          const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.status === "queued",
+          );
+          assert.ok(queued);
+          yield* foreground.answer("Durable foreground answer");
+          yield* foreground.settle("completed");
+          // The real capture is parked before Git publishes its ref. Nothing that
+          // can be claimed meanwhile delivers the queued message.
+          yield* captureEntered.pipe(Effect.timeout("15 seconds"));
+          yield* (yield* OrchestrationEffectWorkerV2).drain(12);
+          assert.deepEqual(offers, ["foreground"]);
+          assert.isUndefined(deliveredAfterSequence);
+          assert.equal(
+            (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+              (run) => run.id === queued.id,
+            )?.status,
+            "queued",
+          );
+          yield* releaseCapture;
+          const next = yield* takeOffer;
+          assert.equal(next.input.runId, queued.id);
+          assert.ok(deliveredAfterSequence !== undefined);
+
+          // Durable order: the answer, then the capture, then the queued start.
+          const history = yield* eventStore.read({ threadId }).pipe(Stream.runCollect);
+          const sequenceOf = (
+            predicate: (event: (typeof history)[number]["event"]) => boolean,
+          ): number | undefined => history.find((entry) => predicate(entry.event))?.sequence;
+          const answered = sequenceOf(
+            (event) =>
+              event.type === "message.updated" &&
+              event.payload.runId === foreground.input.runId &&
+              event.payload.role === "assistant" &&
+              event.payload.text === "Durable foreground answer" &&
+              !event.payload.streaming,
+          );
+          const captured = sequenceOf(
+            (event) =>
+              event.type === "checkpoint.captured" &&
+              event.payload.runId === foreground.input.runId &&
+              event.payload.status === "ready",
+          );
+          const started = sequenceOf(
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === queued.id &&
+              event.payload.status !== "queued",
+          );
+          assert.ok(answered !== undefined && captured !== undefined && started !== undefined);
+          assert.isBelow(answered, captured);
+          assert.isBelow(captured, started);
+          assert.isAtMost(started, deliveredAfterSequence);
+          // Exactly one delivery.
+          yield* next.settle("completed");
+          assert.deepEqual(offers, ["foreground", "next"]);
+        }),
+      { holdCheckpointCapture: true },
+    ),
+);
+
+it.live(
   "native failure holds queued work across a later successful foreground turn until explicit Resume",
   () =>
     withNativeQueue(
@@ -1684,6 +1821,7 @@ for (const release of ["whole", "head", "newer-failure", "new-admission"] as con
               "interrupted",
             );
             if (release === "head" || release === "newer-failure") {
+              stage = "newer terminal re-holds tail";
               yield* waitForThread(childThreadId, (projection) =>
                 projection.runs.some(
                   (run) =>
@@ -2388,6 +2526,207 @@ it.live("a real checkpoint capture failure settles the native answer and drains 
       }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.live(
+  "a checkpoint capture that fails on every attempt completes the answered run and drains the queue",
+  () =>
+    withNativeQueue(
+      "queue-native-capture-precondition-failure",
+      ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
+        Effect.gen(function* () {
+          yield* send(orchestrator, threadId, "foreground");
+          const foreground = yield* takeOffer;
+          yield* send(orchestrator, threadId, "first", true);
+          yield* foreground.answer("Answer before an uncapturable checkpoint");
+          yield* foreground.settle("completed");
+          // Every capture attempt fails before Git runs; the worker retries, then gives up.
+          const next = yield* takeOffer.pipe(Effect.option);
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          const run = after.runs.find((candidate) => candidate.id === foreground.input.runId);
+          assert.equal(run?.status, "completed");
+          assert.isTrue(Option.isSome(next));
+          if (Option.isNone(next)) return;
+          assert.equal(next.value.input.message.text, "first");
+          const checkpoint = after.checkpoints.find((row) => row.id === run?.checkpointId);
+          assert.equal(checkpoint?.status, "error");
+          assert.deepEqual(checkpoint?.files, []);
+          assert.equal(
+            after.nodes.find((node) => node.id === foreground.input.rootNodeId)?.status,
+            "completed",
+          );
+          assert.equal(
+            after.messages.find(
+              (row) => row.runId === foreground.input.runId && row.role === "assistant",
+            )?.text,
+            "Answer before an uncapturable checkpoint",
+          );
+          yield* next.value.settle("completed");
+          yield* waitFor((projection) =>
+            projection.runs.every((candidate) => candidate.status === "completed"),
+          );
+          assert.deepEqual(offers, ["foreground", "first"]);
+        }),
+      {
+        // The stored workspace no longer matches the checkpoint scope's identity,
+        // a precondition the capture checks before it touches Git.
+        decorateProjectionStore: (store) => ({
+          ...store,
+          getCheckpointCaptureContext: (threadId, target) =>
+            store.getCheckpointCaptureContext(threadId, target).pipe(
+              Effect.map((context) =>
+                context.scope === undefined
+                  ? context
+                  : {
+                      ...context,
+                      scope: { ...context.scope, cwd: `${context.scope.cwd}-moved` },
+                    },
+              ),
+            ),
+        }),
+      },
+    ),
+);
+
+for (const failing of ["read", "commit"] as const) {
+  it.live(
+    `a transient ${failing} failure while settling an uncapturable checkpoint still completes the run once`,
+    () => {
+      // The capture's precondition always fails, so every attempt ends in the
+      // last-attempt settlement once the attempts run out.
+      let contextReads = 0;
+      let failedOnce = false;
+      const failOnce = () => {
+        if (failedOnce) return false;
+        failedOnce = true;
+        return true;
+      };
+      return withNativeQueue(
+        `queue-native-capture-settlement-${failing}-failure`,
+        ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
+          Effect.gen(function* () {
+            yield* send(orchestrator, threadId, "foreground");
+            const foreground = yield* takeOffer;
+            yield* send(orchestrator, threadId, "first", true);
+            yield* foreground.answer("Answer kept through a busy database");
+            yield* foreground.settle("completed");
+            const next = yield* takeOffer.pipe(Effect.option);
+            const after = yield* orchestrator.getThreadProjection(threadId);
+            const run = after.runs.find((candidate) => candidate.id === foreground.input.runId);
+            assert.isTrue(failedOnce);
+            assert.equal(run?.status, "completed");
+            assert.isTrue(Option.isSome(next));
+            if (Option.isNone(next)) return;
+            assert.equal(next.value.input.message.text, "first");
+            assert.equal(
+              after.checkpoints.find((row) => row.id === run?.checkpointId)?.status,
+              "error",
+            );
+            // Exactly one settlement was committed.
+            const history = yield* (yield* EventStore.EventStoreV2)
+              .read({ threadId })
+              .pipe(Stream.runCollect);
+            assert.equal(
+              history.filter(
+                (entry) =>
+                  entry.event.type === "run.updated" &&
+                  entry.event.payload.id === foreground.input.runId &&
+                  entry.event.payload.status === "completed",
+              ).length,
+              1,
+            );
+            assert.equal(
+              history.filter(
+                (entry) =>
+                  entry.event.type === "checkpoint.captured" &&
+                  entry.event.payload.runId === foreground.input.runId,
+              ).length,
+              1,
+            );
+            yield* next.value.settle("completed");
+            yield* waitFor((projection) =>
+              projection.runs.every((candidate) => candidate.status === "completed"),
+            );
+            assert.deepEqual(offers, ["foreground", "first"]);
+          }),
+        {
+          decorateProjectionStore: (store) => ({
+            ...store,
+            getCheckpointCaptureContext: (threadId, target) =>
+              Effect.suspend(() => {
+                contextReads++;
+                // Reads 1-5 are the capture attempts; read 6 is the settlement's.
+                return failing === "read" && contextReads === 6 && failOnce()
+                  ? Effect.fail(
+                      new ProjectionStore.ProjectionStoreReadError({
+                        threadId,
+                        cause: "Synthetic busy database during settlement read",
+                      }),
+                    )
+                  : store.getCheckpointCaptureContext(threadId, target);
+              }).pipe(
+                Effect.map((context) =>
+                  context.scope === undefined
+                    ? context
+                    : {
+                        ...context,
+                        scope: { ...context.scope, cwd: `${context.scope.cwd}-moved` },
+                      },
+                ),
+              ),
+          }),
+          decorateEventSink: (sink) => ({
+            ...sink,
+            commitCommand: (input) =>
+              failing === "commit" && input.commandType === "checkpoint.capture" && failOnce()
+                ? Effect.fail(
+                    new EventSinkWriteError({
+                      eventCount: input.events.length,
+                      commandId: input.commandId,
+                      cause: "Synthetic busy database during settlement commit",
+                    }),
+                  )
+                : sink.commitCommand(input),
+          }),
+        },
+      );
+    },
+  );
+}
+
+it.live("a deferred start does not open a provider that was turned off after admission", () => {
+  let enabled = true;
+  return withNativeQueue(
+    "queue-native-provider-disabled-after-admission",
+    ({ orchestrator, threadId, offers, takeOffer }) =>
+      Effect.gen(function* () {
+        const worker = yield* OrchestrationEffectWorkerV2;
+        yield* send(orchestrator, threadId, "after disable");
+        const admitted = yield* orchestrator.getThreadProjection(threadId);
+        const run = admitted.runs.find((candidate) => candidate.status === "starting");
+        assert.ok(run);
+        // Settings turn the provider off before the durable start effect runs.
+        enabled = false;
+        yield* worker.drain();
+        const settled = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(offers, []);
+        assert.equal(settled.runs.find((candidate) => candidate.id === run.id)?.status, "failed");
+        const failure = settled.turnItems.find(
+          (item) => item.runId === run.id && item.type === "error",
+        );
+        assert.ok(failure?.type === "error");
+        assert.equal(failure.title, "Provider is turned off");
+        assert.match(failure.failure.message, /turned off/);
+        assert.deepEqual(settled.providerTurns, []);
+        // Turning it back on lets the next message start normally.
+        enabled = true;
+        yield* send(orchestrator, threadId, "after enable");
+        yield* worker.drain();
+        const next = yield* takeOffer;
+        assert.include(next.input.message.text, "after enable");
+      }),
+    { runEffectWorker: false, providerEnabled: () => enabled },
+  );
+});
 
 it.live(
   "native checkpoint comparison failure preserves the captured ref and reports its diagnostic",
