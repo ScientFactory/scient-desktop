@@ -1376,7 +1376,8 @@ describe("deriveMessagesTimelineRows", () => {
   it("labels Scient Agent tool rows by the call, never by the tool's output", () => {
     const fixture = makeStreamingTimelineFixture();
     const source = fixture.visibleTurnItems.find((row) => row.item.type === "dynamic_tool")!;
-    if (source.item.type !== "dynamic_tool") throw new Error("Expected tool fixture");
+    const sourceItem = source.item;
+    if (sourceItem.type !== "dynamic_tool") throw new Error("Expected tool fixture");
     const skillsOutput = '{"skills":[{"name":"html-pdf-authoring","description":"Author PDFs"}]}';
     // Native session adapters title a tool row with its name and retain its output.
     const tool = (
@@ -1385,7 +1386,7 @@ describe("deriveMessagesTimelineRows", () => {
       input: Record<string, unknown>,
       output: string,
     ): OrchestrationV2ProjectedTurnItem["item"] => ({
-      ...source.item,
+      ...sourceItem,
       type: "dynamic_tool",
       id: TurnItemId.make(id),
       status: "completed",
