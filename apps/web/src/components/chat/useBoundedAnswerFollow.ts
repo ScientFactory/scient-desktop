@@ -15,10 +15,26 @@ const REVEAL_PACE = { maxPxPerMs: 1.2, easeMs: 90 };
 /** How long after the reader's last scroll input the follow keeps yielding. */
 const READER_INPUT_GRACE_MS = 250;
 /** The gap the timeline keeps between its last row and the composer at the end. */
-const END_GAP = 16;
+export const END_GAP = 16;
 /** A followed response's drift: a calm top speed, gentle acceleration and braking. */
 const FOLLOW_MAX_SPEED = 1; // px per ms
 const FOLLOW_ACCELERATION = 0.004; // px per ms², so ~250ms to top speed
+
+/**
+ * The last row of a prompt's response: the row before the next prompt, or
+ * the timeline's last row. A later prompt (sent from another window, say)
+ * and what follows it are not this prompt's response.
+ */
+export function promptResponseLastIndex(
+  rows: readonly MessagesTimelineRow[],
+  promptIndex: number,
+): number {
+  for (let index = promptIndex + 1; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (row?.kind === "message" && row.message.role === "user") return index - 1;
+  }
+  return rows.length - 1;
+}
 
 /**
  * How far the reveal may scroll now. Growth is revealed only while the sent
@@ -185,7 +201,7 @@ export function useBoundedAnswerFollow({
       // the composer, never past the scroll range (nor into reserved space).
       const endBelow = () => {
         const toMax = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
-        const last = rows.at(-1);
+        const last = rows[promptResponseLastIndex(rows, promptIndex)];
         const endBox = last ? rowRect(last.id) : null;
         const restingBottom = viewportRect.top + viewport.clientHeight - composerInset - END_GAP;
         // The answer is clipped to its revealed lines, so this is the real end:

@@ -6150,6 +6150,7 @@ function ChatViewContent(props: ChatViewProps) {
     loaded: !isServerThread || serverProjection !== null,
   });
   const { start: startResponseFollow, clear: clearResponseFollow } = responseFollow;
+  const followSentPrompt = responseFollow.followSent;
   // SCIENT-FORK:END
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
   const programmaticScrollPendingRef = useRef(false);
@@ -6317,20 +6318,20 @@ function ChatViewContent(props: ChatViewProps) {
         // clamping the viewport.
         cancelTimelinePositioning();
         // SCIENT-FORK:START — a later prompt's whole response is followed to the end.
-        startResponseFollow(messageId, true);
+        followSentPrompt(messageId, snapshot.firstMessage);
         // SCIENT-FORK:END
         return;
       }
       cancelPositionRestoreRef.current?.();
       // SCIENT-FORK:START — the first prompt keeps its placement; its answer is revealed.
-      startResponseFollow(messageId, false);
+      followSentPrompt(messageId, snapshot.firstMessage);
       // SCIENT-FORK:END
       timelineScrollModeRef.current = "anchoring-new-turn";
       setTimelinePositioningPending(true);
       positionedTimelineAnchorRef.current = null;
       setTimelineAnchor({ threadKey: activeThreadKey, messageId });
     },
-    [activeThreadKey, cancelTimelinePositioning, startResponseFollow],
+    [activeThreadKey, cancelTimelinePositioning, followSentPrompt],
   );
   // SCIENT-FORK:START — a queued prompt the server delivers while the reader is at the end
   // gets the same follow as a send (chat/responseFollow.ts).

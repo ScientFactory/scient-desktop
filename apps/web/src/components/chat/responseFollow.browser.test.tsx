@@ -150,7 +150,7 @@ const base = {
 /** What ChatView does with the controller; the test drives these. */
 const chat: {
   /** A later prompt sent from this window (ChatView's frameSubmittedMessage). */
-  sendAtEnd: (promptId: string) => void;
+  sendAtEnd: (promptId: string, options?: { firstMessage?: boolean }) => void;
   /** Prompts sent from this window whose send is still being dispatched (no V2 run yet). */
   sending: Set<string>;
   /** The Scroll to end control (ChatView's scrollToEnd → cancelTimelinePositioning). */
@@ -169,7 +169,7 @@ function Chat({
 }) {
   const messages = entries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : []));
   const follow = useResponseFollow({ threadKey, runs, messages, loaded: true });
-  const { start, clear } = follow;
+  const { start, followSent, clear } = follow;
   const atEndRef = useRef(true);
   const readerAtEnd = useCallback(() => atEndRef.current, []);
   const followDelivered = useCallback(
@@ -194,9 +194,10 @@ function Chat({
   }, [threadKey, clear]);
   useLayoutEffect(() => {
     chat.followPromptId = follow.promptId;
-    chat.sendAtEnd = (promptId) => {
+    chat.sendAtEnd = (promptId, options) => {
       chat.sending.add(promptId);
-      if (atEndRef.current) flushSync(() => start(MessageId.make(promptId), true));
+      if (atEndRef.current)
+        flushSync(() => followSent(MessageId.make(promptId), options?.firstMessage ?? false));
     };
     chat.scrollToEnd = () => {
       flushSync(() => clear());
@@ -648,4 +649,167 @@ it("rests between changes: no frames while the run works and nothing changes", a
   } finally {
     window.requestAnimationFrame = requestFrame;
   }
+});
+
+it("follows a queued prompt promoted to a steer through the run it went into", async () => {
+  const key = "follow:promoted";
+  const { history, runs } = await answeredThread(key);
+  // Run 10 works on prompt 10; prompt 11 waits in the queue as its own run.
+  const prompt = message(10, "user", { text: "Working prompt", runId: "run-10" });
+  const working = [...runs, run("run-10", "message-10", "running")];
+  render(
+    key,
+    [...history, prompt, ...steps(1, "run-10")],
+    [...working, run("run-11", "message-11", "queued")],
+  );
+  await listRef.current!.scrollToEnd({ animated: false });
+  viewport().dispatchEvent(new Event("scroll"));
+  await play(96);
+  // Promoted to a steer: its queued run is cancelled, and it is delivered into run 10.
+  const promoted = message(11, "user", {
+    text: "Promoted to steer",
+    runId: "run-10",
+    inputIntent: "promoted_queued_to_steer",
+  });
+  const promotedRuns = [...working, run("run-11", "message-11", "cancelled")];
+  const rows = (count: number) => [
+    ...history,
+    prompt,
+    ...steps(1, "run-10"),
+    promoted,
+    ...steps(count, "run-10").map((row) => ({ ...row, id: `after-${row.id}` })),
+  ];
+  render(key, rows(0), promotedRuns);
+  await play(16);
+  expect(chat.followPromptId).toBe("message-11");
+  // At rest, a change that wakes the follow without anything to reveal (the
+  // window grows a little): a follow judged settled would end here.
+  await playUntil(() => toEnd() <= 1);
+  await play(160);
+  host!.style.height = "640px";
+  await play(96);
+  expect(chat.followPromptId).toBe("message-11");
+  // Run 10 keeps working on it: its steps are followed, not settled away.
+  const start = viewport().scrollTop;
+  for (let count = 1; count <= 4; count++) {
+    render(key, rows(count), promotedRuns);
+    await playUntil(
+      () => toEnd() <= 1 || promptTextTop("message-11") <= CHAT_TIMELINE_ANCHOR_OFFSET + 1,
+    );
+  }
+  expect(chat.followPromptId).toBe("message-11");
+  expect(viewport().scrollTop).toBeGreaterThan(start);
+  // Run 10 ends: the follow ends with it.
+  const answer = message(12, "assistant", { text: "Done.", runId: "run-10" });
+  render(
+    key,
+    [...rows(4), answer],
+    [...runs, run("run-10", "message-10", "completed"), run("run-11", "message-11", "cancelled")],
+  );
+  await playUntil(() => chat.followPromptId === null);
+});
+
+/** A followed prompt left behind, and a later prompt another window sent while the reader was away. */
+async function leaveThenReturnPastAnotherPrompt(
+  key: string,
+  followedRun: OrchestrationV2RunStatus,
+) {
+  const { history, runs } = await answeredThread(key);
+  const prompt = message(10, "user", { text: "Followed prompt", runId: "run-10" });
+  chat.sendAtEnd("message-10");
+  render(
+    key,
+    [...history, prompt, ...steps(1, "run-10")],
+    [...runs, run("run-10", "message-10", "running")],
+  );
+  await playUntil(() => toEnd() <= 1);
+  await expect.poll(() => readTimelinePosition(key)?.followingPromptId).toBe("message-10");
+  await visitElsewhere(`${key}-elsewhere`);
+  const answer = message(11, "assistant", { text: "A short answer.", runId: "run-10" });
+  const later =
+    followedRun === "running"
+      ? message(30, "user", {
+          text: "A steer from elsewhere",
+          runId: "run-10",
+          inputIntent: "steer",
+        })
+      : message(30, "user", {
+          text: "Elsewhere's prompt",
+          runId: "run-30",
+          inputIntent: "turn_start",
+        });
+  const laterRun = followedRun === "running" ? "run-10" : "run-30";
+  const laterAnswer = message(31, "assistant", {
+    runId: laterRun,
+    text: Array.from({ length: 8 }, () => "A long later answer. ".repeat(10)).join("\n\n"),
+  });
+  const returnedRuns = [
+    ...runs,
+    run("run-10", "message-10", followedRun),
+    ...(followedRun === "running" ? [] : [run("run-30", "message-30", "running")]),
+  ];
+  render(
+    key,
+    [
+      ...history,
+      prompt,
+      ...steps(3, "run-10"),
+      answer,
+      later,
+      ...steps(4, laterRun).map((row) => ({ ...row, id: `later-${row.id}` })),
+      laterAnswer,
+    ],
+    returnedRuns,
+  );
+}
+const answerBottom = (messageId: string) => {
+  const element = host!.querySelector(`[data-message-id="${messageId}"]`);
+  return element
+    ? element.getBoundingClientRect().bottom - viewport().getBoundingClientRect().top
+    : Number.NaN;
+};
+const readingBottom = () => viewport().clientHeight - base.contentInsetEndAdjustment;
+
+it("brings a reader back to the prompt they followed, not past it to a later one", async () => {
+  const key = "follow:return-identity";
+  await leaveThenReturnPastAnotherPrompt(key, "running");
+  // Back at the followed prompt's response: its end rests above the composer,
+  // and the later prompt (and its long answer) stays below.
+  await playUntil(() => Math.abs(answerBottom("message-11") - (readingBottom() - 16)) <= 2);
+  expect(promptTextTop("message-10")).toBeGreaterThanOrEqual(CHAT_TIMELINE_ANCHOR_OFFSET - 1);
+  expect(promptTextTop("message-30")).toBeGreaterThan(readingBottom() - 40);
+  // Its run still works, so its follow carries on, for that prompt.
+  await playUntil(() => chat.followPromptId === "message-10");
+  const resting = viewport().scrollTop;
+  await play(320);
+  expect(Math.abs(viewport().scrollTop - resting)).toBeLessThanOrEqual(1);
+});
+
+it("brings a reader back to the prompt they followed when it finished while they were away", async () => {
+  const key = "follow:return-finished";
+  await leaveThenReturnPastAnotherPrompt(key, "completed");
+  await playUntil(() => Math.abs(answerBottom("message-11") - (readingBottom() - 16)) <= 2);
+  expect(promptTextTop("message-10")).toBeGreaterThanOrEqual(CHAT_TIMELINE_ANCHOR_OFFSET - 1);
+  expect(promptTextTop("message-30")).toBeGreaterThan(readingBottom() - 40);
+  // Finished: nothing to carry on with.
+  await play(320);
+  expect(chat.followPromptId).toBeNull();
+});
+
+it("keeps the reveal of a first prompt as it was: traces do not move it", async () => {
+  const key = "follow:first";
+  const { history, runs } = await answeredThread(key);
+  const prompt = message(10, "user", { text: "Short follow-up", runId: "run-10" });
+  const working = [...runs, run("run-10", "message-10", "running")];
+  // Sent as a thread's first prompt (ChatView's first-message path).
+  chat.sendAtEnd("message-10", { firstMessage: true });
+  render(key, [...history, prompt], working);
+  await play(160);
+  expect(chat.followPromptId).toBe("message-10");
+  for (let count = 1; count <= 8; count++) {
+    render(key, [...history, prompt, ...steps(count, "run-10")], working);
+    await play(96);
+  }
+  // Without whole-response following, the traces are left below the view.
+  expect(toEnd()).toBeGreaterThan(100);
 });

@@ -19,16 +19,21 @@ interface PromptRun {
 type PromptMessage = Pick<ChatMessage, "id" | "runId">;
 const NO_RUNS: readonly PromptRun[] = [];
 
-/** The run a prompt started (its userMessageId), or the run it steered (its runId). */
+/**
+ * The run answering a prompt: the run its listed message belongs to now (its
+ * own run, or the run a steer or a queued prompt promoted to a steer went
+ * into), else the run it started (its userMessageId) while it is not listed
+ * with one yet. A promoted prompt's own queued run is cancelled at promotion;
+ * the receiving run is the one that answers it.
+ */
 function promptRun(
   promptId: string,
   runs: readonly PromptRun[],
   messages: readonly PromptMessage[],
 ) {
-  const started = runs.find((run) => run.userMessageId === promptId);
-  if (started) return started;
   const runId = messages.find((message) => message.id === promptId)?.runId;
-  return runId ? runs.find((run) => run.id === runId) : undefined;
+  const receiving = runId ? runs.find((run) => run.id === runId) : undefined;
+  return receiving ?? runs.find((run) => run.userMessageId === promptId);
 }
 
 export function promptResponseState(input: {
@@ -114,6 +119,15 @@ export function useResponseFollow(input: {
   const start = useCallback((promptId: MessageId, followsResponse: boolean) => {
     setIntent({ threadKey: latest.current.threadKey, promptId, followsResponse });
   }, []);
+  /**
+   * A prompt sent from this window at the end: a thread's first prompt keeps
+   * its placement and has its answer revealed; a later prompt's whole
+   * response is followed to the end.
+   */
+  const followSent = useCallback(
+    (promptId: MessageId, firstMessage: boolean) => start(promptId, !firstMessage),
+    [start],
+  );
   const clear = useCallback(() => setIntent(null), []);
   const onFinished = useCallback((promptId: string) => {
     setIntent((existing) => (existing?.promptId === promptId ? null : existing));
@@ -130,7 +144,7 @@ export function useResponseFollow(input: {
     () => ({ followsResponse, settled, onFinished, onResume }),
     [followsResponse, settled, onFinished, onResume],
   );
-  return { promptId: current?.promptId ?? null, timeline, start, clear };
+  return { promptId: current?.promptId ?? null, timeline, start, followSent, clear };
 }
 
 /**

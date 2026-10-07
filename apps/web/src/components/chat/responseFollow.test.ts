@@ -45,6 +45,35 @@ describe("promptResponseState", () => {
     ).toBe("settled");
   });
 
+  it("follows a queued prompt promoted to a steer through the run it went into", () => {
+    // Its own queued run is cancelled at promotion; it is delivered into run 1.
+    const queued = { id: RunId.make("run-2"), userMessageId: prompt, status: "cancelled" as const };
+    const receiving = {
+      id: RunId.make("run-1"),
+      userMessageId: MessageId.make("p1"),
+      status: "running" as const,
+    };
+    const messages = [{ id: prompt, runId: receiving.id }];
+    expect(promptResponseState({ promptId: prompt, runs: [queued, receiving], messages })).toBe(
+      "running",
+    );
+    expect(
+      promptResponseState({
+        promptId: prompt,
+        runs: [queued, { ...receiving, status: "completed" }],
+        messages,
+      }),
+    ).toBe("settled");
+    // Still waiting in the queue, not listed yet: its own queued run.
+    expect(
+      promptResponseState({
+        promptId: prompt,
+        runs: [{ ...queued, status: "queued" }, receiving],
+        messages: [],
+      }),
+    ).toBe("awaiting");
+  });
+
   it("reports a prompt that left without a run (its send failed) as missing", () => {
     expect(promptResponseState({ promptId: prompt, runs: [], messages: [] })).toBe("missing");
   });

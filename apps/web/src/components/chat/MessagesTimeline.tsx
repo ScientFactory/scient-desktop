@@ -1062,6 +1062,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         list,
         rows,
         composerInset: contentInsetEndAdjustment,
+        promptId: followingPromptId,
         cancelled: () => cancelled,
         nextFrame: (step) => {
           settleFrame = requestAnimationFrame(step);
