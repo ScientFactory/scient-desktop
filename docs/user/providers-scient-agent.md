@@ -69,6 +69,15 @@ their catalog order within each group. Your saved visibility and ordering choice
 precedence and belong to this client and Scient Agent instance, independently of Pi and Oh My Pi.
 These defaults curate the display; they do not prove subscription access.
 
+For a new automatic selection, Scient prefers GPT-6.1-Sol for ChatGPT accounts,
+Opus 5.5 for Anthropic, Grok 4.7 for Cursor, and Gemini 3.8 Flash for Antigravity
+when the account reports them. High reasoning is the initial preference when
+the model offers it. Saved model and reasoning choices remain in effect, and
+custom models keep their own defaults. Hidden or unavailable models are excluded
+from automatic selection. Cursor and Antigravity's separate providers use the
+same model preferences; the separate Codex and Claude providers also start at
+high reasoning when supported.
+
 If a successful refresh stops reporting a native model, the provider page retains it with an
 unavailable explanation, and selectors exclude it. A failed refresh does not establish a denial.
 The remembered catalog lasts for the running server and resets when runtime settings or version

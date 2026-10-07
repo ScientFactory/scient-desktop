@@ -1,5 +1,11 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import {
+  ORCHESTRATION_PROTOCOL_HEADER,
+  ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+  COMPACT_THREAD_SNAPSHOT_FORMAT,
+  THREAD_SNAPSHOT_FORMAT_HEADER,
+} from "@t3tools/contracts";
 import * as Result from "effect/Result";
 import { FetchHttpClient, type HttpMethod } from "effect/unstable/http";
 
@@ -17,6 +23,25 @@ import {
 export interface EnvironmentHttpAuthHeaders {
   readonly authorization?: string;
   readonly dpop?: string;
+}
+
+export function withOrchestrationProtocolHeader(
+  headers: EnvironmentHttpAuthHeaders,
+): EnvironmentHttpAuthHeaders & {
+  readonly [ORCHESTRATION_PROTOCOL_HEADER]: typeof ORCHESTRATION_PROTOCOL_VERSION_TEXT;
+} {
+  return {
+    ...headers,
+    [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+  };
+}
+
+/** Opt into reference compression; the response codec also accepts older full responses. */
+export function withCompactThreadSnapshotHeaders(headers: EnvironmentHttpAuthHeaders) {
+  return {
+    ...withOrchestrationProtocolHeader(headers),
+    [THREAD_SNAPSHOT_FORMAT_HEADER]: COMPACT_THREAD_SNAPSHOT_FORMAT,
+  };
 }
 
 /**

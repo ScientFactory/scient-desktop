@@ -5,6 +5,7 @@ import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   providerOnboardingStatusLabel,
   readyProviderDefaultModel,
+  readyProviderModelSelection,
 } from "./ProviderOnboardingPicker";
 
 const INSTANCE_ID = ProviderInstanceId.make("claudeAgent");
@@ -31,6 +32,26 @@ function entry(input: {
 }
 
 describe("readyProviderDefaultModel", () => {
+  it("uses Scient's preferred model without selecting a hidden model or replacing a saved choice", () => {
+    const provider = entry({
+      status: "ready",
+      models: [
+        { slug: "openai-codex/gpt-6-astra", name: "Astra", isCustom: false, capabilities: null },
+        { slug: "openai-codex/gpt-6.1-sol", name: "Sol", isCustom: false, capabilities: null },
+      ],
+    });
+    const scient = { ...provider!, driverKind: ProviderDriverKind.make("scient") };
+    expect(readyProviderModelSelection(scient)?.model).toBe("openai-codex/gpt-6.1-sol");
+    expect(readyProviderModelSelection(scient, null, ["openai-codex/gpt-6.1-sol"])?.model).toBe(
+      "openai-codex/gpt-6-astra",
+    );
+    const saved = {
+      instanceId: scient.instanceId,
+      model: "openai-codex/gpt-6-astra",
+      options: [{ id: "thinkingLevel", value: "low" }],
+    };
+    expect(readyProviderModelSelection(scient, saved)).toEqual(saved);
+  });
   it("prefers the provider's declared non-custom default", () => {
     expect(
       readyProviderDefaultModel(

@@ -52,6 +52,7 @@ import {
 import { truncateUtf8, warningValue } from "./boundedText.ts";
 import { scanHtmlStartTags } from "./htmlTags.ts";
 import { writeMessageBody } from "./messageBody.ts";
+import { presentProviderCitationText } from "./providerCitationMarkdown.ts";
 import {
   deriveTerminalAssistantMessageIds,
   deriveTurnFolds,
@@ -632,11 +633,16 @@ export function buildConversationDocument(
         message: `Image “${warningValue(alt) || "untitled"}” in message ${n} refers to a file on the original computer and is not included.`,
       });
     const bodySource = replaceLocalImages(
-      renderReferences(message, {
-        assetIdByLocalId,
-        citations,
-        contextDetails,
-      }),
+      renderReferences(
+        role === "assistant"
+          ? { ...message, text: presentProviderCitationText({ ...message, streaming: false }) }
+          : message,
+        {
+          assetIdByLocalId,
+          citations,
+          contextDetails,
+        },
+      ),
       unresolvedImage,
       role === "assistant",
     );

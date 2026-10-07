@@ -122,6 +122,8 @@ describe("resolveInitialServerAuthGateState", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
+    vi.stubEnv("VITE_HTTP_URL", "");
+    vi.stubEnv("VITE_WS_URL", "");
     installTestBrowser("http://localhost/");
   });
 

@@ -23,6 +23,7 @@ import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 // SCIENT-FORK: conversation export dialog.
 import { ConversationExportDialogHost } from "../scient/conversationExport/ConversationExportDialog";
 import { ConversationImportDialogHost } from "../scient/conversationImport/ConversationImportDialog";
+import { LegacyThreadMigrationToast } from "../components/LegacyThreadMigrationToast";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
@@ -247,6 +248,7 @@ function RootRouteView() {
           {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
           {primaryEnvironmentAuthenticated ? <AnalyticsSharingNotice /> : null}
           {primaryEnvironmentAuthenticated ? <SettingsAnalyticsObserver /> : null}
+          {primaryEnvironmentAuthenticated ? <LegacyThreadMigrationToast /> : null}
           {appShell}
           {/* Above the router: a theme draft is judged by walking the app, so the
               editor has to survive navigation away from settings. */}

@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
 import { beforeEach, expect, it, vi } from "vite-plus/test";
-import type { OrchestrationShellSnapshot } from "@t3tools/contracts";
+import type { OrchestrationV2ShellSnapshot } from "@t3tools/contracts";
 import { snapshotBaseline } from "./baseline";
 const before = "2026-09-09T09:00:00.000Z";
 const after = "2026-09-09T10:00:00.000Z";
 const snapshot = (updatedAt: string) =>
-  ({ updatedAt, threads: [] }) as unknown as OrchestrationShellSnapshot;
+  ({ threads: [{ updatedAt }], archivedThreads: [] }) as unknown as OrchestrationV2ShellSnapshot;
 beforeEach(() => {
   localStorage.clear();
   vi.resetModules();
@@ -28,7 +28,7 @@ it("uses the newest server completion if it is ahead of the projection timestamp
   expect(
     snapshotBaseline({
       ...snapshot(before),
-      threads: [{ latestCompletedAnswer: { completedAt: after } }],
-    } as unknown as OrchestrationShellSnapshot),
+      threads: [{ updatedAt: before, latestCompletedAnswer: { completedAt: after } }],
+    } as unknown as OrchestrationV2ShellSnapshot),
   ).toBe(after);
 });

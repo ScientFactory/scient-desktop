@@ -23,7 +23,10 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+export { modelSelectionsEqual } from "@t3tools/shared/model";
+
 import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
+import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { DraftComposerAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { resolveProviderInteractionMode } from "./legacy-plan-mode";
@@ -54,6 +57,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   context: Schema.optional(OrchestrationMessageContext),
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
+  dispatchMode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
   // Present when the queued item creates a brand-new thread (pending task)
@@ -86,6 +90,13 @@ export interface QueuedThreadMessage {
   readonly modelSelection?: ModelSelectionType;
   readonly runtimeMode?: RuntimeModeType;
   readonly interactionMode?: ProviderInteractionModeType;
+  /**
+   * How this message should be delivered if a turn is still running when the
+   * outbox drains. Captured at enqueue time because the drain can fire long
+   * after the tap. Absent on rows written before follow-up behavior existed,
+   * which keep the previous always-queue delivery.
+   */
+  readonly dispatchMode?: ComposerDispatchMode;
   readonly creation?: QueuedThreadCreation;
   readonly createdAt: string;
 }
@@ -113,14 +124,6 @@ export function resolveQueuedThreadSettings(
       message.interactionMode ?? thread.interactionMode,
     ),
   };
-}
-
-export function modelSelectionsEqual(left: ModelSelectionType, right: ModelSelectionType): boolean {
-  return (
-    left.instanceId === right.instanceId &&
-    left.model === right.model &&
-    JSON.stringify(left.options ?? null) === JSON.stringify(right.options ?? null)
-  );
 }
 
 export function encodeQueuedThreadMessage(message: QueuedThreadMessage): unknown {

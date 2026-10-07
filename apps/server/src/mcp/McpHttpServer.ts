@@ -25,8 +25,22 @@ import { makeScientToolListLayer, ScientMcpProtocol } from "./ScientMcpProtocol.
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
+import { PreviewControlsHandlersLive } from "./toolkits/previewControls/handlers.ts";
+import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
+import { EnvironmentHandlersLive } from "./toolkits/environment/handlers.ts";
+import { ProjectToolkit } from "./toolkits/project/tools.ts";
+import { ProjectHandlersLive } from "./toolkits/project/handlers.ts";
+import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
+import { AttachmentHandlersLive } from "./toolkits/attachment/handlers.ts";
+import { ThreadToolkit } from "./toolkits/thread/tools.ts";
+import { ThreadToolkitHandlersLive } from "./toolkits/thread/handlers.ts";
+import * as ThreadMetadataMcpService from "./ThreadMetadataMcpService.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import { OrchestratorToolkitHandlersLive } from "./toolkits/orchestrator/handlers.ts";
+import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import {
   PreviewSnapshotToolkitHandlersLive,
   PreviewStandardToolkitHandlersLive,
@@ -44,9 +58,13 @@ import { ScientDocumentsToolkitHandlersLive } from "./toolkits/documents/handler
 import { ScientDocumentsToolkit } from "./toolkits/documents/tools.ts";
 import { ScientComputeToolkitHandlersLive } from "./toolkits/compute/handlers.ts";
 import { ScientComputeToolkit } from "./toolkits/compute/tools.ts";
-// SCIENT-THREAD-READ: Scient-owned t3_thread_read bridge; delete with V2's orchestrator toolkit.
+// Scient's read-only history contract has a narrower grant than orchestration inspection.
 import { ScientThreadsToolkitHandlersLive } from "./toolkits/threads/handlers.ts";
 import { ScientThreadsToolkit } from "./toolkits/threads/tools.ts";
+
+import { WorktreeToolkitHandlersLive } from "./toolkits/worktree/handlers.ts";
+import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
+import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 import {
@@ -682,6 +700,39 @@ export const ScientThreadsToolkitRegistrationLive = registerScientToolkit(
   ScientThreadsToolkit,
 ).pipe(Layer.provide(ScientThreadsToolkitHandlersLive));
 
+// Orchestration inspection can acknowledge child results. It has a distinct
+// name and grant from Scient's read-only omitted-history reader.
+export const OrchestratorToolkitRegistrationLive = McpServer.toolkit(OrchestratorToolkit).pipe(
+  Layer.provide(OrchestratorToolkitHandlersLive),
+  Layer.provide(OrchestratorMcpService.layer),
+  Layer.provide(ThreadMetadataMcpService.layer),
+);
+
+export const ThreadToolkitRegistrationLive = McpServer.toolkit(ThreadToolkit).pipe(
+  Layer.provide(ThreadToolkitHandlersLive),
+);
+
+const WorktreeToolkitRegistrationLive = McpServer.toolkit(WorktreeToolkit).pipe(
+  Layer.provide(WorktreeToolkitHandlersLive),
+  Layer.provide(WorktreeMcpService.layer),
+);
+
+const PreviewControlsRegistrationLive = McpServer.toolkit(PreviewControlsToolkit).pipe(
+  Layer.provide(PreviewControlsHandlersLive),
+);
+
+const EnvironmentRegistrationLive = McpServer.toolkit(EnvironmentToolkit).pipe(
+  Layer.provide(EnvironmentHandlersLive),
+);
+
+const ProjectRegistrationLive = McpServer.toolkit(ProjectToolkit).pipe(
+  Layer.provide(ProjectHandlersLive),
+);
+
+const AttachmentRegistrationLive = McpServer.toolkit(AttachmentToolkit).pipe(
+  Layer.provide(AttachmentHandlersLive),
+);
+
 export const PullRequestsToolkitRegistrationLive = McpServer.toolkit(PullRequestsToolkit).pipe(
   Layer.provide(PullRequestsToolkitHandlersLive),
 );
@@ -698,10 +749,20 @@ export const DeviceToolkitRegistrationLive = Layer.mergeAll(
   DeviceScreenshotRegistrationLive,
 );
 const deviceTools = Object.values(DeviceToolkit.tools);
-const McpToolListLive = makeScientToolListLayer(
-  [...Object.values(PullRequestsToolkit.tools), ...deviceTools],
-  deviceTools,
-);
+/** Host-owned tools retain their domain admission. Discovery must declare the
+ * exact objects registered below rather than treating unknown names as owned. */
+export const hostMcpTools: ReadonlyArray<Tool.Any> = [
+  ...Object.values(OrchestratorToolkit.tools),
+  ...Object.values(ThreadToolkit.tools),
+  ...Object.values(AttachmentToolkit.tools),
+  ...Object.values(ProjectToolkit.tools),
+  ...Object.values(EnvironmentToolkit.tools),
+  ...Object.values(PreviewControlsToolkit.tools),
+  ...Object.values(WorktreeToolkit.tools),
+  ...Object.values(PullRequestsToolkit.tools),
+  ...deviceTools,
+];
+const McpToolListLive = makeScientToolListLayer(hostMcpTools, deviceTools);
 /** The authenticated `/mcp` transport; exported so tests can serve a subset of toolkits. */
 export const McpTransportLive = McpServer.layerHttp({
   name: "Scient",
@@ -717,6 +778,14 @@ export const layer = Layer.mergeAll(
   ScientDocumentsToolkitRegistrationLive,
   ScientComputeToolkitRegistrationLive,
   ScientThreadsToolkitRegistrationLive,
+
+  OrchestratorToolkitRegistrationLive,
+  ThreadToolkitRegistrationLive,
+  AttachmentRegistrationLive,
+  ProjectRegistrationLive,
+  EnvironmentRegistrationLive,
+  PreviewControlsRegistrationLive,
+  WorktreeToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

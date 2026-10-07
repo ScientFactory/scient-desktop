@@ -126,6 +126,11 @@ handler checks the capability and exact turn allowlist. Loading returns
 instructions and resource metadata; resources remain separate and are read on
 demand.
 
+Shared context validation precedes scope replacement. A request rejected by
+that validation leaves the previous scope intact. Optional catalog discovery
+may be omitted to fit the allowance; user input and selected-skill instructions
+remain whole.
+
 The list result distinguishes a `pending` initialization scope, a `complete`
 prepared scope, and an `incomplete` scope whose activation inputs could not all
 be inspected. Only a complete prepared scope can report an authoritative empty

@@ -42,9 +42,11 @@ describe("Scient file refresh seams", () => {
   it("keeps workspace watcher recovery behind the existing narrow viewer seam", () => {
     expect(workspaceFileRefreshSource).toContain("fileChanges.refresh();");
     expect(workspaceFileRefreshSource).toContain("automaticRefreshUnavailable:");
+    // A file owned by a document session reports the health of that session's watcher.
     expect(filePreviewPanelSource).toContain(
-      "automaticRefreshUnavailable={automaticRefreshUnavailable}",
+      "automaticRefreshUnavailable={automaticRefreshUnavailable || sessionWatch.unavailable}",
     );
+    expect(filePreviewPanelSource).toContain("sessionWatch.refresh();");
   });
 
   it("uses explicit responsive headers and content-derived title direction", () => {

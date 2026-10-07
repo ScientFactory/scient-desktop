@@ -56,27 +56,27 @@ class FakeClient implements PiRpcClient {
     });
   prompt = () => {
     this.promptCalls += 1;
-    const self = this;
-    return self.failPrompt
+    const { queue, promptEvents, output, settle, shutdownAfterPrompt } = this;
+    return this.failPrompt
       ? Effect.fail(
           new PiRpcCommandError({ command: "prompt", requestId: "test", detail: "prompt failed" }),
         )
       : Effect.gen(function* () {
           yield* Queue.offerAll(
-            self.queue,
-            self.promptEvents ?? [
+            queue,
+            promptEvents ?? [
               {
                 type: "message_update",
-                assistantMessageEvent: { type: "text_delta", delta: `preface ${self.output}` },
+                assistantMessageEvent: { type: "text_delta", delta: `preface ${output}` },
               },
               {
                 type: "message_end",
-                message: { role: "assistant", content: [{ type: "text", text: self.output }] },
+                message: { role: "assistant", content: [{ type: "text", text: output }] },
               },
-              ...(self.settle ? [{ type: "agent_settled" }] : []),
+              ...(settle ? [{ type: "agent_settled" }] : []),
             ],
           );
-          if (self.shutdownAfterPrompt) yield* Queue.shutdown(self.queue);
+          if (shutdownAfterPrompt) yield* Queue.shutdown(queue);
         });
   };
   abort = () => Effect.void;
@@ -299,5 +299,40 @@ it.effect("rejects an aborted final assistant message", () => {
     assert.equal(result._tag, "Failure");
     if (result._tag === "Failure") assert.match(result.failure.detail, /aborted/);
     assert.equal(client.closeCalls, 1);
+  });
+});
+
+it.effect("uses Pi's configured default model and effort when both are omitted", () => {
+  const client = new FakeClient();
+  client.state = { model: { provider: "configured", id: "default-model" }, thinkingLevel: "low" };
+  return Effect.gen(function* () {
+    yield* makeHarness(
+      client,
+      [],
+      undefined,
+      createModelSelection(selection.instanceId, "default"),
+    );
+    assert.deepEqual(client.models, []);
+    assert.deepEqual(client.thinking, []);
+    assert.equal(client.state.thinkingLevel, "low");
+    assert.equal(client.promptCalls, 1);
+    assert.equal(client.closeCalls, 1);
+  });
+});
+
+it.effect("accepts the adopted thinking option while preserving explicit off", () => {
+  const client = new FakeClient();
+  client.getThinkingLevels = () => Effect.succeed({ levels: ["off"] });
+  return Effect.gen(function* () {
+    yield* makeHarness(
+      client,
+      [],
+      undefined,
+      createModelSelection(selection.instanceId, selection.model, [
+        { id: "thinking", value: "off" },
+      ]),
+    );
+    assert.deepEqual(client.thinking, ["off"]);
+    assert.equal(client.promptCalls, 1);
   });
 });

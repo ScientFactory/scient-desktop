@@ -16,12 +16,15 @@
     "apps/server/src/provider/ScientToolProjection.ts",
     "apps/server/src/provider/ScientAwareness.ts",
     "apps/server/src/scient/skills/BuiltInSkillSources.ts",
+    "apps/web/src/scient/markdownEditor/persistence/markdownPersistenceRegistry.ts",
     "scripts/stage-synctex-runtime.ts",
     "scripts/lib/scient-synctex-build.ts",
     "packages/client-runtime/src/state/scientLatexHttp.ts",
-    "packages/client-runtime/src/work-log/scientToolPresentation.ts",
     "packages/contracts/src/scientLatex.ts",
-    "packages/contracts/src/latexPdfBuild.ts"
+    "packages/contracts/src/latexPdfBuild.ts",
+    "packages/contracts/src/scient/environmentHttpGroups.ts",
+    "apps/server/src/scient/ScientServerLayers.ts",
+    "apps/web/src/scient/fileSurfaces/scientLazyFileSurfaces.tsx"
   ],
   "latexDiffSignals": [
     "ScientLatex",
@@ -34,6 +37,21 @@
     "/api/scient/latex"
   ],
   "upstreamMounts": [
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.testkit.ts",
+      "anchor": "latexDir: path.join(stateDir, \"latex\")",
+      "purpose": "Give native Codex replay qualification an isolated server-owned LaTeX state directory."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/CursorAdapterV2.testkit.ts",
+      "anchor": "latexDir: path.join(stateDir, \"latex\")",
+      "purpose": "Give native Cursor replay qualification an isolated server-owned LaTeX state directory."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/ProviderReplayHarness.ts",
+      "anchor": "latexDir: path.join(stateDir, \"latex\")",
+      "purpose": "Retain LaTeX state isolation when the shared native provider harness creates disposable server configuration."
+    },
     {
       "path": ".gitignore",
       "anchor": "native/synctex-runtime/",
@@ -66,7 +84,7 @@
     },
     {
       "path": "apps/server/src/server.ts",
-      "anchor": "LatexBuildService",
+      "anchor": "ScientRouteServices.provideScientRouteServices",
       "purpose": "Provide the build coordinator and toolchain probe to the shared server layer."
     },
     {
@@ -76,7 +94,7 @@
     },
     {
       "path": "apps/web/src/components/ChatView.tsx",
-      "anchor": "const openFileSourceSurface = useCallback(",
+      "anchor": "useScientRightPanelOpeners",
       "purpose": "Open a diagnostic or inverse-SyncTeX source at its reported line through the inherited right-panel store."
     },
     {
@@ -101,7 +119,7 @@
     },
     {
       "path": "packages/contracts/src/environmentHttp.ts",
-      "anchor": "scientLatex",
+      "anchor": ".add(EnvironmentScientLatexHttpApi)",
       "purpose": "Register the LaTeX endpoint group in the shared environment HTTP API."
     },
     {

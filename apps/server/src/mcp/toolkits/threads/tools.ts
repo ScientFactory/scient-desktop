@@ -16,13 +16,14 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 
 import { ScientOperation } from "../../ScientOperationTool.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
+import { LegacyV1ThreadImporter } from "../../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 
 /**
- * Bridge until T3 Orchestration V2 lands. The tool name, input fields and
- * defaults mirror V2's `t3_thread_read` (`OrchestratorMcpThreadReadInput`) so
- * prompts that name it keep working when V2's orchestrator toolkit replaces
- * this one. Delete this toolkit then; see docs/internals/scient-fork-divergence.md.
+ * Scient's omitted-history reader uses V2's input fields, defaults and paging
+ * semantics under the Scient-owned `scient_thread_read` name and read-only
+ * grant. Orchestration's `scient_thread_inspect` also returns run metadata and
+ * can acknowledge a delegated result, so it retains a separate capability.
  *
  * Upstream reference: pingdotgg/t3code PR #2829 at a3fbbe45315e (2026-09-27),
  * `packages/contracts/src/orchestratorMcp.ts` (`OrchestratorMcpThreadReadInput`)
@@ -61,8 +62,8 @@ export const ScientThreadReadInput = Schema.Struct({
       description: `Maximum items to return (default ${THREAD_READ_DEFAULT_LIMIT}).`,
     }),
   ),
-  // Accepted for V2 input compatibility. This server has no per-thread run
-  // history projection (only the latest turn), so there are no runs to list.
+  // Accepted for the shipped reader's input compatibility. Run metadata is
+  // available through orchestration inspection rather than this narrow reader.
   runLimit: Schema.optional(
     PositiveInt.check(Schema.isLessThanOrEqualTo(50)).annotate({
       description: "Accepted for compatibility and ignored; no run history is returned.",
@@ -79,10 +80,16 @@ export type ScientThreadReadInput = typeof ScientThreadReadInput.Type;
 /** V2's thread status vocabulary: idle, or the latest run's state. */
 export const ScientThreadReadStatus = Schema.Literals([
   "idle",
+  "preparing",
+  "queued",
+  "starting",
   "running",
+  "waiting",
   "completed",
   "interrupted",
   "failed",
+  "cancelled",
+  "rolled_back",
 ]);
 
 export const ScientThreadReadThread = Schema.Struct({
@@ -157,18 +164,19 @@ export class ScientThreadReadToolError extends Schema.TaggedError<ScientThreadRe
 
 const dependencies = [
   AgentInvocationContext.AgentInvocationContext,
-  ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+  ProjectionStoreV2,
+  LegacyV1ThreadImporter,
 ];
 
-export const ScientThreadReadTool = Tool.make("t3_thread_read", {
+export const ScientThreadReadTool = Tool.make("scient_thread_read", {
   description:
-    "Read durable state and a paginated timeline from a T3 thread in the calling project, including this thread. Use it to recover conversation history that was omitted from a forked or bounded transcript. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. Continue with afterPosition=nextPosition while hasMore is true. Recover long item text with itemId and textOffset=nextTextOffset until nextTextOffset is null; offsets count UTF-16 code units. Read-only.",
+    "Read durable state and a paginated timeline from a Scient thread in the calling project, including this thread. Use it to recover conversation history that was omitted from a forked or bounded transcript. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. Continue with afterPosition=nextPosition while hasMore is true. Recover long item text with itemId and textOffset=nextTextOffset until nextTextOffset is null; offsets count UTF-16 code units. Read-only.",
   parameters: ScientThreadReadInput,
   success: ScientThreadReadResult,
   failure: ScientThreadReadToolError,
   dependencies,
 })
-  .annotate(Tool.Title, "Read a T3 thread")
+  .annotate(Tool.Title, "Read a Scient thread")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)

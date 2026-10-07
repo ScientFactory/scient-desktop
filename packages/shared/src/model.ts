@@ -1,7 +1,4 @@
 import {
-  DEFAULT_MODEL_BY_PROVIDER,
-  PREFERRED_DEFAULT_CODEX_MODELS,
-  type ServerProviderModel,
   type CustomModelSetting,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
   ModelCapabilities,
@@ -13,84 +10,38 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { copySorted } from "./Array.ts";
+// SCIENT-FORK:START — agent model order, reasoning default and automatic model choice
+import { preferredReasoningLevel } from "./scientModel.ts";
+export {
+  applyAutomaticModelDefaults,
+  getDefaultHiddenAgentModels,
+  preferredReasoningLevel,
+  resolveAutomaticModel,
+  resolveProviderModelPreferences,
+  sortAgentModelsByAccount,
+} from "./scientModel.ts";
+// SCIENT-FORK:END
 
 const DEFAULT_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");
 
 export const MODEL_TOKEN_LIMIT_MESSAGE = "Response stopped at a token limit.";
+
+/** Choose the command for a model change against the thread's current provider instance. */
+export function modelSelectionCommandType(
+  currentInstanceId: ProviderInstanceId,
+  selection: ModelSelection,
+) {
+  return currentInstanceId === selection.instanceId
+    ? ("thread.model-selection.set" as const)
+    : ("provider.switch" as const);
+}
 
 export interface SelectableModelOption {
   slug: string;
   name: string;
   aliases?: ReadonlyArray<string> | undefined;
   unavailableReason?: string | undefined;
-}
-
-const VISIBLE_AGENT_SUBSCRIPTION_MODELS = new Set([
-  "anthropic/claude-sonnet-5-5",
-  "anthropic/claude-opus-5-5",
-  "anthropic/claude-fable-5-5",
-  "openai-codex/gpt-6-astra",
-  "openai-codex/gpt-6-luna",
-  "openai-codex/gpt-6.1-sol",
-  "google-antigravity/gemini-3.8-flash",
-  "google-antigravity/gemini-3.1-pro",
-  "google-antigravity/claude-opus-4-6",
-]);
-
-const AGENT_ACCOUNT_GROUP_ORDER = new Map([
-  ["anthropic", 0],
-  ["openai", 1],
-  ["openai-codex", 1],
-  ["google", 2],
-  ["google-antigravity", 2],
-  ["google-gemini-cli", 2],
-  ["google-vertex", 2],
-]);
-
-/** Default native agent account groups; preserve catalog order within each group. */
-export function sortAgentModelsByAccount<T extends { readonly slug: string }>(
-  driver: string,
-  models: ReadonlyArray<T>,
-): T[] {
-  if (driver !== "pi" && driver !== "omp" && driver !== "scient") return [...models];
-  const rank = (model: T) => AGENT_ACCOUNT_GROUP_ORDER.get(model.slug.split("/")[0] ?? "") ?? 3;
-  return [...models].sort((a, b) => rank(a) - rank(b));
-}
-
-/** Curated picker defaults for native agent catalogs, independent of account access. */
-export function getDefaultHiddenAgentModels(
-  driver: string,
-  models: ReadonlyArray<{ readonly slug: string; readonly isCustom?: boolean }>,
-): string[] {
-  if (driver !== "pi" && driver !== "omp" && driver !== "scient") return [];
-  return models
-    .filter(
-      (model) =>
-        !model.isCustom &&
-        ["anthropic/", "openai-codex/", "google-antigravity/"].some((prefix) =>
-          model.slug.startsWith(prefix),
-        ) &&
-        !VISIBLE_AGENT_SUBSCRIPTION_MODELS.has(model.slug),
-    )
-    .map((model) => model.slug);
-}
-
-/** Saved visibility wins; use the default account order until the user reorders models. */
-export function resolveProviderModelPreferences(
-  driver: string,
-  models: ReadonlyArray<{ readonly slug: string; readonly isCustom?: boolean }>,
-  preferences:
-    | { readonly hiddenModels: ReadonlyArray<string>; readonly modelOrder: ReadonlyArray<string> }
-    | undefined,
-) {
-  if (driver !== "pi" && driver !== "omp" && driver !== "scient") {
-    return preferences ?? { hiddenModels: [], modelOrder: [] };
-  }
-  if (preferences?.modelOrder.length) return preferences;
-  return {
-    hiddenModels: preferences?.hiddenModels ?? getDefaultHiddenAgentModels(driver, models),
-    modelOrder: sortAgentModelsByAccount(driver, models).map((model) => model.slug),
-  };
 }
 
 export function createModelCapabilities(input: {
@@ -144,6 +95,44 @@ export function getModelSelectionBooleanOptionValue(
   id: string,
 ): boolean | undefined {
   return getProviderOptionBooleanSelectionValue(modelSelection?.options, id);
+}
+
+function canonicalModelSelectionOptions(
+  modelSelection: ModelSelection,
+): ReadonlyArray<readonly [id: string, value: string | boolean]> {
+  return copySorted(
+    (modelSelection.options ?? []).map(
+      (selection): readonly [id: string, value: string | boolean] => [
+        selection.id,
+        selection.value,
+      ],
+    ),
+    (
+      [leftId, leftValue]: readonly [id: string, value: string | boolean],
+      [rightId, rightValue]: readonly [id: string, value: string | boolean],
+    ) => {
+      const idOrder = leftId.localeCompare(rightId);
+      return idOrder !== 0 ? idOrder : String(leftValue).localeCompare(String(rightValue));
+    },
+  );
+}
+
+/**
+ * Compares the complete provider selection while treating option ordering and
+ * an omitted empty option list as presentation details.
+ */
+export function modelSelectionsEqual(left: ModelSelection, right: ModelSelection): boolean {
+  if (left.instanceId !== right.instanceId || left.model !== right.model) {
+    return false;
+  }
+  const leftOptions = canonicalModelSelectionOptions(left);
+  const rightOptions = canonicalModelSelectionOptions(right);
+  return (
+    leftOptions.length === rightOptions.length &&
+    leftOptions.every(
+      ([id, value], index) => id === rightOptions[index]?.[0] && value === rightOptions[index]?.[1],
+    )
+  );
 }
 
 function resolveDescriptorChoiceValue(
@@ -314,25 +303,6 @@ export function buildExplicitProviderOptionSelectionsFromDescriptors(
   return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
-/** A product default for the next request, never a claim about an already-running session. */
-export function preferredReasoningLevel(
-  levels: ReadonlyArray<string>,
-  preferred?: string,
-  userPreference?: string,
-): string | undefined {
-  const available = levels.filter(
-    (level) => !["off", "none", "default", "inherited"].includes(level),
-  );
-  return (
-    (userPreference && available.includes(userPreference) ? userPreference : undefined) ??
-    (preferred && available.includes(preferred) ? preferred : undefined) ??
-    ["medium", "high", "low", "xhigh", "max", "minimal"].find((level) =>
-      available.includes(level),
-    ) ??
-    available[0]
-  );
-}
-
 export function isClaudeUltrathinkPrompt(text: string | null | undefined): boolean {
   return typeof text === "string" && /\bultrathink\b/i.test(text);
 }
@@ -340,6 +310,26 @@ export function isClaudeUltrathinkPrompt(text: string | null | undefined): boole
 /** Compare Codex model families without changing provider-owned dispatch identifiers. */
 export function codexModelFamily(slug: string): string {
   return slug.startsWith("openai.gpt-") ? slug.slice("openai.".length) : slug;
+}
+
+export function formatCodexModelName(name: string): string {
+  return name.replace(/^gpt/i, "GPT").replace(/-([a-z])/g, (_, c: string) => "-" + c.toUpperCase());
+}
+
+export function formatModelSlugName(slug: string): string {
+  const separator = slug.lastIndexOf("/") + 1;
+  const prefix = slug.slice(0, separator);
+  const name = slug.slice(separator);
+  if (/^gpt-\d/i.test(name)) return prefix + formatCodexModelName(name);
+  if (!/^(claude-(opus|sonnet|haiku|fable)|gemini|grok|composer)-\d/i.test(name)) return slug;
+  return (
+    prefix +
+    name
+      .replace(/^(claude-[a-z]+-\d+)-(\d{1,2})(?=-|\[|$)/i, "$1.$2")
+      .split("-")
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ")
+  );
 }
 
 export function normalizeModelSlug(
@@ -430,98 +420,6 @@ export function toCustomModelSetting(entry: CustomModelDefinition): CustomModelS
       ? { capabilities: createModelCapabilities({ optionDescriptors: descriptors }) }
       : {}),
   };
-}
-
-/** Resolve only implicit selections; explicit and persisted picks never pass through here. */
-export function resolveAutomaticModel(
-  driver: ProviderDriverKind,
-  models: ReadonlyArray<
-    SelectableModelOption & {
-      isDefault?: boolean | undefined;
-      isCustom?: boolean | undefined;
-      isLegacy?: boolean | undefined;
-      capabilities?: ModelCapabilities | null | undefined;
-    }
-  >,
-): string | undefined {
-  const available = models.filter((model) => !model.isLegacy && !model.unavailableReason);
-  const builtIns = available.filter((model) => !model.isCustom);
-  const preferences =
-    driver === "codex"
-      ? PREFERRED_DEFAULT_CODEX_MODELS
-      : driver === "claudeAgent"
-        ? ["claude-opus-5-5", "claude-fable-5-1"]
-        : [];
-  const preferred = preferences.flatMap((slug) =>
-    builtIns.filter((model) =>
-      driver === "codex"
-        ? codexModelFamily(model.slug) === slug
-        : model.slug === slug || model.aliases?.includes(slug),
-    ),
-  )[0];
-  const reported = available.find((model) => model.isDefault);
-  const fallback = DEFAULT_MODEL_BY_PROVIDER[driver];
-  const selected =
-    preferred ??
-    reported ??
-    builtIns.find((model) => model.slug === fallback || model.aliases?.includes(fallback ?? "")) ??
-    builtIns[0] ??
-    available[0];
-  if (driver === "antigravity" && selected && !selected.isCustom && selected.capabilities) {
-    const variant = /^(gemini-[a-z0-9.-]+)-(low|medium|high)$/.exec(selected.slug);
-    const name = /^(Gemini .+) \((Low|Medium|High)\)$/.exec(selected.name);
-    if (variant && name && name[2]?.toLowerCase() === variant[2]) {
-      const high = builtIns.find(
-        (model) =>
-          model.slug === `${variant[1]}-high` &&
-          model.name === `${name[1]} (High)` &&
-          Boolean(model.capabilities) &&
-          (model.capabilities?.optionDescriptors?.length ?? 0) === 0,
-      );
-      if (high && (selected.capabilities?.optionDescriptors?.length ?? 0) === 0) return high.slug;
-    }
-  }
-  // Antigravity has no static dispatchable model ID.
-  return selected?.slug ?? (models.length === 0 && driver !== "antigravity" ? fallback : undefined);
-}
-
-/** Publish the same automatic choice to every client without altering catalog order or IDs. */
-export function applyAutomaticModelDefaults(
-  driver: ProviderDriverKind,
-  models: ReadonlyArray<ServerProviderModel>,
-): ReadonlyArray<ServerProviderModel> {
-  const selected = resolveAutomaticModel(driver, models);
-  return models.map((model) => {
-    // Built-in capability defaults affect new selections, not saved selection options.
-    const capabilities =
-      !model.isCustom && (driver === "codex" || driver === "claudeAgent") && model.capabilities
-        ? {
-            ...model.capabilities,
-            optionDescriptors: (model.capabilities.optionDescriptors ?? []).map((descriptor) => {
-              if (
-                descriptor.type !== "select" ||
-                !["reasoningEffort", "effort"].includes(descriptor.id) ||
-                !descriptor.options.some((option) => option.id === "medium")
-              )
-                return descriptor;
-              return {
-                ...descriptor,
-                concreteReasoning: true,
-                currentValue: "medium",
-                options: descriptor.options.map((option) => ({
-                  ...option,
-                  isDefault: option.id === "medium",
-                })),
-              };
-            }),
-          }
-        : model.capabilities;
-    const resolved = capabilities === model.capabilities ? model : { ...model, capabilities };
-    if (model.slug === selected) return { ...resolved, isDefault: true };
-    if (!model.isDefault) return resolved;
-    const { isDefault: _default, ...rest } = resolved;
-    return rest;
-  });
 }
 
 export function resolveSelectableModel(

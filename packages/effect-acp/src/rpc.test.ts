@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import * as AcpSchema from "./_generated/schema.gen.ts";
-import { LenientSetSessionConfigOptionResponse } from "./rpc.ts";
+import { CompatAgentRpcs, LenientSetSessionConfigOptionResponse } from "./rpc.ts";
 
 const decodeLenient = Schema.decodeUnknownEffect(LenientSetSessionConfigOptionResponse);
 const decodeStrict = Schema.decodeUnknownEffect(AcpSchema.SetSessionConfigOptionResponse);
@@ -21,12 +21,35 @@ const decodeStrict = Schema.decodeUnknownEffect(AcpSchema.SetSessionConfigOption
  * not overwrite already-observed state with an empty list.
  */
 describe("LenientSetSessionConfigOptionResponse", () => {
+  it.effect("uses the lenient codec in the production compatibility registration", () =>
+    Effect.gen(function* () {
+      const rpc = CompatAgentRpcs.requests.get("session/set_config_option");
+      expect(rpc).toBeDefined();
+      if (!rpc) return;
+      const decode = Schema.decodeUnknownEffect(rpc.successSchema);
+      expect(yield* decode({})).toEqual({});
+      expect(yield* decode({ configOptions: null })).toEqual({ configOptions: null });
+      expect(yield* decode({ configOptions: [] })).toEqual({ configOptions: [] });
+      for (const key of ["id", "configId"] as const) {
+        const option = {
+          [key]: "native-mode",
+          type: "select",
+          name: "Mode",
+          currentValue: "supervised",
+          options: [{ value: "supervised", name: "Supervised" }],
+        };
+        expect(yield* decode({ configOptions: [option] })).toEqual({ configOptions: [option] });
+      }
+      yield* Effect.flip(decode({ configOptions: "invalid" }));
+      yield* Effect.flip(decode({ configOptions: [{ type: "select", name: "missing-id" }] }));
+    }),
+  );
   it.effect("accepts the spec-shaped response", () =>
     Effect.gen(function* () {
       const spec = {
         configOptions: [
           {
-            id: "model",
+            configId: "model",
             name: "Model",
             category: "model",
             type: "select" as const,

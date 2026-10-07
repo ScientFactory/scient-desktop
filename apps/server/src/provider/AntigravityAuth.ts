@@ -58,6 +58,8 @@ interface OwnedProcess {
 
 export interface AntigravityAuth {
   readonly controller: ProviderAuthController;
+  /** Physical process teardown for connection actions; manager-owned sessions remain separate. */
+  readonly stopProcesses: Effect.Effect<void>;
   /** Tracks startup and the process scope so sign-out cannot leave cached credentials in memory. */
   readonly withProcess: <A, E, R>(
     stop: Effect.Effect<void>,
@@ -67,7 +69,7 @@ export interface AntigravityAuth {
 
 export type AntigravityAuthRuntime = Pick<
   AcpSessionRuntime["Service"],
-  "initialize" | "start" | "request"
+  "initialize" | "start" | "logout"
 >;
 
 export interface AntigravityAuthOptions<
@@ -96,6 +98,7 @@ function visibleSnapshot(snapshot: AuthSnapshot, ownerSessionId: string): Provid
     ...snapshot.state,
     flowId: null,
     authorizationUrl: null,
+    interaction: null,
     expiresAt: null,
     ...(busy ? { message: "Sign-in is in progress in another client." } : {}),
   };
@@ -478,7 +481,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
                   "This Antigravity version does not support sign-out. Update the provider.",
                 );
               }
-              yield* runtime.request("logout", {});
+              yield* runtime.logout;
               yield* options.onSignedOut;
             }).pipe(
               Effect.scoped,
@@ -517,7 +520,23 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
     }),
     subscribe: (ownerSessionId) =>
       SubscriptionRef.changes(snapshot).pipe(
-        Stream.map((value) => visibleSnapshot(value, ownerSessionId)),
+        Stream.map((value) => {
+          const state = visibleSnapshot(value, ownerSessionId);
+          return {
+            ...state,
+            credentialOwner: "provider" as const,
+            interaction:
+              state.phase === "waiting" && state.authorizationUrl && state.flowId
+                ? {
+                    type: "browser" as const,
+                    id: state.flowId,
+                    url: state.authorizationUrl,
+                    requiresConsent: false,
+                    acceptsCallback: true,
+                  }
+                : null,
+          };
+        }),
         Stream.interruptWhen(Deferred.await(closed)),
       ),
     isLogoutPrompt: (text, hasAttachments) => !hasAttachments && text.trim() === "/logout",
@@ -538,5 +557,5 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
     }),
   );
 
-  return { controller, withProcess };
+  return { controller, withProcess, stopProcesses: stopOwnedProcesses };
 });

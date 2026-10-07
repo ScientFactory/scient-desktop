@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import * as Option from "effect/Option";
-import { EnvironmentId, type OrchestrationShellSnapshot } from "@t3tools/contracts";
+import { EnvironmentId, type OrchestrationV2ShellSnapshot } from "@t3tools/contracts";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useUiStateStore } from "../../uiStateStore";
 import { ScientAnswerBadgeCoordinator } from "./ScientAnswerBadgeCoordinator";
@@ -20,6 +20,7 @@ const after = "2026-09-09T10:00:00.000Z";
 const thread = (id: string, completedAt = before, archivedAt: string | null = null) => ({
   id,
   archivedAt,
+  updatedAt: before,
   latestCompletedAnswer: { turnId: "turn", messageId: "answer", completedAt },
   latestTurn: { state: "running" },
 });
@@ -31,7 +32,10 @@ const environment = (
   environmentId: EnvironmentId.make(environmentId),
   shell: {
     status,
-    snapshot: Option.some({ threads, updatedAt: before } as unknown as OrchestrationShellSnapshot),
+    snapshot: Option.some({
+      threads,
+      archivedThreads: [],
+    } as unknown as OrchestrationV2ShellSnapshot),
   },
 });
 const render = (environments: ReturnType<typeof environment>[]) => {

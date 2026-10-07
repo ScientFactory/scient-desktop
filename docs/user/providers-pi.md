@@ -37,6 +37,11 @@ tested against Pi 0.85.1 and requires 0.84.4 or newer. The managed installer cov
 and Intel macOS, ARM64 and x64 Windows, and ARM64 and x64 glibc Linux. Musl Linux and other
 operating-system or architecture targets require a separately installed runtime.
 
+Provider environment variables and launch arguments are available for installations that need a
+custom agent directory, endpoint, or model configuration. `--provider` must be paired with
+`--model`. Scient rejects launch arguments that change Pi's execution mode or select a session,
+because it owns those parts of the process lifecycle.
+
 Use **Settings > Custom models > Add model**, or **Connect models** in Pi's setup:
 
 1. Choose a service or a local/custom endpoint, then enter its exact model ID and API key (optional for a keyless endpoint).
@@ -71,6 +76,11 @@ refresh. Refresh after fixing the account or model configuration to make them se
 Changing the instance configuration or runtime version clears that remembered catalog. A failed
 catalog refresh does not establish a model-access denial. Models with unverified account access
 remain selectable; Scient does not send paid requests to every model to check access.
+
+If discovery cannot complete, Scient keeps Pi available with the `Pi default` model; start a thread
+to let the interactive Pi session handle any startup prompt. The context meter appears once Pi
+reports usage for the thread, so it can wait for the first reply when a model provider reports
+usage only when a response completes.
 
 You can still configure models and API keys, or complete Pi's supported `/login` flow, in Pi itself
 on the execution machine. Refresh the provider catalog afterward. There is no universal **Sign in to Pi** or
@@ -121,15 +131,23 @@ tool-calling support or model quality; verify those with the actual model and se
 ## Access and conversations
 
 Choose a discovered model and explicitly select **Full access** before sending. Pi does not supply
-Scient's supervised sandbox. Its tools and extensions can read or modify files and run commands
-with the server user's permissions; use trusted workspaces and extensions. Scient does not silently
-change a supervised task to Full access.
+an operating-system sandbox: its tools and extensions can read or modify files and run commands
+with the server user's permissions; use trusted workspaces and extensions.
+
+Scient applies the composer's permission mode through Pi's blocking tool hook: **Supervised** asks
+before commands, file changes, and extension tools while read-only tools continue, and
+**Auto-accept edits** allows Pi's edit and write tools but still asks before commands and extension
+tools. **Auto** is not offered for Pi, because Pi has no AI approval reviewer; a thread that stored
+Auto before Pi support was added behaves and displays as **Supervised**. Changing the mode restarts
+the Pi session and resumes the same native conversation. Scient does not silently change a
+supervised task to **Full access**.
 
 Scient displays assistant output using its usual buffered-output setting, tool activity, model
 failures, available thinking levels, and Pi's reported context usage. Pi's native text and reasoning
 deltas are translated into runtime events; a separate reasoning transcript is not displayed by the
 current shared conversation UI. You can change models between turns. Images require an
 image-capable model; other attached files are supplied as local paths for Pi's tools to inspect.
+The thinking picker marks Pi's current configured level as the default without overriding it.
 
 If a response exhausts its token allowance and Pi cannot recover automatically, Scient keeps any
 partial answer and shows a dismissible notice above the composer. Continue the conversation or adjust
@@ -139,6 +157,10 @@ Steering sends another message into the current turn. **Stop** cancels pending w
 thread's Pi process. The next turn resumes its exact private session file. Scient deliberately rejects
 native commands or extensions that switch the session behind its back; create a new Scient thread
 instead of using `/new` or switching to an unrelated Pi session.
+
+Scient's `delegate_task` tool creates durable child threads in the shared subagent UI. When Pi's
+example `subagent` extension is installed, Scient shows its task progress and results there too.
+Pi runs those children without a session, so they cannot be opened or resumed as Scient threads.
 
 ## Scient tools and Pi extensions
 

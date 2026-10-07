@@ -105,7 +105,7 @@ describe("Scient awareness", () => {
       CLAUDE_SCIENT_TOOL_PROJECTION,
     );
 
-    expect(awareness).toContain("`mcp__t3-code__scient_compute_inventory`");
+    expect(awareness).toContain("`mcp__scient__scient_compute_inventory`");
     expect(awareness).not.toContain("`scient_compute_inventory`");
   });
 
@@ -139,16 +139,16 @@ describe("Scient awareness", () => {
       CLAUDE_SCIENT_TOOL_PROJECTION,
     );
 
-    expect(awareness).toContain("`mcp__t3-code__scient_pdf_build`");
-    expect(awareness).toContain("`mcp__t3-code__scient_latex_build`");
-    expect(awareness).toContain("`mcp__t3-code__scient_document_export`");
-    expect(awareness).toContain("`mcp__t3-code__preview_status`");
-    expect(awareness).toContain("`mcp__t3-code__preview_open`");
+    expect(awareness).toContain("`mcp__scient__scient_pdf_build`");
+    expect(awareness).toContain("`mcp__scient__scient_latex_build`");
+    expect(awareness).toContain("`mcp__scient__scient_document_export`");
+    expect(awareness).toContain("`mcp__scient__preview_status`");
+    expect(awareness).toContain("`mcp__scient__preview_open`");
     expect(awareness).not.toContain("`preview_status`");
     expect(awareness).not.toContain("`ToolSearch`");
     expect(awareness).not.toContain("use `scient_pdf_build`");
-    expect(awareness).toContain("`mcp__t3-code__scient_skills_list`");
-    expect(awareness).toContain("`mcp__t3-code__scient_skill_load`");
+    expect(awareness).toContain("`mcp__scient__scient_skills_list`");
+    expect(awareness).toContain("`mcp__scient__scient_skill_load`");
     expect(awareness).not.toContain("`scient_skills_list`");
     expect(awareness).toContain("provider-native skills are separate");
     expect(buildScientAwareness(new Set(), CLAUDE_SCIENT_TOOL_PROJECTION)).toBe(
@@ -159,6 +159,7 @@ describe("Scient awareness", () => {
   it("requires an explicit delivery decision for every built-in provider", () => {
     const builtInKinds = BUILT_IN_DRIVERS.map((driver) => String(driver.driverKind)).toSorted();
     expect(Object.keys(SCIENT_AWARENESS_DELIVERY).toSorted()).toEqual(builtInKinds);
+    expect(SCIENT_AWARENESS_DELIVERY.acpRegistry).toBe("unsupported-no-private-system-seam");
     expect(SCIENT_AWARENESS_DELIVERY.antigravity).toBe("unsupported-no-private-system-seam");
     expect(SCIENT_AWARENESS_DELIVERY.cursor).toBe("unsupported-no-private-system-seam");
     // Oh My Pi uses Pi's session-local extension hook, appended to its string[] prompt.

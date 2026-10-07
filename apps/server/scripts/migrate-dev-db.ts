@@ -5,7 +5,7 @@
  * ~/.t3 database, then run this checkout's migrations against it.
  *
  * `vp run migrate-dev-db` from a worktree:
- *   1. Nukes `<worktree>/.t3/userdata/state.sqlite`.
+ *   1. Nukes `<worktree>/.t3/userdata/statev2.sqlite`.
  *   2. Snapshots the real db (read-only VACUUM INTO) and prunes it to the
  *      most recently updated projects and, per project, the most recent
  *      threads that have fully stopped. Working, settled, and monitored
@@ -373,7 +373,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     return yield* new MigrateDevDbNotInWorktreeError();
   }
   const stateDir = path.join(baseDir, "userdata");
-  const databasePath = path.join(stateDir, "state.sqlite");
+  const databasePath = path.join(stateDir, "statev2.sqlite");
   const snapshotPath = `${databasePath}.migrate-dev-db-tmp`;
 
   if (!(yield* fs.exists(sourcePath))) {
@@ -424,6 +424,21 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     }).pipe(
       Effect.provide(NodeSqliteClient.layer({ filename: sourcePath, readonly: true })),
       wrapPhase("snapshot", sourcePath),
+    );
+
+    // Check the copied ledger BEFORE migrating. The migration layer detects a
+    // slot collision too, but it reports it as an opaque MigrationError message;
+    // running our own check first keeps the structured slot/codeName/appliedName
+    // the CLI and its tests depend on. The snapshot is already a copy, so an
+    // input collision aborts here without touching the source or the worktree db.
+    yield* verifyMigrationSlots().pipe(
+      Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
+      Effect.catchTags({
+        SqlError: (cause) =>
+          Effect.fail(
+            new MigrateDevDbPhaseError({ phase: "verify", databasePath: snapshotPath, cause }),
+          ),
+      }),
     );
 
     // Migrate before pruning: a source older than this checkout would

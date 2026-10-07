@@ -1,7 +1,12 @@
+import type { EnvironmentId } from "@t3tools/contracts";
 import { MessageSquareDashedIcon, SquarePenIcon } from "lucide-react";
-import { useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { SidebarMenuButton } from "../../components/ui/sidebar";
+import { stackedThreadToast, toastManager } from "../../components/ui/toast";
+import type { useHandleNewThread } from "../../hooks/useHandleNewThread";
+import type { useScratchProject } from "../../hooks/useScratchProject";
+import { startNewThreadFromContext } from "../../lib/chatThreadActions";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 
 /**
@@ -99,4 +104,61 @@ export function SidebarNewThreadRow(props: {
       </div>
     </div>
   );
+}
+
+/**
+ * The New thread row's actions. Shift+click starts straight in the current
+ * project, skipping the picker; the separate button starts without a project.
+ */
+export function useSidebarNewThreadRowActions(input: {
+  readonly handleNewThreadClick: () => void;
+  readonly isMobile: boolean;
+  readonly setOpenMobile: (open: boolean) => void;
+  readonly newThreadContext: ReturnType<typeof useHandleNewThread>;
+  readonly projectGroupCount: number;
+  readonly scratchTargetEnvironmentId: EnvironmentId | null;
+  readonly startScratchThread: ReturnType<typeof useScratchProject>["startScratchThread"];
+}) {
+  const {
+    handleNewThreadClick,
+    isMobile,
+    setOpenMobile,
+    newThreadContext,
+    projectGroupCount,
+    scratchTargetEnvironmentId,
+    startScratchThread,
+  } = input;
+  const handleNewThreadRowClick = useCallback(
+    (event: { readonly shiftKey: boolean }) => {
+      if (!event.shiftKey || projectGroupCount === 0) {
+        handleNewThreadClick();
+        return;
+      }
+      if (isMobile) setOpenMobile(false);
+      void startNewThreadFromContext({
+        activeDraftThread: newThreadContext.activeDraftThread,
+        activeThread: newThreadContext.activeThread ?? undefined,
+        defaultProjectRef: newThreadContext.defaultProjectRef,
+        handleNewThread: newThreadContext.handleNewThread,
+      });
+    },
+    [handleNewThreadClick, isMobile, newThreadContext, projectGroupCount, setOpenMobile],
+  );
+
+  const handleNewWithoutProject = useCallback(async () => {
+    if (scratchTargetEnvironmentId === null) return;
+    if (isMobile) setOpenMobile(false);
+    try {
+      await startScratchThread(scratchTargetEnvironmentId);
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not start without a project",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    }
+  }, [isMobile, scratchTargetEnvironmentId, setOpenMobile, startScratchThread]);
+  return { handleNewThreadRowClick, handleNewWithoutProject };
 }

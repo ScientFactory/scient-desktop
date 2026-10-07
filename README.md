@@ -27,37 +27,22 @@ separate from production.
 
 ## Scient persistence
 
-Scient owns a versioned SQLite migration runner
-(`apps/server/src/orchestration/scient-fork/scientMigrator.ts`). It runs four
-ordered, transactional migrations for Scient's active fork lineage and
-normalizes legacy provider modes to `transcript-bootstrap`. Its ledger is the
-separate `scient_schema_migrations` table; the inherited T3
-`effect_sql_migrations` ledger and numbering are never modified.
+Scient's native migration entry point is
+[`orchestration-v2/scient-fork/schema.ts`](apps/server/src/orchestration-v2/scient-fork/schema.ts),
+which exports the versioned
+[`scientMigrator.ts`](apps/server/src/orchestration-v2/scient-fork/scientMigrator.ts) runner.
+Its ordered, transactional migrations use the separate `scient_schema_migrations` ledger;
+they never consume or renumber the inherited T3 `effect_sql_migrations` ledger.
+Immutable historical migrations remain compatibility owners, not live execution authorities.
 
-Existing databases remain compatible: legacy `applied_at` ledger timestamps are
-reconciled into `created_at` without losing IDs, names, or timestamps, and
-physical compatibility columns remain queryable with their data. Legacy
-lineage rows are normalized in place with safe defaults and fail-closed
-validation. Migration 4 is an additive compatibility repair for development
-databases that already recorded migration 3: it upgrades the quarantine
-evidence schema and removes decoder-invalid recovery rows by SQLite row ID,
-including rows with null or blank thread IDs. Valid lineage remains active,
-and pending, recovery, terminal state, restart, and retry behavior is
-preserved. The finalized persistence design and evidence are documented in
-[the Scient fork divergence record](docs/internals/scient-fork-divergence.md).
+V2 seeds its database from the original V1 database once, then reads retained historical facts
+through import/recovery services. Current forks use V2 events, projections and outbox provisioning,
+not the retired V1 lineage reactor. See
+[legacy migration and recovery](docs/internals/legacy-orchestration-migration.md) and
+[Scient fork architecture](docs/internals/scient-fork-divergence.md) for these boundaries.
 
-Focused validation for this persistence work:
-
-```bash
-pnpm exec vp test run \
-  apps/server/src/orchestration/scient-fork/schema.test.ts \
-  apps/server/src/orchestration/scient-fork/crossArea.test.ts \
-  apps/server/src/orchestration/scient-fork/crossAreaPR15.test.ts
-pnpm exec vp fmt --check
-pnpm exec vp lint --report-unused-disable-directives
-pnpm run typecheck
-git diff --check
-```
+Use the maintained [development and verification guidance](docs/operations/development.md) and
+[agent verification rules](AGENTS.md#verification), rather than commands for removed V1 suites.
 
 The remainder of this README is inherited T3 product documentation. It remains
 useful for understanding the host platform but does not describe Scient's
@@ -135,6 +120,7 @@ Full docs live in [docs/](./docs). There's no docs site yet.
 - [Permission modes](./docs/user/permission-modes.md)
 - [Keyboard shortcuts](./docs/user/keybindings.md)
 - [Project settings](./docs/user/project-settings.md)
+- [Appearance preferences](./docs/user/appearance.md)
 - [Remote access from a phone or another machine](./docs/user/remote-access.md)
 - [Keeping app and server in sync](./docs/user/updating.md)
 - [Source control integrations](./docs/user/source-control.md)

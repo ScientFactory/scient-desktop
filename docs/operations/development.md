@@ -146,6 +146,15 @@ vp lint <files>
 vp run --filter <package> typecheck
 ```
 
+Shared replay-test support uses `*.testkit.ts` modules, keeping it outside product-surface
+brand checks. Preserve recorded inbound protocol frames; synthetic initialization
+expectations use Scient's shared client identity.
+
+Complete Electron's dependency installation before running concurrent desktop suites:
+`pnpm --filter @t3tools/desktop exec install-electron`.
+Electron's lazy installer otherwise allows multiple test workers to extract the same
+application directory at once.
+
 Use `vp run lint:mobile` for native mobile changes. Scient's final local verification gate is
 defined in [AGENTS.md](../../AGENTS.md#verification). Use focused checks while iterating, then run
 the complete gate after the candidate stabilizes. Record completed checks against the exact
