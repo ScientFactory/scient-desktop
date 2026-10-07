@@ -493,6 +493,23 @@ if ! t3_runtime_ready; then
   # once. A lock with no pid at all is a crash between mkdir and the pid
   # write; it is reclaimed after a short grace so a live owner has time to
   # publish.
+  #
+  # Reclaiming renames the lock away before deleting it, so exactly one
+  # waiter takes a given lock, and it then checks the lock it took. Between
+  # reading a dead owner's pid and acting on it, that owner may have released
+  # the lock and another launch may have created a fresh one at the same
+  # path; deleting the path then would destroy the live owner's lock and let
+  # two installs run at once. A taken lock whose pid no longer matches the
+  # observation is put back.
+  t3_reclaim_lock() {
+    T3_STALE_LOCK="$T3_LOCK.stale.$$"
+    mv "$T3_LOCK" "$T3_STALE_LOCK" 2>/dev/null || return 0
+    if [ "$(cat "$T3_STALE_LOCK/pid" 2>/dev/null || true)" = "$1" ]; then
+      rm -rf "$T3_STALE_LOCK"
+    elif ! mv "$T3_STALE_LOCK" "$T3_LOCK" 2>/dev/null; then
+      rm -rf "$T3_STALE_LOCK"
+    fi
+  }
   T3_LOCK_WAITED=0
   T3_LOCK_UNOWNED=0
   while ! mkdir "$T3_LOCK" 2>/dev/null; do
@@ -500,13 +517,14 @@ if ! t3_runtime_ready; then
     if [ -n "$T3_LOCK_OWNER" ]; then
       T3_LOCK_UNOWNED=0
       if ! kill -0 "$T3_LOCK_OWNER" 2>/dev/null; then
-        rm -rf "$T3_LOCK"
+        t3_reclaim_lock "$T3_LOCK_OWNER"
         continue
       fi
     else
       T3_LOCK_UNOWNED=$((T3_LOCK_UNOWNED + 1))
       if [ "$T3_LOCK_UNOWNED" -ge 5 ]; then
-        rm -rf "$T3_LOCK"
+        T3_LOCK_UNOWNED=0
+        t3_reclaim_lock ""
         continue
       fi
     fi
