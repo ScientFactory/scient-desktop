@@ -232,6 +232,7 @@ function HtmlPdfRelationObserver(props: { readonly relationId: string }) {
             lease.owner,
             useHtmlPdfSourceStore.getState().relations[latest.id]?.authorizedUrl ?? "",
             10_000,
+            lease.pageUrl,
           ),
         isNavigationTargetCurrent,
         isCurrent,

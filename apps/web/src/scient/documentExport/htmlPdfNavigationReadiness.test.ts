@@ -26,6 +26,81 @@ describe("linked document renderer readiness", () => {
       waitForNavigationReadiness(threadRef, tabId, runtimeTabId, "server", url, 100),
     ).resolves.toBeUndefined();
   });
+  it("waits for the renewed page when the navigation reply precedes its status subscription", async () => {
+    const previousUrl = "https://remote.test/authorized/previous.html";
+    const previous = {
+      ...state(),
+      sessions: {
+        [tabId]: { runtime: "server", navStatus: { _tag: "Success", url: previousUrl } },
+      },
+    };
+    mocks.read.mockReturnValue(previous);
+    vi.useFakeTimers();
+    try {
+      let ready = false;
+      const pending = waitForNavigationReadiness(
+        threadRef,
+        tabId,
+        runtimeTabId,
+        "server",
+        url,
+        100,
+        previousUrl,
+      ).then(() => {
+        ready = true;
+      });
+      await vi.advanceTimersByTimeAsync(50);
+      expect(ready).toBe(false);
+      mocks.read.mockReturnValue(state());
+      await vi.advanceTimersByTimeAsync(50);
+      await pending;
+      expect(ready).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("times out without treating the old document as export-ready", async () => {
+    const previousUrl = "https://remote.test/authorized/previous.html";
+    mocks.read.mockReturnValue({
+      ...state(),
+      sessions: {
+        [tabId]: { runtime: "server", navStatus: { _tag: "Success", url: previousUrl } },
+      },
+    });
+    vi.useFakeTimers();
+    try {
+      const rejected = expect(
+        waitForNavigationReadiness(threadRef, tabId, runtimeTabId, "server", url, 100, previousUrl),
+      ).rejects.toThrow("did not finish loading");
+      await vi.advanceTimersByTimeAsync(150);
+      await rejected;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("rejects return to the old document after observing the requested navigation", async () => {
+    const previousUrl = "https://remote.test/authorized/previous.html";
+    mocks.read.mockReturnValue({
+      ...state(),
+      sessions: { [tabId]: { runtime: "server", navStatus: { _tag: "Loading", url } } },
+    });
+    vi.useFakeTimers();
+    try {
+      const rejected = expect(
+        waitForNavigationReadiness(threadRef, tabId, runtimeTabId, "server", url, 100, previousUrl),
+      ).rejects.toThrow("navigated elsewhere");
+      mocks.read.mockReturnValue({
+        ...state(),
+        sessions: {
+          [tabId]: { runtime: "server", navStatus: { _tag: "Success", url: previousUrl } },
+        },
+      });
+      await vi.advanceTimersByTimeAsync(50);
+      await rejected;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("still requires actual native webcontents to finish loading for the desktop owner", async () => {
     mocks.read.mockReturnValue({
       ...state("desktop"),

@@ -11,8 +11,10 @@ export async function waitForNavigationReadiness(
   owner: BrowserPdfExportOwner,
   expectedUrl: string,
   timeoutMs: number,
+  previousUrl?: string,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+  let observedNavigation = false;
   while (Date.now() <= deadline) {
     const state = readThreadPreviewState(threadRef);
     const session = state.sessions[tabId];
@@ -24,16 +26,24 @@ export async function waitForNavigationReadiness(
     }
     if (session.navStatus._tag === "LoadFailed")
       throw new Error("The HTML document failed to load.");
+    if (session.navStatus._tag === "Loading" && session.navStatus.url === expectedUrl)
+      observedNavigation = true;
     if (session.navStatus._tag === "Success") {
-      if (session.navStatus.url !== expectedUrl)
-        throw new Error("The HTML document navigated elsewhere during PDF update.");
-      const desktop = state.desktopByTabId[tabId];
-      if (
-        owner === "server"
-          ? session.runtime === "server"
-          : desktop?.hasWebContents && !desktop.loading
-      )
-        return;
+      if (session.navStatus.url !== expectedUrl) {
+        // The navigation command can finish before its status subscription
+        // delivers the new page. Only the captured old document may precede it.
+        if (observedNavigation || session.navStatus.url !== previousUrl)
+          throw new Error("The HTML document navigated elsewhere during PDF update.");
+      } else {
+        observedNavigation = true;
+        const desktop = state.desktopByTabId[tabId];
+        if (
+          owner === "server"
+            ? session.runtime === "server"
+            : desktop?.hasWebContents && !desktop.loading
+        )
+          return;
+      }
     }
     await new Promise<void>((resolve) => setTimeout(resolve, 50));
   }
