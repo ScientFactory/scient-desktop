@@ -17,15 +17,47 @@ answer keeps its latest content as the end. One rule,
 `readerAtReadingEnd`, decides being at the end for the end control, sending,
 navigation, saved positions and idle end keeping: at most the answer's last three
 lines hidden, in its own line height, never less than the inherited 40-pixel band.
-Preserve the existing first-message framing. Eligible sends, and queued prompts the server delivers (`queue:` ids) while
-the reader is at the end, reveal the prompt and the start of its response's latest
-message through `chat/useBoundedAnswerFollow.ts`: capped at the prompt's first line
+Send motion (Scient): the draft hero composer's move to the thread always animates
+(260ms, decelerating curve; `useDraftHeroMotion` in `chat/timelineEntranceMotion.ts`), not only
+with the opt-in panel animation setting; reduced motion skips it. A first prompt being placed is revealed top-down
+and fades in on the same curve (clip and opacity only, never a transform, so the reveal's
+measurements hold), and the "Working for" label carries the thinking traces' live shine (ActivityShimmerOverlay)
+for as long as the turn works; its line just appears
+(`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount). While an
+answer streams it is revealed as one flow (`chat/useStreamingBlockEntrance.ts`, `.streamed-reveal`):
+after a 1s buffer, lines appear top-down at ~4 lines/s (faster when >8 lines wait), at 65%, with
+the full tone one line behind, crossing blank space between blocks 5x faster; the answer is
+clipped to its revealed lines, so the follow scroll simply goes to the real end. The live
+"Thinking" row fades out (keeping its place) while the answer right above it is appearing
+(`useStreamingTextAppearing`). Revealed height is kept per message (bounded), so remounted
+rows continue rather than replay; a caught-up reveal rests until the answer's content or width
+changes. The timeline's working state (`chat/timelineWorkingState.ts`) is held back until a
+send's prompt is listed (the optimistic row, or a newer server user message than the dispatch
+started from), and stays on while that prompt's own V2 run prepares or starts (the dispatch is
+reset at admission; V2 reports that phase as connecting).
+Preserve the existing first-message framing. One controller in ChatView owns the send follow
+(`chat/responseFollow.ts`): eligible sends, and queued prompts the server delivers while the
+reader is at the end (V2's `queued_turn`/`promoted_queued_to_steer` input intent on the
+delivered prompt, which keeps its message id), start it; it settles from the V2 run answering
+that prompt (the run its message belongs to, so a promoted steer follows the run it went into,
+not its cancelled queue run), never from the thread looking busy. A prompt's response ends at the
+next prompt. It reveals the prompt and the start of its response's latest
+message through `chat/useBoundedAnswerFollow.ts` (for a later prompt, `followResponse`
+follows the whole response's end, traces and tools included, at a calmer pace): capped at the prompt's first line
 reaching the top margin, past it only to show a message pushed below the fold, never
 past that message's top. Scrolling up by any means (wheel, keys, touch, scrollbar)
-cancels pending placement and bounded following; scrolling down, clicks and selection do not. `onIsAtEndChange` reacts to
+cancels pending placement and bounded following; scrolling down, clicks and selection do not.
+While the reader scrolls toward the end (wheel, keys, touch, scrollbar drag), the follow never
+writes the scroll position (a write cancels the browser's smooth scroll in motion); it resumes
+from rest 250ms after their input stops. `onIsAtEndChange` reacts to
 transitions only. The existing Scroll to end button is a one-shot action with an
-unread badge counting responses, not a follow toggle. Do not add a second navigation button.
-Reading positions resolve by message/turn identity, load up to two pages of missing
+unread badge counting responses, not a follow toggle, and it ends the follow. Do not add a
+second navigation button. A reader who leaves while the follow is still going (saved as
+`followingPromptId`; never inferred from resting at the end) comes back to where the follow
+would be now for that saved prompt (`chat/liveFollowOffset.ts`): its response's end if it all
+fits, else the prompt at the top margin, or its latest message's start there if it would be below
+the screen; a later prompt (from another window) never moves it further. The follow then carries
+on while that prompt's run works. Reading positions resolve by message/turn identity, load up to two pages of missing
 history before falling back to a neighbor or the end, and
 survive same-window reloads; never restore an unrelated absolute pixel offset.
 Capture native scroll positions synchronously before Legend's deferred callbacks;

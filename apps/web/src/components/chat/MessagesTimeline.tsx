@@ -1,5 +1,16 @@
 import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
+// SCIENT-FORK:START — send motion, and the send follow ChatView owns (chat/responseFollow.ts).
+import { returnToLiveFollow } from "./liveFollowOffset";
+import type { TimelineResponseFollow } from "./responseFollow";
+import { ThinkingRowFade } from "./ThinkingRowFade";
+import {
+  type TimelineSendMotion,
+  usePromptEntrance,
+  useTimelineSendMotion,
+} from "./timelineEntranceMotion";
+import { useWorkingRowExit, useWorkingRowExitAnimation } from "./workingRowExit";
+// SCIENT-FORK:END
 import {
   timelineRowsKey,
   type RestingAtReadingEnd,
@@ -395,6 +406,9 @@ interface TimelineRowSharedState {
 
 interface TimelineRowActivityState {
   isWorking: boolean;
+  // SCIENT-FORK:START — send motion: the first prompt's entrance, Thinking's fade, the header's exit.
+  sendMotion: TimelineSendMotion;
+  // SCIENT-FORK:END
   isCompacting: boolean;
   isRevertingCheckpoint: boolean;
   activeTurnInProgress: boolean;
@@ -539,6 +553,9 @@ interface MessagesTimelineProps {
   contentInsetEndAdjustment: number;
   timelinePositioningPending?: boolean;
   readingFollowPromptId?: string | null;
+  // SCIENT-FORK:START — the send follow's lifecycle, owned by ChatView (chat/responseFollow.ts).
+  responseFollow?: TimelineResponseFollow;
+  // SCIENT-FORK:END
   onReleaseUnusedAnchor?: () => void;
   onIsAtEndChange: (isAtEnd: boolean) => void;
   onUnreadBelowChange?: (count: number) => void;
@@ -632,6 +649,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   contentInsetEndAdjustment,
   timelinePositioningPending = false,
   readingFollowPromptId = null,
+  // SCIENT-FORK:START — the send follow's lifecycle.
+  responseFollow,
+  // SCIENT-FORK:END
   onReleaseUnusedAnchor,
   onIsAtEndChange,
   onUnreadBelowChange,
@@ -947,23 +967,37 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     subagentWorkflowIds,
     worktreeSetup,
   ]);
-  const rows = useStableRows(rawRows, listIdentityKey);
+  // SCIENT-FORK:START — a finished turn's working header closes its space (chat/workingRowExit.ts).
+  const stableRows = useStableRows(rawRows, listIdentityKey);
+  const { rows, exit: workingRowExit } = useWorkingRowExit(stableRows, listIdentityKey);
+  // SCIENT-FORK:END
   // A finished reveal (revealed or cancelled) no longer holds off idle end pinning.
   const [finishedRevealPromptId, setFinishedRevealPromptId] = useState<string | null>(null);
-  const onRevealFinished = useCallback((promptId: string) => {
-    setFinishedRevealPromptId(promptId);
-  }, []);
+  // SCIENT-FORK:START — ChatView owns the follow; a finished one ends there too.
+  const onFollowFinished = responseFollow?.onFinished;
+  const onResumeFollow = responseFollow?.onResume;
+  const onRevealFinished = useCallback(
+    (promptId: string) => {
+      setFinishedRevealPromptId(promptId);
+      onFollowFinished?.(promptId);
+    },
+    [onFollowFinished],
+  );
+  // SCIENT-FORK:END
   const revealActive =
     readingFollowPromptId !== null && finishedRevealPromptId !== readingFollowPromptId;
-  useBoundedAnswerFollow({
+  // SCIENT-FORK:START — the follow settles with the prompt's own run, and says what it follows.
+  const followingPromptId = useBoundedAnswerFollow({
     listRef,
     rows,
     promptMessageId: readingFollowPromptId,
-    responseRunning: isWorking,
+    responseSettled: responseFollow ? responseFollow.settled : !isWorking,
     suspended: timelinePositioningPending || restoringThreadPosition || positionHistoryLoading,
     composerInset: contentInsetEndAdjustment,
+    followResponse: responseFollow?.followsResponse ?? false,
     onFinished: onRevealFinished,
   });
+  // SCIENT-FORK:END
 
   // Run status/timestamps churn on every stream event; the shared row context
   // must not change with them or every timeline row re-renders per event.
@@ -1071,6 +1105,27 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       viewport?.ownerDocument.removeEventListener("keydown", onScrollKey);
     };
     if (positionHistoryLoading || waitingForReadingHistory) return cleanup;
+    // SCIENT-FORK:START — left while following: back to where the follow is now (chat/liveFollowOffset.ts).
+    const followingPromptId = position?.followingPromptId;
+    if (followingPromptId) {
+      returnToLiveFollow({
+        list,
+        rows,
+        composerInset: contentInsetEndAdjustment,
+        promptId: followingPromptId,
+        cancelled: () => cancelled,
+        nextFrame: (step) => {
+          settleFrame = requestAnimationFrame(step);
+        },
+        done: () => {
+          setPositionedThreadKey(listIdentityKey);
+          // The follow carries on from here while the prompt's run still works.
+          onResumeFollow?.(followingPromptId);
+        },
+      });
+      return cleanup;
+    }
+    // SCIENT-FORK:END
     const scrolling =
       position && index >= 0
         ? list.scrollToIndex({
@@ -1166,6 +1221,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     waitingForReadingHistory,
     positionHistoryLoading,
     readingListLoaded,
+    // SCIENT-FORK:START — the return to a follow.
+    contentInsetEndAdjustment,
+    onResumeFollow,
+    // SCIENT-FORK:END
   ]);
 
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
@@ -1322,6 +1381,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     timelinePositioningPending,
     runningRunId,
     turnUnfinished,
+    followingPromptId,
     rows,
     listIdentityKey,
     anchorMessageId,
@@ -1673,9 +1733,20 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     latestRun?.startedAt != null
       ? worktreeSetup
       : null;
+  // SCIENT-FORK:START — send motion (chat/timelineEntranceMotion.ts).
+  const sendMotion = useTimelineSendMotion({
+    rows,
+    timelinePositioningPending,
+    anchorMessageId,
+    workingRowExit,
+  });
+  // SCIENT-FORK:END
   const activityState = useMemo<TimelineRowActivityState>(
     () => ({
       isWorking,
+      // SCIENT-FORK:START — send motion.
+      sendMotion,
+      // SCIENT-FORK:END
       isCompacting: compactionAwaitingRow,
       isRevertingCheckpoint,
       backgroundWorktreeSetup,
@@ -1688,6 +1759,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       awaitingUser,
       compactionAwaitingRow,
       backgroundWorktreeSetup,
+      // SCIENT-FORK:START — send motion.
+      sendMotion,
+      // SCIENT-FORK:END
       activeTurnInProgress,
       isPreparingWorktree,
       isRevertingCheckpoint,
@@ -2439,6 +2513,10 @@ function MessageAuthorHeading({ children }: { children: string }) {
 
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
+  // SCIENT-FORK:START — a thread's first prompt enters as the composer lands.
+  const { sendMotion } = use(TimelineRowActivityCtx);
+  const entranceRef = usePromptEntrance(row.message.id, sendMotion.enteringPromptId);
+  // SCIENT-FORK:END
   const { onImageExpand, onFileOpen } = ctx;
   const senderThreadId = row.message.senderThreadId;
   const resources = useMemo(
@@ -2596,7 +2674,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
 
   return (
-    <div className="group flex flex-col items-end gap-1">
+    // SCIENT-FORK:START — the first prompt's entrance plays on its bubble.
+    <div ref={entranceRef} className="group flex flex-col items-end gap-1">
+      {/* SCIENT-FORK:END */}
       {userMessage.isAutomation ? (
         <p
           className="me-1 text-2xs text-muted-foreground/70"
@@ -3986,7 +4066,13 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
     use(TimelineRowActivityCtx);
   // One span for every label so the setup-to-working handoff swaps text in
   // place instead of remounting the row.
-  const shimmer = isPreparingWorktree || isCompacting;
+  // SCIENT-FORK:START — the label carries the thinking traces' live shine while the turn works;
+  // a finished turn's header fades and closes its space (chat/workingRowExit.ts).
+  const { sendMotion } = use(TimelineRowActivityCtx);
+  const exiting = sendMotion.workingRowExit.exiting;
+  const exitRef = useWorkingRowExitAnimation(sendMotion.workingRowExit);
+  const shimmer = !exiting;
+  // SCIENT-FORK:END
   const label = isPreparingWorktree ? (
     "Setting up worktree…"
   ) : isCompacting ? (
@@ -3999,7 +4085,12 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
     "Working..."
   );
   return (
-    <div className="border-b border-border/60 pb-2 pt-1">
+    // SCIENT-FORK:START — the exit plays on the header's root.
+    <div
+      ref={exitRef}
+      className={cn("border-b border-border/60 pb-2 pt-1", exiting && "overflow-hidden")}
+    >
+      {/* SCIENT-FORK:END */}
       <div className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
         <span
           ref={shimmer ? observeVisibleAnimation : undefined}
@@ -4070,21 +4161,31 @@ function CompactingLabel() {
 function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
   const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
+  // SCIENT-FORK:START — Thinking steps aside while the answer above it appears (chat/ThinkingRowFade.tsx).
+  const { sendMotion } = use(TimelineRowActivityCtx);
   // Reserve the activity row during setup so the handoff keeps the same height.
-  if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
-  const activity = <LiveActivityRow label="Thinking" iconName="brain" active shimmer />;
+  const activity =
+    isPreparingWorktree || isCompacting ? (
+      <WorkLogRow label="" />
+    ) : (
+      <LiveActivityRow label="Thinking" iconName="brain" active shimmer />
+    );
   const { groupId } = row;
-  if (groupId === undefined) return activity;
-  return (
-    <button
-      type="button"
-      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-      aria-expanded={row.expanded === true}
-      onClick={() => ctx.onToggleWorkGroup(groupId, row.id)}
-    >
-      {activity}
-    </button>
-  );
+  const content =
+    groupId === undefined || isPreparingWorktree || isCompacting ? (
+      activity
+    ) : (
+      <button
+        type="button"
+        className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        aria-expanded={row.expanded === true}
+        onClick={() => ctx.onToggleWorkGroup(groupId, row.id)}
+      >
+        {activity}
+      </button>
+    );
+  return <ThinkingRowFade answerId={sendMotion.thinkingFollowsAnswerId}>{content}</ThinkingRowFade>;
+  // SCIENT-FORK:END
 }
 
 function LiveActivityRow({

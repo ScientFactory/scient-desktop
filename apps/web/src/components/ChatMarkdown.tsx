@@ -86,6 +86,9 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import { parseComposerCitationHref } from "@t3tools/shared/composerCitations";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
+// SCIENT-FORK:START — a streaming answer is revealed line by line.
+import { useStreamingBlockEntrance } from "./chat/useStreamingBlockEntrance";
+// SCIENT-FORK:END
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { parseThreadLinkHref, THREAD_LINK_PROTOCOL } from "@t3tools/shared/threadLinks";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
@@ -2233,6 +2236,9 @@ function useChatMarkdownState({
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
   const markdownRef = useRef<HTMLDivElement>(null);
+  // SCIENT-FORK:START — a streaming answer is revealed line by line (chat/useStreamingBlockEntrance.ts).
+  useStreamingBlockEntrance(markdownRef, isStreaming, messageId);
+  // SCIENT-FORK:END
   const expandMedia = onImageExpand ?? setLocalMediaPreview;
   const mediaRequestId = useRef(0);
   useEffect(() => {
