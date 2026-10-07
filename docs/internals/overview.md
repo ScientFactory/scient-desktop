@@ -55,8 +55,9 @@ after an environment downgrade.
 
 [`ws.ts`][ws] serves the group. `websocketRpcRouteLayer` mounts `GET /ws`, authenticates the upgrade
 through `EnvironmentAuth.authenticateWebSocketUpgrade`, then hands the socket to
-`RpcServer.toHttpEffectWebsocket`. Authorization is per method: `RPC_REQUIRED_SCOPE` maps each method
-to a scope, and `authorizeEffect`/`authorizeStream` enforce it. Holding a valid socket is not
+the protocol created by `RpcServer.makeProtocolWithHttpEffectWebsocket` and the server from
+`RpcServer.make`. `RpcAuthorization.layer` enforces each method's declared scope;
+`rpcInstrumentationLayer` retains invocation instrumentation. Holding a valid socket is not
 authorization to call everything on it. See [environment-auth.md](./environment-auth.md).
 
 On the client, [`session.ts`][session] opens the socket and builds the typed client.

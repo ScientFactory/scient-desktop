@@ -243,7 +243,7 @@ Each delegated review round uses a new `delegate_task` call with the original br
 prior findings, responses, and unresolved objections. Track each round by its own `taskId` and use
 a distinct `clientRequestId` per round, stable across retries of that round.
 `childThreadId` is backing storage, not a target for another review round through
-`t3_thread_send`. Ordinary thread messaging remains available for user-requested
+`scient_thread_send`. Ordinary thread messaging remains available for user-requested
 conversations; it does not reopen a completed task. There is no task-level follow-up
 API for preserving the same reviewer session.
 
@@ -349,30 +349,34 @@ bounded and offset-paginated. Deleted threads are never listed.
 
 ### `scient_thread_read`
 
-Reads the durable state, recent runs, and visible timeline of any thread in
-the environment by thread ID. A deleted thread returns `thread_not_found`. The
-default `messages` view returns user messages, assistant
-messages, and proposed plans. The `activity` view also returns summarized tool,
-reasoning, checkpoint, handoff, and runtime-request items. Large item text is
-bounded and reports whether it was truncated. `afterPosition` and
-`nextPosition` support incremental reads.
+Reads a thread's durable summary and visible timeline within the calling
+thread's project. A missing or deleted target returns `thread_not_found`;
+a target in another project returns `thread_outside_project`.
 
-Thread and message results include required `createdBy` and `creationSource`
-provenance. MCP-created threads and user-role messages use `createdBy: "agent"`
-and `creationSource: "mcp"`; provider output uses `creationSource: "provider"`.
-Actor and ingress are separate so agent-authored user-role messages remain
-distinguishable from human-authored messages.
+The default `messages` view returns user and assistant messages and proposed
+plans. The `activity` view includes tool, reasoning, checkpoint, handoff and
+runtime-request items. The result contains `thread`, `items`, `nextPosition`
+and `hasMore`. `afterPosition` pages through history; `itemId`, `textOffset`
+and `maxCharsPerItem` allow reading an individual item's remaining text.
+Truncated text reports `textTruncated` and `nextTextOffset`.
 
-List, read, and launch results include `link`, a Markdown link of the form
-`[title](t3-thread://v1/<environmentId>/<threadId>)` that clients open as the
-thread. List and read results also report `snoozed` and `snoozedUntil`, and
-`t3_thread_list` filters on `snoozed`. The server's `isSnoozed` follows the
-client's `effectiveSnoozed`, so agents and the sidebar agree: a snoozed thread
-wakes early when it has a pending request, fails, or completes after the snooze.
+This preserved Scient history reader is distinct from upstream's native
+thread-management read operation. Do not assume native `recentRuns`, thread
+links, provenance or snooze fields are part of this history-reader response.
+
+### `scient_thread_inspect`
+
+Inspects durable state, recent runs and a paginated timeline through the
+orchestration service. Provider-thread callers may inspect their project or a
+thread explicitly attached by the user as context. External clients use their
+approved environment authority. Reading a complete terminal result from a
+direct app-owned child also acknowledges that child's completion delivery.
+This is separate from the narrow `scient_thread_read` history reader.
 
 ### `scient_thread_update`
 
-Updates metadata for the calling thread or any other thread in the environment.
+Updates metadata for the calling thread or another thread in its project.
+External clients use their declared environment authority.
 The typed actions are `rename`, `regenerate_title`, `link_pull_request`, and
 `unlink_pull_request`. A link input supplies the repository, number, and URL;
 the server records the target thread's project ID. Branch and workspace changes
@@ -381,12 +385,13 @@ are outside this tool.
 The result includes the command ID and durable event sequence together with the
 resultant title, title-regeneration marker, and linked pull request. Reusing a
 `clientRequestId` for the same action and thread replays the same command
-receipt. Thread list and read results expose the linked pull request, and thread
-detail also exposes an in-flight title regeneration.
+receipt. Native thread-management results expose linked pull requests and in-flight
+title regeneration; the Scient history-reader response has its own schema.
 
 ### `scient_thread_send`
 
-Sends a message to any ordinary or delegated thread in the environment:
+Sends a message to an ordinary or delegated thread within the calling
+thread's project. External clients use their declared environment authority:
 
 - `auto` starts an idle thread, steers a fully active turn, or queues behind a
   turn that is not yet steerable;
@@ -453,8 +458,10 @@ results use the latest assistant content from the final work turn.
   mode. It may not escalate privileges.
 - A child interaction mode may stay equal to or narrow from `default` to
   `plan`. It may not escalate from `plan` to `default`.
-- Thread tools take any thread in the environment as a target. For a thread
-  caller, list and search cover one project: its own unless `projectId` is given.
+- Thread credentials retain the calling project's boundary for reading,
+  sending and metadata updates. External clients use their declared
+  environment authority; they do not inherit a fabricated thread identity.
+  List and search remain project-scoped.
 - A tool that changes another thread needs the calling thread's live run, and
   the target's runtime and interaction modes may not be broader than the
   caller's. This is the same privilege ceiling as child creation.
