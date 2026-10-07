@@ -66,6 +66,7 @@ function render(
   items: ScientThreadQueueItem[] = [],
   serverMessages: OptimisticUserMessage[] = [],
   threadKey = "host:thread",
+  attachmentUrls?: ReadonlyMap<string, string>,
 ) {
   if (!host) {
     host = document.createElement("div");
@@ -96,8 +97,10 @@ function render(
             id: entry.id,
             text: entry.text,
             attachmentCount: entry.attachments?.length ?? 0,
+            imageCount: entry.attachments?.filter((file) => file.type === "image").length ?? 0,
             accepted: entry.queueAdmission?.accepted === true,
           }))}
+          {...(attachmentUrls === undefined ? {} : { attachmentUrls })}
           error={null}
           threadBusy
           supportsExplicitSend
@@ -198,15 +201,22 @@ it("keeps the row's text and controls in place when the queued row replaces it",
     text: "Existing",
     attachments: [],
   };
-  const settled = { ...message, attachments: [] };
-  const queued = { ...item, attachments: [] };
+  // Both carry the same image: the pending preview and the queued row's attachment.
+  const settled = message;
+  const queued: ScientThreadQueueItem = {
+    ...item,
+    attachments: item.attachments.map((attachment) => ({ ...attachment, id: "plot" })),
+  };
+  const unresolved = new Map<string, string>();
+  const resolved = new Map([["plot", "data:image/png;base64,AA=="]]);
   const box = (selector: string) => {
     const rect = host!.querySelector(selector)!.getBoundingClientRect();
     return { left: rect.left, right: rect.right, top: rect.top, height: rect.height };
   };
   const textOf = (row: string) => `${row} span[dir="auto"]`;
 
-  render(settleQueueAdmissionPreview([settled], settled.id, true), [second]);
+  const accepted = settleQueueAdmissionPreview([settled], settled.id, true);
+  render(accepted, [second], [], "host:thread", unresolved);
   const pendingRow = '[data-testid="thread-queue-pending-pending"]';
   const before = {
     existing: box(textOf('[data-testid="thread-queue-row-qitem_existing"]')),
@@ -214,10 +224,16 @@ it("keeps the row's text and controls in place when the queued row replaces it",
     text: box(textOf(pendingRow)),
   };
 
-  render(settleQueueAdmissionPreview([settled], settled.id, true), [second, queued]);
+  expect(host!.querySelectorAll(`${pendingRow} [data-thumbnail-slot]`)).toHaveLength(1);
+
+  // The queued row arrives before its image URL resolves, then the URL resolves.
   const queuedRow = '[data-testid="thread-queue-row-qitem_server"]';
-  expect(host!.querySelector(pendingRow)).toBeNull();
-  expect(box(textOf('[data-testid="thread-queue-row-qitem_existing"]'))).toEqual(before.existing);
-  expect(box(queuedRow)).toEqual(before.row);
-  expect(box(textOf(queuedRow))).toEqual(before.text);
+  for (const urls of [unresolved, resolved]) {
+    render(accepted, [second, queued], [], "host:thread", urls);
+    expect(host!.querySelector(pendingRow)).toBeNull();
+    expect(box(textOf('[data-testid="thread-queue-row-qitem_existing"]'))).toEqual(before.existing);
+    expect(box(queuedRow)).toEqual(before.row);
+    expect(box(textOf(queuedRow))).toEqual(before.text);
+  }
+  expect(host!.querySelectorAll(`${queuedRow} img`)).toHaveLength(1);
 });

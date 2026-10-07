@@ -117,6 +117,7 @@ export function QueuedRunsControl({
       id: message.id,
       text: message.text,
       attachmentCount: message.attachments?.length ?? 0,
+      imageCount: message.attachments?.filter((item) => item.type === "image").length ?? 0,
       accepted: message.queueAdmission?.accepted === true,
     }));
   const perform = async (

@@ -31,6 +31,8 @@ export interface PendingQueueMessage {
   readonly id: string;
   readonly text: string;
   readonly attachmentCount: number;
+  /** Image attachments, which the queued row shows as thumbnails. */
+  readonly imageCount?: number;
   readonly accepted: boolean;
 }
 
@@ -68,6 +70,17 @@ function GripPlaceholder() {
     <span aria-hidden="true" className="invisible shrink-0">
       <GripVertical className="size-3" />
     </span>
+  );
+}
+
+/** A thumbnail's place before its image URL is known, sized like the thumbnail. */
+function ThumbnailSlot() {
+  return (
+    <span
+      aria-hidden="true"
+      data-thumbnail-slot=""
+      className="size-4 shrink-0 rounded border border-border/70 bg-muted"
+    />
   );
 }
 
@@ -129,20 +142,26 @@ function QueueRow<I extends QueueStripItem>(props: {
               {props.item.attachments.length}
             </span>
           )}
-          {props.item.attachments
-            .filter((attachment) => attachment.type === "image")
-            .map((attachment) => {
-              const url =
-                attachment.id === undefined ? undefined : props.attachmentUrls?.get(attachment.id);
-              return url ? (
-                <img
-                  key={attachment.id}
-                  src={url}
-                  alt={attachment.name}
-                  className="size-4 shrink-0 rounded border border-border/70 object-cover"
-                />
-              ) : null;
-            })}
+          {props.attachmentUrls !== undefined &&
+            props.item.attachments
+              .filter((attachment) => attachment.type === "image")
+              .map((attachment, index) => {
+                const url =
+                  attachment.id === undefined
+                    ? undefined
+                    : props.attachmentUrls?.get(attachment.id);
+                // Keep the thumbnail's place while its URL resolves, so the text does not move.
+                return url ? (
+                  <img
+                    key={attachment.id ?? index}
+                    src={url}
+                    alt={attachment.name}
+                    className="size-4 shrink-0 rounded border border-border/70 object-cover"
+                  />
+                ) : (
+                  <ThumbnailSlot key={attachment.id ?? index} />
+                );
+              })}
           <span dir="auto" className="min-w-0 flex-1 truncate text-sm text-foreground">
             {props.editing ? <span className="sr-only">Editing queued message: </span> : null}
             {composerCitationsToPlainText(props.item.text)}
@@ -226,6 +245,7 @@ function PendingQueueRow(props: {
   readonly message: PendingQueueMessage;
   readonly gripSlot: boolean;
   readonly steerSlot: boolean;
+  readonly thumbnailSlots: boolean;
 }) {
   const { message } = props;
   const status = useDelayedStatus(message.id, message.accepted ? null : "Queuing…", {
@@ -247,6 +267,10 @@ function PendingQueueRow(props: {
           {message.attachmentCount}
         </span>
       )}
+      {props.thumbnailSlots &&
+        Array.from({ length: message.imageCount ?? 0 }, (_, index) => (
+          <ThumbnailSlot key={index} />
+        ))}
       <span dir="auto" className="min-w-0 flex-1 truncate text-sm text-foreground">
         {composerCitationsToPlainText(message.text)}
       </span>
@@ -465,6 +489,7 @@ export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueIte
               message={message}
               gripSlot={gripSlot}
               steerSlot={props.threadBusy && props.canSteer !== false}
+              thumbnailSlots={props.attachmentUrls !== undefined}
             />
           ))}
         </div>
