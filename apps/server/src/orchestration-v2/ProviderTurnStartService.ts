@@ -42,6 +42,9 @@ import {
 // SCIENT-FORK:START — a pending start keeps its session out of idle release.
 import { reserveSessionForStartup } from "./scient-provider/StartupSessionHold.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START provider-enabled-at-open
+import { isProviderInstanceDisabledOpen } from "./scient-provider/ProviderInstanceEnabled.ts";
+// SCIENT-FORK:END provider-enabled-at-open
 // SCIENT-FORK:START — a Stop before native acceptance declines and captures the start.
 import {
   pendingStartCancellation,
@@ -679,6 +682,9 @@ export const layer: Layer.Layer<
           : providerSessions.open({
               threadId: projection.thread.id,
               providerSessionId,
+              // SCIENT-FORK:START provider-enabled-at-open
+              requireEnabledInstance: true,
+              // SCIENT-FORK:END provider-enabled-at-open
               modelSelection: run.modelSelection,
               runtimePolicy: resolvedRuntimePolicy,
               ...(existingSessionProjection === undefined
@@ -704,6 +710,19 @@ export const layer: Layer.Layer<
         settleStartFailure,
       });
       // SCIENT-FORK:END
+      // SCIENT-FORK:START provider-enabled-at-open
+      if (
+        sessionResult._tag === "Failure" &&
+        isProviderInstanceDisabledOpen(sessionResult.failure)
+      ) {
+        yield* settleStartFailure({
+          signal: "provider-instance-disabled",
+          title: "Provider is turned off",
+          error: sessionResult.failure,
+        });
+        return;
+      }
+      // SCIENT-FORK:END provider-enabled-at-open
       if (sessionResult._tag === "Failure") {
         // A disposed buffered generation cannot be recreated by retrying session startup.
         if (

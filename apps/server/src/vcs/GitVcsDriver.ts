@@ -857,7 +857,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
       yield* Effect.gen(function* () {
         // SCIENT-FORK:START — stage objects in a scoped bare repository.
-        const { stagingRepo, stagedEnv } = yield* prepareCheckpointStagingRepo({
+        const { stagingRepo, stagedEnv, objectFormat } = yield* prepareCheckpointStagingRepo({
           execute,
           fileSystem,
           path,
@@ -1103,11 +1103,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         // SCIENT-FORK:START — publish the staged commit into the user's repository.
         yield* publishStagedCheckpoint({
           execute,
+          vcsProcess,
+          fileSystem,
+          path,
           operation,
           cwd: input.cwd,
+          gitCommonDir,
           stagingRepo,
           stagedEnv,
           cleanGitEnv,
+          objectFormat,
           durableWrite,
           commitOid,
           checkpointRef: input.checkpointRef,

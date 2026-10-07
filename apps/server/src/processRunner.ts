@@ -25,6 +25,8 @@ export interface ProcessRunInput {
   readonly timeout?: Duration.Input | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly stdin?: string | undefined;
+  /** Binary stdin, for input that is not text (for example a Git pack). Ignored when `stdin` is set. */
+  readonly stdinBytes?: Uint8Array | undefined;
   /** Receives every stdout chunk, including bytes beyond the buffered output limit. */
   readonly onStdoutChunk?: ((chunk: Uint8Array) => void) | undefined;
   readonly maxOutputBytes?: number | undefined;
@@ -333,12 +335,15 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
       ),
     );
 
-  const stdin = input.stdin;
+  const stdin = input.stdin ?? input.stdinBytes;
   const onStdoutChunk = input.onStdoutChunk;
   const writeStdin =
     stdin === undefined
       ? Effect.void
-      : Stream.run(Stream.encodeText(Stream.make(stdin)), child.stdin).pipe(
+      : Stream.run(
+          typeof stdin === "string" ? Stream.encodeText(Stream.make(stdin)) : Stream.make(stdin),
+          child.stdin,
+        ).pipe(
           Effect.mapError(
             (cause) =>
               new ProcessStdinError({
@@ -346,7 +351,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
                 argumentCount: input.args.length,
                 cwd: input.cwd,
                 spawnCwd: input.spawnCwd,
-                stdinBytes: Buffer.byteLength(stdin),
+                stdinBytes: typeof stdin === "string" ? Buffer.byteLength(stdin) : stdin.byteLength,
                 cause,
               }),
           ),

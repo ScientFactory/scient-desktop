@@ -19,6 +19,9 @@ import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+// SCIENT-FORK:START checkpoint-capture-final-attempt
+import { settleUncapturedRunOnFinalAttempt } from "./scient-fork/CheckpointCaptureFinalAttempt.ts";
+// SCIENT-FORK:END checkpoint-capture-final-attempt
 
 export class CheckpointCaptureExecutionError extends Schema.TaggedError<CheckpointCaptureExecutionError>()(
   "CheckpointCaptureExecutionError",
@@ -242,6 +245,12 @@ export const layer: Layer.Layer<
     return CheckpointCaptureServiceV2.of({
       execute: (input) =>
         execute(input).pipe(
+          // SCIENT-FORK:START checkpoint-capture-final-attempt
+          settleUncapturedRunOnFinalAttempt(
+            { eventSink, ids, projections, makeCheckpointTurnItem },
+            input,
+          ),
+          // SCIENT-FORK:END checkpoint-capture-final-attempt
           Effect.mapError((cause) =>
             isCheckpointCaptureExecutionError(cause)
               ? cause

@@ -26,6 +26,10 @@ import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+// SCIENT-FORK:START checkpoint-capture-lane
+import { checkpointCaptureLaneBarrier } from "./scient-fork/CheckpointCaptureLane.ts";
+// SCIENT-FORK:END checkpoint-capture-lane
+
 export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({ type: Schema.Literal("scient-fork.provision") }),
   Schema.Struct({
@@ -340,6 +344,11 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               )
             )
         )
+        ${
+          // SCIENT-FORK:START checkpoint-capture-lane
+          checkpointCaptureLaneBarrier(sql)
+          // SCIENT-FORK:END checkpoint-capture-lane
+        }
       `;
 
     const cancellationSignal = (effectId: string) => {
