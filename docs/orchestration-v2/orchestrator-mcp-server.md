@@ -9,7 +9,7 @@ agent can use this endpoint to:
 - wait for or poll the sub-agent's durable result;
 - cancel an active delegated task; and
 - create one or more ordinary top-level Scient threads;
-- list a project's threads and incrementally read any thread;
+- list a project's threads and incrementally read authorized threads;
 - rename threads, regenerate titles, and link or unlink pull requests;
 - send or steer follow-up messages; and
 - wait for or interrupt ordinary thread runs.
@@ -525,7 +525,7 @@ Coverage includes:
 - async status polling;
 - cancellation;
 - batch ordinary-thread creation;
-- thread listing and timeline reads, including another project's threads;
+- project-scoped thread listing and timeline reads, including denial of foreign-project access;
 - ordinary-thread send, wait, steering, and interruption;
 - inheritance and per-thread provider overrides; and
 - idempotent retries.
