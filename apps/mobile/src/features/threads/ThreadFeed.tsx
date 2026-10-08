@@ -1,3 +1,4 @@
+import { resolveMarkdownThreadNavigation } from "./markdownThreadNavigation";
 import { ThreadContextDivider } from "./thread-context-divider";
 import { ThreadHandoffRow } from "./thread-handoff-row";
 import { SecretRequestCard } from "./SecretRequestCard";
@@ -2299,17 +2300,20 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const userBubbleColor = theme["--color-user-bubble"];
   const onMarkdownLinkPress = useCallback(
     (href: string) => {
-      // SCIENT-FORK:START — saved qualified links retain their originating environment.
-      const qualifiedThread = parseEnvironmentQualifiedThreadLinkHref(href);
-      const linkedThreadId = qualifiedThread?.threadId ?? parseThreadLinkHref(href);
-      // SCIENT-FORK:END
-      if (linkedThreadId) {
+      // SCIENT-FORK:START — resolve written IDs before trying one decoded local shell.
+      const linkedThread = resolveMarkdownThreadNavigation(
+        href,
+        props.environmentId,
+        (ref) => appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref)) !== null,
+      );
+      if (linkedThread) {
         navigation.navigate("Thread", {
-          environmentId: String(qualifiedThread?.environmentId ?? props.environmentId),
-          threadId: String(linkedThreadId),
+          environmentId: String(linkedThread.environmentId),
+          threadId: String(linkedThread.threadId),
         });
         return;
       }
+      // SCIENT-FORK:END
       const presentation = resolveMarkdownLinkPresentation(href);
       const linkTarget =
         presentation.kind === "file"
