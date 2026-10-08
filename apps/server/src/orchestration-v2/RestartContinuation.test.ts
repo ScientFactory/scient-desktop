@@ -663,10 +663,17 @@ it.effect(
       const commands: Parameters<
         ThreadManagementService.ThreadManagementService["Service"]["dispatch"]
       >[0][] = [];
+      const recovered: Array<{ threadId: ThreadId; sourceRunId: RunId }> = [];
       const dependencies = Layer.merge(
         ServerSettings.layerTest({ continueThreadsAfterServerUpdate: false }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: () => Effect.succeed(projection),
+          recoverDelegatedTask: (recoveredThreadId, recoveredSourceRunId) =>
+            Effect.sync(() => {
+              assert.equal(recoveredThreadId, threadId);
+              assert.equal(recoveredSourceRunId, runId);
+              recovered.push({ threadId: recoveredThreadId, sourceRunId: recoveredSourceRunId });
+            }),
           dispatch: (command) =>
             Effect.sync(() => {
               commands.push(command);
@@ -693,6 +700,11 @@ it.effect(
         Effect.provide(dependencies),
       );
       assert.lengthOf(commands, 1);
+      assert.deepEqual(recovered, [
+        { threadId, sourceRunId: runId },
+        { threadId, sourceRunId: runId },
+        { threadId, sourceRunId: runId },
+      ]);
     }),
 );
 const continuationTexts = (projection: OrchestrationV2ThreadProjection) =>

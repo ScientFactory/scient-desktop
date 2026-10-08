@@ -183,25 +183,6 @@ function latestStartedRun(
   );
 }
 
-function providerThreadsWithOpenBackgroundWork(
-  projection: ProjectionStore.ProjectionRuntimeRecoveryState,
-): ReadonlySet<ProviderThreadId> {
-  const ids = new Set<ProviderThreadId>();
-  for (const item of projection.turnItems ?? []) {
-    if (!isBackgroundCapableTurnItemType(item.type) || !isNonterminalTurnItemStatus(item.status))
-      continue;
-    const providerThreadId =
-      item.providerThreadId ??
-      projection.runs.find((run) => run.id === item.runId)?.providerThreadId;
-    if (providerThreadId != null) ids.add(providerThreadId);
-  }
-  for (const thread of projection.providerThreads ?? []) {
-    if (thread.ownerNodeId === null && providerThreadHasPendingBackgroundTasks(thread))
-      ids.add(thread.id);
-  }
-  return ids;
-}
-
 export const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const updateContinuations = yield* Ref.make<ReadonlyMap<ThreadId, RunId>>(new Map());
@@ -805,12 +786,7 @@ export const make = Effect.gen(function* () {
     for (const threadId of threadIds) {
       yield* Effect.gen(function* () {
         const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
-        // Shutdown reconciliation cancels the background work below, so a
-        // settled thread's continuation must be captured while it is still open.
-        const run = restartContinuationRun(
-          projection,
-          providerThreadsWithOpenBackgroundWork(projection),
-        );
+        const run = restartContinuationRun(projection);
         if (!run) return;
         const updateRequested = updateIntent.get(threadId) === run.id;
         if (
@@ -862,10 +838,7 @@ export const make = Effect.gen(function* () {
     const selected = new Map<ThreadId, RunId>();
     for (const threadId of yield* projections.getRecoveryThreadIds("runtime")) {
       const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
-      const run = restartContinuationRun(
-        projection,
-        providerThreadsWithOpenBackgroundWork(projection),
-      );
+      const run = restartContinuationRun(projection);
       if (run !== undefined) selected.set(threadId, run.id);
     }
     yield* Ref.set(updateContinuations, selected);

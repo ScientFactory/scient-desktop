@@ -5,7 +5,6 @@ import {
   MessageId,
   type OrchestrationV2Run,
   type RunId,
-  type ProviderThreadId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -31,7 +30,6 @@ export function restartContinuationRun(
     ProjectionRuntimeRecoveryState,
     "thread" | "runs" | "providerThreads" | "providerSessions" | "providerTurns"
   >,
-  cancelledWorkProviderThreadIds: ReadonlySet<ProviderThreadId> = new Set(),
 ): OrchestrationV2Run | undefined {
   if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return;
   // Queued runs never started; recovery holds them behind the cut run.
@@ -45,12 +43,8 @@ export function restartContinuationRun(
   if (!run) return;
   const preparedContinuation =
     run.status === "starting" && run.restartContinuationOfRunId !== undefined;
-  const settledWithCancelledWork =
-    (run.status === "completed" || run.status === "waiting") &&
-    run.providerThreadId !== null &&
-    cancelledWorkProviderThreadIds.has(run.providerThreadId);
-  if (run.status !== "running" && !preparedContinuation && !settledWithCancelledWork) return;
-  const liveTurnRequired = !preparedContinuation && !settledWithCancelledWork;
+  if (run.status !== "running" && !preparedContinuation) return;
+  const liveTurnRequired = !preparedContinuation;
   if (projection.thread.providerInstanceId !== run.providerInstanceId) return;
   const providerThread = projection.providerThreads.find(
     (thread) => thread.id === run.providerThreadId,
@@ -74,11 +68,10 @@ export function restartContinuationRun(
   // Most adapters keep a live session "ready" through its turns, so only a
   // stopped or failed session rules out a live turn.
   if (
-    session === undefined
-      ? !settledWithCancelledWork
-      : session.providerInstanceId !== run.providerInstanceId ||
-        session.driver !== providerThread.driver ||
-        (liveTurnRequired && (session.status === "stopped" || session.status === "error"))
+    session === undefined ||
+    session.providerInstanceId !== run.providerInstanceId ||
+    session.driver !== providerThread.driver ||
+    (liveTurnRequired && (session.status === "stopped" || session.status === "error"))
   )
     return;
   if (
@@ -123,9 +116,12 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
     // Pending effects from older versions may target settled background work,
     // including waiting runs that reconciliation subsequently cancelled.
-    const noteSource =
-      source !== undefined && isRestartNoteSource(source, projection.providerTurns);
-    if (!source || (source.status !== "cancelled" && !noteSource)) return;
+    if (
+      !source ||
+      source.status !== "cancelled" ||
+      isRestartNoteSource(source, projection.providerTurns)
+    )
+      return;
     // A user submission after reconciliation takes precedence over an automatic
     // prompt. Queued runs never started and stay held behind this one.
     if (
