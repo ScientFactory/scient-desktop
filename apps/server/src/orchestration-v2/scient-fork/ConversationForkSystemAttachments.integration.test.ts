@@ -245,6 +245,13 @@ it.live(
           })).snapshot.messages,
           captured.snapshot.messages,
         );
+        // Deleting the last conversation that shows it releases the system file.
+        yield* (yield* OrchestratorV2).dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make("system-file-target-delete"),
+          threadId: target,
+        });
+        assert.deepEqual(yield* forks.releasableFiles(target), [attachment.id]);
       }).pipe(Effect.provide(testLayer), Effect.timeout("15 seconds")),
     ),
 );

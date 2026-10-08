@@ -777,3 +777,57 @@ it.effect.each(
     );
   }).pipe(Effect.provide(layerDatabase)),
 );
+
+it.effect("force-deleting a project releases a fork lineage's shared files after commit", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const projectId = ProjectId.make("project:fork-deletion");
+    const sourceId = ThreadId.make("thread:fork-deletion-source");
+    const forkId = ThreadId.make("thread:fork-deletion-fork");
+    const commandId = CommandId.make("command:fork-project-delete");
+    yield* seedProject(projectId);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const service = yield* ProjectService.make;
+      const source = nativeThreadCreated(projectId, sourceId);
+      const fork = nativeThreadCreated(projectId, forkId);
+      yield* eventSink.write({
+        events: [
+          source,
+          {
+            ...fork,
+            payload: {
+              ...fork.payload,
+              lineage: {
+                parentThreadId: sourceId,
+                relationshipToParent: "fork",
+                rootThreadId: sourceId,
+              },
+              conversationFork: {
+                commandId: CommandId.make("command:fork"),
+                sourceThreadId: sourceId,
+                workspaceMode: "local",
+                status: "ready",
+                cwd: `/work/${projectId}`,
+                checkpointRef: null,
+                checkpointOid: null,
+                attachmentCopies: [],
+                error: null,
+              },
+            },
+          },
+        ],
+      });
+      yield* service.delete({ commandId, projectId, force: true });
+      const release = yield* sql<{ readonly thread_id: string }>`
+        SELECT thread_id FROM orchestration_v2_effect_outbox
+        WHERE effect_type = 'scient-fork.release-files'
+        ORDER BY thread_id
+      `;
+      assert.deepEqual(
+        release.map((row) => row.thread_id),
+        [forkId, sourceId],
+      );
+    }).pipe(Effect.provide(layerServices));
+  }).pipe(Effect.provide(layerDatabase)),
+);

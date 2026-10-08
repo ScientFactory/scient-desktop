@@ -2241,11 +2241,42 @@ it.live(
           (yield* store.getThreadProjection(sourceId)).messages.map((message) => message.text),
           "Rewritten question",
         );
-        assert.deepEqual(shownText(yield* store.getThreadProjection(forkId)), shownBefore);
+        const afterRewrite = yield* store.getThreadProjection(forkId);
+        assert.deepEqual(shownText(afterRewrite), shownBefore);
+        // Nothing a loaded client holds changes identity, and the baseline stays.
+        assert.deepEqual(
+          afterRewrite.visibleTurnItems.map((row) => [row.sourceThreadId, row.sourceItemId]),
+          frozen.visibleTurnItems.map((row) => [row.sourceThreadId, row.sourceItemId]),
+        );
+        assert.equal(
+          afterRewrite.thread.forkLineage?.baselineAssistantMessageId,
+          frozen.thread.forkLineage?.baselineAssistantMessageId,
+        );
+        assert.include(
+          afterRewrite.messages.map((message) => message.id),
+          frozen.thread.forkLineage?.baselineAssistantMessageId,
+        );
+        // A fork of the fork shows what the fork shows.
+        const grandchildId = ThreadId.make("frozen-live-grandchild");
+        yield* forks.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("frozen-live-grandchild"),
+          originThreadId: forkId,
+          newThreadId: grandchildId,
+          sourceAssistantMessageId: frozen.thread.forkLineage!.baselineAssistantMessageId!,
+          workspaceMode: "local",
+        });
+        const grandchild = shownText(yield* store.getThreadProjection(grandchildId));
+        assert.deepEqual(grandchild.messages, shownBefore.messages);
+        assert.deepEqual(grandchild.items.slice(0, -1), shownBefore.items.slice(0, -1));
         yield* ProjectionMaintenanceV2.use((maintenance) => maintenance.rebuild).pipe(
           Effect.provide(projectionMaintenanceLayer),
         );
         assert.deepEqual(shownText(yield* store.getThreadProjection(forkId)), shownBefore);
+        assert.deepEqual(
+          shownText(yield* store.getThreadProjection(grandchildId)).messages,
+          shownBefore.messages,
+        );
 
         // The fork can queue a file its shared history shows.
         const sharedFile = frozen.messages.flatMap((message) => message.attachments)[0]!;

@@ -429,6 +429,8 @@ export const make = Effect.gen(function* () {
       command,
       projection,
       attachmentIds: yield* threadProjections.getThreadAttachmentIds(threadId),
+      // SCIENT-FORK: a fork lineage releases its shared files after commit.
+      releaseForkFiles: yield* threadProjections.isInForkFamily(threadId),
       now,
       idAllocator,
     });

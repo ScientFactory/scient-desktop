@@ -57,6 +57,8 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
   readonly projection: OrchestrationV2ThreadProjection;
   readonly targetThreadId: ThreadId;
   readonly source: ConversationForkSource;
+  /** False to check a fork without building its copies (the options check). */
+  readonly materialize?: boolean;
 }) {
   const { projection, source, targetThreadId } = input;
   const reject = (detail: string) =>
@@ -232,7 +234,8 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
           };
     },
   );
-  const messages = projection.messages
+  const materialize = input.materialize !== false;
+  const messages = (materialize ? projection.messages : [])
     .filter((message) => messageIds.has(message.id))
     .map((source) => {
       const message = Schema.decodeSync(messageJson)(Schema.encodeSync(messageJson)(source));
@@ -248,7 +251,7 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
   const plans = new Map<PlanId, OrchestrationV2PlanArtifact>();
   const nodes = new Map<NodeId, OrchestrationV2ExecutionNode>();
   const positions = new Map(retained.map(({ item }, index) => [item.id, index]));
-  const items = copied.map(({ item: sourceItem }): OrchestrationV2TurnItem => {
+  const items = (materialize ? copied : []).map(({ item: sourceItem }): OrchestrationV2TurnItem => {
     const original = Schema.decodeSync(itemJson)(Schema.encodeSync(itemJson)(sourceItem));
     const ordinal = positions.get(sourceItem.id)!;
     const base = {

@@ -189,6 +189,7 @@ const make = Effect.gen(function* () {
     input: GetForkOptionsInput,
     targetThreadId: ThreadId,
     capturedProjection?: OrchestrationV2ThreadProjection,
+    materialize = true,
   ) {
     yield* legacyImporter.ensureTranscript(input.originThreadId);
     const projection =
@@ -199,7 +200,7 @@ const make = Effect.gen(function* () {
     )
       return yield* failure("Finish the original fork's workspace setup first.");
     const source = yield* resolveSource(projection, input);
-    const plan = yield* planConversationFork({ projection, targetThreadId, source });
+    const plan = yield* planConversationFork({ projection, targetThreadId, source, materialize });
     const project = yield* projects.get(projection.thread.projectId);
     if (Option.isNone(project)) return yield* failure("The conversation's project is unavailable.");
     const originCwd = projection.thread.worktreePath ?? project.value.workspaceRoot;
@@ -894,7 +895,7 @@ const make = Effect.gen(function* () {
       ),
     getOptions: (input) =>
       withoutVcsDiagnostics(
-        inspect(input, ThreadId.make(`scient-options:${input.originThreadId}`)),
+        inspect(input, ThreadId.make(`scient-options:${input.originThreadId}`), undefined, false),
       ).pipe(
         Effect.map(({ source, checkpointAvailable, localAvailable }): ForkOptions => ({
           available: true,

@@ -607,6 +607,17 @@ it.live(
             assert.notEqual(copied.messageId, sourceItem.messageId);
             // The fork's baseline answer is the message it shows: its copy.
             assert.equal(frozen.thread.forkLineage?.baselineAssistantMessageId, copied.messageId);
+            // A page anchored in the fork's history carries its copies' messages.
+            const anchored = yield* (yield* ProjectionStoreV2).getThreadSnapshotWindow(forkId, {
+              rowLimit: 2,
+              userTurnLimit: 1,
+              anchorItemId: copied.id,
+            });
+            assert.equal(anchored.projection.visibleTurnItems.at(-1)?.sourceItemId, copied.id);
+            assert.include(
+              anchored.projection.messages.map((message) => message.id),
+              copied.messageId,
+            );
             assert.equal(copied.inheritedFrom?.threadId, threadId);
             assert.isFalse(copied.streaming);
             assert.deepEqual(copied.attachments, sourceItem.attachments);

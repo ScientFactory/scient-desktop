@@ -92,6 +92,21 @@ it.live(
           window.projection.visibleTurnItems.map((r) => r.sourceItemId),
           expected,
         );
+        // A page anchored in shared history never reads the fork's newest row.
+        yield* sql`UPDATE orchestration_v2_projection_turn_items SET payload_json = ${"{invalid-json-local-tripwire"} WHERE turn_item_id = ${"local-window-item-7"}`;
+        const anchor = full.visibleTurnItems.find((r) => r.visibility === "inherited")!;
+        const anchored = yield* store.getThreadSnapshotWindow(child.thread.id, {
+          rowLimit: 3,
+          userTurnLimit: 1,
+          anchorItemId: anchor.sourceItemId,
+        });
+        assert.equal(
+          anchored.projection.visibleTurnItems.at(-1)?.sourceItemId,
+          anchor.sourceItemId,
+        );
+        assert.isTrue(
+          anchored.projection.visibleTurnItems.every((r) => r.visibility === "inherited"),
+        );
       }),
     ),
   60000,

@@ -11004,36 +11004,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
             ),
           );
-        const deletion = yield* mapDispatchError(command)(
+        return yield* mapDispatchError(command)(
           planThreadDeletion({
             command,
             projection,
             attachmentIds: yield* projectionStore
               .getThreadAttachmentIds(command.threadId)
               .pipe(mapDispatchError(command)),
+            // SCIENT-FORK: a fork lineage releases its shared files after commit.
+            releaseForkFiles: yield* projectionStore
+              .isInForkFamily(command.threadId)
+              .pipe(mapDispatchError(command)),
             now: yield* DateTime.now,
             idAllocator,
           }),
         );
-        // SCIENT-FORK:START — a fork lineage shares files; release them once the
-        // deletion has committed, so concurrent deletions see each other.
-        if (
-          !(yield* projectionStore.isInForkFamily(command.threadId).pipe(mapDispatchError(command)))
-        )
-          return deletion;
-        return {
-          ...deletion,
-          effects: [
-            ...deletion.effects,
-            {
-              id: `effect:${command.commandId}:scient-fork.release-files`,
-              commandId: command.commandId,
-              threadId: command.threadId,
-              request: { type: "scient-fork.release-files" },
-            },
-          ],
-        };
-        // SCIENT-FORK:END
       }
       case "thread.archive":
       case "thread.unarchive":

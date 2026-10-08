@@ -143,7 +143,11 @@ export function presentInheritedItem(
   return fork as OrchestrationV2TurnItem;
 }
 
-/** Records the fork's inherited history, in order, in the caller's transaction. */
+/**
+ * Records the fork's inherited history, in order, in the caller's transaction,
+ * after its thread is created. Rows its parent fork shows in a kept version
+ * keep that version too, so a fork of a fork shows what its parent showed.
+ */
 export const writeForkHistory = (
   sql: SqlClient.SqlClient,
   threadId: ThreadId,
@@ -151,24 +155,42 @@ export const writeForkHistory = (
 ) =>
   entries.length === 0
     ? Effect.void
-    : sql`
-        INSERT INTO scient_fork_history
-          (thread_id, position, source_thread_id, source_item_id, item_type, message_id,
-            turn_start, user_turn)
-        SELECT ${threadId}, CAST(key AS INTEGER), json_extract(value, '$[0]'),
-          json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'),
-          json_extract(value, '$[4]'), json_extract(value, '$[5]')
-        FROM json_each(${encodeJson(
-          entries.map((entry) => [
-            entry.sourceThreadId,
-            entry.sourceItemId,
-            entry.type,
-            entry.messageId,
-            entry.turnStart ? 1 : 0,
-            entry.userTurn ? 1 : 0,
-          ]),
-        )})
-      `.pipe(Effect.asVoid);
+    : Effect.gen(function* () {
+        yield* sql`
+          INSERT INTO scient_fork_history
+            (thread_id, position, source_thread_id, source_item_id, item_type, message_id,
+              turn_start, user_turn)
+          SELECT ${threadId}, CAST(key AS INTEGER), json_extract(value, '$[0]'),
+            json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'),
+            json_extract(value, '$[4]'), json_extract(value, '$[5]')
+          FROM json_each(${encodeJson(
+            entries.map((entry) => [
+              entry.sourceThreadId,
+              entry.sourceItemId,
+              entry.type,
+              entry.messageId,
+              entry.turnStart ? 1 : 0,
+              entry.userTurn ? 1 : 0,
+            ]),
+          )})
+        `;
+        yield* sql`
+          INSERT OR IGNORE INTO scient_fork_frozen_items (thread_id, position, item_json, message_json)
+          SELECT fork.thread_id, fork.position, kept.item_json, kept.message_json
+          FROM scient_fork_history AS fork
+          JOIN scient_fork_history AS parent
+            ON parent.source_thread_id = fork.source_thread_id
+            AND parent.source_item_id = fork.source_item_id
+          JOIN scient_fork_frozen_items AS kept
+            ON kept.thread_id = parent.thread_id AND kept.position = parent.position
+          WHERE fork.thread_id = ${threadId}
+            AND parent.thread_id = (
+              SELECT json_extract(payload_json, '$.lineage.parentThreadId')
+              FROM orchestration_v2_projection_threads
+              WHERE thread_id = ${threadId}
+            )
+        `;
+      });
 
 export interface ForkHistoryIndexRow extends ForkHistoryEntry {
   readonly position: number;
@@ -217,30 +239,20 @@ export const readForkHistoryRows = Effect.fn("ForkHistory.readRows")(function* (
   if (index.length === 0) return [];
   const first = index[0]!.position;
   const last = index.at(-1)!.position;
-  // Windows and full reads are one run of positions: read them by range.
-  const payloads =
-    last - first + 1 === index.length
-      ? (yield* sql<{ readonly payload_json: string | null }>`
-          SELECT item.payload_json
-          FROM scient_fork_history AS history
-          LEFT JOIN orchestration_v2_projection_turn_items AS item
-            ON item.turn_item_id = history.source_item_id
-          WHERE history.thread_id = ${threadId}
-            AND history.position BETWEEN ${first} AND ${last}
-          ORDER BY history.position
-        `).map((row) => row.payload_json)
-      : yield* sql<{ readonly turn_item_id: string; readonly payload_json: string }>`
-          SELECT turn_item_id, payload_json
-          FROM orchestration_v2_projection_turn_items
-          WHERE turn_item_id IN (SELECT value FROM json_each(${encodeJson(
-            index.map((row) => row.sourceItemId),
-          )}))
-        `.pipe(
-          Effect.map((rows) => {
-            const byId = new Map(rows.map((row) => [row.turn_item_id, row.payload_json]));
-            return index.map((row) => byId.get(row.sourceItemId) ?? null);
-          }),
-        );
+  // Read the run of positions the rows span, preferring a version kept for the fork.
+  const byPosition = new Map(
+    (yield* sql<{ readonly position: number; readonly payload_json: string | null }>`
+      SELECT history.position, COALESCE(frozen.item_json, item.payload_json) AS payload_json
+      FROM scient_fork_history AS history
+      LEFT JOIN scient_fork_frozen_items AS frozen
+        ON frozen.thread_id = history.thread_id AND frozen.position = history.position
+      LEFT JOIN orchestration_v2_projection_turn_items AS item
+        ON item.turn_item_id = history.source_item_id
+      WHERE history.thread_id = ${threadId}
+        AND history.position BETWEEN ${first} AND ${last}
+    `).map((row) => [row.position, row.payload_json] as const),
+  );
+  const payloads = index.map((row) => byPosition.get(row.position) ?? null);
   const missing = payloads.findIndex((payload) => payload === null);
   if (missing >= 0)
     return yield* new ForkHistoryReadError({
@@ -359,13 +371,18 @@ export const readForkShownToolPayloads = (
   mcpAppOutputKey: string,
 ) =>
   sql<{ readonly payload_json: string }>`
-    SELECT item.payload_json
+    SELECT COALESCE(frozen.item_json, item.payload_json) AS payload_json
     FROM scient_fork_history AS history
     JOIN orchestration_v2_projection_turn_items AS item
       ON item.turn_item_id = history.source_item_id
+    LEFT JOIN scient_fork_frozen_items AS frozen
+      ON frozen.thread_id = history.thread_id AND frozen.position = history.position
     WHERE history.thread_id = ${threadId}
       AND history.item_type = 'dynamic_tool'
-      AND (item.payload_json LIKE '%htmlRender%' OR item.payload_json LIKE ${`%${mcpAppOutputKey}%`})
+      AND (
+        COALESCE(frozen.item_json, item.payload_json) LIKE '%htmlRender%'
+        OR COALESCE(frozen.item_json, item.payload_json) LIKE ${`%${mcpAppOutputKey}%`}
+      )
   `.pipe(Effect.map((rows) => rows.map((row) => row.payload_json)));
 
 /** The given attachment ids that a shared item of `sourceThreadId`, shown by a live fork, names. */
@@ -381,47 +398,63 @@ export const readLiveForkSharedAttachmentIds = (
       JOIN orchestration_v2_projection_threads AS fork ON fork.thread_id = history.thread_id
       JOIN orchestration_v2_projection_turn_items AS item
         ON item.turn_item_id = history.source_item_id
+      LEFT JOIN scient_fork_frozen_items AS frozen
+        ON frozen.thread_id = history.thread_id AND frozen.position = history.position
       WHERE history.source_thread_id = ${sourceThreadId}
         AND history.thread_id <> ${sourceThreadId}
         AND fork.deleted_at IS NULL
-        AND instr(lower(item.payload_json), ${id.toLowerCase()}) > 0
+        AND instr(lower(COALESCE(frozen.item_json, item.payload_json)), ${id.toLowerCase()}) > 0
       LIMIT 1
     `.pipe(Effect.map((rows) => rows.length > 0)),
   );
 
 /**
- * Raw messages of the fork's shared history, in history order: the messages its
- * inherited user and assistant items stand for. The fork's own copies keep
- * their own messages. Narrow to `messageIds` to read only some.
+ * Raw messages of the fork's history, in history order: the messages its user
+ * and assistant rows stand for, as the fork shows them (a kept version first).
+ * Shared rows only, unless `includeCopies`; narrow to a run of `positions`.
  */
 export const readForkHistoryMessageRows = (
   sql: SqlClient.SqlClient,
   threadId: ThreadId,
-  messageIds?: ReadonlyArray<string>,
+  options: {
+    readonly positions?: readonly [first: number, last: number];
+    readonly includeCopies?: boolean;
+  } = {},
 ) =>
-  sql<{ readonly message_id: string; readonly payload_json: string }>`
-    SELECT message.message_id, message.payload_json
+  sql<{ readonly message_id: string; readonly payload_json: string | null }>`
+    SELECT history.message_id, COALESCE(frozen.message_json, message.payload_json) AS payload_json
     FROM scient_fork_history AS history
-    JOIN orchestration_v2_projection_turn_items AS item
-      ON item.turn_item_id = history.source_item_id
-    JOIN orchestration_v2_projection_messages AS message
-      ON message.thread_id = item.thread_id
-      AND message.message_id = json_extract(item.payload_json, '$.messageId')
+    LEFT JOIN scient_fork_frozen_items AS frozen
+      ON frozen.thread_id = history.thread_id AND frozen.position = history.position
+    LEFT JOIN orchestration_v2_projection_messages AS message
+      ON message.message_id = history.message_id
     WHERE history.thread_id = ${threadId}
-      AND history.source_thread_id <> ${threadId}
-      AND history.item_type IN ('user_message', 'assistant_message')
+      AND history.message_id IS NOT NULL
+      ${options.includeCopies === true ? sql`` : sql`AND history.source_thread_id <> ${threadId}`}
       ${
-        messageIds === undefined
+        options.positions === undefined
           ? sql``
-          : sql`AND message.message_id IN (SELECT value FROM json_each(${encodeJson(messageIds)}))`
+          : sql`AND history.position BETWEEN ${options.positions[0]} AND ${options.positions[1]}`
       }
     ORDER BY history.position
   `.pipe(
     Effect.map((rows) => {
       const seen = new Set<string>();
-      return rows.filter((row) => !seen.has(row.message_id) && seen.add(row.message_id));
+      return rows.flatMap((row) =>
+        row.payload_json === null || seen.has(row.message_id)
+          ? []
+          : (seen.add(row.message_id),
+            [{ message_id: row.message_id, payload_json: row.payload_json }]),
+      );
     }),
   );
+
+/** How many distinct messages the fork's shared history shows. */
+export const countForkHistoryMessages = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
+  sql<{ readonly count: number }>`
+    SELECT COUNT(DISTINCT message_id) AS count FROM scient_fork_history
+    WHERE thread_id = ${threadId} AND message_id IS NOT NULL AND source_thread_id <> ${threadId}
+  `.pipe(Effect.map((rows) => rows[0]?.count ?? 0));
 
 /** An inherited message as the fork's frozen history shows it. */
 export function presentInheritedMessage<

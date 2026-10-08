@@ -356,8 +356,10 @@ const layerBase: Layer.Layer<
       const consumeSourcePlan = makeSourcePlanConsumer({ sql, projectionStore });
       return Effect.gen(function* () {
         const normalized: OrchestrationV2DomainEvent[] = [];
-        const position = (event: OrchestrationV2DomainEvent) =>
-          event.type === "turn-item.updated"
+        for (const event of events) {
+          // SCIENT-FORK: forks showing what this event rewrites keep the stored version.
+          yield* freezeShownHistory(sql, event);
+          const positioned = yield* event.type === "turn-item.updated"
             ? turnItemPositions
                 .normalize(
                   event.payload,
@@ -365,11 +367,7 @@ const layerBase: Layer.Layer<
                 )
                 .pipe(Effect.map((payload) => ({ ...event, payload })))
             : Effect.succeed(event);
-        for (const event of events) {
-          // Forks showing what this event rewrites keep a frozen copy first.
-          for (const frozen of yield* freezeShownHistory(sql, event))
-            normalized.push(yield* position(frozen));
-          normalized.push(yield* position(event));
+          normalized.push(positioned);
           const consumption = consumeSourcePlan(event);
           const consumed = consumption === undefined ? undefined : yield* consumption;
           if (consumed !== undefined) normalized.push(consumed);
@@ -739,6 +737,7 @@ const layerBase: Layer.Layer<
               new Error(`Command ${input.commandId} produced no orchestration events.`),
             );
           }
+          yield* applyStoredEvents(storedEvents);
           // SCIENT-FORK:START
           if (input.forkHistory !== undefined)
             yield* writeForkHistory(sql, input.threadId, input.forkHistory).pipe(
@@ -752,7 +751,6 @@ const layerBase: Layer.Layer<
               ),
             );
           // SCIENT-FORK:END
-          yield* applyStoredEvents(storedEvents);
           yield* effectOutbox.enqueue(input.effects);
           const receipt: CommandReceiptStore.CommandReceiptV2 = {
             commandId: input.commandId,
