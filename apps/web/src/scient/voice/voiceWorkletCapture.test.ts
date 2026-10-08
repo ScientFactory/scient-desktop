@@ -46,18 +46,28 @@ function createProcessor(sampleRate: number) {
 
 describe("progressive voice worklet capture", () => {
   it.each([24_000, 44_100, 48_000])(
-    "fills 112 real measurements in about two seconds at %i Hz",
+    "moves halfway between the original and faster rates at %i Hz",
     (rate) => {
       const { processor, messages } = createProcessor(rate);
       let filledAt = 0;
-      for (let offset = 0; offset < rate * 2.1; offset += 128) {
+      const originalRate = rate / 2048;
+      const fasterRate = rate / Math.round(rate / 56);
+      const midpointRate = (originalRate + fasterRate) / 2;
+      for (let offset = 0; offset < rate * 4; offset += 128) {
         processor.process([[new Float32Array(128).fill(0.125)]]);
         if (filledAt === 0 && messages.length >= VOICE_WAVEFORM_LEVEL_COUNT) {
           filledAt = (offset + 128) / rate;
         }
       }
-      expect(filledAt).toBeGreaterThan(1.98);
-      expect(filledAt).toBeLessThan(2.02);
+      const first = messages[0];
+      expect(first?.type).toBe("samples");
+      if (first?.type !== "samples") throw new Error("No audio measurement emitted");
+      const measuredRate = rate / first.samples.length;
+      expect(measuredRate).toBeGreaterThan(originalRate);
+      expect(measuredRate).toBeLessThan(fasterRate);
+      // Whole-sample rounding changes the rate by less than 0.1%.
+      expect(Math.abs(measuredRate / midpointRate - 1)).toBeLessThan(0.001);
+      expect(Math.abs(filledAt - VOICE_WAVEFORM_LEVEL_COUNT / midpointRate)).toBeLessThan(0.02);
       for (const message of messages) {
         expect(message.type).toBe("samples");
         if (message.type === "samples") expect(message.rms).toBeCloseTo(0.125);
@@ -85,7 +95,8 @@ describe("progressive voice worklet capture", () => {
       frames += 1;
       expect(Number.isFinite(message.rms)).toBe(true);
     }
-    expect(frames).toBeGreaterThan(10_000);
+    expect(frames).toBeGreaterThan(6_000);
+    expect(frames).toBeLessThan(7_000);
     expect(length).toBe(original.length);
     expect(Buffer.from(captured.buffer).equals(Buffer.from(original.buffer))).toBe(true);
     expect(messages.at(-1)).toEqual({ type: "flushed", requestId: 1 });
