@@ -564,17 +564,17 @@ it.live.each(
             ["chosen"],
           );
         }
-        if (nested) {
-          // Deleting the parent keeps the files its live fork still shows.
-          const sharedId = ready.value.thread.conversationFork?.attachmentCopies[0]?.target.id;
-          assert.ok(sharedId);
-          assert.notInclude(yield* projectionStore.getThreadAttachmentIds(parentId), sharedId);
-        }
         yield* orchestrator.dispatch({
           type: "thread.delete",
           commandId: CommandId.make("native-run-fork-delete-parent"),
           threadId: parentId,
         });
+        if (nested) {
+          // Deleting the parent keeps the files its live fork still shows.
+          const sharedId = ready.value.thread.conversationFork?.attachmentCopies[0]?.target.id;
+          assert.ok(sharedId);
+          assert.notInclude(yield* projectionStore.getReleasableFiles(parentId), sharedId);
+        }
         if (sourceFilePath !== undefined)
           assert.equal(
             yield* (yield* FileSystem.FileSystem).readFileString(sourceFilePath),

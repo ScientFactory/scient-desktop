@@ -219,9 +219,13 @@ it.effect("retries a partial project deletion without repeating child events or 
       assert.lengthOf(partialEvents, 1);
       assert.equal(partialEvents[0]?.stream_id, firstThreadId);
       assert.equal(partialEvents[0]?.event_type, "thread.deleted");
-      assert.lengthOf(partialCleanup, 1);
-      assert.equal(partialCleanup[0]?.thread_id, firstThreadId);
-      assert.equal(partialCleanup[0]?.effect_type, "terminal.cleanup");
+      assert.deepEqual(
+        partialCleanup.map((effect) => [effect.thread_id, effect.effect_type]),
+        [
+          [firstThreadId, "scient.release-thread-files"],
+          [firstThreadId, "terminal.cleanup"],
+        ],
+      );
 
       const deletedProject = yield* service.delete(input);
       assert.isNotNull(deletedProject.deletedAt);
@@ -242,7 +246,7 @@ it.effect("retries a partial project deletion without repeating child events or 
       assert.deepEqual(finalEvents[0], partialEvents[0]);
       assert.equal(finalEvents[2]?.command_id, commandId);
       const finalCleanup = yield* readCleanup;
-      assert.lengthOf(finalCleanup, 2);
+      assert.lengthOf(finalCleanup, 4);
       assert.deepEqual(
         finalCleanup.filter((effect) => effect.thread_id === firstThreadId),
         partialCleanup,
@@ -251,14 +255,12 @@ it.effect("retries a partial project deletion without repeating child events or 
         const expectedCommandId = `${commandId}:delete-thread:${threadId}`;
         assert.deepEqual(
           finalCleanup.filter((effect) => effect.thread_id === threadId),
-          [
-            {
-              effect_id: `effect:${expectedCommandId}:terminal.cleanup`,
-              thread_id: threadId,
-              command_id: expectedCommandId,
-              effect_type: "terminal.cleanup",
-            },
-          ],
+          ["scient.release-thread-files", "terminal.cleanup"].map((effectType) => ({
+            effect_id: `effect:${expectedCommandId}:${effectType}`,
+            thread_id: threadId,
+            command_id: expectedCommandId,
+            effect_type: effectType,
+          })),
         );
       }
     }).pipe(Effect.provide(layerServices));
@@ -366,16 +368,15 @@ it.effect(
         }>`
         SELECT command_id, payload_json, status
         FROM orchestration_v2_effect_outbox
-        WHERE thread_id = ${threadId} AND effect_type = 'attachment.cleanup'
+        WHERE thread_id = ${threadId} AND effect_type = 'scient.release-thread-files'
       `;
         assert.lengthOf(cleanup, 1);
         assert.equal(cleanup[0]?.command_id, `${commandId}:delete-thread:${threadId}`);
         assert.equal(cleanup[0]?.status, "pending");
         const request = yield* decodeEffectRequest(cleanup[0]?.payload_json);
-        assert.deepEqual(request, {
-          type: "attachment.cleanup",
-          attachmentIds: ["legacy_screenshot"],
-        });
+        assert.deepEqual(request, { type: "scient.release-thread-files" });
+        // The hydrated transcript names the screenshot, so the release frees it.
+        assert.deepEqual(yield* projections.getReleasableFiles(threadId), ["legacy_screenshot"]);
       }).pipe(Effect.provide(layerServices));
     }).pipe(Effect.provide(layerDatabase)),
 );
@@ -821,7 +822,7 @@ it.effect("force-deleting a project releases a fork lineage's shared files after
       yield* service.delete({ commandId, projectId, force: true });
       const release = yield* sql<{ readonly thread_id: string }>`
         SELECT thread_id FROM orchestration_v2_effect_outbox
-        WHERE effect_type = 'scient-fork.release-files'
+        WHERE effect_type = 'scient.release-thread-files'
         ORDER BY thread_id
       `;
       assert.deepEqual(

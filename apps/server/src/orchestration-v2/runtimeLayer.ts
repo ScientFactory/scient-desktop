@@ -8,7 +8,7 @@ import { ScientForkCheckpointBaselineLive } from "./scient-fork/ForkCheckpointBa
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AttachmentReservationReconciliation from "./AttachmentReservationReconciliation.ts";
 import * as AttachmentRollbackPruneService from "./AttachmentRollbackPruneService.ts";
-import * as ForkFileRelease from "./scient-fork/ForkFileRelease.ts";
+import * as ThreadFileRelease from "./scient-fork/ThreadFileRelease.ts";
 // SCIENT-FORK:END
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -344,7 +344,7 @@ const layerAttachmentRollbackPruneProvided = AttachmentRollbackPruneService.laye
     ),
   ),
 );
-const layerForkFileReleaseProvided = ForkFileRelease.layer.pipe(
+const layerThreadFileReleaseProvided = ThreadFileRelease.layer.pipe(
   Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerAttachmentReconciliationProvided)),
 );
 // SCIENT-FORK:END
@@ -353,7 +353,7 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
   Layer.provide(
     Layer.mergeAll(
       layerAttachmentRollbackPruneProvided,
-      layerForkFileReleaseProvided,
+      layerThreadFileReleaseProvided,
       layerConversationForkProvided,
       layerRunFinalizationServiceProvided,
       layerCheckpointRollbackServiceProvided,

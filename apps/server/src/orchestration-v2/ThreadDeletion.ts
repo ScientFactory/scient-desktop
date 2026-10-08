@@ -22,8 +22,8 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     "thread" | "runs" | "attempts" | "nodes" | "runtimeRequests" | "subagents" | "providerSessions"
   >;
   readonly attachmentIds: ReadonlyArray<string>;
-  /** SCIENT-FORK: the thread's lineage shares files; release them after the deletion commits. */
-  readonly releaseForkFiles?: boolean;
+  /** SCIENT-FORK: release the thread's files after the deletion commits, if no live conversation names them. */
+  readonly releaseFilesAfterCommit?: boolean;
   readonly now: DateTime.Utc;
   readonly idAllocator: IdAllocatorV2["Service"];
 }): Effect.fn.Return<ThreadDeletionPlan, IdAllocatorV2Error> {
@@ -227,12 +227,12 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     });
   }
   // SCIENT-FORK:START
-  if (input.releaseForkFiles === true)
+  if (input.releaseFilesAfterCommit === true)
     effects.push({
-      id: `effect:${command.commandId}:scient-fork.release-files`,
+      id: `effect:${command.commandId}:scient.release-thread-files`,
       commandId: command.commandId,
       threadId: command.threadId,
-      request: { type: "scient-fork.release-files" },
+      request: { type: "scient.release-thread-files" },
     });
   // SCIENT-FORK:END
   return { events, effects };

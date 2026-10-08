@@ -82,11 +82,7 @@ import {
   HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME,
   readHistoricalSystemMessage,
 } from "./legacy/HistoricalSystemMessage.ts";
-import {
-  parseThreadSegmentFromAttachmentId,
-  threadHtmlRenderAttachmentIds,
-  toSafeThreadAttachmentSegment,
-} from "../attachmentStore.ts";
+import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import {
   isThreadHistoryUserTurn,
   isThreadHistoryTurnStart,
@@ -105,6 +101,7 @@ import {
   readForkShownToolPayloads,
   readQuestionAnswerFileIds,
   readLiveMessageFileReferences,
+  readLiveForkSharedFileReferences,
   presentInheritedItem,
   presentInheritedMessage,
   readForkHistoryMessageRows,
@@ -454,13 +451,11 @@ export interface ProjectionStoreV2Shape {
   readonly getForkHistoryItems: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2TurnItem>, ProjectionStoreV2Error>;
-  /** SCIENT-FORK: whether the thread's lineage includes a fork, which shares its files. */
-  readonly isInForkFamily: (threadId: ThreadId) => Effect.Effect<boolean, ProjectionStoreV2Error>;
   /**
-   * SCIENT-FORK: files of deleted conversations in the thread's lineage that no
-   * live conversation there still names. Read after a deletion commits.
+   * SCIENT-FORK: files the deleted conversations of the thread's lineage name
+   * that no live conversation names. Read after a deletion commits.
    */
-  readonly getReleasableForkFiles: (
+  readonly getReleasableFiles: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
   /**
@@ -4808,24 +4803,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
       );
 
-    // SCIENT-FORK:START — forks share history and its files across a lineage.
-    // There, a deletion's files are released after it commits, by
-    // `getReleasableForkFiles`, so concurrent deletions see each other.
-    const inForkFamily = (threadId: ThreadId) =>
-      readForkFamily(sql, threadId).pipe(
-        Effect.map((family) => family.some((member) => member.fork)),
-      );
-    const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = (threadId) =>
-      inForkFamily(threadId).pipe(
-        Effect.flatMap((shared) =>
-          shared ? Effect.succeed([]) : readThreadAttachmentIds(threadId),
-        ),
-        Effect.mapError((cause) =>
-          isProjectionStoreReadError(cause)
-            ? cause
-            : new ProjectionStoreReadError({ threadId, cause }),
-        ),
-      );
+    const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] =
+      readThreadAttachmentIds;
+
+    // SCIENT-FORK:START — files are shared (forks show their history's files,
+    // messages can reuse a file), so a deletion releases files after it
+    // commits, by `getReleasableFiles`, keeping any a live conversation names.
     const renderAttachmentIds = (payloads: ReadonlyArray<string>) =>
       payloads.flatMap((payload) => {
         const item = parseEncodedPayload(payload);
@@ -4871,37 +4854,30 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ];
       });
     /**
-     * Files named by deleted conversations of a thread's lineage, and minted for
-     * one of them, that no live conversation there still names.
+     * Files the deleted conversations of a thread's lineage name that no live
+     * conversation names: none in the lineage (messages, question answers, tool
+     * pages, system messages, shown history), and no message or fork's shared
+     * files anywhere else. Names compare without case: on a case-insensitive
+     * disk an alias names the same file.
      */
-    const getReleasableForkFiles = (threadId: ThreadId) =>
+    const getReleasableFiles = (threadId: ThreadId) =>
       Effect.gen(function* () {
         const family = yield* readForkFamily(sql, threadId);
-        const segments = new Set(
-          family.flatMap(({ threadId: member }) => {
-            const segment = toSafeThreadAttachmentSegment(member);
-            return segment === null ? [] : [segment];
-          }),
-        );
         const candidates = new Set<string>();
         for (const member of family) {
           if (!member.deleted) continue;
-          for (const id of yield* namedFiles(member.threadId)) {
-            const segment = parseThreadSegmentFromAttachmentId(id);
-            if (segment === null || segment === "_pending" || segments.has(segment))
-              candidates.add(id);
-          }
+          for (const id of yield* namedFiles(member.threadId)) candidates.add(id);
         }
-        // File names compare without case: on a case-insensitive disk an alias
-        // names the same file.
         const named = new Set<string>();
         for (const member of family) {
           if (member.deleted || candidates.size === 0) continue;
           for (const id of yield* namedFiles(member.threadId)) named.add(id.toLowerCase());
         }
         const remaining = [...candidates].filter((id) => !named.has(id.toLowerCase()));
-        // A message in any other live conversation may have been sent the file.
-        const elsewhere = yield* readLiveMessageFileReferences(sql, remaining);
+        const elsewhere = new Set([
+          ...(yield* readLiveMessageFileReferences(sql, remaining)),
+          ...(yield* readLiveForkSharedFileReferences(sql, remaining)),
+        ]);
         return remaining.filter((id) => !elsewhere.has(id.toLowerCase()));
       }).pipe(
         Effect.mapError((cause) =>
@@ -6071,11 +6047,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           Effect.map((rows) => rows.map((row) => row.item)),
           Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
         ),
-      isInForkFamily: (threadId) =>
-        inForkFamily(threadId).pipe(
-          Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
-        ),
-      getReleasableForkFiles,
+      getReleasableFiles,
       getProjectThreadTitles: (threadId) =>
         sql<{ readonly thread_id: string; readonly title: string }>`
           SELECT sibling.thread_id, json_extract(sibling.payload_json, '$.title') AS title
@@ -6662,8 +6634,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
         ),
       // SCIENT-FORK: forks need the SQL store.
       getForkHistoryItems: () => Effect.succeed([]),
-      isInForkFamily: () => Effect.succeed(false),
-      getReleasableForkFiles: () => Effect.succeed([]),
+      getReleasableFiles: () => Effect.succeed([]),
       getProjectThreadTitles: (threadId) =>
         Effect.gen(function* () {
           const origin = yield* service.getThread(threadId);

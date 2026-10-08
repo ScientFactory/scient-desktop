@@ -478,7 +478,10 @@ export const readForkSharedFileIds = (sql: SqlClient.SqlClient, threadId: Thread
       AND EXISTS (SELECT 1 FROM scient_fork_history WHERE thread_id = ${threadId})
   `.pipe(Effect.map((rows) => rows.flatMap((row) => (row.id === null ? [] : [row.id]))));
 
-/** Which of `ids` (any case) a message of any live conversation attaches, lowercased. */
+/**
+ * Which of `ids` (any case) a message or question answer of any live
+ * conversation attaches, lowercased.
+ */
 export const readLiveMessageFileReferences = (
   sql: SqlClient.SqlClient,
   ids: ReadonlyArray<string>,
@@ -486,13 +489,39 @@ export const readLiveMessageFileReferences = (
   ids.length === 0
     ? Effect.succeed(new Set<string>())
     : sql<{ readonly id: string }>`
-        SELECT DISTINCT lower(json_extract(attachment.value, '$.id')) AS id
+        WITH wanted(id) AS (SELECT lower(value) FROM json_each(${encodeJson(ids)}))
+        SELECT lower(json_extract(attachment.value, '$.id')) AS id
         FROM orchestration_v2_projection_messages AS message
         JOIN orchestration_v2_projection_threads AS thread
           ON thread.thread_id = message.thread_id,
           json_each(message.payload_json, '$.attachments') AS attachment
         WHERE thread.deleted_at IS NULL
-          AND lower(json_extract(attachment.value, '$.id')) IN (
+          AND lower(json_extract(attachment.value, '$.id')) IN (SELECT id FROM wanted)
+        UNION
+        SELECT lower(json_extract(file.value, '$.id')) AS id
+        FROM orchestration_v2_projection_turn_items AS item
+        JOIN orchestration_v2_projection_threads AS thread
+          ON thread.thread_id = item.thread_id,
+          json_each(item.payload_json, '$.questionAnswer.attachmentsByQuestionId') AS answer,
+          json_each(answer.value) AS file
+        WHERE item.type = 'user_input_request' AND thread.deleted_at IS NULL
+          AND lower(json_extract(file.value, '$.id')) IN (SELECT id FROM wanted)
+      `.pipe(Effect.map((rows) => new Set(rows.map((row) => row.id))));
+
+/** Which of `ids` (any case) a live fork shares from its history, lowercased. */
+export const readLiveForkSharedFileReferences = (
+  sql: SqlClient.SqlClient,
+  ids: ReadonlyArray<string>,
+) =>
+  ids.length === 0
+    ? Effect.succeed(new Set<string>())
+    : sql<{ readonly id: string }>`
+        SELECT DISTINCT lower(json_extract(copy.value, '$.source.id')) AS id
+        FROM orchestration_v2_projection_threads AS thread,
+          json_each(thread.payload_json, '$.conversationFork.attachmentCopies') AS copy
+        WHERE thread.deleted_at IS NULL
+          AND EXISTS (SELECT 1 FROM scient_fork_history WHERE thread_id = thread.thread_id)
+          AND lower(json_extract(copy.value, '$.source.id')) IN (
             SELECT lower(value) FROM json_each(${encodeJson(ids)})
           )
       `.pipe(Effect.map((rows) => new Set(rows.map((row) => row.id))));

@@ -422,10 +422,14 @@ handoff items. Shown items look the way copies always looked: no run, node or pr
 in-flight work interrupted, `inheritedFrom` naming the owner, the fork's thread id, and their
 position as ordinal. A projection rebuild replays events and keeps both tables.
 
-Files are shared. In a lineage that contains a fork, deletion plans no file cleanup; a
-`scient-fork.release-files` effect runs after the deletion commits and releases files of deleted
-members that no live member names (messages, question answers, tool pages, historical system
-messages, and each fork's shared-file list). Lineages without forks keep upstream's deletion path.
+Files are shared: a fork shows its history's files, and a message can reuse a file another
+conversation owns. So deletion plans no immediate file cleanup. A `scient.release-thread-files`
+effect runs after the deletion commits and releases the files the lineage's deleted members name
+when no live conversation names them: no live member of the lineage (messages, question answers,
+tool pages, historical system messages, a fork's shared-file list), and no message or fork's
+shared-file list anywhere else. Names compare without case. Like rollback pruning, it decides and
+unlinks under attachment arbitration and waits, past the usual attempt limit, while an admission
+holds a file. A file kept for another conversation is released by that conversation's deletion.
 
 Forking time no longer grows with history size beyond reading the source once to plan: a
 37,000-item conversation forks in about 0.4 s (was 5.6 s). Provider delivery may omit whole items

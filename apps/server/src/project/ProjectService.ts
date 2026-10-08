@@ -428,9 +428,10 @@ export const make = Effect.gen(function* () {
     const plan = yield* planThreadDeletion({
       command,
       projection,
-      attachmentIds: yield* threadProjections.getThreadAttachmentIds(threadId),
-      // SCIENT-FORK: a fork lineage releases its shared files after commit.
-      releaseForkFiles: yield* threadProjections.isInForkFamily(threadId),
+      // SCIENT-FORK: files can be shown by other conversations: release them
+      // after the deletion commits, keeping any a live conversation still names.
+      attachmentIds: [],
+      releaseFilesAfterCommit: true,
       now,
       idAllocator,
     });

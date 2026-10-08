@@ -335,7 +335,7 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
       assert.isTrue(yield* fs.exists(worktreePath));
       assert.deepStrictEqual(removals, []);
       completed = true;
-      for (const row of effects) {
+      for (let claimedCount = 0; claimedCount < effects.length; claimedCount += 1) {
         const claimed = yield* outbox.claimNext({
           workerId: "cleanup-test",
           leaseDurationMs: 60_000,
@@ -345,7 +345,10 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
         assert.isTrue(
           yield* outbox.succeed({ effectId: claimed.value.id, workerId: "cleanup-test" }),
         );
-        assert.strictEqual(Option.getOrNull(yield* outbox.get(row.id))?.status, "succeeded");
+        assert.strictEqual(
+          Option.getOrNull(yield* outbox.get(claimed.value.id))?.status,
+          "succeeded",
+        );
       }
       // A runtime's logical stop is insufficient: park the real channel shutdown
       // and keep the reservation until its physical scope finalizer runs.

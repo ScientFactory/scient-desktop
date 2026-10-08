@@ -1,35 +1,30 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
 import { ServerConfig } from "../../../config.ts";
 import { resolveAttachmentPath } from "../../../attachmentStore.ts";
 import { nativeImportRuntimeTestLayer } from "../../../scient/conversationImport/conversationImport.native-test-harness.ts";
 import { seed, fork, remove, inertRegistry, runtimeOptions } from "./stressHarness.ts";
 
+// Files are released after deletions commit, so concurrent last deletions each
+// see the other's commit when they decide.
 it.live(
-  "two last deletions that read retention before either commits release shared files",
+  "two concurrent last deletions release shared files",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const bothRead = yield* Deferred.make<void>();
-        let armed = false;
-        let reads = 0;
+        let decisions = 0;
         const runtime = nativeImportRuntimeTestLayer(inertRegistry, {
           ...runtimeOptions,
           decorateProjectionStore: (store) => ({
             ...store,
-            getThreadAttachmentIds: (threadId) =>
-              store.getThreadAttachmentIds(threadId).pipe(
+            getReleasableFiles: (threadId) =>
+              store.getReleasableFiles(threadId).pipe(
                 Effect.tap(() =>
-                  !armed
-                    ? Effect.void
-                    : Effect.gen(function* () {
-                        reads++;
-                        if (reads === 2) yield* Deferred.succeed(bothRead, undefined);
-                        yield* Deferred.await(bothRead);
-                      }),
+                  Effect.sync(() => {
+                    decisions++;
+                  }),
                 ),
               ),
           }),
@@ -47,11 +42,10 @@ it.live(
             );
           yield* remove(source.thread.id);
           for (const path of paths) assert.isTrue(yield* fs.exists(path));
-          armed = true;
           yield* Effect.all([remove(a.thread.id), remove(b.thread.id)], {
             concurrency: "unbounded",
           });
-          assert.equal(reads, 2);
+          assert.isAtLeast(decisions, 3);
           for (const path of paths)
             assert.isFalse(
               yield* fs.exists(path),

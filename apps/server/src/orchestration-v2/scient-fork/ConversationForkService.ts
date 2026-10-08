@@ -859,7 +859,7 @@ const make = Effect.gen(function* () {
                           id: `scient-fork:${fork.commandId}:abandoned:release-files`,
                           commandId: fork.commandId,
                           threadId,
-                          request: { type: "scient-fork.release-files" },
+                          request: { type: "scient.release-thread-files" },
                         },
                       ]
                     : [],
@@ -883,7 +883,7 @@ const make = Effect.gen(function* () {
               }),
         ),
       ),
-    releasableFiles: (threadId) => projections.getReleasableForkFiles(threadId),
+    releasableFiles: (threadId) => projections.getReleasableFiles(threadId),
     provision: (threadId, willRetry) =>
       provision(threadId, willRetry).pipe(
         Effect.mapError((cause) =>

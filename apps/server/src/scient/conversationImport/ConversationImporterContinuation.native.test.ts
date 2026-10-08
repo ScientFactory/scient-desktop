@@ -29,9 +29,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EventSinkV2 } from "../../orchestration-v2/EventSink.ts";
 import { reserveAttachment } from "../../orchestration-v2/AttachmentFileUse.ts";
 import {
-  ForkFileRelease,
-  layer as forkFileReleaseLayer,
-} from "../../orchestration-v2/scient-fork/ForkFileRelease.ts";
+  ThreadFileRelease,
+  layer as threadFileReleaseLayer,
+} from "../../orchestration-v2/scient-fork/ThreadFileRelease.ts";
 import {
   buildBoundedThreadProjection,
   THREAD_HISTORY_PAGE_POLICY,
@@ -63,6 +63,7 @@ import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
 import { layer as resourceCleanupLayer } from "../../orchestration-v2/ResourceCleanupService.ts";
 import { TerminalManager } from "../../terminal/Manager.ts";
 import {
+  createAttachmentId,
   parseThreadSegmentFromAttachmentId,
   resolveAttachmentPath,
   toSafeThreadAttachmentSegment,
@@ -2542,17 +2543,150 @@ it.live(
             commandId: CommandId.make(`guarded-release-delete-${threadId}`),
             threadId,
           });
-        const release = yield* ForkFileRelease.pipe(Effect.provide(forkFileReleaseLayer));
+        const release = yield* ThreadFileRelease.pipe(Effect.provide(threadFileReleaseLayer));
         const path = (attachment: (typeof files)[number]) =>
           resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!;
         const deferred = yield* Effect.flip(release.release(forkId));
-        assert.equal(deferred._tag, "ForkFileReleaseDeferred");
+        assert.equal(deferred._tag, "ThreadFileReleaseDeferred");
         assert.isTrue(yield* fs.exists(path(held)));
         assert.isTrue(yield* fs.exists(path(sent)));
         yield* pin.release;
         yield* release.release(forkId);
         assert.isFalse(yield* fs.exists(path(held)));
         assert.isTrue(yield* fs.exists(path(sent)));
+      }),
+    ),
+);
+
+it.live(
+  "file release keeps a file any live conversation or fork shows, and frees it once none does",
+  () =>
+    withImporter(
+      Effect.gen(function* () {
+        const { lease } = yield* leaseFor(importFixture({ turns: 2, attachments: true }));
+        const sourceId = (yield* importOnce(lease)).result.threadId;
+        const store = yield* ProjectionStoreV2;
+        const forks = yield* ConversationForkService;
+        const orchestrator = yield* OrchestratorV2;
+        const sink = yield* EventSinkV2;
+        const sql = yield* SqlClient.SqlClient;
+        const source = yield* store.getThreadProjection(sourceId);
+        const forkId = ThreadId.make("reuse-release-fork");
+        yield* forks.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("reuse-release-fork"),
+          originThreadId: sourceId,
+          newThreadId: forkId,
+          sourceAssistantMessageId: source.messages.findLast(
+            (message) => message.role === "assistant",
+          )!.id,
+          workspaceMode: "local",
+        });
+        const fork = yield* store.getThreadProjection(forkId);
+        const file = fork.thread.conversationFork!.attachmentCopies[0]!.source;
+        const now = yield* DateTime.now;
+        const prompt = source.messages.find((message) => message.role === "user")!;
+        // An unrelated conversation that was sent `files`.
+        const conversation = (threadId: ThreadId, files: ReadonlyArray<typeof file>) =>
+          sink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}-created`),
+                threadId,
+                type: "thread.created",
+                occurredAt: now,
+                payload: {
+                  ...source.thread,
+                  id: threadId,
+                  lineage: {
+                    parentThreadId: null,
+                    relationshipToParent: null,
+                    rootThreadId: threadId,
+                  },
+                  conversationImport: null,
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              },
+              {
+                id: EventId.make(`${threadId}-message`),
+                threadId,
+                type: "message.updated",
+                occurredAt: now,
+                payload: {
+                  ...prompt,
+                  id: MessageId.make(`${threadId}-message`),
+                  threadId,
+                  attachments: files,
+                },
+              },
+            ],
+          });
+        const remove = (threadId: ThreadId) =>
+          orchestrator.dispatch({
+            type: "thread.delete",
+            commandId: CommandId.make(`reuse-release-delete-${threadId}`),
+            threadId,
+          });
+        const released = (threadId: ThreadId) =>
+          forks
+            .releasableFiles(threadId)
+            .pipe(Effect.map((ids) => ids.map((id) => id.toLowerCase())));
+
+        // Deleting a conversation outside any fork lineage that reused the file
+        // keeps it for the source and fork, and frees the conversation's own file.
+        const otherId = ThreadId.make("reuse-release-other");
+        const own = { ...file, id: ChatAttachmentId.make(createAttachmentId(otherId, "png")!) };
+        yield* conversation(otherId, [file, own]);
+        yield* remove(otherId);
+        assert.deepEqual(yield* released(otherId), [own.id.toLowerCase()]);
+
+        // A conversation that reused the file forks; deleting it leaves its fork
+        // showing the file through history only.
+        const reuserId = ThreadId.make("reuse-release-reuser");
+        const reuserForkId = ThreadId.make("reuse-release-reuser-fork");
+        yield* conversation(reuserId, [file]);
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("reuse-release-reuser-fork-created"),
+              threadId: reuserForkId,
+              type: "thread.created",
+              occurredAt: now,
+              payload: {
+                ...fork.thread,
+                id: reuserForkId,
+                lineage: {
+                  parentThreadId: reuserId,
+                  relationshipToParent: "fork",
+                  rootThreadId: reuserId,
+                },
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+          ],
+        });
+        yield* sql`
+          INSERT INTO scient_fork_history
+            (thread_id, position, source_thread_id, source_item_id, item_type, message_id,
+             turn_start, user_turn)
+          VALUES (${reuserForkId}, 0, ${reuserId}, 'reuse-release-item', 'user_message',
+            ${`${reuserId}-message`}, 1, 1)
+        `;
+        yield* remove(reuserId);
+        assert.notInclude(yield* released(reuserId), file.id.toLowerCase());
+
+        // The original lineage goes: the reuser's live fork still shows the file.
+        yield* remove(sourceId);
+        yield* remove(forkId);
+        assert.notInclude(yield* released(forkId), file.id.toLowerCase());
+        assert.notInclude(yield* released(sourceId), file.id.toLowerCase());
+
+        // The last conversation showing it goes: the file is freed, though
+        // another lineage minted it.
+        yield* remove(reuserForkId);
+        assert.include(yield* released(reuserForkId), file.id.toLowerCase());
       }),
     ),
 );

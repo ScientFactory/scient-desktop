@@ -36,8 +36,8 @@ import { checkpointCaptureLaneBarrier } from "./scient-fork/CheckpointCaptureLan
 
 export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({ type: Schema.Literal("scient-fork.provision") }),
-  /** SCIENT-FORK: after a deletion in a fork lineage, release files nothing live names. */
-  Schema.Struct({ type: Schema.Literal("scient-fork.release-files") }),
+  /** SCIENT-FORK: after a thread is deleted, release its files that no live conversation names. */
+  Schema.Struct({ type: Schema.Literal("scient.release-thread-files") }),
   Schema.Struct({
     type: Schema.Literal("provider-runtime.continue"),
     sourceRunId: RunId,
@@ -144,7 +144,7 @@ export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.T
 
 export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "scient-fork.provision",
-  "scient-fork.release-files",
+  "scient.release-thread-files",
   "provider-runtime.continue",
   "provider-session.detach",
   "provider-thread.rollback",
