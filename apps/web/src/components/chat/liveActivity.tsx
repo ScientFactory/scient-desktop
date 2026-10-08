@@ -34,15 +34,23 @@ export function currentLiveActivityRowId(
       const owner = rows.findLast(
         (candidate) =>
           (candidate.kind === "context-compaction" && candidate.active) ||
-          (candidate.kind === "worktree-setup" && candidate.snapshot.phase === "running"),
+          (candidate.kind === "worktree-setup" &&
+            candidate.snapshot.phase === "running" &&
+            candidate.snapshot.stages.some((stage) => stage.status === "running")),
       );
       return owner?.id ?? rows.find((candidate) => candidate.kind === "working")?.id ?? null;
+    }
+    if (row.kind === "worktree-setup" && row.snapshot.phase === "running") {
+      // Until a stage runs (the setup has just begun), the header's
+      // "Setting up worktree…" is the activity.
+      return row.snapshot.stages.some((stage) => stage.status === "running")
+        ? row.id
+        : (rows.find((candidate) => candidate.kind === "working")?.id ?? row.id);
     }
     if (
       row.kind === "thinking" ||
       (row.kind === "work-live" && row.active) ||
-      (row.kind === "context-compaction" && row.active) ||
-      (row.kind === "worktree-setup" && row.snapshot.phase === "running")
+      (row.kind === "context-compaction" && row.active)
     )
       return row.id;
   }
@@ -55,6 +63,11 @@ const SWEEP_PX_PER_SECOND = 160;
 const SWEEP_BAND_REM = 7;
 /** The pass takes this share of each cycle; the rest is a pause between passes. */
 const SWEEP_PASS_SHARE = 0.8;
+
+const SWEEP_ANIMATION_NAMES = new Set([
+  "scient-live-activity-sweep",
+  "scient-live-activity-sweep-counter",
+]);
 
 /** A label's sweep cycle, in seconds: the same pace for any width. */
 export function liveActivitySweepSeconds(labelWidthPx: number, remPx: number): number {
@@ -74,11 +87,21 @@ export function observeLiveActivitySweep(element: HTMLElement | null) {
   const measure = () => {
     const remPx = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
     const seconds = liveActivitySweepSeconds(element.getBoundingClientRect().width, remPx);
-    element.style.setProperty("--live-activity-duration", `${seconds.toFixed(2)}s`);
+    const value = `${seconds.toFixed(2)}s`;
+    if (element.style.getPropertyValue("--live-activity-duration") === value) return false;
+    element.style.setProperty("--live-activity-duration", value);
+    return true;
   };
   measure();
   const onPassEnd = (event: AnimationEvent) => {
-    if (event.animationName === "scient-live-activity-sweep") measure();
+    if (event.animationName !== "scient-live-activity-sweep" || !measure()) return;
+    // A new duration keeps the time already played, which would land the
+    // light midway across the label: start the new cycle (and its counter
+    // motion) from the beginning, as the old one ended.
+    for (const animation of element.getAnimations({ subtree: true })) {
+      if (animation instanceof CSSAnimation && SWEEP_ANIMATION_NAMES.has(animation.animationName))
+        animation.currentTime = 0;
+    }
   };
   element.addEventListener("animationiteration", onPassEnd);
   const stopObserving = observeVisibleAnimation(element);

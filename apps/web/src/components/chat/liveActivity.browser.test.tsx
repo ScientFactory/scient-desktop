@@ -5,6 +5,7 @@ import { createRef } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { cdp } from "vitest/browser";
 import { ThreadId } from "@t3tools/contracts";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
@@ -269,8 +270,80 @@ it("re-measures the pace between passes when the running tool changes", async ()
     ],
     working,
   );
-  // After the current pass ends, the cycle follows the new width.
+  // After the current pass ends, the cycle follows the new width…
   await expect
     .poll(() => cycleSeconds(sweeps()[0]!), { timeout: 8000 })
     .toBeGreaterThan(first + 0.5);
+  // …starting a fresh pass, not landing midway across the label.
+  const animation = sweeps()[0]!
+    .getAnimations()
+    .find((candidate) => candidate instanceof CSSAnimation)!;
+  expect(animation.effect!.getComputedTiming().progress ?? 1).toBeLessThan(0.2);
+});
+
+it("never sweeps the setup popover beside the timeline's current activity", async () => {
+  const snapshot = {
+    ...setupSnapshot(),
+    // The agent has started; the async setup script still runs.
+    stages: setupSnapshot().stages.map((stage) =>
+      stage.id === "agent" ? { ...stage, status: "done" as const, endedAt: date } : stage,
+    ),
+  };
+  render("live:chip", [entry(1, "Go")], {
+    ...working,
+    worktreeSetup: snapshot,
+    latestRun: {
+      runId: RunId.make("run-1"),
+      status: "running",
+      startedAt: date,
+      completedAt: null,
+    },
+  });
+  const chip = () =>
+    document.querySelector<HTMLButtonElement>('button[aria-label$="Show setup progress."]');
+  await expect.poll(chip).not.toBeNull();
+  chip()!.click();
+  await expect
+    .poll(() => document.querySelector('[data-worktree-setup-stage="setup-script"]'))
+    .not.toBeNull();
+  // The popover's running stage stays still: one sweep on the whole page.
+  expect(document.querySelectorAll(".live-activity-focus")).toHaveLength(1);
+});
+
+async function emulate(feature: "prefers-reduced-motion" | "forced-colors", value: string) {
+  await cdp().send("Emulation.setEmulatedMedia", { features: [{ name: feature, value }] });
+}
+
+it("with reduced motion: no sweep or dimming, the dot still and visible", async () => {
+  await emulate("prefers-reduced-motion", "reduce");
+  try {
+    render("live:reduced", [entry(1, "Calm")], working);
+    await expect.poll(() => host!.querySelector(".live-activity-dot")).not.toBeNull();
+    const dot = host!.querySelector(".live-activity-dot")!;
+    expect(getComputedStyle(dot).animationName).toBe("none");
+    expect(getComputedStyle(dot).opacity).toBe("1");
+    const overlay = host!.querySelector(".live-activity-focus");
+    if (overlay) {
+      expect(getComputedStyle(overlay).animationName).toBe("none");
+      expect(getComputedStyle(overlay).opacity).toBe("0");
+    }
+    const rest = host!.querySelector(".live-activity-rest");
+    if (rest) expect(getComputedStyle(rest).opacity).toBe("1");
+  } finally {
+    await emulate("prefers-reduced-motion", "");
+  }
+});
+
+it("in high contrast mode: the dot keeps the system text color", async () => {
+  await emulate("forced-colors", "active");
+  try {
+    render("live:contrast", [entry(1, "Contrast")], working);
+    await expect.poll(() => host!.querySelector(".live-activity-dot")).not.toBeNull();
+    const dot = getComputedStyle(host!.querySelector(".live-activity-dot")!);
+    expect(dot.forcedColorAdjust).toBe("none");
+    expect(dot.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+    expect(dot.animationName).toBe("none");
+  } finally {
+    await emulate("forced-colors", "");
+  }
 });

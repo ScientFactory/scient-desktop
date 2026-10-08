@@ -24,14 +24,18 @@ describe("currentLiveActivityRowId", () => {
     ).toBe("compaction");
     expect(
       currentLiveActivityRowId([
-        row({ kind: "worktree-setup", id: "setup", snapshot: { phase: "running" } }),
+        row({
+          kind: "worktree-setup",
+          id: "setup",
+          snapshot: { phase: "running", stages: [{ id: "fetch", status: "running" }] },
+        }),
       ]),
     ).toBe("setup");
     expect(
       currentLiveActivityRowId([
         row({ kind: "work-live", id: "settled", active: false }),
         row({ kind: "context-compaction", id: "done", active: false }),
-        row({ kind: "worktree-setup", id: "finished", snapshot: { phase: "done" } }),
+        row({ kind: "worktree-setup", id: "finished", snapshot: { phase: "done", stages: [] } }),
         row({ kind: "working", id: "working-indicator-row" }),
       ]),
     ).toBeNull();
@@ -57,7 +61,29 @@ describe("currentLiveActivityRowId while compacting or preparing a worktree", ()
     expect(currentLiveActivityRowId([working, thinking], false)).toBe("live-activity-row");
   });
   it("gives it to the setup or compaction row once that exists", () => {
-    const setup = row({ kind: "worktree-setup", id: "setup", snapshot: { phase: "running" } });
+    const setup = row({
+      kind: "worktree-setup",
+      id: "setup",
+      snapshot: { phase: "running", stages: [{ id: "fetch", status: "running" }] },
+    });
     expect(currentLiveActivityRowId([working, setup, thinking], true)).toBe("setup");
+  });
+});
+
+describe("currentLiveActivityRowId for a setup that has just begun", () => {
+  it("gives the activity to the header until a setup stage runs", () => {
+    const working = row({ kind: "working", id: "working-indicator-row" });
+    const pending = row({
+      kind: "worktree-setup",
+      id: "setup",
+      snapshot: { phase: "running", stages: [{ id: "fetch", status: "pending" }] },
+    });
+    expect(currentLiveActivityRowId([working, pending])).toBe("working-indicator-row");
+    const running = row({
+      kind: "worktree-setup",
+      id: "setup",
+      snapshot: { phase: "running", stages: [{ id: "fetch", status: "running" }] },
+    });
+    expect(currentLiveActivityRowId([working, running])).toBe("setup");
   });
 });
