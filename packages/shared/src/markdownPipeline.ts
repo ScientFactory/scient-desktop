@@ -298,3 +298,7 @@ function remarkKeepWindowsPathDestinations(this: Processor) {
 export function shouldPreserveAssistantLineBreaks(text: string): boolean {
   return /^★ Insight(?:\s|─)/mu.test(text);
 }
+
+// SCIENT-FORK:START — document/chat profiles share the canonical Windows destination owner.
+export { remarkKeepWindowsPathDestinations };
+// SCIENT-FORK:END

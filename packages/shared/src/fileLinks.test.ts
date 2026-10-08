@@ -51,6 +51,16 @@ describe("resolvePathLinkTarget", () => {
     ).toBe("/Users/julius/project/src/components/ThreadTerminalDrawer.tsx:42:7");
   });
 
+  it.each([
+    ["/tmp/project\\", "/tmp/project\\/notes.txt:12:3"],
+    ["/tmp/project/", "/tmp/project/notes.txt:12:3"],
+    ["C:\\repo\\", "C:\\repo\\notes.txt:12:3"],
+    ["C:/repo/", "C:/repo\\notes.txt:12:3"],
+    ["\\\\server\\share\\", "\\\\server\\share\\notes.txt:12:3"],
+  ])("preserves filesystem separator semantics when joining %s", (cwd, expected) => {
+    expect(resolvePathLinkTarget("notes.txt:12:3", cwd)).toBe(expected);
+  });
+
   it("keeps absolute paths unchanged", () => {
     expect(
       resolvePathLinkTarget("/Users/julius/project/src/main.ts:12", "/Users/julius/project"),

@@ -66,7 +66,7 @@ export interface ProviderClientDefinition {
    * specific instance), so every instance of that driver — built-in default
    * or custom — advertises the same marker.
    *
-   * SCIENT-FORK:START — no driver sets this. Upstream badges Pi and ACP
+   * SCIENT-FORK:START — only Muse retains its incoming Beta marker. Upstream badges Pi and ACP
    * Registry "Early Access"; the fork moved that signal to the model picker's
    * `pickerSidebarBadge` instead (see `providerOrdering.test.ts`).
    * SCIENT-FORK:END

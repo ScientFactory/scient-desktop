@@ -62,7 +62,10 @@ function isWindowsPathStyle(value: string): boolean {
 }
 
 function joinPath(base: string, next: string, separator: "/" | "\\"): string {
-  const cleanBase = base.replace(/[\\/]+$/, "");
+  // SCIENT-FORK:START — preserve POSIX filename authority while joining links.
+  // POSIX backslashes are filename characters, not directory separators.
+  const cleanBase = base.replace(separator === "\\" ? /[\\/]+$/ : /\/+$/, "");
+  // SCIENT-FORK:END
   if (separator === "\\") {
     return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
   }

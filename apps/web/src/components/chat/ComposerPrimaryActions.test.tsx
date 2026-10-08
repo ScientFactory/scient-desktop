@@ -149,10 +149,10 @@ describe("ComposerPrimaryActions", () => {
     expect(markup).toContain('type="submit"');
   });
 
-  it("labels the idle submit button as send, not queue", () => {
+  it("labels the idle button as submit, not queue", () => {
     const markup = renderSendButton();
 
-    expect(markup).toContain('aria-label="Send message"');
+    expect(markup).toContain('aria-label="Submit message"');
     expect(markup).not.toContain('aria-label="Queue message"');
   });
 
