@@ -62,6 +62,12 @@ describe("settings sidebar order", () => {
 });
 
 describe("searchSettings", () => {
+  it("does not offer the withheld privacy-policy link", () => {
+    expect(SETTINGS_SEARCH_ITEMS.map((item) => item.id)).not.toContain("privacy-policy");
+    expect(searchSettings("privacy policy")).toEqual([]);
+    expect(searchSettings("diagnostics")[0]).toMatchObject({ id: "diagnostics" });
+  });
+
   it.each(["send shortcut", "multiline", "new line"])("finds Send shortcut for %s", (query) => {
     expect(searchSettings(query).map((item) => item.id)).toContain("send-shortcut");
   });

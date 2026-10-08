@@ -35,7 +35,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
-import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
 import {
@@ -418,20 +417,8 @@ function ConnectionStep({
           {skippedLabels.length === 1 ? "it" : "them"} up later from Settings.
         </p>
       ) : null}
-      <div className="mt-6 flex flex-col-reverse gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-        <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
-          {/* SCIENT-FORK:START — use Scient's policy without changing sharing defaults. */}
-          For details about data collection and sharing settings, see our{" "}
-          <a
-            className="underline underline-offset-2 hover:text-foreground"
-            href={PRIVACY_POLICY_URL}
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            privacy policy
-          </a>
-          .{/* SCIENT-FORK:END */}
-        </p>
+      {/* SCIENT-FORK:START — withhold the policy link and keep Continue aligned right. */}
+      <div className="mt-6 flex justify-end">
         <Button
           className="shrink-0 self-end"
           ref={continueRef}
@@ -443,6 +430,7 @@ function ConnectionStep({
           <ArrowRightIcon className="size-3.5" />
         </Button>
       </div>
+      {/* SCIENT-FORK:END */}
     </>
   );
 }

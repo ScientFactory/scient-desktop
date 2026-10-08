@@ -3,7 +3,6 @@ import { SettingsGroup } from "./SettingsGroup";
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
-import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { ArchiveIcon, ArchiveX, CheckIcon, ChevronRightIcon, SettingsIcon } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
@@ -3422,6 +3421,7 @@ export function GeneralSettingsPanel() {
 
       <AnalyticsPrivacySettings />
 
+      {/* SCIENT-FORK:START — withhold the external policy row without changing analytics controls. */}
       <SettingsSection id="about" title="About">
         {isElectron || HOSTED_APP_CHANNEL ? (
           <AboutVersionSection />
@@ -3433,20 +3433,8 @@ export function GeneralSettingsPanel() {
             />
           </>
         )}
-        <SettingsRow
-          {...searchableSetting("privacy-policy")}
-          description="How we handle your data, including optional usage analytics."
-          control={
-            <Button
-              render={<a href={PRIVACY_POLICY_URL} target="_blank" rel="noreferrer noopener" />}
-              size="sm"
-              variant="outline"
-            >
-              View policy
-            </Button>
-          }
-        />
       </SettingsSection>
+      {/* SCIENT-FORK:END */}
       <SettingsSection title="Diagnostics">
         <SettingsRow
           {...searchableSetting("diagnostics")}
