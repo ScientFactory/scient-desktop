@@ -2383,7 +2383,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         </WorkLogBlock>
       ) : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
-      {row.kind === "fork-marker" ? <ForkMarkerTimelineRow /> : null}
+      {row.kind === "fork-marker" ? <ForkMarkerTimelineRow row={row} /> : null}
       {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
       {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
@@ -2401,18 +2401,24 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
   );
 });
 
-function ForkMarkerTimelineRow() {
+function ForkMarkerTimelineRow({
+  row,
+}: {
+  row: Extract<MessagesTimelineRow, { kind: "fork-marker" }>;
+}) {
   const ctx = use(TimelineRowCtx);
+  // SCIENT-FORK: an earlier fork point links to the conversation it came from.
+  const originThreadId = row.originThreadId ?? ctx.forkOriginThreadId;
   return (
     <div className="flex items-center gap-3 px-1 py-3 text-xs text-muted-foreground">
       <div className="h-px flex-1 bg-border/60" />
       <span className="shrink-0 rounded-full border border-border/70 bg-muted/35 px-2.5 py-1">
-        {ctx.forkOriginThreadId ? (
+        {originThreadId ? (
           <Link
             to="/$environmentId/$threadId"
             params={{
               environmentId: ctx.activeThreadEnvironmentId,
-              threadId: ctx.forkOriginThreadId,
+              threadId: originThreadId,
             }}
             className="hover:text-foreground hover:underline"
             aria-label="Open original conversation"
