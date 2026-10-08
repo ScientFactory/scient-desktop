@@ -916,9 +916,6 @@ importers:
       culori:
         specifier: ^4.0.2
         version: 4.0.2
-      dompurify:
-        specifier: ^3.4.16
-        version: 3.4.16
       effect:
         specifier: 4.0.1
         version: 4.0.1(patch_hash=a33cba07c41f32374c2aaa86ea4a84d3ab9a872a78c94b65e929b19f8361856f)
