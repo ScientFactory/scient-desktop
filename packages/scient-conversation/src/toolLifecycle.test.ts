@@ -125,6 +125,17 @@ describe("mergeToolLifecyclePayloads", () => {
     ).toEqual({ status: "completed", data: { rawOutput: "result", command: "ls" } });
   });
 
+  it("keeps a field named __proto__ as data", () => {
+    const merged = mergeToolLifecyclePayloads([
+      JSON.parse('{"__proto__":{"top":1},"data":{"__proto__":{"inner":2}}}'),
+      { data: {} },
+    ]) as Record<string, unknown>;
+    expect(Object.hasOwn(merged, "__proto__")).toBe(true);
+    expect(JSON.parse(JSON.stringify(merged))).toEqual(
+      JSON.parse('{"data":{"__proto__":{"inner":2}},"__proto__":{"top":1}}'),
+    );
+  });
+
   it("returns a single or non-object payload unchanged", () => {
     const only = { data: { command: "ls" } };
     expect(mergeToolLifecyclePayloads([only])).toBe(only);

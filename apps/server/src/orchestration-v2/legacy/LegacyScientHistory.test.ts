@@ -1554,7 +1554,31 @@ it.effect("keeps a thread an earlier build imported row by row in that shape", (
     );
     assert.isTrue(items.every((item) => positioned.has(item.id)));
     yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
-    assert.equal((yield* projections.getThreadProjection(THREAD)).turnItems.length, items.length);
+    const repaired = yield* projections.getThreadProjection(THREAD);
+    assert.equal(repaired.turnItems.length, items.length);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("exports the recorded outcome of tool rows that were not folded", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    const sql = yield* SqlClient.SqlClient;
+    const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    // A failed completion without a call id is imported as it is.
+    yield* sql`UPDATE projection_thread_activities
+      SET payload_json = '{"itemType":"command_execution","status":"failed"}'
+      WHERE activity_id = 'tool-call'`;
+    yield* migration.reconcileShells;
+    yield* migration.ensureTranscript(THREAD);
+    const projection = yield* projections.getThreadProjection(THREAD);
+    const exported = projectWorkLog(
+      conversationSnapshotProjection(projection, null).activities,
+    ).entries.flatMap((entry) => (entry._tag === "tool" ? [[entry.id, entry.status]] : []));
+    assert.deepEqual(
+      exported.filter(([id]) => id === activityItem("tool-call")),
+      [[activityItem("tool-call"), "failed"]],
+    );
   }).pipe(Effect.provide(TestLayer)),
 );
 
@@ -1604,5 +1628,66 @@ it.effect("keeps a call an earlier build imported only partly in its row-by-row 
     // The rest of the call is imported row by row, so nothing is lost.
     for (const id of ["c1-u1", "c1-u2", "c1-done", "c1-again"])
       assert.isTrue(ids.has(activityItem(id)), id);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("keeps a partly imported call whose rows share one kind in its row-by-row shape", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    const sql = yield* SqlClient.SqlClient;
+    const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    for (const [id, output, createdAt] of [
+      ["p1", "a", "2026-01-03T02:00:00.000Z"],
+      ["p2", "ab", "2026-01-03T02:00:01.000Z"],
+    ] as const) {
+      const payload = JSON.stringify({
+        itemType: "command_execution",
+        toolCallId: "call-p",
+        status: "inProgress",
+        data: { item: { output } },
+      });
+      yield* sql`INSERT INTO projection_thread_activities (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at)
+        VALUES (${id}, ${THREAD}, 'tool-turn', 'tool', 'tool.updated', 'Ran command', ${payload}, NULL, ${createdAt})`;
+    }
+    yield* migration.reconcileShells;
+    // An earlier build imported the first progress row, then stopped.
+    const at = DateTime.makeUnsafe("2026-01-03T02:00:00.000Z");
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(activityItem("p1")),
+          type: "turn-item.updated",
+          threadId: THREAD,
+          occurredAt: at,
+          payload: {
+            id: activityItem("p1"),
+            threadId: THREAD,
+            runId: null,
+            historyTurnId: TurnId.make("tool-turn"),
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "completed",
+            startedAt: at,
+            completedAt: at,
+            updatedAt: at,
+            type: "dynamic_tool",
+            title: "Ran command",
+            toolName: "tool.updated",
+            input: { activityId: "p1", kind: "tool.updated" },
+          },
+        },
+      ],
+    });
+    yield* migration.ensureTranscript(THREAD);
+    const ids = new Set(
+      (yield* projections.getThreadProjection(THREAD)).turnItems.map((item) => item.id),
+    );
+    assert.isTrue(ids.has(activityItem("p2")));
   }).pipe(Effect.provide(TestLayer)),
 );

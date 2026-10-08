@@ -37,7 +37,7 @@ interface HistoryRow {
   readonly tool_call_id: string | null;
   /** A folded tool call: its merged record and how it ended. */
   readonly folded?: {
-    readonly record: typeof Activity.Type;
+    readonly record: FoldedActivity;
     readonly status: ToolLifecycleOutcome;
   };
 }
@@ -83,6 +83,14 @@ class LegacyHistoryPositionError extends Schema.TaggedError<LegacyHistoryPositio
   }
 }
 const decodeActivity = Schema.decodeUnknownEffect(Schema.fromJsonString(Activity));
+/** A tool call's V1 rows folded into one record; the count marks the item as folded. */
+type FoldedActivity = typeof Activity.Type & { readonly foldedRowCount: number };
+/** A group of rows `groupToolLifecycles` formed for one tool call. */
+const isToolCall = (group: ReadonlyArray<HistoryRow>) =>
+  group[0]!.tool_call_id !== null &&
+  (group[0]!.kind === "tool.started" ||
+    group[0]!.kind === "tool.updated" ||
+    group[0]!.kind === "tool.completed");
 const decodeAnswer = Schema.decodeUnknownEffect(UserInputAttachmentAnswerPayload);
 const decodeApproval = Schema.decodeUnknownEffect(Schema.fromJsonString(Approval));
 const decodePlan = Schema.decodeUnknownEffect(Schema.fromJsonString(Plan));
@@ -104,7 +112,8 @@ const DROPPED_ACTIVITY_KINDS: ReadonlySet<string> = new Set([
  *
  * A thread an earlier build imported row by row, even partly, keeps that
  * shape: folding it would leave existing items without positions, or skip the
- * rest of a call whose first row was already imported.
+ * rest of a call whose first row was already imported. Folded items carry
+ * `foldedRowCount`, so the two shapes are never confused.
  */
 const foldToolCalls = Effect.fnUntraced(function* (
   sql: SqlClient.SqlClient,
@@ -116,29 +125,22 @@ const foldToolCalls = Effect.fnUntraced(function* (
   const groups = groupToolLifecycles(
     kept.map((row) => ({ ...row, turnId: row.turn_id, toolCallId: row.tool_call_id })),
   );
-  // A folded call keeps its first row's id and its last row's kind; an item an
-  // earlier build imported for that same first row carries the first row's kind.
-  const foldedKindById = new Map(
-    groups.map((group) => [group[0]!.item_id, group.at(-1)!.kind] as const),
-  );
-  const importedRowByRow = (yield* sql<{ turn_item_id: string; kind: string | null }>`
-    SELECT turn_item_id, json_extract(payload_json, '$.input.kind') AS kind
+  // Every folded call carries `foldedRowCount`; an item for a call without it,
+  // or an item that folding would not produce, was imported by an earlier build.
+  const keptIds = new Set(groups.map((group) => group[0]!.item_id));
+  const callIds = new Set(groups.filter(isToolCall).map((group) => group[0]!.item_id));
+  const importedRowByRow = (yield* sql<{ turn_item_id: string; marked: number }>`
+    SELECT turn_item_id, json_type(payload_json, '$.input.foldedRowCount') IS NOT NULL AS marked
     FROM orchestration_v2_projection_turn_items
     WHERE thread_id = ${threadId} AND turn_item_id LIKE 'migration:v1:history:activity:%'`).some(
-    (row) =>
-      !foldedKindById.has(row.turn_item_id) || foldedKindById.get(row.turn_item_id) !== row.kind,
+    (row) => !keptIds.has(row.turn_item_id) || (callIds.has(row.turn_item_id) && row.marked !== 1),
   );
   if (importedRowByRow) return rows;
   const folded: HistoryRow[] = [];
   for (const group of groups) {
     const first = group[0]!;
     const last = group.at(-1)!;
-    const isToolCall =
-      first.tool_call_id !== null &&
-      (first.kind === "tool.started" ||
-        first.kind === "tool.updated" ||
-        first.kind === "tool.completed");
-    if (!isToolCall || !includeDetails) {
+    if (!isToolCall(group) || !includeDetails) {
       folded.push({ ...first, updated_at: group.length > 1 ? last.created_at : first.updated_at });
       continue;
     }
@@ -152,6 +154,7 @@ const foldToolCalls = Effect.fnUntraced(function* (
           activityId: records[0]!.activityId,
           sequence: records[0]!.sequence,
           payload: mergeToolLifecyclePayloads(records.map((record) => record.payload)),
+          foldedRowCount: records.length,
         },
         status: toolLifecycleOutcome(records),
       },

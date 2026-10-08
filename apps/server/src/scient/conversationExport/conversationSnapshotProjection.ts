@@ -12,11 +12,8 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { readHistoricalSystemMessage } from "../../orchestration-v2/legacy/HistoricalSystemMessage.ts";
 
-const TOOL_LIFECYCLE_KINDS: ReadonlySet<string> = new Set([
-  "tool.started",
-  "tool.updated",
-  "tool.completed",
-]);
+/** The V1 importer marks the one item it folded a tool call's rows into. */
+const isFoldedToolCall = Schema.is(Schema.Struct({ foldedRowCount: Schema.Number }));
 
 const historicalActivity = Schema.Struct({
   kind: Schema.String,
@@ -134,12 +131,12 @@ export function conversationSnapshotProjection(
           });
         } else if (isHistoricalActivity(item.input)) {
           const { kind, payload } = item.input;
-          // An imported tool call's item status is how it ended; its merged
+          // A folded tool call's item status is how it ended; its merged
           // payload can still carry a progress status from an earlier row.
           activity(
             kind,
             item.input.summary,
-            TOOL_LIFECYCLE_KINDS.has(kind) &&
+            isFoldedToolCall(item.input) &&
               typeof payload === "object" &&
               payload !== null &&
               !Array.isArray(payload)

@@ -58,6 +58,16 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** An own data field, whatever its name; plain assignment to `__proto__` would not create one. */
+function defineField(target: Record<string, unknown>, key: string, value: unknown) {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
 /**
  * `latest` with every field it does not have filled from `earlier`, newest
  * first. A field that is present wins, even when its value is null. The
@@ -73,7 +83,7 @@ function fillFrom(
     const candidate = earlier[index];
     if (!isRecord(candidate)) continue;
     for (const [key, value] of Object.entries(candidate)) {
-      if (key !== nested && !Object.hasOwn(merged, key)) merged[key] = value;
+      if (key !== nested && !Object.hasOwn(merged, key)) defineField(merged, key, value);
     }
   }
   if (nested !== undefined) {
@@ -82,10 +92,14 @@ function fillFrom(
     );
     if (Object.hasOwn(merged, nested)) {
       const own = merged[nested];
-      if (isRecord(own)) merged[nested] = fillFrom(own, nestedEarlier);
+      if (isRecord(own)) defineField(merged, nested, fillFrom(own, nestedEarlier));
     } else if (nestedEarlier.length > 0) {
       const newest = nestedEarlier.at(-1);
-      merged[nested] = isRecord(newest) ? fillFrom(newest, nestedEarlier.slice(0, -1)) : newest;
+      defineField(
+        merged,
+        nested,
+        isRecord(newest) ? fillFrom(newest, nestedEarlier.slice(0, -1)) : newest,
+      );
     }
   }
   return merged;
