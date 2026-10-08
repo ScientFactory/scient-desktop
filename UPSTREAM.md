@@ -226,7 +226,8 @@ channel as Scient distribution.
 
 The next qualified alignment is recorded in
 [the 2026-10-08 receipt](docs/internals/t3-upstream-sync-20261008-468ade3049.md)
-and `upstream-state.json`. It receives 366 first-parent official commits through
+and `upstream-state.json` ([Scient PR #472](https://github.com/ScientFactory/scient-desktop/pull/472)).
+It receives 366 first-parent official commits through
 `468ade30495c450ae4e731483187f77bc3c5e42b` onto owned base
 `c8ec17b2a03ed567c5cbda21e01df158a55af55c`. Literal merge
 `e434651620b6ad9e5a9b9c610199e0820fd3268f` retains that exact official target;
