@@ -310,10 +310,6 @@ const make = Effect.gen(function* () {
     const run = projection.runs.find((row) => row.id === source.runId);
     const thread = projection.providerThreads.find((row) => row.id === run?.providerThreadId);
     if (thread?.driver !== "codex") return null;
-    if (Option.isNone(snapshots) || snapshots.value.captureRunningForkText === undefined)
-      return yield* failure(
-        "Native running text capture is unavailable. Retry after reconnecting.",
-      );
     const attempt = projection.attempts.find((row) => row.id === run?.activeAttemptId);
     // Native turn/started can be committed before the start RPC binds the attempt.
     // The accepted turn's exact attempt/root/thread links remain canonical authority.
@@ -326,6 +322,13 @@ const make = Effect.gen(function* () {
         ["running", "waiting"].includes(row.status) &&
         (attempt?.providerTurnId == null || row.id === attempt.providerTurnId),
     );
+    // Before the native turn is accepted (Codex can take many seconds to start),
+    // nothing native is buffered yet: the fork freezes what is committed.
+    if (turns.length === 0) return null;
+    if (Option.isNone(snapshots) || snapshots.value.captureRunningForkText === undefined)
+      return yield* failure(
+        "Native running text capture is unavailable. Retry after reconnecting.",
+      );
     const turn = turns.length === 1 ? turns[0] : undefined;
     if (
       run === undefined ||
