@@ -4014,16 +4014,29 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       OR json_array_length(payload_json, '$.attachments') > 0)
               ) AS present
             `;
-            // SCIENT-FORK: a fork's inherited request is part of its conversation.
+            // SCIENT-FORK: a fork's inherited request is part of its conversation,
+            // as the fork shows it (a kept version first).
             const inheritedConversation =
               conversation[0]?.present !== 1 &&
-              (yield* readForkHistoryMessageRows(sql, threadId)).some((row) => {
-                const message = parseEncodedPayload(row.payload_json);
-                const text =
-                  typeof message.text === "string" ? message.text.trim().toLowerCase() : "";
-                const attachments = Array.isArray(message.attachments) ? message.attachments : [];
-                return message.role === "user" && (text !== "/compact" || attachments.length > 0);
-              });
+              (yield* sql<{ present: number }>`
+                SELECT EXISTS(
+                  SELECT 1 FROM (
+                    SELECT COALESCE(frozen.message_json, message.payload_json) AS payload_json
+                    FROM scient_fork_history AS history
+                    LEFT JOIN scient_fork_frozen_items AS frozen
+                      ON frozen.thread_id = history.thread_id
+                        AND frozen.position = history.position
+                    LEFT JOIN orchestration_v2_projection_messages AS message
+                      ON message.message_id = history.message_id
+                    WHERE history.thread_id = ${threadId}
+                      AND history.source_thread_id <> ${threadId}
+                      AND history.item_type = 'user_message'
+                  ) AS shown
+                  WHERE json_extract(shown.payload_json, '$.role') = 'user'
+                    AND (lower(trim(json_extract(shown.payload_json, '$.text'), ${javascriptTrimWhitespace})) <> '/compact'
+                      OR json_array_length(shown.payload_json, '$.attachments') > 0)
+                ) AS present
+              `)[0]?.present === 1;
             return {
               hasConversation: conversation[0]?.present === 1 || inheritedConversation,
               thread,
@@ -4073,7 +4086,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const forkHistory = yield* readForkHistoryIndex(sql, threadId);
         if (forkHistory.length === 0) return local;
         const inherited = new Set<string>(forkHistory.map((row) => row.sourceItemId));
-        const history = (yield* readForkHistoryRows(sql, threadId, forkHistory))
+        // Only rows of a type turn-start history can hold are read.
+        const candidates = forkHistory.filter(
+          (row) =>
+            TURN_START_HISTORY_TYPES.has(row.type) ||
+            row.type === "reasoning" ||
+            row.type === "dynamic_tool" ||
+            row.type === "user_input_request",
+        );
+        const history = (yield* readForkHistoryRows(sql, threadId, candidates))
           .map((row) => row.item)
           .filter(
             (item) =>

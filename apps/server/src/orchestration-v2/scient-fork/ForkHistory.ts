@@ -249,7 +249,9 @@ export const readForkHistoryRows = Effect.fn("ForkHistory.readRows")(function* (
   if (index.length === 0) return [];
   const first = index[0]!.position;
   const last = index.at(-1)!.position;
-  // Read the run of positions the rows span, preferring a version kept for the fork.
+  // Read the rows' positions, preferring a version kept for the fork. A
+  // contiguous run reads by range; scattered rows read only themselves.
+  const scattered = last - first + 1 !== index.length;
   const byPosition = new Map(
     (yield* sql<{ readonly position: number; readonly payload_json: string | null }>`
       SELECT history.position, COALESCE(frozen.item_json, item.payload_json) AS payload_json
@@ -260,6 +262,11 @@ export const readForkHistoryRows = Effect.fn("ForkHistory.readRows")(function* (
         ON item.turn_item_id = history.source_item_id
       WHERE history.thread_id = ${threadId}
         AND history.position BETWEEN ${first} AND ${last}
+        ${
+          scattered
+            ? sql`AND history.position IN (SELECT value FROM json_each(${encodeJson(index.map((row) => row.position))}))`
+            : sql``
+        }
     `).map((row) => [row.position, row.payload_json] as const),
   );
   const payloads = index.map((row) => byPosition.get(row.position) ?? null);

@@ -4,7 +4,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { ProjectionStoreV2 } from "../../ProjectionStore.ts";
 import { ProjectionMaintenanceV2, layer as maintenanceLayer } from "../../ProjectionMaintenance.ts";
 import { fork, remove, run, seed } from "./stressHarness.ts";
-import { ThreadId, TurnItemId } from "@t3tools/contracts";
+import { EventId, MessageId, RunId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import { EventSinkV2 } from "../../EventSink.ts";
 import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
@@ -299,6 +301,96 @@ it.live(
         );
         assert.deepEqual(none.messages, []);
         assert.deepEqual(byRun.messages, []);
+      }),
+    ),
+  120000,
+);
+
+it.live(
+  "fork turn starts read only the inherited items and messages they use",
+  () =>
+    run(
+      Effect.gen(function* () {
+        const source = yield* seed({ turns: 3 });
+        const store = yield* ProjectionStoreV2;
+        const sql = yield* SqlClient.SqlClient;
+        const now = yield* DateTime.now;
+        // A web search in the shared history: turn-start history never uses one.
+        const firstUser = source.turnItems.find((item) => item.type === "user_message")!;
+        yield* (yield* EventSinkV2).write({
+          events: [
+            {
+              id: EventId.make("turn-start-web-search"),
+              threadId: source.thread.id,
+              type: "turn-item.updated",
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`${firstUser.id}~web-search`),
+                type: "web_search",
+                threadId: source.thread.id,
+                runId: null,
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: firstUser.ordinal,
+                status: "completed",
+                title: "Search",
+                patterns: ["fork"],
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+              },
+            },
+          ],
+        });
+        // An answer after it, so the fork keeps it.
+        const lastAnswer = source.turnItems.findLast((item) => item.type === "assistant_message")!;
+        const lastMessage = source.messages.findLast((message) => message.role === "assistant")!;
+        assert.ok(lastAnswer.type === "assistant_message");
+        const laterId = `${lastMessage.id}~later`;
+        yield* (yield* EventSinkV2).write({
+          events: [
+            {
+              id: EventId.make("turn-start-later-message"),
+              threadId: source.thread.id,
+              type: "message.updated",
+              occurredAt: now,
+              payload: { ...lastMessage, id: MessageId.make(laterId), text: "Later answer" },
+            },
+            {
+              id: EventId.make("turn-start-later-item"),
+              threadId: source.thread.id,
+              type: "turn-item.updated",
+              occurredAt: now,
+              payload: {
+                ...lastAnswer,
+                id: TurnItemId.make(`${lastAnswer.id}~later`),
+                messageId: MessageId.make(laterId),
+                text: "Later answer",
+              },
+            },
+          ],
+        });
+        const child = (yield* fork(source.thread.id, "turn-start-child")).projection;
+        assert.isTrue(child.visibleTurnItems.some((row) => row.item.type === "web_search"));
+        const expected = yield* store.getTurnStartHistory(child.thread.id);
+        // Undecodable once shared: reading it would fail the turn start.
+        yield* sql`UPDATE orchestration_v2_projection_turn_items SET payload_json = '{}'
+          WHERE turn_item_id = ${`${firstUser.id}~web-search`}`;
+        assert.deepEqual(yield* store.getTurnStartHistory(child.thread.id), expected);
+        const context = yield* store.getTurnStartContext(child.thread.id, RunId.make("none"));
+        assert.isTrue(context.hasConversation);
+        // Inherited requests that are only /compact are not a conversation.
+        const users = source.messages.filter((message) => message.role === "user");
+        for (const message of users)
+          yield* sql`UPDATE orchestration_v2_projection_messages
+            SET payload_json = json_set(json_set(payload_json, '$.text', ' /compact '), '$.attachments', json('[]'))
+            WHERE message_id = ${message.id}`;
+        assert.isFalse(
+          (yield* store.getTurnStartContext(child.thread.id, RunId.make("none"))).hasConversation,
+        );
       }),
     ),
   120000,
