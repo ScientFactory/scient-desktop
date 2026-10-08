@@ -226,3 +226,48 @@ describe.skipIf(!available)("restoration recovery", () => {
       expect(await NodeFSP.readFile(target, "utf8")).toBe("C");
     }, true));
 });
+
+it.skipIf(!available)("returns a newer in-place write displaced by the return exchange", () =>
+  fixture(async (input, target, root) => {
+    const swap = async (value: string) => {
+      const writer = NodePath.join(root, "writer");
+      await NodeFSP.writeFile(writer, value);
+      await NodeFSP.rename(writer, target);
+    };
+    let once = true;
+    const result = await mutateRetainedFile(input, target, {
+      at: async (point) => {
+        if (point === "checked") await swap("A");
+        if (point === "restore-intent") await swap("B");
+        if (point === "return-intent" && once) {
+          once = false;
+          await NodeFSP.writeFile(target, "C in place");
+        }
+      },
+    });
+    expect(result.outcome).toBe("attention");
+    expect(await NodeFSP.readFile(target, "utf8")).toBe("C in place");
+  }, true),
+);
+
+it.skipIf(!available)("reports late writes through a handle to a restored staged file", () =>
+  fixture(async (input, target) => {
+    let handle: Awaited<ReturnType<typeof NodeFSP.open>> | undefined;
+    try {
+      await mutateRetainedFile(input, target, {
+        at: async (point) => {
+          if (point === "checked") await NodeFSP.writeFile(target, "A");
+          if (point === "displaced") handle = await NodeFSP.open(target, "r+");
+        },
+      });
+      await handle!.truncate(0);
+      await handle!.writeFile("held staged user edit");
+      await handle!.sync();
+      const recovered = await mutateRetainedFile(input, target);
+      expect(recovered.retainedPath).not.toBeNull();
+      expect(await NodeFSP.readFile(recovered.retainedPath!, "utf8")).toBe("held staged user edit");
+    } finally {
+      await handle?.close();
+    }
+  }, true),
+);

@@ -22,10 +22,11 @@ import {
   type RetainedMutationResult,
 } from "../workspace/RetainedFileMutation.ts";
 import { manuscriptCollisionKey } from "./unicodeCaseFold.ts";
-import { manuscriptTreeProblem } from "./manuscriptPaths.ts";
+import { manuscriptTreeProblem, manuscriptPathProblem } from "./manuscriptPaths.ts";
 import {
   advanceBase,
   applyUnits,
+  closeOverRenames,
   hasConflictMarkers,
   type ConflictGroup,
   type FileChange,
@@ -45,6 +46,7 @@ const Plan = Schema.Struct({
   target: Schema.Record(Schema.String, Target),
   renames: Schema.Array(Schema.Struct({ from: Schema.String, to: Schema.String })),
   units: Schema.Array(Schema.Array(Schema.String)),
+  guards: Schema.Array(Schema.Array(Schema.String)),
   markerPaths: Schema.Array(Schema.String),
 });
 const State = Schema.Struct({
@@ -154,6 +156,18 @@ function storePlan(input: WorkspaceApplyPlan): StoredPlan {
   const units = applyUnits({ changes, renames: input.renames, conflicts: structural }).map(
     (indices) => indices.map((index) => changes[index]!.path),
   );
+  const guards = units.map((unit) => {
+    let paths = new Set(unit),
+      size = -1;
+    while (size !== paths.size) {
+      size = paths.size;
+      paths = new Set(closeOverRenames([...paths], input.renames));
+      for (const group of structural)
+        if (group.paths.some((name) => paths.has(name)))
+          for (const name of group.paths) paths.add(name);
+    }
+    return [...paths];
+  });
   return {
     base: Object.fromEntries(input.base),
     remote: Object.fromEntries(input.remote),
@@ -161,6 +175,7 @@ function storePlan(input: WorkspaceApplyPlan): StoredPlan {
     target,
     renames: [...input.renames],
     units,
+    guards,
     markerPaths: [...input.markerPaths],
   };
 }
@@ -196,6 +211,16 @@ function validatePlan(plan: StoredPlan) {
   ) {
     throw new Error("Invalid apply units.");
   }
+  if (
+    plan.guards.length !== plan.units.length ||
+    plan.guards.some(
+      (guard, index) =>
+        guard.some((name) => manuscriptPathProblem(name) !== null) ||
+        plan.units[index]!.some((name) => !guard.includes(name)) ||
+        manuscriptTreeProblem(guard.filter((name) => Object.hasOwn(plan.target, name))),
+    )
+  )
+    throw new Error("Invalid apply guards.");
   if (plan.markerPaths.some((name) => !ownValue(plan.target, name)))
     throw new Error("Invalid conflict marker scope.");
 }
@@ -276,6 +301,13 @@ export const make = (hooks: ApplierHooks = {}) =>
                     ...Object.keys(state.plan.captured),
                     ...Object.keys(state.plan.target),
                   ])) {
+                    const stat = await NodeFSP.lstat(NodePath.join(cwd, name)).catch((e) => {
+                      if (["ENOENT", "ENOTDIR"].includes(e.code)) return null;
+                      throw e;
+                    });
+                    if (stat?.isFile()) captureBytes += stat.size;
+                    if (captureBytes > 250 * 1024 * 1024)
+                      throw new Error("Capture exceeds local read budget.");
                     if (
                       (await revision(cwd, name)) !== (ownValue(state.plan.captured, name) ?? null)
                     ) {
@@ -318,12 +350,11 @@ export const make = (hooks: ApplierHooks = {}) =>
               ];
               const destinationsIntact = async () => {
                 await assertRootBinding(state.cwd, state.rootIdentity);
-                for (const name of unit) {
+                for (const name of state.plan.guards[unitIndex]!) {
                   const target = ownValue(state.plan.target, name);
                   if (
-                    ownValue(state.steps, name) === "done" &&
-                    target &&
-                    (await revision(state.cwd, name)) !== target.revision
+                    (!unit.includes(name) || ownValue(state.steps, name) === "done") &&
+                    (await revision(state.cwd, name)) !== (target?.revision ?? null)
                   )
                     return false;
                 }
@@ -344,6 +375,15 @@ export const make = (hooks: ApplierHooks = {}) =>
                   try: () => hooks.at?.("before-step", name) ?? Promise.resolve(),
                   catch: (cause) => new WorkspaceApplyError({ cause }),
                 });
+                if (
+                  !(yield* Effect.tryPromise({
+                    try: destinationsIntact,
+                    catch: (cause) => new WorkspaceApplyError({ cause }),
+                  }))
+                ) {
+                  failed = true;
+                  break;
+                }
                 const file = ownValue(state.plan.target, name);
                 const index = state.plan.units.flat().indexOf(name);
                 const args = {
@@ -406,9 +446,9 @@ export const make = (hooks: ApplierHooks = {}) =>
               yield* save();
             }
           if (state.phase === "applying") {
-            const undonePaths = state.plan.units
-              .filter((_, i) => state.outcomes[i] !== "done")
-              .flat();
+            const undonePaths = state.plan.units.flatMap((_, i) =>
+              state.outcomes[i] !== "done" ? state.plan.guards[i]! : [],
+            );
             const next = advanceBase({
               before: new Map(Object.entries(state.plan.base)),
               remote: new Map(Object.entries(state.plan.remote)),
@@ -440,7 +480,8 @@ export const make = (hooks: ApplierHooks = {}) =>
                       current !== null &&
                       (leaf === "retained" ||
                         record.stagedIdentity?.ino !== (await fileIdentity(kept))?.ino ||
-                        record.stagedIdentity?.dev !== (await fileIdentity(kept))?.dev)
+                        record.stagedIdentity?.dev !== (await fileIdentity(kept))?.dev ||
+                        current !== record.desired)
                     ) {
                       retained.push(
                         await recheckRetainedFile(
@@ -481,8 +522,8 @@ export const make = (hooks: ApplierHooks = {}) =>
                   if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
                 }
               }
-              const interrupted = state.plan.units.filter(
-                (_, i) => state.outcomes[i] === "interrupted",
+              const interrupted = state.plan.guards.filter(
+                (_, i) => state.outcomes[i] === "interrupted" || state.outcomes[i] === "skipped",
               );
               return {
                 outcome:

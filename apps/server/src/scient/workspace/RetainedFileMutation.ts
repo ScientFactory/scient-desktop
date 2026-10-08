@@ -26,6 +26,8 @@ const Journal = Schema.Struct({
   stagedIdentity: Schema.NullOr(Identity),
   restoreSlot: Schema.NullOr(Identity),
   restoreTarget: Schema.NullOr(Identity),
+  restoreSlotRevision: Schema.NullOr(Schema.String),
+  restoreTargetRevision: Schema.NullOr(Schema.String),
   rounds: Schema.Number,
   visibleRetentionPath: Schema.NullOr(Schema.String),
   outcome: Schema.NullOr(Schema.Literals(["done", "skipped", "attention"])),
@@ -230,6 +232,8 @@ async function run(
       stagedIdentity: null,
       restoreSlot: null,
       restoreTarget: null,
+      restoreSlotRevision: null,
+      restoreTargetRevision: null,
       rounds: 0,
       visibleRetentionPath: input.visibleRetentionPath ?? null,
       outcome: null,
@@ -256,7 +260,9 @@ async function run(
   ): Promise<RetainedMutationResult> => {
     const keptPath = (await fileIdentity(retained))
       ? retained
-      : (await fileIdentity(slot)) && !same(await fileIdentity(slot), record.stagedIdentity)
+      : (await fileIdentity(slot)) &&
+          (!same(await fileIdentity(slot), record.stagedIdentity) ||
+            (await fileRevision(slot)) !== record.desired)
         ? slot
         : null;
     return {
@@ -298,7 +304,11 @@ async function run(
       if (!slotId) return finish("attention");
       if (resume) {
         const happened = same(targetId, record.restoreSlot);
-        const waiting = same(slotId, record.restoreSlot) && same(targetId, record.restoreTarget);
+        const waiting =
+          same(slotId, record.restoreSlot) &&
+          same(targetId, record.restoreTarget) &&
+          (await fileRevision(slot)) === record.restoreSlotRevision &&
+          (await fileRevision(target)) === record.restoreTargetRevision;
         if (!happened && !waiting) return finish("attention");
         if (waiting) {
           await exchangePaths();
@@ -314,6 +324,8 @@ async function run(
           phase: returning ? "returning-newer" : "restoring",
           restoreSlot: slotId,
           restoreTarget: targetId,
+          restoreSlotRevision: await fileRevision(slot),
+          restoreTargetRevision: await fileRevision(target),
           rounds: record.rounds + 1,
         });
         await point(returning ? "return-intent" : "restore-intent");
@@ -324,10 +336,19 @@ async function run(
       targetId = await fileIdentity(target);
       if (same(slotId, record.stagedIdentity) && (await fileRevision(slot)) === record.desired)
         return finish(record.rounds === 1 ? "skipped" : "attention");
-      if (record.rounds > 1 && same(slotId, record.restoreTarget)) return finish("attention");
+      if (
+        record.rounds > 1 &&
+        same(slotId, record.restoreTarget) &&
+        (await fileRevision(slot)) === record.restoreTargetRevision
+      )
+        return finish("attention");
       // If a writer replaced the file we just installed, its current path is newest;
       // leave it alone. Otherwise the displaced slot is the newer version to return.
-      if (!same(targetId, record.restoreSlot)) return finish("attention");
+      if (
+        !same(targetId, record.restoreSlot) ||
+        (await fileRevision(target)) !== record.restoreSlotRevision
+      )
+        return finish("attention");
     }
   };
   if (record.phase === "restoring" || record.phase === "returning-newer") return restore();

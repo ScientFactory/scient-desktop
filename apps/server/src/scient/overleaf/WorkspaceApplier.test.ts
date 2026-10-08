@@ -504,3 +504,94 @@ it.live.each(modelCases)(
     );
   },
 );
+
+it.live("guards an unchanged rename destination before deleting its source", () => {
+  let folder = "";
+  return fixture(
+    async (h) => {
+      folder = h.cwd;
+      const before = { "old.tex": "old", "new.tex": "merged" };
+      await put(h.cwd, before);
+      const p = plan(before, { "new.tex": "merged" }, [{ from: "old.tex", to: "new.tex" }]);
+      const result = await h.apply("unchanged-destination", p);
+      expect(result.outcome).toBe("attention");
+      expect([...result.base]).toEqual([...p.base]);
+      expect(await NodeFSP.readFile(NodePath.join(h.cwd, "old.tex"), "utf8")).toBe("old");
+    },
+    {
+      at: async (point, name) => {
+        if (point === "before-step" && name === "old.tex")
+          await NodeFSP.unlink(NodePath.join(folder, "new.tex"));
+      },
+    },
+  );
+});
+it.live("interrupts a structural replay if its blocker was recreated", () => {
+  let once = true;
+  return fixture(
+    async (h) => {
+      const before = { notes: "old" },
+        after = { "notes/a.tex": "new" };
+      await put(h.cwd, before);
+      const p = plan(before, after);
+      await expect(h.apply("recreated-blocker", p)).rejects.toBeTruthy();
+      await put(h.cwd, { notes: "later" });
+      await h.restart();
+      const result = await h.apply("recreated-blocker");
+      expect(result.outcome).toBe("attention");
+      expect([...result.base]).toEqual([...p.base]);
+      expect(await NodeFSP.readFile(NodePath.join(h.cwd, "notes"), "utf8")).toBe("later");
+    },
+    {
+      at: async (point, name) => {
+        if (point === "step-recorded" && name === "notes" && once) {
+          once = false;
+          throw new Error("crash");
+        }
+      },
+    },
+  );
+});
+
+describe.skipIf(!available)("held staged file visibility", () => {
+  it.live("lists a late staged-handle edit after restoration", () => {
+    let folder = "",
+      handle: Awaited<ReturnType<typeof NodeFSP.open>> | undefined;
+    return fixture(
+      async (h) => {
+        folder = h.cwd;
+        await put(h.cwd, { "main.tex": "base" });
+        try {
+          const result = await h.apply(
+            "staged-handle",
+            plan({ "main.tex": "base" }, { "main.tex": "remote" }),
+            true,
+          );
+          expect(result.outcome).toBe("attention");
+          expect(result.retained.some((r) => r.changed)).toBe(true);
+          const kept = result.retained.find((r) => r.changed)!;
+          expect(await NodeFSP.readFile(kept.retainedPath!, "utf8")).toBe("late staged edit");
+        } finally {
+          await handle?.close();
+        }
+      },
+      {
+        at: async (point) => {
+          if (point === "after-step") {
+            await handle!.truncate(0);
+            await handle!.writeFile("late staged edit");
+            await handle!.sync();
+          }
+        },
+      },
+      {
+        at: async (point) => {
+          if (point === "checked")
+            await NodeFSP.writeFile(NodePath.join(folder, "main.tex"), "direct A");
+          if (point === "displaced")
+            handle = await NodeFSP.open(NodePath.join(folder, "main.tex"), "r+");
+        },
+      },
+    );
+  });
+});
