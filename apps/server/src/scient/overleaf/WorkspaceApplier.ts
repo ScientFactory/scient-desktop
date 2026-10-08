@@ -166,7 +166,7 @@ function storePlan(input: WorkspaceApplyPlan): StoredPlan {
         if (group.paths.some((name) => paths.has(name)))
           for (const name of group.paths) paths.add(name);
     }
-    return [...paths];
+    return [...new Set([...unit, ...paths])];
   });
   return {
     base: Object.fromEntries(input.base),
@@ -416,7 +416,10 @@ export const make = (hooks: ApplierHooks = {}) =>
                   try: () => hooks.at?.("after-step", name) ?? Promise.resolve(),
                   catch: (cause) => new WorkspaceApplyError({ cause }),
                 });
-                state = { ...state, steps: Object.assign({}, state.steps, { [name]: outcome }) };
+                state = {
+                  ...state,
+                  steps: Object.fromEntries([...Object.entries(state.steps), [name, outcome]]),
+                };
                 yield* save();
                 yield* Effect.tryPromise({
                   try: () => hooks.at?.("step-recorded", name) ?? Promise.resolve(),

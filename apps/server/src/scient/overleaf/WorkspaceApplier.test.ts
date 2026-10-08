@@ -347,7 +347,7 @@ it.live.each(["delete", "replace"])(
         const result = await h.apply("destination-change");
         expect(result.outcome).toBe("attention");
         expect(result.interrupted).toHaveLength(1);
-        expect([...result.base]).toEqual([...p.base]);
+        expect(result.base).toEqual(p.base);
         expect(await NodeFSP.readFile(NodePath.join(h.cwd, "old.tex"), "utf8")).toBe("base");
       },
       {
@@ -515,7 +515,7 @@ it.live("guards an unchanged rename destination before deleting its source", () 
       const p = plan(before, { "new.tex": "merged" }, [{ from: "old.tex", to: "new.tex" }]);
       const result = await h.apply("unchanged-destination", p);
       expect(result.outcome).toBe("attention");
-      expect([...result.base]).toEqual([...p.base]);
+      expect(result.base).toEqual(p.base);
       expect(await NodeFSP.readFile(NodePath.join(h.cwd, "old.tex"), "utf8")).toBe("old");
     },
     {
@@ -539,7 +539,7 @@ it.live("interrupts a structural replay if its blocker was recreated", () => {
       await h.restart();
       const result = await h.apply("recreated-blocker");
       expect(result.outcome).toBe("attention");
-      expect([...result.base]).toEqual([...p.base]);
+      expect(result.base).toEqual(p.base);
       expect(await NodeFSP.readFile(NodePath.join(h.cwd, "notes"), "utf8")).toBe("later");
     },
     {
@@ -594,4 +594,27 @@ describe.skipIf(!available)("held staged file visibility", () => {
       },
     );
   });
+});
+
+it.live("recovers a manuscript path named __proto__ without losing journal keys", () => {
+  let once = true;
+  return fixture(
+    async (h) => {
+      const before = Object.fromEntries([["__proto__", "base"]]),
+        after = Object.fromEntries([["__proto__", "remote"]]);
+      await put(h.cwd, before);
+      await expect(h.apply("proto-key", plan(before, after))).rejects.toBeTruthy();
+      await h.restart();
+      const result = await h.apply("proto-key");
+      expect(result).toMatchObject({ outcome: "complete", matchesTarget: true });
+    },
+    {
+      at: async (point) => {
+        if (point === "step-recorded" && once) {
+          once = false;
+          throw new Error("crash");
+        }
+      },
+    },
+  );
 });
