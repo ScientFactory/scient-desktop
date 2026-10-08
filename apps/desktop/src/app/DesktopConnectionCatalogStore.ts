@@ -431,9 +431,7 @@ export const make = Effect.gen(function* () {
   });
 
   const migrateLegacyCatalog = Effect.gen(function* () {
-    if (!(yield* encryptionAvailable)) {
-      return Option.none<string>();
-    }
+    // SCIENT-FORK:START — an empty catalog needs no macOS Keychain access.
     const records = yield* savedEnvironments.getRegistry.pipe(
       Effect.mapError(
         (cause) =>
@@ -447,6 +445,10 @@ export const make = Effect.gen(function* () {
     if (records.length === 0) {
       return Option.none<string>();
     }
+    if (!(yield* encryptionAvailable)) {
+      return Option.none<string>();
+    }
+    // SCIENT-FORK:END
     const catalog = yield* migrateSavedEnvironmentRecords(records, savedEnvironments, catalogPath);
     const encoded = yield* encodeRuntimeConnectionCatalogDocumentJson(catalog).pipe(
       Effect.mapError(
