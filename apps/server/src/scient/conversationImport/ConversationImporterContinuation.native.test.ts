@@ -2349,6 +2349,107 @@ it.live(
     ).pipe(Effect.timeout("60 seconds")),
 );
 
+it.live("an upstream run fork of a fork shows the fork's history as the fork shows it", () =>
+  withImporter(
+    Effect.gen(function* () {
+      const { lease } = yield* leaseFor(importFixture({ turns: 2 }));
+      const sourceId = (yield* importOnce(lease)).result.threadId;
+      const store = yield* ProjectionStoreV2;
+      const source = yield* store.getThreadProjection(sourceId);
+      const forkId = ThreadId.make("run-fork-base");
+      yield* (yield* ConversationForkService).dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("run-fork-base"),
+        originThreadId: sourceId,
+        newThreadId: forkId,
+        sourceAssistantMessageId: source.messages.findLast(
+          (message) => message.role === "assistant",
+        )!.id,
+        workspaceMode: "local",
+      });
+      yield* continueImport(forkId, MessageId.make("run-fork-base-request"), "Continue");
+      const fork = yield* store.getThreadProjection(forkId);
+      const run = fork.runs.at(-1)!;
+      const childId = ThreadId.make("run-fork-child");
+      const now = yield* DateTime.now;
+      yield* (yield* EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make("run-fork-child-created"),
+            threadId: childId,
+            type: "thread.created",
+            occurredAt: now,
+            payload: {
+              ...fork.thread,
+              id: childId,
+              title: "Run fork of a fork",
+              forkedFrom: { type: "run", threadId: forkId, runId: run.id },
+              lineage: {
+                parentThreadId: forkId,
+                rootThreadId: fork.thread.lineage.rootThreadId,
+                relationshipToParent: "fork",
+              },
+              conversationFork: null,
+              forkLineage: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+        ],
+      });
+      const texts = (rows: ReadonlyArray<{ readonly item: OrchestrationV2TurnItem }>) =>
+        rows.map(({ item }) => ("text" in item ? [item.type, item.text] : [item.type]));
+      const before = yield* store.getThreadProjection(childId);
+      assert.includeDeepMembers(texts(before.visibleTurnItems), [
+        ["user_message", "Question 1"],
+        ["assistant_message", "Answer 2"],
+        ["assistant_message", "Continued"],
+      ]);
+      // The original rewrites an answer the fork shows.
+      const shared = before.visibleTurnItems.find(
+        (row) => row.sourceThreadId === sourceId && row.item.type === "assistant_message",
+      )!;
+      const stored = source.turnItems.find((item) => item.id === shared.sourceItemId)!;
+      assert.ok(stored.type === "assistant_message");
+      yield* (yield* EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make("run-fork-rewrite"),
+            threadId: sourceId,
+            type: "turn-item.updated",
+            occurredAt: now,
+            payload: { ...stored, text: "Rewritten answer" },
+          },
+        ],
+      });
+      const after = yield* store.getThreadProjection(childId);
+      assert.deepEqual(texts(after.visibleTurnItems), texts(before.visibleTurnItems));
+      const paged: Array<{ readonly item: OrchestrationV2TurnItem }> = [];
+      let afterPosition: number | undefined;
+      while (true) {
+        const page = yield* store.getTimelinePage(childId, {
+          limit: 4,
+          view: "activity",
+          ...(afterPosition === undefined ? {} : { afterPosition }),
+        });
+        paged.push(...page.items);
+        if (!page.hasMore) break;
+        afterPosition = page.items.at(-1)!.position;
+      }
+      assert.deepEqual(texts(paged), texts(after.visibleTurnItems));
+      const shown = after.visibleTurnItems.find(
+        (row) => row.sourceItemId === shared.sourceItemId,
+      )!.item;
+      const detail = yield* store.getTurnItem({
+        threadId: shown.threadId,
+        itemId: shared.sourceItemId,
+      });
+      assert.ok(detail?.type === "assistant_message");
+      assert.equal(detail.text, stored.text);
+    }),
+  ),
+);
+
 it.live("opening a recent fork window never reads its older copies", () =>
   withImporter(
     Effect.gen(function* () {
@@ -2372,18 +2473,31 @@ it.live("opening a recent fork window never reads its older copies", () =>
       const plan = (yield* store.getThreadProjection(forkId)).turnItems.find(
         (item) => item.type === "proposed_plan",
       )!;
-      // A tripwire: the fork's own copy of the old plan cannot be decoded.
-      yield* (yield* SqlClient.SqlClient)`
-        UPDATE orchestration_v2_projection_turn_items SET payload_json = '{invalid-copy-tripwire'
-        WHERE turn_item_id = ${plan.id}`;
-      const window = yield* store.getThreadSnapshotWindow(forkId, {
-        rowLimit: 10,
-        userTurnLimit: 1,
+      const tripwire = Effect.fn("test.tripwire")(function* () {
+        // The fork's own copy of the old plan cannot be decoded.
+        yield* (yield* SqlClient.SqlClient)`
+          UPDATE orchestration_v2_projection_turn_items SET payload_json = '{invalid-copy-tripwire'
+          WHERE turn_item_id = ${plan.id}`;
+        const window = yield* store.getThreadSnapshotWindow(forkId, {
+          rowLimit: 10,
+          userTurnLimit: 1,
+        });
+        assert.isFalse(
+          window.projection.visibleTurnItems.some((row) => row.sourceItemId === plan.id),
+        );
+        return window;
       });
-      assert.isFalse(
-        window.projection.visibleTurnItems.some((row) => row.sourceItemId === plan.id),
-      );
-      assert.equal(window.projection.visibleTurnItems.at(-1)?.item.type, "fork");
+      const stored = yield* (yield* SqlClient.SqlClient)<{ readonly payload_json: string }>`
+        SELECT payload_json FROM orchestration_v2_projection_turn_items
+        WHERE turn_item_id = ${plan.id}`;
+      assert.equal((yield* tripwire()).projection.visibleTurnItems.at(-1)?.item.type, "fork");
+      yield* (yield* SqlClient.SqlClient)`
+        UPDATE orchestration_v2_projection_turn_items SET payload_json = ${stored[0]!.payload_json}
+        WHERE turn_item_id = ${plan.id}`;
+      // Nor after a turn of the fork's own is rolled back.
+      yield* continueImport(forkId, MessageId.make("recent-window-local"), "Temporary follow-up");
+      yield* rollbackToBaseline(forkId, "recent-window");
+      yield* tripwire();
     }),
   ),
 );

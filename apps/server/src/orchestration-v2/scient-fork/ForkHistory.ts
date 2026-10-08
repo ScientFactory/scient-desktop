@@ -293,7 +293,9 @@ export const hasForkHistory = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
 
 /**
  * The fork's own rows from its boundary on (its copies come before it), with
- * their turn starts and user turns; undefined without a boundary.
+ * their turn starts and user turns; undefined without a boundary. Counts the
+ * rows `readCanonicalProjection` keeps, by the same rules, so a window of
+ * this many rows ends at the boundary.
  */
 export const readForkLocalExtent = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
   sql<{
@@ -312,7 +314,35 @@ export const readForkLocalExtent = (sql: SqlClient.SqlClient, threadId: ThreadId
         THEN 1 ELSE 0 END) AS user_turns
     FROM orchestration_v2_projection_turn_items AS boundary
     LEFT JOIN orchestration_v2_projection_turn_items AS item
-      ON item.thread_id = boundary.thread_id AND item.ordinal >= boundary.ordinal
+      ON item.thread_id = boundary.thread_id
+      AND item.ordinal >= boundary.ordinal
+      AND NOT EXISTS (
+        SELECT 1 FROM orchestration_v2_projection_runs AS run
+        WHERE run.run_id = item.run_id
+          AND (
+            run.status = 'rolled_back'
+            OR (
+              run.status = 'cancelled'
+              AND item.type = 'user_message'
+              AND json_extract(item.payload_json, '$.inputIntent') = 'queued_turn'
+            )
+          )
+      )
+      AND NOT (
+        item.type = 'run_interrupt_result'
+        AND EXISTS (
+          SELECT 1 FROM orchestration_v2_projection_run_attempts AS attempt
+          WHERE attempt.run_id = item.run_id
+            AND attempt.root_node_id = item.node_id
+            AND attempt.status = 'superseded'
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM orchestration_v2_projection_turn_items AS request
+          WHERE request.thread_id = item.thread_id
+            AND request.run_id = item.run_id
+            AND request.type = 'run_interrupt_request'
+        )
+      )
     WHERE boundary.turn_item_id = ${`turn-item:fork:${threadId}`} AND boundary.thread_id = ${threadId}
     GROUP BY boundary.ordinal
   `.pipe(

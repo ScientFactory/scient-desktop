@@ -92,6 +92,43 @@ describe("fork lifecycle across navigation and remounts", () => {
     expect(commands.options).toHaveBeenCalledTimes(4);
   });
 
+  it("reuses the options of the menu shown, not a stale earlier check", async () => {
+    const other = { kind: "assistant-response" as const, messageId: MessageId.make("other") };
+    const resolved = (messageId: MessageId) =>
+      AsyncResult.success({
+        available: true,
+        localAvailable: true,
+        reason: null,
+        newWorktree: false,
+        sourceAssistantMessageId: messageId,
+        sourceUserMessageId: null,
+      });
+    let finishSlow!: () => void;
+    commands.options
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishSlow = () => resolve(resolved(other.messageId));
+          }),
+      )
+      .mockImplementationOnce(async () => resolved(source.messageId));
+    await render();
+    let slow!: Promise<void>;
+    await act(async () => {
+      slow = hook.prepareFork(other);
+      await hook.prepareFork(source);
+    });
+    await act(async () => {
+      finishSlow();
+      await slow;
+    });
+    await act(async () => {
+      await hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace");
+    });
+    expect(commands.options).toHaveBeenCalledTimes(2);
+    expect(commands.dispatch).toHaveBeenCalledTimes(1);
+  });
+
   it("checks again when the menu's options are older than 30 seconds", async () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
     try {

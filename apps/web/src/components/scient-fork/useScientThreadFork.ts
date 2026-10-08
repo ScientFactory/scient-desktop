@@ -387,12 +387,13 @@ export function useScientThreadFork({
               sourceRunningRunId: pending.command.sourceRunningRunId ?? null,
             }
           : await resolveOptions(source);
-        if (!pending) checkedOptions.current = { key, options, at: Date.now() };
         if (
           sequence === previewSequence.current &&
           mounted.current &&
           activeOrigin.current === originKey
         ) {
+          // Only the menu being shown publishes its options for reuse.
+          if (!pending) checkedOptions.current = { key, options, at: Date.now() };
           setPreview({
             key,
             options,

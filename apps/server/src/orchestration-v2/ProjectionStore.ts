@@ -1346,7 +1346,11 @@ function visibleTurnItemsThroughRun(input: {
   const runOrdinalById = new Map(input.sourceProjection.runs.map((run) => [run.id, run.ordinal]));
   const inheritedPrefix = input.sourceProjection.visibleTurnItems
     .filter(
-      (row) => row.item.threadId !== input.sourceProjection.thread.id || row.item.type === "fork",
+      (row) =>
+        row.item.threadId !== input.sourceProjection.thread.id ||
+        row.item.type === "fork" ||
+        // SCIENT-FORK: a Scient fork shows shared history under its own id.
+        (row.visibility === "inherited" && row.sourceThreadId !== input.sourceProjection.thread.id),
     )
     .map((row) => ({
       visibility: "inherited" as const,
@@ -4943,7 +4947,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       readonly visibility: OrchestrationV2ProjectedTurnItem["visibility"];
       readonly item: TimelineIndexItem;
       readonly synthetic?: OrchestrationV2TurnItem;
-      // SCIENT-FORK: an inherited row of a fork's frozen history, at this position.
+      // SCIENT-FORK: an inherited row of a fork's frozen history: that fork, and the position.
+      readonly forkHistoryThreadId?: ThreadId;
       readonly forkHistoryPosition?: number;
     };
     const readTimelineIndex = (
@@ -5012,6 +5017,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   type: row.type,
                   frozenHistory: true,
                 },
+                forkHistoryThreadId: threadId,
                 forkHistoryPosition: row.position,
               })),
               ...visible.filter((row) => !inherited.has(row.sourceItemId)),
@@ -5102,13 +5108,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     visibility: row.visibility,
                     item: row.synthetic,
                   };
-                // SCIENT-FORK: a shared row reads the version kept for the fork first.
-                const kept =
-                  row.forkHistoryPosition !== undefined && row.sourceThreadId !== threadId
-                    ? yield* sql<PayloadRow>`SELECT item_json AS payload_json
+                // SCIENT-FORK: a shared row reads the version kept for its fork first.
+                const historyOwner = row.forkHistoryThreadId ?? threadId;
+                const shared =
+                  row.forkHistoryPosition !== undefined && row.sourceThreadId !== historyOwner;
+                const kept = shared
+                  ? yield* sql<PayloadRow>`SELECT item_json AS payload_json
           FROM scient_fork_frozen_items
-          WHERE thread_id = ${threadId} AND position = ${row.forkHistoryPosition}`
-                    : [];
+          WHERE thread_id = ${historyOwner} AND position = ${row.forkHistoryPosition}`
+                  : [];
                 const payloads =
                   kept.length > 0
                     ? kept
@@ -5130,10 +5138,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   sourceItemId: row.sourceItemId,
                   visibility: row.visibility,
                   // SCIENT-FORK: shared history reads as the fork shows it.
-                  item:
-                    row.forkHistoryPosition !== undefined && row.sourceThreadId !== threadId
-                      ? presentInheritedItem(item, row.forkHistoryPosition, threadId)
-                      : item,
+                  item: shared
+                    ? presentInheritedItem(item, row.forkHistoryPosition!, historyOwner)
+                    : item,
                 };
               }),
             );
