@@ -1485,9 +1485,17 @@ it.effect("imports one item per tool call with its full content and true outcome
     const exported = projectWorkLog(
       conversationSnapshotProjection(projection, null).activities,
     ).entries.flatMap((entry) => (entry._tag === "tool" ? [[entry.id, entry.status]] : []));
+    // Each folded call is one export entry, with its outcome, even when a
+    // later call reuses its id or the call never got past starting.
     assert.deepEqual(
-      exported.filter(([id]) => id === activityItem("c4-start")),
-      [[activityItem("c4-start"), "completed"]],
+      exported.filter(([id]) => typeof id === "string" && /c\d-/.test(id)),
+      [
+        [activityItem("c1-start"), "completed"],
+        [activityItem("c1-again"), "failed"],
+        [activityItem("c2-start"), "stopped"],
+        [activityItem("c3-failing"), "failed"],
+        [activityItem("c4-start"), "completed"],
+      ],
     );
     // Every item has its own position, in order, with no gaps left by folded rows.
     const positions = yield* sql<{ turn_item_id: string; ordinal: number }>`

@@ -14,6 +14,8 @@ import { readHistoricalSystemMessage } from "../../orchestration-v2/legacy/Histo
 
 /** The V1 importer marks the one item it folded a tool call's rows into. */
 const isFoldedToolCall = Schema.is(Schema.Struct({ foldedRowCount: Schema.Number }));
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const historicalActivity = Schema.Struct({
   kind: Schema.String,
@@ -131,19 +133,16 @@ export function conversationSnapshotProjection(
           });
         } else if (isHistoricalActivity(item.input)) {
           const { kind, payload } = item.input;
-          // A folded tool call's item status is how it ended; its merged
-          // payload can still carry a progress status from an earlier row.
-          activity(
-            kind,
-            item.input.summary,
-            isFoldedToolCall(item.input) &&
-              typeof payload === "object" &&
-              payload !== null &&
-              !Array.isArray(payload)
-              ? { ...payload, status: item.status }
-              : payload,
-            item.input.tone,
-          );
+          if (isFoldedToolCall(item.input) && isRecord(payload)) {
+            // One folded call is one finished row: its item status is how it
+            // ended, which its merged payload may not repeat.
+            activity(
+              item.status === "interrupted" ? "tool.updated" : "tool.completed",
+              item.input.summary,
+              { ...payload, status: item.status },
+              item.input.tone,
+            );
+          } else activity(kind, item.input.summary, payload, item.input.tone);
         } else {
           activity(
             "tool.completed",
