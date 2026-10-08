@@ -81,6 +81,12 @@ const backgroundGenerationFixture = (
         NodeHttp.createServer(async (request, response) => {
           let body = "";
           for await (const part of request) body += String(part);
+          // Since 0.236.0 a signed-in Droid first tries a WebSocket model transport
+          // (GET .../responses/ws); the fixture serves models over HTTP POST only.
+          if (request.method !== "POST" && request.url?.startsWith("/api/llm/")) {
+            response.writeHead(404).end();
+            return;
+          }
           if (await handle(request.url ?? "", body, response)) return;
           response.writeHead(200, { "content-type": "application/json" });
           response.end(factoryFixtureBody(request.url));
