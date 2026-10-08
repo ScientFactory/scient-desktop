@@ -2,16 +2,20 @@ import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 const SLASH_PREFIXED_WINDOWS_DRIVE_PATTERN = /^\/[A-Za-z]:[\\/]/;
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
+// Explicit Markdown destinations may contain Unicode and filename punctuation.
+// Keep separators, controls and position/scheme colons out of each segment;
+// inline-code auto-linking still requires its separate, stricter path evidence.
 const RELATIVE_FILE_PATH_PATTERN =
-  /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*(?::\d+){0,2}$/;
+  /^(?:[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*\/)+[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*(?::\d+){0,2}$/u;
 const RELATIVE_FILE_NAME_PATTERN =
-  /^[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
+  /^[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/u;
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
 const POSITION_SUFFIX_CAPTURE_PATTERN = /:(\d+)(?::(\d+))?$/;
 const POSITION_HASH_PATTERN = /^#L(\d+)(?:C(\d+))?$/i;
 const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
 const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
+const INLINE_CODE_RELATIVE_PATH_CHARACTER_PATTERN = /^[A-Za-z0-9._:/-]+$/;
 const PATH_SEPARATOR_PATTERN = /[\\/]/;
 const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
 // A final dot between digits marks a version or model id (`glm-5.3`,
@@ -171,6 +175,7 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
     candidate.startsWith("/") ||
     isWindowsAbsolutePath(candidate);
   if (!hasExplicitPathShape) {
+    if (!INLINE_CODE_RELATIVE_PATH_CHARACTER_PATTERN.test(candidate)) return null;
     const withoutPosition = candidate.replace(POSITION_SUFFIX_PATTERN, "");
     const firstSegment = withoutPosition.split("/")[0] ?? withoutPosition;
     if (looksLikeHostname(firstSegment, hasPosition)) return null;

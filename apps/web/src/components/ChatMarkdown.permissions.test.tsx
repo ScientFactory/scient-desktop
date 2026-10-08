@@ -171,7 +171,7 @@ beforeEach(() => {
   state.toast.mockReset();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", {});
-  vi.stubGlobal("navigator", { clipboard: { writeText: state.copy } });
+  vi.stubGlobal("navigator", { platform: "MacIntel", clipboard: { writeText: state.copy } });
 });
 
 afterEach(async () => {
@@ -193,6 +193,37 @@ function menuEvent() {
 function anchor() {
   return renderer!.root.findByType("a");
 }
+
+it.each([
+  [false, "LTC - Cystic Fibrosis - new (readable).md"],
+  [true, "LTC - Cystic Fibrosis - new (readable).md"],
+  [false, "סיכום.md"],
+  [true, "סיכום.md"],
+  [false, "Folder (draft)/Study [final].md"],
+  [true, "Folder (draft)/Study [final].md"],
+] as const)(
+  "opens a relative file inside Scient (raw HTML=%s, path=%s)",
+  async (parseRawHtml, path) => {
+    state.search.mockResolvedValue(AsyncResult.success({ _tag: "literal", path: `/work/${path}` }));
+    await act(async () => {
+      renderer = create(
+        <ChatMarkdown
+          cwd="/work"
+          threadRef={threadRef}
+          text={`[Open file](<${path}>)`}
+          parseRawHtml={parseRawHtml}
+        />,
+      );
+    });
+    const event = { ...menuEvent(), metaKey: false, ctrlKey: false, defaultPrevented: false };
+    await act(async () => anchor().props.onClick(event));
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(state.openFile).toHaveBeenCalledWith(threadRef, path, undefined);
+    expect(state.openExternal).not.toHaveBeenCalled();
+    expect(state.openEditor).not.toHaveBeenCalled();
+    expect(state.toast).not.toHaveBeenCalled();
+  },
+);
 
 async function openContextMenu() {
   await act(async () => anchor().props.onContextMenu(menuEvent()));
