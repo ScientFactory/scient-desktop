@@ -207,6 +207,16 @@ describe.each(SURFACES)("%s runtime progress", (surface) => {
     await commands.start.mock.results[0]!.value;
     renderSurface(surface, operation({}));
     await expect.element(page.getByLabelText("Download progress 42%")).toBeVisible();
+    const busy = host!.querySelector<HTMLButtonElement>('button[aria-label="Installing Codex"]')!;
+    const loader = busy.querySelector("svg")!;
+    const percent = busy.querySelector<HTMLElement>('[aria-label="Download progress 42%"]')!;
+    expect(percent.className).toContain("text-muted-foreground");
+    expect(parseFloat(getComputedStyle(percent).fontSize)).toBeLessThan(
+      parseFloat(getComputedStyle(busy).fontSize),
+    );
+    expect(getComputedStyle(loader).animationName).not.toBe("none");
+    const initialRotation = getComputedStyle(loader).transform;
+    await expect.poll(() => getComputedStyle(loader).transform).not.toBe(initialRotation);
     await page.getByRole("button", { name: "Installing Codex", exact: true }).click();
     await expect.element(page.getByRole("dialog")).toBeVisible();
     await page.getByRole("button", { name: "Close details" }).click();

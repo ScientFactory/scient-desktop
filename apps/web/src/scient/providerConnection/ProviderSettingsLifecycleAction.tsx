@@ -121,13 +121,13 @@ export function ProviderSettingsLifecycleAction(props: ProviderSettingsLifecycle
           type="button"
           variant="ghost-primary"
         >
-          <LoaderIcon aria-hidden />
+          <LoaderIcon aria-hidden className="animate-spin" />
           <span role="status" className="inline-flex items-baseline gap-1.5">
             {progressLabel}
             {operationActive && presentation.downloadPercent !== undefined ? (
               <span
                 aria-label={`Download progress ${presentation.downloadPercent}%`}
-                className="text-[11px] font-normal tabular-nums"
+                className="text-[11px] font-normal tabular-nums text-muted-foreground"
               >
                 {presentation.downloadPercent}%
               </span>

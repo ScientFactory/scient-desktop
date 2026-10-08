@@ -123,6 +123,11 @@ providers, show a labeled Manage button; updates, repairs, and enablement remain
 according to the server's advertised capabilities. Version update indicators stay visible in the
 provider list.
 
+Cursor's account actions adapt the instance's SDK authentication controller to this shared
+connection lifecycle. The connection attempt owns SDK cancellation through its scope, including
+startup before a browser URL arrives. The SDK retains credential storage, verification, and
+session cleanup; the shared manager does not invoke the retained Cursor CLI for sign-in.
+
 Configuration fields use compact secondary typography. Repetitive binary-path explanations are
 omitted; other field guidance remains available through keyboard-accessible information controls,
 including the account-isolation explanation for a shadow home. Authentication prompts avoid

@@ -292,7 +292,7 @@ describe("ProviderSettingsLifecycleAction", () => {
     expect(markup).not.toContain(">Manage</button>");
     expect(markup).toContain('role="status"');
     expect(markup).toContain("text-primary");
-    expect(markup).not.toContain("animate-spin");
+    expect(markup).toContain("animate-spin");
     if (action === "remove") expect(markup).not.toContain("Download progress");
     else expect(markup).toContain('aria-label="Download progress 42%"');
 
