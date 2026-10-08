@@ -2288,12 +2288,13 @@ code {
    after the inherited rules it refines, so upstream T3 lines above stay
    byte-identical through merges. The tokens live beside --code-background. */
 
-/* Chat and file-preview code blocks share the rich editor's quiet code card. */
-.chat-markdown .chat-markdown-codeblock,
-html[data-theme-id] .chat-markdown .chat-markdown-codeblock {
+/* SCIENT-FORK:START — chat, composer and previews share the rich editor's quiet card. */
+:is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblock,
+html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblock {
   background-color: var(--markdown-code-block-background);
   border-color: var(--markdown-code-block-border);
 }
+/* SCIENT-FORK:END */
 
 /* SCIENT-FORK:START — rich editor code header */
 @import "./scient/presentation/scient-markdown-code-header.css";
