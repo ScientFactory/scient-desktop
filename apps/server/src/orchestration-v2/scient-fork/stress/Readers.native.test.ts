@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/sql/SqlClient";
 import { ProjectionStoreV2 } from "../../ProjectionStore.ts";
 import { ProjectionMaintenanceV2, layer as maintenanceLayer } from "../../ProjectionMaintenance.ts";
 import { fork, remove, run, seed } from "./stressHarness.ts";
@@ -259,6 +260,45 @@ it.live(
           );
           assert.ok(window.nodes.some((node) => node.id === copy.nodeId));
         }
+      }),
+    ),
+  120000,
+);
+
+it.live(
+  "filtered fork record reads never load the inherited messages they exclude",
+  () =>
+    run(
+      Effect.gen(function* () {
+        const source = yield* seed({ turns: 3 });
+        const child = (yield* fork(source.thread.id, "filtered-records-child")).projection;
+        const store = yield* ProjectionStoreV2;
+        const sql = yield* SqlClient.SqlClient;
+        const answer = source.messages.find((message) => message.role === "assistant")!;
+        const [original] = yield* sql<{ readonly payload_json: string }>`
+          SELECT payload_json FROM orchestration_v2_projection_messages
+          WHERE message_id = ${answer.id}
+        `;
+        // A shared answer that cannot be decoded: reading it would fail.
+        yield* sql`UPDATE orchestration_v2_projection_messages SET payload_json = '{'
+          WHERE message_id = ${answer.id}`;
+        const users = yield* store.getThreadRecords(child.thread.id, ["messages"], {
+          messageRoles: ["user"],
+        });
+        const none = yield* store.getThreadRecords(child.thread.id, ["messages"], {
+          messageIds: [],
+        });
+        const byRun = yield* store.getThreadRecords(child.thread.id, ["messages"], {
+          messageRunIds: [],
+        });
+        yield* sql`UPDATE orchestration_v2_projection_messages
+          SET payload_json = ${original!.payload_json} WHERE message_id = ${answer.id}`;
+        assert.deepEqual(
+          users.messages,
+          child.messages.filter((message) => message.role === "user"),
+        );
+        assert.deepEqual(none.messages, []);
+        assert.deepEqual(byRun.messages, []);
       }),
     ),
   120000,

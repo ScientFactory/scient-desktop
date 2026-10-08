@@ -3142,10 +3142,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const localMessages = sortMessagesByTurnItemOrder(messages, turnItems, messageOrdinals);
         // SCIENT-FORK:START — a fork's inherited messages come first, as its own copies once did.
         // Windowed reads add the messages of the inherited rows they show (readForkProjection).
+        // Filters apply in SQL first, so excluded payloads are never read; a run
+        // filter excludes them all (shared messages have no run here).
         const inheritedMessages =
-          window !== undefined || (fields !== undefined && !fields.includes("messages"))
+          window !== undefined ||
+          (fields !== undefined && !fields.includes("messages")) ||
+          filter?.messageRunIds !== undefined ||
+          filter?.messageIds?.length === 0
             ? []
-            : (yield* readInheritedMessages(threadId)).filter(
+            : (yield* readInheritedMessages(threadId, {
+                ...(filter?.messageIds === undefined ? {} : { messageIds: filter.messageIds }),
+                ...(filter?.messageRoles === undefined
+                  ? {}
+                  : {
+                      itemTypes: filter.messageRoles.flatMap((role) =>
+                        role === "user"
+                          ? ["user_message"]
+                          : role === "assistant"
+                            ? ["assistant_message"]
+                            : [],
+                      ),
+                    }),
+              })).filter(
                 (message) =>
                   (filter?.messageIds === undefined || filter.messageIds.includes(message.id)) &&
                   (filter?.messageRoles === undefined ||

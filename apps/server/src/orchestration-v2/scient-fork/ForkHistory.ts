@@ -631,6 +631,10 @@ export const readForkHistoryMessageRows = (
   options: {
     readonly positions?: readonly [first: number, last: number];
     readonly includeCopies?: boolean;
+    /** Only these messages, before any payload is read. */
+    readonly messageIds?: ReadonlyArray<string>;
+    /** Only messages shown by items of these types (a message's role follows its item's type). */
+    readonly itemTypes?: ReadonlyArray<string>;
   } = {},
 ) =>
   sql<{ readonly message_id: string; readonly payload_json: string | null }>`
@@ -647,6 +651,16 @@ export const readForkHistoryMessageRows = (
         options.positions === undefined
           ? sql``
           : sql`AND history.position BETWEEN ${options.positions[0]} AND ${options.positions[1]}`
+      }
+      ${
+        options.messageIds === undefined
+          ? sql``
+          : sql`AND history.message_id IN (SELECT value FROM json_each(${encodeJson(options.messageIds)}))`
+      }
+      ${
+        options.itemTypes === undefined
+          ? sql``
+          : sql`AND history.item_type IN (SELECT value FROM json_each(${encodeJson(options.itemTypes)}))`
       }
     ORDER BY history.position
   `.pipe(
