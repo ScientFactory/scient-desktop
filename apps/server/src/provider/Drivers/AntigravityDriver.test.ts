@@ -91,11 +91,31 @@ it("selects legacy agy only when explicitly configured or no official ACP asset 
     }),
   ).toBe(false);
   expect(usesLegacyAntigravityBackend({ binaryPath: "", platform: "darwin", arch: "x64" })).toBe(
-    true,
+    false,
   );
   expect(usesLegacyAntigravityBackend({ binaryPath: "", platform: "linux", arch: "x64" })).toBe(
     false,
   );
+  expect(usesLegacyAntigravityBackend({ binaryPath: "", platform: "win32", arch: "arm64" })).toBe(
+    false,
+  );
+  expect(usesLegacyAntigravityBackend({ binaryPath: "", platform: "freebsd", arch: "x64" })).toBe(
+    true,
+  );
+  expect(
+    usesLegacyAntigravityBackend({
+      binaryPath: "C:\\legacy\\agy.exe",
+      platform: "win32",
+      arch: "arm64",
+    }),
+  ).toBe(true);
+  expect(
+    usesLegacyAntigravityBackend({
+      binaryPath: "/opt/antigravity/agy_acp_server.par",
+      platform: "freebsd",
+      arch: "x64",
+    }),
+  ).toBe(false);
 });
 
 function shellQuote(value: string): string {

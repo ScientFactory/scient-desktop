@@ -435,6 +435,10 @@ describe("VcsStatusBroadcaster", () => {
         aheadCount: 2,
       };
       const refreshed = yield* broadcaster.refreshStatus("/repo");
+      // Explicit refresh checks availability before remote work, then reads local
+      // state again because the remote fetch can move the comparison base.
+      assert.equal(state.localStatusCalls, 3);
+      assert.equal(state.remoteStatusCalls, 2);
       const cached = yield* broadcaster.getStatus({ cwd: "/repo" });
 
       assert.deepStrictEqual(initial, baseStatus);
@@ -446,7 +450,7 @@ describe("VcsStatusBroadcaster", () => {
         ...state.currentLocalStatus,
         ...state.currentRemoteStatus,
       });
-      assert.equal(state.localStatusCalls, 2);
+      assert.equal(state.localStatusCalls, 3);
       assert.equal(state.remoteStatusCalls, 2);
       assert.equal(state.localInvalidationCalls, 1);
       assert.equal(state.remoteInvalidationCalls, 1);

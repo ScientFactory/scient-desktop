@@ -1088,7 +1088,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           _tag: "GitCommandError",
           operation: "GitVcsDriver.removeWorktree",
           command: "git",
-          argumentCount: 3,
+          argumentCount: 5,
           cwd,
         });
         assert.notProperty(error, "cause");
@@ -1139,6 +1139,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const mergeBase = yield* git(cwd, ["rev-parse", initialBranch]);
         yield* writeTextFile(cwd, "untracked.txt", "untracked content\n");
         const paths = Array.from({ length: 5000 }, (_, index) => `${"a".repeat(220)}-${index}.txt`);
         const stats = paths.map((path) => `1\t0\t${path}\0`).join("");
@@ -1149,10 +1150,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
         const spawner = ChildProcessSpawner.make((command) => {
           if (ChildProcess.isStandardCommand(command)) {
-            if (
-              command.args.includes("--numstat") &&
-              command.args.includes(`${initialBranch}...HEAD`)
-            ) {
+            if (command.args.includes("--numstat") && command.args.includes(mergeBase)) {
               return Effect.succeed(makeSuccessfulHandle(stats));
             }
             if (command.args.includes("ls-files") && command.args.includes("--others")) {
@@ -1628,6 +1626,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
 
         assert.deepStrictEqual(branch.files, [
           { path: "a-large.txt", previousPath: null, additions: 4000, deletions: 0 },
+          { path: "untracked.txt", previousPath: null, additions: 4000, deletions: 0 },
           { path: "z-last.txt", previousPath: null, additions: 1, deletions: 0 },
         ]);
         assert.deepStrictEqual(dirty.files, [
@@ -2794,8 +2793,10 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           Effect.gen(function* () {
             if (
               ChildProcess.isStandardCommand(command) &&
-              command.args[0] === "worktree" &&
-              command.args[1] === "remove"
+              command.args[0] === "-c" &&
+              command.args[1] === "status.showUntrackedFiles=normal" &&
+              command.args[2] === "worktree" &&
+              command.args[3] === "remove"
             ) {
               yield* Deferred.succeed(removalStarted, undefined);
               yield* Effect.sleep("31 seconds");
@@ -2955,7 +2956,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("commit context", () => {
-    it.effect("stages selected files and commits only those files", () =>
+    it.effect("previews selected files without staging and commits only those files", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         yield* initRepoWithCommit(cwd);
@@ -2967,10 +2968,17 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const context = yield* driver.prepareCommitContext(cwd, ["a.txt"]);
         assert.include(context?.stagedSummary ?? "", "a.txt");
         assert.notInclude(context?.stagedSummary ?? "", "b.txt");
+        assert.isEmpty(yield* git(cwd, ["diff", "--cached", "--name-only"]));
 
-        const commit = yield* driver.commit(cwd, "Add a", "");
+        const commit = yield* driver.commit(cwd, "Add a", "", {
+          stage: { filePaths: ["a.txt"] },
+        });
         assert.match(commit.commitSha, /^[a-f0-9]{40}$/);
         assert.equal(yield* git(cwd, ["log", "-1", "--pretty=%s"]), "Add a");
+        assert.equal(
+          yield* git(cwd, ["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"]),
+          "a.txt",
+        );
 
         const status = yield* git(cwd, ["status", "--porcelain"]);
         assert.include(status, "?? b.txt");
@@ -2987,9 +2995,18 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* writeTextFile(cwd, "selected[1].txt", "literal\n");
         yield* writeTextFile(cwd, "selected1.txt", "pattern match\n");
 
-        yield* driver.prepareCommitContext(cwd, ["selected[1].txt"]);
+        const context = yield* driver.prepareCommitContext(cwd, ["selected[1].txt"]);
 
-        assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "selected[1].txt");
+        assert.include(context?.stagedSummary ?? "", "selected[1].txt");
+        assert.notInclude(context?.stagedSummary ?? "", "selected1.txt");
+        assert.isEmpty(yield* git(cwd, ["diff", "--cached", "--name-only"]));
+        yield* driver.commit(cwd, "Add literal path", "", {
+          stage: { filePaths: ["selected[1].txt"] },
+        });
+        assert.equal(
+          yield* git(cwd, ["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"]),
+          "selected[1].txt",
+        );
 
         const status = yield* git(cwd, ["status", "--porcelain"]);
         assert.include(status, "?? selected1.txt");
@@ -3178,7 +3195,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         });
         yield* writeTextFile(cwd, "feature.txt", "feature\n");
         yield* (yield* GitVcsDriver.GitVcsDriver).prepareCommitContext(cwd);
-        yield* (yield* GitVcsDriver.GitVcsDriver).commit(cwd, "Add feature", "");
+        yield* (yield* GitVcsDriver.GitVcsDriver).commit(cwd, "Add feature", "", { stage: {} });
 
         const pushed = yield* (yield* GitVcsDriver.GitVcsDriver).pushCurrentBranch(cwd, null);
         assert.deepInclude(pushed, {
@@ -3250,7 +3267,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           yield* git(cwd, ["push", "-u", "origin", "main"]);
           yield* writeTextFile(cwd, "upstream.txt", "upstream\n");
           yield* driver.prepareCommitContext(cwd);
-          yield* driver.commit(cwd, "Add upstream update", "");
+          yield* driver.commit(cwd, "Add upstream update", "", { stage: {} });
 
           const pushed = yield* driver.pushCurrentBranch(cwd, null);
 
@@ -3291,7 +3308,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["checkout", "-b", "feature/x", "origin/dev"]);
         yield* writeTextFile(cwd, "feature.txt", "feature\n");
         yield* driver.prepareCommitContext(cwd);
-        yield* driver.commit(cwd, "Add feature", "");
+        yield* driver.commit(cwd, "Add feature", "", { stage: {} });
 
         const pushed = yield* driver.pushCurrentBranch(cwd, null);
 
@@ -3325,7 +3342,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["config", "branch.feature/y.gh-merge-base", "release/v2"]);
         yield* writeTextFile(cwd, "feature.txt", "feature\n");
         yield* driver.prepareCommitContext(cwd);
-        yield* driver.commit(cwd, "Add feature", "");
+        yield* driver.commit(cwd, "Add feature", "", { stage: {} });
 
         const pushed = yield* driver.pushCurrentBranch(cwd, null);
 
@@ -3363,7 +3380,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         );
         yield* writeTextFile(cwd, "alias.txt", "alias\n");
         yield* driver.prepareCommitContext(cwd);
-        yield* driver.commit(cwd, "Add alias update", "");
+        yield* driver.commit(cwd, "Add alias update", "", { stage: {} });
 
         const pushed = yield* driver.pushCurrentBranch(cwd, null);
 

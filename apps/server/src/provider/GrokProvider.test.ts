@@ -25,7 +25,7 @@ import { grokUsageResponseToLimits, readGrokAccount } from "./grokUsageLimits.ts
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 
-const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
+const mockAgentPath = NodePath.join(__dirname, "../../scripts/acp-mock-agent.ts");
 
 const makeMockGrok = Effect.fn("GrokProvider.test.makeMockGrok")(function* (
   authState:

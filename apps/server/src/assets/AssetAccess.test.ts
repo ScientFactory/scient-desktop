@@ -1208,7 +1208,22 @@ describe("AssetAccess", () => {
         const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
         const token = suffix.slice(0, suffix.indexOf("/"));
 
-        expect(yield* resolveAsset(token, name)).toEqual({ kind: "file", path: canonicalFile });
+        const info = yield* fileSystem.stat(canonicalFile);
+        expect(yield* resolveAsset(token, name)).toEqual({
+          kind: "file",
+          path: canonicalFile,
+          ...(name.endsWith(".pdf")
+            ? {
+                revision: {
+                  size: Number(info.size),
+                  mtimeMs: Option.match(info.mtime, {
+                    onNone: () => null,
+                    onSome: (mtime) => mtime.getTime(),
+                  }),
+                },
+              }
+            : {}),
+        });
         if (name.endsWith(".png")) {
           expect(yield* resolveAsset(token, "other.png")).toBeNull();
         }

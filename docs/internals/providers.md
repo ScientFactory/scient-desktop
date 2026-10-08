@@ -482,8 +482,8 @@ tolerantly without weakening non-array validation or editing generated schemas.
 
 The official ACP path above is the default on supported hosts. Scient's previous `agy`
 stream-json transport remains only for version-2 continuation cursors, explicit legacy executable
-paths (`agy`, `agy.exe`, or the old managed `antigravity` binary), and the unsupported-ACP Intel Mac
-default. The Antigravity driver's native adapter router chooses `AntigravityAdapterV2` or
+paths (`agy`, `agy.exe`, or the old managed `antigravity` binary), and the default fallback on hosts
+without an official ACP artifact. The Antigravity driver's native adapter router chooses `AntigravityAdapterV2` or
 `LegacyAntigravityAdapterV2` from the configured executable and recorded native reference.
 It never replays or converts one protocol's cursor into the other.
 
