@@ -4,11 +4,12 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Tracer from "effect/Tracer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { readScientThreadForInvocation } from "../../mcp/toolkits/threads/handlers.ts";
 import { AgentInvocationContext } from "../../scient/operations/AgentInvocationContext.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { listLinkedPullRequestThreads } from "../../pullRequest/linkedThreads.ts";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
@@ -16,39 +17,45 @@ import * as LegacyV1ThreadImporter from "./LegacyV1ThreadImporter.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 
-const databaseLayer = SqlitePersistenceMemory;
-const eventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(databaseLayer));
-const projectionStoreProvided = ProjectionStore.layer.pipe(Layer.provideMerge(databaseLayer));
-const storesProvided = Layer.mergeAll(databaseLayer, eventStoreProvided, projectionStoreProvided);
-const eventSinkProvided = EventSink.layer.pipe(Layer.provide(storesProvided));
-const importerProvided = LegacyV1ThreadImporter.layer.pipe(
-  Layer.provide(Layer.mergeAll(storesProvided, eventSinkProvided)),
+const layerDatabase = SqlitePersistence.layerMemory;
+const layerEventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(layerDatabase));
+const layerProjectionStoreProvided = ProjectionStore.layer.pipe(Layer.provideMerge(layerDatabase));
+const layerStoresProvided = Layer.mergeAll(
+  layerDatabase,
+  layerEventStoreProvided,
+  layerProjectionStoreProvided,
 );
-const projectionMaintenanceProvided = ProjectionMaintenance.layer.pipe(
-  Layer.provide(storesProvided),
+const layerEventSinkProvided = EventSink.layer.pipe(Layer.provide(layerStoresProvided));
+const layerImporterProvided = LegacyV1ThreadImporter.layer.pipe(
+  Layer.provide(Layer.mergeAll(layerStoresProvided, layerEventSinkProvided)),
 );
-const TestLayer = Layer.mergeAll(
-  storesProvided,
-  eventSinkProvided,
-  importerProvided,
-  projectionMaintenanceProvided,
+const layerProjectionMaintenanceProvided = ProjectionMaintenance.layer.pipe(
+  Layer.provide(layerStoresProvided),
+);
+const layerTest = Layer.mergeAll(
+  layerStoresProvided,
+  layerEventSinkProvided,
+  layerImporterProvided,
+  layerProjectionMaintenanceProvided,
 );
 
-for (const missing of [true, false]) {
-  it.effect(
-    missing
+it.effect.each(
+  [true, false].map((missing) => ({
+    caseTitle: missing
       ? "repairs an opt-out missing from otherwise complete imported metadata"
       : "preserves an explicit V2 auto-settle choice during metadata repair",
-    () =>
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-        const projections = yield* ProjectionStore.ProjectionStoreV2;
-        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-        const eventSink = yield* EventSink.EventSinkV2;
-        const threadId = ThreadId.make(`thread:legacy-opt-out:${missing}`);
-        const optOut = "2026-01-02T00:00:00.000Z";
-        yield* sql`
+    missing,
+  })),
+)("$caseTitle", ({ missing }) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const threadId = ThreadId.make(`thread:legacy-opt-out:${missing}`);
+    const optOut = "2026-01-02T00:00:00.000Z";
+    yield* sql`
             INSERT INTO projection_projects (
               project_id, title, workspace_root, scripts_json, created_at, updated_at
             ) VALUES (
@@ -56,7 +63,7 @@ for (const missing of [true, false]) {
               '[]', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
             )
           `;
-        yield* sql`
+    yield* sql`
             INSERT INTO projection_threads (
               thread_id, project_id, title, model_selection_json, runtime_mode,
               interaction_mode, created_at, updated_at, auto_settle_disabled_at
@@ -66,54 +73,53 @@ for (const missing of [true, false]) {
               '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', ${optOut}
             )
           `;
-        yield* importer.reconcileShells;
-        const imported = yield* projections.getThreadProjection(threadId);
-        const edited: {
-          -readonly [K in keyof typeof imported.thread]: (typeof imported.thread)[K];
-        } = {
-          ...imported.thread,
-          title: "Renamed in V2",
-          autoSettleDisabledAt: null,
-        };
-        if (missing) delete edited.autoSettleDisabledAt;
-        yield* eventSink.write({
-          events: [
-            {
-              id: EventId.make(`metadata:opt-out:${missing}`),
-              type: "thread.metadata-updated",
-              threadId,
-              providerInstanceId: edited.providerInstanceId,
-              occurredAt: DateTime.makeUnsafe("2026-01-03T00:00:00.000Z"),
-              payload: edited,
-            },
-          ],
-        });
-        assert.deepStrictEqual(yield* importer.reconcileShells, {
-          importedThreadCount: missing ? 1 : 0,
-          importedMessageCount: 0,
-        });
-        const repaired = yield* projections.getThreadProjection(threadId);
-        assert.equal(repaired.thread.title, "Renamed in V2");
-        assert.equal(
-          repaired.thread.autoSettleDisabledAt === null
-            ? null
-            : DateTime.formatIso(repaired.thread.autoSettleDisabledAt!),
-          missing ? optOut : null,
-        );
-        assert.deepStrictEqual(yield* importer.reconcileShells, {
-          importedThreadCount: 0,
-          importedMessageCount: 0,
-        });
-        assert.isTrue((yield* maintenance.rebuild).valid);
-        assert.deepStrictEqual(
-          (yield* projections.getThreadProjection(threadId)).thread,
-          repaired.thread,
-        );
-      }).pipe(Effect.provide(TestLayer)),
-  );
-}
+    yield* importer.reconcileShells;
+    const imported = yield* projections.getThreadProjection(threadId);
+    const edited: {
+      -readonly [K in keyof typeof imported.thread]: (typeof imported.thread)[K];
+    } = {
+      ...imported.thread,
+      title: "Renamed in V2",
+      autoSettleDisabledAt: null,
+    };
+    if (missing) delete edited.autoSettleDisabledAt;
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make(`metadata:opt-out:${missing}`),
+          type: "thread.metadata-updated",
+          threadId,
+          providerInstanceId: edited.providerInstanceId,
+          occurredAt: DateTime.makeUnsafe("2026-01-03T00:00:00.000Z"),
+          payload: edited,
+        },
+      ],
+    });
+    assert.deepStrictEqual(yield* importer.reconcileShells, {
+      importedThreadCount: missing ? 1 : 0,
+      importedMessageCount: 0,
+    });
+    const repaired = yield* projections.getThreadProjection(threadId);
+    assert.equal(repaired.thread.title, "Renamed in V2");
+    assert.equal(
+      repaired.thread.autoSettleDisabledAt === null
+        ? null
+        : DateTime.formatIso(repaired.thread.autoSettleDisabledAt!),
+      missing ? optOut : null,
+    );
+    assert.deepStrictEqual(yield* importer.reconcileShells, {
+      importedThreadCount: 0,
+      importedMessageCount: 0,
+    });
+    assert.isTrue((yield* maintenance.rebuild).valid);
+    assert.deepStrictEqual(
+      (yield* projections.getThreadProjection(threadId)).thread,
+      repaired.thread,
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
 
-it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
+it.layer(layerTest)("LegacyV1ThreadImporter", (it) => {
   it.effect("uses the created-thread index for startup migration checks", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

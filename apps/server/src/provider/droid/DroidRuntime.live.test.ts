@@ -6,7 +6,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { Effect, FileSystem, Path, Redacted, Stream, Schema } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { droidCustomModelId, makeDroidCustomModelsRuntimeFactory } from "./DroidCustomModels.ts";

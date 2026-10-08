@@ -1,3 +1,4 @@
+import * as Crypto from "effect/Crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   MessageId,
@@ -39,6 +40,7 @@ describe("ClaudeAdapterV2 native fork", () => {
           readonly providerSessionId: ProviderSessionId;
         }> = [];
         const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          crypto: yield* Crypto.Crypto,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
@@ -52,6 +54,8 @@ describe("ClaudeAdapterV2 native fork", () => {
               Effect.sync(() => {
                 openedQueries.push(input);
                 return {
+                  setPermissionMode: () =>
+                    Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.empty,
                   offer: () => Effect.void,
                   setModel: () => Effect.void,

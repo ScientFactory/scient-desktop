@@ -2,7 +2,6 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Download, FileDown, FileText } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { previewBridge } from "~/components/preview/previewBridge";
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { toastManager } from "~/components/ui/toast";
@@ -37,7 +36,7 @@ export function ScientPreviewExportActions(props: {
 
   const exportPdf = useCallback(
     async (action: PdfExportAction) => {
-      if (!previewBridge || !props.runtimeTabId || !props.pageUrl || exportPendingRef.current)
+      if (props.disabled || !props.runtimeTabId || !props.pageUrl || exportPendingRef.current)
         return;
       exportPendingRef.current = true;
       setExporting(true);
@@ -80,6 +79,7 @@ export function ScientPreviewExportActions(props: {
     },
     [
       exportBrowserPdf,
+      props.disabled,
       props.pageUrl,
       props.runtimeTabId,
       props.tabId,
@@ -87,8 +87,6 @@ export function ScientPreviewExportActions(props: {
       savePdfCopy,
     ],
   );
-
-  if (!previewBridge) return null;
 
   return (
     <Menu>

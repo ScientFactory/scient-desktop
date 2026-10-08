@@ -16,7 +16,7 @@ import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/ho
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { OMP_RPC_PROTOCOL_V2 } from "effect-omp-rpc/schema";
 
 import {

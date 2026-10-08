@@ -33,7 +33,7 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ScientificRuntimePreferences from "../compute/ScientificRuntimePreferences.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { AnalyticsService, type AnalyticsStatus } from "../../telemetry/AnalyticsService.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
@@ -300,62 +300,63 @@ const artifactTestAdapter = (mode: ArtifactFixtureMode): AnalysisRuntimeAdapter 
 });
 
 describe("analysis artifact analytics", () => {
-  for (const mode of ["captured", "warning"] as const) {
-    it.effect(`preserves ${mode} publication independently of concurrent cancellation`, () =>
-      Effect.gen(function* () {
-        const publishing = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        const harness = yield* makeServiceTestLayer(artifactTestAdapter(mode), (store) => ({
-          ...store,
-          publishArtifacts: (input) =>
-            Effect.gen(function* () {
-              yield* Deferred.succeed(publishing, undefined);
-              yield* Deferred.await(release);
-              return yield* store.publishArtifacts(input);
-            }),
-        }));
-        const analytics = yield* analyticsFixture;
-        yield* Effect.scoped(
+  it.effect.each(
+    (["captured", "warning"] as const).map((mode) => ({
+      caseTitle: `preserves ${mode} publication independently of concurrent cancellation`,
+      mode,
+    })),
+  )("$caseTitle", ({ mode }) =>
+    Effect.gen(function* () {
+      const publishing = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const harness = yield* makeServiceTestLayer(artifactTestAdapter(mode), (store) => ({
+        ...store,
+        publishArtifacts: (input) =>
           Effect.gen(function* () {
-            const service = yield* AnalysisService;
-            yield* service.startRun({
-              cwd: harness.projectRoot,
-              relativePath: "cancel-publishing.m",
-              sourceRevision,
-              runtimeId,
-            });
-            const runId = yield* Queue.take(harness.startedRuns);
-            yield* Deferred.succeed(harness.processExits.get(runId)!, 0);
-            yield* Deferred.await(publishing);
-            yield* service.cancelRun({ cwd: harness.projectRoot, runId });
-            yield* Deferred.succeed(release, undefined);
-            const expected = mode === "warning" ? "failed" : "completed";
-            expect(yield* Queue.take(analytics.terminalEvents)).toBe(
-              `scient.operation.${expected}`,
-            );
-            expect(yield* Queue.take(analytics.terminalEvents)).toBe("scient.operation.cancelled");
-            const persisted = yield* service.getRun({ cwd: harness.projectRoot, runId });
-            expect(persisted.receipt.status).toBe("cancelled");
-            expect(persisted.artifacts).toHaveLength(1);
-            expect(persisted.artifactReceipt.status).toBe(
-              mode === "warning" ? "failed" : "succeeded",
-            );
-            expect(
-              analytics.events
-                .filter((event) => event.properties?.operationKind === "compute-artifact")
-                .map((event) => event.name),
-            ).toEqual(["scient.operation.started", `scient.operation.${expected}`]);
-          }).pipe(
-            Effect.provide(
-              harness.analysisLayer.pipe(
-                Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-              ),
+            yield* Deferred.succeed(publishing, undefined);
+            yield* Deferred.await(release);
+            return yield* store.publishArtifacts(input);
+          }),
+      }));
+      const analytics = yield* analyticsFixture;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* AnalysisService;
+          yield* service.startRun({
+            cwd: harness.projectRoot,
+            relativePath: "cancel-publishing.m",
+            sourceRevision,
+            runtimeId,
+          });
+          const runId = yield* Queue.take(harness.startedRuns);
+          yield* Deferred.succeed(harness.processExits.get(runId)!, 0);
+          yield* Deferred.await(publishing);
+          yield* service.cancelRun({ cwd: harness.projectRoot, runId });
+          yield* Deferred.succeed(release, undefined);
+          const expected = mode === "warning" ? "failed" : "completed";
+          expect(yield* Queue.take(analytics.terminalEvents)).toBe(`scient.operation.${expected}`);
+          expect(yield* Queue.take(analytics.terminalEvents)).toBe("scient.operation.cancelled");
+          const persisted = yield* service.getRun({ cwd: harness.projectRoot, runId });
+          expect(persisted.receipt.status).toBe("cancelled");
+          expect(persisted.artifacts).toHaveLength(1);
+          expect(persisted.artifactReceipt.status).toBe(
+            mode === "warning" ? "failed" : "succeeded",
+          );
+          expect(
+            analytics.events
+              .filter((event) => event.properties?.operationKind === "compute-artifact")
+              .map((event) => event.name),
+          ).toEqual(["scient.operation.started", `scient.operation.${expected}`]);
+        }).pipe(
+          Effect.provide(
+            harness.analysisLayer.pipe(
+              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
             ),
           ),
-        );
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-    );
-  }
+        ),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 
   it.effect("reports a failed requested capture when preparation prevents process launch", () =>
     Effect.gen(function* () {
@@ -453,83 +454,88 @@ describe("analysis artifact analytics", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  for (const scenario of [
-    { mode: "captured", exitCode: 0, outcome: "completed", artifacts: 1 },
-    { mode: "captured", exitCode: 1, outcome: "completed", artifacts: 1 },
-    { mode: "empty", exitCode: 0, outcome: "skipped", artifacts: 0 },
-    { mode: "warning", exitCode: 0, outcome: "failed", artifacts: 1 },
-    { mode: "collection-error", exitCode: 0, outcome: "failed", artifacts: 0 },
-    { mode: "publication-error", exitCode: 0, outcome: "failed", artifacts: 0 },
-  ] as const) {
-    it.effect(`separates ${scenario.mode} capture from process exit ${scenario.exitCode}`, () =>
-      Effect.gen(function* () {
-        const harness = yield* makeServiceTestLayer(artifactTestAdapter(scenario.mode));
-        const analytics = yield* analyticsFixture;
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const service = yield* AnalysisService;
-            const run = yield* service.startRun({
-              cwd: harness.projectRoot,
-              relativePath: "private-study.m",
-              sourceRevision,
-              runtimeId,
-            });
-            const runId = yield* Queue.take(harness.startedRuns);
-            expect(analytics.events.map((event) => event.properties?.operationKind)).toEqual([
-              "compute-run",
-              "compute-artifact",
-            ]);
-            yield* Deferred.succeed(harness.processExits.get(runId)!, scenario.exitCode);
-            expect(yield* Queue.take(analytics.terminalEvents)).toBe(
-              `scient.operation.${scenario.outcome}`,
-            );
-            expect(yield* Queue.take(analytics.terminalEvents)).toBe(
-              scenario.exitCode === 0 ? "scient.operation.completed" : "scient.operation.failed",
-            );
-            const persisted = yield* service.getRun({ cwd: harness.projectRoot, runId });
-            expect(persisted.receipt.status).toBe(scenario.exitCode === 0 ? "succeeded" : "failed");
-            expect(persisted.artifactReceipt.status).toBe(
-              scenario.outcome === "failed" ? "failed" : "succeeded",
-            );
-            expect(persisted.artifacts).toHaveLength(scenario.artifacts);
-            yield* service.listRuns({ cwd: harness.projectRoot });
-            const captureEvents = analytics.events.filter(
-              (event) => event.properties?.operationKind === "compute-artifact",
-            );
-            expect(captureEvents.map((event) => event.name)).toEqual([
-              "scient.operation.started",
-              `scient.operation.${scenario.outcome}`,
-            ]);
-            expect(captureEvents[1]?.properties).toEqual({
-              operationKind: "compute-artifact",
-              trigger: "user",
-              durationMs: expect.any(Number),
-              failureClass: "unknown",
-            });
-            const payload = yield* encodeUnknownJson(analytics.events);
-            for (const privateValue of [
-              harness.projectRoot,
-              harness.projectId,
-              String(run.receipt.runId),
-              "private-",
-              "Private scientific",
-              "private partial",
-              "private capture",
-              "missing.svg",
-            ]) {
-              expect(payload).not.toContain(privateValue);
-            }
-          }).pipe(
-            Effect.provide(
-              harness.analysisLayer.pipe(
-                Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-              ),
+  it.effect.each(
+    (
+      [
+        { mode: "captured", exitCode: 0, outcome: "completed", artifacts: 1 },
+        { mode: "captured", exitCode: 1, outcome: "completed", artifacts: 1 },
+        { mode: "empty", exitCode: 0, outcome: "skipped", artifacts: 0 },
+        { mode: "warning", exitCode: 0, outcome: "failed", artifacts: 1 },
+        { mode: "collection-error", exitCode: 0, outcome: "failed", artifacts: 0 },
+        { mode: "publication-error", exitCode: 0, outcome: "failed", artifacts: 0 },
+      ] as const
+    ).map((scenario) => ({
+      caseTitle: `separates ${scenario.mode} capture from process exit ${scenario.exitCode}`,
+      scenario,
+    })),
+  )("$caseTitle", ({ scenario }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeServiceTestLayer(artifactTestAdapter(scenario.mode));
+      const analytics = yield* analyticsFixture;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* AnalysisService;
+          const run = yield* service.startRun({
+            cwd: harness.projectRoot,
+            relativePath: "private-study.m",
+            sourceRevision,
+            runtimeId,
+          });
+          const runId = yield* Queue.take(harness.startedRuns);
+          expect(analytics.events.map((event) => event.properties?.operationKind)).toEqual([
+            "compute-run",
+            "compute-artifact",
+          ]);
+          yield* Deferred.succeed(harness.processExits.get(runId)!, scenario.exitCode);
+          expect(yield* Queue.take(analytics.terminalEvents)).toBe(
+            `scient.operation.${scenario.outcome}`,
+          );
+          expect(yield* Queue.take(analytics.terminalEvents)).toBe(
+            scenario.exitCode === 0 ? "scient.operation.completed" : "scient.operation.failed",
+          );
+          const persisted = yield* service.getRun({ cwd: harness.projectRoot, runId });
+          expect(persisted.receipt.status).toBe(scenario.exitCode === 0 ? "succeeded" : "failed");
+          expect(persisted.artifactReceipt.status).toBe(
+            scenario.outcome === "failed" ? "failed" : "succeeded",
+          );
+          expect(persisted.artifacts).toHaveLength(scenario.artifacts);
+          yield* service.listRuns({ cwd: harness.projectRoot });
+          const captureEvents = analytics.events.filter(
+            (event) => event.properties?.operationKind === "compute-artifact",
+          );
+          expect(captureEvents.map((event) => event.name)).toEqual([
+            "scient.operation.started",
+            `scient.operation.${scenario.outcome}`,
+          ]);
+          expect(captureEvents[1]?.properties).toEqual({
+            operationKind: "compute-artifact",
+            trigger: "user",
+            durationMs: expect.any(Number),
+            failureClass: "unknown",
+          });
+          const payload = yield* encodeUnknownJson(analytics.events);
+          for (const privateValue of [
+            harness.projectRoot,
+            harness.projectId,
+            String(run.receipt.runId),
+            "private-",
+            "Private scientific",
+            "private partial",
+            "private capture",
+            "missing.svg",
+          ]) {
+            expect(payload).not.toContain(privateValue);
+          }
+        }).pipe(
+          Effect.provide(
+            harness.analysisLayer.pipe(
+              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
             ),
           ),
-        );
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-    );
-  }
+        ),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 
   it.effect("keeps the saved capture outcome when later run bookkeeping fails", () =>
     Effect.gen(function* () {
@@ -583,194 +589,198 @@ describe("analysis artifact analytics", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  for (const mode of ["off", "epoch-change", "broken"] as const) {
-    it.effect(`keeps capture functional with ${mode} analytics without replay`, () =>
-      Effect.gen(function* () {
-        const harness = yield* makeServiceTestLayer(artifactTestAdapter("captured"));
-        const analytics = yield* analyticsFixture;
-        if (mode === "off") yield* analytics.service.setConsent("off");
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const service = yield* AnalysisService;
-            yield* service.startRun({
-              cwd: harness.projectRoot,
-              relativePath: "consent.m",
-              sourceRevision,
-              runtimeId,
-            });
-            const runId = yield* Queue.take(harness.startedRuns);
-            if (mode === "epoch-change") yield* analytics.service.setConsent("off");
-            yield* analytics.service.setConsent("product");
-            const updates = yield* service.subscribeRuns({ cwd: harness.projectRoot });
-            yield* Deferred.succeed(harness.processExits.get(runId)!, 0);
-            yield* updates.pipe(
-              Stream.filter(
-                (event) =>
-                  event._tag !== "run-output" &&
-                  event.run.receipt.runId === runId &&
-                  event.run.receipt.status === "succeeded",
-              ),
-              Stream.take(1),
-              Stream.runDrain,
-            );
-            const persisted = yield* service.getRun({ cwd: harness.projectRoot, runId });
-            expect(persisted.artifacts).toHaveLength(1);
-            expect(persisted.artifactReceipt.status).toBe("succeeded");
-          }).pipe(
-            Effect.provide(
-              harness.analysisLayer.pipe(
-                Layer.provide(
-                  Layer.succeed(
-                    AnalyticsService,
-                    mode === "broken"
-                      ? {
-                          ...analytics.service,
-                          record: () => Effect.die("private analytics failure"),
-                        }
-                      : analytics.service,
-                  ),
+  it.effect.each(
+    (["off", "epoch-change", "broken"] as const).map((mode) => ({
+      caseTitle: `keeps capture functional with ${mode} analytics without replay`,
+      mode,
+    })),
+  )("$caseTitle", ({ mode }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeServiceTestLayer(artifactTestAdapter("captured"));
+      const analytics = yield* analyticsFixture;
+      if (mode === "off") yield* analytics.service.setConsent("off");
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* AnalysisService;
+          yield* service.startRun({
+            cwd: harness.projectRoot,
+            relativePath: "consent.m",
+            sourceRevision,
+            runtimeId,
+          });
+          const runId = yield* Queue.take(harness.startedRuns);
+          if (mode === "epoch-change") yield* analytics.service.setConsent("off");
+          yield* analytics.service.setConsent("product");
+          const updates = yield* service.subscribeRuns({ cwd: harness.projectRoot });
+          yield* Deferred.succeed(harness.processExits.get(runId)!, 0);
+          yield* updates.pipe(
+            Stream.filter(
+              (event) =>
+                event._tag !== "run-output" &&
+                event.run.receipt.runId === runId &&
+                event.run.receipt.status === "succeeded",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+          );
+          const persisted = yield* service.getRun({ cwd: harness.projectRoot, runId });
+          expect(persisted.artifacts).toHaveLength(1);
+          expect(persisted.artifactReceipt.status).toBe("succeeded");
+        }).pipe(
+          Effect.provide(
+            harness.analysisLayer.pipe(
+              Layer.provide(
+                Layer.succeed(
+                  AnalyticsService,
+                  mode === "broken"
+                    ? {
+                        ...analytics.service,
+                        record: () => Effect.die("private analytics failure"),
+                      }
+                    : analytics.service,
                 ),
               ),
             ),
           ),
-        );
-        expect(analytics.events.map((event) => event.name)).toEqual(
-          mode === "epoch-change" ? ["scient.operation.started", "scient.operation.started"] : [],
-        );
-        expect(yield* Ref.get(harness.processStartCount)).toBe(1);
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-    );
-  }
+        ),
+      );
+      expect(analytics.events.map((event) => event.name)).toEqual(
+        mode === "epoch-change" ? ["scient.operation.started", "scient.operation.started"] : [],
+      );
+      expect(yield* Ref.get(harness.processStartCount)).toBe(1);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 });
 
 describe("analysis outcome analytics", () => {
-  for (const mode of ["off", "epoch-change", "broken"] as const) {
-    it.effect(`keeps execution intact with ${mode} analytics and does not replay active work`, () =>
-      Effect.gen(function* () {
-        const harness = yield* serviceTestLayer;
-        const analytics = yield* analyticsFixture;
-        if (mode === "off") yield* analytics.service.setConsent("off");
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const service = yield* AnalysisService;
-            const first = yield* service.startRun({
-              cwd: harness.projectRoot,
-              relativePath: "first.m",
-              sourceRevision,
-              runtimeId,
-            });
-            yield* Queue.take(harness.startedRuns);
-            const queued = yield* service.startRun({
-              cwd: harness.projectRoot,
-              relativePath: "queued.m",
-              sourceRevision,
-              runtimeId,
-            });
-            if (mode === "epoch-change") yield* analytics.service.setConsent("off");
-            yield* analytics.service.setConsent("product");
-            const cancelled = yield* service.cancelRun({
-              cwd: harness.projectRoot,
-              runId: queued.receipt.runId,
-            });
-            expect(cancelled.receipt.status).toBe("cancelled");
-            yield* service.cancelRun({ cwd: harness.projectRoot, runId: first.receipt.runId });
-          }).pipe(
-            Effect.provide(
-              harness.analysisLayer.pipe(
-                Layer.provide(
-                  Layer.succeed(
-                    AnalyticsService,
-                    mode === "broken"
-                      ? {
-                          ...analytics.service,
-                          status: Effect.die("private observer failure"),
-                        }
-                      : analytics.service,
-                  ),
+  it.effect.each(
+    (["off", "epoch-change", "broken"] as const).map((mode) => ({
+      caseTitle: `keeps execution intact with ${mode} analytics and does not replay active work`,
+      mode,
+    })),
+  )("$caseTitle", ({ mode }) =>
+    Effect.gen(function* () {
+      const harness = yield* serviceTestLayer;
+      const analytics = yield* analyticsFixture;
+      if (mode === "off") yield* analytics.service.setConsent("off");
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* AnalysisService;
+          const first = yield* service.startRun({
+            cwd: harness.projectRoot,
+            relativePath: "first.m",
+            sourceRevision,
+            runtimeId,
+          });
+          yield* Queue.take(harness.startedRuns);
+          const queued = yield* service.startRun({
+            cwd: harness.projectRoot,
+            relativePath: "queued.m",
+            sourceRevision,
+            runtimeId,
+          });
+          if (mode === "epoch-change") yield* analytics.service.setConsent("off");
+          yield* analytics.service.setConsent("product");
+          const cancelled = yield* service.cancelRun({
+            cwd: harness.projectRoot,
+            runId: queued.receipt.runId,
+          });
+          expect(cancelled.receipt.status).toBe("cancelled");
+          yield* service.cancelRun({ cwd: harness.projectRoot, runId: first.receipt.runId });
+        }).pipe(
+          Effect.provide(
+            harness.analysisLayer.pipe(
+              Layer.provide(
+                Layer.succeed(
+                  AnalyticsService,
+                  mode === "broken"
+                    ? {
+                        ...analytics.service,
+                        status: Effect.die("private observer failure"),
+                      }
+                    : analytics.service,
                 ),
               ),
             ),
           ),
-        );
-        expect(analytics.events.map((event) => event.name)).toEqual(
-          mode === "epoch-change" ? ["scient.operation.started", "scient.operation.started"] : [],
-        );
-        expect(yield* Ref.get(harness.processStartCount)).toBe(1);
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-    );
-  }
-  for (const outcome of ["completed", "failed", "cancelled"] as const) {
-    it.effect(`observes one durable ${outcome} outcome without exporting run data`, () =>
-      Effect.gen(function* () {
-        const harness = yield* serviceTestLayer;
-        const analytics = yield* analyticsFixture;
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const service = yield* AnalysisService;
-            const run = yield* service.startRun({
-              cwd: harness.projectRoot,
-              relativePath: "private-study.m",
-              sourceRevision,
-              runtimeId,
-            });
-            const runId = yield* Queue.take(harness.startedRuns);
-            expect(analytics.events.map((event) => event.name)).toEqual([
-              "scient.operation.started",
-            ]);
-            if (outcome === "cancelled") {
-              yield* service.cancelRun({ cwd: harness.projectRoot, runId });
-            } else {
-              yield* Deferred.succeed(
-                harness.processExits.get(runId)!,
-                outcome === "failed" ? 1 : 0,
-              );
-            }
-            expect(yield* Queue.take(analytics.terminalEvents)).toBe(`scient.operation.${outcome}`);
-            const persisted = yield* service.getRun({ cwd: harness.projectRoot, runId });
-            expect(persisted.receipt.status).toBe(outcome === "completed" ? "succeeded" : outcome);
-            yield* service.listRuns({ cwd: harness.projectRoot, limit: 20 });
-            expect(analytics.events).toEqual([
-              {
-                name: "scient.operation.started",
-                properties: {
-                  operationKind: "compute-run",
-                  trigger: "user",
-                  durationMs: undefined,
-                  failureClass: "unknown",
-                },
+        ),
+      );
+      expect(analytics.events.map((event) => event.name)).toEqual(
+        mode === "epoch-change" ? ["scient.operation.started", "scient.operation.started"] : [],
+      );
+      expect(yield* Ref.get(harness.processStartCount)).toBe(1);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+  it.effect.each(
+    (["completed", "failed", "cancelled"] as const).map((outcome) => ({
+      caseTitle: `observes one durable ${outcome} outcome without exporting run data`,
+      outcome,
+    })),
+  )("$caseTitle", ({ outcome }) =>
+    Effect.gen(function* () {
+      const harness = yield* serviceTestLayer;
+      const analytics = yield* analyticsFixture;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* AnalysisService;
+          const run = yield* service.startRun({
+            cwd: harness.projectRoot,
+            relativePath: "private-study.m",
+            sourceRevision,
+            runtimeId,
+          });
+          const runId = yield* Queue.take(harness.startedRuns);
+          expect(analytics.events.map((event) => event.name)).toEqual(["scient.operation.started"]);
+          if (outcome === "cancelled") {
+            yield* service.cancelRun({ cwd: harness.projectRoot, runId });
+          } else {
+            yield* Deferred.succeed(harness.processExits.get(runId)!, outcome === "failed" ? 1 : 0);
+          }
+          expect(yield* Queue.take(analytics.terminalEvents)).toBe(`scient.operation.${outcome}`);
+          const persisted = yield* service.getRun({ cwd: harness.projectRoot, runId });
+          expect(persisted.receipt.status).toBe(outcome === "completed" ? "succeeded" : outcome);
+          yield* service.listRuns({ cwd: harness.projectRoot, limit: 20 });
+          expect(analytics.events).toEqual([
+            {
+              name: "scient.operation.started",
+              properties: {
+                operationKind: "compute-run",
+                trigger: "user",
+                durationMs: undefined,
+                failureClass: "unknown",
               },
-              {
-                name: `scient.operation.${outcome}`,
-                properties: {
-                  operationKind: "compute-run",
-                  trigger: "user",
-                  durationMs: expect.any(Number),
-                  failureClass: "unknown",
-                },
+            },
+            {
+              name: `scient.operation.${outcome}`,
+              properties: {
+                operationKind: "compute-run",
+                trigger: "user",
+                durationMs: expect.any(Number),
+                failureClass: "unknown",
               },
-            ]);
-            const payload = yield* encodeUnknownJson(analytics.events);
-            for (const privateValue of [
-              harness.projectRoot,
-              harness.projectId,
-              String(run.receipt.runId),
-              "private-study",
-              "test-source",
-              "test/matlab",
-            ]) {
-              expect(payload).not.toContain(privateValue);
-            }
-          }).pipe(
-            Effect.provide(
-              harness.analysisLayer.pipe(
-                Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-              ),
+            },
+          ]);
+          const payload = yield* encodeUnknownJson(analytics.events);
+          for (const privateValue of [
+            harness.projectRoot,
+            harness.projectId,
+            String(run.receipt.runId),
+            "private-study",
+            "test-source",
+            "test/matlab",
+          ]) {
+            expect(payload).not.toContain(privateValue);
+          }
+        }).pipe(
+          Effect.provide(
+            harness.analysisLayer.pipe(
+              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
             ),
           ),
-        );
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-    );
-  }
+        ),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 });
 
 describe("analysis restart recovery", () => {

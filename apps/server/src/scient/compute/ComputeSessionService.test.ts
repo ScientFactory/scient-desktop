@@ -1,4 +1,5 @@
 // @effect-diagnostics globalTimersInEffect:off -- This host watchdog must remain independent of the Effect test clock.
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- This host watchdog must remain independent of the Effect test clock.
 import * as NodeTimers from "node:timers";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
@@ -1474,53 +1475,60 @@ const analyticsFixture = () => {
 };
 
 describe("interactive capture analytics", () => {
-  for (const [code, outcome, expected] of [
-    ["figure", "succeeded", "completed"],
-    ["rich-figure", "succeeded", "completed"],
-    ["chart", "succeeded", "completed"],
-    ["chart-updates", "succeeded", "completed"],
-    ["chart-then-failure", "failed", "completed"],
-    ["chart-then-missing", "succeeded", "failed"],
-    ["phantom-figure", "succeeded", "failed"],
-    ["phantom-rich-figure", "succeeded", "failed"],
-    ["print(1)", "succeeded", "skipped"],
-    ["empty-display-flood", "succeeded", "skipped"],
-    ["boom", "failed", "skipped"],
-    ["die", "lost", "skipped"],
-  ] as const) {
-    it.effect(`captures ${code} as ${expected} independently of ${outcome} execution`, () =>
-      Effect.gen(function* () {
-        const f = analyticsFixture();
-        const test = yield* harness({ analytics: f.service });
-        yield* test.use(
-          Effect.gen(function* () {
-            yield* start;
-            yield* submit(code, "private-output-execution");
-            yield* waitUntil(
-              executionAt(ComputeExecutionId.make("private-output-execution"), outcome),
-            );
-          }),
-        );
-        const captures = f.events.filter(
-          (event) => event.properties?.operationKind === "compute-artifact",
-        );
-        expect(captures.map((event) => event.name)).toEqual([
-          "scient.operation.started",
-          `scient.operation.${expected}`,
-        ]);
-        expect(captures[1]?.properties).toEqual({
-          operationKind: "compute-artifact",
-          trigger: "other",
-          durationMs: expect.any(Number),
-          failureClass: "unknown",
-        });
-        expect(yield* encodeUnknownJson(f.events)).not.toMatch(
-          /private-|project-1|session-1|sha256:|display-1|print\(1\)/u,
-        );
-        expect(test.submitted()).toEqual([code]);
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-    );
-  }
+  it.effect.each(
+    (
+      [
+        ["figure", "succeeded", "completed"],
+        ["rich-figure", "succeeded", "completed"],
+        ["chart", "succeeded", "completed"],
+        ["chart-updates", "succeeded", "completed"],
+        ["chart-then-failure", "failed", "completed"],
+        ["chart-then-missing", "succeeded", "failed"],
+        ["phantom-figure", "succeeded", "failed"],
+        ["phantom-rich-figure", "succeeded", "failed"],
+        ["print(1)", "succeeded", "skipped"],
+        ["empty-display-flood", "succeeded", "skipped"],
+        ["boom", "failed", "skipped"],
+        ["die", "lost", "skipped"],
+      ] as const
+    ).map(([code, outcome, expected]) => ({
+      caseTitle: `captures ${code} as ${expected} independently of ${outcome} execution`,
+      code,
+      outcome,
+      expected,
+    })),
+  )("$caseTitle", ({ code, outcome, expected }) =>
+    Effect.gen(function* () {
+      const f = analyticsFixture();
+      const test = yield* harness({ analytics: f.service });
+      yield* test.use(
+        Effect.gen(function* () {
+          yield* start;
+          yield* submit(code, "private-output-execution");
+          yield* waitUntil(
+            executionAt(ComputeExecutionId.make("private-output-execution"), outcome),
+          );
+        }),
+      );
+      const captures = f.events.filter(
+        (event) => event.properties?.operationKind === "compute-artifact",
+      );
+      expect(captures.map((event) => event.name)).toEqual([
+        "scient.operation.started",
+        `scient.operation.${expected}`,
+      ]);
+      expect(captures[1]?.properties).toEqual({
+        operationKind: "compute-artifact",
+        trigger: "other",
+        durationMs: expect.any(Number),
+        failureClass: "unknown",
+      });
+      expect(yield* encodeUnknownJson(f.events)).not.toMatch(
+        /private-|project-1|session-1|sha256:|display-1|print\(1\)/u,
+      );
+      expect(test.submitted()).toEqual([code]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 
   it.effect("records failed capture when a retained-output budget rejects a chart", () =>
     Effect.gen(function* () {
@@ -1547,45 +1555,51 @@ describe("interactive capture analytics", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  for (const [code, expected] of [
-    ["chart-hold", "completed"],
-    ["hold", "skipped"],
-  ] as const) {
-    it.effect(`records ${expected} capture when the user interrupts ${code}`, () =>
-      Effect.gen(function* () {
-        const f = analyticsFixture();
-        const test = yield* harness({ analytics: f.service });
-        yield* test.use(
-          Effect.gen(function* () {
-            const service = yield* ComputeSessionService;
-            yield* start;
-            yield* submit(code, "cancel-output");
-            yield* waitUntil(
-              Effect.gen(function* () {
-                const transcript = yield* service.listOutputs({
-                  projectId: PROJECT_ID,
-                  sessionId: SESSION_ID,
-                  executionId: ComputeExecutionId.make("cancel-output"),
-                });
-                return transcript.outputs.length > 0 ? true : null;
-              }),
-            );
-            yield* service.interruptSession({
-              projectId: PROJECT_ID,
-              sessionId: SESSION_ID,
-              expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
-            });
-            yield* waitUntil(executionAt(ComputeExecutionId.make("cancel-output"), "cancelled"));
-          }),
-        );
-        expect(
-          f.events
-            .filter((event) => event.properties?.operationKind === "compute-artifact")
-            .map((event) => event.name),
-        ).toEqual(["scient.operation.started", `scient.operation.${expected}`]);
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-    );
-  }
+  it.effect.each(
+    (
+      [
+        ["chart-hold", "completed"],
+        ["hold", "skipped"],
+      ] as const
+    ).map(([code, expected]) => ({
+      caseTitle: `records ${expected} capture when the user interrupts ${code}`,
+      code,
+      expected,
+    })),
+  )("$caseTitle", ({ code, expected }) =>
+    Effect.gen(function* () {
+      const f = analyticsFixture();
+      const test = yield* harness({ analytics: f.service });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start;
+          yield* submit(code, "cancel-output");
+          yield* waitUntil(
+            Effect.gen(function* () {
+              const transcript = yield* service.listOutputs({
+                projectId: PROJECT_ID,
+                sessionId: SESSION_ID,
+                executionId: ComputeExecutionId.make("cancel-output"),
+              });
+              return transcript.outputs.length > 0 ? true : null;
+            }),
+          );
+          yield* service.interruptSession({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          });
+          yield* waitUntil(executionAt(ComputeExecutionId.make("cancel-output"), "cancelled"));
+        }),
+      );
+      expect(
+        f.events
+          .filter((event) => event.properties?.operationKind === "compute-artifact")
+          .map((event) => event.name),
+      ).toEqual(["scient.operation.started", `scient.operation.${expected}`]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 
   it.effect("counts a project figure only after it becomes a retained execution output", () =>
     Effect.gen(function* () {
@@ -1660,112 +1674,118 @@ describe("interactive capture analytics", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  for (const mode of ["off", "broken"] as const) {
-    it.effect(`keeps real output persistence intact with ${mode} analytics`, () =>
-      Effect.gen(function* () {
-        const f = analyticsFixture();
-        if (mode === "off") yield* f.service.setConsent("off");
-        const test = yield* harness({
-          analytics:
-            mode === "broken"
-              ? { ...f.service, status: Effect.die("private analytics error") }
-              : f.service,
-        });
-        yield* test.use(
-          Effect.gen(function* () {
-            const service = yield* ComputeSessionService;
-            yield* start;
-            yield* submit("rich-figure", "untracked-output");
-            yield* waitUntil(executionAt(ComputeExecutionId.make("untracked-output"), "succeeded"));
-            const transcript = yield* service.listOutputs({
-              projectId: PROJECT_ID,
-              sessionId: SESSION_ID,
-              executionId: ComputeExecutionId.make("untracked-output"),
-            });
-            expect(transcript.outputs).toEqual([richImageOutput]);
-          }),
-        );
-        expect(f.events).toHaveLength(0);
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-    );
-  }
+  it.effect.each(
+    (["off", "broken"] as const).map((mode) => ({
+      caseTitle: `keeps real output persistence intact with ${mode} analytics`,
+      mode,
+    })),
+  )("$caseTitle", ({ mode }) =>
+    Effect.gen(function* () {
+      const f = analyticsFixture();
+      if (mode === "off") yield* f.service.setConsent("off");
+      const test = yield* harness({
+        analytics:
+          mode === "broken"
+            ? { ...f.service, status: Effect.die("private analytics error") }
+            : f.service,
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start;
+          yield* submit("rich-figure", "untracked-output");
+          yield* waitUntil(executionAt(ComputeExecutionId.make("untracked-output"), "succeeded"));
+          const transcript = yield* service.listOutputs({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            executionId: ComputeExecutionId.make("untracked-output"),
+          });
+          expect(transcript.outputs).toEqual([richImageOutput]);
+        }),
+      );
+      expect(f.events).toHaveLength(0);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 });
 
 describe("compute outcome analytics", () => {
-  for (const initialConsent of ["off", "product"] as const) {
-    it.effect(`does not restart tracking queued work when ${initialConsent} consent is reset`, () =>
-      Effect.gen(function* () {
-        const events: {
-          name: string;
-          properties: Readonly<Record<string, unknown>> | undefined;
-        }[] = [];
-        let status: AnalyticsStatus = { available: true, consent: initialConsent };
-        let epoch = 0;
-        const analytics = AnalyticsService.of({
-          record: (name, properties) =>
-            Effect.sync(() => {
-              events.push({ name, properties });
-            }),
-          status: Effect.sync(() => status),
-          collectionEpoch: Effect.sync(() => epoch),
-          setConsent: (consent) =>
-            Effect.sync(() => {
-              status = { available: true, consent };
-              epoch += 1;
-              return status;
-            }),
-          flush: Effect.void,
-          deleteData: Effect.succeed(true),
-        });
-        const test = yield* harness({ analytics });
-        yield* test.use(
-          Effect.gen(function* () {
-            const service = yield* ComputeSessionService;
-            yield* start;
-            yield* submit("hold", "active-before-consent");
-            yield* waitUntil(
-              executionAt(ComputeExecutionId.make("active-before-consent"), "running"),
-            );
-            yield* submit("hold", "queued-cancel");
-            yield* submit("print(1)", "queued-complete");
-            yield* analytics.setConsent("off");
-            yield* analytics.setConsent("product");
-            yield* service.cancelExecution({
-              projectId: PROJECT_ID,
-              sessionId: SESSION_ID,
-              executionId: ComputeExecutionId.make("queued-cancel"),
-              expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
-            });
-            yield* service.interruptSession({
-              projectId: PROJECT_ID,
-              sessionId: SESSION_ID,
-              expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
-            });
-            yield* waitUntil(executionAt(ComputeExecutionId.make("queued-complete"), "succeeded"));
-            yield* submit("boom", "fresh-after-consent");
-            yield* waitUntil(executionAt(ComputeExecutionId.make("fresh-after-consent"), "failed"));
+  it.effect.each(
+    (["off", "product"] as const).map((initialConsent) => ({
+      caseTitle: `does not restart tracking queued work when ${initialConsent} consent is reset`,
+      initialConsent,
+    })),
+  )("$caseTitle", ({ initialConsent }) =>
+    Effect.gen(function* () {
+      const events: {
+        name: string;
+        properties: Readonly<Record<string, unknown>> | undefined;
+      }[] = [];
+      let status: AnalyticsStatus = { available: true, consent: initialConsent };
+      let epoch = 0;
+      const analytics = AnalyticsService.of({
+        record: (name, properties) =>
+          Effect.sync(() => {
+            events.push({ name, properties });
           }),
-        );
-        for (const kind of ["compute-run", "compute-artifact"]) {
-          expect(
-            events
-              .filter((event) => event.properties?.operationKind === kind)
-              .map((event) => event.name),
-          ).toEqual([
-            ...(initialConsent === "product"
-              ? Array.from({ length: 3 }, () => "scient.operation.started")
-              : []),
-            "scient.operation.started",
-            kind === "compute-run" ? "scient.operation.failed" : "scient.operation.skipped",
-          ]);
-        }
-        expect(events).toHaveLength(initialConsent === "product" ? 10 : 4);
-        expect(yield* encodeUnknownJson(events)).not.toMatch(
-          /project-1|session-1|before-consent|after-consent|queued-|print\(1\)|ZeroDivisionError|division by zero|python3/u,
-        );
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-    );
-  }
+        status: Effect.sync(() => status),
+        collectionEpoch: Effect.sync(() => epoch),
+        setConsent: (consent) =>
+          Effect.sync(() => {
+            status = { available: true, consent };
+            epoch += 1;
+            return status;
+          }),
+        flush: Effect.void,
+        deleteData: Effect.succeed(true),
+      });
+      const test = yield* harness({ analytics });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start;
+          yield* submit("hold", "active-before-consent");
+          yield* waitUntil(
+            executionAt(ComputeExecutionId.make("active-before-consent"), "running"),
+          );
+          yield* submit("hold", "queued-cancel");
+          yield* submit("print(1)", "queued-complete");
+          yield* analytics.setConsent("off");
+          yield* analytics.setConsent("product");
+          yield* service.cancelExecution({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            executionId: ComputeExecutionId.make("queued-cancel"),
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          });
+          yield* service.interruptSession({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          });
+          yield* waitUntil(executionAt(ComputeExecutionId.make("queued-complete"), "succeeded"));
+          yield* submit("boom", "fresh-after-consent");
+          yield* waitUntil(executionAt(ComputeExecutionId.make("fresh-after-consent"), "failed"));
+        }),
+      );
+      for (const kind of ["compute-run", "compute-artifact"]) {
+        expect(
+          events
+            .filter((event) => event.properties?.operationKind === kind)
+            .map((event) => event.name),
+        ).toEqual([
+          ...(initialConsent === "product"
+            ? Array.from({ length: 3 }, () => "scient.operation.started")
+            : []),
+          "scient.operation.started",
+          kind === "compute-run" ? "scient.operation.failed" : "scient.operation.skipped",
+        ]);
+      }
+      expect(events).toHaveLength(initialConsent === "product" ? 10 : 4);
+      expect(yield* encodeUnknownJson(events)).not.toMatch(
+        /project-1|session-1|before-consent|after-consent|queued-|print\(1\)|ZeroDivisionError|division by zero|python3/u,
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 });
 
 describe("compute session startup", () => {
@@ -4043,172 +4063,172 @@ describe("compute session reads", () => {
  */
 describe("compute session under load", () => {
   for (const initiallyEmpty of [false, true]) {
-    for (const unrelatedRuns of [0, 12]) {
-      it.effect(
-        `retains a paused ${initiallyEmpty ? "empty" : "populated"} project's completion after ${unrelatedRuns} unrelated floods`,
-        () =>
+    it.effect.each(
+      [0, 12].map((unrelatedRuns) => ({
+        caseTitle: `retains a paused ${initiallyEmpty ? "empty" : "populated"} project's completion after ${unrelatedRuns} unrelated floods`,
+        unrelatedRuns,
+      })),
+    )("$caseTitle", ({ unrelatedRuns }) =>
+      Effect.gen(function* () {
+        const test = yield* harness();
+        yield* test.use(
           Effect.gen(function* () {
-            const test = yield* harness();
-            yield* test.use(
-              Effect.gen(function* () {
-                const service = yield* ComputeSessionService;
-                if (!initiallyEmpty) yield* start;
-                const events = yield* service.subscribeSessions({ projectId: PROJECT_ID });
-                if (initiallyEmpty) {
-                  yield* start;
-                } else {
-                  const snapshot = yield* events.pipe(Stream.take(1), Stream.runCollect);
-                  expect(snapshot[0]?._tag).toBe("session-snapshot");
-                }
+            const service = yield* ComputeSessionService;
+            if (!initiallyEmpty) yield* start;
+            const events = yield* service.subscribeSessions({ projectId: PROJECT_ID });
+            if (initiallyEmpty) {
+              yield* start;
+            } else {
+              const snapshot = yield* events.pipe(Stream.take(1), Stream.runCollect);
+              expect(snapshot[0]?._tag).toBe("session-snapshot");
+            }
 
-                const executionId = ComputeExecutionId.make("paused-project-completion");
-                yield* submit("print(1)", executionId);
-                yield* waitUntil(executionAt(executionId, "succeeded"));
+            const executionId = ComputeExecutionId.make("paused-project-completion");
+            yield* submit("print(1)", executionId);
+            yield* waitUntil(executionAt(executionId, "succeeded"));
 
-                if (unrelatedRuns > 0) {
-                  yield* service.startSession(startInput({ projectId: OTHER_PROJECT_ID }));
-                  for (let index = 0; index < unrelatedRuns; index++) {
-                    // Deliberately reuse the session and execution identifiers:
-                    // it is the owner, not these portable IDs, that partitions delivery.
-                    const otherExecutionId =
-                      index === 0 ? executionId : ComputeExecutionId.make(`unrelated-${index}`);
-                    yield* service.submitExecution({
-                      projectId: OTHER_PROJECT_ID,
-                      sessionId: SESSION_ID,
-                      executionId: otherExecutionId,
-                      expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
-                      code: "empty-display-flood",
-                      source: { _tag: "console" },
-                    });
-                    yield* waitUntil(
-                      service
-                        .listExecutions({ projectId: OTHER_PROJECT_ID, sessionId: SESSION_ID })
-                        .pipe(
-                          Effect.map(
-                            (records) =>
-                              records.find(
-                                (record) =>
-                                  record.request.executionId === otherExecutionId &&
-                                  record.result?.status === "succeeded",
-                              ) ?? null,
-                          ),
-                        ),
-                    );
-                  }
-                }
-
-                const observed = yield* TestClock.withLive(
-                  events.pipe(
-                    Stream.takeUntil(
-                      (event) =>
-                        event._tag === "execution-updated" &&
-                        event.execution.request.executionId === executionId &&
-                        event.execution.result?.status === "succeeded",
-                    ),
-                    Stream.runCollect,
-                    Effect.timeout("2 seconds"),
-                  ),
-                );
-                expect(observed.at(-1)).toMatchObject({
-                  _tag: "execution-updated",
-                  projectId: PROJECT_ID,
-                  execution: { result: { status: "succeeded" } },
+            if (unrelatedRuns > 0) {
+              yield* service.startSession(startInput({ projectId: OTHER_PROJECT_ID }));
+              for (let index = 0; index < unrelatedRuns; index++) {
+                // Deliberately reuse the session and execution identifiers:
+                // it is the owner, not these portable IDs, that partitions delivery.
+                const otherExecutionId =
+                  index === 0 ? executionId : ComputeExecutionId.make(`unrelated-${index}`);
+                yield* service.submitExecution({
+                  projectId: OTHER_PROJECT_ID,
+                  sessionId: SESSION_ID,
+                  executionId: otherExecutionId,
+                  expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+                  code: "empty-display-flood",
+                  source: { _tag: "console" },
                 });
-                const deltas = observed.filter((event) => event._tag !== "session-snapshot");
-                expect(deltas.map((event) => event.eventSequence)).toEqual(
-                  Array.from({ length: deltas.length }, (_, index) => index),
+                yield* waitUntil(
+                  service
+                    .listExecutions({ projectId: OTHER_PROJECT_ID, sessionId: SESSION_ID })
+                    .pipe(
+                      Effect.map(
+                        (records) =>
+                          records.find(
+                            (record) =>
+                              record.request.executionId === otherExecutionId &&
+                              record.result?.status === "succeeded",
+                          ) ?? null,
+                      ),
+                    ),
                 );
-                expect(yield* executionAt(executionId, "succeeded")).not.toBeNull();
-              }),
-            );
-          }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-      );
-    }
-  }
-
-  for (const initiallyEmpty of [false, true]) {
-    it.effect(
-      `recovers durable results after its own ${initiallyEmpty ? "empty" : "populated"} subscription overflows`,
-      () =>
-        Effect.gen(function* () {
-          const test = yield* harness();
-          yield* test.use(
-            Effect.gen(function* () {
-              const service = yield* ComputeSessionService;
-              if (!initiallyEmpty) yield* start;
-              const subscriptionScope = yield* Scope.make();
-              const events = yield* service
-                .subscribeSessions({ projectId: PROJECT_ID })
-                .pipe(Effect.provideService(Scope.Scope, subscriptionScope));
-              if (initiallyEmpty) yield* start;
-              for (let index = 0; index < 12; index++) {
-                const executionId = ComputeExecutionId.make(`own-overflow-${index}`);
-                yield* submit("empty-display-flood", executionId);
-                yield* waitUntil(executionAt(executionId, "succeeded"));
               }
-              const lastId = ComputeExecutionId.make("own-overflow-11");
-              const retained = yield* TestClock.withLive(
-                events.pipe(
-                  Stream.takeUntil(
-                    (event) =>
-                      event._tag === "execution-updated" &&
-                      event.execution.request.executionId === lastId &&
-                      event.execution.result?.status === "succeeded",
-                  ),
-                  Stream.runCollect,
-                  Effect.timeout("2 seconds"),
-                ),
-              );
-              const deltas = retained.filter((event) => event._tag !== "session-snapshot");
-              expect(deltas.length).toBeLessThanOrEqual(512);
-              expect(deltas[0]!.eventSequence).toBeGreaterThan(0);
+            }
 
-              // The first retained cursor signals a gap even for an initially empty
-              // project. The existing client recovery rereads, it never reruns code.
-              const executions = yield* service.listExecutions({
-                projectId: PROJECT_ID,
-                sessionId: SESSION_ID,
-              });
-              expect(executions).toHaveLength(12);
-              expect(executions.every((record) => record.result?.status === "succeeded")).toBe(
-                true,
-              );
-              expect(
-                (yield* outputsOf(ComputeExecutionId.make("own-overflow-0"))).outputs,
-              ).toHaveLength(50);
-              yield* Scope.close(subscriptionScope, Exit.void);
-
-              const resumed = yield* service.subscribeSessions({ projectId: PROJECT_ID });
-              const nextId = ComputeExecutionId.make("after-recovery");
-              yield* submit("print(1)", nextId);
-              yield* waitUntil(executionAt(nextId, "succeeded"));
-              const recovered = yield* TestClock.withLive(
-                resumed.pipe(
-                  Stream.takeUntil(
-                    (event) =>
-                      event._tag === "execution-updated" &&
-                      event.execution.request.executionId === nextId &&
-                      event.execution.result?.status === "succeeded",
-                  ),
-                  Stream.runCollect,
-                  Effect.timeout("2 seconds"),
+            const observed = yield* TestClock.withLive(
+              events.pipe(
+                Stream.takeUntil(
+                  (event) =>
+                    event._tag === "execution-updated" &&
+                    event.execution.request.executionId === executionId &&
+                    event.execution.result?.status === "succeeded",
                 ),
-              );
-              expect(recovered[0]).toMatchObject({
-                _tag: "session-snapshot",
-                eventSequence: 0,
-                session: { status: "ready" },
-              });
-              const live = recovered.filter((event) => event._tag !== "session-snapshot");
-              expect(live.map((event) => event.eventSequence)).toEqual(
-                Array.from({ length: live.length }, (_, index) => index),
-              );
-              expect(test.submitted()).toHaveLength(13);
-            }),
-          );
-        }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+                Stream.runCollect,
+                Effect.timeout("2 seconds"),
+              ),
+            );
+            expect(observed.at(-1)).toMatchObject({
+              _tag: "execution-updated",
+              projectId: PROJECT_ID,
+              execution: { result: { status: "succeeded" } },
+            });
+            const deltas = observed.filter((event) => event._tag !== "session-snapshot");
+            expect(deltas.map((event) => event.eventSequence)).toEqual(
+              Array.from({ length: deltas.length }, (_, index) => index),
+            );
+            expect(yield* executionAt(executionId, "succeeded")).not.toBeNull();
+          }),
+        );
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
     );
   }
+
+  it.effect.each(
+    [false, true].map((initiallyEmpty) => ({
+      caseTitle: `recovers durable results after its own ${initiallyEmpty ? "empty" : "populated"} subscription overflows`,
+      initiallyEmpty,
+    })),
+  )("$caseTitle", ({ initiallyEmpty }) =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          if (!initiallyEmpty) yield* start;
+          const subscriptionScope = yield* Scope.make();
+          const events = yield* service
+            .subscribeSessions({ projectId: PROJECT_ID })
+            .pipe(Effect.provideService(Scope.Scope, subscriptionScope));
+          if (initiallyEmpty) yield* start;
+          for (let index = 0; index < 12; index++) {
+            const executionId = ComputeExecutionId.make(`own-overflow-${index}`);
+            yield* submit("empty-display-flood", executionId);
+            yield* waitUntil(executionAt(executionId, "succeeded"));
+          }
+          const lastId = ComputeExecutionId.make("own-overflow-11");
+          const retained = yield* TestClock.withLive(
+            events.pipe(
+              Stream.takeUntil(
+                (event) =>
+                  event._tag === "execution-updated" &&
+                  event.execution.request.executionId === lastId &&
+                  event.execution.result?.status === "succeeded",
+              ),
+              Stream.runCollect,
+              Effect.timeout("2 seconds"),
+            ),
+          );
+          const deltas = retained.filter((event) => event._tag !== "session-snapshot");
+          expect(deltas.length).toBeLessThanOrEqual(512);
+          expect(deltas[0]!.eventSequence).toBeGreaterThan(0);
+
+          // The first retained cursor signals a gap even for an initially empty
+          // project. The existing client recovery rereads, it never reruns code.
+          const executions = yield* service.listExecutions({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+          });
+          expect(executions).toHaveLength(12);
+          expect(executions.every((record) => record.result?.status === "succeeded")).toBe(true);
+          expect(
+            (yield* outputsOf(ComputeExecutionId.make("own-overflow-0"))).outputs,
+          ).toHaveLength(50);
+          yield* Scope.close(subscriptionScope, Exit.void);
+
+          const resumed = yield* service.subscribeSessions({ projectId: PROJECT_ID });
+          const nextId = ComputeExecutionId.make("after-recovery");
+          yield* submit("print(1)", nextId);
+          yield* waitUntil(executionAt(nextId, "succeeded"));
+          const recovered = yield* TestClock.withLive(
+            resumed.pipe(
+              Stream.takeUntil(
+                (event) =>
+                  event._tag === "execution-updated" &&
+                  event.execution.request.executionId === nextId &&
+                  event.execution.result?.status === "succeeded",
+              ),
+              Stream.runCollect,
+              Effect.timeout("2 seconds"),
+            ),
+          );
+          expect(recovered[0]).toMatchObject({
+            _tag: "session-snapshot",
+            eventSequence: 0,
+            session: { status: "ready" },
+          });
+          const live = recovered.filter((event) => event._tag !== "session-snapshot");
+          expect(live.map((event) => event.eventSequence)).toEqual(
+            Array.from({ length: live.length }, (_, index) => index),
+          );
+          expect(test.submitted()).toHaveLength(13);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 
   it.effect("keeps running while a subscriber never reads a thing", () =>
     Effect.gen(function* () {

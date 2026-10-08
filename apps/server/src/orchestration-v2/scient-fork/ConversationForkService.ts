@@ -41,7 +41,7 @@ import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import { EventSinkV2 } from "../EventSink.ts";
-import { makeKeyedSerialExecutor } from "../KeyedSerialExecutor.ts";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { ProjectStoreV2 } from "../ProjectStore.ts";
 import { ThreadCommandExecutor } from "../ThreadCommandExecutor.ts";
@@ -135,7 +135,7 @@ const make = Effect.gen(function* () {
   const receipts = yield* CommandReceiptStoreV2;
   const sink = yield* EventSinkV2;
   const executor = yield* ThreadCommandExecutor;
-  const titles = yield* makeKeyedSerialExecutor<string>();
+  const titles = yield* KeyedLock.make<string>();
   const baseline = yield* ScientForkCheckpointBaseline;
   const copier = yield* ScientForkAttachmentCopier;
   const git = yield* GitWorkflowService;
@@ -276,7 +276,7 @@ const make = Effect.gen(function* () {
       const cursor = yield* sink.latestSequence({ threadId });
       const initial = yield* projections.getThread(threadId);
       const final =
-        initial.conversationFork?.status === "pending"
+        initial.deletedAt === null && initial.conversationFork?.status === "pending"
           ? yield* sink.stream({ threadId, afterSequence: cursor }).pipe(
               Stream.filterMap((stored) => {
                 const event = stored.event;
@@ -422,10 +422,12 @@ const make = Effect.gen(function* () {
         }
         return receipt.value.resultSequence;
       }
-      const destinationExists = yield* projections.getThread(command.newThreadId).pipe(
-        Effect.as(true),
-        Effect.catchTag("ProjectionStoreThreadNotFoundError", () => Effect.succeed(false)),
-      );
+      const destinationExists = yield* projections
+        .getThread(command.newThreadId)
+        .pipe(
+          Effect.as(true),
+          Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(false) }),
+        );
       if (destinationExists)
         return yield* failure("The destination already exists. Choose a new fork identity.");
       const inspected = yield* inspect(command, command.newThreadId, capture?.projection);

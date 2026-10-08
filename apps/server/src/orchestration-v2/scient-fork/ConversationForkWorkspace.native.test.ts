@@ -44,18 +44,18 @@ import * as GitVcs from "../../vcs/GitVcsDriver.ts";
 import * as VcsRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
-import { makeLayer } from "../ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { OrchestrationEffectWorkerV2 } from "../EffectWorker.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import {
-  SqlitePersistenceMemory,
-  makeSqlitePersistenceLive,
-} from "../../persistence/Layers/Sqlite.ts";
+  layerMemory as SqlitePersistenceMemory,
+  layerFromPath as makeSqlitePersistenceLive,
+} from "../../persistence/Sqlite.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "fixture" };
@@ -67,11 +67,17 @@ const gitLayer = GitWorkflow.layer.pipe(
     Layer.mergeAll(
       GitVcs.layer,
       VcsRegistry.layer,
-      Layer.mock(GitManager.GitManager)({
-        invalidateLocalStatus: () => Effect.void,
-        invalidateRemoteStatus: () => Effect.void,
-        invalidateStatus: () => Effect.void,
-      }),
+      Layer.unwrap(
+        Effect.map(GitVcs.GitVcsDriver, (git) =>
+          Layer.mock(GitManager.GitManager)({
+            // Execute real checkouts; this fixture has no settings overrides or submodules.
+            createWorktree: git.createWorktree,
+            invalidateLocalStatus: () => Effect.void,
+            invalidateRemoteStatus: () => Effect.void,
+            invalidateStatus: () => Effect.void,
+          }),
+        ),
+      ).pipe(Layer.provide(GitVcs.layer)),
     ),
   ),
   Layer.provide(vcsLayer),
@@ -335,42 +341,44 @@ const pending = Effect.fn("Workspace.pending")(function* (
   };
 });
 
-for (const mode of ["local", "new-worktree"] as const)
-  it.live(
-    `native ${mode} fork freezes the selected older checkpoint and never substitutes the later source head`,
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const { cwd, commits } = yield* seed();
-          const store = yield* ProjectionStoreV2;
-          const source = yield* store.getThreadProjection(sourceId);
-          const { command, waiting, frozen } = yield* pending(mode, mode);
-          assert.equal(frozen.thread.conversationFork?.checkpointOid, commits[0]);
-          assert.equal(
-            yield* git(cwd, ["rev-parse", frozen.thread.conversationFork!.checkpointRef!]),
-            commits[0],
-          );
-          yield* git(cwd, ["update-ref", "refs/scient/source/1", commits[1]!]);
-          yield* (yield* OrchestrationEffectWorkerV2).drain();
-          assert.equal((yield* Fiber.join(waiting))._tag, "Success");
-          const ready = yield* store.getThreadProjection(command.newThreadId);
-          assert.equal(ready.thread.conversationFork?.status, "ready");
-          assert.deepEqual(
-            ready.messages.map((message) => message.text),
-            ["Question 1", "Answer 1"],
-          );
-          if (mode === "new-worktree") {
-            assert.ok(ready.thread.worktreePath);
-            assert.equal(yield* fsRead(ready.thread.worktreePath, "evidence.txt"), "version 1");
-            assert.equal(yield* git(ready.thread.worktreePath, ["rev-parse", "HEAD"]), commits[0]);
-          } else {
-            assert.isNull(ready.thread.worktreePath);
-            assert.equal(yield* fsRead(cwd, "evidence.txt"), "version 3");
-          }
-          assert.deepEqual((yield* store.getThreadProjection(sourceId)).thread, source.thread);
-        }).pipe(Effect.provide(layer), Effect.timeout("20 seconds")),
-      ),
-  );
+it.live.each(
+  (["local", "new-worktree"] as const).map((mode) => ({
+    caseTitle: `native ${mode} fork freezes the selected older checkpoint and never substitutes the later source head`,
+    mode,
+  })),
+)("$caseTitle", ({ mode }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { cwd, commits } = yield* seed();
+      const store = yield* ProjectionStoreV2;
+      const source = yield* store.getThreadProjection(sourceId);
+      const { command, waiting, frozen } = yield* pending(mode, mode);
+      assert.equal(frozen.thread.conversationFork?.checkpointOid, commits[0]);
+      assert.equal(
+        yield* git(cwd, ["rev-parse", frozen.thread.conversationFork!.checkpointRef!]),
+        commits[0],
+      );
+      yield* git(cwd, ["update-ref", "refs/scient/source/1", commits[1]!]);
+      yield* (yield* OrchestrationEffectWorkerV2).drain();
+      assert.equal((yield* Fiber.join(waiting))._tag, "Success");
+      const ready = yield* store.getThreadProjection(command.newThreadId);
+      assert.equal(ready.thread.conversationFork?.status, "ready");
+      assert.deepEqual(
+        ready.messages.map((message) => message.text),
+        ["Question 1", "Answer 1"],
+      );
+      if (mode === "new-worktree") {
+        assert.ok(ready.thread.worktreePath);
+        assert.equal(yield* fsRead(ready.thread.worktreePath, "evidence.txt"), "version 1");
+        assert.equal(yield* git(ready.thread.worktreePath, ["rev-parse", "HEAD"]), commits[0]);
+      } else {
+        assert.isNull(ready.thread.worktreePath);
+        assert.equal(yield* fsRead(cwd, "evidence.txt"), "version 3");
+      }
+      assert.deepEqual((yield* store.getThreadProjection(sourceId)).thread, source.thread);
+    }).pipe(Effect.provide(layer), Effect.timeout("20 seconds")),
+  ),
+);
 const fsRead = (cwd: string, file: string) =>
   FileSystem.FileSystem.use((fs) => fs.readFileString(NodePath.join(cwd, file)));
 
@@ -397,45 +405,47 @@ it.live(
     ),
 );
 
-for (const clean of [true, false])
-  it.live(
-    `native worktree provisioning reuses only a verified existing checkout: clean=${clean}`,
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const { cwd, commits } = yield* seed();
-          const { command, waiting, frozen } = yield* pending(`existing-${clean}`, "new-worktree");
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* fs.makeTempDirectoryScoped({ prefix: "native-fork-existing-" });
-          const branch = `scient/fork/${command.newThreadId}`;
-          yield* git(cwd, [
-            "worktree",
-            "add",
-            "-b",
-            branch,
-            path,
-            frozen.thread.conversationFork!.checkpointRef!,
-          ]);
-          if (!clean)
-            yield* fs.writeFileString(
-              NodePath.join(path, "evidence.txt"),
-              "Unfinished or edited checkout",
-            );
-          yield* (yield* OrchestrationEffectWorkerV2).drain();
-          const result = yield* Fiber.join(waiting);
-          const target = yield* (yield* ProjectionStoreV2).getThreadProjection(command.newThreadId);
-          assert.equal(result._tag, clean ? "Success" : "Failure");
-          assert.equal(target.thread.conversationFork?.status, clean ? "ready" : "abandoned");
-          if (clean) {
-            assert.equal(yield* fs.realPath(target.thread.worktreePath!), yield* fs.realPath(path));
-            assert.equal(yield* git(path, ["rev-parse", "HEAD"]), commits[0]);
-          } else {
-            assert.isNotNull(target.thread.deletedAt);
-            assert.equal(yield* fsRead(path, "evidence.txt"), "Unfinished or edited checkout");
-          }
-        }).pipe(Effect.provide(layer), Effect.timeout("20 seconds")),
-      ),
-  );
+it.live.each(
+  [true, false].map((clean) => ({
+    caseTitle: `native worktree provisioning reuses only a verified existing checkout: clean=${clean}`,
+    clean,
+  })),
+)("$caseTitle", ({ clean }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { cwd, commits } = yield* seed();
+      const { command, waiting, frozen } = yield* pending(`existing-${clean}`, "new-worktree");
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* fs.makeTempDirectoryScoped({ prefix: "native-fork-existing-" });
+      const branch = `scient/fork/${command.newThreadId}`;
+      yield* git(cwd, [
+        "worktree",
+        "add",
+        "-b",
+        branch,
+        path,
+        frozen.thread.conversationFork!.checkpointRef!,
+      ]);
+      if (!clean)
+        yield* fs.writeFileString(
+          NodePath.join(path, "evidence.txt"),
+          "Unfinished or edited checkout",
+        );
+      yield* (yield* OrchestrationEffectWorkerV2).drain();
+      const result = yield* Fiber.join(waiting);
+      const target = yield* (yield* ProjectionStoreV2).getThreadProjection(command.newThreadId);
+      assert.equal(result._tag, clean ? "Success" : "Failure");
+      assert.equal(target.thread.conversationFork?.status, clean ? "ready" : "abandoned");
+      if (clean) {
+        assert.equal(yield* fs.realPath(target.thread.worktreePath!), yield* fs.realPath(path));
+        assert.equal(yield* git(path, ["rev-parse", "HEAD"]), commits[0]);
+      } else {
+        assert.isNotNull(target.thread.deletedAt);
+        assert.equal(yield* fsRead(path, "evidence.txt"), "Unfinished or edited checkout");
+      }
+    }).pipe(Effect.provide(layer), Effect.timeout("20 seconds")),
+  ),
+);
 
 it.live("native provisioning abandons a dedicated fork whose frozen checkpoint disappeared", () =>
   Effect.scoped(
@@ -852,7 +862,9 @@ it.live("late SQL admission failure releases only the just-published snapshot", 
         assert.equal(yield* fsRead(cwd, "evidence.txt"), "version 3");
       }).pipe(
         Effect.provide(
-          makeRuntime(gitLayer, { databaseLayer }).pipe(Layer.provideMerge(databaseLayer)),
+          makeRuntime(gitLayer, { layerDatabase: databaseLayer }).pipe(
+            Layer.provideMerge(databaseLayer),
+          ),
         ),
       );
     }).pipe(Effect.timeout("25 seconds")),
@@ -980,7 +992,7 @@ it.live(
         const databaseLayer = makeSqlitePersistenceLive(
           NodePath.join(profile, "statev2.sqlite"),
         ).pipe(Layer.provide(NodeServices.layer));
-        const runtime = makeRuntime(gitLayer, { databaseLayer }).pipe(
+        const runtime = makeRuntime(gitLayer, { layerDatabase: databaseLayer }).pipe(
           Layer.provideMerge(databaseLayer),
         );
         const orphan = "refs/t3/checkpoints/orphan/turn/0-attempt";

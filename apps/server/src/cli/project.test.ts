@@ -1,9 +1,5 @@
-import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
-import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
-import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration uses temporary Node paths.
 import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -17,104 +13,106 @@ import {
   type OrchestrationV2AppThread,
   type ProjectId,
 } from "@t3tools/contracts";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as AzureDevOpsCli from "../sourceControl/AzureDevOpsCli.ts";
+import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
+import * as ForgejoCli from "../sourceControl/ForgejoCli.ts";
+import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as GitLabCli from "../sourceControl/GitLabCli.ts";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as References from "effect/References";
 import * as Stream from "effect/Stream";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 
 import { cli } from "../binCli.ts";
 import * as ServerConfig from "../config.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
-import {
-  OrchestrationV2EventSinkLayerLive,
-  ProjectServiceLayerLive,
-} from "../orchestration-v2/runtimeLayer.ts";
-import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
-import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
-import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
-import * as ProjectService from "../project/ProjectService.ts";
-import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
-import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
-import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import {
   ProjectLiveServerDeclaredResponseError,
   ProjectLiveServerRequestError,
   projectCommandErrorFromLiveServerRequest,
 } from "./project.ts";
 
+// The full command tree requires these execution authorities even when a
+// fixture invokes another subcommand. Their state belongs to a scoped test profile.
+const layerCliAuthority = Layer.mergeAll(
+  ThreadCommandExecutor.layer,
+  ProjectCloneTracker.layer.pipe(
+    Layer.provide(
+      SourceControlRepositoryService.layer.pipe(
+        Layer.provide(GitVcsDriver.layer),
+        Layer.provide(
+          SourceControlProviderRegistry.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                AzureDevOpsCli.layer,
+                BitbucketApi.layer,
+                GitHubCli.layer,
+                GitLabCli.layer,
+                ForgejoCli.layer,
+              ),
+            ),
+            Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
+          ),
+        ),
+      ),
+    ),
+    Layer.provide(GitVcsDriver.layer),
+    Layer.provide(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+    Layer.provide(VcsProcess.layer),
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(SqlitePersistence.layerMemory),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+    Layer.provide(
+      ServerConfig.layerTest("/", { prefix: "scient-cli-authority-test-" }).pipe(
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ),
+);
+
 const CliRuntimeLayer = Layer.mergeAll(
   NodeServices.layer,
   NetService.layer,
+  layerCliAuthority,
   ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
 );
 const runCli = (args: ReadonlyArray<string>) =>
   Command.runWith(cli, { version: "0.0.0" })(args).pipe(Effect.provide(CliRuntimeLayer));
 
-const makeConfig = (baseDir: string) =>
-  Effect.gen(function* () {
-    const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
-    return {
-      logLevel: "Info",
-      traceMinLevel: "Info",
-      traceTimingEnabled: true,
-      traceBatchWindowMs: 200,
-      traceMaxBytes: 10 * 1024 * 1024,
-      traceMaxFiles: 10,
-      otelEnvironment: OtelEnvironment.none,
-      otlpTracesUrl: undefined,
-      otlpMetricsUrl: undefined,
-      otlpLogsUrl: undefined,
-      otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
-      otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
-      otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
-      mode: "web",
-      port: 0,
-      host: "127.0.0.1",
-      cwd: process.cwd(),
-      baseDir,
-      ...derivedPaths,
-      staticDir: undefined,
-      devUrl: undefined,
-      devAllowedOrigins: [],
-      noBrowser: true,
-      startupPresentation: "browser",
-      desktopBootstrapToken: undefined,
-      autoBootstrapProjectFromCwd: false,
-      logWebSocketEvents: false,
-      tailscaleServeEnabled: false,
-      tailscaleServePort: 443,
-    } satisfies ServerConfig.ServerConfig["Service"];
-  });
+const layerPersistence = (baseDir: string) =>
+  SqlitePersistence.layerConfig.pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+    Layer.provideMerge(NodeServices.layer),
+  );
 
-const readProjects = (baseDir: string) =>
+// Read the CLI's committed V2 project shells, including projects whose
+// workspaces no longer exist.
+const readStoredProjects = (baseDir: string) =>
   Effect.gen(function* () {
-    const config = yield* makeConfig(baseDir);
-    const layer = ProjectServiceLayerLive.pipe(
-      Layer.provide(
-        Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ discard: () => Effect.void }),
-      ),
-      Layer.provideMerge(ProjectEnrichmentService.layer),
-      Layer.provideMerge(RepositoryIdentityResolver.layer),
-      Layer.provideMerge(ProjectFaviconResolver.layer),
-      Layer.provideMerge(T3ProjectFileLoader.layer),
-      Layer.provideMerge(WorkspacePaths.layer),
-      Layer.provideMerge(SqlitePersistence.layerConfig),
-      Layer.provideMerge(NodeServices.layer),
-      Layer.provide(ServerConfig.layer(config)),
-      Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
-    );
-    return yield* ProjectService.ProjectService.pipe(
-      Effect.flatMap((projects) => projects.snapshot),
-      Effect.provide(layer),
-    );
-  });
+    const projects = yield* ProjectStore.ProjectStoreV2;
+    return { projects: yield* projects.listShells() };
+  }).pipe(Effect.provide(ProjectStore.layer.pipe(Layer.provide(layerPersistence(baseDir)))));
 
 it("maps declared server failures into structural project command errors", () => {
   const cause = new EnvironmentInternalError({
@@ -146,21 +144,20 @@ it("preserves unexpected server failures without deriving the message from them"
 
 it.effect("adds, renames, and removes projects through the V2 project CLI domain", () =>
   Effect.gen(function* () {
-    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-v2-project-cli-"));
-    const workspaceRoot = NodeFS.mkdtempSync(
-      NodePath.join(NodeOS.tmpdir(), "t3-v2-project-workspace-"),
-    );
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-project-cli-" });
+    const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-project-workspace-" });
 
     yield* runCli(["project", "add", workspaceRoot, "--title", "Alpha", "--base-dir", baseDir]);
-    const added = (yield* readProjects(baseDir)).projects[0];
+    const added = (yield* readStoredProjects(baseDir)).projects[0];
     assert.equal(added?.title, "Alpha");
     assert.equal(added?.workspaceRoot, workspaceRoot);
 
     yield* runCli(["project", "rename", workspaceRoot, "Beta", "--base-dir", baseDir]);
-    assert.equal((yield* readProjects(baseDir)).projects[0]?.title, "Beta");
+    assert.equal((yield* readStoredProjects(baseDir)).projects[0]?.title, "Beta");
 
     yield* runCli(["project", "remove", added?.id ?? "", "--base-dir", baseDir]);
-    assert.deepEqual((yield* readProjects(baseDir)).projects, []);
+    assert.deepEqual((yield* readStoredProjects(baseDir)).projects, []);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -171,26 +168,15 @@ const makeProjectLookupFixture = Effect.fn("ProjectCliTest.makeProjectLookupFixt
   const workspaceRoot = NodePath.join(root, "workspace");
   yield* fs.makeDirectory(workspaceRoot);
   yield* runCli(["project", "add", workspaceRoot, "--base-dir", baseDir]);
-  const project = (yield* readProjects(baseDir)).projects[0];
+  const project = (yield* readStoredProjects(baseDir)).projects[0];
   assert.isDefined(project);
   return { baseDir, workspaceRoot, project: project! };
 });
 
-const makeThreadPersistenceLayer = Effect.fn("ProjectCliTest.makeThreadPersistenceLayer")(
-  function* (baseDir: string) {
-    const config = yield* makeConfig(baseDir);
-    return Layer.mergeAll(
-      OrchestrationV2EventSinkLayerLive,
-      ProjectionStore.layer,
-      EventStore.layer,
-    ).pipe(
-      Layer.provideMerge(SqlitePersistence.layerConfig),
-      Layer.provideMerge(NodeServices.layer),
-      Layer.provide(ServerConfig.layer(config)),
-      Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
-    );
-  },
-);
+const makeThreadPersistenceLayer = (baseDir: string) =>
+  Layer.mergeAll(RuntimeLayer.layerEventSink, ProjectionStore.layer, EventStore.layer).pipe(
+    Layer.provide(layerPersistence(baseDir)),
+  );
 
 const seedNativeThreads = Effect.fn("ProjectCliTest.seedNativeThreads")(function* (
   baseDir: string,
@@ -200,7 +186,7 @@ const seedNativeThreads = Effect.fn("ProjectCliTest.seedNativeThreads")(function
     readonly archived: boolean;
   }>,
 ) {
-  const layer = yield* makeThreadPersistenceLayer(baseDir);
+  const layer = makeThreadPersistenceLayer(baseDir);
   const createdAt = DateTime.makeUnsafe("2026-09-04T12:00:00.000Z");
   const providerInstanceId = ProviderInstanceId.make("codex");
   yield* Effect.gen(function* () {
@@ -248,7 +234,7 @@ const readNativeThreadState = Effect.fn("ProjectCliTest.readNativeThreadState")(
   baseDir: string,
   threadId: ThreadId,
 ) {
-  const layer = yield* makeThreadPersistenceLayer(baseDir);
+  const layer = makeThreadPersistenceLayer(baseDir);
   return yield* Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const events = yield* EventStore.EventStoreV2;
@@ -297,7 +283,7 @@ it.layer(NodeServices.layer)("project deletion with native V2 threads", (it) => 
 
       assert.include(error.message, "not empty");
       assert.deepEqual(
-        (yield* readProjects(baseDir)).projects.map((entry) => entry.id),
+        (yield* readStoredProjects(baseDir)).projects.map((entry) => entry.id),
         [project.id],
       );
       assert.deepEqual(yield* readNativeThreadState(baseDir, threadId), before);
@@ -314,7 +300,7 @@ it.layer(NodeServices.layer)("project deletion with native V2 threads", (it) => 
         const otherWorkspace = `${workspaceRoot}-other`;
         yield* fs.makeDirectory(otherWorkspace);
         yield* runCli(["project", "add", otherWorkspace, "--base-dir", baseDir]);
-        const otherProject = (yield* readProjects(baseDir)).projects.find(
+        const otherProject = (yield* readStoredProjects(baseDir)).projects.find(
           (entry) => entry.workspaceRoot === otherWorkspace,
         );
         assert.isDefined(otherProject);
@@ -341,7 +327,7 @@ it.layer(NodeServices.layer)("project deletion with native V2 threads", (it) => 
         ]);
 
         assert.deepEqual(
-          (yield* readProjects(baseDir)).projects.map((entry) => entry.id),
+          (yield* readStoredProjects(baseDir)).projects.map((entry) => entry.id),
           [otherProject!.id],
         );
         for (const threadId of [activeId, archivedId]) {
@@ -374,7 +360,7 @@ it.layer(NodeServices.layer)("project lookup with unavailable workspaces", (it) 
           "--base-dir",
           baseDir,
         ]);
-        assert.deepEqual((yield* readProjects(baseDir)).projects, []);
+        assert.deepEqual((yield* readStoredProjects(baseDir)).projects, []);
         assert.isFalse(yield* fs.exists(workspaceRoot));
       }),
   );
@@ -389,7 +375,7 @@ it.layer(NodeServices.layer)("project lookup with unavailable workspaces", (it) 
         [workspaceRoot, "Renamed by stored path"],
       ] as const) {
         yield* runCli(["project", "rename", identifier, title, "--base-dir", baseDir]);
-        assert.equal((yield* readProjects(baseDir)).projects[0]?.title, title);
+        assert.equal((yield* readStoredProjects(baseDir)).projects[0]?.title, title);
       }
       assert.isFalse(yield* fs.exists(workspaceRoot));
     }),
@@ -411,10 +397,10 @@ it.layer(NodeServices.layer)("project lookup with unavailable workspaces", (it) 
       ]).pipe(Effect.flip);
       assert.include(error.message, "No active project found");
       assert.deepEqual(
-        (yield* readProjects(baseDir)).projects.map((entry) => entry.id),
+        (yield* readStoredProjects(baseDir)).projects.map((entry) => entry.id),
         [project.id],
       );
-      assert.deepEqual((yield* readProjects(replacementDir)).projects, []);
+      assert.deepEqual((yield* readStoredProjects(replacementDir)).projects, []);
     }),
   );
 
@@ -429,7 +415,7 @@ it.layer(NodeServices.layer)("project lookup with unavailable workspaces", (it) 
         "--base-dir",
         baseDir,
       ]);
-      assert.equal((yield* readProjects(baseDir)).projects[0]?.title, "Normalized");
+      assert.equal((yield* readStoredProjects(baseDir)).projects[0]?.title, "Normalized");
       const aliasPath = `${workspaceRoot}-alias`;
       NodeFS.symlinkSync(workspaceRoot, aliasPath, "junction");
       const unknownAlias = yield* runCli([
@@ -441,14 +427,14 @@ it.layer(NodeServices.layer)("project lookup with unavailable workspaces", (it) 
       ]).pipe(Effect.flip);
       assert.include(unknownAlias.message, "No active project found");
       yield* runCli(["project", "add", aliasPath, "--base-dir", baseDir]);
-      const added = (yield* readProjects(baseDir)).projects;
+      const added = (yield* readStoredProjects(baseDir)).projects;
       assert.equal(added.length, 2);
       const aliasProject = added.find((entry) => entry.workspaceRoot === aliasPath);
       assert.isDefined(aliasProject);
       assert.notEqual(aliasProject?.id, project.id);
       yield* runCli(["project", "remove", `${aliasPath}${NodePath.sep}.`, "--base-dir", baseDir]);
       assert.deepEqual(
-        (yield* readProjects(baseDir)).projects.map((entry) => entry.id),
+        (yield* readStoredProjects(baseDir)).projects.map((entry) => entry.id),
         [project.id],
       );
       assert.isTrue(NodeFS.existsSync(workspaceRoot));

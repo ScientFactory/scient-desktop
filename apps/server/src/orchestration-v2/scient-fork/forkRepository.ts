@@ -14,7 +14,7 @@ import {
 import * as Effect from "effect/Effect";
 import { inheritedTurnIdsOf } from "./inheritedTurns.ts";
 import * as Schema from "effect/Schema";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 export type ScientForkCheckpointStatus = "ready" | "unavailable";
 export type ScientForkWorkspaceStatus = "project-root" | "shared" | "worktree";

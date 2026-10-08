@@ -7,9 +7,12 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { FetchHttpClient, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { FetchHttpClient, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ServerConfig from "../config.ts";
 import { assetRouteHandler } from "../http.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
@@ -24,7 +27,6 @@ const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-pdf-route-test-",
 });
 const testLayer = Layer.mergeAll(
-  configLayer,
   WorkspacePaths.layer,
   ProjectFaviconResolver.layer.pipe(
     Layer.provide(WorkspacePaths.layer),
@@ -32,10 +34,22 @@ const testLayer = Layer.mergeAll(
   ),
   NativeAppIconResolver.layer.pipe(Layer.provide(configLayer)),
   ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
-  FetchHttpClient.layer,
-  GitHubCli.layer.pipe(Layer.provideMerge(VcsProcess.layer)),
+  Layer.mock(Orchestrator.OrchestratorV2)({
+    getTurnItem: () =>
+      Effect.die("This fixture serves files and never reads provider tool output."),
+  }),
+  GitHubCli.layer.pipe(
+    Layer.provideMerge(VcsProcess.layer),
+    Layer.provide(GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer))),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(FetchHttpClient.layer),
+  ),
   NodeHttpPlatform.layer,
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(
+  Layer.provideMerge(FetchHttpClient.layer),
+  Layer.provideMerge(configLayer),
+  Layer.provideMerge(NodeServices.layer),
+);
 
 const runRequest = (relativeUrl: string, init?: RequestInit) =>
   Effect.gen(function* () {
@@ -164,8 +178,9 @@ describe("asset route", () => {
       expect(html.status).toBe(200);
       expect(html.headers.get("content-type")).toContain("text/html");
       expect(html.headers.get("content-security-policy")).toBe(
-        "sandbox allow-scripts allow-forms allow-popups allow-modals",
+        "sandbox allow-scripts allow-forms allow-popups",
       );
+      expect(html.headers.get("content-security-policy")).not.toContain("allow-modals");
       expect(html.headers.get("cache-control")).toBe("no-store");
       expect(yield* Effect.promise(() => html.text())).toContain('src="assets/app.js"');
 

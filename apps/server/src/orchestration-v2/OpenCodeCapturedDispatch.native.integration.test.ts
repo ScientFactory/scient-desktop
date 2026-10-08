@@ -26,8 +26,8 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpServer } from "effect/unstable/http";
-import * as NetAddress from "effect/unstable/net/NetAddress";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
@@ -43,10 +43,10 @@ import { makeOpenCodeAdapterV2, openCodePermissionRules } from "./Adapters/OpenC
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "./IdAllocator.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { ProjectStoreV2 } from "./ProjectStore.ts";
-import { makeLayer } from "./ProviderAdapterRegistry.ts";
+import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
 import { ProviderAdapterV2RuntimePolicy } from "./ProviderAdapter.ts";
 import {
-  makeOrchestratorV2ReplayLayerWithRegistry,
+  layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
@@ -340,7 +340,7 @@ it.live(
           { name, runtimePolicyOverride: { cwd } },
           makeLayer([adapter, foreign]),
           {
-            serverConfigLayer: Layer.succeed(ServerConfig.ServerConfig, config),
+            layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
             configureMcp: true,
             mcpSessionRegistryLayer: Layer.succeed(McpSessionRegistry.McpSessionRegistry, registry),
           },
@@ -418,8 +418,8 @@ it.live(
           assert.deepEqual(permissions, openCodePermissionRules(policy));
           assert.ok(installedMcp);
           assert.ok(scopeAtWire?.skillScope);
-          assert.equal(scopeAtWire.threadId, threadId);
-          assert.equal(scopeAtWire.providerInstanceId, instanceId);
+          assert.equal(scopeAtWire.thread?.threadId, threadId);
+          assert.equal(scopeAtWire.thread!.providerInstanceId, instanceId);
           assert.isTrue(scopeAtWire.capabilities.has("skills:read"));
           assert.deepEqual(
             scopeAtWire.skillScope.skills.map((skill) => skill.name),

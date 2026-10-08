@@ -1,3 +1,4 @@
+import * as Base64Url from "effect/encoding/Base64Url";
 // @effect-diagnostics nodeBuiltinImport:off -- Test fixtures exercise the real project filesystem.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -11,7 +12,6 @@ import type {
   ScientDocumentPageRenderResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
@@ -148,7 +148,7 @@ export function renderResultFor(
       scrollHeight: 2_400,
     },
     blockedRequestCount: 0,
-    bytesBase64: Encoding.encodeBase64Url(bytes),
+    bytesBase64: Base64Url.encode(bytes),
   };
 }
 

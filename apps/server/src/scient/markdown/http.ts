@@ -1,6 +1,6 @@
 import { AuthOrchestrationOperateScope, EnvironmentHttpApi } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import {
   annotateEnvironmentRequest,
@@ -27,9 +27,10 @@ export const scientMarkdownHttpApiLayer = HttpApiBuilder.group(
               ? {}
               : { assetDirectory: args.payload.assetDirectory }),
           }).pipe(
-            Effect.catchTag("WorkspaceMarkdownImageOperationError", (cause) =>
-              failEnvironmentInternal("scient_markdown_operation_failed", cause.cause),
-            ),
+            Effect.catchTags({
+              WorkspaceMarkdownImageOperationError: (cause) =>
+                failEnvironmentInternal("scient_markdown_operation_failed", cause.cause),
+            }),
           );
         }),
       ),

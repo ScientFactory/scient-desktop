@@ -68,18 +68,21 @@ afterEach(() => {
 });
 
 describe("actual desktop smoke child lifecycle", () => {
-  for (const code of [0, 7]) {
-    it(`rejects an early exit ${code} without fatal output`, async () => {
-      const result = await runChild(
-        `process.stdout.write("ordinary early output"); process.exitCode = ${code};`,
-      );
-      assert.equal(result.passed, false);
-      assert.equal(result.code, code);
-      assert.equal(result.shutdownRequested, false);
-      assert.deepEqual(result.failures, []);
-      assert.equal(result.stdout, "ordinary early output");
-    });
-  }
+  it.each(
+    [0, 7].map((code) => ({
+      caseTitle: `rejects an early exit ${code} without fatal output`,
+      code,
+    })),
+  )("$caseTitle", async ({ code }) => {
+    const result = await runChild(
+      `process.stdout.write("ordinary early output"); process.exitCode = ${code};`,
+    );
+    assert.equal(result.passed, false);
+    assert.equal(result.code, code);
+    assert.equal(result.shutdownRequested, false);
+    assert.deepEqual(result.failures, []);
+    assert.equal(result.stdout, "ordinary early output");
+  });
 
   it.skipIf(isWindows)("accepts survival followed by the requested graceful exit", async () => {
     const result = await runChild(`
@@ -100,6 +103,41 @@ describe("actual desktop smoke child lifecycle", () => {
     assert.equal(result.signal, "SIGTERM");
     assert.equal(result.forcedKill, false);
   });
+
+  it.skipIf(isWindows)(
+    "allows bounded native cleanup beyond two seconds with the default grace",
+    async () => {
+      const fixture = makeFixture();
+      const result = await runDesktopSmoke({
+        executable: process.execPath,
+        args: [
+          "-e",
+          `
+        setInterval(() => {}, 1000);
+        process.on("SIGTERM", () => {
+          setTimeout(() => {
+            process.stdout.write("scoped cleanup complete", () => process.exit(0));
+          }, 2250);
+        });
+      `,
+        ],
+        cwd: fixture.root,
+        env: fixture.env,
+        survivalMs: 1_000,
+        // Omit shutdownGraceMs: this case exercises the production default.
+      });
+      assert.equal(result.passed, true);
+      assert.equal(result.shutdownRequested, true);
+      assert.equal(result.code, 0);
+      assert.equal(result.signal, null);
+      assert.equal(result.forcedKill, false);
+      assert.equal(result.drainageTimedOut, false);
+      assert.deepEqual(result.failures, []);
+      assert.equal(result.stdout, "scoped cleanup complete");
+      assert.equal(result.stderr, "");
+      assert.throws(() => process.kill(result.pid, 0), /ESRCH/);
+    },
+  );
 
   it.skipIf(isWindows)("rejects a nonzero exit during requested shutdown", async () => {
     const result = await runChild(`

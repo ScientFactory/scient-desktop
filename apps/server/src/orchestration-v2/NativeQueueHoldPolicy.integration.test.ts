@@ -31,7 +31,7 @@ import { EventSinkV2, EventSinkWriteError } from "./EventSink.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
 import { OrchestrationEffectWorkerV2, runDaemonWithOptions } from "./EffectWorker.ts";
-import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlite.ts";
 import type * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -71,16 +71,16 @@ import {
   type ProviderAdapterV2Event,
 } from "./ProviderAdapter.ts";
 import {
-  makeLayer,
+  layerFromAdapters as makeLayer,
   ProviderAdapterRegistryMetadataError,
   ProviderAdapterRegistryV2,
 } from "./ProviderAdapterRegistry.ts";
 import {
-  makeOrchestratorV2ReplayLayerWithRegistry,
+  layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./testkit/ProviderReplayHarness.ts";
 import { nativeSettlementTrace } from "./testkit/OmpNativeConjunctions.ts";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 import { sourcePlanFingerprint } from "./SourcePlan.ts";
 import { checkpointRefForScopeOrdinal } from "./CheckpointService.ts";
@@ -90,15 +90,15 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import * as ProviderInstances from "../provider/Services/ProviderInstanceRegistry.ts";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
   ThreadCommandExecutor,
   layer as threadCommandExecutorLayer,
 } from "./ThreadCommandExecutor.ts";
 
-import * as NetAddress from "effect/unstable/net/NetAddress";
-import { HttpServer } from "effect/unstable/http";
+import * as NetAddress from "effect/net/NetAddress";
+import { HttpServer } from "effect/http";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import { readMcpProviderSession } from "../mcp/McpProviderSession.ts";
@@ -187,6 +187,10 @@ const withNativeQueue = <A, E, R>(
     readonly preparationAttempts: () => number;
     readonly failNextStarts: (count: number) => void;
     readonly nativeInterruptions: () => number;
+    readonly delegatedStops: ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly commandId: CommandId;
+    }>;
     readonly interruptEntered: Effect.Effect<void>;
     readonly releaseInterrupt: Effect.Effect<void>;
     readonly takeOffer: Effect.Effect<NativeOffer, Cause.TimeoutError>;
@@ -216,10 +220,10 @@ const withNativeQueue = <A, E, R>(
     readonly existingThread?: boolean;
     readonly databaseLayer?: NonNullable<
       Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2]
-    >["databaseLayer"];
+    >["layerDatabase"];
     readonly serverConfigLayer?: NonNullable<
       Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2]
-    >["serverConfigLayer"];
+    >["layerServerConfig"];
     readonly runEffectWorker?: boolean;
     readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
     readonly holdFirstSend?: boolean;
@@ -249,6 +253,12 @@ const withNativeQueue = <A, E, R>(
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = options.cwd ?? (yield* checkpointWorkspace(name));
+      const stopBoundary = yield* Deferred.make<{
+        readonly orchestrator: OrchestratorV2["Service"];
+        readonly outbox: EffectOutboxV2["Service"];
+      }>();
+      const delegatedStops: Array<{ readonly threadId: ThreadId; readonly commandId: CommandId }> =
+        [];
       let startupRefusals = 0;
       const allocator = yield* IdAllocatorV2;
       const scope = yield* Scope.Scope;
@@ -513,10 +523,45 @@ const withNativeQueue = <A, E, R>(
                 ).pipe(Layer.provide(VcsProcess.layer), Layer.provide(NodeServices.layer)),
               }
             : {}),
-          ...(options.databaseLayer === undefined ? {} : { databaseLayer: options.databaseLayer }),
+          threads: {
+            stopDelegatedTasks: (input) =>
+              Effect.gen(function* () {
+                const { orchestrator, outbox } = yield* Deferred.await(stopBoundary);
+                const { subagents } = yield* orchestrator.getThreadRecords(input.threadId, [
+                  "subagents",
+                ]);
+                // The delegated-child cases stop the child itself, which has no grandchildren.
+                // Never substitute an empty parent model when that parent owns a real child.
+                assert.isEmpty(
+                  subagents.filter(
+                    (task) => task.origin === "app_owned" && task.childThreadId !== null,
+                  ),
+                );
+                const effects = yield* outbox.listByCommandId(input.commandId).pipe(Effect.orDie);
+                const stops = effects.filter(
+                  (effect) => effect.request.type === "delegated-tasks.stop",
+                );
+                assert.lengthOf(stops, 1);
+                const stop = stops[0]!;
+                assert.ok(stop.request.type === "delegated-tasks.stop");
+                assert.deepEqual(input, {
+                  threadId: stop.threadId,
+                  commandId: stop.commandId,
+                  reason: stop.request.reason,
+                });
+                assert.isEmpty(
+                  delegatedStops.filter(
+                    (prior) =>
+                      prior.threadId === input.threadId && prior.commandId === input.commandId,
+                  ),
+                );
+                delegatedStops.push({ threadId: input.threadId, commandId: input.commandId });
+              }),
+          },
+          ...(options.databaseLayer === undefined ? {} : { layerDatabase: options.databaseLayer }),
           ...(options.serverConfigLayer === undefined
             ? {}
-            : { serverConfigLayer: options.serverConfigLayer }),
+            : { layerServerConfig: options.serverConfigLayer }),
           ...(options.runEffectWorker === undefined
             ? {}
             : { runEffectWorker: options.runEffectWorker }),
@@ -535,6 +580,8 @@ const withNativeQueue = <A, E, R>(
       );
       return yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
+        const outbox = yield* EffectOutboxV2;
+        yield* Deferred.succeed(stopBoundary, { orchestrator, outbox });
         const threadId = ThreadId.make(`thread:${name}`);
         if (!options.existingThread)
           yield* orchestrator.dispatch({
@@ -598,6 +645,7 @@ const withNativeQueue = <A, E, R>(
           waitForThread,
           waitFor: (predicate) => waitForThread(threadId, predicate),
           nativeInterruptions: () => nativeInterruptions,
+          delegatedStops,
           interruptEntered: Deferred.await(interruptEntered),
           releaseInterrupt: Deferred.succeed(interruptReleased, undefined).pipe(Effect.asVoid),
         });
@@ -623,493 +671,487 @@ const send = (
     dispatchMode: { type: queue ? "queue_after_active" : "start_immediately" },
   });
 
-for (const { bytes, refused } of [
-  { bytes: false, refused: true },
-  { bytes: false, refused: false },
-  { bytes: true, refused: true },
-  { bytes: true, refused: false },
-]) {
-  it.live(
-    `reserves queued ${bytes ? "bytes" : "count"} through preparation until ${refused ? "held failure" : "native acceptance"}`,
-    () =>
-      withNativeQueue(
-        `queue-reservation:${bytes}:${refused}`,
-        ({
-          orchestrator,
+it.live.each(
+  [
+    { bytes: false, refused: true },
+    { bytes: false, refused: false },
+    { bytes: true, refused: true },
+    { bytes: true, refused: false },
+  ].map(({ bytes, refused }) => ({
+    caseTitle: `reserves queued ${bytes ? "bytes" : "count"} through preparation until ${refused ? "held failure" : "native acceptance"}`,
+    bytes,
+    refused,
+  })),
+)("$caseTitle", ({ bytes, refused }) =>
+  withNativeQueue(
+    `queue-reservation:${bytes}:${refused}`,
+    ({
+      orchestrator,
+      threadId,
+      takeOffer,
+      waitFor,
+      preparationReady,
+      releasePreparation,
+      preparationAttempts,
+    }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig;
+        const ownedAttachment = Effect.fnUntraced(function* (name: string, size: number) {
+          const id = createAttachmentId(threadId);
+          assert.ok(id);
+          const attachment = {
+            type: "file" as const,
+            id: ChatAttachmentId.make(id),
+            name,
+            mimeType: "application/octet-stream",
+            sizeBytes: 1,
+          };
+          const path = resolveAttachmentPath({
+            attachmentsDir: config.attachmentsDir,
+            attachment,
+          });
+          assert.ok(path);
+          yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+          yield* fs.writeFile(path, new Uint8Array(size).fill(73));
+          assert.equal(Number((yield* fs.stat(path)).size), size);
+          return { attachment, path };
+        });
+        yield* send(orchestrator, threadId, "Foreground");
+        const foreground = yield* takeOffer;
+        const headAttachment = bytes
+          ? yield* ownedAttachment("head.bin", 31 * 1024 * 1024)
+          : undefined;
+        const tailAttachment = bytes
+          ? yield* ownedAttachment("tail.bin", 32 * 1024 * 1024)
+          : undefined;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
           threadId,
-          takeOffer,
-          waitFor,
-          preparationReady,
-          releasePreparation,
-          preparationAttempts,
-        }) =>
-          Effect.gen(function* () {
-            const fs = yield* FileSystem.FileSystem;
-            const config = yield* ServerConfig;
-            const ownedAttachment = Effect.fnUntraced(function* (name: string, size: number) {
-              const id = createAttachmentId(threadId);
-              assert.ok(id);
-              const attachment = {
-                type: "file" as const,
-                id: ChatAttachmentId.make(id),
-                name,
-                mimeType: "application/octet-stream",
-                sizeBytes: 1,
-              };
-              const path = resolveAttachmentPath({
-                attachmentsDir: config.attachmentsDir,
-                attachment,
-              });
-              assert.ok(path);
-              yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
-              yield* fs.writeFile(path, new Uint8Array(size).fill(73));
-              assert.equal(Number((yield* fs.stat(path)).size), size);
-              return { attachment, path };
-            });
-            yield* send(orchestrator, threadId, "Foreground");
-            const foreground = yield* takeOffer;
-            const headAttachment = bytes
-              ? yield* ownedAttachment("head.bin", 31 * 1024 * 1024)
-              : undefined;
-            const tailAttachment = bytes
-              ? yield* ownedAttachment("tail.bin", 32 * 1024 * 1024)
-              : undefined;
-            yield* orchestrator.dispatch({
-              type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:head`),
+          messageId: MessageId.make(`${threadId}:head`),
+          text: "Queued head",
+          attachments: headAttachment ? [headAttachment.attachment] : [],
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("queue-preparation-target"),
+            model: "queue-policy-model",
+          },
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+          selectedScientSkillNames: ["preserved-skill"],
+        });
+        for (let index = 0; index < (bytes ? 1 : 19); index++) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            threadId,
+            commandId: CommandId.make(`${threadId}:tail:${index}`),
+            messageId: MessageId.make(`${threadId}:tail:${index}`),
+            text: `Tail ${index}`,
+            attachments: tailAttachment ? [tailAttachment.attachment] : [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        }
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const head = before.runs.find(
+          (run) => run.userMessageId === MessageId.make(`${threadId}:head`),
+        );
+        assert.ok(head);
+        assert.equal(head.status, "queued");
+        const originalMessage = before.messages.find(
+          (message) => message.id === head.userMessageId,
+        );
+        assert.ok(originalMessage);
+        yield* foreground.settle("completed");
+        yield* preparationReady;
+        const preparing = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(preparing.runs.find((run) => run.id === head.id)?.status, "starting");
+        assert.equal(
+          preparing.runs.filter((run) => run.status === "queued").length,
+          bytes ? 1 : 19,
+        );
+        const extra = bytes ? yield* ownedAttachment("extra.bin", 2 * 1024 * 1024) : undefined;
+        const candidate = {
+          type: "message.dispatch" as const,
+          threadId,
+          commandId: CommandId.make(`${threadId}:replacement`),
+          messageId: MessageId.make(`${threadId}:replacement`),
+          text: "Replacement",
+          attachments: extra ? [extra.attachment] : [],
+          dispatchMode: { type: "queue_after_active" as const },
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+        };
+        if (tailAttachment && extra) {
+          const tailRun = preparing.runs.find(
+            (run) => run.userMessageId === MessageId.make(`${threadId}:tail:0`),
+          );
+          assert.ok(tailRun);
+          const edit = yield* Effect.result(
+            orchestrator.dispatch({
+              type: "queued-run.edit",
               threadId,
-              commandId: CommandId.make(`${threadId}:head`),
-              messageId: MessageId.make(`${threadId}:head`),
-              text: "Queued head",
-              attachments: headAttachment ? [headAttachment.attachment] : [],
-              modelSelection: {
-                instanceId: ProviderInstanceId.make("queue-preparation-target"),
-                model: "queue-policy-model",
+              runId: tailRun.id,
+              commandId: CommandId.make(`${threadId}:edit-while-reserved`),
+              text: "Enlarged tail",
+              attachments: [tailAttachment.attachment, extra.attachment],
+            }),
+          );
+          assert.equal(edit._tag, "Failure", "A queued edit must retain the starting head's bytes");
+          assert.deepEqual(
+            (yield* orchestrator.getThreadProjection(threadId)).messages.find(
+              (message) => message.id === tailRun.userMessageId,
+            )?.attachments,
+            [tailAttachment.attachment],
+          );
+        }
+        const rejected = yield* Effect.result(orchestrator.dispatch(candidate));
+        assert.equal(
+          rejected._tag,
+          "Failure",
+          "Promotion cannot release a potentially restored head's budget",
+        );
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).messages.some(
+            (message) => message.id === candidate.messageId,
+          ),
+          false,
+        );
+        yield* releasePreparation;
+        if (refused) {
+          const held = yield* waitFor((projection) =>
+            projection.runs.some(
+              (run) => run.id === head.id && run.status === "queued" && run.queueHeld === true,
+            ),
+          );
+          assert.equal(preparationAttempts(), 5);
+          assert.equal(held.runs.filter((run) => run.status === "queued").length, bytes ? 2 : 20);
+          assert.deepEqual(
+            held.messages.find((message) => message.id === head.userMessageId),
+            originalMessage,
+          );
+          const again = yield* Effect.result(
+            orchestrator.dispatch({
+              type: "legacy-queue.import",
+              threadId,
+              commandId: CommandId.make(`${threadId}:after-held`),
+              queueItemId: "reserved-import",
+              messageId: candidate.messageId,
+              text: candidate.text,
+              attachments: candidate.attachments,
+              createdAt: yield* DateTime.now,
+            }),
+          );
+          assert.equal(
+            again._tag,
+            "Failure",
+            "Held legacy admission shares the restored queue's budget",
+          );
+        } else {
+          const nativeHead = yield* takeOffer;
+          assert.equal(nativeHead.input.runId, head.id);
+          yield* waitFor((projection) =>
+            projection.providerTurns.some(
+              (turn) =>
+                turn.runAttemptId === nativeHead.input.attemptId &&
+                turn.nativeAcceptance === "accepted",
+            ),
+          );
+          yield* orchestrator.dispatch({
+            ...candidate,
+            commandId: CommandId.make(`${threadId}:after-accepted`),
+          });
+          const admitted = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(
+            admitted.messages.some((message) => message.id === candidate.messageId),
+            true,
+          );
+          assert.equal(
+            admitted.runs.filter((run) => run.status === "queued").length,
+            bytes ? 2 : 20,
+          );
+        }
+        if (headAttachment)
+          assert.equal(Number((yield* fs.stat(headAttachment.path)).size), 31 * 1024 * 1024);
+        if (extra) assert.equal(Number((yield* fs.stat(extra.path)).size), 2 * 1024 * 1024);
+      }),
+    { holdPreparation: true, refusePreparation: refused },
+  ),
+);
+
+it.live.each(
+  [
+    { queued: false, ambiguous: false },
+    { queued: true, ambiguous: false },
+    { queued: true, ambiguous: true },
+  ].map(({ queued, ambiguous }) => ({
+    caseTitle: `${queued ? "queued" : "immediate"} ${ambiguous ? "ambiguous native failure is not replayed" : "plan refusal preserves the plan until an exact native acceptance"}`,
+    queued,
+    ambiguous,
+  })),
+)("$caseTitle", ({ queued, ambiguous }) =>
+  withNativeQueue(
+    `source-plan-native-refusal:${queued}:${ambiguous}`,
+    ({ orchestrator, threadId, takeOffer, waitFor, offers }) =>
+      Effect.gen(function* () {
+        const sink = yield* EventSinkV2;
+        const now = yield* DateTime.now;
+        const planId = PlanId.make(`${threadId}:plan`);
+        const plan = {
+          id: planId,
+          threadId,
+          runId: null,
+          nodeId: NodeId.make(`${threadId}:plan-node`),
+          kind: "proposed_plan" as const,
+          status: "active" as const,
+          markdown: "# Exact plan\nRetain this plan after native refusal.",
+        };
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:plan-event`),
+              type: "plan.updated",
+              threadId,
+              occurredAt: now,
+              payload: plan,
+            },
+          ],
+        });
+        const foreground = queued
+          ? yield* send(orchestrator, threadId, "foreground").pipe(Effect.andThen(takeOffer))
+          : null;
+        const dispatch = (suffix: string) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${threadId}:${suffix}`),
+            threadId,
+            messageId: MessageId.make(`${threadId}:${suffix}`),
+            text: "Implement the exact plan",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+            dispatchMode: { type: queued ? "queue_after_active" : "start_immediately" },
+            sourcePlanRef: { threadId, planId },
+          });
+        yield* dispatch("original");
+        const admitted = yield* orchestrator.getThreadProjection(threadId);
+        const run = admitted.runs.find((candidate) => candidate.sourcePlanRef?.planId === planId);
+        assert.ok(run);
+        assert.equal(run.sourcePlanFingerprint, sourcePlanFingerprint(plan));
+        assert.equal(admitted.plans[0]?.status, "active");
+        if (foreground !== null) yield* foreground.settle("completed");
+        const refused = yield* takeOffer;
+        assert.equal(refused.input.runId, run.id);
+        yield* waitFor((projection) =>
+          projection.providerTurns.some(
+            (turn) =>
+              turn.runAttemptId === refused.input.attemptId && turn.nativeAcceptance === "unknown",
+          ),
+        );
+        yield* refused.releaseSend;
+        const afterRefusal = yield* waitFor((projection) => {
+          const current = projection.runs.find((candidate) => candidate.id === run.id);
+          return queued && !ambiguous
+            ? current?.status === "queued" && current.queueHeld === true
+            : current?.status === "failed";
+        });
+        const pending = afterRefusal.providerTurns.find(
+          (turn) => turn.runAttemptId === refused.input.attemptId,
+        );
+        assert.ok(pending);
+        assert.equal(pending.nativeAcceptance, ambiguous ? "unknown" : "pending");
+        assert.equal(pending.acceptedAt, undefined);
+        const retained = afterRefusal.plans.find((candidate) => candidate.id === planId);
+        assert.ok(retained?.kind === "proposed_plan");
+        assert.equal(retained.status, "active");
+        assert.equal(retained.consumedBy, undefined);
+        if (ambiguous) {
+          assert.equal(
+            afterRefusal.runs.filter(
+              (candidate) => candidate.id === run.id && candidate.status === "queued",
+            ).length,
+            0,
+          );
+          assert.isTrue(
+            afterRefusal.turnItems.some(
+              (item) =>
+                item.runId === run.id &&
+                item.type === "assistant_message" &&
+                item.text.includes("Native output"),
+            ),
+          );
+          assert.equal(offers.length, 2);
+          return;
+        }
+        if (queued) {
+          const held = afterRefusal.runs.find((candidate) => candidate.id === run.id);
+          assert.equal(held?.queuePosition, run.queuePosition);
+          assert.equal(held?.userMessageId, run.userMessageId);
+          assert.equal(held?.sourcePlanFingerprint, run.sourcePlanFingerprint);
+          yield* orchestrator.dispatch({
+            type: "queue.resume",
+            threadId,
+            commandId: CommandId.make(`${threadId}:resume`),
+          });
+        } else yield* dispatch("retry");
+        const accepted = yield* takeOffer;
+        assert.notEqual(accepted.input.attemptId, refused.input.attemptId);
+        if (queued) assert.equal(accepted.input.runId, refused.input.runId);
+        const consumed = yield* waitFor((projection) =>
+          projection.plans.some(
+            (candidate) => candidate.id === planId && candidate.status === "completed",
+          ),
+        );
+        const consumedPlan = consumed.plans.find((candidate) => candidate.id === planId);
+        assert.ok(consumedPlan?.kind === "proposed_plan");
+        const receipt = consumed.providerTurns.find(
+          (turn) => turn.runAttemptId === accepted.input.attemptId,
+        );
+        assert.ok(receipt?.acceptedAt);
+        assert.equal(receipt.nativeAcceptance, "accepted");
+        assert.deepEqual(consumedPlan.consumedBy, {
+          threadId,
+          runId: accepted.input.runId,
+          runAttemptId: accepted.input.attemptId,
+          providerTurnId: receipt.id,
+        });
+        yield* accepted.settle("failed");
+        const failed = yield* waitFor((projection) =>
+          projection.runs.some(
+            (candidate) => candidate.id === accepted.input.runId && candidate.status === "failed",
+          ),
+        );
+        assert.deepEqual(
+          failed.plans.find((candidate) => candidate.id === planId),
+          consumedPlan,
+        );
+        assert.equal(offers.length, queued ? 3 : 2);
+      }),
+    ambiguous ? { ambiguousSend: 2 } : { refuseSend: queued ? 2 : 1 },
+  ),
+);
+
+it.live.each(
+  [
+    { accepted: false, ingested: false },
+    { accepted: true, ingested: false },
+    { accepted: true, ingested: true },
+  ].map(({ accepted, ingested }) => ({
+    caseTitle: `persists ${accepted ? "accepted" : "unknown"} synchronous start failure with ${ingested ? "already persisted acceptance" : "blocked offer ingestion"}`,
+    accepted,
+    ingested,
+  })),
+)("$caseTitle", ({ accepted, ingested }) =>
+  withNativeQueue(
+    `queue-sync-failure:${accepted}:${ingested}`,
+    ({ orchestrator, threadId, takeOffer, waitFor, offers }) =>
+      Effect.gen(function* () {
+        const sink = yield* EventSinkV2;
+        const now = yield* DateTime.now;
+        const planId = PlanId.make(`${threadId}:plan`);
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:plan-event`),
+              type: "plan.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: planId,
+                threadId,
+                runId: null,
+                nodeId: NodeId.make(`${threadId}:plan-node`),
+                kind: "proposed_plan",
+                status: "active",
+                markdown: "# Synchronous exact plan",
               },
-              dispatchMode: { type: "queue_after_active" },
-              createdBy: "user",
-              creationSource: "web",
-              selectedScientSkillNames: ["preserved-skill"],
-            });
-            for (let index = 0; index < (bytes ? 1 : 19); index++) {
-              yield* orchestrator.dispatch({
-                type: "message.dispatch",
-                threadId,
-                commandId: CommandId.make(`${threadId}:tail:${index}`),
-                messageId: MessageId.make(`${threadId}:tail:${index}`),
-                text: `Tail ${index}`,
-                attachments: tailAttachment ? [tailAttachment.attachment] : [],
-                dispatchMode: { type: "queue_after_active" },
-                createdBy: "user",
-                creationSource: "web",
-              });
-            }
-            const before = yield* orchestrator.getThreadProjection(threadId);
-            const head = before.runs.find(
-              (run) => run.userMessageId === MessageId.make(`${threadId}:head`),
-            );
-            assert.ok(head);
-            assert.equal(head.status, "queued");
-            const originalMessage = before.messages.find(
-              (message) => message.id === head.userMessageId,
-            );
-            assert.ok(originalMessage);
-            yield* foreground.settle("completed");
-            yield* preparationReady;
-            const preparing = yield* orchestrator.getThreadProjection(threadId);
-            assert.equal(preparing.runs.find((run) => run.id === head.id)?.status, "starting");
-            assert.equal(
-              preparing.runs.filter((run) => run.status === "queued").length,
-              bytes ? 1 : 19,
-            );
-            const extra = bytes ? yield* ownedAttachment("extra.bin", 2 * 1024 * 1024) : undefined;
-            const candidate = {
-              type: "message.dispatch" as const,
-              threadId,
-              commandId: CommandId.make(`${threadId}:replacement`),
-              messageId: MessageId.make(`${threadId}:replacement`),
-              text: "Replacement",
-              attachments: extra ? [extra.attachment] : [],
-              dispatchMode: { type: "queue_after_active" as const },
-              createdBy: "user" as const,
-              creationSource: "web" as const,
-            };
-            if (tailAttachment && extra) {
-              const tailRun = preparing.runs.find(
-                (run) => run.userMessageId === MessageId.make(`${threadId}:tail:0`),
-              );
-              assert.ok(tailRun);
-              const edit = yield* Effect.result(
-                orchestrator.dispatch({
-                  type: "queued-run.edit",
-                  threadId,
-                  runId: tailRun.id,
-                  commandId: CommandId.make(`${threadId}:edit-while-reserved`),
-                  text: "Enlarged tail",
-                  attachments: [tailAttachment.attachment, extra.attachment],
-                }),
-              );
-              assert.equal(
-                edit._tag,
-                "Failure",
-                "A queued edit must retain the starting head's bytes",
-              );
-              assert.deepEqual(
-                (yield* orchestrator.getThreadProjection(threadId)).messages.find(
-                  (message) => message.id === tailRun.userMessageId,
-                )?.attachments,
-                [tailAttachment.attachment],
-              );
-            }
-            const rejected = yield* Effect.result(orchestrator.dispatch(candidate));
-            assert.equal(
-              rejected._tag,
-              "Failure",
-              "Promotion cannot release a potentially restored head's budget",
-            );
-            assert.equal(
-              (yield* orchestrator.getThreadProjection(threadId)).messages.some(
-                (message) => message.id === candidate.messageId,
-              ),
-              false,
-            );
-            yield* releasePreparation;
-            if (refused) {
-              const held = yield* waitFor((projection) =>
-                projection.runs.some(
-                  (run) => run.id === head.id && run.status === "queued" && run.queueHeld === true,
-                ),
-              );
-              assert.equal(preparationAttempts(), 5);
-              assert.equal(
-                held.runs.filter((run) => run.status === "queued").length,
-                bytes ? 2 : 20,
-              );
-              assert.deepEqual(
-                held.messages.find((message) => message.id === head.userMessageId),
-                originalMessage,
-              );
-              const again = yield* Effect.result(
-                orchestrator.dispatch({
-                  type: "legacy-queue.import",
-                  threadId,
-                  commandId: CommandId.make(`${threadId}:after-held`),
-                  queueItemId: "reserved-import",
-                  messageId: candidate.messageId,
-                  text: candidate.text,
-                  attachments: candidate.attachments,
-                  createdAt: yield* DateTime.now,
-                }),
-              );
-              assert.equal(
-                again._tag,
-                "Failure",
-                "Held legacy admission shares the restored queue's budget",
-              );
-            } else {
-              const nativeHead = yield* takeOffer;
-              assert.equal(nativeHead.input.runId, head.id);
-              yield* waitFor((projection) =>
-                projection.providerTurns.some(
-                  (turn) =>
-                    turn.runAttemptId === nativeHead.input.attemptId &&
-                    turn.nativeAcceptance === "accepted",
-                ),
-              );
-              yield* orchestrator.dispatch({
-                ...candidate,
-                commandId: CommandId.make(`${threadId}:after-accepted`),
-              });
-              const admitted = yield* orchestrator.getThreadProjection(threadId);
-              assert.equal(
-                admitted.messages.some((message) => message.id === candidate.messageId),
-                true,
-              );
-              assert.equal(
-                admitted.runs.filter((run) => run.status === "queued").length,
-                bytes ? 2 : 20,
-              );
-            }
-            if (headAttachment)
-              assert.equal(Number((yield* fs.stat(headAttachment.path)).size), 31 * 1024 * 1024);
-            if (extra) assert.equal(Number((yield* fs.stat(extra.path)).size), 2 * 1024 * 1024);
-          }),
-        { holdPreparation: true, refusePreparation: refused },
-      ),
-  );
-}
-
-for (const { queued, ambiguous } of [
-  { queued: false, ambiguous: false },
-  { queued: true, ambiguous: false },
-  { queued: true, ambiguous: true },
-]) {
-  it.live(
-    `${queued ? "queued" : "immediate"} ${ambiguous ? "ambiguous native failure is not replayed" : "plan refusal preserves the plan until an exact native acceptance"}`,
-    () =>
-      withNativeQueue(
-        `source-plan-native-refusal:${queued}:${ambiguous}`,
-        ({ orchestrator, threadId, takeOffer, waitFor, offers }) =>
-          Effect.gen(function* () {
-            const sink = yield* EventSinkV2;
-            const now = yield* DateTime.now;
-            const planId = PlanId.make(`${threadId}:plan`);
-            const plan = {
-              id: planId,
-              threadId,
-              runId: null,
-              nodeId: NodeId.make(`${threadId}:plan-node`),
-              kind: "proposed_plan" as const,
-              status: "active" as const,
-              markdown: "# Exact plan\nRetain this plan after native refusal.",
-            };
-            yield* sink.write({
-              events: [
-                {
-                  id: EventId.make(`${threadId}:plan-event`),
-                  type: "plan.updated",
-                  threadId,
-                  occurredAt: now,
-                  payload: plan,
-                },
-              ],
-            });
-            const foreground = queued
-              ? yield* send(orchestrator, threadId, "foreground").pipe(Effect.andThen(takeOffer))
-              : null;
-            const dispatch = (suffix: string) =>
-              orchestrator.dispatch({
-                type: "message.dispatch",
-                commandId: CommandId.make(`${threadId}:${suffix}`),
-                threadId,
-                messageId: MessageId.make(`${threadId}:${suffix}`),
-                text: "Implement the exact plan",
-                attachments: [],
-                createdBy: "user",
-                creationSource: "web",
-                dispatchMode: { type: queued ? "queue_after_active" : "start_immediately" },
-                sourcePlanRef: { threadId, planId },
-              });
-            yield* dispatch("original");
-            const admitted = yield* orchestrator.getThreadProjection(threadId);
-            const run = admitted.runs.find(
-              (candidate) => candidate.sourcePlanRef?.planId === planId,
-            );
-            assert.ok(run);
-            assert.equal(run.sourcePlanFingerprint, sourcePlanFingerprint(plan));
-            assert.equal(admitted.plans[0]?.status, "active");
-            if (foreground !== null) yield* foreground.settle("completed");
-            const refused = yield* takeOffer;
-            assert.equal(refused.input.runId, run.id);
-            yield* waitFor((projection) =>
-              projection.providerTurns.some(
-                (turn) =>
-                  turn.runAttemptId === refused.input.attemptId &&
-                  turn.nativeAcceptance === "unknown",
-              ),
-            );
-            yield* refused.releaseSend;
-            const afterRefusal = yield* waitFor((projection) => {
-              const current = projection.runs.find((candidate) => candidate.id === run.id);
-              return queued && !ambiguous
-                ? current?.status === "queued" && current.queueHeld === true
-                : current?.status === "failed";
-            });
-            const pending = afterRefusal.providerTurns.find(
-              (turn) => turn.runAttemptId === refused.input.attemptId,
-            );
-            assert.ok(pending);
-            assert.equal(pending.nativeAcceptance, ambiguous ? "unknown" : "pending");
-            assert.equal(pending.acceptedAt, undefined);
-            const retained = afterRefusal.plans.find((candidate) => candidate.id === planId);
-            assert.ok(retained?.kind === "proposed_plan");
-            assert.equal(retained.status, "active");
-            assert.equal(retained.consumedBy, undefined);
-            if (ambiguous) {
-              assert.equal(
-                afterRefusal.runs.filter(
-                  (candidate) => candidate.id === run.id && candidate.status === "queued",
-                ).length,
-                0,
-              );
-              assert.isTrue(
-                afterRefusal.turnItems.some(
-                  (item) =>
-                    item.runId === run.id &&
-                    item.type === "assistant_message" &&
-                    item.text.includes("Native output"),
-                ),
-              );
-              assert.equal(offers.length, 2);
-              return;
-            }
-            if (queued) {
-              const held = afterRefusal.runs.find((candidate) => candidate.id === run.id);
-              assert.equal(held?.queuePosition, run.queuePosition);
-              assert.equal(held?.userMessageId, run.userMessageId);
-              assert.equal(held?.sourcePlanFingerprint, run.sourcePlanFingerprint);
-              yield* orchestrator.dispatch({
-                type: "queue.resume",
-                threadId,
-                commandId: CommandId.make(`${threadId}:resume`),
-              });
-            } else yield* dispatch("retry");
-            const accepted = yield* takeOffer;
-            assert.notEqual(accepted.input.attemptId, refused.input.attemptId);
-            if (queued) assert.equal(accepted.input.runId, refused.input.runId);
-            const consumed = yield* waitFor((projection) =>
-              projection.plans.some(
-                (candidate) => candidate.id === planId && candidate.status === "completed",
-              ),
-            );
-            const consumedPlan = consumed.plans.find((candidate) => candidate.id === planId);
-            assert.ok(consumedPlan?.kind === "proposed_plan");
-            const receipt = consumed.providerTurns.find(
-              (turn) => turn.runAttemptId === accepted.input.attemptId,
-            );
-            assert.ok(receipt?.acceptedAt);
-            assert.equal(receipt.nativeAcceptance, "accepted");
-            assert.deepEqual(consumedPlan.consumedBy, {
-              threadId,
-              runId: accepted.input.runId,
-              runAttemptId: accepted.input.attemptId,
-              providerTurnId: receipt.id,
-            });
-            yield* accepted.settle("failed");
-            const failed = yield* waitFor((projection) =>
-              projection.runs.some(
-                (candidate) =>
-                  candidate.id === accepted.input.runId && candidate.status === "failed",
-              ),
-            );
-            assert.deepEqual(
-              failed.plans.find((candidate) => candidate.id === planId),
-              consumedPlan,
-            );
-            assert.equal(offers.length, queued ? 3 : 2);
-          }),
-        ambiguous ? { ambiguousSend: 2 } : { refuseSend: queued ? 2 : 1 },
-      ),
-  );
-}
-
-for (const { accepted, ingested } of [
-  { accepted: false, ingested: false },
-  { accepted: true, ingested: false },
-  { accepted: true, ingested: true },
-]) {
-  it.live(
-    `persists ${accepted ? "accepted" : "unknown"} synchronous start failure with ${ingested ? "already persisted acceptance" : "blocked offer ingestion"}`,
-    () =>
-      withNativeQueue(
-        `queue-sync-failure:${accepted}:${ingested}`,
-        ({ orchestrator, threadId, takeOffer, waitFor, offers }) =>
-          Effect.gen(function* () {
-            const sink = yield* EventSinkV2;
-            const now = yield* DateTime.now;
-            const planId = PlanId.make(`${threadId}:plan`);
-            yield* sink.write({
-              events: [
-                {
-                  id: EventId.make(`${threadId}:plan-event`),
-                  type: "plan.updated",
-                  threadId,
-                  occurredAt: now,
-                  payload: {
-                    id: planId,
-                    threadId,
-                    runId: null,
-                    nodeId: NodeId.make(`${threadId}:plan-node`),
-                    kind: "proposed_plan",
-                    status: "active",
-                    markdown: "# Synchronous exact plan",
-                  },
-                },
-              ],
-            });
-            yield* send(orchestrator, threadId, "foreground");
-            const foreground = yield* takeOffer;
-            yield* orchestrator.dispatch({
-              type: "message.dispatch",
-              threadId,
-              commandId: CommandId.make(`${threadId}:queued`),
-              messageId: MessageId.make(`${threadId}:queued`),
-              text: "Implement",
-              attachments: [],
-              createdBy: "user",
-              creationSource: "web",
-              dispatchMode: { type: "queue_after_active" },
-              sourcePlanRef: { threadId, planId },
-            });
-            const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
-              (run) => run.status === "queued",
-            );
-            assert.ok(queued);
-            yield* foreground.settle("completed");
-            const failedOffer = yield* takeOffer;
-            assert.equal(failedOffer.input.runId, queued.id);
-            let ingestedReceiptId;
-            if (ingested) {
-              const observed = yield* waitFor((projection) =>
-                projection.providerTurns.some(
-                  (turn) =>
-                    turn.runAttemptId === failedOffer.input.attemptId &&
-                    turn.nativeAcceptance === "accepted",
-                ),
-              );
-              ingestedReceiptId = observed.providerTurns.find(
-                (turn) => turn.runAttemptId === failedOffer.input.attemptId,
-              )?.id;
-              assert.ok(ingestedReceiptId);
-              yield* failedOffer.releaseSend;
-            }
-            const failed = yield* waitFor((projection) =>
-              projection.runs.some((run) => run.id === queued.id && run.status === "failed"),
-            );
-            const receipt = failed.providerTurns.find(
-              (turn) => turn.runAttemptId === failedOffer.input.attemptId,
-            );
-            assert.ok(receipt);
-            assert.equal(receipt.status, "failed");
-            if (ingested) {
-              assert.equal(receipt.id, ingestedReceiptId);
-              assert.equal(
-                failed.providerTurns.filter(
-                  (turn) => turn.runAttemptId === failedOffer.input.attemptId,
-                ).length,
-                1,
-              );
-            }
-            assert.equal(receipt.nativeAcceptance, accepted ? "accepted" : "unknown");
-            const plan = failed.plans.find((candidate) => candidate.id === planId);
-            assert.ok(plan?.kind === "proposed_plan");
-            assert.equal(plan.status, accepted ? "completed" : "active");
-            if (accepted) {
-              assert.ok(receipt.acceptedAt);
-              assert.deepEqual(plan.consumedBy, {
-                threadId,
-                runId: queued.id,
-                runAttemptId: failedOffer.input.attemptId,
-                providerTurnId: receipt.id,
-              });
-            } else {
-              assert.equal(receipt.acceptedAt, undefined);
-              assert.equal(plan.consumedBy, undefined);
-            }
-            assert.equal(
-              failed.runs.some((run) => run.id === queued.id && run.status === "queued"),
-              false,
-            );
-            assert.equal(offers.length, 2);
-          }),
-        {
-          synchronousFailSend: 2,
-          acceptBeforeSyncFailure: accepted,
-          ingestSyncAcceptance: ingested,
-          holdSyncFailure: ingested,
-        },
-      ),
-  );
-}
+            },
+          ],
+        });
+        yield* send(orchestrator, threadId, "foreground");
+        const foreground = yield* takeOffer;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          threadId,
+          commandId: CommandId.make(`${threadId}:queued`),
+          messageId: MessageId.make(`${threadId}:queued`),
+          text: "Implement",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+          dispatchMode: { type: "queue_after_active" },
+          sourcePlanRef: { threadId, planId },
+        });
+        const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.status === "queued",
+        );
+        assert.ok(queued);
+        yield* foreground.settle("completed");
+        const failedOffer = yield* takeOffer;
+        assert.equal(failedOffer.input.runId, queued.id);
+        let ingestedReceiptId;
+        if (ingested) {
+          const observed = yield* waitFor((projection) =>
+            projection.providerTurns.some(
+              (turn) =>
+                turn.runAttemptId === failedOffer.input.attemptId &&
+                turn.nativeAcceptance === "accepted",
+            ),
+          );
+          ingestedReceiptId = observed.providerTurns.find(
+            (turn) => turn.runAttemptId === failedOffer.input.attemptId,
+          )?.id;
+          assert.ok(ingestedReceiptId);
+          yield* failedOffer.releaseSend;
+        }
+        const failed = yield* waitFor((projection) =>
+          projection.runs.some((run) => run.id === queued.id && run.status === "failed"),
+        );
+        const receipt = failed.providerTurns.find(
+          (turn) => turn.runAttemptId === failedOffer.input.attemptId,
+        );
+        assert.ok(receipt);
+        assert.equal(receipt.status, "failed");
+        if (ingested) {
+          assert.equal(receipt.id, ingestedReceiptId);
+          assert.equal(
+            failed.providerTurns.filter((turn) => turn.runAttemptId === failedOffer.input.attemptId)
+              .length,
+            1,
+          );
+        }
+        assert.equal(receipt.nativeAcceptance, accepted ? "accepted" : "unknown");
+        const plan = failed.plans.find((candidate) => candidate.id === planId);
+        assert.ok(plan?.kind === "proposed_plan");
+        assert.equal(plan.status, accepted ? "completed" : "active");
+        if (accepted) {
+          assert.ok(receipt.acceptedAt);
+          assert.deepEqual(plan.consumedBy, {
+            threadId,
+            runId: queued.id,
+            runAttemptId: failedOffer.input.attemptId,
+            providerTurnId: receipt.id,
+          });
+        } else {
+          assert.equal(receipt.acceptedAt, undefined);
+          assert.equal(plan.consumedBy, undefined);
+        }
+        assert.equal(
+          failed.runs.some((run) => run.id === queued.id && run.status === "queued"),
+          false,
+        );
+        assert.equal(offers.length, 2);
+      }),
+    {
+      synchronousFailSend: 2,
+      acceptBeforeSyncFailure: accepted,
+      ingestSyncAcceptance: ingested,
+      holdSyncFailure: ingested,
+    },
+  ),
+);
 
 it.live(
   "a delayed accepted start failure cannot consume a plan or terminalize a replacement attempt",
@@ -1288,7 +1330,7 @@ it.live("normal native completion automatically drains queued messages in FIFO o
         assert.isFalse(
           yield* store.hasCheckpointRef({
             cwd: scope.cwd,
-            checkpointRef: checkpointRefForScopeOrdinal({
+            checkpointRef: yield* checkpointRefForScopeOrdinal({
               scopeId: scope.id,
               ordinalWithinScope: 1,
             }),
@@ -1474,7 +1516,15 @@ it.live(
   () =>
     withNativeQueue(
       "queue-policy-stop-hold",
-      ({ orchestrator, threadId, takeOffer, offers, waitFor, nativeInterruptions }) =>
+      ({
+        orchestrator,
+        threadId,
+        takeOffer,
+        offers,
+        waitFor,
+        nativeInterruptions,
+        delegatedStops,
+      }) =>
         Effect.gen(function* () {
           yield* send(orchestrator, threadId, "foreground");
           const foreground = yield* takeOffer;
@@ -1583,6 +1633,9 @@ it.live(
               projection.runs.find((run) => run.id === first.id)?.status === "completed",
           );
           assert.deepEqual(offers, ["foreground", "second", "first"]);
+          assert.deepEqual(delegatedStops, [
+            { threadId, commandId: CommandId.make(`${threadId}:stop`) },
+          ]);
         }),
       { holdFirstSend: true },
     ),
@@ -1634,285 +1687,283 @@ it.live("non-user native interruption holds ordinary queued work without a holdQ
   ),
 );
 
-for (const release of ["whole", "head", "newer-failure", "new-admission"] as const) {
-  it.live(`delayed interrupted child checkpoint cannot supersede ${release} queue release`, () =>
-    withNativeQueue(
-      `queue-policy-terminal-echo:${release}`,
-      ({ orchestrator, threadId, takeOffer, waitFor, waitForThread, offers }) =>
-        Effect.gen(function* () {
-          let stage = "parent offer";
-          const locks = yield* ThreadCommandExecutor;
-          yield* send(orchestrator, threadId, "parent");
-          const parent = yield* takeOffer;
-          yield* waitFor((projection) =>
-            projection.providerTurns.some((turn) => turn.runAttemptId === parent.input.attemptId),
-          );
+it.live.each(
+  (["whole", "head", "newer-failure", "new-admission"] as const).map((release) => ({
+    caseTitle: `delayed interrupted child checkpoint cannot supersede ${release} queue release`,
+    release,
+  })),
+)("$caseTitle", ({ release }) =>
+  withNativeQueue(
+    `queue-policy-terminal-echo:${release}`,
+    ({ orchestrator, threadId, takeOffer, waitFor, waitForThread, offers }) =>
+      Effect.gen(function* () {
+        let stage = "parent offer";
+        const locks = yield* ThreadCommandExecutor;
+        yield* send(orchestrator, threadId, "parent");
+        const parent = yield* takeOffer;
+        yield* waitFor((projection) =>
+          projection.providerTurns.some((turn) => turn.runAttemptId === parent.input.attemptId),
+        );
+        yield* orchestrator.dispatch({
+          type: "delegated_task.request",
+          commandId: CommandId.make(`${threadId}:child`),
+          parentThreadId: threadId,
+          parentRunId: parent.input.runId,
+          parentNodeId: parent.input.rootNodeId,
+          task: "child-foreground",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          completionWake: "settled_only",
+          createdBy: "user",
+          creationSource: "web",
+        });
+        stage = "child offer";
+        const child = yield* takeOffer;
+        const childThreadId = child.input.threadId;
+        assert.notEqual(childThreadId, threadId);
+        yield* waitForThread(childThreadId, (projection) =>
+          projection.providerTurns.some((turn) => turn.runAttemptId === child.input.attemptId),
+        );
+        yield* send(orchestrator, childThreadId, "first", true);
+        yield* send(orchestrator, childThreadId, "second", true);
+        const before = yield* orchestrator.getThreadProjection(childThreadId);
+        const first = before.runs.find((run) => run.ordinal === 2);
+        const second = before.runs.find((run) => run.ordinal === 3);
+        assert.ok(first);
+        assert.ok(second);
+        const entered = yield* Deferred.make<void>();
+        const unlock = yield* Deferred.make<void>();
+        const parentLock = yield* locks
+          .withLock(
+            threadId,
+            Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(unlock))),
+          )
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(entered);
+        yield* Effect.gen(function* () {
+          // The terminal reactor must finalize this real app-owned child under
+          // its parent's lock before it can react to the child's queue.
           yield* orchestrator.dispatch({
-            type: "delegated_task.request",
-            commandId: CommandId.make(`${threadId}:child`),
-            parentThreadId: threadId,
-            parentRunId: parent.input.runId,
-            parentNodeId: parent.input.rootNodeId,
-            task: "child-foreground",
-            modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            completionWake: "settled_only",
-            createdBy: "user",
-            creationSource: "web",
+            type: "run.interrupt",
+            threadId: childThreadId,
+            runId: child.input.runId,
+            holdQueue: true,
+            commandId: CommandId.make(`${childThreadId}:stop`),
           });
-          stage = "child offer";
-          const child = yield* takeOffer;
-          const childThreadId = child.input.threadId;
-          assert.notEqual(childThreadId, threadId);
-          yield* waitForThread(childThreadId, (projection) =>
-            projection.providerTurns.some((turn) => turn.runAttemptId === child.input.attemptId),
+          stage = "child interrupted checkpoint";
+          const stopped = yield* waitForThread(childThreadId, (projection) =>
+            projection.runs.some(
+              (run) =>
+                run.id === child.input.runId &&
+                run.status === "interrupted" &&
+                run.checkpointId !== null,
+            ),
           );
-          yield* send(orchestrator, childThreadId, "first", true);
-          yield* send(orchestrator, childThreadId, "second", true);
-          const before = yield* orchestrator.getThreadProjection(childThreadId);
-          const first = before.runs.find((run) => run.ordinal === 2);
-          const second = before.runs.find((run) => run.ordinal === 3);
-          assert.ok(first);
-          assert.ok(second);
-          const entered = yield* Deferred.make<void>();
-          const unlock = yield* Deferred.make<void>();
-          const parentLock = yield* locks
-            .withLock(
-              threadId,
-              Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(unlock))),
-            )
-            .pipe(Effect.forkScoped);
-          yield* Deferred.await(entered);
-          yield* Effect.gen(function* () {
-            // The terminal reactor must finalize this real app-owned child under
-            // its parent's lock before it can react to the child's queue.
-            yield* orchestrator.dispatch({
-              type: "run.interrupt",
-              threadId: childThreadId,
-              runId: child.input.runId,
-              holdQueue: true,
-              commandId: CommandId.make(`${childThreadId}:stop`),
+          assert.isTrue(
+            stopped.runs.filter((run) => run.status === "queued").every((run) => run.queueHeld),
+          );
+          const resume = {
+            type: "queue.resume" as const,
+            threadId: childThreadId,
+            commandId: CommandId.make(`${childThreadId}:resume`),
+            ...(release === "head" ? { runId: first.id } : {}),
+          };
+          yield* orchestrator.dispatch(resume);
+          stage = "resumed head offer";
+          const resumed = yield* takeOffer;
+          assert.equal(resumed.input.runId, first.id);
+          // The original accepted command remains the release boundary on retry.
+          yield* orchestrator.dispatch(resume);
+          if (release === "new-admission") yield* send(orchestrator, childThreadId, "third", true);
+          const released = yield* orchestrator.getThreadProjection(childThreadId);
+          assert.equal(
+            released.runs.find((run) => run.id === second.id)?.queueHeld,
+            release === "head",
+          );
+          let settledUnderParentLock = false;
+          if (release === "newer-failure") {
+            settledUnderParentLock = true;
+            // Commit the newer real failure while the older terminal reactor
+            // is still fenced by the parent lock. Failed runs do not capture.
+            yield* resumed.settle("failed");
+            stage = "newer failure committed under parent lock";
+            const failed = yield* waitForThread(
+              childThreadId,
+              (projection) =>
+                projection.runs.some((run) => run.id === first.id && run.status === "failed") &&
+                projection.attempts.some(
+                  (attempt) =>
+                    attempt.id === resumed.input.attemptId && attempt.status === "failed",
+                ) &&
+                projection.nodes.some(
+                  (node) => node.id === resumed.input.rootNodeId && node.status === "failed",
+                ),
+            );
+            assert.equal(failed.runs.find((run) => run.id === second.id)?.status, "queued");
+            assert.equal(failed.runs.find((run) => run.id === second.id)?.queueHeld, false);
+            const eventStore = yield* EventStore.EventStoreV2;
+            const throughSequence = yield* eventStore.latestSequence({ threadId: childThreadId });
+            const history = yield* eventStore
+              .read({ threadId: childThreadId, eventType: "run.updated", throughSequence })
+              .pipe(Stream.runCollect);
+            const terminals = history
+              .flatMap((entry) =>
+                entry.event.type === "run.updated"
+                  ? [
+                      {
+                        sequence: entry.sequence,
+                        commandId: entry.commandId,
+                        runId: entry.event.payload.id,
+                        attemptId: entry.event.payload.activeAttemptId,
+                        rootNodeId: entry.event.payload.rootNodeId,
+                        providerThreadId: entry.event.payload.providerThreadId,
+                        status: entry.event.payload.status,
+                      },
+                    ]
+                  : [],
+              )
+              .toSorted((left, right) => left.sequence - right.sequence);
+            const interrupted = terminals.find(
+              (entry) =>
+                entry.runId === child.input.runId &&
+                entry.attemptId === child.input.attemptId &&
+                entry.status === "interrupted",
+            );
+            const newer = terminals.find(
+              (entry) =>
+                entry.runId === first.id &&
+                entry.attemptId === resumed.input.attemptId &&
+                entry.status === "failed",
+            );
+            assert.ok(interrupted);
+            assert.ok(newer);
+            const receipt = yield* (yield* CommandReceiptStoreV2).getByCommandId(resume.commandId);
+            assert.isTrue(Option.isSome(receipt));
+            if (Option.isNone(receipt)) return yield* Effect.die("Missing accepted Resume receipt");
+            assert.equal(receipt.value.status, "accepted");
+            assert.equal(receipt.value.threadId, childThreadId);
+            assert.equal(receipt.value.commandType, "queue.resume");
+            assert.isBelow(interrupted.sequence, receipt.value.resultSequence);
+            assert.isBelow(receipt.value.resultSequence, newer.sequence);
+            assert.deepEqual(offers, ["parent", "child-foreground", "first"]);
+            yield* Effect.logInfo("Queue promotion deciding terminal boundaries", {
+              interrupted,
+              resume: {
+                commandId: resume.commandId,
+                resultSequence: receipt.value.resultSequence,
+              },
+              newer,
+              tail: { runId: second.id, status: "queued", held: false },
             });
-            stage = "child interrupted checkpoint";
-            const stopped = yield* waitForThread(childThreadId, (projection) =>
-              projection.runs.some(
-                (run) =>
-                  run.id === child.input.runId &&
-                  run.status === "interrupted" &&
-                  run.checkpointId !== null,
-              ),
-            );
-            assert.isTrue(
-              stopped.runs.filter((run) => run.status === "queued").every((run) => run.queueHeld),
-            );
-            const resume = {
-              type: "queue.resume" as const,
-              threadId: childThreadId,
-              commandId: CommandId.make(`${childThreadId}:resume`),
-              ...(release === "head" ? { runId: first.id } : {}),
-            };
-            yield* orchestrator.dispatch(resume);
-            stage = "resumed head offer";
-            const resumed = yield* takeOffer;
-            assert.equal(resumed.input.runId, first.id);
-            // The original accepted command remains the release boundary on retry.
-            yield* orchestrator.dispatch(resume);
-            if (release === "new-admission")
-              yield* send(orchestrator, childThreadId, "third", true);
-            const released = yield* orchestrator.getThreadProjection(childThreadId);
-            assert.equal(
-              released.runs.find((run) => run.id === second.id)?.queueHeld,
-              release === "head",
-            );
-            let settledUnderParentLock = false;
-            if (release === "newer-failure") {
-              settledUnderParentLock = true;
-              // Commit the newer real failure while the older terminal reactor
-              // is still fenced by the parent lock. Failed runs do not capture.
-              yield* resumed.settle("failed");
-              stage = "newer failure committed under parent lock";
-              const failed = yield* waitForThread(
-                childThreadId,
-                (projection) =>
-                  projection.runs.some((run) => run.id === first.id && run.status === "failed") &&
-                  projection.attempts.some(
-                    (attempt) =>
-                      attempt.id === resumed.input.attemptId && attempt.status === "failed",
-                  ) &&
-                  projection.nodes.some(
-                    (node) => node.id === resumed.input.rootNodeId && node.status === "failed",
-                  ),
-              );
-              assert.equal(failed.runs.find((run) => run.id === second.id)?.status, "queued");
-              assert.equal(failed.runs.find((run) => run.id === second.id)?.queueHeld, false);
-              const eventStore = yield* EventStore.EventStoreV2;
-              const throughSequence = yield* eventStore.latestSequence({ threadId: childThreadId });
-              const history = yield* eventStore
-                .read({ threadId: childThreadId, eventType: "run.updated", throughSequence })
-                .pipe(Stream.runCollect);
-              const terminals = history
-                .flatMap((entry) =>
-                  entry.event.type === "run.updated"
-                    ? [
-                        {
-                          sequence: entry.sequence,
-                          commandId: entry.commandId,
-                          runId: entry.event.payload.id,
-                          attemptId: entry.event.payload.activeAttemptId,
-                          rootNodeId: entry.event.payload.rootNodeId,
-                          providerThreadId: entry.event.payload.providerThreadId,
-                          status: entry.event.payload.status,
-                        },
-                      ]
-                    : [],
-                )
-                .toSorted((left, right) => left.sequence - right.sequence);
-              const interrupted = terminals.find(
-                (entry) =>
-                  entry.runId === child.input.runId &&
-                  entry.attemptId === child.input.attemptId &&
-                  entry.status === "interrupted",
-              );
-              const newer = terminals.find(
-                (entry) =>
-                  entry.runId === first.id &&
-                  entry.attemptId === resumed.input.attemptId &&
-                  entry.status === "failed",
-              );
-              assert.ok(interrupted);
-              assert.ok(newer);
-              const receipt = yield* (yield* CommandReceiptStoreV2).getByCommandId(
-                resume.commandId,
-              );
-              assert.isTrue(Option.isSome(receipt));
-              if (Option.isNone(receipt))
-                return yield* Effect.die("Missing accepted Resume receipt");
-              assert.equal(receipt.value.status, "accepted");
-              assert.equal(receipt.value.threadId, childThreadId);
-              assert.equal(receipt.value.commandType, "queue.resume");
-              assert.isBelow(interrupted.sequence, receipt.value.resultSequence);
-              assert.isBelow(receipt.value.resultSequence, newer.sequence);
-              assert.deepEqual(offers, ["parent", "child-foreground", "first"]);
-              yield* Effect.logInfo("Queue promotion deciding terminal boundaries", {
-                interrupted,
-                resume: {
-                  commandId: resume.commandId,
-                  resultSequence: receipt.value.resultSequence,
-                },
-                newer,
-                tail: { runId: second.id, status: "queued", held: false },
-              });
-            }
-            yield* Deferred.succeed(unlock, undefined);
-            yield* Fiber.join(parentLock);
-            if (!settledUnderParentLock)
-              yield* resumed.settle(release === "newer-failure" ? "failed" : "completed");
-            stage = "resumed head terminal";
-            const completed = yield* waitForThread(childThreadId, (projection) =>
-              projection.runs.some(
-                (run) =>
-                  run.id === first.id &&
-                  run.status === (release === "newer-failure" ? "failed" : "completed"),
-              ),
-            );
-            assert.equal(
-              completed.runs.find((run) => run.id === child.input.runId)?.status,
-              "interrupted",
-            );
-            if (release === "head" || release === "newer-failure") {
-              stage = "newer terminal re-holds tail";
-              yield* waitForThread(childThreadId, (projection) =>
-                projection.runs.some(
-                  (run) =>
-                    run.id === second.id && run.status === "queued" && run.queueHeld === true,
-                ),
-              );
-              assert.deepEqual(offers, ["parent", "child-foreground", "first"]);
-              yield* orchestrator.dispatch({
-                type: "queue.resume",
-                threadId: childThreadId,
-                commandId: CommandId.make(`${childThreadId}:resume-rest`),
-              });
-            }
-            stage = "tail offer";
-            const tail = yield* takeOffer;
-            assert.equal(tail.input.runId, second.id);
-            yield* tail.settle("completed");
-            yield* waitForThread(childThreadId, (projection) =>
-              projection.runs.some((run) => run.id === second.id && run.status === "completed"),
-            );
-            if (release === "new-admission") {
-              const third = yield* takeOffer;
-              assert.equal(third.input.message.text, "third");
-              yield* third.settle("completed");
-              yield* waitForThread(childThreadId, (projection) =>
-                projection.runs.some(
-                  (run) => run.id === third.input.runId && run.status === "completed",
-                ),
-              );
-            }
-            assert.deepEqual(offers, [
-              "parent",
-              "child-foreground",
-              "first",
-              "second",
-              ...(release === "new-admission" ? ["third"] : []),
-            ]);
-          }).pipe(
-            Effect.tapError(() =>
-              release === "newer-failure"
-                ? Effect.gen(function* () {
-                    const eventStore = yield* EventStore.EventStoreV2;
-                    const throughSequence = yield* eventStore.latestSequence({
-                      threadId: childThreadId,
-                    });
-                    const history = yield* eventStore
-                      .read({ threadId: childThreadId, eventType: "run.updated", throughSequence })
-                      .pipe(Stream.runCollect);
-                    yield* Effect.logError(
-                      "Queue promotion failed deciding stored timeline",
-                      history.flatMap((entry) =>
-                        entry.event.type === "run.updated"
-                          ? [
-                              {
-                                sequence: entry.sequence,
-                                commandId: entry.commandId,
-                                runId: entry.event.payload.id,
-                                attemptId: entry.event.payload.activeAttemptId,
-                                rootNodeId: entry.event.payload.rootNodeId,
-                                providerThreadId: entry.event.payload.providerThreadId,
-                                status: entry.event.payload.status,
-                                held: entry.event.payload.queueHeld,
-                              },
-                            ]
-                          : [],
-                      ),
-                    );
-                  })
-                : Effect.void,
+          }
+          yield* Deferred.succeed(unlock, undefined);
+          yield* Fiber.join(parentLock);
+          if (!settledUnderParentLock)
+            yield* resumed.settle(release === "newer-failure" ? "failed" : "completed");
+          stage = "resumed head terminal";
+          const completed = yield* waitForThread(childThreadId, (projection) =>
+            projection.runs.some(
+              (run) =>
+                run.id === first.id &&
+                run.status === (release === "newer-failure" ? "failed" : "completed"),
             ),
-            Effect.tapError(() =>
-              orchestrator.getThreadProjection(childThreadId).pipe(
-                Effect.flatMap((projection) =>
-                  Effect.logError("Terminal ordering regression stage", {
-                    stage,
-                    runs: projection.runs.map((run) => ({
-                      ordinal: run.ordinal,
-                      status: run.status,
-                      held: run.queueHeld,
-                      checkpoint: run.checkpointId !== null,
-                    })),
-                  }),
-                ),
-              ),
-            ),
-            Effect.ensuring(Deferred.succeed(unlock, undefined)),
           );
-        }),
-    ),
-  );
-}
+          assert.equal(
+            completed.runs.find((run) => run.id === child.input.runId)?.status,
+            "interrupted",
+          );
+          if (release === "head" || release === "newer-failure") {
+            stage = "newer terminal re-holds tail";
+            yield* waitForThread(childThreadId, (projection) =>
+              projection.runs.some(
+                (run) => run.id === second.id && run.status === "queued" && run.queueHeld === true,
+              ),
+            );
+            assert.deepEqual(offers, ["parent", "child-foreground", "first"]);
+            yield* orchestrator.dispatch({
+              type: "queue.resume",
+              threadId: childThreadId,
+              commandId: CommandId.make(`${childThreadId}:resume-rest`),
+            });
+          }
+          stage = "tail offer";
+          const tail = yield* takeOffer;
+          assert.equal(tail.input.runId, second.id);
+          yield* tail.settle("completed");
+          yield* waitForThread(childThreadId, (projection) =>
+            projection.runs.some((run) => run.id === second.id && run.status === "completed"),
+          );
+          if (release === "new-admission") {
+            const third = yield* takeOffer;
+            assert.equal(third.input.message.text, "third");
+            yield* third.settle("completed");
+            yield* waitForThread(childThreadId, (projection) =>
+              projection.runs.some(
+                (run) => run.id === third.input.runId && run.status === "completed",
+              ),
+            );
+          }
+          assert.deepEqual(offers, [
+            "parent",
+            "child-foreground",
+            "first",
+            "second",
+            ...(release === "new-admission" ? ["third"] : []),
+          ]);
+        }).pipe(
+          Effect.tapError(() =>
+            release === "newer-failure"
+              ? Effect.gen(function* () {
+                  const eventStore = yield* EventStore.EventStoreV2;
+                  const throughSequence = yield* eventStore.latestSequence({
+                    threadId: childThreadId,
+                  });
+                  const history = yield* eventStore
+                    .read({ threadId: childThreadId, eventType: "run.updated", throughSequence })
+                    .pipe(Stream.runCollect);
+                  yield* Effect.logError(
+                    "Queue promotion failed deciding stored timeline",
+                    history.flatMap((entry) =>
+                      entry.event.type === "run.updated"
+                        ? [
+                            {
+                              sequence: entry.sequence,
+                              commandId: entry.commandId,
+                              runId: entry.event.payload.id,
+                              attemptId: entry.event.payload.activeAttemptId,
+                              rootNodeId: entry.event.payload.rootNodeId,
+                              providerThreadId: entry.event.payload.providerThreadId,
+                              status: entry.event.payload.status,
+                              held: entry.event.payload.queueHeld,
+                            },
+                          ]
+                        : [],
+                    ),
+                  );
+                })
+              : Effect.void,
+          ),
+          Effect.tapError(() =>
+            orchestrator.getThreadProjection(childThreadId).pipe(
+              Effect.flatMap((projection) =>
+                Effect.logError("Terminal ordering regression stage", {
+                  stage,
+                  runs: projection.runs.map((run) => ({
+                    ordinal: run.ordinal,
+                    status: run.status,
+                    held: run.queueHeld,
+                    checkpoint: run.checkpointId !== null,
+                  })),
+                }),
+              ),
+            ),
+          ),
+          Effect.ensuring(Deferred.succeed(unlock, undefined)),
+        );
+      }),
+  ),
+);
 
 it.live("restarted queue reactor preserves durable Resume across an older pending checkpoint", () =>
   Effect.scoped(
@@ -2498,7 +2549,10 @@ it.live("a real checkpoint capture failure settles the native answer and drains 
           (scope) => scope.id === root?.checkpointScopeId,
         );
         assert.ok(scope);
-        const ref = checkpointRefForScopeOrdinal({ scopeId: scope.id, ordinalWithinScope: 1 });
+        const ref = yield* checkpointRefForScopeOrdinal({
+          scopeId: scope.id,
+          ordinalWithinScope: 1,
+        });
         const lock = `${scope.cwd}/.git/${ref}.lock`;
         yield* fs.writeFileString(lock, "Synthetic competing checkpoint writer\n");
         yield* foreground.settle("completed");
@@ -2587,111 +2641,111 @@ it.live(
     ),
 );
 
-for (const failing of ["read", "commit"] as const) {
-  it.live(
-    `a transient ${failing} failure while settling an uncapturable checkpoint still completes the run once`,
-    () => {
-      // The capture's precondition always fails, so every attempt ends in the
-      // last-attempt settlement once the attempts run out.
-      let contextReads = 0;
-      let failedOnce = false;
-      const failOnce = () => {
-        if (failedOnce) return false;
-        failedOnce = true;
-        return true;
-      };
-      return withNativeQueue(
-        `queue-native-capture-settlement-${failing}-failure`,
-        ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
-          Effect.gen(function* () {
-            yield* send(orchestrator, threadId, "foreground");
-            const foreground = yield* takeOffer;
-            yield* send(orchestrator, threadId, "first", true);
-            yield* foreground.answer("Answer kept through a busy database");
-            yield* foreground.settle("completed");
-            const next = yield* takeOffer.pipe(Effect.option);
-            const after = yield* orchestrator.getThreadProjection(threadId);
-            const run = after.runs.find((candidate) => candidate.id === foreground.input.runId);
-            assert.isTrue(failedOnce);
-            assert.equal(run?.status, "completed");
-            assert.isTrue(Option.isSome(next));
-            if (Option.isNone(next)) return;
-            assert.equal(next.value.input.message.text, "first");
-            assert.equal(
-              after.checkpoints.find((row) => row.id === run?.checkpointId)?.status,
-              "error",
-            );
-            // Exactly one settlement was committed.
-            const history = yield* (yield* EventStore.EventStoreV2)
-              .read({ threadId })
-              .pipe(Stream.runCollect);
-            assert.equal(
-              history.filter(
-                (entry) =>
-                  entry.event.type === "run.updated" &&
-                  entry.event.payload.id === foreground.input.runId &&
-                  entry.event.payload.status === "completed",
-              ).length,
-              1,
-            );
-            assert.equal(
-              history.filter(
-                (entry) =>
-                  entry.event.type === "checkpoint.captured" &&
-                  entry.event.payload.runId === foreground.input.runId,
-              ).length,
-              1,
-            );
-            yield* next.value.settle("completed");
-            yield* waitFor((projection) =>
-              projection.runs.every((candidate) => candidate.status === "completed"),
-            );
-            assert.deepEqual(offers, ["foreground", "first"]);
-          }),
-        {
-          decorateProjectionStore: (store) => ({
-            ...store,
-            getCheckpointCaptureContext: (threadId, target) =>
-              Effect.suspend(() => {
-                contextReads++;
-                // Reads 1-5 are the capture attempts; read 6 is the settlement's.
-                return failing === "read" && contextReads === 6 && failOnce()
-                  ? Effect.fail(
-                      new ProjectionStore.ProjectionStoreReadError({
-                        threadId,
-                        cause: "Synthetic busy database during settlement read",
-                      }),
-                    )
-                  : store.getCheckpointCaptureContext(threadId, target);
-              }).pipe(
-                Effect.map((context) =>
-                  context.scope === undefined
-                    ? context
-                    : {
-                        ...context,
-                        scope: { ...context.scope, cwd: `${context.scope.cwd}-moved` },
-                      },
-                ),
-              ),
-          }),
-          decorateEventSink: (sink) => ({
-            ...sink,
-            commitCommand: (input) =>
-              failing === "commit" && input.commandType === "checkpoint.capture" && failOnce()
-                ? Effect.fail(
-                    new EventSinkWriteError({
-                      eventCount: input.events.length,
-                      commandId: input.commandId,
-                      cause: "Synthetic busy database during settlement commit",
-                    }),
-                  )
-                : sink.commitCommand(input),
-          }),
-        },
-      );
+it.live.each(
+  (["read", "commit"] as const).map((failing) => ({
+    caseTitle: `a transient ${failing} failure while settling an uncapturable checkpoint still completes the run once`,
+    failing,
+  })),
+)("$caseTitle", ({ failing }) => {
+  // The capture's precondition always fails, so every attempt ends in the
+  // last-attempt settlement once the attempts run out.
+  let contextReads = 0;
+  let failedOnce = false;
+  const failOnce = () => {
+    if (failedOnce) return false;
+    failedOnce = true;
+    return true;
+  };
+  return withNativeQueue(
+    `queue-native-capture-settlement-${failing}-failure`,
+    ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
+      Effect.gen(function* () {
+        yield* send(orchestrator, threadId, "foreground");
+        const foreground = yield* takeOffer;
+        yield* send(orchestrator, threadId, "first", true);
+        yield* foreground.answer("Answer kept through a busy database");
+        yield* foreground.settle("completed");
+        const next = yield* takeOffer.pipe(Effect.option);
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        const run = after.runs.find((candidate) => candidate.id === foreground.input.runId);
+        assert.isTrue(failedOnce);
+        assert.equal(run?.status, "completed");
+        assert.isTrue(Option.isSome(next));
+        if (Option.isNone(next)) return;
+        assert.equal(next.value.input.message.text, "first");
+        assert.equal(
+          after.checkpoints.find((row) => row.id === run?.checkpointId)?.status,
+          "error",
+        );
+        // Exactly one settlement was committed.
+        const history = yield* (yield* EventStore.EventStoreV2)
+          .read({ threadId })
+          .pipe(Stream.runCollect);
+        assert.equal(
+          history.filter(
+            (entry) =>
+              entry.event.type === "run.updated" &&
+              entry.event.payload.id === foreground.input.runId &&
+              entry.event.payload.status === "completed",
+          ).length,
+          1,
+        );
+        assert.equal(
+          history.filter(
+            (entry) =>
+              entry.event.type === "checkpoint.captured" &&
+              entry.event.payload.runId === foreground.input.runId,
+          ).length,
+          1,
+        );
+        yield* next.value.settle("completed");
+        yield* waitFor((projection) =>
+          projection.runs.every((candidate) => candidate.status === "completed"),
+        );
+        assert.deepEqual(offers, ["foreground", "first"]);
+      }),
+    {
+      decorateProjectionStore: (store) => ({
+        ...store,
+        getCheckpointCaptureContext: (threadId, target) =>
+          Effect.suspend(() => {
+            contextReads++;
+            // Reads 1-5 are the capture attempts; read 6 is the settlement's.
+            return failing === "read" && contextReads === 6 && failOnce()
+              ? Effect.fail(
+                  new ProjectionStore.ProjectionStoreReadError({
+                    threadId,
+                    cause: "Synthetic busy database during settlement read",
+                  }),
+                )
+              : store.getCheckpointCaptureContext(threadId, target);
+          }).pipe(
+            Effect.map((context) =>
+              context.scope === undefined
+                ? context
+                : {
+                    ...context,
+                    scope: { ...context.scope, cwd: `${context.scope.cwd}-moved` },
+                  },
+            ),
+          ),
+      }),
+      decorateEventSink: (sink) => ({
+        ...sink,
+        commitCommand: (input) =>
+          failing === "commit" && input.commandType === "checkpoint.capture" && failOnce()
+            ? Effect.fail(
+                new EventSinkWriteError({
+                  eventCount: input.events.length,
+                  commandId: input.commandId,
+                  cause: "Synthetic busy database during settlement commit",
+                }),
+              )
+            : sink.commitCommand(input),
+      }),
     },
   );
-}
+});
 
 it.live("a deferred start does not open a provider that was turned off after admission", () => {
   let enabled = true;
@@ -3792,7 +3846,7 @@ it.live(
                       ?.checkpointScopeId,
                 )!;
                 assert.equal(scopeA.cwd, workspaceA);
-                const baselineA = checkpointRefForScopeOrdinal({
+                const baselineA = yield* checkpointRefForScopeOrdinal({
                   scopeId: scopeA.id,
                   ordinalWithinScope: 0,
                 });
@@ -3915,7 +3969,7 @@ it.live(
                   }),
                   "+Native A output",
                 );
-                const baselineB = checkpointRefForScopeOrdinal({
+                const baselineB = yield* checkpointRefForScopeOrdinal({
                   scopeId: scopeB.id,
                   ordinalWithinScope: 1,
                 });

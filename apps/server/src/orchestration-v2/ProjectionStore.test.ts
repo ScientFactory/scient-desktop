@@ -26,11 +26,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import { threadShellFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import {

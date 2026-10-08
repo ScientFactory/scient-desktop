@@ -196,7 +196,7 @@ export const pendingStartOwnerIsCurrent = Effect.fn("pendingStartOwnerIsCurrent"
 
 /** A Stop requested before the native offer declines the start. */
 export const startUnlessStopRequested = (
-  currentAttemptRunning: Effect.Effect<boolean>,
+  currentAttemptRunning: Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>,
   input: {
     readonly projectionStore: ProjectionStore.ProjectionStoreV2Shape;
     readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
@@ -220,10 +220,7 @@ export const startUnlessStopRequested = (
                 signal: "interrupt-result",
               }),
             )
-            .pipe(
-              Effect.map((requested) => !requested),
-              Effect.catchCause(() => Effect.succeed(false)),
-            )
+            .pipe(Effect.map((requested) => !requested))
         : Effect.succeed(false),
     ),
   );

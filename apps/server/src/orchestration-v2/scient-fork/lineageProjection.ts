@@ -15,7 +15,7 @@
  */
 import type { OrchestrationEvent } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import { insertPendingFork, markForkReady } from "./forkRepository.ts";
@@ -36,21 +36,23 @@ export function applyScientThreadLineageProjection(
       updatedAt: event.occurredAt,
     }).pipe(
       Effect.asVoid,
-      Effect.catchTag("SqlError", (sqlError) =>
-        Effect.fail(
-          toPersistenceSqlError("ScientThreadLineageProjection.apply:updateFidelity")(sqlError),
-        ),
-      ),
+      Effect.catchTags({
+        SqlError: (sqlError) =>
+          Effect.fail(
+            toPersistenceSqlError("ScientThreadLineageProjection.apply:updateFidelity")(sqlError),
+          ),
+      }),
     );
   }
   // An import's transfer is written with its thread, in the command's transaction.
   if (event.type === "thread.conversation-imported") {
     return insertImportTransfer(sql, event.payload).pipe(
-      Effect.catchTag("SqlError", (sqlError) =>
-        Effect.fail(
-          toPersistenceSqlError("ScientThreadLineageProjection.apply:importTransfer")(sqlError),
-        ),
-      ),
+      Effect.catchTags({
+        SqlError: (sqlError) =>
+          Effect.fail(
+            toPersistenceSqlError("ScientThreadLineageProjection.apply:importTransfer")(sqlError),
+          ),
+      }),
     );
   }
   if (event.type !== "thread.forked") {
@@ -59,8 +61,9 @@ export function applyScientThreadLineageProjection(
   const payload = event.payload;
   return insertPendingFork(sql, payload).pipe(
     Effect.asVoid,
-    Effect.catchTag("SqlError", (sqlError) =>
-      Effect.fail(toPersistenceSqlError("ScientThreadLineageProjection.apply:upsert")(sqlError)),
-    ),
+    Effect.catchTags({
+      SqlError: (sqlError) =>
+        Effect.fail(toPersistenceSqlError("ScientThreadLineageProjection.apply:upsert")(sqlError)),
+    }),
   );
 }

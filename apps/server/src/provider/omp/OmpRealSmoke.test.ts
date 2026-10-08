@@ -11,7 +11,7 @@ import { OmpSettings, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 
 import { nativeOmpSession, watchNativeOmpTextTurn } from "../testUtils/nativeOmpSession.ts";
-import { checkOmpProviderStatus } from "../Layers/OmpProvider.ts";
+import { checkOmpProviderStatus } from "../OmpProvider.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import {
   ompLiveInstance,

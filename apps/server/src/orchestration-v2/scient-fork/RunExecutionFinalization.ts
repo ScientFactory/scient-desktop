@@ -10,7 +10,7 @@ import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
-import type { KeyedSerialExecutor } from "../KeyedSerialExecutor.ts";
+import type * as KeyedLock from "@t3tools/shared/KeyedLock";
 import {
   ProviderAdapterTurnStartError,
   type ProviderAdapterV2SessionRuntime,
@@ -34,7 +34,7 @@ export const makeOwnedRunFinalizer = Effect.fnUntraced(function* <
     readonly attempt: { readonly id: RunAttemptId };
     readonly run: { readonly threadId: ThreadId };
   },
-  threadDispatch: KeyedSerialExecutor<ThreadId>,
+  threadDispatch: KeyedLock.KeyedLock<ThreadId>,
   writeFinalRunEvents: (final: Final) => Effect.Effect<boolean, E, R>,
 ) {
   // An interrupt receipt can commit even when this superseded root cannot finalize.

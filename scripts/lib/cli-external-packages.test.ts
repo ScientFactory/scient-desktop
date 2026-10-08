@@ -117,6 +117,7 @@ describe("selectCliRuntimeExternalDependencies", () => {
         "@napi-rs/keyring",
         "msgpackr-extract",
         "node-pty",
+        "playwright-core",
       ],
     );
   });

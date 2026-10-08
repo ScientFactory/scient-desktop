@@ -4,6 +4,7 @@ type AtomCommandFailure<A, E> = Extract<AtomCommandResult<A, E>, { readonly _tag
 
 export interface FileSaveCoordinatorOptions<A, E> {
   readonly debounceMs: number;
+  readonly canPersist?: () => boolean;
   readonly initialRevision: string;
   readonly persist: (
     contents: string,
@@ -11,7 +12,7 @@ export interface FileSaveCoordinatorOptions<A, E> {
   ) => Promise<AtomCommandResult<A, E>>;
   readonly revisionFromResult: (value: A) => string;
   readonly onPendingChange: (pending: boolean) => void;
-  readonly onConfirmed: (contents: string, value: A) => void;
+  readonly onConfirmed: (contents: string, value: A) => boolean | void;
   readonly onFailure?: (contents: string, result: AtomCommandFailure<A, E>) => void;
   readonly onResolutionApplied?: (action: FileSaveResolutionAction) => void;
 }
@@ -165,16 +166,18 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
   private async persistLatest(force: boolean): Promise<void> {
     if (this.saving || !this.hasPendingChanges || (this.suspended && !this.disposed && !force))
       return;
+    if (this.options.canPersist?.() === false) return;
 
     this.saving = true;
     const contents = this.latestContents;
     const revision = this.latestRevision;
     const result = await this.options.persist(contents, this.confirmedFileRevision);
     const succeeded = result._tag === "Success";
+    let confirmed = false;
     if (result._tag === "Success") {
       this.confirmedFileRevision = this.options.revisionFromResult(result.value);
       this.confirmedEditRevision = revision;
-      this.options.onConfirmed(contents, result.value);
+      confirmed = this.options.onConfirmed(contents, result.value) !== false;
     } else {
       this.options.onFailure?.(contents, result);
     }
@@ -187,7 +190,7 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
       return;
     }
     if (revision === this.latestRevision) {
-      if (succeeded) this.options.onPendingChange(false);
+      if (confirmed) this.options.onPendingChange(false);
       return;
     }
 

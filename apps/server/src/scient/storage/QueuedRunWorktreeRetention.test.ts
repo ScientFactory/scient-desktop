@@ -18,8 +18,8 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import * as SqlClient from "effect/sql/SqlClient";
+import { ChildProcessSpawner } from "effect/process";
 import {
   threadCreated,
   THREAD_ID,
@@ -29,8 +29,8 @@ import { GitManager } from "../../git/GitManager.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as Settings from "../../serverSettings.ts";
 import * as StorageCleanup from "../../storageCleanup.ts";
 import { presentQueuedRunsAsBusy } from "./QueuedRunWorktreeRetention.ts";
@@ -43,8 +43,8 @@ const testLayer = Layer.merge(
   database,
   makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "queued-run-worktree-retention" },
-    ProviderAdapterRegistry.makeLayer([]),
-    { databaseLayer: database, runEffectWorker: false },
+    ProviderAdapterRegistry.layerFromAdapters([]),
+    { layerDatabase: database, runEffectWorker: false },
   ),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -111,124 +111,128 @@ const scenarios = {
 >;
 
 describe("storage cleanup keeps worktrees of threads with queued runs", () => {
-  for (const [name, scenario] of Object.entries(scenarios)) {
-    it.effect(`${scenario.kept ? "keeps" : "removes"} the worktree for ${name}`, () =>
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse("2026-07-01T00:00:00Z"));
-        const config = yield* ServerConfig;
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const sink = yield* EventSink.EventSinkV2;
-        const projections = yield* ProjectionStore.ProjectionStoreV2;
-        const now = yield* DateTime.now;
-        const worktreePath = path.join(yield* fs.realPath(config.worktreesDir), "feature");
-        yield* fs.makeDirectory(worktreePath, { recursive: true });
-        yield* fs.writeFileString(path.join(worktreePath, ".git"), "gitdir: /fixture/admin");
-        const created = threadCreated(driver);
-        yield* sink.commitProjectCommand({
+  it.effect.each(
+    Object.entries(scenarios).map(([name, scenario]) => ({
+      caseTitle: `${scenario.kept ? "keeps" : "removes"} the worktree for ${name}`,
+      name,
+      scenario,
+    })),
+  )("$caseTitle", ({ name, scenario }) =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-07-01T00:00:00Z"));
+      const config = yield* ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sink = yield* EventSink.EventSinkV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const worktreePath = path.join(yield* fs.realPath(config.worktreesDir), "feature");
+      yield* fs.makeDirectory(worktreePath, { recursive: true });
+      yield* fs.writeFileString(path.join(worktreePath, ".git"), "gitdir: /fixture/admin");
+      const created = threadCreated(driver);
+      yield* sink.commitProjectCommand({
+        commandId: CommandId.make("retention-project"),
+        projectId: created.payload.projectId!,
+        commandType: "project.create",
+        acceptedAt: now,
+        event: {
+          eventId: EventId.make("retention-project-created"),
+          aggregateKind: "project",
+          aggregateId: created.payload.projectId!,
+          occurredAt: DateTime.formatIso(now),
           commandId: CommandId.make("retention-project"),
-          projectId: created.payload.projectId!,
-          commandType: "project.create",
-          acceptedAt: now,
-          event: {
-            eventId: EventId.make("retention-project-created"),
-            aggregateKind: "project",
-            aggregateId: created.payload.projectId!,
-            occurredAt: DateTime.formatIso(now),
-            commandId: CommandId.make("retention-project"),
-            causationEventId: null,
-            correlationId: null,
-            metadata: {},
-            type: "project.created",
-            payload: {
-              projectId: created.payload.projectId!,
-              title: "Retention project",
-              workspaceRoot: config.baseDir,
-              defaultModelSelection: null,
-              scripts: [],
-              createdAt: DateTime.formatIso(now),
-              updatedAt: DateTime.formatIso(now),
-            },
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          type: "project.created",
+          payload: {
+            projectId: created.payload.projectId!,
+            title: "Retention project",
+            workspaceRoot: config.baseDir,
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: DateTime.formatIso(now),
+            updatedAt: DateTime.formatIso(now),
           },
-        });
-        yield* sink.write({
-          events: [
-            { ...created, payload: { ...created.payload, branch: "feature", worktreePath } },
-            ...scenario.runs.map(runCreated),
-          ],
-        });
-        const swept = yield* Deferred.make<void>();
-        const removals: string[] = [];
-        const settings = yield* Settings.ServerSettingsService.pipe(
-          Effect.provide(
-            Settings.layerTest({
-              storageCleanup: {
-                worktreeAfterDays: 7,
-                worktreeOnDelete: false,
-                worktreeOnMerge: false,
-                worktreeUnchanged: false,
-                browserArtifactsAfterDays: null,
-                logsAfterDays: null,
+        },
+      });
+      yield* sink.write({
+        events: [
+          { ...created, payload: { ...created.payload, branch: "feature", worktreePath } },
+          ...scenario.runs.map(runCreated),
+        ],
+      });
+      const swept = yield* Deferred.make<void>();
+      const removals: string[] = [];
+      const settings = yield* Settings.ServerSettingsService.pipe(
+        Effect.provide(
+          Settings.layerTest({
+            storageCleanup: {
+              worktreeAfterDays: 7,
+              worktreeOnDelete: false,
+              worktreeOnMerge: false,
+              worktreeUnchanged: false,
+              browserArtifactsAfterDays: null,
+              logsAfterDays: null,
+            },
+          }),
+        ),
+      );
+      const cleanup = yield* StorageCleanup.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(Settings.ServerSettingsService, settings),
+            Layer.succeed(ProjectionStore.ProjectionStoreV2, {
+              ...projections,
+              getShellSnapshot: (options) =>
+                projections
+                  .getShellSnapshot(options)
+                  .pipe(Effect.tap(() => Deferred.succeed(swept, undefined))),
+            }),
+            Layer.mock(GitManager)({ invalidateStatus: () => Effect.void }),
+            Layer.mock(TerminalManager)({
+              subscribeMetadata: (listener) =>
+                listener({ type: "snapshot", terminals: [] }).pipe(Effect.as(() => {})),
+            }),
+            Layer.mock(GitVcsDriver)({
+              statusDetailsLocal: () =>
+                Effect.succeed({
+                  isRepo: true,
+                  hasOriginRemote: false,
+                  isDefaultBranch: false,
+                  branch: "feature",
+                  upstreamRef: null,
+                  hasWorkingTreeChanges: false,
+                  workingTree: { files: [], insertions: 0, deletions: 0 },
+                  hasUpstream: false,
+                  aheadCount: 0,
+                  behindCount: 0,
+                  aheadOfDefaultCount: 0,
+                }),
+              resolveCommit: () => Effect.succeed({ commitSha: "a".repeat(40) }),
+              execute: () =>
+                Effect.succeed({
+                  exitCode: ChildProcessSpawner.ExitCode(0),
+                  stdout: "",
+                  stderr: "",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                }),
+              removeWorktree: (input) => {
+                removals.push(input.path);
+                return fs.remove(input.path, { recursive: true }).pipe(Effect.orDie);
               },
             }),
           ),
-        );
-        const cleanup = yield* StorageCleanup.make.pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              Layer.succeed(Settings.ServerSettingsService, settings),
-              Layer.succeed(ProjectionStore.ProjectionStoreV2, {
-                ...projections,
-                getShellSnapshot: (options) =>
-                  projections
-                    .getShellSnapshot(options)
-                    .pipe(Effect.tap(() => Deferred.succeed(swept, undefined))),
-              }),
-              Layer.mock(GitManager)({ invalidateStatus: () => Effect.void }),
-              Layer.mock(TerminalManager)({
-                subscribeMetadata: (listener) =>
-                  listener({ type: "snapshot", terminals: [] }).pipe(Effect.as(() => {})),
-              }),
-              Layer.mock(GitVcsDriver)({
-                statusDetailsLocal: () =>
-                  Effect.succeed({
-                    isRepo: true,
-                    hasOriginRemote: false,
-                    isDefaultBranch: false,
-                    branch: "feature",
-                    upstreamRef: null,
-                    hasWorkingTreeChanges: false,
-                    workingTree: { files: [], insertions: 0, deletions: 0 },
-                    hasUpstream: false,
-                    aheadCount: 0,
-                    behindCount: 0,
-                    aheadOfDefaultCount: 0,
-                  }),
-                resolveCommit: () => Effect.succeed({ commitSha: "a".repeat(40) }),
-                execute: () =>
-                  Effect.succeed({
-                    exitCode: ChildProcessSpawner.ExitCode(0),
-                    stdout: "",
-                    stderr: "",
-                    stdoutTruncated: false,
-                    stderrTruncated: false,
-                  }),
-                removeWorktree: (input) => {
-                  removals.push(input.path);
-                  return fs.remove(input.path, { recursive: true }).pipe(Effect.orDie);
-                },
-              }),
-            ),
-          ),
-        );
-        yield* cleanup.start();
-        yield* Deferred.await(swept);
-        yield* cleanup.drain;
-        assert.deepStrictEqual(removals, scenario.kept ? [] : [worktreePath]);
-        assert.strictEqual(yield* fs.exists(worktreePath), scenario.kept);
-      }).pipe(Effect.provide(testLayer), Effect.scoped),
-    );
-  }
+        ),
+      );
+      yield* cleanup.start();
+      yield* Deferred.await(swept);
+      yield* cleanup.drain;
+      assert.deepStrictEqual(removals, scenario.kept ? [] : [worktreePath]);
+      assert.strictEqual(yield* fs.exists(worktreePath), scenario.kept);
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
 
   it.effect("finds queued runs through the recovery index instead of scanning run history", () =>
     Effect.gen(function* () {

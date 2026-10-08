@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { SqlitePersistenceMemory } from "../../../persistence/Layers/Sqlite.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import { layerMemory as SqlitePersistenceMemory } from "../../../persistence/Sqlite.ts";
 import { runScientMigrations } from "../scientMigrator.ts";
 import Migration016 from "./016_PreserveLegacyForkSessions.ts";
 

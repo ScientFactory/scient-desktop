@@ -1,6 +1,6 @@
 import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 /**
  * Storage cleanup reads the thread shell, whose status skips held queued runs:

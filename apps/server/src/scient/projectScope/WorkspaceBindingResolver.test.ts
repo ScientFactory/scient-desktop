@@ -13,7 +13,7 @@ import * as Option from "effect/Option";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ServerConfig from "../../config.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import {
   type ObservedWorkspaceEvidence,
   WorkspaceAuthorityScopeRevision,

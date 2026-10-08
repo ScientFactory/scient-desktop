@@ -95,39 +95,42 @@ describe("Python filesystem inventory", () => {
     ),
   );
 
-  for (const selected of [true, false]) {
-    it.effect(`preserves managed ownership when also found on PATH (selected=${selected})`, () =>
-      Effect.gen(function* () {
-        const adapter = makePythonRuntimeAdapter(() => Effect.never, "/bridge.py", {
-          managedRuntime: () =>
-            Effect.succeed({
-              executable: "/managed/python",
-              selected,
-              available: true,
-              version: "3.12.13",
-            }),
-        });
-        const rows = yield* adapter.listInstallations!({
-          projectRoot: null,
-          configuredExecutable: "/managed/python",
-          refresh: true,
-        });
-        expect(rows).toEqual([
-          {
+  it.effect.each(
+    [true, false].map((selected) => ({
+      caseTitle: `preserves managed ownership when also found on PATH (selected=${selected})`,
+      selected,
+    })),
+  )("$caseTitle", ({ selected }) =>
+    Effect.gen(function* () {
+      const adapter = makePythonRuntimeAdapter(() => Effect.never, "/bridge.py", {
+        managedRuntime: () =>
+          Effect.succeed({
             executable: "/managed/python",
-            source: "managed",
-            configured: true,
+            selected,
+            available: true,
             version: "3.12.13",
-            problem: null,
-          },
-        ]);
-      }).pipe(
-        Effect.provideService(HostProcessPlatform, "darwin"),
-        Effect.provideService(HostProcessEnvironment, {}),
-        Effect.provideService(SpawnExecutableResolution, () => "/managed/python"),
-      ),
-    );
-  }
+          }),
+      });
+      const rows = yield* adapter.listInstallations!({
+        projectRoot: null,
+        configuredExecutable: "/managed/python",
+        refresh: true,
+      });
+      expect(rows).toEqual([
+        {
+          executable: "/managed/python",
+          source: "managed",
+          configured: true,
+          version: "3.12.13",
+          problem: null,
+        },
+      ]);
+    }).pipe(
+      Effect.provideService(HostProcessPlatform, "darwin"),
+      Effect.provideService(HostProcessEnvironment, {}),
+      Effect.provideService(SpawnExecutableResolution, () => "/managed/python"),
+    ),
+  );
 
   it.effect("preserves managed selection and venv identity without spawning a probe", () =>
     Effect.gen(function* () {

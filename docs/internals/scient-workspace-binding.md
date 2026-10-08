@@ -26,15 +26,15 @@ Earlier combined experiments remain separate Git/state recovery material, not su
 
 ## Ownership
 
-| Boundary                                                        | Owner                                                                                |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Pure operation metadata and workspace receipt schemas           | `packages/scient-operations`                                                         |
-| Existing tool definitions and schemas                           | `apps/server/src/mcp/toolkits`                                                       |
-| Catalog derived from those definitions                          | `mcp/ScientOperationCatalog.ts`                                                      |
-| Shared dispatch and domain invocation context                   | `scient/operations`                                                                  |
-| MCP registration, grant projection, discovery middleware        | `mcp/ScientToolkitRegistration.ts`, `ScientMcpInvocation.ts`, `ScientMcpProtocol.ts` |
-| Host projection, filesystem/VCS evidence and persisted bindings | `scient/projectScope`                                                                |
-| Document staging and publication fences                         | `mcp/toolkits/documents`                                                             |
+| Boundary                                                        | Owner                                                                    |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Pure operation metadata and workspace receipt schemas           | `packages/scient-operations`                                             |
+| Existing tool definitions and schemas                           | `apps/server/src/mcp/toolkits`                                           |
+| Catalog derived from those definitions                          | `mcp/ScientOperationCatalog.ts`                                          |
+| Shared dispatch and domain invocation context                   | `scient/operations`                                                      |
+| MCP registration, grant projection, discovery middleware        | `mcp/McpHttpServer.ts`, `ScientMcpInvocation.ts`, `ScientMcpProtocol.ts` |
+| Host projection, filesystem/VCS evidence and persisted bindings | `scient/projectScope`                                                    |
+| Document staging and publication fences                         | `mcp/toolkits/documents`                                                 |
 
 Paths in the table that omit an application prefix are under
 `apps/server/src`. The shared package contains no transport, provider SDK,
@@ -165,7 +165,7 @@ The original candidate and its state remain separate recovery material.
 
 The implementation uses merged orchestration V2, not a second event-sourced host.
 Workspace authority follows native projections and committed workspace revisions.
-[`ScientToolkitRegistration`](../../apps/server/src/mcp/ScientToolkitRegistration.ts) projects
+[`registerScientToolkit`](../../apps/server/src/mcp/McpHttpServer.ts) projects
 authenticated MCP invocation context into shared admission before invoking the registered domain
 handler; provider preparation and MCP mounting retain their existing owners. Domain services
 stay independently owned.

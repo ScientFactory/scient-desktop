@@ -27,7 +27,7 @@ import {
 import { makeDroidToolPresentation } from "./DroidToolPresentation.ts";
 import { confirmDroidTurnAdmission } from "./DroidTurnAdmission.ts";
 import { acpPermissionDisposition } from "../../provider/acp/AcpClientPolicy.ts";
-import { isDroidAuthenticationRequiredError } from "../../provider/Layers/DroidProvider.ts";
+import { isDroidAuthenticationRequiredError } from "../../provider/DroidProvider.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import {
   AcpProviderCapabilitiesV2,

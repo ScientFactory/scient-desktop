@@ -17,8 +17,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
 import {
   LegacyV1ThreadImporter,
@@ -28,7 +28,7 @@ import { HistoricalSystemMessage } from "../legacy/HistoricalSystemMessage.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as Registry from "../ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
 
@@ -38,7 +38,7 @@ const isDispatchError = Schema.is(OrchestrationDispatchCommandError);
 const decodeHistoricalSystem = Schema.decodeUnknownSync(HistoricalSystemMessage);
 const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
   { name: "lazy-history-fork" },
-  Registry.makeLayer([
+  Registry.layerFromAdapters([
     {
       instanceId,
       driver: ProviderDriverKind.make("codex"),

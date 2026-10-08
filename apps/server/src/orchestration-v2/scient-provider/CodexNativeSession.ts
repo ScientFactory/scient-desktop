@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The pure native-session launch key preserves its persisted identity.
 import * as NodeCrypto from "node:crypto";
 
 import {

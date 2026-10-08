@@ -11,14 +11,14 @@ import {
   type ThreadForkCommand,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
+import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sqlite.ts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { ServerConfig } from "../../config.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ConversationImporter } from "../../scient/conversationImport/ConversationImporter.ts";
@@ -34,7 +34,7 @@ import {
   PROVIDER_ID,
 } from "../../scient/conversationImport/conversationImport.test-fixtures.ts";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
-import { makeLayer } from "../ProviderAdapterRegistry.ts";
+import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import { EffectOutboxV2 } from "../EffectOutbox.ts";
 import { OrchestrationEffectWorkerV2 } from "../EffectWorker.ts";
@@ -384,111 +384,142 @@ it.live(
     ),
 );
 
-for (const claimedBeforeRestart of [false, true]) {
-  it.live(
-    `native startup recovers a frozen fork without its missed wakeup: interrupted-claim=${claimedBeforeRestart}`,
-    () =>
-      Effect.scoped(
+it.live(
+  "replaying an accepted fork after its pending destination was deleted settles without another event",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { command } = yield* seed;
+        const { waiting } = yield* acceptPending(command);
+        yield* (yield* OrchestratorV2).dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make("delete-pending-fork-before-replay"),
+          threadId: command.newThreadId,
+        });
+        const store = yield* ProjectionStoreV2;
+        const deleted = yield* store.getThreadProjection(command.newThreadId);
+        assert.isNotNull(deleted.thread.deletedAt);
+        assert.equal(deleted.thread.conversationFork?.status, "pending");
+
+        // The replay reaches awaitReady after the terminal deletion is durable,
+        // so its cursor cannot recover that event from a future-only stream.
+        const forks = yield* ConversationForkService;
+        const replayError = yield* forks.dispatch(command).pipe(Effect.flip);
+        assert.equal(replayError.forkDisposition, "abandoned");
+        assert.equal((yield* Fiber.join(waiting))._tag, "Failure");
+        yield* (yield* OrchestrationEffectWorkerV2).drain();
+        yield* forks.provision(command.newThreadId, false);
+        assert.deepEqual(yield* store.getThreadProjection(command.newThreadId), deleted);
+      }).pipe(Effect.provide(runtime({ runEffectWorker: false })), Effect.timeout("15 seconds")),
+    ),
+);
+
+it.live.each(
+  [false, true].map((claimedBeforeRestart) => ({
+    caseTitle: `native startup recovers a frozen fork without its missed wakeup: interrupted-claim=${claimedBeforeRestart}`,
+    claimedBeforeRestart,
+  })),
+)("$caseTitle", ({ claimedBeforeRestart }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const config = yield* ServerConfig;
+      const configLayer = Layer.succeed(ServerConfig, config);
+      const database = makeSqlitePersistenceLive(config.dbPath).pipe(
+        Layer.provide(NodeServices.layer),
+      );
+      const saved = yield* Effect.scoped(
         Effect.gen(function* () {
-          const config = yield* ServerConfig;
-          const configLayer = Layer.succeed(ServerConfig, config);
-          const database = makeSqlitePersistenceLive(config.dbPath).pipe(
-            Layer.provide(NodeServices.layer),
+          const { command } = yield* seed;
+          const { pending } = yield* acceptPending(command);
+          const outbox = yield* EffectOutboxV2;
+          if (claimedBeforeRestart) {
+            const claim = yield* outbox.claimNext({
+              workerId: "interrupted-process",
+              leaseDurationMs: 30000,
+            });
+            assert.ok(Option.isSome(claim));
+            assert.equal(claim.value.request.type, "scient-fork.provision");
+            assert.equal(claim.value.attemptCount, 1);
+          }
+          // The accepted history is frozen even when source content is replaced before setup.
+          const source = yield* (yield* ProjectionStoreV2).getThreadProjection(
+            command.originThreadId,
           );
-          const saved = yield* Effect.scoped(
-            Effect.gen(function* () {
-              const { command } = yield* seed;
-              const { pending } = yield* acceptPending(command);
-              const outbox = yield* EffectOutboxV2;
-              if (claimedBeforeRestart) {
-                const claim = yield* outbox.claimNext({
-                  workerId: "interrupted-process",
-                  leaseDurationMs: 30000,
-                });
-                assert.ok(Option.isSome(claim));
-                assert.equal(claim.value.request.type, "scient-fork.provision");
-                assert.equal(claim.value.attemptCount, 1);
-              }
-              // The accepted history is frozen even when source content is replaced before setup.
-              const source = yield* (yield* ProjectionStoreV2).getThreadProjection(
-                command.originThreadId,
-              );
-              const answer = source.messages.find(
-                (message) => message.id === command.sourceAssistantMessageId,
-              );
-              assert.ok(answer);
-              const now = yield* DateTime.now;
-              yield* (yield* EventSinkV2).write({
-                events: [
-                  {
-                    id: EventId.make("replace-source-after-fork"),
-                    type: "message.updated",
-                    threadId: command.originThreadId,
-                    occurredAt: now,
-                    payload: {
-                      ...answer,
-                      text: "Source replaced after acceptance",
-                      updatedAt: now,
-                    },
-                  },
-                ],
-              });
-              return { command, pending };
-            }).pipe(
-              Effect.provide(
-                runtime({
-                  runEffectWorker: false,
-                  runtimeOptions: { serverConfigLayer: configLayer, databaseLayer: database },
-                }),
-              ),
-            ),
+          const answer = source.messages.find(
+            (message) => message.id === command.sourceAssistantMessageId,
           );
-          yield* Effect.scoped(
-            Effect.gen(function* () {
-              const forks = yield* ConversationForkService;
-              const receipt = yield* forks.dispatch(saved.command);
-              const store = yield* ProjectionStoreV2;
-              const ready = yield* store.getThreadProjection(saved.command.newThreadId);
-              assert.equal(ready.thread.conversationFork?.status, "ready");
-              assert.deepEqual(ready.messages, saved.pending.messages);
-              assert.deepEqual(ready.turnItems, saved.pending.turnItems);
-              assert.notInclude(
-                ready.messages.map((message) => message.text),
-                "Source replaced after acceptance",
-              );
-              const rows = yield* settledJobs(saved.command.commandId);
-              assert.lengthOf(rows, 1);
-              assert.equal(rows[0]?.attemptCount, claimedBeforeRestart ? 2 : 1);
-              assert.equal((yield* forks.dispatch(saved.command)).sequence, receipt.sequence);
-              assert.deepEqual(
-                receipt.forkAttachmentIdMap,
-                Object.fromEntries(
-                  ready.thread.conversationFork!.attachmentCopies.map((copy) => [
-                    copy.source.id,
-                    copy.target.id,
-                  ]),
-                ),
-              );
-            }).pipe(
-              Effect.provide(
-                runtime({
-                  runtimeOptions: {
-                    serverConfigLayer: configLayer,
-                    databaseLayer: database,
-                    recoverOnStartup: true,
-                  },
-                }),
-              ),
+          assert.ok(answer);
+          const now = yield* DateTime.now;
+          yield* (yield* EventSinkV2).write({
+            events: [
+              {
+                id: EventId.make("replace-source-after-fork"),
+                type: "message.updated",
+                threadId: command.originThreadId,
+                occurredAt: now,
+                payload: {
+                  ...answer,
+                  text: "Source replaced after acceptance",
+                  updatedAt: now,
+                },
+              },
+            ],
+          });
+          return { command, pending };
+        }).pipe(
+          Effect.provide(
+            runtime({
+              runEffectWorker: false,
+              runtimeOptions: { layerServerConfig: configLayer, layerDatabase: database },
+            }),
+          ),
+        ),
+      );
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const forks = yield* ConversationForkService;
+          const receipt = yield* forks.dispatch(saved.command);
+          const store = yield* ProjectionStoreV2;
+          const ready = yield* store.getThreadProjection(saved.command.newThreadId);
+          assert.equal(ready.thread.conversationFork?.status, "ready");
+          assert.deepEqual(ready.messages, saved.pending.messages);
+          assert.deepEqual(ready.turnItems, saved.pending.turnItems);
+          assert.notInclude(
+            ready.messages.map((message) => message.text),
+            "Source replaced after acceptance",
+          );
+          const rows = yield* settledJobs(saved.command.commandId);
+          assert.lengthOf(rows, 1);
+          assert.equal(rows[0]?.attemptCount, claimedBeforeRestart ? 2 : 1);
+          assert.equal((yield* forks.dispatch(saved.command)).sequence, receipt.sequence);
+          assert.deepEqual(
+            receipt.forkAttachmentIdMap,
+            Object.fromEntries(
+              ready.thread.conversationFork!.attachmentCopies.map((copy) => [
+                copy.source.id,
+                copy.target.id,
+              ]),
             ),
           );
         }).pipe(
           Effect.provide(
-            ServerConfig.layerTest(process.cwd(), { prefix: "native-fork-restart-" }).pipe(
-              Layer.provideMerge(NodeServices.layer),
-            ),
+            runtime({
+              runtimeOptions: {
+                layerServerConfig: configLayer,
+                layerDatabase: database,
+                recoverOnStartup: true,
+              },
+            }),
           ),
-          Effect.timeout("20 seconds"),
+        ),
+      );
+    }).pipe(
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "native-fork-restart-" }).pipe(
+          Layer.provideMerge(NodeServices.layer),
         ),
       ),
-  );
-}
+      Effect.timeout("20 seconds"),
+    ),
+  ),
+);

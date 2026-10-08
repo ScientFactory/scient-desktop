@@ -16,7 +16,7 @@ import {
   makeAntigravityManagedRuntimeActions,
 } from "./AntigravityLifecycleBridge.ts";
 import { ANTIGRAVITY_RELEASE_VERSION } from "./antigravityRelease.ts";
-import type { ProviderAuthController } from "./Services/ProviderAuthService.ts";
+import type { ProviderAuthController } from "./ProviderAuthService.ts";
 import { bundledAntigravityAcpAsset } from "../scient/providerLifecycle/antigravityAcpCatalog.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-lifecycle-test");

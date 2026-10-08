@@ -1,4 +1,7 @@
-import { ANTIGRAVITY_ACP_REGISTRY_VERSION } from "@scientfactory/provider-runtime";
+import {
+  ANTIGRAVITY_ACP_REGISTRY_VERSION,
+  ANTIGRAVITY_ACP_TARGETS,
+} from "@scientfactory/provider-runtime";
 import {
   resolveAntigravityReleaseAsset,
   type AntigravityReleaseAsset,
@@ -14,6 +17,10 @@ export function bundledAntigravityAcpAsset(
   platform: NodeJS.Platform,
   arch: string,
 ): AntigravityReleaseAsset | null {
+  if (
+    !ANTIGRAVITY_ACP_TARGETS.some((target) => target.platform === platform && target.arch === arch)
+  )
+    return null;
   const asset = resolveAntigravityReleaseAsset(platform, arch);
   return asset ? { ...asset, registryVersion: ANTIGRAVITY_ACP_REGISTRY_VERSION } : null;
 }

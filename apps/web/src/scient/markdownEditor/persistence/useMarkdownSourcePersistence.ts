@@ -11,7 +11,7 @@ import type { MarkdownPersistenceLease } from "./markdownPersistenceRegistry";
 export function useMarkdownSourcePersistence(persistence: MarkdownPersistenceLease) {
   const snapshot = useSyncExternalStore(persistence.subscribe, persistence.getSnapshot);
   const pendingInput = useSyncExternalStore(persistence.subscribe, persistence.getPendingInput);
-  const appliedVersion = useRef(snapshot.editVersion);
+  const appliedVersion = useRef<number | null>(null);
   const active = useRef(false);
   const [, rejectStaleProjection] = useState(0);
   useLayoutEffect(() => {
@@ -23,14 +23,14 @@ export function useMarkdownSourcePersistence(persistence: MarkdownPersistenceLea
   const onProjectionApplied = useCallback(
     (source: string) => {
       const current = persistence.getSnapshot();
-      if (active.current && source === current.draftSource)
-        appliedVersion.current = current.editVersion;
+      if (active.current)
+        appliedVersion.current = source === current.draftSource ? current.editVersion : null;
     },
     [persistence],
   );
   const onContentsChange = useCallback(
     (source: string) => {
-      if (!active.current) return;
+      if (!active.current || appliedVersion.current === null) return;
       if (persistence.getPendingInput() !== null) return;
       if (!persistence.change(source, appliedVersion.current)) {
         rejectStaleProjection((version) => version + 1);

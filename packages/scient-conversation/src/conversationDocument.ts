@@ -215,6 +215,11 @@ function warningMessage(
         message: `Attachment “${warningValue(warning.name)}”${where(warning.messageN)} has a type Scient cannot display; it is included as a file.`,
       };
     case "records-skipped": {
+      if (warning.kind === "rendered-output")
+        return {
+          code: "attachment-unsupported",
+          message: `${warning.count} rendered HTML page${warning.count === 1 ? "" : "s"} or MCP app view${warning.count === 1 ? "" : "s"} cannot be bundled in this conversation format. Their HTML bytes and interactive views are not included; preserve those pages separately.`,
+        };
       const what =
         warning.kind === "activity"
           ? "work-log records"

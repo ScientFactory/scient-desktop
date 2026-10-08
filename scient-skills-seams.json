@@ -122,14 +122,9 @@
       "purpose": "Expose an optional provider-owned native skill mutation capability without coupling Scient policy to provider implementations."
     },
     {
-      "path": "apps/server/src/provider/Services/ProviderRegistry.ts",
+      "path": "apps/server/src/provider/ProviderRegistry.ts",
       "anchor": "getProviderSkillActionsForInstance",
       "purpose": "Resolve native skill capabilities for the exact live provider instance."
-    },
-    {
-      "path": "apps/server/src/provider/Layers/ProviderRegistry.ts",
-      "anchor": "getProviderSkillActionsForInstance",
-      "purpose": "Read the optional native skill capability from the existing live provider registry."
     },
     {
       "path": "apps/server/src/provider/Drivers/ClaudeDriver.ts",
@@ -157,12 +152,12 @@
       "purpose": "Preserve unrelated Grok TOML while changing only the native disabled-skill list."
     },
     {
-      "path": "apps/server/src/provider/Layers/CodexProvider.ts",
+      "path": "apps/server/src/provider/CodexProvider.ts",
       "anchor": "skills/config/write",
       "purpose": "Use Codex's authoritative native skill configuration method."
     },
     {
-      "path": "apps/server/src/provider/Layers/OpenCodeProvider.ts",
+      "path": "apps/server/src/provider/OpenCodeProvider.ts",
       "anchor": "resolveOpenCodeSkillScope",
       "purpose": "Normalize OpenCode skill scope so project inventory stays out of global skill surfaces."
     },

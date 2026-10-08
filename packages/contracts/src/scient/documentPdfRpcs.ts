@@ -1,11 +1,20 @@
 import * as Schema from "effect/Schema";
-import * as Rpc from "effect/unstable/rpc/Rpc";
+import * as Rpc from "effect/rpc/Rpc";
+
+import {
+  ScientDocumentHost,
+  ScientDocumentHostResponse,
+  ScientDocumentHostStreamEvent,
+} from "../scientDocumentHost.ts";
+import { PreviewAutomationError } from "../previewAutomation.ts";
 
 import { EnvironmentAuthorizationError } from "../auth.ts";
 import {
   BrowserPdfExportError,
   BrowserPdfExportInput,
   BrowserPdfExportResult,
+  ServerBrowserPdfExportInput,
+  ServerBrowserDocumentNavigateInput,
 } from "../browserPdfExport.ts";
 import {
   ScientDocumentPdfExportError,
@@ -22,6 +31,10 @@ import {
 
 /** Spread into rpc.ts WS_METHODS where these methods have always been listed. */
 export const SCIENT_DOCUMENT_PDF_WS_METHODS = {
+  documentsHostConnect: "documents.hostConnect",
+  documentsHostRespond: "documents.hostRespond",
+  documentsExportServerBrowserPdf: "documents.exportServerBrowserPdf",
+  documentsNavigateServerBrowser: "documents.navigateServerBrowser",
   documentsPublishBrowserPdfExport: "documents.publishBrowserPdfExport",
   documentsPrepareMarkdownPdf: "documents.prepareMarkdownPdf",
   documentsPublishDocumentPdf: "documents.publishDocumentPdf",
@@ -29,6 +42,21 @@ export const SCIENT_DOCUMENT_PDF_WS_METHODS = {
   documentsReleaseDocumentPdf: "documents.releaseDocumentPdf",
 } as const;
 
+export const WsDocumentsExportServerBrowserPdfRpc = Rpc.make(
+  SCIENT_DOCUMENT_PDF_WS_METHODS.documentsExportServerBrowserPdf,
+  {
+    payload: ServerBrowserPdfExportInput,
+    success: BrowserPdfExportResult,
+    error: Schema.Union([BrowserPdfExportError, EnvironmentAuthorizationError]),
+  },
+);
+export const WsDocumentsNavigateServerBrowserRpc = Rpc.make(
+  SCIENT_DOCUMENT_PDF_WS_METHODS.documentsNavigateServerBrowser,
+  {
+    payload: ServerBrowserDocumentNavigateInput,
+    error: Schema.Union([BrowserPdfExportError, EnvironmentAuthorizationError]),
+  },
+);
 export const WsDocumentsPublishBrowserPdfExportRpc = Rpc.make(
   SCIENT_DOCUMENT_PDF_WS_METHODS.documentsPublishBrowserPdfExport,
   {
@@ -70,5 +98,23 @@ export const WsDocumentsReleaseDocumentPdfRpc = Rpc.make(
   {
     payload: ScientDocumentPdfReleaseInput,
     error: EnvironmentAuthorizationError,
+  },
+);
+
+export const WsDocumentsHostConnectRpc = Rpc.make(
+  SCIENT_DOCUMENT_PDF_WS_METHODS.documentsHostConnect,
+  {
+    payload: ScientDocumentHost,
+    success: ScientDocumentHostStreamEvent,
+    stream: true,
+    error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
+  },
+);
+export const WsDocumentsHostRespondRpc = Rpc.make(
+  SCIENT_DOCUMENT_PDF_WS_METHODS.documentsHostRespond,
+  {
+    payload: ScientDocumentHostResponse,
+    success: Schema.Struct({ accepted: Schema.Boolean }),
+    error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
   },
 );

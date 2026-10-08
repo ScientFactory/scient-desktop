@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 /** Unaccepted filesystem publications are resources, not accepted V2 threads. */
 export default Effect.gen(function* () {

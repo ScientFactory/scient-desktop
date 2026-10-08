@@ -9,7 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { ScientForkCheckpointBaseline } from "./ForkCheckpointBaseline.ts";
@@ -61,7 +61,7 @@ export const makeForkCheckpointOwnership = Effect.gen(function* () {
     const receipt = yield* receipts.getByCommandId(CommandId.make(row.command_id));
     const target = yield* projections
       .getThread(ThreadId.make(row.target_thread_id))
-      .pipe(Effect.catchTag("ProjectionStoreThreadNotFoundError", () => Effect.succeed(null)));
+      .pipe(Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }));
     const accepted =
       Option.isSome(receipt) &&
       receipt.value.status === "accepted" &&

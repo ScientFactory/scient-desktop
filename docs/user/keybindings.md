@@ -69,16 +69,19 @@ inserts a new line. This applies to the web and desktop composer at desktop widt
 
 **Follow-up behavior** chooses Queue or Steer while the agent runs. Use
 `mod+Enter` to do the opposite for one message, even when the send shortcut
-requires a modifier. In a new thread, `mod+Alt+Enter` starts the thread in the
-background and opens a fresh composer. Change either shortcut in
-**Settings → Keybindings** under **Composer: Opposite Queue or Steer Action** or
-**Composer: Start in Background**. These bindings take priority over the send
-shortcut. Click the send button to use the configured follow-up behavior.
+requires a modifier. `mod+Alt+Enter` sends, keeps that thread running in the
+background, and opens a fresh new-thread composer. In a new thread, `mod+Enter`
+does the same. Change these shortcuts in **Settings → Keybindings** under
+**Composer: Opposite Queue or Steer Action**, **Composer: Start in Background**,
+or **Composer: Send and Start New Thread**. These bindings take priority over the
+send shortcut. Click the send button to use the configured follow-up behavior.
 
 When an active turn has queued messages, `mod+Shift+Enter` sends the first as a
 steer. Change it under **Queue: Send First Queued Message as Steer** in Keybindings.
 
 Use `mod+shift+m` to choose a model and `mod+shift+h` to choose a host.
+To step a new thread to the next machine instead of opening the menu, bind
+**Composer: Cycle Host** in Keybindings. It has no default shortcut.
 Use `mod+shift+e` for effort, `mod+shift+a` for access mode, `mod+shift+x` for the
 workspace, and `mod+shift+g` for the Git branch. The workspace menu includes the
 current checkout, a new worktree, and the previous worktree when available.
@@ -109,6 +112,8 @@ displayed threads. The shortcuts follow the current list filters and order.
 Use the arrow keys and Return to choose a result, or `Cmd+1` through `Cmd+9` to
 choose directly. Escape or `Cmd+K` closes the palette. Start a search with `>`
 to show only actions.
+
+In a new thread, `Cmd+Shift+H` moves the draft to the next machine.
 
 In the composer, Return sends and `Shift+Return` inserts a new line. `Cmd+Return`
 also sends. To make Return insert a new line instead, change the Return key
@@ -227,7 +232,8 @@ always matches the build you are running. Use that rather than a copied list.
 shortcut; assign one in **Settings → Shortcuts**.
 
 `thread.undo` (`mod+z` by default) reverses the actions shown in the notice at the
-bottom of the sidebar, such as unpin, settle, snooze, or archive. Consecutive
+bottom of the sidebar, such as unpin, settle, snooze, archive, or discarding a
+draft. Consecutive
 actions of the same kind undo together. The notice remains available for five
 seconds after the latest action. The default shortcut skips text fields and
 terminals so native undo keeps working there.
@@ -253,6 +259,16 @@ current machine when available. It uses the same flow as **No project** in the p
 Background submission from a new thread is the exception. `mod+enter` starts that thread and opens
 another new thread with the same workspace mode and base branch. **New worktree** remains selected,
 but the new thread does not reuse the worktree created for the thread that just started.
+
+`mod+shift+t` reopens the last closed tab across the app, including files,
+diffs, pull requests, browsers, and devices, in the order you closed them.
+A browser opens in a fresh session without its old page history. Incognito tabs
+can reopen until you reload or quit the app. This shortcut does not undo deleted work.
+Browsers also use it to reopen browser tabs; choose another binding in Settings
+if the browser takes it first.
+
+Many defaults include `!terminalFocus` so they do not intercept terminal input.
+Keep that condition when remapping them if you want the same behavior.
 
 ## `when` Conditions
 

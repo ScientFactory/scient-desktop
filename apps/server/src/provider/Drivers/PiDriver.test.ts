@@ -15,8 +15,8 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { FetchHttpClient, HttpClient } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -59,237 +59,233 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
 );
 
 it.layer(testLayer)("PiDriver native discovery and runtime envelope", (it) => {
-  for (const custom of [false, true]) {
-    it.effect(`bootstraps instance-scoped native discovery with custom connections=${custom}`, () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const root = yield* fs.makeTempDirectoryScoped();
-          const baseSettings = yield* ServerSettings.ServerSettingsService;
-          const instanceId = ProviderInstanceId.make("pi-discovery-owner");
-          let connections: ReadonlyArray<ResolvedModelConnection> = custom
-            ? [
-                {
-                  id: "connection",
-                  name: "Scoped connection",
-                  baseUrl: "https://unused.example.test/v1",
-                  protocol: "openai-completions",
-                  credentialId: "fixture",
-                  apiKey: Redacted.make("synthetic-fixture"),
-                  models: [
-                    {
-                      id: "entry",
-                      modelId: "model/with space",
-                      name: "Original model",
-                      contextWindow: 32000,
-                      maxOutputTokens: 1000,
-                      images: false,
-                      reasoning: false,
-                      instanceIds: [instanceId],
-                    },
-                  ],
-                },
-              ]
-            : [];
-          const current = yield* baseSettings.getSettings;
-          const snapshot = (): ServerSettingsData => ({
-            ...current,
-            customModels: { revision: 0, connections },
-          });
-          const updates = yield* PubSub.unbounded<ServerSettingsData>();
-          const requestedInstances: string[] = [];
-          const settings = {
-            ...baseSettings,
-            getSettings: Effect.sync(snapshot),
-            streamChanges: Stream.fromPubSub(updates),
-            subscribeChanges: Effect.succeed(Stream.fromPubSub(updates)),
-            resolveCustomModels: (id: ProviderInstanceId) =>
-              Effect.sync(() => {
-                requestedInstances.push(id);
-                return connections.flatMap((connection) => {
-                  const models = connection.models.filter((model) =>
-                    model.instanceIds.includes(id),
-                  );
-                  return models.length ? [{ ...connection, models }] : [];
-                });
-              }),
-          };
-          const nativeLaunches: Array<{ args: ReadonlyArray<string>; env: NodeJS.ProcessEnv }> = [];
-          const httpClient = yield* HttpClient.HttpClient;
-          const spawner = ChildProcessSpawner.make((command) =>
-            Effect.gen(function* () {
-              if (!ChildProcess.isStandardCommand(command))
-                return yield* Effect.die("Expected direct native Pi command");
-              const args = command.args;
-              const env = command.options.env ?? {};
-              const output = yield* Queue.unbounded<Uint8Array, Cause.Done>();
-              if (args.includes("--version")) {
-                yield* Queue.offer(output, new TextEncoder().encode("0.84.4\n"));
-                yield* Queue.end(output);
-              } else nativeLaunches.push({ args, env });
-              let buffer = "";
-              const decoder = new TextDecoder();
-              const handle = ChildProcessSpawner.makeHandle({
-                pid: ChildProcessSpawner.ProcessId(999999999),
-                exitCode: args.includes("--version")
-                  ? Effect.succeed(ChildProcessSpawner.ExitCode(0))
-                  : Effect.never,
-                isRunning: Effect.succeed(!args.includes("--version")),
-                kill: () => Queue.end(output).pipe(Effect.asVoid),
-                unref: Effect.succeed(Effect.void),
-                stdin: Sink.forEach((chunk: Uint8Array) =>
-                  Effect.gen(function* () {
-                    buffer += decoder.decode(chunk, { stream: true });
-                    const lines = buffer.split("\n");
-                    buffer = lines.pop() ?? "";
-                    for (const line of lines.filter(Boolean)) {
-                      const request = decodeJson(line);
-                      if (!Predicate.isObject(request))
-                        return yield* Effect.die("Invalid native Pi request");
-                      let data: unknown = {};
-                      if (request.type === "get_commands")
-                        data = {
-                          commands: [
-                            { name: "scient-models-refresh", source: "extension" },
-                            { name: "skill:review", source: "skill" },
-                          ],
-                        };
-                      if (request.type === "get_available_models" || request.type === "prompt") {
-                        if (!env.SCIENT_PI_MODELS_URL || !env.SCIENT_PI_MODELS_TOKEN)
-                          return yield* Effect.die(
-                            "Production discovery omitted instance bootstrap",
-                          );
-                        const response = yield* HttpClient.get(env.SCIENT_PI_MODELS_URL, {
-                          headers: { authorization: `Bearer ${env.SCIENT_PI_MODELS_TOKEN}` },
-                        });
-                        assert.equal(response.status, 200);
-                        const bootstrap = yield* response.json.pipe(
-                          Effect.flatMap(decodeBootstrap),
-                        );
-                        data =
-                          request.type === "prompt"
-                            ? {}
-                            : {
-                                models: bootstrap.flatMap((connection) =>
-                                  connection.config.models.map((model) => ({
-                                    ...model,
-                                    provider: connection.id,
-                                  })),
-                                ),
-                              };
-                      }
-                      yield* Queue.offer(
-                        output,
-                        new TextEncoder().encode(
-                          `${encodeJson({ type: "response", id: request.id, command: request.type, success: true, data })}\n`,
-                        ),
-                      );
+  it.effect.each(
+    [false, true].map((custom) => ({
+      caseTitle: `bootstraps instance-scoped native discovery with custom connections=${custom}`,
+      custom,
+    })),
+  )("$caseTitle", ({ custom }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped();
+        const baseSettings = yield* ServerSettings.ServerSettingsService;
+        const instanceId = ProviderInstanceId.make("pi-discovery-owner");
+        let connections: ReadonlyArray<ResolvedModelConnection> = custom
+          ? [
+              {
+                id: "connection",
+                name: "Scoped connection",
+                baseUrl: "https://unused.example.test/v1",
+                protocol: "openai-completions",
+                credentialId: "fixture",
+                apiKey: Redacted.make("synthetic-fixture"),
+                models: [
+                  {
+                    id: "entry",
+                    modelId: "model/with space",
+                    name: "Original model",
+                    contextWindow: 32000,
+                    maxOutputTokens: 1000,
+                    images: false,
+                    reasoning: false,
+                    instanceIds: [instanceId],
+                  },
+                ],
+              },
+            ]
+          : [];
+        const current = yield* baseSettings.getSettings;
+        const snapshot = (): ServerSettingsData => ({
+          ...current,
+          customModels: { revision: 0, connections },
+        });
+        const updates = yield* PubSub.unbounded<ServerSettingsData>();
+        const requestedInstances: string[] = [];
+        const settings = {
+          ...baseSettings,
+          getSettings: Effect.sync(snapshot),
+          streamChanges: Stream.fromPubSub(updates),
+          subscribeChanges: Effect.succeed(Stream.fromPubSub(updates)),
+          resolveCustomModels: (id: ProviderInstanceId) =>
+            Effect.sync(() => {
+              requestedInstances.push(id);
+              return connections.flatMap((connection) => {
+                const models = connection.models.filter((model) => model.instanceIds.includes(id));
+                return models.length ? [{ ...connection, models }] : [];
+              });
+            }),
+        };
+        const nativeLaunches: Array<{ args: ReadonlyArray<string>; env: NodeJS.ProcessEnv }> = [];
+        const httpClient = yield* HttpClient.HttpClient;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (!ChildProcess.isStandardCommand(command))
+              return yield* Effect.die("Expected direct native Pi command");
+            const args = command.args;
+            const env = command.options.env ?? {};
+            const output = yield* Queue.unbounded<Uint8Array, Cause.Done>();
+            if (args.includes("--version")) {
+              yield* Queue.offer(output, new TextEncoder().encode("0.84.4\n"));
+              yield* Queue.end(output);
+            } else nativeLaunches.push({ args, env });
+            let buffer = "";
+            const decoder = new TextDecoder();
+            const handle = ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(999999999),
+              exitCode: args.includes("--version")
+                ? Effect.succeed(ChildProcessSpawner.ExitCode(0))
+                : Effect.never,
+              isRunning: Effect.succeed(!args.includes("--version")),
+              kill: () => Queue.end(output).pipe(Effect.asVoid),
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.forEach((chunk: Uint8Array) =>
+                Effect.gen(function* () {
+                  buffer += decoder.decode(chunk, { stream: true });
+                  const lines = buffer.split("\n");
+                  buffer = lines.pop() ?? "";
+                  for (const line of lines.filter(Boolean)) {
+                    const request = decodeJson(line);
+                    if (!Predicate.isObject(request))
+                      return yield* Effect.die("Invalid native Pi request");
+                    let data: unknown = {};
+                    if (request.type === "get_commands")
+                      data = {
+                        commands: [
+                          { name: "scient-models-refresh", source: "extension" },
+                          { name: "skill:review", source: "skill" },
+                        ],
+                      };
+                    if (request.type === "get_available_models" || request.type === "prompt") {
+                      if (!env.SCIENT_PI_MODELS_URL || !env.SCIENT_PI_MODELS_TOKEN)
+                        return yield* Effect.die("Production discovery omitted instance bootstrap");
+                      const response = yield* HttpClient.get(env.SCIENT_PI_MODELS_URL, {
+                        headers: { authorization: `Bearer ${env.SCIENT_PI_MODELS_TOKEN}` },
+                      });
+                      assert.equal(response.status, 200);
+                      const bootstrap = yield* response.json.pipe(Effect.flatMap(decodeBootstrap));
+                      data =
+                        request.type === "prompt"
+                          ? {}
+                          : {
+                              models: bootstrap.flatMap((connection) =>
+                                connection.config.models.map((model) => ({
+                                  ...model,
+                                  provider: connection.id,
+                                })),
+                              ),
+                            };
                     }
-                  }).pipe(
-                    Effect.provideService(HttpClient.HttpClient, httpClient),
-                    Effect.mapError((cause) =>
-                      PlatformError.systemError({
-                        _tag: "Unknown",
-                        module: "PiDiscoveryNativeFixture",
-                        method: "writeResponse",
-                        description:
-                          "Could not read or decode the private model bootstrap response.",
-                        cause,
-                      }),
-                    ),
+                    yield* Queue.offer(
+                      output,
+                      new TextEncoder().encode(
+                        `${encodeJson({ type: "response", id: request.id, command: request.type, success: true, data })}\n`,
+                      ),
+                    );
+                  }
+                }).pipe(
+                  Effect.provideService(HttpClient.HttpClient, httpClient),
+                  Effect.mapError((cause) =>
+                    PlatformError.systemError({
+                      _tag: "Unknown",
+                      module: "PiDiscoveryNativeFixture",
+                      method: "writeResponse",
+                      description: "Could not read or decode the private model bootstrap response.",
+                      cause,
+                    }),
                   ),
                 ),
-                stdout: Stream.fromQueue(output),
-                stderr: Stream.empty,
-                all: Stream.empty,
-                getInputFd: () => Sink.drain,
-                getOutputFd: () => Stream.empty,
-              });
-              return handle;
-            }),
-          );
-          const instance = yield* PiDriver.create({
-            instanceId,
-            displayName: undefined,
-            enabled: true,
-            environment: [{ name: "HOME", value: root, sensitive: false }],
-            config: { ...PiDriver.defaultConfig(), binaryPath: `${root}/pi-fixture` },
-          }).pipe(
-            Effect.provideService(ServerSettings.ServerSettingsService, settings),
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          );
-          const initial = yield* instance.snapshot.getSnapshot;
-          assert.isDefined(initial.connection?.runtime);
-          assert.deepEqual(initial.connection?.methods, []);
-          assert.equal(initial.connection?.canDisconnect, false);
-          const checked = yield* instance.snapshot.refresh;
-          assert.deepEqual(checked.connection?.runtime, initial.connection?.runtime);
-          assert.isTrue(nativeLaunches.length > 0);
-          for (const launch of nativeLaunches) {
-            assert.include(launch.args, "--no-session");
-            assert.equal(launch.args.filter((arg) => arg === "--mode").length, 1);
-            assert.include(launch.args, "--extension");
-            assert.equal(launch.env.HOME, root);
-            assert.isString(launch.env.SCIENT_PI_MODELS_URL);
-          }
-          assert.isTrue(requestedInstances.every((id) => id === instanceId));
-          if (!custom) {
-            assert.equal(checked.auth.status, "unauthenticated");
-            assert.deepEqual(checked.modelConnections, []);
-            return;
-          }
-          assert.equal(checked.auth.status, "authenticated");
-          assert.equal(
-            checked.models.find((model) => model.name === "Original model")?.subProvider,
-            "Scoped connection",
-          );
-          assert.equal(checked.modelConnections?.[0]?.state, "available");
-          const observerReady = yield* Deferred.make<void>();
-          const refreshed = yield* instance.snapshot.streamChanges.pipe(
-            Stream.tap(() => Deferred.succeed(observerReady, undefined)),
-            Stream.filter((value) => value.models.some((model) => model.name === "Renamed model")),
-            Stream.runHead,
-            Effect.forkScoped,
-          );
-          yield* instance.snapshot.refresh;
-          yield* Deferred.await(observerReady);
-          const before = nativeLaunches.length;
-          const first = connections[0];
-          if (!first) return yield* Effect.die("Missing owned connection");
-          connections = [
-            ...connections,
-            {
-              ...first,
-              id: "peer",
-              models: first.models.map((model) => ({
-                ...model,
-                instanceIds: [ProviderInstanceId.make("other-instance")],
-              })),
-            },
-          ];
-          yield* PubSub.publish(updates, snapshot());
-          connections = connections.map((connection) =>
-            connection.id === "connection"
-              ? {
-                  ...connection,
-                  models: connection.models.map((model) => ({ ...model, name: "Renamed model" })),
-                }
-              : connection,
-          );
-          yield* PubSub.publish(updates, snapshot());
-          yield* Fiber.join(refreshed);
-          assert.equal(nativeLaunches.length, before + 1);
-          const updated = yield* instance.snapshot.getSnapshot;
-          assert.equal(
-            updated.models.find((model) => model.name === "Renamed model")?.subProvider,
-            "Scoped connection",
-          );
-          assert.deepEqual(updated.connection?.runtime, initial.connection?.runtime);
-          if (!instance.snapshotForCwd) return yield* Effect.die("Missing workspace discovery");
-          const workspace = yield* instance.snapshotForCwd(root);
-          assert.deepEqual(workspace.connection?.runtime, initial.connection?.runtime);
-        }),
-      ),
-    );
-  }
+              ),
+              stdout: Stream.fromQueue(output),
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
+            return handle;
+          }),
+        );
+        const instance = yield* PiDriver.create({
+          instanceId,
+          displayName: undefined,
+          enabled: true,
+          environment: [{ name: "HOME", value: root, sensitive: false }],
+          config: { ...PiDriver.defaultConfig(), binaryPath: `${root}/pi-fixture` },
+        }).pipe(
+          Effect.provideService(ServerSettings.ServerSettingsService, settings),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const initial = yield* instance.snapshot.getSnapshot;
+        assert.isDefined(initial.connection?.runtime);
+        assert.deepEqual(initial.connection?.methods, []);
+        assert.equal(initial.connection?.canDisconnect, false);
+        const checked = yield* instance.snapshot.refresh;
+        assert.deepEqual(checked.connection?.runtime, initial.connection?.runtime);
+        assert.isTrue(nativeLaunches.length > 0);
+        for (const launch of nativeLaunches) {
+          assert.include(launch.args, "--no-session");
+          assert.equal(launch.args.filter((arg) => arg === "--mode").length, 1);
+          assert.include(launch.args, "--extension");
+          assert.equal(launch.env.HOME, root);
+          assert.isString(launch.env.SCIENT_PI_MODELS_URL);
+        }
+        assert.isTrue(requestedInstances.every((id) => id === instanceId));
+        if (!custom) {
+          assert.equal(checked.auth.status, "unauthenticated");
+          assert.deepEqual(checked.modelConnections, []);
+          return;
+        }
+        assert.equal(checked.auth.status, "authenticated");
+        assert.equal(
+          checked.models.find((model) => model.name === "Original model")?.subProvider,
+          "Scoped connection",
+        );
+        assert.equal(checked.modelConnections?.[0]?.state, "available");
+        const observerReady = yield* Deferred.make<void>();
+        const refreshed = yield* instance.snapshot.streamChanges.pipe(
+          Stream.tap(() => Deferred.succeed(observerReady, undefined)),
+          Stream.filter((value) => value.models.some((model) => model.name === "Renamed model")),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        yield* instance.snapshot.refresh;
+        yield* Deferred.await(observerReady);
+        const before = nativeLaunches.length;
+        const first = connections[0];
+        if (!first) return yield* Effect.die("Missing owned connection");
+        connections = [
+          ...connections,
+          {
+            ...first,
+            id: "peer",
+            models: first.models.map((model) => ({
+              ...model,
+              instanceIds: [ProviderInstanceId.make("other-instance")],
+            })),
+          },
+        ];
+        yield* PubSub.publish(updates, snapshot());
+        connections = connections.map((connection) =>
+          connection.id === "connection"
+            ? {
+                ...connection,
+                models: connection.models.map((model) => ({ ...model, name: "Renamed model" })),
+              }
+            : connection,
+        );
+        yield* PubSub.publish(updates, snapshot());
+        yield* Fiber.join(refreshed);
+        assert.equal(nativeLaunches.length, before + 1);
+        const updated = yield* instance.snapshot.getSnapshot;
+        assert.equal(
+          updated.models.find((model) => model.name === "Renamed model")?.subProvider,
+          "Scoped connection",
+        );
+        assert.deepEqual(updated.connection?.runtime, initial.connection?.runtime);
+        if (!instance.snapshotForCwd) return yield* Effect.die("Missing workspace discovery");
+        const workspace = yield* instance.snapshotForCwd(root);
+        assert.deepEqual(workspace.connection?.runtime, initial.connection?.runtime);
+      }),
+    ),
+  );
 });

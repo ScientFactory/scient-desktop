@@ -11,7 +11,7 @@ import {
   ScientSourceType,
 } from "@scientfactory/scient-sources";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/unstable/ai";
+import { Tool, Toolkit } from "effect/ai";
 import { ScientOperation, type OperationMetadata } from "../../ScientOperationTool.ts";
 
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";

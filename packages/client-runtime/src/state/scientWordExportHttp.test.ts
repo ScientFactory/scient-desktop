@@ -5,7 +5,7 @@ import * as Fiber from "effect/Fiber";
 import { TestClock } from "effect/testing";
 
 import { PrimaryConnectionTarget, type PreparedConnection } from "../connection/model.ts";
-import { remoteHttpClientLayer } from "../rpc/http.ts";
+import { layerRemoteHttpClient } from "../rpc/http.ts";
 import { exportEnvironmentWordFile, WORD_EXPORT_TIMEOUT_MS } from "./scientWordExportHttp.ts";
 
 const TARGET = new PrimaryConnectionTarget({
@@ -36,7 +36,7 @@ describe("exportEnvironmentWordFile", () => {
       const pending = yield* exportEnvironmentWordFile({
         prepared: PREPARED,
         request: { cwd: "/work/project", relativePath: "notes.md", revision: "r1" },
-      }).pipe(Effect.provide(remoteHttpClientLayer(fetchFn)), Effect.flip, Effect.forkChild);
+      }).pipe(Effect.provide(layerRemoteHttpClient(fetchFn)), Effect.flip, Effect.forkChild);
       yield* Effect.promise(() => requested.promise);
 
       yield* TestClock.adjust(SCIENT_WORD_CONVERSION_TIMEOUT_MS + 60_000);

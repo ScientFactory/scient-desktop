@@ -51,6 +51,7 @@ require a cosmetic folder migration.
 - [Environment themes](./user/environment-theme.md)
 - [Appearance and themes](./user/appearance.md)
 - [SnapShots](./user/snap-shot.md)
+- [Visual replies](./user/html-renders.md)
 - [Import browser sessions](./user/browser-import.md)
 - [Devices](./user/devices.md)
 - [Usage and limits](./user/usage.md)
@@ -70,6 +71,7 @@ require a cosmetic folder migration.
 - [Run a MATLAB file](./user/matlab-run-file.md)
 - [Sources and Zotero import](./user/sources.md)
 - [Background service (Linux and macOS)](./user/background-service.md)
+- [Outside agents (MCP)](./user/outside-agents.md)
 
 ---
 

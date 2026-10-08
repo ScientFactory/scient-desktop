@@ -15,7 +15,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   BundleNotSelfContainedError,
@@ -173,6 +173,8 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   readonly copyUnpackedNatives: boolean;
   readonly serverEntrySource?: string;
   readonly wslRuntime?: "valid" | "forbidden" | "bad-digest";
+  readonly targetArch?: "x64" | "arm64";
+  readonly ptyPrebuildArch?: "x64" | "arm64";
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -219,7 +221,10 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
 
   if (input.wslRuntime !== undefined) {
     const wslSourceDir = path.join(tempDir, "wsl-source");
-    const linuxPrebuildDir = path.join(wslSourceDir, "node_modules/node-pty/prebuilds/linux-x64");
+    const linuxPrebuildDir = path.join(
+      wslSourceDir,
+      `node_modules/node-pty/prebuilds/linux-${input.ptyPrebuildArch ?? "x64"}`,
+    );
     yield* fs.makeDirectory(path.join(wslSourceDir, "apps/server/dist"), { recursive: true });
     yield* fs.makeDirectory(linuxPrebuildDir, { recursive: true });
     yield* fs.writeFileString(
@@ -233,7 +238,7 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
     yield* fs.writeFileString(path.join(linuxPrebuildDir, "pty.node"), "linux-pty");
     yield* fs.writeFileString(
       path.join(linuxPrebuildDir, "t3code-wsl-node-pty.json"),
-      '{"arch":"x64"}',
+      JSON.stringify({ arch: input.ptyPrebuildArch ?? "x64" }),
     );
     if (input.wslRuntime === "forbidden") {
       const windowsPrebuildDir = path.join(
@@ -810,6 +815,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(mac.fileAssociations, []);
       // Windows uses a custom OpenWith ProgID to preserve the user's default.
       assert.deepStrictEqual(win.fileAssociations, []);
+
+      assert.deepStrictEqual(linux.toolsets, { appimage: "1.0.3" });
+      assert.notProperty(mac, "toolsets");
+      assert.notProperty(win, "toolsets");
       assert.deepStrictEqual(mac.files, [...DESKTOP_FILE_EXCLUSIONS, ...MAC_FILE_EXCLUSIONS]);
       assert.deepStrictEqual(linux.files, [...DESKTOP_FILE_EXCLUSIONS, ...LINUX_FILE_EXCLUSIONS]);
       assert.deepStrictEqual(win.files, [
@@ -1217,54 +1226,57 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  for (const scenario of [
-    {
-      name: "foreign-only",
-      platform: "mac" as const,
-      arch: "arm64" as const,
-      installed: ["sdk-win32-x64"],
-      missing: ["sdk-darwin-arm64"],
-    },
-    {
-      name: "universal missing x64",
-      platform: "mac" as const,
-      arch: "universal" as const,
-      installed: ["sdk-darwin-arm64"],
-      missing: ["sdk-darwin-x64"],
-    },
-    {
-      name: "Windows missing WSL helpers",
-      platform: "win" as const,
-      arch: "x64" as const,
-      installed: ["sdk-win32-x64"],
-      missing: ["sdk-linux-x64"],
-    },
-  ]) {
-    it.effect(`rejects Cursor ${scenario.name} packages before staging a partial target`, () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-cursor-target-" });
-          const nodeModules = path.join(root, "node_modules");
-          yield* fs.makeDirectory(path.join(nodeModules, "@cursor/sdk"), { recursive: true });
-          for (const name of scenario.installed)
-            yield* fs.makeDirectory(path.join(nodeModules, "@cursor", name), { recursive: true });
-          const destination = path.join(root, "resources");
-          const error = yield* stageCursorSdkPlatformPackages(nodeModules, destination, {
-            platform: scenario.platform,
-            arch: scenario.arch,
-            linuxServerBackend: scenario.platform === "win",
-          }).pipe(Effect.flip);
-          if (!isCursorSdkPlatformPackagesMissingError(error)) {
-            return yield* Effect.die("Expected a missing Cursor target package error.");
-          }
-          assert.deepEqual(error.missingPackages, scenario.missing);
-          assert.isFalse(yield* fs.exists(destination));
-        }),
-      ),
-    );
-  }
+  it.effect.each(
+    [
+      {
+        name: "foreign-only",
+        platform: "mac" as const,
+        arch: "arm64" as const,
+        installed: ["sdk-win32-x64"],
+        missing: ["sdk-darwin-arm64"],
+      },
+      {
+        name: "universal missing x64",
+        platform: "mac" as const,
+        arch: "universal" as const,
+        installed: ["sdk-darwin-arm64"],
+        missing: ["sdk-darwin-x64"],
+      },
+      {
+        name: "Windows missing WSL helpers",
+        platform: "win" as const,
+        arch: "x64" as const,
+        installed: ["sdk-win32-x64"],
+        missing: ["sdk-linux-x64"],
+      },
+    ].map((scenario) => ({
+      caseTitle: `rejects Cursor ${scenario.name} packages before staging a partial target`,
+      scenario,
+    })),
+  )("$caseTitle", ({ scenario }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-cursor-target-" });
+        const nodeModules = path.join(root, "node_modules");
+        yield* fs.makeDirectory(path.join(nodeModules, "@cursor/sdk"), { recursive: true });
+        for (const name of scenario.installed)
+          yield* fs.makeDirectory(path.join(nodeModules, "@cursor", name), { recursive: true });
+        const destination = path.join(root, "resources");
+        const error = yield* stageCursorSdkPlatformPackages(nodeModules, destination, {
+          platform: scenario.platform,
+          arch: scenario.arch,
+          linuxServerBackend: scenario.platform === "win",
+        }).pipe(Effect.flip);
+        if (!isCursorSdkPlatformPackagesMissingError(error)) {
+          return yield* Effect.die("Expected a missing Cursor target package error.");
+        }
+        assert.deepEqual(error.missingPackages, scenario.missing);
+        assert.isFalse(yield* fs.exists(destination));
+      }),
+    ),
+  );
 
   it.effect("rejects a staged server missing Cursor platform optional dependencies", () =>
     Effect.scoped(
@@ -1727,6 +1739,59 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       }),
     ).pipe(Effect.provideService(HostProcessPlatform, "linux")),
   );
+
+  it.effect.each(["x64", "arm64"] as const)(
+    "accepts an embedded archive with the Linux %s node-pty prebuild",
+    (targetArch) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fixture = yield* makeWindowsPayloadFixture({
+            copyUnpackedNatives: true,
+            wslRuntime: "valid",
+            targetArch,
+            ptyPrebuildArch: targetArch,
+          });
+          const result = yield* validateWindowsPackagedPayload({
+            stageDistDir: fixture.stageDistDir,
+            appExecutableName: fixture.appExecutableName,
+            targetArch,
+            expectWslRuntime: true,
+          });
+
+          assert.equal(result.packagedAppDir, fixture.packagedAppDir);
+        }),
+      ).pipe(Effect.provideService(HostProcessPlatform, "linux")),
+  );
+
+  it.effect.each(["x64", "arm64"] as const)(
+    "rejects a node-pty prebuild for the wrong architecture in a Linux %s archive",
+    (targetArch) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fixture = yield* makeWindowsPayloadFixture({
+            copyUnpackedNatives: true,
+            wslRuntime: "valid",
+            targetArch,
+            ptyPrebuildArch: targetArch === "x64" ? "arm64" : "x64",
+          });
+          const error = yield* validateWindowsPackagedPayload({
+            stageDistDir: fixture.stageDistDir,
+            appExecutableName: fixture.appExecutableName,
+            targetArch,
+            expectWslRuntime: true,
+          }).pipe(Effect.flip);
+
+          assert.instanceOf(error, WindowsPackagedPayloadValidationError);
+          assert.equal(error.reason, "wsl-runtime-invalid");
+        }),
+      ),
+  );
+
+  // SCIENT-FORK: Scient bundles one fixed-name, digest-verified WSL resource;
+  // upstream's version-named archive lookup is not the shipped artifact owner.
+  // Architecture rejection above and checksum/missing-resource tests below
+  // exercise the retained validator without introducing a second archive format.
+  // SCIENT-FORK-END
 
   it.effect("rejects a Windows package missing its expected WSL runtime", () =>
     Effect.scoped(

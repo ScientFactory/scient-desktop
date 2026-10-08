@@ -27,6 +27,26 @@ const MISMATCH_HINT =
   "Version mismatch. Try syncing the client and server to the same Scient version.";
 
 describe("versionSkew", () => {
+  it("keeps global-install recovery on the immutable Scient release without using its npm prefix", () => {
+    const command =
+      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz t3";
+    expect(manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/node" })).toBe(
+      command,
+    );
+    expect(
+      manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/maria's node" }),
+    ).toBe(command);
+    expect(command).not.toContain("npm install");
+  });
+
+  it("keeps runner and unknown recovery on the immutable Scient release", () => {
+    const command =
+      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz t3";
+    expect(manualServerUpdateCommand("0.0.45")).toBe(command);
+    expect(manualServerUpdateCommand("0.0.45", { kind: "npx" })).toBe(command);
+    expect(manualServerUpdateCommand("0.0.45", { kind: "pnpm-dlx" })).toBe(command);
+    expect(manualServerUpdateCommand("0.0.45", { kind: "bunx" })).toBe(command);
+  });
   beforeEach(() => {
     branding.APP_VERSION = "0.0.34";
   });

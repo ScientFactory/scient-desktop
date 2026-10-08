@@ -2,25 +2,25 @@
 
 ## Purpose
 
-T3 exposes V2 orchestration through its app-owned MCP endpoint. A provider
+Scient exposes V2 orchestration through its app-owned MCP endpoint. A provider
 agent can use this endpoint to:
 
 - create an app-owned sub-agent on any supported provider instance;
 - wait for or poll the sub-agent's durable result;
 - cancel an active delegated task; and
-- create one or more ordinary top-level T3 threads;
-- list and incrementally read project threads;
+- create one or more ordinary top-level Scient threads;
+- list a project's threads and incrementally read authorized threads;
 - rename threads, regenerate titles, and link or unlink pull requests;
 - send or steer follow-up messages; and
 - wait for or interrupt ordinary thread runs.
 
-These are T3 orchestration operations, not provider-native sub-agent APIs.
-Delegated tasks always create a T3 child thread and run. The child receives
+These are Scient orchestration operations, not provider-native sub-agent APIs.
+Delegated tasks always create a Scient child thread and run. The child receives
 only the supplied task prompt, plus an optional role instruction supplied in
 the same tool call. Parent conversation history is not copied into the child.
 
 `ThreadManagementService` is the shared server application boundary for V2
-WebSocket commands and MCP. It owns project-scoped lookup, listing, send-mode
+WebSocket commands and MCP. It owns thread lookup, listing, send-mode
 selection, durable send postconditions, wait polling, and interrupt selection;
 `OrchestratorV2` remains the lower-level command/event processor. Transport
 adapters only authenticate, resolve transport-specific inputs, and shape
@@ -34,25 +34,36 @@ The orchestration tools share the existing authenticated HTTP MCP endpoint:
 http://127.0.0.1:<server-port>/mcp
 ```
 
-The provider-visible server key is `t3-code`. The endpoint registers both the
-preview toolkit and the orchestration toolkit.
+Codex and Claude use the provider-visible server key `scient`; OpenCode and
+the native Pi bridge retain their `t3-code` transport namespace. Server keys,
+wire tool names and the `T3_MCP_BEARER_TOKEN` environment variable are separate
+compatibility boundaries. The endpoint registers orchestration and the
+Scient operation catalog, including preview and scientific tools.
 
 Before `ProviderSessionManager` opens a new V2 provider session, it asks
 `McpSessionRegistry` for a credential scoped to:
 
-- the T3 environment;
-- the parent T3 thread;
+- the Scient environment;
+- the parent Scient thread;
 - the concrete provider instance; and
 - the provider session.
 
-The credential grants `preview` and `orchestration` capabilities. Credentials
+The credential includes orchestration, worktree, pull-request and Scient domain
+capabilities. Preview and device access follow the current agent-access settings;
+skill access follows that provider's delivery path. A domain grant does not bypass
+workspace resolution or publication checks. Credentials
 expire after a maximum lifetime, expire when idle, and are revoked when the
 provider session is released. The raw token is not persisted in orchestration
 state.
 
 The MCP HTTP server resolves the bearer token and supplies the resulting
 `McpInvocationScope` to tool handlers. Orchestration handlers additionally
-check the `orchestration` capability before reading or mutating state.
+check the `orchestration` capability before reading or mutating state. Mutations
+resolve the live provider owner's captured runtime and interaction policy; changed
+thread defaults affect future admissions and cannot raise an already-running
+agent's authority. Released/stale owners are refused. MCP clients that sign in
+from outside a thread retain their independently approved read-only or mode
+ceiling, as described in [environment authentication](../internals/environment-auth.md).
 
 ## Provider Injection
 
@@ -62,8 +73,8 @@ Codex app-server receives the remote MCP server through command-line config
 overrides:
 
 ```text
--c mcp_servers.t3-code.url=http://127.0.0.1:<port>/mcp
--c mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"
+-c mcp_servers.scient.url=http://127.0.0.1:<port>/mcp
+-c mcp_servers.scient.bearer_token_env_var="T3_MCP_BEARER_TOKEN"
 ```
 
 The provider-session token is placed in `T3_MCP_BEARER_TOKEN`. Both the
@@ -77,7 +88,7 @@ Claude receives an HTTP MCP server in its query options:
 ```ts
 {
   mcpServers: {
-    "t3-code": {
+    scient: {
       type: "http",
       url: "http://127.0.0.1:<port>/mcp",
       headers: {
@@ -87,7 +98,7 @@ Claude receives an HTTP MCP server in its query options:
   },
   allowedTools: [
     // existing allowed tools
-    "mcp__t3-code__*",
+    "mcp__scient__*",
   ],
 }
 ```
@@ -146,7 +157,7 @@ provider-specific extensions; those remain in flavors such as Grok.
 ### Pi V2
 
 Pi core has no MCP client. When a provider session credential exists, the
-adapter writes a T3-owned extension into the server cache and spawns
+adapter writes a Scient-owned extension into the server cache and spawns
 `pi --mode rpc --extension <cache>/pi-t3-mcp-extension.ts` with:
 
 ```text
@@ -156,15 +167,15 @@ T3_MCP_BEARER_TOKEN=<provider-session-token>
 
 The extension connects to that HTTP endpoint, lists tools, and registers each
 one with `pi.registerTool` under a `mcp__t3-code__` namespace
-(`mcp__t3-code__delegate_task`, `mcp__t3-code__t3_thread_launch`, and the rest).
+(`mcp__t3-code__delegate_task`, `mcp__t3-code__scient_thread_launch`, and the rest).
 The bridge calls the original MCP tool name over HTTP. Follow-up requests send
 `mcp-protocol-version: 2025-06-18`; Effect's MCP transport returns 400
-without it. The first turn of a session also receives the shared T3
+without it. The first turn of a session also receives the shared Scient
 orchestration instructions.
 
-Pi keeps ownership of native extension discovery. T3 does not replace Pi's
+Pi keeps ownership of native extension discovery. Scient does not replace Pi's
 `subagent` tool or reproduce Pi's package and project-trust loader. Durable
-delegation goes through the namespaced T3 MCP `delegate_task` tool and the
+delegation goes through the namespaced Scient MCP `delegate_task` tool and the
 shared orchestration child-thread lifecycle. When Pi's example `subagent`
 extension is installed, the adapter observes its documented `details.results`
 shape and projects task cards with no child thread id. Unknown result shapes
@@ -200,7 +211,7 @@ adapter support, disabled state, missing executable, or missing authentication.
 
 ### `delegate_task`
 
-Creates a T3-owned child thread and immediately dispatches the supplied task
+Creates a Scient-owned child thread and immediately dispatches the supplied task
 prompt.
 
 ```ts
@@ -227,6 +238,14 @@ when it can run child tasks, and otherwise selects an available instance of
 that driver; an explicit `providerInstanceId` is honored exactly and fails
 when unavailable. Selecting a different provider without a model uses that
 provider's first advertised model.
+
+Each delegated review round uses a new `delegate_task` call with the original brief,
+prior findings, responses, and unresolved objections. Track each round by its own `taskId` and use
+a distinct `clientRequestId` per round, stable across retries of that round.
+`childThreadId` is backing storage, not a target for another review round through
+`scient_thread_send`. Ordinary thread messaging remains available for user-requested
+conversations; it does not reopen a completed task. There is no task-level follow-up
+API for preserving the same reviewer session.
 
 Delegation requires an active parent run owned by the MCP credential's
 provider session. The request becomes the V2 command
@@ -271,13 +290,17 @@ the published task result.
 
 ### `task_cancel`
 
-Interrupts the currently active task run through the normal V2 `run.interrupt`
-command. Native background work between turns currently has no interruptible run. It is idempotent for terminal tasks and accepts an optional cancellation
-reason. Use `t3_thread_interrupt` to interrupt a later follow-up run.
+Stops the child thread with the internal `thread.stop` command, then stops every
+task the child delegated, and disposes automatic parent delivery. Like a user Stop,
+`thread.stop` interrupts the running turn, holds queued turns, and ends pull request
+watches. A nonterminal task with no interruptible run is rejected. A terminal task
+returns its existing status, and its child thread still stops, including later
+runs and watch wakes. Published task results remain available. It accepts an
+optional cancellation reason.
 
 ### `create_threads`
 
-Creates between one and twenty ordinary top-level T3 threads:
+Creates between one and twenty ordinary top-level Scient threads:
 
 ```ts
 type CreateThreadsInput = {
@@ -301,7 +324,7 @@ inherit the parent's project, branch, and worktree path, but they have no
 sub-agent lineage. Entries with a prompt immediately dispatch a run; entries
 without a prompt remain idle.
 
-### `t3_thread_launch`
+### `scient_thread_launch`
 
 Launches one ordinary top-level thread through the app's launch service. Use an
 explicit `workspaceStrategy` to create a new worktree (`worktree` with `baseRef`),
@@ -313,35 +336,47 @@ this binding.
 Pass the task in `message`. Project, model, and modes inherit when omitted;
 workspace does not. `scratch: true` launches without a project, in a folder of
 its own under the environment's Scratch project. For stacked PRs, use the parent branch as `baseRef` with
-`startFromOrigin: false`. Launch requires a full-access/default caller and has
-no retry key, so inspect existing threads after a failed or lost response before
+`startFromOrigin: false`. The new thread may not run with broader runtime or
+interaction modes than the caller. Launch has no retry key, so inspect existing threads after a failed or lost response before
 launching again. `create_threads` remains the batch option for a shared checkout.
 
-### `t3_thread_list`
+### `scient_thread_list`
 
-Lists durable thread shells in the calling thread's project, newest first.
-Callers can filter by title, run status, and whether app-owned sub-agent threads
-are included. Results are bounded and offset-paginated. Deleted threads and
-threads from other projects are never exposed.
+Lists durable thread shells in one project, newest first: `projectId` when
+given, else the calling thread's project. Callers can filter by title, run
+status, and whether app-owned sub-agent threads are included. Results are
+bounded and offset-paginated. Deleted threads are never listed.
 
-### `t3_thread_read`
+### `scient_thread_read`
 
-Reads a project-scoped thread's durable state, recent runs, and visible
-timeline. The default `messages` view returns user messages, assistant
-messages, and proposed plans. The `activity` view also returns summarized tool,
-reasoning, checkpoint, handoff, and runtime-request items. Large item text is
-bounded and reports whether it was truncated. `afterPosition` and
-`nextPosition` support incremental reads.
+Reads a thread's durable summary and visible timeline within the calling
+thread's project. A missing or deleted target returns `thread_not_found`;
+a target in another project returns `thread_outside_project`.
 
-Thread and message results include required `createdBy` and `creationSource`
-provenance. MCP-created threads and user-role messages use `createdBy: "agent"`
-and `creationSource: "mcp"`; provider output uses `creationSource: "provider"`.
-Actor and ingress are separate so agent-authored user-role messages remain
-distinguishable from human-authored messages.
+The default `messages` view returns user and assistant messages and proposed
+plans. The `activity` view includes tool, reasoning, checkpoint, handoff and
+runtime-request items. The result contains `thread`, `items`, `nextPosition`
+and `hasMore`. `afterPosition` pages through history; `itemId`, `textOffset`
+and `maxCharsPerItem` allow reading an individual item's remaining text.
+Truncated text reports `textTruncated` and `nextTextOffset`.
 
-### `t3_thread_update`
+This preserved Scient history reader is distinct from upstream's native
+thread-management read operation. Do not assume native `recentRuns`, thread
+links, provenance or snooze fields are part of this history-reader response.
 
-Updates metadata for the calling thread or another thread in the same project.
+### `scient_thread_inspect`
+
+Inspects durable state, recent runs and a paginated timeline through the
+orchestration service. Provider-thread callers may inspect their project or a
+thread explicitly attached by the user as context. External clients use their
+approved environment authority. Reading a complete terminal result from a
+direct app-owned child also acknowledges that child's completion delivery.
+This is separate from the narrow `scient_thread_read` history reader.
+
+### `scient_thread_update`
+
+Updates metadata for the calling thread or another thread in its project.
+External clients use their declared environment authority.
 The typed actions are `rename`, `regenerate_title`, `link_pull_request`, and
 `unlink_pull_request`. A link input supplies the repository, number, and URL;
 the server records the target thread's project ID. Branch and workspace changes
@@ -350,12 +385,13 @@ are outside this tool.
 The result includes the command ID and durable event sequence together with the
 resultant title, title-regeneration marker, and linked pull request. Reusing a
 `clientRequestId` for the same action and thread replays the same command
-receipt. Thread list and read results expose the linked pull request, and thread
-detail also exposes an in-flight title regeneration.
+receipt. Native thread-management results expose linked pull requests and in-flight
+title regeneration; the Scient history-reader response has its own schema.
 
-### `t3_thread_send`
+### `scient_thread_send`
 
-Sends a message to an ordinary or delegated thread in the calling project:
+Sends a message to an ordinary or delegated thread within the calling
+thread's project. External clients use their declared environment authority:
 
 - `auto` starts an idle thread, steers a fully active turn, or queues behind a
   turn that is not yet steerable;
@@ -368,14 +404,14 @@ The target runtime and interaction modes may not be broader than the caller's.
 Stable command and message IDs are derived from `clientRequestId` for
 idempotent retries.
 
-### `t3_thread_wait`
+### `scient_thread_wait`
 
 Waits for a selected run to become `completed`, `failed`, `cancelled`,
 `interrupted`, or `rolled_back`. Without `runId`, it pins the latest run at call
 time; an idle thread returns immediately. A timeout reports the latest durable
 status and does not cancel work.
 
-### `t3_thread_interrupt`
+### `scient_thread_interrupt`
 
 Interrupts a selected active run through the normal V2 `run.interrupt` command.
 Without `runId`, it selects the newest interruptible run. A terminal run is
@@ -422,9 +458,13 @@ results use the latest assistant content from the final work turn.
   mode. It may not escalate privileges.
 - A child interaction mode may stay equal to or narrow from `default` to
   `plan`. It may not escalate from `plan` to `default`.
-- General thread management is limited to the calling thread's project. Send
-  additionally enforces the same runtime and interaction privilege ceiling as
-  child creation.
+- Thread credentials retain the calling project's boundary for reading,
+  sending and metadata updates. External clients use their declared
+  environment authority; they do not inherit a fabricated thread identity.
+  List and search remain project-scoped.
+- A tool that changes another thread needs the calling thread's live run, and
+  the target's runtime and interaction modes may not be broader than the
+  caller's. This is the same privilege ceiling as child creation.
 - Provider instances must be enabled, installed, available, authenticated, and
   backed by a V2 adapter.
 - A requested model must be advertised by the selected provider when the
@@ -485,7 +525,7 @@ Coverage includes:
 - async status polling;
 - cancellation;
 - batch ordinary-thread creation;
-- project-scoped thread listing and timeline reads;
+- project-scoped thread listing and timeline reads, including denial of foreign-project access;
 - ordinary-thread send, wait, steering, and interruption;
 - inheritance and per-thread provider overrides; and
 - idempotent retries.

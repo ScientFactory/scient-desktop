@@ -26,7 +26,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EventSinkV2 } from "../../orchestration-v2/EventSink.ts";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import { ConversationForkService } from "../../orchestration-v2/scient-fork/ConversationForkService.ts";
-import { makeLayer } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
+import { layerFromAdapters as makeLayer } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import type { ProviderAdapterV2TurnInput } from "../../orchestration-v2/ProviderAdapter.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../../orchestration-v2/IdAllocator.ts";
 import { AcpProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/AcpAdapterV2.ts";
@@ -37,17 +37,17 @@ import {
 } from "../../orchestration-v2/Adapters/NativeSessionAdapterV2.ts";
 import * as Option from "effect/Option";
 import * as Clock from "effect/Clock";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Schema from "effect/Schema";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
-import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
+import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sqlite.ts";
 import { LegacyV1ThreadImporter } from "../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 
 import { ServerConfig } from "../../config.ts";
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
-import { live as resourceCleanupLayer } from "../../orchestration-v2/ResourceCleanupService.ts";
+import { layer as resourceCleanupLayer } from "../../orchestration-v2/ResourceCleanupService.ts";
 import { TerminalManager } from "../../terminal/Manager.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { CommandReceiptStoreV2 } from "../../orchestration-v2/CommandReceiptStore.ts";
@@ -1953,8 +1953,8 @@ it.live(
         );
         const config = yield* ServerConfig;
         const runtimeOptions = {
-          databaseLayer: database,
-          serverConfigLayer: Layer.succeed(ServerConfig, config),
+          layerDatabase: database,
+          layerServerConfig: Layer.succeed(ServerConfig, config),
         };
         const replacing = yield* Deferred.make<void>();
         let pauseReplacement = false;
@@ -2497,7 +2497,9 @@ it.live("native steering reaches an accepted carrying turn before its long send 
           ),
           Stream.runHead,
           Effect.timeout("5 seconds"),
-          Effect.catchTag("TimeoutError", () => Effect.die("Native acceptance never reached SQL")),
+          Effect.catchTags({
+            TimeoutError: () => Effect.die("Native acceptance never reached SQL"),
+          }),
         );
         const before = Option.getOrThrow(accepted);
         const run = before.runs.at(-1)!;
@@ -2518,9 +2520,9 @@ it.live("native steering reaches an accepted carrying turn before its long send 
         assert.equal(
           yield* Deferred.await(steered).pipe(
             Effect.timeout("5 seconds"),
-            Effect.catchTag("TimeoutError", () =>
-              Effect.die("Steering remained blocked by the long send"),
-            ),
+            Effect.catchTags({
+              TimeoutError: () => Effect.die("Steering remained blocked by the long send"),
+            }),
           ),
           "Use the retained evidence",
         );
@@ -2580,8 +2582,8 @@ it.live(
         ).pipe(Layer.provide(NodeServices.layer));
         const config = yield* ServerConfig;
         const runtimeOptions = {
-          databaseLayer: database,
-          serverConfigLayer: Layer.succeed(ServerConfig, config),
+          layerDatabase: database,
+          layerServerConfig: Layer.succeed(ServerConfig, config),
         };
         const projectScope = yield* Scope.Scope;
         const selected = { instanceId: PROVIDER_ID, model: "reported-capacity-model" };
@@ -2789,8 +2791,8 @@ it.live(
             {
               modelContextWindow: () => undefined,
               runtimeOptions: {
-                databaseLayer: freshDatabase,
-                serverConfigLayer: Layer.succeed(ServerConfig, freshConfig),
+                layerDatabase: freshDatabase,
+                layerServerConfig: Layer.succeed(ServerConfig, freshConfig),
               },
             },
           );

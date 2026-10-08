@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as EffectOutbox from "../EffectOutbox.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 

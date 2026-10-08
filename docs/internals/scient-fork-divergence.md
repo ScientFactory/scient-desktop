@@ -250,7 +250,7 @@ Git availability for valid non-Git local workspaces.
 | `orchestration-v2/EventSink.ts`, `ProjectionStore.ts`, `EffectWorker.ts`                                      | Atomic persistence, read models, provisioning execution                     |
 | `orchestration-v2/ProviderTurnStartService.ts`, `ProviderSessionManager.ts`                                   | Native clone or portable context, exact-session delivery and recovery       |
 | `orchestration-v2/ContextHandoffBudget.ts`, `ContextHandoffDelivery.ts`                                       | Whole-item selection, target allowance, delivery evidence                   |
-| `orchestration-v2/legacy/`, `persistence/Layers/Sqlite.ts`                                                    | Legacy hydration and immutable migration compatibility                      |
+| `orchestration-v2/legacy/`, `persistence/Sqlite.ts`                                                           | Legacy hydration and immutable migration compatibility                      |
 | `ws.ts`, `packages/client-runtime/src/operations/commands.ts`                                                 | Retained message-boundary wire routing and client operation                 |
 | `apps/web/src/components/scient-fork/forkAttempt.ts`, fork hooks/dialog, timeline and right-panel integration | Dialog, draft journal, navigation, and safe continuity                      |
 
@@ -348,7 +348,7 @@ into behavior tests.
 
 ### Live Scient migration preflight
 
-[`Sqlite.ts`](../../apps/server/src/persistence/Layers/Sqlite.ts) still invokes the independent
+[`Sqlite.ts`](../../apps/server/src/persistence/Sqlite.ts) still invokes the independent
 [`scientMigrator.ts`](../../apps/server/src/orchestration-v2/scient-fork/scientMigrator.ts) runner.
 Keep `scient_schema_migrations` separate from upstream's ledger and preserve its immutable ID/name
 manifest. Before applying migrations, the runner transactionally reconciles legacy `applied_at`

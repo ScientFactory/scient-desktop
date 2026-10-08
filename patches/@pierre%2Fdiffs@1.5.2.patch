@@ -1,0 +1,409 @@
+diff --git a/dist/components/VirtualizedFile.d.ts b/dist/components/VirtualizedFile.d.ts
+--- a/dist/components/VirtualizedFile.d.ts
++++ b/dist/components/VirtualizedFile.d.ts
+@@ -49,7 +49,7 @@
+   setVisibility(visible: boolean): void;
+   rerender(): void;
+   syncGhostTextRows(): void;
+-  applyDocumentChange(textDocument: TextDocument<'file', LAnnotation>, newLineAnnotations?: LineAnnotation<LAnnotation>[], shouldUpdateBuffer?: boolean): void;
++  applyDocumentChange(textDocument: TextDocument<'file', LAnnotation>, newLineAnnotations?: LineAnnotation<LAnnotation>[], shouldUpdateBuffer?: boolean, startLine?: number): void;
+   render({ fileContainer, file, forceRender, lineAnnotations, ...props }: FileRenderProps<LAnnotation>): boolean;
+   protected finalizeRender(): void;
+   private updatePendingRender;
+diff --git a/dist/components/VirtualizedFile.js b/dist/components/VirtualizedFile.js
+--- a/dist/components/VirtualizedFile.js
++++ b/dist/components/VirtualizedFile.js
+@@ -23,6 +23,7 @@
+ 		heights: /* @__PURE__ */ new Map(),
+ 		checkpoints: [],
+ 		fileAnnotationHeight: 0,
++		codeWidth: void 0,
+ 		ghostTextRows: NO_GHOST_TEXT_ROWS
+ 	};
+ 	pendingRender;
+@@ -35,6 +36,8 @@
+ 		super(options, workerManager, isContainerManaged);
+ 		this.virtualizer = virtualizer;
+ 		this.metrics = metrics;
++		const simpleVirtualizer = this.getSimpleVirtualizer();
++		if (simpleVirtualizer != null) this.resizeManager.onResize = () => simpleVirtualizer.requestHeightReconcile(this);
+ 	}
+ 	setMetrics(metrics, force = false) {
+ 		const nextMetrics = computeVirtualFileMetrics(metrics);
+@@ -86,10 +89,12 @@
+ 		if (this.isAdvancedMode()) throw new Error("VirtualizedFile.setThemeType cannot be used inside CodeView. Update CodeView options instead.");
+ 		super.setThemeType(themeType);
+ 	}
+-	resetLayoutCache(recompute = false, resetRenderRange = true) {
++	resetLayoutCache(recompute = false, resetRenderRange = true, startLine = 0) {
+ 		this.layoutDirty = true;
+-		this.cache.fileAnnotationHeight = 0;
+-		if (this.cache.heights.size > 0) this.cache.heights.clear();
++		if (startLine === 0) this.cache.fileAnnotationHeight = 0;
++		// Dropping unchanged wrapped rows moves the viewport before they can be remeasured.
++		if (startLine === 0) this.cache.heights.clear();
++		else for (const lineIndex of this.cache.heights.keys()) if (lineIndex >= startLine) this.cache.heights.delete(lineIndex);
+ 		if (this.cache.checkpoints.length > 0) this.cache.checkpoints.length = 0;
+ 		this.cache.ghostTextRows = NO_GHOST_TEXT_ROWS;
+ 		if (this.renderRange != null && resetRenderRange) this.renderRange = void 0;
+@@ -135,6 +140,13 @@
+ 		if (this.code == null) return hasHeightChange;
+ 		const content = this.code.children[1];
+ 		if (!(content instanceof HTMLElement)) return hasHeightChange;
++		const codeWidth = this.code.getBoundingClientRect().width;
++		if (!(codeWidth > 0)) return hasHeightChange;
++		if (this.cache.codeWidth != null && this.cache.codeWidth !== codeWidth) {
++			this.resetLayoutCache(false, false);
++			hasHeightChange = true;
++		}
++		this.cache.codeWidth = codeWidth;
+ 		if (this.renderRange != null && shouldRenderFileAnnotations(this.renderRange)) {
+ 			const nextFileAnnotationHeight = measureFileAnnotationHeight(content) ?? 0;
+ 			if (nextFileAnnotationHeight !== this.cache.fileAnnotationHeight) {
+@@ -358,12 +370,12 @@
+ 			codeView.instanceChanged(this, true);
+ 		} else this.getSimpleVirtualizer()?.requestHeightReconcile(this);
+ 	}
+-	applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer = false) {
++	applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer = false, startLine = 0) {
+ 		const { renderRange: previousRenderRange } = this;
+ 		this.getAdvancedVirtualizer()?.capturePendingLayoutAnchor();
+ 		super.applyDocumentChange(textDocument, newLineAnnotations);
+ 		this.getSimpleVirtualizer()?.markDOMDirty();
+-		this.resetLayoutCache(this.isSimpleMode(), false);
++		this.resetLayoutCache(this.isSimpleMode(), false, startLine);
+ 		const file = this.getRenderedFile();
+ 		if (!this.isSimpleMode()) this.computeApproximateSize(true);
+ 		else if (shouldUpdateBuffer && previousRenderRange != null && file != null) {
+diff --git a/dist/editor/editStack.js b/dist/editor/editStack.js
+--- a/dist/editor/editStack.js
++++ b/dist/editor/editStack.js
+@@ -1,3 +1,4 @@
++import { prepareExternalHistory } from "./externalHistory.js";
+ //#region src/editor/editStack.ts
+ /** Largest number of undo or redo entries kept; oldest entries drop first once exceeded. */
+ const DEFAULT_EDIT_STACK_MAX_ENTRIES = 100;
+@@ -58,6 +59,14 @@
+ 		return stack;
+ 	}
+ 	/** Clears both the undo and redo stacks. */
++	prepareExternal(source, edits) {
++		const prepared = prepareExternalHistory(this.#undoStack, this.#redoStack, source, edits);
++		return prepared ? () => {
++			this.#undoStack = prepared.undo;
++			this.#redoStack = prepared.redo;
++			this.#canCoalesce = false;
++		} : null;
++	}
+ 	clear() {
+ 		this.#undoStack.length = 0;
+ 		this.#redoStack.length = 0;
+diff --git a/dist/editor/editor.d.ts b/dist/editor/editor.d.ts
+--- a/dist/editor/editor.d.ts
++++ b/dist/editor/editor.d.ts
+@@ -163,6 +163,9 @@
+    */
+   applyEdits(edits: TextEdit[], updateHistory?: boolean): void;
+   /** Whether there is an edit to undo. */
++  /** Scient opt-in: prepare an exact, non-undoable external update, rebasing local history. */
++  prepareExternalEdits(expectedSource: string, edits: { start: number; end: number; text: string }[]): (() => void) | null;
++  readonly isComposing: boolean;
+   get canUndo(): boolean;
+   /** Whether there is an undone edit to redo. */
+   get canRedo(): boolean;
+diff --git a/dist/editor/editor.js b/dist/editor/editor.js
+--- a/dist/editor/editor.js
++++ b/dist/editor/editor.js
+@@ -341,6 +341,24 @@
+ 		this.#applyChange(change, nextSelections, this.#applyChangeToLineAnnotations(change), { skipFocus: !wasFocused });
+ 	}
+ 	/** Whether there is an edit to undo. */
++	prepareExternalEdits(expectedSource, edits) {
++		const document = this.#editSession?.document;
++		if (!document || this.#isComposing || document.getText() !== expectedSource) return null;
++		const prepared = document.prepareExternalEdits(edits);
++		if (!prepared) return null;
++		return () => {
++			if (this.#editSession?.document !== document || document.getText() !== expectedSource || this.#isComposing)
++				throw new Error("External editor update became stale");
++			// External updates neither steal focus nor scroll to the caret.
++			const selections = this.#selections;
++			const offsets = selections?.map((selection) => [document.offsetAt(selection.start), document.offsetAt(selection.end)]);
++			const change = prepared();
++			if (!change) return;
++			const next = selections && offsets ? remapSelectionsAfterEdits(document, selections, offsets, edits) : void 0;
++			this.#applyChange(change, next, this.#lineAnnotations === void 0 ? void 0 : applyDocumentChangeToLineAnnotations(change, this.#lineAnnotations), { skipFocus: true });
++		};
++	}
++	get isComposing() { return this.#isComposing; }
+ 	get canUndo() {
+ 		return (this.#editSession ?? this.#initialState)?.document?.canUndo ?? false;
+ 	}
+@@ -1209,6 +1227,17 @@
+ 				if (e.inputType === "insertCompositionText") {
+ 					this.#cancelEditPrediction(true);
+ 					return;
++				}
++				// The first beforeinput may precede the browser's selectionchange.
++				// Adopt only an owned native range when no editor selection exists.
++				if (!this.#selections?.length) {
++					const shadowRoot = this.#fileContainer?.shadowRoot;
++					const native = document.getSelection();
++					const range = shadowRoot && native
++						? (typeof native.getComposedRanges === "function" ? native.getComposedRanges({ shadowRoots: [shadowRoot] })?.[0] : getShadowRootRange(shadowRoot))
++						: void 0;
++					const selection = range && this.#rangeBelongsToEditor(range) ? convertSelection(range, 0) : void 0;
++					if (selection) this.#updateSelections([selection]);
+ 				}
+ 				e.preventDefault();
+ 				this.#handleInput(e.inputType, e.data);
+@@ -1899,7 +1928,11 @@
+ 			changedDocumentLines: this.#isDiff && !didLineCountChange ? getChangedDocumentLines(textDocument, change) : void 0,
+ 			documentLineCount: textDocument.lineCount
+ 		});
+-		if (didLineCountChange) applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer);
++		if (didLineCountChange) {
++			// A wider or narrower line-number gutter can rewrap unchanged rows.
++			const layoutStartLine = String(change.previousLineCount).length === String(change.lineCount).length ? change.startLine : 0;
++			applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer, layoutStartLine);
++		}
+ 		if (didLineCountChange || this.#isDiff && this.#diffSyle === "unified") this.#resetCache();
+ 		if (newLineAnnotations != null) {
+ 			this.#lineAnnotations = newLineAnnotations;
+diff --git a/dist/editor/externalHistory.js b/dist/editor/externalHistory.js
+new file mode 100644
+--- /dev/null
++++ b/dist/editor/externalHistory.js
+@@ -0,0 +1,106 @@
++import { PieceTable } from "./pieceTable.js";
++
++// Scient's opt-in external-edit path. Existing programmatic edits retain their
++// upstream undo semantics. Uncertain history intersections decline atomically.
++function apply(text, edits) {
++  let result = text;
++  for (const edit of edits.toSorted((a, b) => b.start - a.start)) {
++    if (edit.start < 0 || edit.end < edit.start || edit.end > text.length) throw new Error("Invalid history range");
++    result = result.slice(0, edit.start) + edit.text + result.slice(edit.end);
++  }
++  return result;
++}
++function mapOffset(offset, edits, bias = 1) {
++  let delta = 0;
++  for (const edit of edits) {
++    if (offset < edit.start || offset === edit.start && bias < 0) break;
++    if (offset < edit.end || offset === edit.end && edit.start === edit.end) return edit.start + delta + (bias < 0 ? 0 : edit.text.length);
++    delta += edit.text.length - (edit.end - edit.start);
++  }
++  return offset + delta;
++}
++function mapEdits(edits, through, insertionBias = 1) {
++  for (const edit of edits) for (const other of through) {
++    const inside = edit.start === edit.end
++      ? edit.start > other.start && edit.start < other.end
++      : other.start === other.end
++        ? other.start > edit.start && other.start < edit.end
++        : edit.start < other.end && other.start < edit.end;
++    if (inside) return null;
++  }
++  return edits.map((edit) => ({
++    ...edit,
++    start: mapOffset(edit.start, through, edit.start === edit.end ? insertionBias : 1),
++    end: mapOffset(edit.end, through, edit.start === edit.end ? insertionBias : -1)
++  }));
++}
++function mapState(entry, side, source, updated, changes) {
++  const before = new PieceTable(source);
++  const after = new PieceTable(updated);
++  const selections = entry["selections" + side];
++  const annotations = entry["lineAnnotations" + side];
++  return {
++    ["selections" + side]: selections?.map((selection) => ({
++      ...selection,
++      start: after.positionAt(mapOffset(before.offsetAt(selection.start), changes)),
++      end: after.positionAt(mapOffset(before.offsetAt(selection.end), changes))
++    })),
++    ["lineAnnotations" + side]: annotations?.map((annotation) => annotation.lineNumber <= 0 || annotation.side === "deletions" ? annotation : ({
++      ...annotation,
++      lineNumber: after.positionAt(mapOffset(before.offsetAt({ line: annotation.lineNumber - 1, character: 0 }), changes)).line + 1
++    }))
++  };
++}
++export function prepareExternalHistory(undo, redo, source, edits) {
++  if (source.length > 256000 || undo.length + redo.length > 200) return null;
++  const started = performance.now();
++  const walk = (entries, direction) => {
++    const result = entries.slice();
++    let text = source;
++    let external = edits;
++    for (let index = entries.length - 1; index >= 0; index--) {
++      if (performance.now() - started > 40 || text.length > 256000) return null;
++      const entry = entries[index];
++      const travel = direction === "undo" ? entry.inverseEdits : entry.forwardEdits;
++      const returnEdits = direction === "undo" ? entry.forwardEdits : entry.inverseEdits;
++      const mappedTravel = mapEdits(travel, external);
++      const nextExternal = mapEdits(external, travel, -1);
++      if (!mappedTravel || !nextExternal) return null;
++      const next = apply(text, travel);
++      const merged = apply(text, external);
++      const nextMerged = apply(next, nextExternal);
++      if (apply(next, returnEdits) !== text) return null;
++      // Recover the reciprocal local edit from its actual rebased range.
++      // Mapping another insertion at a shared boundary loses its order.
++      let delta = 0;
++      const mappedReturn = mappedTravel.toSorted((a, b) => a.start - b.start || a.end - b.end).map((edit) => {
++        const start = edit.start + delta;
++        delta += edit.text.length - (edit.end - edit.start);
++        return { start, end: start + edit.text.length, text: merged.slice(edit.start, edit.end) };
++      });
++      if (apply(merged, mappedTravel) !== nextMerged || apply(nextMerged, mappedReturn) !== merged) return null;
++      const before = direction === "undo" ? next : text;
++      const after = direction === "undo" ? text : next;
++      const beforeMerged = direction === "undo" ? nextMerged : merged;
++      const afterMerged = direction === "undo" ? merged : nextMerged;
++      result[index] = {
++        ...entry,
++        forwardEdits: direction === "undo" ? mappedReturn : mappedTravel,
++        inverseEdits: direction === "undo" ? mappedTravel : mappedReturn,
++        ...mapState(entry, "Before", before, beforeMerged, direction === "undo" ? nextExternal : external),
++        ...mapState(entry, "After", after, afterMerged, direction === "undo" ? external : nextExternal),
++        undoBoundary: true
++      };
++      text = next;
++      external = nextExternal;
++    }
++    return result;
++  };
++  try {
++    const mappedUndo = walk(undo, "undo");
++    const mappedRedo = walk(redo, "redo");
++    return mappedUndo && mappedRedo ? { undo: mappedUndo, redo: mappedRedo } : null;
++  } catch {
++    return null;
++  }
++}
+diff --git a/dist/editor/textDocument.js b/dist/editor/textDocument.js
+--- a/dist/editor/textDocument.js
++++ b/dist/editor/textDocument.js
+@@ -122,6 +122,19 @@
+ 	}
+ 	setLastUndoSelectionsAfter(selections) {
+ 		this.#editStack.setLastUndoSelectionsAfter(selections);
++	}
++	prepareExternalEdits(edits) {
++		const resolved = this.#sortAndValidateResolvedEdits(edits.map((edit) => ({ ...edit })));
++		const commitHistory = this.#editStack.prepareExternal(this.getText(), resolved);
++		if (!commitHistory) return null;
++		const version = this.#version;
++		return () => {
++			if (this.#version !== version) throw new Error("External edit preparation became stale");
++			const change = this.#applyResolvedEditsToBuffer(resolved);
++			commitHistory();
++			this.#version++;
++			return change;
++		};
+ 	}
+ 	setLastUndoLineAnnotations(lineAnnotationsBefore, lineAnnotationsAfter) {
+ 		this.#editStack.setLastUndoLineAnnotations(lineAnnotationsBefore, lineAnnotationsAfter);
+diff --git a/dist/managers/ResizeManager.d.ts b/dist/managers/ResizeManager.d.ts
+--- a/dist/managers/ResizeManager.d.ts
++++ b/dist/managers/ResizeManager.d.ts
+@@ -5,6 +5,8 @@
+   columnVariables?: ResizeManagerColumnVariableMode;
+ }
+ declare class ResizeManager {
++  /** Schedule owner measurement after an observed code or gutter size change. */
++  onResize?: () => void;
+   private static resizeObserver;
+   private static managersByElement;
+   private static getResizeObserver;
+diff --git a/dist/managers/ResizeManager.js b/dist/managers/ResizeManager.js
+--- a/dist/managers/ResizeManager.js
++++ b/dist/managers/ResizeManager.js
+@@ -19,6 +19,7 @@
+ 		for (const [manager, managerEntries] of entriesByManager) manager.handleResizeEntries(managerEntries);
+ 	}
+ 	observedNodes = /* @__PURE__ */ new Map();
++	onResize;
+ 	setup(pre, { disableAnnotations, columnVariables = "apply" }) {
+ 		const annotationUpdates = /* @__PURE__ */ new Set();
+ 		const applyColumnVariables = columnVariables === "apply";
+@@ -212,6 +213,7 @@
+ 		this.applyAnnotationUpdates(annotationUpdates);
+ 		annotationUpdates.clear();
+ 		this.applyColumnUpdates(codeUpdates);
++		if (codeUpdates.size > 0) this.onResize?.();
+ 		codeUpdates.clear();
+ 	}
+ 	applyAnnotationUpdates(annotationUpdates) {
+diff --git a/dist/react/utils/useFileDiffInstance.js b/dist/react/utils/useFileDiffInstance.js
+--- a/dist/react/utils/useFileDiffInstance.js
++++ b/dist/react/utils/useFileDiffInstance.js
+@@ -88,10 +88,11 @@
+ 				prerenderedHTML
+ 			});
+ 		} else {
+-			if (instanceRef.current == null) throw new Error("useFileDiffInstance: A FileDiff instance should exist when unmounting");
+-			pendingAttachRef.current = null;
+-			instanceRef.current.cleanUp();
++			const instance = instanceRef.current;
++			if (instance == null) return;
++			pendingAttachRef.current = null;
+ 			instanceRef.current = null;
++			instance.cleanUp();
+ 			disposeEditorRef.current = null;
+ 		}
+ 	});
+diff --git a/dist/react/utils/useFileInstance.js b/dist/react/utils/useFileInstance.js
+--- a/dist/react/utils/useFileInstance.js
++++ b/dist/react/utils/useFileInstance.js
+@@ -67,9 +67,10 @@
+ 				prerenderedHTML
+ 			});
+ 		} else {
+-			if (instanceRef.current == null) throw new Error("File: A File instance should exist when unmounting");
+-			instanceRef.current.cleanUp();
++			const instance = instanceRef.current;
++			if (instance == null) return;
+ 			instanceRef.current = null;
++			instance.cleanUp();
+ 			disposeEditorRef.current = null;
+ 		}
+ 	});
+diff --git a/dist/react/utils/useUnresolvedFileInstance.js b/dist/react/utils/useUnresolvedFileInstance.js
+--- a/dist/react/utils/useUnresolvedFileInstance.js
++++ b/dist/react/utils/useUnresolvedFileInstance.js
+@@ -50,9 +50,10 @@
+ 				prerenderedHTML
+ 			});
+ 		} else {
+-			if (instanceRef.current == null) throw new Error("useUnresolvedFileInstance: A UnresolvedFile instance should exist when unmounting");
+-			instanceRef.current.cleanUp();
++			const instance = instanceRef.current;
++			if (instance == null) return;
+ 			instanceRef.current = null;
++			instance.cleanUp();
+ 		}
+ 	});
+ 	useIsomorphicLayoutEffect(() => {
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -58,6 +58,18 @@
+     "./worker/worker-portable.js": {
+       "types": "./dist/worker/worker-portable.d.ts",
+       "import": "./dist/worker/worker-portable.js"
++    },
++    "./types": {
++      "types": "./dist/types.d.ts",
++      "import": "./dist/types.js"
++    },
++    "./utils/getFiletypeFromFileName": {
++      "types": "./dist/utils/getFiletypeFromFileName.d.ts",
++      "import": "./dist/utils/getFiletypeFromFileName.js"
++    },
++    "./utils/parsePatchFiles": {
++      "types": "./dist/utils/parsePatchFiles.d.ts",
++      "import": "./dist/utils/parsePatchFiles.js"
+     }
+   },
+   "publishConfig": {

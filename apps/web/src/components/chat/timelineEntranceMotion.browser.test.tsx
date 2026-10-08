@@ -5,6 +5,7 @@ import { createRef } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vitest/browser";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { motionClock } from "./motionClock";
 import { streamingTextAppearing } from "./useStreamingBlockEntrance";
@@ -318,6 +319,44 @@ it("hides Thinking while the answer's lines appear, and brings it back when the 
     const visibleThinking = thinking() && !thinking()!.classList.contains("opacity-0");
     return Boolean(live) || Boolean(visibleThinking);
   });
+});
+
+it("keeps a hidden Thinking disclosure out of focus, then restores its group interaction", async () => {
+  const prompt = entry(1, "Question");
+  const answer = (streaming: boolean) =>
+    reply(42, "First paragraph.\n\nSecond paragraph.", streaming);
+  const failedTool = {
+    id: "failed-tool-after-text",
+    kind: "work" as const,
+    createdAt: date,
+    entry: {
+      id: "failed-tool-after-text",
+      createdAt: date,
+      runId: RunId.make("run-1"),
+      label: "Run command",
+      tone: "tool" as const,
+      toolLifecycleStatus: "failed" as const,
+      detail: "Command failed",
+    },
+  };
+  const disclosure = () =>
+    host!.querySelector<HTMLButtonElement>('[data-timeline-row-kind="thinking"] button');
+  render("motion:thinking-disclosure", [prompt, answer(true), failedTool], working);
+  await playUntil(() => disclosure() !== null);
+  await playUntil(() => streamingTextAppearing("message-42"));
+  disclosure()!.focus();
+  // Chromium refuses focus on the invisible native disclosure; it cannot steal
+  // keyboard interaction while the answer is appearing above it.
+  expect(document.activeElement).not.toBe(disclosure());
+  expect(disclosure()!.getAttribute("aria-expanded")).toBe("false");
+  render("motion:thinking-disclosure", [prompt, answer(false), failedTool], working);
+  await playUntil(() => !streamingTextAppearing("message-42"));
+  disclosure()!.focus();
+  expect(document.activeElement).toBe(disclosure());
+  await userEvent.keyboard("{Enter}");
+  await expect.poll(() => disclosure()?.getAttribute("aria-expanded")).toBe("true");
+  await userEvent.keyboard("{Enter}");
+  await expect.poll(() => disclosure()?.getAttribute("aria-expanded")).toBe("false");
 });
 
 it("crosses the blank space between paragraphs without pausing", async () => {

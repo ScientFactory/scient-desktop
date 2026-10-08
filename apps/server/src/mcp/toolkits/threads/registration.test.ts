@@ -4,7 +4,7 @@ import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts"
 import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { McpSchema, McpServer, Tool } from "effect/unstable/ai";
+import { McpSchema, McpServer, Tool } from "effect/ai";
 
 import { ScientThreadsToolkitRegistrationLive } from "../../McpHttpServer.ts";
 import { scientOperationCatalog } from "../../ScientOperationCatalog.ts";
@@ -117,9 +117,13 @@ it.effect(
           Effect.provideService(McpSchema.McpServerClient, client),
           Effect.provideService(McpInvocationContext, {
             environmentId: EnvironmentId.make("environment-reader-cutover"),
-            threadId,
-            providerSessionId: "reader-cutover",
-            providerInstanceId: ProviderInstanceId.make("codex"),
+            requestNamespace: "reader-cutover",
+            thread: {
+              threadId,
+              providerSessionId: "reader-cutover",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+            },
+            client: undefined,
             capabilities,
             issuedAt: 1,
           }),

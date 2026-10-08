@@ -9,6 +9,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -51,6 +52,7 @@ export class CheckpointCaptureServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   CheckpointCaptureServiceV2,
   never,
+  | Crypto.Crypto
   | CheckpointService.CheckpointServiceV2
   | EventSink.EventSinkV2
   | IdAllocator.IdAllocatorV2
@@ -58,6 +60,7 @@ export const layer: Layer.Layer<
 > = Layer.effect(
   CheckpointCaptureServiceV2,
   Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
     const checkpoints = yield* CheckpointService.CheckpointServiceV2;
     const eventSink = yield* EventSink.EventSinkV2;
     const ids = yield* IdAllocator.IdAllocatorV2;
@@ -250,6 +253,7 @@ export const layer: Layer.Layer<
             { eventSink, ids, projections, makeCheckpointTurnItem },
             input,
           ),
+          Effect.provideService(Crypto.Crypto, crypto),
           // SCIENT-FORK:END checkpoint-capture-final-attempt
           Effect.mapError((cause) =>
             isCheckpointCaptureExecutionError(cause)

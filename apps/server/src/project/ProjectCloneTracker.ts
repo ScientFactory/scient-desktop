@@ -1,7 +1,4 @@
 import type {
-  // SCIENT-FORK:START — restored from origin/main; upstream's rewrite dropped it, but the
-  // V1 `dispatchCommand` body in ws.ts calls it verbatim.
-  // SCIENT-FORK:END
   ProjectCloneSnapshot,
   ProjectCloneStage,
   ProjectCloneStartInput,

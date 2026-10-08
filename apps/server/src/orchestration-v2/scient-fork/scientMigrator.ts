@@ -37,9 +37,9 @@
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
-import * as Migrator from "effect/unstable/sql/Migrator";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import * as Migrator from "effect/sql/Migrator";
+import * as SqlClient from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
 
 import Migration001 from "./migrations/001_DurableThreadForks.ts";
 import Migration002 from "./migrations/002_DurableProviderBootstrap.ts";

@@ -16,14 +16,16 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import { vi } from "vite-plus/test";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { HttpClient } from "effect/http";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
-import { CursorDriver, assistedCursorConnectionMethods } from "./CursorDriver.ts";
+import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
+import { CursorDriver } from "./CursorDriver.ts";
+import { assistedCursorConnectionMethods } from "./CursorDriver.ts";
 import * as CursorAgentSdk from "../../orchestration-v2/Adapters/CursorAgentSdk.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../../orchestration-v2/ProviderAdapter.ts";
 import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
@@ -195,45 +197,46 @@ it.layer(testLayer)("CursorDriver", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  for (const enabled of [false, true]) {
-    it.effect(
-      `keeps SDK maintenance manual-only with a discoverable CLI (enabled=${enabled})`,
-      () =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const root = yield* fs.makeTempDirectoryScoped({
-            prefix: "scient-cursor-sdk-maintenance-",
-          });
-          const binary = path.join(root, "cursor-agent");
-          yield* fs.writeFileString(binary, "#!/bin/sh\nprintf 'Cursor Agent 2026.10.01\\n'\n");
-          yield* fs.chmod(binary, 0o755);
-          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          let resolvingMaintenance = false;
-          const guardedSpawner = ChildProcessSpawner.make((command) =>
-            Effect.suspend(() =>
-              resolvingMaintenance
-                ? Effect.die("SDK maintenance must not spawn a process")
-                : spawner.spawn(command),
-            ),
-          );
-          const instance = yield* CursorDriver.create({
-            instanceId: ProviderInstanceId.make(`cursor-sdk-${enabled}`),
-            displayName: "Cursor test",
-            enabled,
-            environment: [
-              { name: "PATH", value: root, sensitive: false },
-              { name: "HOME", value: root, sensitive: false },
-            ],
-            config: CursorDriver.defaultConfig(),
-          }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, guardedSpawner));
-          resolvingMaintenance = true;
-          const maintenance = yield* instance.snapshot.resolveMaintenance();
-          expect(maintenance.update).toBeNull();
-          if (!enabled) expect((yield* instance.snapshot.refresh).status).toBe("disabled");
-        }).pipe(Effect.scoped),
-    );
-  }
+  it.effect.each(
+    [false, true].map((enabled) => ({
+      caseTitle: `keeps SDK maintenance manual-only with a discoverable CLI (enabled=${enabled})`,
+      enabled,
+    })),
+  )("$caseTitle", ({ enabled }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "scient-cursor-sdk-maintenance-",
+      });
+      const binary = path.join(root, "cursor-agent");
+      yield* fs.writeFileString(binary, "#!/bin/sh\nprintf 'Cursor Agent 2026.10.01\\n'\n");
+      yield* fs.chmod(binary, 0o755);
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      let resolvingMaintenance = false;
+      const guardedSpawner = ChildProcessSpawner.make((command) =>
+        Effect.suspend(() =>
+          resolvingMaintenance
+            ? Effect.die("SDK maintenance must not spawn a process")
+            : spawner.spawn(command),
+        ),
+      );
+      const instance = yield* CursorDriver.create({
+        instanceId: ProviderInstanceId.make(`cursor-sdk-${enabled}`),
+        displayName: "Cursor test",
+        enabled,
+        environment: [
+          { name: "PATH", value: root, sensitive: false },
+          { name: "HOME", value: root, sensitive: false },
+        ],
+        config: CursorDriver.defaultConfig(),
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, guardedSpawner));
+      resolvingMaintenance = true;
+      const maintenance = yield* instance.snapshot.resolveMaintenance();
+      expect(maintenance.update).toBeNull();
+      if (!enabled) expect((yield* instance.snapshot.refresh).status).toBe("disabled");
+    }).pipe(Effect.scoped),
+  );
 
   it.effect("retains maintenance for an explicitly configured external CLI", () =>
     Effect.gen(function* () {

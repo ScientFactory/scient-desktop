@@ -300,9 +300,24 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* Effect.yieldNow;
 
         assert.equal(
-          new Set(assistantMessages(harness.events).map((event) => event.message.id)).size,
+          new Set(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+                ? [event.turnItem.messageId]
+                : [],
+            ),
+          ).size,
           1,
         );
+        assert.isFalse(
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "assistant_message" &&
+              event.turnItem.nativeItemRef?.nativeId === "answer-overlap-duplicate",
+          ),
+        );
+        assert.lengthOf(assistantMessages(harness.events), 0);
 
         yield* TestClock.adjust("50 millis");
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");

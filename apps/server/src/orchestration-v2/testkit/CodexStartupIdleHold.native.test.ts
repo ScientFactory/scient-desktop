@@ -1,3 +1,4 @@
+import * as Crypto from "effect/Crypto";
 // @effect-diagnostics nodeBuiltinImport:off
 /** Only external JSONL is controlled: native adapter, manager, turn start and worker are production. */
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -31,8 +32,8 @@ import { makeCodexAdapterV2 } from "../Adapters/CodexAdapterV2.ts";
 import { EventStoreV2 } from "../EventStore.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
-import { makeLayer } from "../ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
+import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -201,6 +202,7 @@ it.live("keeps a fresh Codex session through startup that outlasts the idle wind
       };
       const registry = makeLayer([
         makeCodexAdapterV2({
+          crypto: yield* Crypto.Crypto,
           instanceId,
           settings,
           environment: {},
@@ -221,7 +223,7 @@ it.live("keeps a fresh Codex session through startup that outlasts the idle wind
         registry,
         {
           providerSessionIdleTimeoutMs: IDLE_TIMEOUT_MS,
-          serverConfigLayer: Layer.succeed(ServerConfig, config),
+          layerServerConfig: Layer.succeed(ServerConfig, config),
         },
       );
       yield* Effect.gen(function* () {

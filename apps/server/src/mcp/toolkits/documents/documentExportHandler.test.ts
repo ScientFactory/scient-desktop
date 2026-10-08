@@ -25,6 +25,7 @@ import {
   renderResultFor,
   writeFixtureFile,
 } from "../../../scient/documentExport/DocumentExportTestUtils.ts";
+import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import {
   WorkspaceAuthorityGeneration,
@@ -34,7 +35,7 @@ import {
   type WorkspaceBindingRecordV1,
 } from "../../../scient/projectScope/WorkspaceBinding.ts";
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
-import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
 import { exportScientDocumentForInvocation } from "./documentExportHandler.ts";
 
 const fixtures: string[] = [];
@@ -101,7 +102,7 @@ type RenderBehavior =
   | { readonly _tag: "rejected"; readonly reason: "page-rejected" | "too-large" | "failed" };
 
 const makeBroker = (behavior: RenderBehavior) => {
-  const invoke = vi.fn((request: PreviewAutomationBroker.PreviewAutomationInvokeInput) => {
+  const invoke = vi.fn((request: DocumentHostBroker.DocumentHostInvokeInput) => {
     if (request.operation === "documentPagePdfRender") {
       if (behavior._tag === "no-host") {
         return Effect.fail({ _tag: "PreviewAutomationNoAvailableHostError" } as never);
@@ -126,9 +127,9 @@ const makeBroker = (behavior: RenderBehavior) => {
   });
   return {
     invoke,
-    broker: PreviewAutomationBroker.PreviewAutomationBroker.of({
+    broker: DocumentHostBroker.DocumentHostBroker.of({
       invoke,
-    } as unknown as PreviewAutomationBroker.PreviewAutomationBroker["Service"]),
+    } as unknown as DocumentHostBroker.DocumentHostBroker["Service"]),
   };
 };
 
@@ -166,8 +167,16 @@ const run = (
       makeResolver(context.root, context.authority ?? { changed: false }),
     ),
     Effect.provideService(GeneratedDocumentStore, store.store),
-    Effect.provideService(PreviewAutomationBroker.PreviewAutomationBroker, broker.broker),
-    Effect.provide(Layer.orDie(layer)),
+    Effect.provideService(DocumentHostBroker.DocumentHostBroker, broker.broker),
+    Effect.provide(
+      Layer.orDie(layer).pipe(
+        Layer.provideMerge(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            dispatch: () => Effect.succeed({ sequence: 1, storedEvents: [] }),
+          }),
+        ),
+      ),
+    ),
   );
   return { effect, store, broker };
 };

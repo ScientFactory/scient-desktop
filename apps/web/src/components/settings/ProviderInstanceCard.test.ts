@@ -162,7 +162,7 @@ describe("Pi status copy", () => {
       }),
     );
 
-    expect(markup).toContain("Known broken version");
+    expect(markup).toContain("Update available");
     expect(markup).toContain("Incompatible");
     expect(markup).not.toContain("npm install -g pi-coding-agent@latest");
     expect(markup).not.toContain("Install v0.83.0");

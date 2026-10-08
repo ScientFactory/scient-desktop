@@ -8,6 +8,7 @@ import {
   DROID_LATEST_VERSION_URL,
   parseDroidReleaseVersion,
   antigravityAcpExecutableNames,
+  isAntigravityAcpNativeVersion,
   resolveAntigravityAcpCatalogAsset,
   hydrateManagedRuntimeArtifact,
   isManagedRuntimeUpdate,
@@ -774,7 +775,7 @@ async function discoverAntigravityAcp(fetch_: Fetch): Promise<ManagedRuntimeCata
       throw new Error(`Antigravity ACP ${target.registryKey} changed its approved packaging.`);
     }
     const nativeVersion = url.slice(prefix.length, -suffix.length);
-    if (!/^agy_acp_server_[A-Za-z0-9_.-]{1,96}$/u.test(nativeVersion))
+    if (!isAntigravityAcpNativeVersion(nativeVersion))
       throw new Error("Antigravity ACP returned an invalid native release identity.");
     const inspected = await inspectAntigravityAcpArtifact(
       await request({ fetch: fetch_, url, timeoutMs: ARTIFACT_TIMEOUT_MS }),

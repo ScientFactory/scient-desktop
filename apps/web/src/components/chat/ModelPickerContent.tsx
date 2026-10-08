@@ -18,7 +18,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { SearchIcon } from "lucide-react";
+
 import { ModelPickerNewChatFooter } from "./ModelPickerNewChatFooter";
 import { ModelListDisclosureContent } from "./ModelListDisclosureContent";
 import { ModelListRow } from "./ModelListRow";
@@ -170,6 +170,7 @@ export function adjacentModelPickerProvider(input: {
 }
 
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
+const MODEL_LIST_ESTIMATED_ITEM_SIZE = 52;
 
 function ModelListSeparator() {
   return <div className="h-0.5" />;
@@ -230,6 +231,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const [showBottomScrollFade, setShowBottomScrollFade] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const modelListRef = useRef<LegendListRef | null>(null);
+  const pickerContentRef = useRef<HTMLDivElement>(null);
   const highlightedModelKeyRef = useRef<string | null>(null);
   const favorites = useClientSettings((s) => s.favorites ?? []);
   const activeEntry = props.instanceEntries.find(
@@ -812,6 +814,17 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       ),
     [visibleModels],
   );
+  const [modelListContentSize, setModelListContentSize] = useState(
+    () => filteredItemKeys.length * MODEL_LIST_ESTIMATED_ITEM_SIZE,
+  );
+  const [searchHeight, setSearchHeight] = useState(0);
+  useLayoutEffect(
+    () => modelListRef.current?.getState().listen("totalSize", setModelListContentSize),
+    [],
+  );
+  // Fit the list to its rows plus the combobox list `py-1` and LegendList `py-1.5`.
+  const modelListHeight =
+    filteredItemKeys.length === 0 ? 0 : `calc(${modelListContentSize}px + var(--spacing) * 5)`;
   const updateModelListScrollFades = useCallback(() => {
     const scrollElement = modelListRef.current?.getScrollableNode();
     if (!(scrollElement instanceof HTMLElement)) {
@@ -934,7 +947,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   return (
     <TooltipProvider delay={0}>
       <div
-        className="relative flex h-screen max-h-86.5 w-screen max-w-90 flex-row overflow-hidden"
+        ref={pickerContentRef}
+        className="relative flex max-h-86.5 w-screen max-w-90 flex-row overflow-hidden"
+        // Hold the height from when the search started; results scroll instead of resizing.
+        style={isSearching ? { height: searchHeight } : undefined}
         data-model-picker-content="true"
       >
         {/* Sidebar */}
@@ -1017,7 +1033,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 ref={searchInputRef}
                 placeholder="Search models..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  if (!isSearching) setSearchHeight(pickerContentRef.current?.offsetHeight ?? 0);
+                  setSearchQuery(e.target.value);
+                }}
                 onKeyDown={(e) => {
                   if (
                     showSidebar &&
@@ -1078,7 +1097,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             ) : null}
 
             {/* Model list */}
-            <div className="relative min-h-0 flex-1 overflow-hidden pr-px">
+            <div
+              className="relative min-h-0 overflow-hidden pr-px"
+              style={{ height: modelListHeight }}
+            >
               {selectedSetupEntry && props.renderProviderSetup ? (
                 <div className="absolute inset-0 z-10 flex overflow-y-auto bg-muted/40">
                   {props.renderProviderSetup(selectedSetupEntry)}
@@ -1173,7 +1195,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       </div>
                     );
                   }}
-                  estimatedItemSize={52}
+                  estimatedItemSize={MODEL_LIST_ESTIMATED_ITEM_SIZE}
                   drawDistance={480}
                   recycleItems
                   contentContainerClassName="pl-2 pr-px"

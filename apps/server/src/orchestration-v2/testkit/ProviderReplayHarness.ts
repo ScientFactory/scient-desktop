@@ -13,15 +13,15 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { MigrationError } from "effect/unstable/sql/Migrator";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import type * as SqlClient from "effect/sql/SqlClient";
+import type { MigrationError } from "effect/sql/Migrator";
+import type { SqlError } from "effect/sql/SqlError";
 import type { ScientMigrationError } from "../scient-fork/scientMigrator.ts";
 import type { V2DatabaseImportError } from "../../persistence/initializeV2Database.ts";
 
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../../config.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ThreadManagementService from "../ThreadManagementService.ts";
 import * as McpSessionRegistryTestkit from "../../mcp/McpSessionRegistry.testkit.ts";
@@ -45,9 +45,9 @@ import * as Orchestrator from "../Orchestrator.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
-import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
+import * as ProviderAuthService from "../../provider/ProviderAuthService.ts";
+import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
-import * as ProviderAuthService from "../../provider/Services/ProviderAuthService.ts";
 import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
 import * as ProviderContinuationService from "../ProviderContinuationService.ts";
 import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
@@ -56,13 +56,15 @@ import * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import * as ProviderSwitchService from "../ProviderSwitchService.ts";
 import * as ProviderTurnControlService from "../ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "../ProviderTurnStartService.ts";
-import { worktreeRepairDependenciesTestLayer } from "../ProviderTurnStartService.testkit.ts";
+import * as ProviderTurnStartServiceTestkit from "../ProviderTurnStartService.testkit.ts";
+import * as McpAppModelContext from "../../mcpApps/McpAppModelContext.ts";
 import * as RunExecutionService from "../RunExecutionService.ts";
 import * as RunFinalizationService from "../RunFinalizationService.ts";
 import * as ThreadTitleRegenerationService from "../ThreadTitleRegenerationService.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
 import * as TurnItemPositionStore from "../TurnItemPositionStore.ts";
 import * as RuntimeRequestService from "../RuntimeRequestService.ts";
+import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
 import * as ThreadForkService from "../ThreadForkService.ts";
 import * as ConversationForks from "../scient-fork/ConversationForkService.ts";
 import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
@@ -72,7 +74,6 @@ import {
   type ScientForkCheckpointBaselineShape,
 } from "../scient-fork/ForkCheckpointBaseline.ts";
 import { ScientForkAttachmentCopierLive } from "../scient-fork/ForkAttachmentCopier.ts";
-import { layer as threadCommandExecutorLayer } from "../ThreadCommandExecutor.ts";
 import {
   runOrchestratorV2Scenario,
   type OrchestratorV2ScenarioStepError,
@@ -201,7 +202,7 @@ export function runOrchestratorV2ProviderReplayScenario<
   scenario: OrchestratorV2ProviderReplayScenario<Transcript>,
   harness: OrchestratorV2ProviderReplayHarness<Transcript, Error>,
   options: {
-    readonly databaseLayer?: Layer.Layer<
+    readonly layerDatabase?: Layer.Layer<
       SqlClient.SqlClient,
       | MigrationError
       | PlatformError.PlatformError
@@ -248,7 +249,7 @@ export function runOrchestratorV2ProviderReplayScenario<
         : [],
     ) ?? [],
   );
-  const layer = makeOrchestratorV2ProviderReplayLayer(scenario, harness, {
+  const layer = layerProviderReplay(scenario, harness, {
     ...options,
     replayGate,
   });
@@ -256,14 +257,11 @@ export function runOrchestratorV2ProviderReplayScenario<
   return runOrchestratorV2Scenario(scenario, { replayGate }).pipe(Effect.provide(layer));
 }
 
-export function makeOrchestratorV2ProviderReplayLayer<
-  Transcript extends ProviderReplayTranscript,
-  Error,
->(
+export function layerProviderReplay<Transcript extends ProviderReplayTranscript, Error>(
   scenario: OrchestratorV2ProviderReplayScenario<Transcript>,
   harness: OrchestratorV2ProviderReplayHarness<Transcript, Error>,
   options: {
-    readonly databaseLayer?: Layer.Layer<
+    readonly layerDatabase?: Layer.Layer<
       SqlClient.SqlClient,
       | MigrationError
       | PlatformError.PlatformError
@@ -311,21 +309,23 @@ export function makeOrchestratorV2ProviderReplayLayer<
   | ScientMigrationError
   | V2DatabaseImportError
 > {
-  const registryLayer = harness.makeProviderAdapterRegistryLayer(
+  const layerRegistry = harness.makeProviderAdapterRegistryLayer(
     scenario.transcript,
     options.replayGate === undefined ? {} : { replayGate: options.replayGate },
   );
-  return makeOrchestratorV2ReplayLayerWithRegistry(scenario, registryLayer, options);
+  return layerWithRegistry(scenario, layerRegistry, options);
 }
 
-export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
+export function layerWithRegistry<Error>(
   scenario: Pick<OrchestratorV2ProviderReplayScenario, "name" | "runtimePolicyOverride">,
   registryLayer: Layer.Layer<ProviderAdapterRegistry.ProviderAdapterRegistryV2, Error>,
   options: {
     /** Preserve one disposable profile across file-backed restart and recovery tests. */
-    readonly serverConfigLayer?: Layer.Layer<ServerConfig.ServerConfig>;
-    readonly serverSettingsLayer?: Layer.Layer<ServerSettings.ServerSettingsService>;
+    readonly layerServerConfig?: Layer.Layer<ServerConfig.ServerConfig>;
+    readonly layerServerSettings?: Layer.Layer<ServerSettings.ServerSettingsService>;
     readonly providerSessionIdleTimeoutMs?: number;
+    /** Capture explicitly supplied thread operations in the actual effect worker. */
+    readonly threads?: Partial<ThreadManagementService.ThreadManagementServiceShape>;
     /** Observe or gate the real canonical writer without replacing its SQL transaction. */
     readonly decorateEventSink?: (sink: EventSink.EventSinkV2Shape) => EventSink.EventSinkV2Shape;
     /** Observe real projection reads without replacing their SQL implementation. */
@@ -336,7 +336,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     readonly decorateForkCheckpointBaseline?: (
       baseline: ScientForkCheckpointBaselineShape,
     ) => ScientForkCheckpointBaselineShape;
-    readonly databaseLayer?: Layer.Layer<
+    readonly layerDatabase?: Layer.Layer<
       SqlClient.SqlClient,
       | MigrationError
       | PlatformError.PlatformError
@@ -402,27 +402,28 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   | ScientMigrationError
   | V2DatabaseImportError
 > {
-  const serverConfigLayer =
-    options.serverConfigLayer ??
+  const layerServerConfig =
+    options.layerServerConfig ??
     Layer.effect(
       ServerConfig.ServerConfig,
       makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
     ).pipe(Layer.provide(NodeServices.layer));
-  const runtimeLayer =
+  const layerRuntime =
     options.runtimePolicyLayer ??
     (scenario.runtimePolicyOverride === undefined
       ? RuntimePolicy.layer
       : RuntimePolicy.layerWithOverride(scenario.runtimePolicyOverride).pipe(
           Layer.provide(RuntimePolicy.layer),
         ));
-  const databaseLayer = options.databaseLayer ?? SqlitePersistenceMemory;
+  const layerDatabase = options.layerDatabase ?? SqlitePersistence.layerMemory;
+  const layerThreadCommandExecutor = ThreadCommandExecutor.layer;
   // One queue shared by the adapters, the orchestrator, and the worker, like
-  // runtimeLayer.ts; layer memoization keeps it a single instance.
-  const continuationRequestsLayer =
+  // layerRuntime.ts; layer memoization keeps it a single instance.
+  const layerContinuationRequests =
     options.runContinuationWorker === true ? ProviderContinuationRequests.layer : Layer.empty;
-  const providedRegistryLayer = registryLayer.pipe(Layer.provide(continuationRequestsLayer));
-  const serverSettingsLayer =
-    options.serverSettingsLayer ??
+  const layerProvidedRegistry = registryLayer.pipe(Layer.provide(layerContinuationRequests));
+  const layerServerSettings =
+    options.layerServerSettings ??
     ServerSettings.layerTest({
       responseStreamingMode: options.responseStreamingMode ?? "turn",
       ...(options.continueThreadsAfterServerUpdate === undefined
@@ -430,74 +431,76 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
     }).pipe(Layer.orDie);
   const handoffSettingsLayer = Layer.merge(
-    serverSettingsLayer,
+    layerServerSettings,
     options.contextHandoffPolicy === "byte"
       ? Layer.succeed(ContextHandoffPolicyOverride, "byte")
       : Layer.empty,
   );
-  const projectionStoreLayer =
+  const layerProjectionStore =
     options.decorateProjectionStore === undefined
       ? ProjectionStore.layer
       : Layer.effect(
           ProjectionStore.ProjectionStoreV2,
           Effect.map(ProjectionStore.ProjectionStoreV2, options.decorateProjectionStore),
         ).pipe(Layer.provide(ProjectionStore.layer));
-  const storesLayer = Layer.mergeAll(
+  const layerStores = Layer.mergeAll(
     EventStore.layer,
-    projectionStoreLayer,
+    layerProjectionStore,
     ProjectStore.layer,
     CommandReceiptStore.layer,
     EffectOutbox.layer,
     TurnItemPositionStore.layer,
-  ).pipe(Layer.provide(databaseLayer));
+  ).pipe(Layer.provide(layerDatabase));
   const actualEventSink = EventSink.layerFromStores.pipe(
-    Layer.provide(Layer.mergeAll(storesLayer, databaseLayer)),
+    Layer.provide(Layer.mergeAll(layerStores, layerDatabase)),
   );
-  const eventSinkProvided =
+  const layerEventSinkProvided =
     options.decorateEventSink === undefined
       ? actualEventSink
       : Layer.effect(
           EventSink.EventSinkV2,
           Effect.map(EventSink.EventSinkV2, options.decorateEventSink),
         ).pipe(Layer.provide(actualEventSink));
-  const commandReceiptStoreProvided = CommandReceiptStore.layer.pipe(Layer.provide(databaseLayer));
+  const layerCommandReceiptStoreProvided = CommandReceiptStore.layer.pipe(
+    Layer.provide(layerDatabase),
+  );
   const attachmentReconciliationProvided = attachmentReconciliationLayer.pipe(
-    Layer.provide(Layer.merge(storesLayer, serverConfigLayer)),
+    Layer.provide(Layer.merge(layerStores, layerServerConfig)),
   );
   const legacyImporterProvided = LegacyV1ThreadImporter.layer.pipe(
-    Layer.provide(Layer.mergeAll(eventSinkProvided, databaseLayer)),
+    Layer.provide(Layer.mergeAll(layerEventSinkProvided, layerDatabase)),
   );
-  const providerEventIngestorProvided = ProviderEventIngestor.layer.pipe(
+  const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        storesLayer,
-        eventSinkProvided,
+        layerStores,
+        layerEventSinkProvided,
         IdAllocator.layer,
         attachmentReconciliationProvided,
       ),
     ),
   );
-  const vcsDriverRegistryLayer = VcsDriverRegistry.layer.pipe(
+  const layerVcsDriverRegistry = VcsDriverRegistry.layer.pipe(
     Layer.provide(options.vcsProcessLayer ?? VcsProcess.layer),
-    Layer.provide(serverConfigLayer),
+    Layer.provide(layerServerConfig),
     Layer.provide(NodeServices.layer),
   );
-  const checkpointStoreLayer = CheckpointStore.layer.pipe(
-    Layer.provide(vcsDriverRegistryLayer),
+  const layerCheckpointStore = CheckpointStore.layer.pipe(
+    Layer.provide(layerVcsDriverRegistry),
     Layer.provide(NodeServices.layer),
   );
-  const checkpointServiceProvided = CheckpointService.layer.pipe(
-    Layer.provide(Layer.mergeAll(checkpointStoreLayer, IdAllocator.layer)),
+  const layerCheckpointServiceProvided = CheckpointService.layer.pipe(
+    Layer.provide(Layer.mergeAll(layerCheckpointStore, IdAllocator.layer)),
   );
-  const contextHandoffServiceProvided = ContextHandoffService.layer.pipe(
+  const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
     Layer.provide(Layer.mergeAll(IdAllocator.layer, handoffSettingsLayer)),
   );
-  const persistenceLayer = Layer.mergeAll(
-    storesLayer,
-    eventSinkProvided,
-    commandReceiptStoreProvided,
+  const layerPersistence = Layer.mergeAll(
+    layerStores,
+    layerEventSinkProvided,
+    layerCommandReceiptStoreProvided,
     IdAllocator.layer,
-    providerEventIngestorProvided,
+    layerProviderEventIngestorProvided,
   );
   // Recorded transports have no snapshot instance registry. Unexpected auth
   // control must fail visibly; dedicated auth proofs provide the live registry.
@@ -508,7 +511,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       setProviderAuthenticationFailure: () =>
         Effect.die("Unexpected authentication invalidation in recorded provider replay."),
     });
-  const providerSessionManagerProvided = ProviderSessionManager.layerWithOptions({
+  const layerProviderSessionManagerProvided = ProviderSessionManager.layerWithOptions({
     configureMcp: options.configureMcp ?? false,
     ...(options.providerSessionIdleTimeoutMs === undefined
       ? {}
@@ -516,125 +519,139 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
-        providedRegistryLayer,
+        layerProvidedRegistry,
         snapshotRegistryLayer,
-        eventSinkProvided,
+        layerEventSinkProvided,
         IdAllocator.layer,
         options.mcpSessionRegistryLayer ?? McpSessionRegistryTestkit.layer,
-        providerEventIngestorProvided,
-        storesLayer,
+        layerProviderEventIngestorProvided,
+        layerStores,
       ),
     ),
   );
-  const providerSwitchServiceProvided = ProviderSwitchService.layer.pipe(
-    Layer.provide(Layer.mergeAll(providedRegistryLayer, runtimeLayer)),
+  const layerProviderSwitchServiceProvided = ProviderSwitchService.layer.pipe(
+    Layer.provide(Layer.mergeAll(layerProvidedRegistry, layerRuntime)),
   );
-  const runExecutionServiceProvided = RunExecutionService.layer.pipe(
+  const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        checkpointServiceProvided,
-        eventSinkProvided,
+        McpAppModelContext.layerEmpty,
+        layerCheckpointServiceProvided,
+        layerEventSinkProvided,
         IdAllocator.layer,
-        providerEventIngestorProvided,
-        serverSettingsLayer,
+        layerProviderEventIngestorProvided,
+        layerServerSettings,
       ),
     ),
   );
-  const providerTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
+  const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        contextHandoffServiceProvided,
-        serverConfigLayer,
+        layerContextHandoffServiceProvided,
+        layerServerConfig,
         handoffSettingsLayer,
-        databaseLayer,
-        eventSinkProvided,
+        layerDatabase,
+        layerEventSinkProvided,
         IdAllocator.layer,
-        storesLayer,
-        providerSessionManagerProvided,
+        layerStores,
+        layerProviderSessionManagerProvided,
         Layer.mock(ProviderAuthService.ProviderAuthService)({
           tryHandlePromptCommand: () => Effect.succeed(false),
         }),
-        runExecutionServiceProvided,
-        runtimeLayer,
+        layerRunExecutionServiceProvided,
+        layerRuntime,
       ),
     ),
   );
-  const providerTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
-    Layer.provide(Layer.mergeAll(storesLayer, providerSessionManagerProvided, serverConfigLayer)),
+  const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(layerStores, layerProviderSessionManagerProvided, layerServerConfig),
+    ),
   );
-  const runtimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
-    Layer.provide(Layer.merge(storesLayer, providerSessionManagerProvided)),
+  const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
+    Layer.provide(Layer.merge(layerStores, layerProviderSessionManagerProvided)),
   );
-  const checkpointRollbackServiceProvided = CheckpointRollbackService.layer.pipe(
+  const layerCheckpointRollbackServiceProvided = CheckpointRollbackService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        checkpointServiceProvided,
-        eventSinkProvided,
+        layerCheckpointServiceProvided,
+        layerEventSinkProvided,
         IdAllocator.layer,
-        storesLayer,
-        providerSessionManagerProvided,
-        runtimeLayer,
+        layerStores,
+        layerProviderSessionManagerProvided,
+        layerRuntime,
       ),
     ),
   );
-  const checkpointCaptureServiceProvided = CheckpointCaptureService.layer.pipe(
+  const layerCheckpointCaptureServiceProvided = CheckpointCaptureService.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(checkpointServiceProvided, eventSinkProvided, IdAllocator.layer, storesLayer),
+      Layer.mergeAll(
+        layerCheckpointServiceProvided,
+        layerEventSinkProvided,
+        IdAllocator.layer,
+        layerStores,
+      ),
     ),
   );
-  const runFinalizationServiceProvided = RunFinalizationService.layer.pipe(
-    Layer.provide(Layer.merge(checkpointCaptureServiceProvided, storesLayer)),
+  const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
+    Layer.provide(Layer.merge(layerCheckpointCaptureServiceProvided, layerStores)),
   );
-  const threadTitleRegenerationTestLayer = Layer.succeed(
+  const layerThreadTitleRegenerationTest = Layer.succeed(
     ThreadTitleRegenerationService.ThreadTitleRegenerationService,
     ThreadTitleRegenerationService.ThreadTitleRegenerationService.of({
       execute: () => Effect.void,
     }),
   );
-  const orchestratorProvided = Orchestrator.layer.pipe(
+  const layerOrchestratorProvided = Orchestrator.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        serverConfigLayer,
-        checkpointServiceProvided,
+        layerServerConfig,
+        layerCheckpointServiceProvided,
         CommandPolicy.layer,
-        contextHandoffServiceProvided,
-        persistenceLayer,
-        providedRegistryLayer,
-        continuationRequestsLayer,
-        runtimeLayer,
-        providerSessionManagerProvided,
-        providerSwitchServiceProvided,
-        runExecutionServiceProvided,
+        layerContextHandoffServiceProvided,
+        layerPersistence,
+        layerProvidedRegistry,
+        layerContinuationRequests,
+        layerRuntime,
+        layerProviderSessionManagerProvided,
+        layerProviderSwitchServiceProvided,
+        layerRunExecutionServiceProvided,
         ThreadForkService.layer,
       ),
     ),
   );
-  const threadManagementProvided = Layer.unwrap(
+  const layerThreadManagementProvided = Layer.unwrap(
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       return Layer.mock(ThreadManagementService.ThreadManagementService)({
         dispatch: orchestrator.dispatch,
         getThreadRecords: orchestrator.getThreadRecords,
         getThreadProjection: orchestrator.getThreadProjection,
+        recoverDelegatedTask: orchestrator.recoverDelegatedTask,
+        delegatedTaskResultPending: orchestrator.delegatedTaskResultPending,
+        ...options.threads,
       });
     }),
-  ).pipe(Layer.provide(orchestratorProvided));
-  const continuationWorkerProvided =
+  ).pipe(Layer.provide(layerOrchestratorProvided));
+  const layerContinuationWorkerProvided =
     options.runContinuationWorker === true
-      ? ProviderContinuationService.workerLive.pipe(
+      ? ProviderContinuationService.layer.pipe(
           Layer.provide(
-            Layer.mergeAll(continuationRequestsLayer, threadManagementProvided, IdAllocator.layer),
+            Layer.mergeAll(
+              layerContinuationRequests,
+              layerThreadManagementProvided,
+              IdAllocator.layer,
+            ),
           ),
         )
       : Layer.empty;
   const conversationForkProvided = ConversationForks.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        providerSessionManagerProvided,
-        storesLayer,
-        eventSinkProvided,
-        commandReceiptStoreProvided,
-        threadCommandExecutorLayer,
+        layerProviderSessionManagerProvided,
+        layerStores,
+        layerEventSinkProvided,
+        layerCommandReceiptStoreProvided,
         legacyImporterProvided,
         options.decorateForkCheckpointBaseline === undefined
           ? ScientForkCheckpointBaselineLive
@@ -643,68 +660,68 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
               Effect.map(ScientForkCheckpointBaseline, options.decorateForkCheckpointBaseline),
             ).pipe(Layer.provide(ScientForkCheckpointBaselineLive)),
         options.forkAttachmentCopierLayer ?? ScientForkAttachmentCopierLive,
-      ),
+      ).pipe(Layer.provideMerge(layerThreadCommandExecutor)),
     ),
     Layer.provide(
-      Layer.mergeAll(checkpointStoreLayer, serverConfigLayer, VcsProcess.layer, databaseLayer),
+      Layer.mergeAll(layerCheckpointStore, layerServerConfig, VcsProcess.layer, layerDatabase),
     ),
   );
-  const effectExecutorProvided = EffectWorker.executorLayer.pipe(
+  const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
     Layer.provide(
       Layer.mergeAll(
         attachmentRollbackPruneLayer.pipe(
           Layer.provide(
             Layer.mergeAll(
-              storesLayer,
-              threadCommandExecutorLayer,
-              providerSessionManagerProvided,
-              serverConfigLayer,
+              layerStores,
+              layerProviderSessionManagerProvided,
+              layerServerConfig,
               attachmentReconciliationProvided,
-            ),
+            ).pipe(Layer.provideMerge(layerThreadCommandExecutor)),
           ),
         ),
         options.resourceCleanupLayer?.pipe(
-          Layer.provide(Layer.merge(serverConfigLayer, NodeServices.layer)),
+          Layer.provide(Layer.merge(layerServerConfig, NodeServices.layer)),
         ) ?? Layer.empty,
-        runFinalizationServiceProvided,
-        checkpointRollbackServiceProvided,
-        providerSessionManagerProvided,
-        providerTurnControlServiceProvided,
-        providerTurnStartServiceProvided,
-        runtimeRequestServiceProvided,
-        threadTitleRegenerationTestLayer,
-        serverSettingsLayer,
-        threadManagementProvided,
+        layerRunFinalizationServiceProvided,
+        layerCheckpointRollbackServiceProvided,
+        layerProviderSessionManagerProvided,
+        layerProviderTurnControlServiceProvided,
+        layerProviderTurnStartServiceProvided,
+        layerRuntimeRequestServiceProvided,
+        layerThreadTitleRegenerationTest,
+        layerServerSettings,
+        layerThreadManagementProvided,
         conversationForkProvided,
       ),
     ),
   );
-  const effectWorkerProvided = EffectWorker.layer.pipe(
-    Layer.provide(Layer.merge(storesLayer, effectExecutorProvided)),
+  const layerEffectWorkerProvided = EffectWorker.layer.pipe(
+    Layer.provide(Layer.merge(layerStores, layerEffectExecutorProvided)),
   );
-  const replayRuntime = Layer.mergeAll(
+  const layerReplayRuntime = Layer.mergeAll(
     attachmentReconciliationProvided,
-    serverSettingsLayer,
-    commandReceiptStoreProvided,
-    checkpointServiceProvided,
-    checkpointStoreLayer,
+    layerServerSettings,
+    layerCommandReceiptStoreProvided,
+    layerCheckpointServiceProvided,
+    layerCheckpointStore,
     legacyImporterProvided,
-    serverConfigLayer,
+    layerServerConfig,
     conversationForkProvided,
-    storesLayer,
-    orchestratorProvided,
-    providerSessionManagerProvided,
-    providerTurnStartServiceProvided,
-    effectWorkerProvided,
-    eventSinkProvided,
-    continuationWorkerProvided,
+    layerStores,
+    layerOrchestratorProvided,
+    layerProviderSessionManagerProvided,
+    layerProviderTurnStartServiceProvided,
+    layerEffectWorkerProvided,
+    layerEventSinkProvided,
+    layerContinuationWorkerProvided,
   ).pipe(
     Layer.provide(
       Layer.merge(
-        worktreeRepairDependenciesTestLayer,
-        (options.forkGitWorkflowLayer ?? Layer.empty).pipe(Layer.provide(serverConfigLayer)),
+        ProviderTurnStartServiceTestkit.layer,
+        (options.forkGitWorkflowLayer ?? Layer.empty).pipe(Layer.provide(layerServerConfig)),
       ),
     ),
+    Layer.provide(layerThreadCommandExecutor),
     Layer.provide(NodeServices.layer),
   );
 
@@ -712,11 +729,11 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   // orchestrator. Keeping this acquisition in the replay layer makes the
   // outbox lifecycle explicit and prevents test-only command-side draining.
   if (options.runEffectWorker === false) {
-    return replayRuntime;
+    return layerReplayRuntime;
   }
   // Built before the runtime it shares stores with, so recovery commits before
   // the effect worker claims anything, as in serverRuntimeStartup.
-  const startupRecovery: Layer.Layer<
+  const layerStartupRecovery: Layer.Layer<
     never,
     | MigrationError
     | PlatformError.PlatformError
@@ -732,7 +749,12 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         ).pipe(
           Layer.provide(ProviderRuntimeRecoveryService.layer),
           Layer.provide(
-            Layer.mergeAll(storesLayer, eventSinkProvided, IdAllocator.layer, serverSettingsLayer),
+            Layer.mergeAll(
+              layerStores,
+              layerEventSinkProvided,
+              IdAllocator.layer,
+              layerServerSettings,
+            ),
           ),
         )
       : Layer.empty;
@@ -740,8 +762,10 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Orchestrator.OrchestratorV2,
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
+      // As in serverRuntimeStartup: after runtime recovery, before the worker.
+      yield* orchestrator.recoverDelegatedTasks;
       yield* EffectWorker.runDaemon.pipe(Effect.forkScoped);
       return orchestrator;
     }),
-  ).pipe(Layer.provideMerge(replayRuntime), Layer.provide(startupRecovery));
+  ).pipe(Layer.provideMerge(layerReplayRuntime), Layer.provide(layerStartupRecovery));
 }
