@@ -15,7 +15,7 @@ import {
 import { workspaceFileHostPath } from "~/components/files/filePath";
 import { useRightPanelStore } from "~/rightPanelStore";
 import type { usePreparedConnection } from "~/state/session";
-import { isAbsolutePath } from "~/terminal-links";
+import { isAbsolutePath } from "@t3tools/shared/path";
 import { claimWorkspaceBasenameLookup } from "~/workspaceBasenameLookup";
 
 import {

@@ -27,6 +27,9 @@ fall back to asking, like Supervised.
 **Full access**: allow commands and edits without prompts. The default. The agent runs
 unattended until it finishes or asks a question of its own.
 
+Muse Code offers only **Supervised** and **Full access**. A Muse thread already set to another mode
+runs in **Supervised**.
+
 Approvals appear inline in the conversation. Approve or reject one and the agent continues from
 there.
 

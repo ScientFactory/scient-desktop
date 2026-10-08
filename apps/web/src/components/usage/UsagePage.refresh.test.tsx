@@ -54,6 +54,7 @@ vi.mock("../../state/usage", () => ({
       },
     ],
     isPending: false,
+    shown: null,
     isPartial: false,
     refresh: async () => undefined,
   }),

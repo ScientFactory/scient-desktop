@@ -1331,6 +1331,7 @@ const buildAppUnderTest = (options?: {
               }),
               install: Effect.die("unused relay-client install"),
               installWithProgress: () => Effect.die("unused relay-client install"),
+              pruneManagedVersions: Effect.die("unused relay-client prune"),
               ...options?.layers?.relayClient,
             }),
           ),

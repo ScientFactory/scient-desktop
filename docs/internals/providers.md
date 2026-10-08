@@ -9,6 +9,10 @@ Provider protocols, account ownership, permissions, and capabilities belong at t
 [adapter boundary](../../apps/server/src/orchestration-v2/ProviderAdapter.ts). Normalize there
 instead of spreading provider checks through orchestration and clients.
 
+A driver kind identifies an integration; an instance identifies one configuration and account
+lifecycle. Route work by instance, so two accounts using the same driver do not share mutable
+session or catalog state. For a new driver, start with [adding a provider](./adding-a-provider.md).
+
 ## Built-in drivers
 
 [`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with eleven entries:

@@ -11,6 +11,7 @@ import {
   OmpSettings,
   ScientAgentSettings,
   compareProviderDriverKinds,
+  MuseSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
@@ -21,6 +22,7 @@ import {
   CursorIcon,
   DroidIcon,
   GrokIcon,
+  MuseIcon,
   type Icon,
   OpenAI,
   OpenCodeIcon,
@@ -168,6 +170,13 @@ const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[]
     icon: AntigravityIcon,
     settingsSchema: AntigravitySettings,
     supportsCustomModels: false,
+  },
+  {
+    value: ProviderDriverKind.make("muse"),
+    label: "Muse Code",
+    icon: MuseIcon,
+    settingsSchema: MuseSettings,
+    badgeLabel: "Beta",
   },
   {
     value: ProviderDriverKind.make("acpRegistry"),

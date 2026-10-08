@@ -9,7 +9,7 @@ import {
   collectAssistantCitations,
 } from "@t3tools/shared/assistantCitations";
 import { shallow } from "zustand/vanilla/shallow";
-import { renderCodexDirectivesForCopy } from "@t3tools/client-runtime/codex-markdown-directives";
+import { renderCodexDirectivesForCopy } from "@t3tools/shared/codexMarkdownDirectives";
 import {
   commandDisplayText,
   commandProgramName,
@@ -1363,6 +1363,35 @@ function settleSupersededReasoning(entries: ReadonlyArray<TimelineEntry>) {
   });
 }
 
+function timelineRowEntries(entries: ReadonlyArray<TimelineEntry>) {
+  return withoutSubagentDelegationRows(settleSupersededReasoning(entries));
+}
+
+/** The turn folds the timeline would draw, before applying expansion state. */
+function deriveTimelineTurnFolds(
+  input: Pick<
+    MessagesTimelineRowsInput,
+    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
+  >,
+) {
+  const timelineEntries = timelineRowEntries(input.timelineEntries);
+  const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
+  const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
+  const activeVisualResponseRunIds = deriveActiveVisualResponseRunIds({
+    timelineEntries,
+    unsettledRunId,
+    isWorking: input.isWorking,
+  });
+  return deriveTurnFolds({
+    timelineEntries,
+    terminalAssistantMessageIds: deriveTerminalAssistantMessageIds(timelineEntries),
+    latestRun: input.latestRun ?? null,
+    unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
+    runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
+    liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
+  });
+}
+
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   contextTransfers?: ReadonlyArray<OrchestrationV2ContextTransfer> | undefined;
@@ -1388,9 +1417,7 @@ export function deriveMessagesTimelineRows(input: {
   /** Live bootstrap progress. Renders a stage card under the first user message. */
   worktreeSetup?: WorktreeSetupSnapshot | null;
 }): MessagesTimelineRow[] {
-  const timelineEntries = withoutSubagentDelegationRows(
-    settleSupersededReasoning(input.timelineEntries),
-  ).filter(
+  const timelineEntries = timelineRowEntries(input.timelineEntries).filter(
     (entry) =>
       entry.kind !== "event" ||
       !isForkInitializationHandoff(entry.projectedItem, input.contextTransfers),
@@ -2180,6 +2207,35 @@ type MessagesTimelineRowsInput = Parameters<typeof deriveMessagesTimelineRows>[0
 export interface MessagesTimelineRowsProjection {
   readonly input: MessagesTimelineRowsInput;
   readonly rows: MessagesTimelineRow[];
+}
+
+/**
+ * The turn fold that holds an entry, keyed as `expandedRunIds` expects. Runless
+ * (imported V1) turns fold under a synthetic key, so the entry's own run id is
+ * not enough to open them.
+ */
+export function timelineEntryTurnFoldRunId(
+  input: Pick<
+    MessagesTimelineRowsInput,
+    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
+  >,
+  entryId: string,
+): RunId | null {
+  return timelineTurnFoldRunIdsByEntryId(input).get(entryId) ?? null;
+}
+
+/** Every folded entry's fold key, computed once for callers that check many entries. */
+export function timelineTurnFoldRunIdsByEntryId(
+  input: Pick<
+    MessagesTimelineRowsInput,
+    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
+  >,
+): ReadonlyMap<string, RunId> {
+  const byEntryId = new Map<string, RunId>();
+  for (const fold of deriveTimelineTurnFolds(input).values()) {
+    for (const entryId of fold.hiddenEntryIds) byEntryId.set(entryId, fold.runId);
+  }
+  return byEntryId;
 }
 
 function sameCheckpointSummaries(

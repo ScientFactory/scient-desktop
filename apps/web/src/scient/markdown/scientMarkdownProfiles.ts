@@ -2,8 +2,8 @@ import type { Options as ReactMarkdownOptions } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 
-import { remarkGithubAlerts } from "../../markdown-github-alerts";
-import { remarkNormalizeListItemIndentation } from "../../markdown-list-indentation";
+import { remarkGithubAlerts } from "@t3tools/shared/markdownGithubAlerts";
+import { remarkNormalizeListItemIndentation } from "@t3tools/shared/markdownListIndentation";
 import { remarkKeepWindowsPathDestinations } from "../../markdown-windows-path-destinations";
 import { remarkScientMath, remarkScientMathRefinements } from "../math/remarkScientMath";
 import { remarkScientSingleDollarMath } from "../math/scientSingleDollarMath";

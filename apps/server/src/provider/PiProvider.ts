@@ -34,6 +34,8 @@ import {
 } from "../orchestration-v2/Adapters/piT3McpInjection.ts";
 import {
   makePiRpcConnection,
+  PiRpcError,
+  PiRpcTimeoutError,
   piRecordField as recordField,
   piRecordString as recordString,
 } from "../orchestration-v2/Adapters/PiRpc.ts";
@@ -49,7 +51,11 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "./providerMaintenance.ts";
-import type { PiRpcClient, PiRpcError, PiRpcSpawnOptions } from "./pi/PiRpcClient.ts";
+import type {
+  PiRpcClient,
+  PiRpcError as PiClientError,
+  PiRpcSpawnOptions,
+} from "./pi/PiRpcClient.ts";
 import { encodePiModelSlug } from "./pi/PiModel.ts";
 import { PI_DISCOVERY_LAUNCH_POLICY } from "./pi/PiDiscoveryPolicy.ts";
 import {
@@ -97,7 +103,11 @@ interface PiDiscovery extends PiDiscoveredCommands {
 
 type PiDiscoveryClientFactory = (
   options: PiRpcSpawnOptions,
-) => Effect.Effect<PiRpcClient, PiRpcError, ChildProcessSpawner.ChildProcessSpawner | Scope.Scope>;
+) => Effect.Effect<
+  PiRpcClient,
+  PiClientError,
+  ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
+>;
 
 function piModelsFromSettings(
   customModels: ReadonlyArray<CustomModelSetting> | undefined,
@@ -138,6 +148,35 @@ function parseDiscoveredModels(
   }
   return parsed;
 }
+
+const makePiDiscoveryConnection = Effect.fnUntraced(function* (
+  piSettings: PiSettings,
+  environment: NodeJS.ProcessEnv,
+  launchArgs: ReadonlyArray<string>,
+  cwd?: string,
+) {
+  const launch = buildPiRpcLaunch({
+    launchArgs,
+    environment,
+    mcpSession: undefined,
+    extensionPath: undefined,
+    // SCIENT-FORK:START — workspace inventory never executes user extension code.
+    ...PI_DISCOVERY_LAUNCH_POLICY,
+    // SCIENT-FORK:END
+  });
+  const connection = yield* makePiRpcConnection({
+    command: piSettings.binaryPath || "pi",
+    args: launch.args,
+    cwd,
+    env: launch.env,
+  });
+  yield* Stream.fromQueue(connection.events).pipe(
+    Stream.runDrain,
+    Effect.ignore,
+    Effect.forkScoped,
+  );
+  return connection;
+});
 
 const discoverPiViaRpc = (
   piSettings: PiSettings,
@@ -214,6 +253,57 @@ const discoverPiViaRpc = (
       authenticated: discoveredModels.length > 0,
     } satisfies PiDiscovery;
   }).pipe(Effect.scoped);
+
+/** Probe the full command catalog Pi exposes in a workspace without changing machine health. */
+export const discoverPiCommandsForCwd = Effect.fn("discoverPiCommandsForCwd")(
+  function* (
+    piSettings: PiSettings,
+    environment: NodeJS.ProcessEnv,
+    cwd: string,
+    makeDiscoveryClient?: PiDiscoveryClientFactory,
+  ) {
+    const launchArgs = resolvePiLaunchArgs(piSettings.launchArgs);
+    if (!launchArgs.ok) {
+      return yield* new PiRpcError({ operation: "launch", detail: launchArgs.message });
+    }
+    if (makeDiscoveryClient !== undefined) {
+      const launch = buildPiRpcLaunch({
+        launchArgs: launchArgs.args,
+        environment,
+        mcpSession: undefined,
+        extensionPath: undefined,
+        ...PI_DISCOVERY_LAUNCH_POLICY,
+      });
+      const client = yield* makeDiscoveryClient({
+        command: piSettings.binaryPath || "pi",
+        args: launch.args.slice(2),
+        cwd,
+        env: launch.env,
+      });
+      yield* client.events.pipe(Stream.runDrain, Effect.ignore, Effect.forkScoped);
+      const commands = parsePiDiscoveredCommands(yield* client.getCommands());
+      return { ...commands, slashCommands: withPiBuiltinSlashCommands(commands.slashCommands) };
+    }
+    const connection = yield* makePiDiscoveryConnection(
+      piSettings,
+      environment,
+      launchArgs.args,
+      cwd,
+    );
+    // A failed read must not replace a previously usable workspace catalog with an empty one.
+    const commandsData = yield* connection.request({ type: "get_commands" });
+    const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
+    return { slashCommands: withPiBuiltinSlashCommands(slashCommands), skills };
+  },
+  Effect.scoped,
+  Effect.timeoutOrElse({
+    duration: PI_RPC_DISCOVERY_TIMEOUT_MS,
+    orElse: () =>
+      Effect.fail(
+        new PiRpcTimeoutError({ operation: "discovery", timeoutMs: PI_RPC_DISCOVERY_TIMEOUT_MS }),
+      ),
+  }),
+);
 
 const runPiVersionCommand = (piSettings: PiSettings, environment: NodeJS.ProcessEnv) =>
   Effect.gen(function* () {

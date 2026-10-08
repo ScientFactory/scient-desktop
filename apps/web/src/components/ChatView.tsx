@@ -1,4 +1,6 @@
 import { resolveThreadLastVisitedAt } from "./Sidebar.logic";
+import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
+import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import * as DateTime from "effect/DateTime";
 import {
   canApplySendAnchor,
@@ -256,6 +258,7 @@ import {
 } from "../pendingUserInput";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import type { CitationHistoryPage } from "./chat/useAssistantCitationTarget";
+import { seedUserInputDraftAnswers } from "@t3tools/client-runtime/state/thread-requests";
 import { useUiStateStore } from "../uiStateStore";
 import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import {
@@ -592,6 +595,7 @@ import {
   hasAvailableCompactionProvider,
   hasDismissedResumeCompaction,
   shouldOfferResumeCompaction,
+  shouldCompactBeforeSend,
 } from "./chat/ContextWindowMeter.logic";
 import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
 import {
@@ -731,7 +735,7 @@ import {
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
-import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
+import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 
 const TIMELINE_SCROLL_CANCEL_SENTINEL = Object.freeze({});
 const EMPTY_FEEDBACK_SUBMISSIONS: ReadonlyArray<CodexFeedbackSubmission> = [];
@@ -1850,10 +1854,13 @@ function ChatViewContent(props: ChatViewProps) {
       hasMoreHistory: serverThreadHistory.hasMoreHistory,
       loading: serverThreadHistory.loading,
       error: serverThreadHistory.error,
-      onLoadEarlier: () => {
+      onLoadEarlier: (throughEntryId) => {
         void loadEarlierThreadHistory({
           environmentId: routeThreadDetailRef.environmentId,
-          input: { threadId: routeThreadDetailRef.threadId },
+          input: {
+            threadId: routeThreadDetailRef.threadId,
+            ...(throughEntryId === undefined ? {} : { throughEntryId }),
+          },
         });
       },
     };
@@ -3589,6 +3596,19 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadId,
     activePendingUserInput?.requestId,
   ]);
+  const activePendingAnswerDrafts =
+    pendingUserInputAnswersByRequestId[activePendingRequestKey] ?? EMPTY_PENDING_USER_INPUT_ANSWERS;
+  if (
+    activePendingUserInput &&
+    seedUserInputDraftAnswers(activePendingUserInput.questions, activePendingAnswerDrafts) !==
+      activePendingAnswerDrafts
+  ) {
+    setPendingUserInputAnswersByRequestId((existing) => {
+      const drafts = existing[activePendingRequestKey] ?? EMPTY_PENDING_USER_INPUT_ANSWERS;
+      const seeded = seedUserInputDraftAnswers(activePendingUserInput.questions, drafts);
+      return seeded === drafts ? existing : { ...existing, [activePendingRequestKey]: seeded };
+    });
+  }
   const pendingQuestionDraftKeys = useMemo(
     () =>
       activeThreadId
@@ -8043,14 +8063,14 @@ function ChatViewContent(props: ChatViewProps) {
             : "Compacting is unavailable right now"
     : null;
   // Tokens a stale Claude session would re-read on its next turn. While set,
-  // Enter compacts first and the composer's send button says so; "Send with
-  // full history" in its menu skips that once. Held queues and multi-model
-  // sends never compact first, so the offer hides for them.
+  // the composer shows a Compact chip and Enter compacts first; turning the
+  // chip off sends the next message with full history. Held queues and
+  // multi-model sends never compact first, so the offer hides for them.
   const resumeCompactionTokens =
     activeContextWindow &&
     !resumeCompactionPermanentlyDismissed &&
     !nativeResumeCompactionDismissed &&
-    !compactDisabled &&
+    !compactThreadUnavailable &&
     !hasHeldQueuedRuns &&
     multipleModelSelections === null &&
     shouldOfferResumeCompaction({
@@ -8061,17 +8081,25 @@ function ChatViewContent(props: ChatViewProps) {
     })
       ? activeContextWindow.usedTokens
       : null;
-  // Set only for the synchronous span of a "Send with full history" submit;
-  // onSend reads it before its first await.
-  const keepFullHistoryOnceRef = useRef(false);
-  const sendWithFullHistory = useCallback((send: () => void) => {
-    keepFullHistoryOnceRef.current = true;
-    try {
-      send();
-    } finally {
-      keepFullHistoryOnceRef.current = false;
-    }
+  // Threads whose Compact chip is turned off. A send that starts its turn
+  // clears its thread's entry; a failed send keeps it for the retry.
+  const [fullHistoryThreadKeys, setFullHistoryThreadKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const keepFullHistory = fullHistoryThreadKeys.has(routeThreadKey);
+  const setKeepFullHistory = useCallback((threadKey: string, keep: boolean) => {
+    setFullHistoryThreadKeys((current) => {
+      if (current.has(threadKey) === keep) return current;
+      const next = new Set(current);
+      if (keep) next.add(threadKey);
+      else next.delete(threadKey);
+      return next;
+    });
   }, []);
+  const toggleKeepFullHistory = useCallback(
+    () => setKeepFullHistory(routeThreadKey, !keepFullHistory),
+    [keepFullHistory, routeThreadKey, setKeepFullHistory],
+  );
   const handleRestoreThreadBranch = useCallback(() => {
     if (!canWriteSourceControl) return;
     if (gitStatusQuery.data?.hasWorkingTreeChanges) {
@@ -8330,6 +8358,16 @@ function ChatViewContent(props: ChatViewProps) {
     }),
     [composerRef, previewPanelOpen, terminalUiState.terminalOpen, routeKind, phase],
   );
+  const timelineSkills = effectiveActiveProviderSkills;
+  const threadFindControlsRef = useRef<ThreadFindControls | null>(null);
+  const [isThreadFindActive, setIsThreadFindActive] = useState(false);
+  const openThreadFind = useCallback(() => threadFindControlsRef.current?.open(), []);
+  const closeThreadFind = useCallback(() => threadFindControlsRef.current?.close(), []);
+  // The details popover hangs off the header over the find bar; opening find dismisses it.
+  useEffect(() => {
+    if (!isThreadFindActive || threadPanelPresentation !== "popover" || !activeThreadRef) return;
+    useRightPanelStore.getState().setThreadPanelOpen(activeThreadRef, "popover", false);
+  }, [activeThreadRef, isThreadFindActive, threadPanelPresentation]);
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
@@ -8337,6 +8375,8 @@ function ChatViewContent(props: ChatViewProps) {
         event.stopPropagation();
         return;
       }
+      // Let contextual controls claim Escape before the bubbling find handler.
+      if (isThreadFindActive && event.key === "Escape") return;
       if (isTerminalCloseConfirmPending() && preventTerminalCloseShortcut(event, keybindings)) {
         event.stopPropagation();
         return;
@@ -8425,6 +8465,14 @@ function ChatViewContent(props: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         toggleTerminalVisibility();
+        return;
+      }
+
+      // Drafts and servers without thread search leave Mod+F to the browser.
+      if (command === "chat.find" && isServerThread && serverConfig?.threadFind === true) {
+        event.preventDefault();
+        event.stopPropagation();
+        openThreadFind();
         return;
       }
 
@@ -8610,8 +8658,28 @@ function ChatViewContent(props: ChatViewProps) {
       event.stopPropagation();
       void runProjectScript(script);
     };
+    const dismissFind = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        !isThreadFindActive ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.keyCode === 229 ||
+        isCommandPaletteOpen()
+      )
+        return;
+      const context = getShortcutContext(event.target);
+      if (context.terminalFocus || context.previewFocus || context.modelPickerOpen) return;
+      event.preventDefault();
+      closeThreadFind();
+      focusComposer();
+    };
     window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
+    window.addEventListener("keydown", dismissFind);
+    return () => {
+      window.removeEventListener("keydown", handler, true);
+      window.removeEventListener("keydown", dismissFind);
+    };
   }, [
     activeProject,
     activeRightPanelSurface,
@@ -8638,6 +8706,7 @@ function ChatViewContent(props: ChatViewProps) {
     scriptKeybindings,
     handleUnsettleActiveThread,
     isServerThread,
+    serverConfig?.threadFind,
     onInterrupt,
     onToggleDiff,
     pinThread,
@@ -8647,6 +8716,9 @@ function ChatViewContent(props: ChatViewProps) {
     confirmAndUnpinThread,
     copyActiveThreadReference,
     getShortcutContext,
+    openThreadFind,
+    closeThreadFind,
+    isThreadFindActive,
     toggleRightPanel,
     toggleThreadPanel,
     toggleTerminalVisibility,
@@ -9146,7 +9218,6 @@ function ChatViewContent(props: ChatViewProps) {
       useQueueEditSessions.getState().sessions[composerTargetKey(composerDraftTarget)];
     const readingPositionAtSend = captureSendReadingPosition();
     const directPrompt = options?.directPrompt?.trim() || null;
-    const keepFullHistory = keepFullHistoryOnceRef.current;
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
     if (
@@ -9620,6 +9691,18 @@ function ChatViewContent(props: ChatViewProps) {
         promptForSend,
       )
       .trim();
+    // Ordinary sends queue behind compaction. Explicit actions and extracted queue
+    // records retain their original single-purpose admission and retry payload.
+    const compactBeforeSend = shouldCompactBeforeSend({
+      ordinaryServerSend:
+        isServerThread && !options?.steer && !directAnnotation && directPrompt === null,
+      hasCapturedQueueSubmission: Boolean(queueEdit || extractedIntent),
+      multipleModels: multipleModelSelections !== null,
+      resumeCompactionTokens,
+      keepFullHistory,
+      messageText: messageTextForSend,
+    });
+    const turnDispatchMode = compactBeforeSend ? "queue" : dispatchMode;
     // Records bind attachments by the id each side knows: the local id for the optimistic
     // row, the upload id (or local id on the data-URL path) on the wire; the server
     // rebinds them to the persisted id.
@@ -10154,14 +10237,16 @@ function ChatViewContent(props: ChatViewProps) {
               ...(attachment.source ? { source: attachment.source } : {}),
             },
       );
-      const previewQueueAdmission = shouldPreviewQueueAdmission({
-        ordinaryServerSend: isServerThread && !options?.steer && !directAnnotation,
-        phase,
-        hasWaitingItems: isServerThread
-          ? serverProjection?.runs.some((run) => run.status === "queued") === true
-          : threadQueue.items.length > 0,
-        awaitingCompletion: isServerThread ? hasHeldQueuedRuns : threadQueue.awaitingCompletion,
-      });
+      const previewQueueAdmission =
+        compactBeforeSend ||
+        shouldPreviewQueueAdmission({
+          ordinaryServerSend: isServerThread && !options?.steer && !directAnnotation,
+          phase,
+          hasWaitingItems: isServerThread
+            ? serverProjection?.runs.some((run) => run.status === "queued") === true
+            : threadQueue.items.length > 0,
+          awaitingCompletion: isServerThread ? hasHeldQueuedRuns : threadQueue.awaitingCompletion,
+        });
       if (!previewQueueAdmission) frameSubmittedMessage(messageIdForSend, readingPositionAtSend);
       setOptimisticUserMessages((existing) => [
         ...existing,
@@ -10282,6 +10367,21 @@ function ChatViewContent(props: ChatViewProps) {
         failure = turnAttachmentsResult;
       }
 
+      if (failure === null && compactBeforeSend) {
+        const compactResult = await startThreadTurn({
+          environmentId,
+          input: {
+            commandId: CommandId.make(randomUUID()),
+            threadId: threadIdForSend,
+            message: { messageId: newMessageId(), role: "user", text: "/compact", attachments: [] },
+            modelSelection: ctxSelectedModelSelection,
+            runtimeMode,
+            interactionMode: sendInteractionMode,
+          },
+        });
+        if (compactResult._tag === "Failure") failure = compactResult;
+      }
+
       let turnStartSucceeded = false;
       let backgroundDraftOpened = false;
       if (failure === null && turnAttachmentsResult._tag === "Success") {
@@ -10362,7 +10462,7 @@ function ChatViewContent(props: ChatViewProps) {
             titleSeed: title,
             runtimeMode,
             interactionMode: sendInteractionMode,
-            dispatchMode: options?.steer || directAnnotation ? "steer" : dispatchMode,
+            dispatchMode: options?.steer || directAnnotation ? "steer" : turnDispatchMode,
             ...(bootstrap ? { bootstrap } : {}),
             createdAt: messageCreatedAt,
           },
@@ -10406,6 +10506,7 @@ function ChatViewContent(props: ChatViewProps) {
           failure = startResult;
         } else {
           turnStartSucceeded = true;
+          setKeepFullHistory(routeThreadKey, false);
           requestAccepted = true;
           if (extractedIntent) await consumeExtractedSubmission(extractedIntent);
           const queued = "queued" in startResult.value && startResult.value.queued === true;
@@ -10805,6 +10906,7 @@ function ChatViewContent(props: ChatViewProps) {
           [questionId]: setPendingUserInputCustomAnswer(
             existing[activePendingRequestKey]?.[questionId],
             value,
+            question,
           ),
         },
       }));
@@ -11966,7 +12068,18 @@ function ChatViewContent(props: ChatViewProps) {
         {/* Main content area with optional plan sidebar */}
         <div className="relative flex min-h-0 min-w-0 flex-1">
           {/* Chat column */}
-          <ChatCanvas
+          <ThreadFindCanvas
+            findOptions={{
+              skills: timelineSkills,
+              progressive: serverConfig?.threadFindProgressive === true,
+              thread: activeThreadRef,
+              enabled:
+                isServerThread && serverConfig?.threadFind === true && !paintOnlyDisplayedTimeline,
+              content: serverProjection ?? undefined,
+            }}
+            controlsRef={threadFindControlsRef}
+            onOpenChange={setIsThreadFindActive}
+            detailsCardTopInset={isThreadFindActive ? THREAD_FIND_BAR_RESERVED_HEIGHT : 0}
             composerOverlayElement={isDraftHeroState ? null : composerOverlayElement}
             data-chat-workspace-drop-target="true"
             onDragEnter={workspaceFileDropHandlers.onDragEnter}
@@ -11974,6 +12087,7 @@ function ChatViewContent(props: ChatViewProps) {
             onDragLeave={workspaceFileDropHandlers.onDragLeave}
             onDrop={workspaceFileDropHandlers.onDrop}
           >
+            <ThreadFind onClose={focusComposer} />
             {isWorkspaceFileDragActive ? (
               <div
                 className="pointer-events-none absolute inset-2 z-40 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary/60 bg-primary/[0.035]"
@@ -12119,9 +12233,7 @@ function ChatViewContent(props: ChatViewProps) {
                     ? (heldPaintContext?.workspaceRoot ?? undefined)
                     : activeWorkspaceRoot
                 }
-                skills={
-                  paintOnlyDisplayedTimeline ? EMPTY_PROVIDER_SKILLS : effectiveActiveProviderSkills
-                }
+                skills={paintOnlyDisplayedTimeline ? EMPTY_PROVIDER_SKILLS : timelineSkills}
                 anchorMessageId={paintOnlyDisplayedTimeline ? null : timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}
@@ -12148,7 +12260,7 @@ function ChatViewContent(props: ChatViewProps) {
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
-              {showScrollToBottom && (
+              {showScrollToBottom && !isThreadFindActive && (
                 <div
                   className="chat-scroll-to-bottom pointer-events-none absolute z-30 flex justify-center py-1.5"
                   style={{ bottom: scrollToEndClearance + 4 }}
@@ -12398,7 +12510,8 @@ function ChatViewContent(props: ChatViewProps) {
                               queuedRunsControl={null}
                               bannerItems={composerBannerItems}
                               resumeCompactionTokens={resumeCompactionTokens}
-                              onSendWithFullHistory={sendWithFullHistory}
+                              keepFullHistory={keepFullHistory}
+                              onToggleKeepFullHistory={toggleKeepFullHistory}
                               // With attachments or contexts aboard the pick just inserts the
                               // text, so it sends as a prompt like the typed path would.
                               onUsageLimitsCommand={
@@ -12646,7 +12759,7 @@ function ChatViewContent(props: ChatViewProps) {
                 onPrepared={handlePreparedPullRequestThread}
               />
             ) : null}
-          </ChatCanvas>
+          </ThreadFindCanvas>
           {/* end chat column */}
         </div>
         {/* end horizontal flex container */}

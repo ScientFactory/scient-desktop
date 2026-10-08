@@ -1740,7 +1740,7 @@ export function ComputePanel(props: {
           {...(props.onRunSource === undefined ? {} : { onRun: props.onRunSource })}
         />
       ) : (
-        <div className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto px-4 pb-6 pt-12">
+        <div className="scrollbar-gutter-both flex min-h-0 flex-1 items-start justify-center overflow-y-auto px-4 pb-6 pt-12">
           <div className="w-full max-w-md text-center">
             {props.contextId === undefined ? (
               <p className="text-sm text-muted-foreground">No compute history yet.</p>

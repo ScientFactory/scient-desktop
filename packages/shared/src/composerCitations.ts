@@ -2,6 +2,7 @@ import { FileCitation, isFileCitation, type ComposerCitation } from "@t3tools/co
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import {
+  assistantCitationLabel,
   collectAssistantCitations,
   expandAssistantCitationsForProvider,
   parseAssistantCitationHref,
@@ -36,6 +37,15 @@ export function parseFileCitationHref(href: string): FileCitation | null {
   } catch {
     return null;
   }
+}
+
+/** Visible quote-chip label, shared by rendering and conversation search. */
+export function composerCitationLabel(citation: ComposerCitation): string {
+  if (!isFileCitation(citation)) return assistantCitationLabel(citation);
+  const preview = (citation.comment?.trim() || citation.text).replace(/\s+/g, " ");
+  const excerpt = preview.length > 64 ? `${preview.slice(0, 64)}…` : preview;
+  const filename = citation.path.slice(citation.path.lastIndexOf("/") + 1);
+  return `${filename} · ${excerpt}`;
 }
 
 export function parseComposerCitationHref(href: string): ComposerCitation | null {
