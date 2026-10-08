@@ -384,6 +384,36 @@ it.live(
     ),
 );
 
+it.live(
+  "replaying an accepted fork after its pending destination was deleted settles without another event",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { command } = yield* seed;
+        const { waiting } = yield* acceptPending(command);
+        yield* (yield* OrchestratorV2).dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make("delete-pending-fork-before-replay"),
+          threadId: command.newThreadId,
+        });
+        const store = yield* ProjectionStoreV2;
+        const deleted = yield* store.getThreadProjection(command.newThreadId);
+        assert.isNotNull(deleted.thread.deletedAt);
+        assert.equal(deleted.thread.conversationFork?.status, "pending");
+
+        // The replay reaches awaitReady after the terminal deletion is durable,
+        // so its cursor cannot recover that event from a future-only stream.
+        const forks = yield* ConversationForkService;
+        const replayError = yield* forks.dispatch(command).pipe(Effect.flip);
+        assert.equal(replayError.forkDisposition, "abandoned");
+        assert.equal((yield* Fiber.join(waiting))._tag, "Failure");
+        yield* (yield* OrchestrationEffectWorkerV2).drain();
+        yield* forks.provision(command.newThreadId, false);
+        assert.deepEqual(yield* store.getThreadProjection(command.newThreadId), deleted);
+      }).pipe(Effect.provide(runtime({ runEffectWorker: false })), Effect.timeout("15 seconds")),
+    ),
+);
+
 it.live.each(
   [false, true].map((claimedBeforeRestart) => ({
     caseTitle: `native startup recovers a frozen fork without its missed wakeup: interrupted-claim=${claimedBeforeRestart}`,

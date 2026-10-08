@@ -276,7 +276,7 @@ const make = Effect.gen(function* () {
       const cursor = yield* sink.latestSequence({ threadId });
       const initial = yield* projections.getThread(threadId);
       const final =
-        initial.conversationFork?.status === "pending"
+        initial.deletedAt === null && initial.conversationFork?.status === "pending"
           ? yield* sink.stream({ threadId, afterSequence: cursor }).pipe(
               Stream.filterMap((stored) => {
                 const event = stored.event;
