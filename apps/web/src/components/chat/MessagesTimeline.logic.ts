@@ -79,7 +79,6 @@ import {
 } from "@t3tools/shared/toolActivity";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { computeElapsedMs } from "@scientfactory/conversation/work-log-grouping";
-export { shouldPreserveAssistantLineBreaks } from "@scientfactory/conversation/work-log-grouping";
 // SCIENT-FORK:START — historical turns group inert presentation.
 import { timelineEntryHistoryKey } from "../../scient/fork/historicalTimelineTurns";
 // SCIENT-FORK:END
