@@ -92,6 +92,22 @@ describe("fork lifecycle across navigation and remounts", () => {
     expect(commands.options).toHaveBeenCalledTimes(4);
   });
 
+  it("checks again when the menu's options are older than 30 seconds", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    try {
+      await render();
+      await act(() => hook.prepareFork(source));
+      now.mockReturnValue(1_000_000 + 30_001);
+      await act(async () => {
+        await hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace");
+      });
+      expect(commands.options).toHaveBeenCalledTimes(2);
+      expect(commands.dispatch).toHaveBeenCalledTimes(1);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it.each([true, false])(
     "dispatches a missing-image fork only after confirmation (%s)",
     async (proceed) => {

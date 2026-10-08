@@ -136,8 +136,16 @@ export function frozenHistoryFields(item: OrchestrationV2TurnItem) {
 export function presentInheritedItem(
   item: OrchestrationV2TurnItem,
   position: number,
+  forkThreadId: ThreadId,
 ): OrchestrationV2TurnItem {
-  const frozen = { ...item, ...frozenHistoryFields(item), ordinal: position };
+  // The fork shows it as its own: detail and image reads go through the fork,
+  // which serves the version it shows.
+  const frozen = {
+    ...item,
+    ...frozenHistoryFields(item),
+    threadId: forkThreadId,
+    ordinal: position,
+  };
   if (frozen.type !== "fork") return frozen as OrchestrationV2TurnItem;
   const { providerThreadId: _providerThreadId, ...fork } = frozen;
   return fork as OrchestrationV2TurnItem;
@@ -272,7 +280,7 @@ export const readForkHistoryRows = Effect.fn("ForkHistory.readRows")(function* (
         item:
           row.sourceThreadId === threadId
             ? items[at]!
-            : presentInheritedItem(items[at]!, row.position),
+            : presentInheritedItem(items[at]!, row.position, threadId),
       }) satisfies Omit<OrchestrationV2ProjectedTurnItem, "position">,
   );
 });
@@ -282,6 +290,38 @@ export const hasForkHistory = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
   sql<{ readonly present: number }>`
     SELECT 1 AS present FROM scient_fork_history WHERE thread_id = ${threadId} LIMIT 1
   `.pipe(Effect.map((rows) => rows.length > 0));
+
+/**
+ * The fork's own rows from its boundary on (its copies come before it), with
+ * their turn starts and user turns; undefined without a boundary.
+ */
+export const readForkLocalExtent = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
+  sql<{
+    readonly boundary: number | null;
+    readonly rows: number;
+    readonly turn_starts: number | null;
+    readonly user_turns: number | null;
+  }>`
+    SELECT boundary.ordinal AS boundary, COUNT(item.turn_item_id) AS rows,
+      SUM(CASE WHEN item.type = 'user_message'
+        AND json_extract(item.payload_json, '$.inputIntent') IN ('turn_start', 'queued_turn')
+        THEN 1 ELSE 0 END) AS turn_starts,
+      SUM(CASE WHEN item.type = 'user_message'
+        AND json_extract(item.payload_json, '$.inputIntent') IN ('turn_start', 'queued_turn')
+        AND json_extract(item.payload_json, '$.createdBy') = 'user'
+        THEN 1 ELSE 0 END) AS user_turns
+    FROM orchestration_v2_projection_turn_items AS boundary
+    LEFT JOIN orchestration_v2_projection_turn_items AS item
+      ON item.thread_id = boundary.thread_id AND item.ordinal >= boundary.ordinal
+    WHERE boundary.turn_item_id = ${`turn-item:fork:${threadId}`} AND boundary.thread_id = ${threadId}
+    GROUP BY boundary.ordinal
+  `.pipe(
+    Effect.map(([row]) =>
+      row === undefined || row.boundary === null
+        ? undefined
+        : { rows: row.rows, turnStarts: row.turn_starts ?? 0, userTurns: row.user_turns ?? 0 },
+    ),
+  );
 
 /** The fork's own copies listed in its history (shown in place, not as local rows). */
 export const readForkCopyIds = (sql: SqlClient.SqlClient, threadId: ThreadId) =>

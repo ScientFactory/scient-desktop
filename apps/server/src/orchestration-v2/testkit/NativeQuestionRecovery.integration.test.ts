@@ -35,6 +35,7 @@ import * as Registry from "../ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 import { ProjectStoreV2 } from "../ProjectStore.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
+import { ensureQueuedMessageBudget } from "../QueuedMessageBudget.ts";
 import { ConversationForkService } from "../scient-fork/ConversationForkService.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
@@ -215,6 +216,12 @@ it.live.each(
           // The fork shares the source's answer file rather than copying it.
           assert.equal(receipt.forkAttachmentIdMap[file.id], file.id);
           assert.equal(answer.questionAnswer?.attachmentsByQuestionId.dataset?.[0]?.id, file.id);
+          // A queued message in the fork may send the answer's shared file.
+          const prompt = child.messages.find((message) => message.role === "user")!;
+          yield* ensureQueuedMessageBudget({
+            projection: child,
+            message: { ...prompt, id: MessageId.make(`${name}-queued-file`), attachments: [file] },
+          });
           yield* orchestrator.dispatch({
             type: "thread.delete",
             commandId: CommandId.make(`${name}-delete`),

@@ -25,6 +25,11 @@ import * as Stream from "effect/Stream";
 import * as FileSystem from "effect/FileSystem";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EventSinkV2 } from "../../orchestration-v2/EventSink.ts";
+import {
+  buildBoundedThreadProjection,
+  THREAD_HISTORY_PAGE_POLICY,
+  THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+} from "../../orchestration-v2/threadHistoryPaging.ts";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import { ConversationForkService } from "../../orchestration-v2/scient-fork/ConversationForkService.ts";
 import { layerFromAdapters as makeLayer } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -2148,6 +2153,20 @@ it.live(
         assert.deepEqual(yield* store.getThreadProjection(forkId), frozen);
         assert.deepEqual((yield* readThread(forkId))!, exported);
 
+        // The bounded snapshot clients load keeps the messages its rows show.
+        const snapshot = yield* store.getThreadSnapshotWindow(forkId, {
+          rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+          userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
+        });
+        const bounded = buildBoundedThreadProjection({
+          projection: snapshot.projection,
+          snapshotSequence: snapshot.snapshotSequence,
+        }).projection;
+        const boundedMessages = new Set(bounded.messages.map((message) => message.id));
+        for (const { item } of bounded.visibleTurnItems)
+          if (item.type === "user_message" || item.type === "assistant_message")
+            assert.isTrue(boundedMessages.has(item.messageId), item.messageId);
+        assert.isTrue(boundedMessages.has(frozen.thread.forkLineage!.baselineAssistantMessageId!));
         // Counts, pages and windows read the same shared history.
         assert.equal(yield* store.getMessageCount(forkId), frozen.messages.length);
         assert.equal(
@@ -2256,6 +2275,17 @@ it.live(
           afterRewrite.messages.map((message) => message.id),
           frozen.thread.forkLineage?.baselineAssistantMessageId,
         );
+        // Detail reads go through the fork, which serves the version it shows.
+        const shownAnswer = afterRewrite.visibleTurnItems.find(
+          (row) => row.sourceItemId === sharedAnswer.sourceItemId,
+        )!.item;
+        assert.equal(shownAnswer.threadId, forkId);
+        const detail = yield* store.getTurnItem({
+          threadId: shownAnswer.threadId,
+          itemId: sharedAnswer.sourceItemId,
+        });
+        assert.ok(detail?.type === "assistant_message");
+        assert.equal(detail.text, storedAnswer.text);
         // A fork of the fork shows what the fork shows.
         const grandchildId = ThreadId.make("frozen-live-grandchild");
         yield* forks.dispatch({
@@ -2317,6 +2347,45 @@ it.live(
         );
       }),
     ).pipe(Effect.timeout("60 seconds")),
+);
+
+it.live("opening a recent fork window never reads its older copies", () =>
+  withImporter(
+    Effect.gen(function* () {
+      const { lease } = yield* leaseFor(importFixture({ turns: 3 }));
+      const sourceId = (yield* importOnce(lease)).result.threadId;
+      const store = yield* ProjectionStoreV2;
+      for (const index of [4, 5, 6])
+        yield* continueImport(sourceId, MessageId.make(`later-${index}`), "Continue");
+      const source = yield* store.getThreadProjection(sourceId);
+      const forkId = ThreadId.make("recent-window-fork");
+      yield* (yield* ConversationForkService).dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("recent-window-fork"),
+        originThreadId: sourceId,
+        newThreadId: forkId,
+        sourceAssistantMessageId: source.messages.findLast(
+          (message) => message.role === "assistant",
+        )!.id,
+        workspaceMode: "local",
+      });
+      const plan = (yield* store.getThreadProjection(forkId)).turnItems.find(
+        (item) => item.type === "proposed_plan",
+      )!;
+      // A tripwire: the fork's own copy of the old plan cannot be decoded.
+      yield* (yield* SqlClient.SqlClient)`
+        UPDATE orchestration_v2_projection_turn_items SET payload_json = '{invalid-copy-tripwire'
+        WHERE turn_item_id = ${plan.id}`;
+      const window = yield* store.getThreadSnapshotWindow(forkId, {
+        rowLimit: 10,
+        userTurnLimit: 1,
+      });
+      assert.isFalse(
+        window.projection.visibleTurnItems.some((row) => row.sourceItemId === plan.id),
+      );
+      assert.equal(window.projection.visibleTurnItems.at(-1)?.item.type, "fork");
+    }),
+  ),
 );
 
 it.live(

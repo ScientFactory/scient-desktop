@@ -381,7 +381,7 @@ it.live.each(
             ...expectedPrefix.history.map((entry, position) =>
               entry.sourceThreadId === childId
                 ? copies.get(entry.sourceItemId)!
-                : presentInheritedItem(sources.get(entry.sourceItemId)!, position),
+                : presentInheritedItem(sources.get(entry.sourceItemId)!, position, childId),
             ),
             conversationForkBoundaryItem({
               targetThreadId: childId,

@@ -111,6 +111,7 @@ import {
   readForkHistoryIndex,
   readForkHistoryRows,
   readForkHistoryWindow,
+  readForkLocalExtent,
   readForkCopyIds,
   hasForkHistory,
 } from "./scient-fork/ForkHistory.ts";
@@ -3199,6 +3200,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           window !== undefined &&
           (anchorInHistory ||
             (window.historyAnchor !== undefined && window.historyAnchor.threadId !== threadId));
+        // While the fork's own turns cannot fill a user-turn window, the window
+        // reaches into its history and holds every row from its boundary on:
+        // reading only those keeps the local read off its older copies.
+        const extent =
+          window !== undefined &&
+          !redirected &&
+          anchor === undefined &&
+          window.userTurnLimit !== undefined
+            ? yield* readForkLocalExtent(sql, threadId)
+            : undefined;
         const localWindow =
           window === undefined
             ? undefined
@@ -3208,7 +3219,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   rowLimit: 0,
                   anchorItemId: TurnItemId.make(`turn-item:fork:${threadId}`),
                 }
-              : window;
+              : extent !== undefined &&
+                  extent.userTurns < (window.userTurnLimit ?? 0) + 2 &&
+                  extent.turnStarts < THREAD_HISTORY_MAX_RAW_TURNS + 2
+                ? {
+                    ...window,
+                    userTurnLimit: undefined,
+                    rowLimit:
+                      extent.userTurns === 0 ? Math.min(extent.rows, window.rowLimit) : extent.rows,
+                  }
+                : window;
         const projection = yield* readCanonicalProjection(threadId, localWindow);
         // The fork's own copies of in-flight items and plans are listed in its history.
         const local = localVisibleTurnItems(projection).filter(
@@ -3222,7 +3242,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               localWindow !== undefined &&
                 localWindow.rowLimit > 0 &&
                 window.userTurnLimit !== undefined &&
-                localTurns.length >= localWindow.rowLimit &&
+                localTurns.length >= window.rowLimit &&
                 !localTurns.some(isThreadHistoryUserTurn)
               ? []
               : yield* readForkHistoryWindow(
@@ -4705,9 +4725,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         FROM orchestration_v2_projection_turn_items
         WHERE turn_item_id = ${itemId} AND thread_id = ${threadId}`.pipe(
         Effect.flatMap((rows) =>
-          rows[0] === undefined
-            ? Effect.succeed(null)
-            : decodeTurnItemPayload(rows[0].payload_json),
+          rows[0] !== undefined
+            ? decodeTurnItemPayload(rows[0].payload_json)
+            : // SCIENT-FORK: an item a fork shows from its history, as it shows it.
+              sql<{ readonly position: number; readonly payload_json: string | null }>`
+                SELECT history.position, COALESCE(frozen.item_json, item.payload_json) AS payload_json
+                FROM scient_fork_history AS history
+                LEFT JOIN scient_fork_frozen_items AS frozen
+                  ON frozen.thread_id = history.thread_id AND frozen.position = history.position
+                LEFT JOIN orchestration_v2_projection_turn_items AS item
+                  ON item.turn_item_id = history.source_item_id
+                WHERE history.thread_id = ${threadId} AND history.source_item_id = ${itemId}
+                  AND history.source_thread_id <> ${threadId}
+                LIMIT 1
+              `.pipe(
+                Effect.flatMap(([shown]) =>
+                  shown?.payload_json == null
+                    ? Effect.succeed(null)
+                    : decodeTurnItemPayload(shown.payload_json).pipe(
+                        Effect.map((item) => presentInheritedItem(item, shown.position, threadId)),
+                      ),
+                ),
+              ),
         ),
         Effect.mapError(controlReadError(threadId)),
       );
@@ -5093,7 +5132,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   // SCIENT-FORK: shared history reads as the fork shows it.
                   item:
                     row.forkHistoryPosition !== undefined && row.sourceThreadId !== threadId
-                      ? presentInheritedItem(item, row.forkHistoryPosition)
+                      ? presentInheritedItem(item, row.forkHistoryPosition, threadId)
                       : item,
                 };
               }),

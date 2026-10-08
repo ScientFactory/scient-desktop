@@ -110,7 +110,9 @@ function useFetchedTurnItem(
     fetches
       ? {
           environmentId,
-          threadId: projectedItem.sourceThreadId,
+          // SCIENT-FORK: the item's own thread, which for a fork's shared history is
+          // the fork: it serves the version the fork shows.
+          threadId: wireItem.threadId,
           itemId: projectedItem.sourceItemId,
           revision: turnItemDetailRevision(wireItem),
         }

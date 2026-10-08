@@ -278,7 +278,7 @@ function shown(
   return plan.history.map((entry, position) =>
     entry.sourceThreadId === targetThreadId
       ? copies.get(entry.sourceItemId)!
-      : presentInheritedItem(sources.get(entry.sourceItemId)!, position),
+      : presentInheritedItem(sources.get(entry.sourceItemId)!, position, targetThreadId),
   );
 }
 

@@ -69,11 +69,14 @@ export const ensureQueuedMessageBudget = Effect.fn("ensureQueuedMessageBudget")(
   const config = yield* ServerConfig;
   const owner = toSafeThreadAttachmentSegment(input.projection.thread.id);
   // SCIENT-FORK: a fork shares its history's files; those it shows are its own to send.
-  const shown = new Set(
-    input.projection.messages.flatMap((message) =>
+  const shown = new Set([
+    ...input.projection.messages.flatMap((message) =>
       message.id === input.message.id ? [] : message.attachments.map((attachment) => attachment.id),
     ),
-  );
+    ...(input.projection.thread.conversationFork?.attachmentCopies ?? []).map(
+      (copy) => copy.target.id,
+    ),
+  ]);
   let total = 0;
   for (const message of messages) {
     const serialized = yield* encodeMessage(message).pipe(
