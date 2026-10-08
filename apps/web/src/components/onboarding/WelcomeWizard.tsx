@@ -420,8 +420,8 @@ function ConnectionStep({
       ) : null}
       <div className="mt-6 flex flex-col-reverse gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
         <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
-          Scient usage analytics are available when you opt in. To read how your data is used and
-          how to change this preference, see our{" "}
+          {/* SCIENT-FORK:START — use Scient's policy without changing sharing defaults. */}
+          For details about data collection and sharing settings, see our{" "}
           <a
             className="underline underline-offset-2 hover:text-foreground"
             href={PRIVACY_POLICY_URL}
@@ -430,7 +430,7 @@ function ConnectionStep({
           >
             privacy policy
           </a>
-          .
+          .{/* SCIENT-FORK:END */}
         </p>
         <Button
           className="shrink-0 self-end"

@@ -137,6 +137,28 @@ async function click(label: string) {
   await act(async () => button!.click());
 }
 
+it("links the connection step to Scient's privacy policy and continues to agent setup", async () => {
+  const onDone = vi.fn();
+  await act(async () => root.render(<WelcomeWizard localAvailable onDone={onDone} />));
+  expect(document.querySelector("h1")?.textContent?.trim()).toBe("Connect your computers");
+  const policyLink = [...document.querySelectorAll("a")].find(
+    (element) => element.textContent?.trim() === "privacy policy",
+  );
+  expect(policyLink).toBeDefined();
+  expect(policyLink!.getAttribute("href")).toBe("https://scientfactory.com/privacy/");
+  expect(policyLink!.getAttribute("target")).toBe("_blank");
+  expect(policyLink!.getAttribute("rel")).toBe("noreferrer noopener");
+  const disclosure = policyLink!.parentElement!.textContent!.replace(/\s+/g, " ").trim();
+  expect(disclosure).toBe(
+    "For details about data collection and sharing settings, see our privacy policy.",
+  );
+  expect(disclosure).not.toMatch(/opt[ -]in/i);
+
+  await click("Continue");
+  expect(document.querySelector("h1")?.textContent?.trim()).toBe("Connect your agents");
+  expect(onDone).not.toHaveBeenCalled();
+});
+
 it("enters the workspace after a partial import and warns after navigation finishes", async () => {
   let finishNavigation = () => {};
   const navigation = new Promise<void>((resolve) => {
