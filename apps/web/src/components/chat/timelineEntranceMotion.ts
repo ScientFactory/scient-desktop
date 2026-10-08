@@ -84,6 +84,8 @@ export function useTimelineSendMotion(input: {
   timelinePositioningPending: boolean;
   anchorMessageId: string | null;
   workingRowExit: WorkingRowExit;
+  /** A compaction or worktree preparation shows only in the working header for now. */
+  activityInHeader: boolean;
 }): TimelineSendMotion {
   const { rows, workingRowExit } = input;
   const enteringPromptId = input.timelinePositioningPending ? input.anchorMessageId : null;
@@ -94,7 +96,11 @@ export function useTimelineSendMotion(input: {
       ? previous.message.id
       : null;
   }, [rows]);
-  const currentActivityRowId = useMemo(() => currentLiveActivityRowId(rows), [rows]);
+  const { activityInHeader } = input;
+  const currentActivityRowId = useMemo(
+    () => currentLiveActivityRowId(rows, activityInHeader),
+    [rows, activityInHeader],
+  );
   return useMemo(
     () => ({ enteringPromptId, thinkingFollowsAnswerId, workingRowExit, currentActivityRowId }),
     [enteringPromptId, thinkingFollowsAnswerId, workingRowExit, currentActivityRowId],

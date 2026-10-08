@@ -363,6 +363,9 @@ export function WorktreeSetupCard({
   // SCIENT-FORK:END
 }) {
   const running = snapshot.phase === "running";
+  // SCIENT-FORK:START — live activity: an async script can still run beside the agent-start stage.
+  const sweepingStageId = snapshot.stages.findLast((stage) => stage.status === "running")?.id;
+  // SCIENT-FORK:END
   const nowMs = useNowWhile(running);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const totalElapsed = (() => {
@@ -401,8 +404,8 @@ export function WorktreeSetupCard({
                 stage={stage}
                 nowMs={nowMs}
                 scriptName={snapshot.setupScript?.name ?? null}
-                // SCIENT-FORK:START — live activity.
-                sweep={sweep}
+                // SCIENT-FORK:START — live activity: only the latest running stage sweeps.
+                sweep={sweep && stage.id === sweepingStageId}
                 // SCIENT-FORK:END
               />
               {stage.id === "setup-script" && showTail ? (

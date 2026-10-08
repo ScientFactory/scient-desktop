@@ -139,19 +139,23 @@ Owners: `chat/timelineWorkingState.ts`, `chat/workingRowExit.ts`,
 `scient/presentation/scient-live-activity.css` (seams in `chat/MessagesTimeline.tsx`).
 
 - **One sweep, on the current activity only.** The current activity is the
-  latest live row: Thinking, the running-tool bar, an active compaction, or a
-  running worktree setup stage. Only it carries the moving light. Other work in
-  progress (earlier groups still running, entries in an expanded group) stays
-  still, so the page never shimmers all over.
+  latest live row: Thinking, the running-tool bar, an active compaction, or the
+  latest running worktree setup stage. Only it carries the moving light. Other
+  work in progress (earlier groups still running, entries in an expanded group,
+  the setup popover) stays still, so the page never shimmers all over.
   - **The light:** a band 7rem wide with a full-strength core about a word wide
     (2.5rem), passing at 160px per second for any label length. Each pass takes
-    80% of the cycle, then the light rests past the label before the next one.
+    80% of the cycle, then the light rests past the label. The pace is measured
+    again between passes, so a new tool label keeps it.
   - **The resting text:** while a row sweeps, its own text rests at 55%, so the
     light (full color) is clearly seen.
   - **Pausing:** it pauses off screen and in hidden tabs.
 - **"Working for…" header:** a small breathing dot (6px, fading between 40% and
   100% every 1.6s), then the label, then a separator line under it. The line
-  simply appears and stays. The dot goes away with the header's exit.
+  simply appears and stays. The dot fades out with the header's exit.
+  - **Compacting, or preparing a worktree before its setup card exists:** the
+    Thinking row stands empty, so the header's own label ("Compacting…",
+    "Setting up worktree…") is the current activity and sweeps.
 - **It appears only once your message is in the list,** so it never shows
   under the previous answer and then jumps below your message. The exception
   is a worktree being set up, which shows at once.
@@ -168,7 +172,8 @@ Owners: `chat/timelineWorkingState.ts`, `chat/workingRowExit.ts`,
     live tool row (e.g. "Running command") takes its place.
   - During the 1s wait before an answer's first line, it stays visible.
 - **Reduced motion:** no sweep and no dimming; the working header's dot stays,
-  still, so the working state stays visible.
+  still, so the working state stays visible. In high-contrast mode the dot
+  takes the system text color.
 
 ## How an answer appears
 

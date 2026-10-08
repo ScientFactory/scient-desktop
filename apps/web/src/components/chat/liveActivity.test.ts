@@ -48,3 +48,16 @@ describe("liveActivitySweepSeconds", () => {
     expect(short).toBeCloseTo((60 + 2 * 112) / 160 / 0.8, 5);
   });
 });
+
+describe("currentLiveActivityRowId while compacting or preparing a worktree", () => {
+  const working = row({ kind: "working", id: "working-indicator-row" });
+  const thinking = row({ kind: "thinking", id: "live-activity-row" });
+  it("gives the activity to the header while the Thinking row stands empty", () => {
+    expect(currentLiveActivityRowId([working, thinking], true)).toBe("working-indicator-row");
+    expect(currentLiveActivityRowId([working, thinking], false)).toBe("live-activity-row");
+  });
+  it("gives it to the setup or compaction row once that exists", () => {
+    const setup = row({ kind: "worktree-setup", id: "setup", snapshot: { phase: "running" } });
+    expect(currentLiveActivityRowId([working, setup, thinking], true)).toBe("setup");
+  });
+});

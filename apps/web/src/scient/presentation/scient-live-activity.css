@@ -107,3 +107,11 @@
     opacity: 1;
   }
 }
+
+/* High contrast: the dot keeps the system text color instead of turning into canvas. */
+@media (forced-colors: active) {
+  .live-activity-dot {
+    forced-color-adjust: none;
+    background-color: CanvasText;
+  }
+}

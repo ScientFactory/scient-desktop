@@ -1744,6 +1744,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     timelinePositioningPending,
     anchorMessageId,
     workingRowExit,
+    activityInHeader: isPreparingWorktree || compactionAwaitingRow,
   });
   // SCIENT-FORK:END
   const activityState = useMemo<TimelineRowActivityState>(
@@ -4088,6 +4089,7 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
   const { sendMotion } = use(TimelineRowActivityCtx);
   const exiting = sendMotion.workingRowExit.exiting;
   const exitRef = useWorkingRowExitAnimation(sendMotion.workingRowExit);
+  const headerSweeps = !exiting && sendMotion.currentActivityRowId === row.id;
   // SCIENT-FORK:END
   const label = isPreparingWorktree ? (
     "Setting up worktree…"
@@ -4108,9 +4110,16 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
     >
       {/* SCIENT-FORK:END */}
       <div className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
-        {/* SCIENT-FORK:START — the working header's dot; the sweep stays on the current activity. */}
-        {exiting ? null : <LiveActivityDot />}
-        <span className="relative shrink-0 overflow-hidden whitespace-nowrap">{label}</span>
+        {/* SCIENT-FORK:START — the working header's dot (it leaves with the header's exit); its label
+            sweeps only while it is the current activity (compacting or preparing a worktree). */}
+        <LiveActivityDot />
+        <span
+          ref={headerSweeps ? observeLiveActivitySweep : undefined}
+          className="relative shrink-0 overflow-hidden whitespace-nowrap"
+        >
+          <span className={headerSweeps ? "live-activity-rest" : undefined}>{label}</span>
+          {headerSweeps ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
+        </span>
         {/* SCIENT-FORK:END */}
         {backgroundWorktreeSetup ? (
           <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
@@ -4156,6 +4165,9 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
           onCancel={null}
           onWorkLocally={null}
           onOpenTerminal={onOpenTerminal}
+          // SCIENT-FORK:START — the popover's card never sweeps; the timeline has the current activity.
+          sweep={false}
+          // SCIENT-FORK:END
         />
       </PopoverPopup>
     </Popover>

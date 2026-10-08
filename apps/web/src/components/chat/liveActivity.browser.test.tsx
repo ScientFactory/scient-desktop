@@ -5,7 +5,9 @@ import { createRef } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { ThreadId } from "@t3tools/contracts";
 import { MessagesTimeline } from "./MessagesTimeline";
+import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { motionClock } from "./motionClock";
 
 let root: Root | undefined;
@@ -158,4 +160,117 @@ it("gives a longer label a longer cycle at the same pace", async () => {
   const long = cycleSeconds(sweeps()[0]!);
   expect(short).toBeGreaterThan(1.5);
   expect(long).toBeGreaterThan(short + 0.5);
+});
+
+it("runs the light at the label's own pace: the real animation duration and its 80% pass", async () => {
+  render("live:timing", [entry(1, "Timing")], working);
+  await expect.poll(() => sweeps().length).toBe(1);
+  const overlay = sweeps()[0]!;
+  const cycle = cycleSeconds(overlay);
+  const counter = overlay.querySelector(".live-activity-focus-counter")!;
+  expect(Number.parseFloat(getComputedStyle(overlay).animationDuration)).toBeCloseTo(cycle, 2);
+  expect(Number.parseFloat(getComputedStyle(counter).animationDuration)).toBeCloseTo(cycle, 2);
+  const animation = overlay
+    .getAnimations()
+    .find((candidate) => candidate instanceof CSSAnimation) as CSSAnimation;
+  expect(animation.animationName).toBe("scient-live-activity-sweep");
+  const offsets = (animation.effect as KeyframeEffect).getKeyframes().map((frame) => frame.offset);
+  expect(offsets).toContain(0.8);
+});
+
+it("lets the header's own label sweep while compacting before the compaction row exists", async () => {
+  render("live:compacting", [entry(1, "/compact")], { ...working, isCompacting: true });
+  await expect.poll(() => sweeps().length).toBe(1);
+  expect(rowOf(sweeps()[0]!)).toBe("working");
+});
+
+it("keeps the dot through the header's exit, so the label never shifts", async () => {
+  render("live:exit", [entry(1, "Done soon")], working);
+  await expect.poll(() => host!.querySelector(".live-activity-dot")).not.toBeNull();
+  render("live:exit", [entry(1, "Done soon")], { isWorking: false });
+  const header = host!.querySelector('[data-timeline-row-kind="working"]');
+  expect(header).not.toBeNull();
+  expect(header!.querySelector(".live-activity-dot")).not.toBeNull();
+});
+
+function setupSnapshot() {
+  const stage = (id: "fetch" | "setup-script" | "agent", status: "done" | "running") => ({
+    id,
+    status,
+    startedAt: date,
+    endedAt: status === "done" ? date : null,
+    percent: null,
+    detail: null,
+    tail: [],
+  });
+  return {
+    threadId: ThreadId.make("thread-setup"),
+    phase: "running" as const,
+    startedAt: date,
+    endedAt: null,
+    branch: null,
+    baseRef: null,
+    worktreePath: null,
+    setupScript: { name: "Install", command: "pnpm install", terminalId: "term-1" },
+    // An async setup script still runs beside the agent-start stage.
+    stages: [stage("fetch", "done"), stage("setup-script", "running"), stage("agent", "running")],
+    error: null,
+    sequence: 1,
+  };
+}
+
+it("sweeps only the latest running setup stage, and never in the setup popover's card", async () => {
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  flushSync(() =>
+    root!.render(
+      <WorktreeSetupCard
+        snapshot={setupSnapshot()}
+        onCancel={null}
+        onWorkLocally={null}
+        onOpenTerminal={null}
+      />,
+    ),
+  );
+  expect(sweeps()).toHaveLength(1);
+  expect(
+    sweeps()[0]!.closest("[data-worktree-setup-stage]")?.getAttribute("data-worktree-setup-stage"),
+  ).toBe("agent");
+  flushSync(() =>
+    root!.render(
+      <WorktreeSetupCard
+        snapshot={setupSnapshot()}
+        onCancel={null}
+        onWorkLocally={null}
+        onOpenTerminal={null}
+        sweep={false}
+      />,
+    ),
+  );
+  expect(sweeps()).toHaveLength(0);
+});
+
+it("re-measures the pace between passes when the running tool changes", async () => {
+  const prompt = entry(1, "Run things");
+  render("live:retime", [prompt, runningTool("tool-a", "ls")], working);
+  await expect.poll(() => rowOf(sweeps()[0] ?? document.body)).toBe("work-live");
+  const first = cycleSeconds(sweeps()[0]!);
+  // The same live row now shows a much longer tool label.
+  render(
+    "live:retime",
+    [
+      prompt,
+      runningTool("tool-a", "ls"),
+      runningTool(
+        "tool-b",
+        "Running pnpm test --filter @t3tools/web --reporter verbose --watch false",
+      ),
+    ],
+    working,
+  );
+  // After the current pass ends, the cycle follows the new width.
+  await expect
+    .poll(() => cycleSeconds(sweeps()[0]!), { timeout: 8000 })
+    .toBeGreaterThan(first + 0.5);
 });
