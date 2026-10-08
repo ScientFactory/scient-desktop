@@ -404,22 +404,32 @@ boundary, so a running cut takes the portable path. Source execution continues i
 
 ## History by reference and request recovery
 
-A fork does not copy its history. `scient_fork_history (thread_id, position, source_thread_id,
-source_item_id)` lists, in order, the items it shows, written once in the admission transaction.
-Entries point at the item's owner, so a fork of a fork points straight at the original items, and
-at the parent's copies where it has them. The history list is fixed: nothing later changes it,
-and settled source items do not change, so the fork keeps showing what it showed when created.
-Source rollback, edits and deletion keep the items the list names (rollback and deletion are soft).
+A fork does not copy its history. `scient_fork_history` lists, in order, the items it shows: each
+item's owner, type, message and turn facts, written once in the admission transaction. Entries
+point at the item's owner, so a fork of a fork points straight at the original items, and at the
+parent's copies where it has them. The list is fixed.
 
-`ProjectionStore` reads the list wherever it reads a fork: full projections and windows,
-timeline pages, message counts, shell item counts, turn-start history and handoff items. Shown
-items are presented the way copies always looked: no run, node or provider references,
-in-flight status as interrupted, `inheritedFrom` set, and their position as ordinal. A
-projection rebuild replays events and keeps the list, which is not an event projection.
+The fork never changes afterwards. Before any event rewrites an item or message a fork shows,
+`EventSink` keeps the stored version for that fork in `scient_fork_frozen_items` (same
+transaction; the first rewrite wins), and every reader prefers it. Identities never change, so open
+clients and the fork's baseline stay valid; a fork of a fork inherits its parent's kept versions.
+Rollback and deletion of the source are soft and leave the listed items in place.
+
+`ProjectionStore` reads the list wherever it reads a fork: full projections, windows (one window
+rule across shared and own turns, chosen from the list's turn starts in SQL), timeline pages,
+bounded snapshots, message and shell counts, item detail and inline images, turn-start history and
+handoff items. Shown items look the way copies always looked: no run, node or provider references,
+in-flight work interrupted, `inheritedFrom` naming the owner, the fork's thread id, and their
+position as ordinal. A projection rebuild replays events and keeps both tables.
+
+Files are shared. In a lineage that contains a fork, deletion plans no file cleanup; a
+`scient-fork.release-files` effect runs after the deletion commits and releases files of deleted
+members that no live member names (messages, question answers, tool pages, historical system
+messages, and each fork's shared-file list). Lineages without forks keep upstream's deletion path.
 
 Forking time no longer grows with history size beyond reading the source once to plan: a
-37,000-item conversation forks in about 0.4 s (was 5.6 s). Provider delivery may omit whole
-items for context capacity without deleting app history.
+37,000-item conversation forks in about 0.4 s (was 5.6 s). Provider delivery may omit whole items
+for context capacity without deleting app history.
 
 The client journals the command/destination identity before dispatch. An uncertain transport
 outcome retains that identity and the unsent draft; retry reads the durable command receipt and
