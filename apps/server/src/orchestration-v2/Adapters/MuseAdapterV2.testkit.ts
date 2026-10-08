@@ -471,17 +471,81 @@ export function layer(input: {
   ).pipe(Layer.provide(Layer.mergeAll(layerServerConfig, NodeServices.layer, IdAllocator.layer)));
 }
 
+// SCIENT-FORK:START — recorded native requests retain Scient public identity.
+/** Adapt only Scient-owned request identity; native records and matcher stay exact. */
+export function materializeScientMuseRequests(
+  transcript: ProviderReplayTranscript,
+): ProviderReplayTranscript {
+  return {
+    ...transcript,
+    entries: transcript.entries.map((entry) => {
+      if (entry.type !== "expect_outbound" || !isRecord(entry.frame)) return entry;
+      const frame = entry.frame;
+      if (!isRecord(frame.params)) return entry;
+      const params = frame.params;
+      if (
+        frame.method === "initialize" &&
+        isRecord(params.clientInfo) &&
+        params.clientInfo.name === "t3_code" &&
+        params.clientInfo.title === "T3 Code"
+      ) {
+        return {
+          ...entry,
+          frame: {
+            ...frame,
+            params: {
+              ...params,
+              clientInfo: { ...params.clientInfo, title: "Scient" },
+            },
+          },
+        };
+      }
+      if (frame.method !== "turn/start" || !Array.isArray(params.input)) return entry;
+      const first = params.input[0];
+      if (
+        !isRecord(first) ||
+        first.type !== "text" ||
+        typeof first.text !== "string" ||
+        !first.text.startsWith(
+          "<runtime_info>In case you're asked: you are running in T3 Code through ",
+        )
+      )
+        return entry;
+      // These are the exact owned/official RuntimeInstructions differences. Do
+      // not regenerate model/effort or touch user input to make replay pass.
+      const text = first.text
+        .replace("you are running in T3 Code through ", "you are running in Scient through ")
+        .replace("When the t3-code MCP server exposes ", "When the Scient MCP server exposes ")
+        .replace("T3 Code wakes you when checks finish", "Scient wakes you when checks finish");
+      return {
+        ...entry,
+        frame: {
+          ...frame,
+          params: {
+            ...params,
+            input: [{ ...first, text }, ...params.input.slice(1)],
+          },
+        },
+      };
+    }),
+  };
+}
+
+// SCIENT-FORK:END
+
 export const MuseOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
   MuseReplayTranscript,
   MuseReplayTranscriptDecodeError
 > = {
   driver: ProviderDriverKind.make(MUSE_PROVIDER_KIND),
+  // SCIENT-FORK:START — adapt identity before the exact native decoder and matcher.
   decodeTranscript: (transcript: ProviderReplayTranscript) =>
-    decodeMuseReplayTranscript(transcript).pipe(
+    decodeMuseReplayTranscript(materializeScientMuseRequests(transcript)).pipe(
       Effect.mapError(
         (cause) => new MuseReplayTranscriptDecodeError({ scenario: transcript.scenario, cause }),
       ),
     ),
+  // SCIENT-FORK:END
   makeProviderAdapterRegistryLayer: (transcript) =>
     Layer.unwrap(
       Effect.gen(function* () {
