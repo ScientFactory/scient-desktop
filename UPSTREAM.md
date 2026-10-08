@@ -889,6 +889,13 @@ mark in both web `Icons.tsx` (`PiIcon`) and mobile `ProviderIcon.tsx`, replacing
 T3's monochrome glyph. When T3 changes these spots, keep its surrounding layout and
 reapply only the marked lines.
 
+Scient's model picker gives assisted provider setup an intrinsic, scrollable body independent
+of T3's model-row content sizing. Preserve that branch when integrating picker sizing changes:
+providers with no models still need install and sign-in actions. Setup eligibility is shared by
+mouse and keyboard navigation, and returning to models reattaches list measurement. Provider
+views keep their own lifecycle policy; Scient Agent reuses its existing account view in the
+composer connection dialog. See [provider lifecycle architecture](docs/internals/provider-lifecycle.md).
+
 Scient keeps ordinary browser interaction visually quiet: `PreviewView` shows
 the control badge only during agent control. Preserve the underlying human-input
 interruption and cursor behavior. The desktop preview editing-shortcut gate also

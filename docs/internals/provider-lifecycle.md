@@ -31,6 +31,21 @@ led here; it is not a second source of current behavior.
    storage belong to the machine running the Scient server, not necessarily the device displaying the
    UI.
 
+## Composer setup presentation
+
+The model picker keeps assisted setup in normal flow, independently of the virtualized model
+list's measured height. Empty catalogs must still expose installation, sign-in, progress and
+recovery. The same setup eligibility controls the body, provider rail and keyboard navigation;
+conversation locks remain authoritative. Authentication and active connection operations are
+checked independently of cached ready status. Hidden models and search/favorites filters do not
+establish missing installation or authentication.
+
+When setup completes, the model list mounts and subscribes to its own current measurement.
+Provider-specific views and server-advertised actions remain the owners of the next step.
+Scient Agent's composer model connection dialog reuses its Model accounts view alongside Custom
+models. Agents without advertised account support retain their existing model connection path.
+Opening the picker or dialog does not start installation or authentication.
+
 ## Ownership boundaries
 
 | Owner                                     | Responsibilities                                                                                                                                                                                                                                                       |
