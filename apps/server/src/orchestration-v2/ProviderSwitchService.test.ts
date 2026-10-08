@@ -73,7 +73,7 @@ function layerTest(
   metadata: Readonly<Record<string, { continuationKey: string }>>,
   planSelectionTransition: ProviderAdapterV2Shape["planSelectionTransition"] = () =>
     Effect.succeed({ type: "restart_session" }),
-  realPath?: FileSystem.FileSystem["Service"]["realPath"],
+  realPath?: FileSystem.FileSystem["realPath"],
 ) {
   const adapter = (instanceId: ProviderInstanceId): ProviderAdapterV2Shape => ({
     instanceId,
