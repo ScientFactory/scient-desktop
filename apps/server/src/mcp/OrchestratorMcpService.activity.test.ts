@@ -1,5 +1,7 @@
 import {
+  ComposerContextId,
   EnvironmentId,
+  MessageId,
   NodeId,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
@@ -13,6 +15,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "vite-plus/test";
 
@@ -370,10 +373,16 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
-it("readThread and sendToThread reach threads in other projects", async () => {
+it("cross-project reads require a user attachment and writes retain caller authority", async () => {
   let parentRuns: ReadonlyArray<unknown> = [
     makeRun({ id: RunId.make("run-parent-live"), ordinal: 1, status: "running" }),
   ];
+  let parentMessages: OrchestrationV2ThreadProjection["messages"] = [];
+  let foreignRecordReads = 0;
+  let timelineReads = 0;
+  const sentInputs: Array<
+    Parameters<ThreadManagementService.ThreadManagementService["Service"]["sendToThread"]>[0]
+  > = [];
   const foreignProjectId = ProjectId.make("project-mcp-orchestrator-foreign");
   const foreignThreadId = ThreadId.make("thread-mcp-orchestrator-foreign");
   const parentProjection = {
@@ -388,7 +397,9 @@ it("readThread and sendToThread reach threads in other projects", async () => {
     },
     visibleTurnItems: [],
     runtimeRequests: [],
-    messages: [],
+    get messages() {
+      return parentMessages;
+    },
     contextTransfers: [],
     subagents: [],
     updatedAt: now,
@@ -430,11 +441,57 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       updatedAt: now,
     }) as unknown as OrchestrationV2ThreadProjection;
 
+  const attachedMessage = (
+    createdBy: "user" | "agent",
+    role: "user" | "assistant",
+  ): OrchestrationV2ThreadProjection["messages"][number] => ({
+    id: MessageId.make("message-user-attached-foreign-thread"),
+    threadId: parentThreadId,
+    runId: activeRunId,
+    nodeId: null,
+    role,
+    text: "Inspect this conversation",
+    context: {
+      version: 1,
+      records: [
+        {
+          version: 1,
+          contextId: ComposerContextId.make("context-user-attached-foreign-thread"),
+          label: "Foreign conversation",
+          kind: "thread",
+          environmentId,
+          threadId: foreignThreadId,
+          title: "Foreign",
+        },
+      ],
+    },
+    attachments: [],
+    streaming: false,
+    createdBy,
+    creationSource: createdBy === "user" ? "web" : "mcp",
+    createdAt: now,
+    updatedAt: now,
+  });
+  const localProjection = {
+    ...foreignProjection(childThreadId),
+    thread: { ...foreignProjection(childThreadId).thread, projectId },
+  };
+  const targetProjection = (threadId: ThreadId) =>
+    threadId === childThreadId ? localProjection : foreignProjection(threadId);
+
   const layer = OrchestratorMcpService.layer.pipe(
     Layer.provide(
       Layer.mock(ProviderSessionManagerV2)({
-        resolveMcpInvocationPolicy: () =>
-          Effect.die("Read-only fixture cannot grant mutation authority."),
+        resolveMcpInvocationPolicy: (caller) =>
+          Effect.sync(() => {
+            expect(caller).toEqual(makeScope().thread);
+            return parentRuns.length > 0
+              ? Option.some({
+                  runtimeMode: "full-access" as const,
+                  interactionMode: "default" as const,
+                })
+              : Option.none();
+          }),
       }),
     ),
     Layer.provide(
@@ -442,35 +499,51 @@ it("readThread and sendToThread reach threads in other projects", async () => {
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) => {
             if (threadId === parentThreadId) return Effect.succeed(parentProjection);
-            if (threadId === foreignThreadId) return Effect.succeed(foreignProjection(threadId));
+            if (threadId === foreignThreadId || threadId === childThreadId)
+              return Effect.succeed(targetProjection(threadId));
             return Effect.die(`unexpected thread ${threadId}`);
           },
           getThreadShell: (threadId) =>
             Effect.succeed(
-              threadId === foreignThreadId
-                ? (foreignProjection(threadId).thread as unknown as OrchestrationV2ThreadShell)
+              threadId === foreignThreadId || threadId === childThreadId
+                ? (targetProjection(threadId).thread as unknown as OrchestrationV2ThreadShell)
                 : null,
             ),
           getTimelinePage: (threadId) =>
-            Effect.succeed({
-              items: foreignProjection(threadId).visibleTurnItems,
-              totalItems: 1,
-              hasMore: false,
+            Effect.sync(() => {
+              timelineReads += 1;
+              return {
+                items: targetProjection(threadId).visibleTurnItems,
+                totalItems: 1,
+                hasMore: false,
+              };
             }),
-          getProjectThreadRecords: (input) =>
-            input.threadId === foreignThreadId && input.projectId === foreignProjectId
-              ? Effect.succeed(foreignProjection(input.threadId))
-              : Effect.fail(
-                  new ThreadManagementService.ThreadManagementThreadNotFoundError({
-                    projectId: input.projectId,
-                    threadId: input.threadId,
-                  }),
-                ),
-          sendToThread: () =>
-            Effect.succeed({
-              run: { id: "run-foreign", status: "queued" },
-              delivery: "started",
-            } as unknown as ThreadManagementService.ThreadManagementSendResult),
+          getProjectThreadRecords: (input) => {
+            const expectedProject = input.threadId === childThreadId ? projectId : foreignProjectId;
+            if (
+              (input.threadId === foreignThreadId || input.threadId === childThreadId) &&
+              input.projectId === expectedProject
+            ) {
+              return Effect.sync(() => {
+                if (input.threadId === foreignThreadId) foreignRecordReads += 1;
+                return targetProjection(input.threadId);
+              });
+            }
+            return Effect.fail(
+              new ThreadManagementService.ThreadManagementThreadNotFoundError({
+                projectId: input.projectId,
+                threadId: input.threadId,
+              }),
+            );
+          },
+          sendToThread: (input) =>
+            Effect.sync(() => {
+              sentInputs.push(input);
+              return {
+                run: { id: "run-foreign", status: "queued" },
+                delivery: "started",
+              } as unknown as ThreadManagementService.ThreadManagementSendResult;
+            }),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
@@ -500,22 +573,82 @@ it("readThread and sendToThread reach threads in other projects", async () => {
 
   await Effect.gen(function* () {
     const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    for (const message of [
+      undefined,
+      attachedMessage("agent", "user"),
+      attachedMessage("user", "assistant"),
+    ]) {
+      parentMessages = message === undefined ? [] : [message];
+      const refused = yield* service
+        .readThread(makeScope(), { threadId: foreignThreadId })
+        .pipe(Effect.flip);
+      expect(refused.code).toBe("thread_not_found");
+      expect(foreignRecordReads).toBe(0);
+      expect(timelineReads).toBe(0);
+    }
+    const unattachedSend = yield* service
+      .sendToThread(makeScope(), { threadId: foreignThreadId, message: "hi" })
+      .pipe(Effect.flip);
+    expect(unattachedSend.code).toBe("thread_not_found");
+    expect(sentInputs).toEqual([]);
+
+    parentMessages = [attachedMessage("user", "user")];
     const foreign = yield* service.readThread(makeScope(), { threadId: foreignThreadId });
     expect(foreign.thread.threadId).toBe(foreignThreadId);
     expect(foreign.thread.projectId).toBe(foreignProjectId);
     expect(foreign.items.map((item) => item.text)).toEqual(["Foreign thread said hello"]);
 
-    const sent = yield* service.sendToThread(makeScope(), {
-      threadId: foreignThreadId,
-      message: "hi",
-    });
-    expect(sent.threadId).toBe(foreignThreadId);
+    // User attachment grants inspection, never cross-project mutation authority.
+    const attachedSend = yield* service
+      .sendToThread(makeScope(), {
+        threadId: foreignThreadId,
+        message: "hi",
+      })
+      .pipe(Effect.flip);
+    expect(attachedSend.code).toBe("thread_not_found");
+    expect(sentInputs).toEqual([]);
 
-    // Once the caller's run ends, it can still read other threads but no longer write to them.
+    const sent = yield* service.sendToThread(makeScope(), {
+      threadId: childThreadId,
+      message: "hi locally",
+    });
+    expect(sent.threadId).toBe(childThreadId);
+    expect(sentInputs).toHaveLength(1);
+    expect(sentInputs[0]).toMatchObject({
+      projectId,
+      threadId: childThreadId,
+      senderThreadId: parentThreadId,
+    });
+
+    const externalScope: McpInvocationContext.McpInvocationScope = {
+      ...makeScope(),
+      thread: undefined,
+      client: {
+        sessionId: "external-full-client",
+        label: "Approved client",
+        access: "full-access",
+      },
+      requestNamespace: "external-full-client",
+    };
+    parentMessages = [];
+    const externalRead = yield* service.readThread(externalScope, { threadId: foreignThreadId });
+    expect(externalRead.thread.projectId).toBe(foreignProjectId);
+    expect(externalRead.items.map((item) => item.text)).toEqual(["Foreign thread said hello"]);
+    const externalSent = yield* service.sendToThread(externalScope, {
+      threadId: foreignThreadId,
+      message: "external hi",
+    });
+    expect(externalSent.threadId).toBe(foreignThreadId);
+    expect(sentInputs).toHaveLength(2);
+    expect(sentInputs[1]).toMatchObject({ projectId: foreignProjectId, threadId: foreignThreadId });
+    expect(sentInputs[1]?.senderThreadId).toBeUndefined();
+
+    // Read-only user-attached history remains available after the captured run ends.
+    parentMessages = [attachedMessage("user", "user")];
     parentRuns = [];
     yield* service.readThread(makeScope(), { threadId: foreignThreadId });
     const stale = yield* service
-      .sendToThread(makeScope(), { threadId: foreignThreadId, message: "hi again" })
+      .sendToThread(makeScope(), { threadId: childThreadId, message: "hi again" })
       .pipe(Effect.flip);
     expect(stale.code).toBe("parent_not_active");
     const staleInterrupt = yield* service
@@ -542,5 +675,6 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       .deleteScheduledTask(makeScope(), { scheduledTaskId: ScheduledTaskId.make("task-foreign") })
       .pipe(Effect.flip);
     expect(staleDelete.code).toBe("parent_not_active");
+    expect(sentInputs).toHaveLength(2);
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });

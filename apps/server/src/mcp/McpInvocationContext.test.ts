@@ -138,8 +138,11 @@ it.effect("refuses thread-owned capabilities to a caller signed in from outside 
       Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
       Effect.flip,
     );
-    expect(error).toBeInstanceOf(PreviewAutomationUnavailableError);
+    expect(error).toBeInstanceOf(McpCapabilityUnavailableError);
     expect(error).toMatchObject({ capability: "preview", environmentId: "environment-1" });
     expect(error.threadId).toBeUndefined();
+    expect(error.providerSessionId).toBeUndefined();
+    expect(error.providerInstanceId).toBeUndefined();
+    expect(error.message).toBe("MCP credential does not grant the preview capability.");
   });
 });
