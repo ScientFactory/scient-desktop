@@ -478,6 +478,25 @@ export const readForkSharedFileIds = (sql: SqlClient.SqlClient, threadId: Thread
       AND EXISTS (SELECT 1 FROM scient_fork_history WHERE thread_id = ${threadId})
   `.pipe(Effect.map((rows) => rows.flatMap((row) => (row.id === null ? [] : [row.id]))));
 
+/** Which of `ids` (any case) a message of any live conversation attaches, lowercased. */
+export const readLiveMessageFileReferences = (
+  sql: SqlClient.SqlClient,
+  ids: ReadonlyArray<string>,
+) =>
+  ids.length === 0
+    ? Effect.succeed(new Set<string>())
+    : sql<{ readonly id: string }>`
+        SELECT DISTINCT lower(json_extract(attachment.value, '$.id')) AS id
+        FROM orchestration_v2_projection_messages AS message
+        JOIN orchestration_v2_projection_threads AS thread
+          ON thread.thread_id = message.thread_id,
+          json_each(message.payload_json, '$.attachments') AS attachment
+        WHERE thread.deleted_at IS NULL
+          AND lower(json_extract(attachment.value, '$.id')) IN (
+            SELECT lower(value) FROM json_each(${encodeJson(ids)})
+          )
+      `.pipe(Effect.map((rows) => new Set(rows.map((row) => row.id))));
+
 /** Files attached to the thread's own submitted question answers. */
 export const readQuestionAnswerFileIds = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
   sql<{ readonly id: string | null }>`

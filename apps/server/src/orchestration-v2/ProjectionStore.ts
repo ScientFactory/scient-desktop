@@ -104,6 +104,7 @@ import {
   readForkSharedFileIds,
   readForkShownToolPayloads,
   readQuestionAnswerFileIds,
+  readLiveMessageFileReferences,
   presentInheritedItem,
   presentInheritedMessage,
   readForkHistoryMessageRows,
@@ -3217,12 +3218,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           window !== undefined &&
           (anchorInHistory ||
             (window.historyAnchor !== undefined && window.historyAnchor.threadId !== threadId));
-        // While the fork's own turns (up to a local anchor) cannot fill a
-        // user-turn window, the window reaches into its history and holds every
-        // row from its boundary on: reading only those keeps the local read off
-        // its older copies.
+        // The fork's own rows (up to a local anchor) start at its boundary, after
+        // its copies. While they cannot fill the window, the window reaches into
+        // its history and holds every one of them: reading exactly those keeps
+        // the local read off its older copies.
         const extent =
-          window !== undefined && !redirected && window.userTurnLimit !== undefined
+          window !== undefined && !redirected
             ? yield* readForkLocalExtent(sql, threadId, anchor)
             : undefined;
         const localWindow =
@@ -3234,16 +3235,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   rowLimit: 0,
                   anchorItemId: TurnItemId.make(`turn-item:fork:${threadId}`),
                 }
-              : extent !== undefined &&
-                  extent.userTurns < (window.userTurnLimit ?? 0) + 2 &&
-                  extent.turnStarts < THREAD_HISTORY_MAX_RAW_TURNS + 2
-                ? {
-                    ...window,
-                    userTurnLimit: undefined,
-                    rowLimit:
-                      extent.userTurns === 0 ? Math.min(extent.rows, window.rowLimit) : extent.rows,
-                  }
-                : window;
+              : extent === undefined
+                ? window
+                : window.userTurnLimit === undefined
+                  ? { ...window, rowLimit: Math.min(extent.rows, window.rowLimit) }
+                  : extent.userTurns < window.userTurnLimit + 2 &&
+                      extent.turnStarts < THREAD_HISTORY_MAX_RAW_TURNS + 2
+                    ? {
+                        ...window,
+                        userTurnLimit: undefined,
+                        rowLimit:
+                          extent.userTurns === 0
+                            ? Math.min(extent.rows, window.rowLimit)
+                            : extent.rows,
+                      }
+                    : window;
         const projection = yield* readCanonicalProjection(threadId, localWindow);
         // The fork's own copies of in-flight items and plans are listed in its history.
         const local = localVisibleTurnItems(projection).filter(
@@ -4893,7 +4899,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           if (member.deleted || candidates.size === 0) continue;
           for (const id of yield* namedFiles(member.threadId)) named.add(id.toLowerCase());
         }
-        return [...candidates].filter((id) => !named.has(id.toLowerCase()));
+        const remaining = [...candidates].filter((id) => !named.has(id.toLowerCase()));
+        // A message in any other live conversation may have been sent the file.
+        const elsewhere = yield* readLiveMessageFileReferences(sql, remaining);
+        return remaining.filter((id) => !elsewhere.has(id.toLowerCase()));
       }).pipe(
         Effect.mapError((cause) =>
           isProjectionStoreReadError(cause)

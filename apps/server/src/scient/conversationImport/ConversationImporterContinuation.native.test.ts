@@ -27,6 +27,11 @@ import * as Stream from "effect/Stream";
 import * as FileSystem from "effect/FileSystem";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EventSinkV2 } from "../../orchestration-v2/EventSink.ts";
+import { reserveAttachment } from "../../orchestration-v2/AttachmentFileUse.ts";
+import {
+  ForkFileRelease,
+  layer as forkFileReleaseLayer,
+} from "../../orchestration-v2/scient-fork/ForkFileRelease.ts";
 import {
   buildBoundedThreadProjection,
   THREAD_HISTORY_PAGE_POLICY,
@@ -2463,6 +2468,95 @@ it.live("file release ignores name case and subagent conversations' copied fork 
   ),
 );
 
+it.live(
+  "fork file release keeps files other conversations name and waits for admissions holding them",
+  () =>
+    withImporter(
+      Effect.gen(function* () {
+        const { lease } = yield* leaseFor(importFixture({ turns: 2, attachments: true }));
+        const sourceId = (yield* importOnce(lease)).result.threadId;
+        const store = yield* ProjectionStoreV2;
+        const forks = yield* ConversationForkService;
+        const orchestrator = yield* OrchestratorV2;
+        const fs = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig;
+        const source = yield* store.getThreadProjection(sourceId);
+        const forkId = ThreadId.make("guarded-release-fork");
+        yield* forks.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("guarded-release-fork"),
+          originThreadId: sourceId,
+          newThreadId: forkId,
+          sourceAssistantMessageId: source.messages.findLast(
+            (message) => message.role === "assistant",
+          )!.id,
+          workspaceMode: "local",
+        });
+        const files = (yield* store.getThreadProjection(
+          forkId,
+        )).thread.conversationFork!.attachmentCopies.map((copy) => copy.source);
+        assert.isAtLeast(files.length, 2);
+        const [sent, held] = [files[0]!, files[1]!];
+        // An unrelated conversation was sent one of the files.
+        const otherId = ThreadId.make("guarded-release-other");
+        const now = yield* DateTime.now;
+        const prompt = source.messages.find((message) => message.role === "user")!;
+        yield* (yield* EventSinkV2).write({
+          events: [
+            {
+              id: EventId.make("guarded-release-other-created"),
+              threadId: otherId,
+              type: "thread.created",
+              occurredAt: now,
+              payload: {
+                ...source.thread,
+                id: otherId,
+                lineage: {
+                  parentThreadId: null,
+                  relationshipToParent: null,
+                  rootThreadId: otherId,
+                },
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+            {
+              id: EventId.make("guarded-release-other-message"),
+              threadId: otherId,
+              type: "message.updated",
+              occurredAt: now,
+              payload: {
+                ...prompt,
+                id: MessageId.make("guarded-release-other-message"),
+                threadId: otherId,
+                attachments: [sent],
+              },
+            },
+          ],
+        });
+        // An admission holds the other file while the lineage is deleted.
+        const pin = yield* reserveAttachment(held);
+        for (const threadId of [sourceId, forkId])
+          yield* orchestrator.dispatch({
+            type: "thread.delete",
+            commandId: CommandId.make(`guarded-release-delete-${threadId}`),
+            threadId,
+          });
+        const release = yield* ForkFileRelease.pipe(Effect.provide(forkFileReleaseLayer));
+        const path = (attachment: (typeof files)[number]) =>
+          resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!;
+        const deferred = yield* Effect.flip(release.release(forkId));
+        assert.equal(deferred._tag, "ForkFileReleaseDeferred");
+        assert.isTrue(yield* fs.exists(path(held)));
+        assert.isTrue(yield* fs.exists(path(sent)));
+        yield* pin.release;
+        yield* release.release(forkId);
+        assert.isFalse(yield* fs.exists(path(held)));
+        assert.isTrue(yield* fs.exists(path(sent)));
+      }),
+    ),
+);
+
 it.live("opening a recent fork window never reads its older copies", () =>
   withImporter(
     Effect.gen(function* () {
@@ -2486,16 +2580,24 @@ it.live("opening a recent fork window never reads its older copies", () =>
       const plan = (yield* store.getThreadProjection(forkId)).turnItems.find(
         (item) => item.type === "proposed_plan",
       )!;
-      const tripwire = Effect.fn("test.tripwire")(function* (anchorItemId?: TurnItemId) {
+      const tripwire = Effect.fn("test.tripwire")(function* (
+        anchorItemId?: TurnItemId,
+        rowsOnly = false,
+      ) {
         // The fork's own copy of the old plan cannot be decoded.
         yield* (yield* SqlClient.SqlClient)`
           UPDATE orchestration_v2_projection_turn_items SET payload_json = '{invalid-copy-tripwire'
           WHERE turn_item_id = ${plan.id}`;
-        const window = yield* store.getThreadSnapshotWindow(forkId, {
-          rowLimit: 10,
-          userTurnLimit: 1,
-          ...(anchorItemId === undefined ? {} : { anchorItemId }),
-        });
+        const window = yield* store.getThreadSnapshotWindow(
+          forkId,
+          rowsOnly
+            ? { rowLimit: 2 }
+            : {
+                rowLimit: 10,
+                userTurnLimit: 1,
+                ...(anchorItemId === undefined ? {} : { anchorItemId }),
+              },
+        );
         assert.isFalse(
           window.projection.visibleTurnItems.some((row) => row.sourceItemId === plan.id),
         );
@@ -2505,6 +2607,11 @@ it.live("opening a recent fork window never reads its older copies", () =>
         SELECT payload_json FROM orchestration_v2_projection_turn_items
         WHERE turn_item_id = ${plan.id}`;
       assert.equal((yield* tripwire()).projection.visibleTurnItems.at(-1)?.item.type, "fork");
+      // A row-only window too (the older compatibility endpoint).
+      assert.equal(
+        (yield* tripwire(undefined, true)).projection.visibleTurnItems.at(-1)?.item.type,
+        "fork",
+      );
       yield* (yield* SqlClient.SqlClient)`
         UPDATE orchestration_v2_projection_turn_items SET payload_json = ${stored[0]!.payload_json}
         WHERE turn_item_id = ${plan.id}`;

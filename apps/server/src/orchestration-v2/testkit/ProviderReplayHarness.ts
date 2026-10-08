@@ -31,6 +31,7 @@ import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import * as CheckpointCaptureService from "../CheckpointCaptureService.ts";
 import * as CheckpointService from "../CheckpointService.ts";
 import { layer as attachmentRollbackPruneLayer } from "../AttachmentRollbackPruneService.ts";
+import { layer as forkFileReleaseLayer } from "../scient-fork/ForkFileRelease.ts";
 import { layer as attachmentReconciliationLayer } from "../AttachmentReservationReconciliation.ts";
 import * as CheckpointRollbackService from "../CheckpointRollbackService.ts";
 import * as CommandPolicy from "../CommandPolicy.ts";
@@ -673,6 +674,11 @@ export function layerWithRegistry<Error>(
               layerServerConfig,
               attachmentReconciliationProvided,
             ).pipe(Layer.provideMerge(layerThreadCommandExecutor)),
+          ),
+        ),
+        forkFileReleaseLayer.pipe(
+          Layer.provide(
+            Layer.mergeAll(layerStores, layerServerConfig, attachmentReconciliationProvided),
           ),
         ),
         options.resourceCleanupLayer?.pipe(
