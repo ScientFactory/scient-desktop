@@ -520,7 +520,43 @@ export const layerWithOptions = (
       // close. It has no execution rights; retries join its original operation.
       const closingSessions = new Map<string, ClosingSessionEntry>();
       // SCIENT-FORK:START — Pi session files admit one native writer per process scope.
-      const { closeOwnedScope, claimPiFile } = makePiSessionFileLeases({ fileSystem, path });
+      const { closeOwnedScope: closePiScope, claimPiFile } = makePiSessionFileLeases({
+        fileSystem,
+        path,
+      });
+      const ownedScopeCloses = new WeakMap<
+        Scope.Closeable,
+        Fiber.Fiber<Exit.Exit<void, never>, never>
+      >();
+      const parentScopeOwners = new WeakMap<
+        Scope.Closeable,
+        { readonly scope: Scope.Closeable; retiring: boolean; closed: boolean }
+      >();
+      // Scope.close marks a scope closed before its finalizers finish. All exact
+      // owners must join the same physical close before releasing Pi file leases.
+      const closeOwnedScope = (scope: Scope.Closeable) =>
+        Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            let closing = ownedScopeCloses.get(scope);
+            if (closing === undefined) {
+              closing = yield* closePiScope(scope).pipe(
+                Effect.onExit((exit) =>
+                  Effect.suspend(() => {
+                    const owner = parentScopeOwners.get(scope);
+                    if (Exit.isFailure(exit) || owner === undefined) return Effect.void;
+                    owner.closed = true;
+                    return Scope.close(owner.scope, Exit.void);
+                  }),
+                ),
+                Effect.exit,
+                Effect.forkDetach({ startImmediately: true }),
+              );
+              ownedScopeCloses.set(scope, closing);
+            }
+            const result = yield* restore(Fiber.join(closing));
+            if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
+          }),
+        );
       // SCIENT-FORK:END
       const nextSubscriberId = yield* Ref.make(0);
       const sessionOpen = yield* KeyedLock.make<ProviderSessionId>();
@@ -1027,7 +1063,18 @@ export const layerWithOptions = (
             let releasedAt = yield* DateTime.now;
             const operation = yield* Deferred.await(begin).pipe(
               Effect.andThen(
-                Effect.suspend(() => closeRetiringEntry(captured, { ...input, releasedAt })),
+                Effect.suspend(() =>
+                  closeRetiringEntry(captured, { ...input, releasedAt }).pipe(
+                    withMetrics({
+                      counter: providerSessionsTotal,
+                      attributes: {
+                        provider: captured.runtime.driver,
+                        operation: "release",
+                        reason: input.reason,
+                      },
+                    }),
+                  ),
+                ),
               ),
               Effect.exit,
               Effect.tap((result) =>
@@ -1867,7 +1914,7 @@ export const layerWithOptions = (
                         ? awaitClosingEntry(closing)
                         : Effect.void;
                     }),
-                }),
+                }).pipe(turnMetrics("interrupt")),
               ),
             ),
           respondToRuntimeRequest: (input) =>
@@ -2288,8 +2335,9 @@ export const layerWithOptions = (
                   return yield* Effect.uninterruptibleMask((restore) =>
                     Effect.gen(function* () {
                       const sessionScope = yield* Scope.make();
-                      cleanupOpening = closeOwnedScope(sessionScope).pipe(
-                        Effect.andThen(dropReservation),
+                      let published = false;
+                      // SCIENT-FORK:START — layer-owned opening authority and physical close.
+                      cleanupOpening = dropReservation.pipe(
                         Effect.andThen(
                           mcpCredentialId === undefined
                             ? Effect.void
@@ -2299,8 +2347,41 @@ export const layerWithOptions = (
                                 prepared.issued,
                               ),
                         ),
+                        Effect.ensuring(closeOwnedScope(sessionScope)),
                         Effect.ignoreCause({ log: true }),
                       );
+                      const openingOwner = {
+                        scope: yield* Scope.fork(sessionScopes),
+                        retiring: false,
+                        closed: false,
+                      };
+                      parentScopeOwners.set(sessionScope, openingOwner);
+                      yield* Scope.addFinalizer(
+                        openingOwner.scope,
+                        Effect.suspend(() => {
+                          if (openingOwner.closed) return Effect.void;
+                          openingOwner.retiring = true;
+                          return published && openedRuntime !== undefined
+                            ? releaseEntry({
+                                providerSessionId: input.providerSessionId,
+                                expectedRuntime: openedRuntime,
+                                reason: "server_shutdown",
+                              }).pipe(
+                                Effect.ensuring(closeOwnedScope(sessionScope)),
+                                Effect.ignoreCause({ log: true }),
+                              )
+                            : cleanupOpening;
+                        }),
+                      );
+                      const openingClosed = () =>
+                        new ProviderSessionOpenError({
+                          instanceId: input.modelSelection.instanceId,
+                          providerSessionId: input.providerSessionId,
+                          cause: "The provider session owner shut down during opening.",
+                        });
+                      if (openingOwner.retiring || openingOwner.closed)
+                        return yield* openingClosed();
+                      // SCIENT-FORK:END
                       yield* restore(
                         claimPiFile(sessionScope, adapter.driver, input.initialNativeThreadId).pipe(
                           Effect.mapError(
@@ -2337,28 +2418,13 @@ export const layerWithOptions = (
                                 }),
                           })
                           .pipe(
+                            withMetrics({
+                              counter: providerSessionsTotal,
+                              attributes: { provider: adapter.driver, operation: "open" },
+                            }),
                             Effect.provideService(Scope.Scope, sessionScope),
                             Effect.onExit((exit) =>
-                              Exit.isFailure(exit)
-                                ? closeOwnedScope(sessionScope).pipe(
-                                    Effect.ignoreCause({ log: true }),
-                                    Effect.andThen(dropReservation),
-                                    // A failed open drops ownership. Fresh credentials start
-                                    // cleanup; the last pending holder completes it unless
-                                    // a live entry adopted this exact credential.
-                                    Effect.andThen(
-                                      mcpCredentialId === undefined
-                                        ? Effect.void
-                                        : reclaimUnusedMcpCredential(
-                                            input.threadId,
-                                            mcpCredentialId,
-                                            prepared.issued,
-                                          ),
-                                    ),
-                                    // Preserve the native failure or caller interruption.
-                                    Effect.ignoreCause({ log: true }),
-                                  )
-                                : Effect.void,
+                              Exit.isFailure(exit) ? cleanupOpening : Effect.void,
                             ),
                             Effect.mapError(
                               (cause) =>
@@ -2371,7 +2437,9 @@ export const layerWithOptions = (
                           ),
                       );
                       openedRuntime = runtime;
-                      let published = false;
+                      // SCIENT-FORK: a closed parent cannot adopt a late handshake result.
+                      if (openingOwner.retiring || openingOwner.closed)
+                        return yield* openingClosed();
                       const consumer = runtime.eventConsumer;
                       if (consumer)
                         yield* Scope.addFinalizer(
@@ -2420,12 +2488,18 @@ export const layerWithOptions = (
                             idleFiber: null,
                             pinnedSinceMs: null,
                           };
-                          yield* Ref.update(sessions, (current) => {
-                            const updated = new Map(current);
-                            updated.set(key, entry);
-                            published = true;
-                            return updated;
-                          });
+                          // SCIENT-FORK:START — publication cannot resurrect a closing layer owner.
+                          yield* Effect.suspend(() =>
+                            openingOwner.retiring || openingOwner.closed
+                              ? openingClosed()
+                              : Ref.update(sessions, (current) => {
+                                  const updated = new Map(current);
+                                  updated.set(key, entry);
+                                  published = true;
+                                  return updated;
+                                }),
+                          );
+                          // SCIENT-FORK:END
                           // The entry now guards the credential via its recorded id, so
                           // the pre-open reservation can be dropped.
                           yield* dropReservation;

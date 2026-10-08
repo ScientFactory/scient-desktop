@@ -478,9 +478,11 @@ it.effect(
         assert.isUndefined(interrupter.pollUnsafe());
         yield* Deferred.succeed(releaseClose, undefined);
         yield* Fiber.join(interrupter);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
         yield* Deferred.succeed(releaseRetry, undefined);
         yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
-        assert.equal((yield* Ref.get(state)).openCount, 1);
+        // The interrupted handshake already spawned one process; the retry is a fresh second open.
+        assert.equal((yield* Ref.get(state)).openCount, 2);
 
         // Its close hangs as well; release it while the test clock can still move.
         const stopping = yield* manager.shutdown.pipe(Effect.forkChild);
