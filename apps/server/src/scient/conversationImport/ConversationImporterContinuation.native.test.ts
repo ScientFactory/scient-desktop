@@ -50,7 +50,11 @@ import { ServerConfig } from "../../config.ts";
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
 import { layer as resourceCleanupLayer } from "../../orchestration-v2/ResourceCleanupService.ts";
 import { TerminalManager } from "../../terminal/Manager.ts";
-import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import {
+  parseThreadSegmentFromAttachmentId,
+  resolveAttachmentPath,
+  toSafeThreadAttachmentSegment,
+} from "../../attachmentStore.ts";
 import { CommandReceiptStoreV2 } from "../../orchestration-v2/CommandReceiptStore.ts";
 import { EffectOutboxV2 } from "../../orchestration-v2/EffectOutbox.ts";
 import {
@@ -2179,6 +2183,44 @@ it.live(
         const rebuilt = yield* store.getThreadProjection(forkId);
         assert.deepEqual(rebuilt.visibleTurnItems, frozen.visibleTurnItems);
         assert.deepEqual(rebuilt.messages, frozen.messages);
+
+        // The fork can queue a file its shared history shows.
+        const sharedFile = frozen.messages.flatMap((message) => message.attachments)[0]!;
+        assert.notEqual(
+          parseThreadSegmentFromAttachmentId(sharedFile.id),
+          toSafeThreadAttachmentSegment(forkId),
+        );
+        yield* (yield* OrchestratorV2).dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("frozen-live-busy"),
+          threadId: forkId,
+          messageId: MessageId.make("frozen-live-busy"),
+          text: "Continue",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* (yield* OrchestratorV2).dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("frozen-live-resend"),
+          threadId: forkId,
+          messageId: MessageId.make("frozen-live-resend"),
+          text: "Look at this again",
+          attachments: [sharedFile],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const queued = yield* store.getThreadProjection(forkId);
+        assert.equal(
+          queued.runs.find((run) => run.userMessageId === "frozen-live-resend")?.status,
+          "queued",
+        );
+        assert.deepEqual(
+          queued.messages.find((message) => message.id === "frozen-live-resend")?.attachments,
+          [sharedFile],
+        );
       }),
     ).pipe(Effect.timeout("60 seconds")),
 );

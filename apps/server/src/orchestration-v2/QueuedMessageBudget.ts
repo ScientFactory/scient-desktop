@@ -68,6 +68,12 @@ export const ensureQueuedMessageBudget = Effect.fn("ensureQueuedMessageBudget")(
   const fs = yield* FileSystem.FileSystem;
   const config = yield* ServerConfig;
   const owner = toSafeThreadAttachmentSegment(input.projection.thread.id);
+  // SCIENT-FORK: a fork shares its history's files; those it shows are its own to send.
+  const shown = new Set(
+    input.projection.messages.flatMap((message) =>
+      message.id === input.message.id ? [] : message.attachments.map((attachment) => attachment.id),
+    ),
+  );
   let total = 0;
   for (const message of messages) {
     const serialized = yield* encodeMessage(message).pipe(
@@ -84,7 +90,10 @@ export const ensureQueuedMessageBudget = Effect.fn("ensureQueuedMessageBudget")(
     // cannot establish disk usage: a stored attachment may have changed size.
     for (const attachment of message.attachments) {
       const path = resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment });
-      if (path === null || parseThreadSegmentFromAttachmentId(attachment.id) !== owner)
+      if (
+        path === null ||
+        (parseThreadSegmentFromAttachmentId(attachment.id) !== owner && !shown.has(attachment.id))
+      )
         return yield* new QueuedMessageBudgetError({
           message: "Queued attachments must belong to this thread.",
         });
