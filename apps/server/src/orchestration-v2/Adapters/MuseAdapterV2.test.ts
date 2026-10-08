@@ -35,6 +35,7 @@ import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { MuseItem } from "../../provider/museProtocol.ts";
 import type { MuseSdkHost } from "../../provider/museSdk.ts";
+import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
@@ -198,6 +199,7 @@ const makeHarness = Effect.fnUntraced(function* (
     MuseAdapterV2Options,
     "createHost" | "nativeEventLogger" | "modelCatalog" | "continuationRequests"
   > = {},
+  configureMcp?: boolean,
 ) {
   let hostCount = 0;
   const adapter = makeMuseAdapterV2({
@@ -216,6 +218,7 @@ const makeHarness = Effect.fnUntraced(function* (
     modelSelection: modelSelection(instanceId),
     runtimePolicy: policy,
     ...(initialNativeThreadId ? { initialNativeThreadId } : {}),
+    ...(configureMcp === undefined ? {} : { configureMcp }),
   });
   const emitted = yield* Queue.unbounded<ProviderAdapterV2Event>();
   const allEvents: ProviderAdapterV2Event[] = [];
@@ -369,7 +372,8 @@ describe("MuseAdapterV2", () => {
       for (const nativeId of [undefined, "saved-native-session"]) {
         const fake = yield* makeFakeMuse();
         fake.host.initializeResult.grantedCapabilities.push("sessionMcp");
-        yield* makeHarness(fake, INSTANCE_ID, nativeId);
+        const harness = yield* makeHarness(fake, INSTANCE_ID, nativeId);
+        assert.isTrue(harness.adapter.mcpSessionInjection);
         const call = yield* fake.takeCall(nativeId ? "session/resume" : "session/start");
         assert.deepStrictEqual(call.params.config, {
           mcpServers: {
@@ -381,6 +385,61 @@ describe("MuseAdapterV2", () => {
             },
           },
         });
+        // Native tool configuration does not imply a private system prompt seam.
+        // Retain MSP's existing runtime-info and authored user-input channel only.
+        yield* harness.runtime.startTurn(yield* turnInput(harness.providerThread));
+        const nativeTurn = yield* fake.takeCall("turn/start");
+        assert.deepStrictEqual(nativeTurn.params.input, [
+          {
+            type: "text",
+            text: buildRuntimeInstructions({
+              harness: "Muse Code",
+              model: MODEL,
+              reasoningEffort: "max",
+            }),
+          },
+          { type: "text", text: "Hello Muse" },
+        ]);
+      }
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("does not inject an existing credential when native MCP is explicitly disabled", () =>
+    Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => McpProviderSession.clearMcpProviderSession(THREAD_ID)),
+      );
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("test-environment"),
+        threadId: THREAD_ID,
+        providerSessionId: "test-session",
+        providerInstanceId: INSTANCE_ID,
+        endpoint: "http://127.0.0.1:43210/mcp",
+        authorizationHeader: "Bearer thread-scoped-test-token",
+        capabilities: new Set(["skills:read"]),
+        agentDeviceEnvironment: { PATH: "/fake/device-shim", SCIENT_DEVICE_MARKER: "enabled" },
+      });
+      for (const nativeId of [undefined, "saved-native-session"]) {
+        const fake = yield* makeFakeMuse();
+        // This host has no sessionMcp grant: opting out must not attach a credential
+        // or require a native capability that this session never requested.
+        yield* makeHarness(
+          fake,
+          INSTANCE_ID,
+          nativeId,
+          undefined,
+          undefined,
+          runtimePolicy,
+          {
+            createHost: async (options) => {
+              assert.deepStrictEqual(options.environment, { PATH: "/fake/bin" });
+              return fake.host;
+            },
+          },
+          false,
+        );
+        const call = yield* fake.takeCall(nativeId ? "session/resume" : "session/start");
+        assert.isUndefined(call.params.config);
       }
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );

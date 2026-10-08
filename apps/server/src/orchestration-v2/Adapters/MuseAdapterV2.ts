@@ -278,6 +278,9 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
   return ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver: MUSE_PROVIDER,
+    // SCIENT-FORK:START — the native sessionMcp channel carries host-issued skill authority.
+    mcpSessionInjection: true,
+    // SCIENT-FORK:END
     getCapabilities: () => Effect.succeed(MuseProviderCapabilitiesV2),
     planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
     openSession: Effect.fn("MuseAdapterV2.openSession")(function* (
@@ -1315,7 +1318,12 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
       );
       const launchHost = Effect.fnUntraced(function* () {
         const epoch = ++hostEpoch;
-        const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+        // SCIENT-FORK:START — explicit MCP opt-out also withholds device environment authority.
+        const mcpSession =
+          input.configureMcp === false
+            ? undefined
+            : McpProviderSession.readMcpProviderSession(input.threadId);
+        // SCIENT-FORK:END
         const created = yield* Effect.acquireRelease(
           createMuseSdkHostEffect(
             {
@@ -1427,7 +1435,12 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
         let missingNativeSession = false;
         return yield* Effect.gen(function* () {
           nativeSessionId = requestedId ?? host.connection.mintCommandId();
-          const mcpSession = McpProviderSession.readMcpProviderSession(args.threadId);
+          // SCIENT-FORK:START — session configuration follows the host's explicit MCP opt-out.
+          const mcpSession =
+            input.configureMcp === false
+              ? undefined
+              : McpProviderSession.readMcpProviderSession(args.threadId);
+          // SCIENT-FORK:END
           if (mcpSession && !host.initializeResult.grantedCapabilities.includes("sessionMcp"))
             return yield* protocolError(
               "Update Muse Code to a version that supports session MCP servers",
