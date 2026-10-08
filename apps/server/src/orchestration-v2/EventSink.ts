@@ -38,12 +38,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
-import type { UnsequencedProjectEvent } from "../persistence/Services/OrchestrationEventStore.ts";
+import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
 import { projectDomainEventForWire } from "./WireProjection.ts";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -147,6 +148,7 @@ export interface EventSinkV2Shape {
     readonly activeAttemptId: RunAttemptId;
     readonly expectedStatus: OrchestrationV2Run["status"];
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+    readonly effects?: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
   }) => Effect.Effect<
     {
       readonly committed: boolean;
@@ -251,7 +253,7 @@ export class EventSinkV2 extends Context.Service<EventSinkV2, EventSinkV2Shape>(
 /**
  * IMPLEMENTATIONS
  */
-const baseLayer: Layer.Layer<
+const layerBase: Layer.Layer<
   EventSinkV2,
   never,
   | CommandReceiptStore.CommandReceiptStoreV2
@@ -287,6 +289,8 @@ const baseLayer: Layer.Layer<
           );
         }
       });
+    const publishStoredEvents = (events: ReadonlyArray<OrchestrationV2StoredEvent>) =>
+      eventStore.publishCommitted(events).pipe(Effect.andThen(publishLiveEvents(events)));
 
     // A user can answer after terminal normalization reads the pending request.
     // Recheck inside the write transaction so stale cleanup cannot erase answers.
@@ -514,6 +518,7 @@ const baseLayer: Layer.Layer<
               yield* effectOutbox.enqueue(input.pendingStartOwner.effects);
             if (capacityOwner !== undefined && capacity !== undefined)
               yield* recordNativeModelContextWindow(sql, capacityOwner, capacity);
+            yield* effectOutbox.enqueue(input.effects ?? []);
             return { committed: true as const, storedEvents };
           }),
           (result) =>
@@ -526,6 +531,8 @@ const baseLayer: Layer.Layer<
                   input.pendingStartOwner.effects.length > 0
                 )
                   yield* effectOutbox.notifyAvailable(input.pendingStartOwner.effects.length);
+                if (input.effects !== undefined && input.effects.length > 0)
+                  yield* effectOutbox.notifyAvailable(input.effects.length);
               }
             }),
         );
@@ -1058,13 +1065,13 @@ const baseLayer: Layer.Layer<
  * important because enqueue notifications are in-memory wakeups backed by the
  * durable SQL queue.
  */
-export const layerFromStores = baseLayer;
+export const layerFromStores = layerBase;
 
 export const layer: Layer.Layer<
   EventSinkV2,
   never,
   EventStore.EventStoreV2 | ProjectionStore.ProjectionStoreV2 | SqlClient.SqlClient
-> = baseLayer.pipe(
+> = layerBase.pipe(
   Layer.provide(
     Layer.mergeAll(
       CommandReceiptStore.layer,

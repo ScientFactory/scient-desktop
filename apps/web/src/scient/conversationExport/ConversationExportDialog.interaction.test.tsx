@@ -458,6 +458,7 @@ describe("Copy ▸ Conversation as Markdown", () => {
       warnings: [],
     });
     const items = buildThreadActionMenuItems({
+      canOperate: true,
       branch: null,
       projectFilter: null,
       isPinned: false,

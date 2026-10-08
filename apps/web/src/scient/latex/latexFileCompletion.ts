@@ -1,4 +1,4 @@
-import type { Editor } from "@pierre/diffs/editor";
+import type { Editor } from "@pierre/diffs/edit";
 import { sourceMathOwnsEvent, sourceOffset, sourcePosition } from "../math/input/sourceAdapter";
 import { installLatexTextCompletion } from "./latexTextCompletion";
 import { latexDocumentMathSetup } from "./latexDocumentMacros";
@@ -7,7 +7,7 @@ import { latexPreambleEnd } from "./latexPackages";
 
 /** Source completion uses the file editor's edits and undo, including its shadow-root selection. */
 export function installLatexFileCompletion<Annotation>(
-  editor: Editor<Annotation>,
+  editor: Editor<"file", Annotation, undefined>,
   host: HTMLElement,
   editable: () => boolean,
 ) {
@@ -16,7 +16,7 @@ export function installLatexFileCompletion<Annotation>(
   let setupSource = "";
   let setup = { macros: latexDocumentMathSetup("").macros, colors: latexDocumentColors("") };
   const read = () => {
-    const selections = editor.getState().selections;
+    const selections = editor.getViewState().selections;
     if (
       !editable() ||
       !editor.getFile() ||

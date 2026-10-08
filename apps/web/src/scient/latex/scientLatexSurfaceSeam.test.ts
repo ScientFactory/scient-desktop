@@ -19,7 +19,7 @@ const surfaceSource = NodeFS.readFileSync(
   "utf8",
 );
 const automationHostSource = NodeFS.readFileSync(
-  new URL("../../components/preview/PreviewAutomationHosts.tsx", import.meta.url),
+  new URL("../documentExport/documentHost.tsx", import.meta.url),
   "utf8",
 );
 const surfaceStyles = NodeFS.readFileSync(new URL("./scient-latex.css", import.meta.url), "utf8");
@@ -87,10 +87,12 @@ describe("Scient LaTeX file-preview seam", () => {
   });
 
   it("opens successful agent builds on their source while carrying the resolved root", () => {
-    expect(automationHostSource).toContain('request.operation === "documentLatexPresent"');
-    expect(automationHostSource).toContain("openFile(threadRef, input.sourcePath, undefined, {");
+    expect(automationHostSource).toContain('case "documentLatexPresent"');
+    expect(automationHostSource).toContain(
+      "openFile(threadRef, request.input.sourcePath, undefined, {",
+    );
     expect(automationHostSource).toContain('latexPreviewMode: "split"');
-    expect(automationHostSource).toContain("latexRootRelativePath: input.rootSourcePath");
+    expect(automationHostSource).toContain("latexRootRelativePath: request.input.rootSourcePath");
   });
 
   it("mounts source-derived writing independently of the compiled viewer", () => {

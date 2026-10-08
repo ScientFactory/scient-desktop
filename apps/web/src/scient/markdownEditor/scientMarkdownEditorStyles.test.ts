@@ -155,19 +155,19 @@ describe("rich Markdown preview presentation parity", () => {
       /--markdown-code-block-background:\s*color-mix\([^;]+var\(--code-background\) 95%[^;]+var\(--code-foreground\) 5%/su,
     );
     expect(previewCssSource).toMatch(
-      /html\[data-theme-id\] \.chat-markdown \.chat-markdown-codeblock \{[^}]*background-color: var\(--markdown-code-block-background\)/su,
+      /html\[data-theme-id\] :is\(\.chat-markdown, \.composer-tiptap\) \.chat-markdown-codeblock \{[^}]*background-color: var\(--markdown-code-block-background\)/su,
     );
     expect(previewCssSource).toMatch(
-      /\.chat-markdown \.chat-markdown-codeblock \{[^}]*background-color: var\(--markdown-code-block-background\)/su,
+      /:is\(\.chat-markdown, \.composer-tiptap\) \.chat-markdown-codeblock \{[^}]*background-color: var\(--markdown-code-block-background\)/su,
     );
     // The inherited themed rule stays byte-identical; the Scient override wins by order.
     const inheritedThemedCodeblock = previewCssSource.indexOf(
-      "html[data-theme-id] .chat-markdown .chat-markdown-codeblock {\n  background-color: var(--code-background)",
+      "html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblock {\n  background-color: var(--code-background)",
     );
     expect(inheritedThemedCodeblock).toBeGreaterThanOrEqual(0);
     expect(
       previewCssSource.indexOf(
-        "html[data-theme-id] .chat-markdown .chat-markdown-codeblock {\n  background-color: var(--markdown-code-block-background)",
+        "html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblock {\n  background-color: var(--markdown-code-block-background)",
       ),
     ).toBeGreaterThan(inheritedThemedCodeblock);
     expect(cssSource).toMatch(

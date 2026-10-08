@@ -310,12 +310,13 @@ export const make = Effect.gen(function* () {
           }),
         ),
         Stream.run(fileSystem.sink(input.destination, { flag: "wx" })),
-        Effect.catchTag("PlatformError", (cause) =>
-          failInstall(
-            "download-failed",
-            `Scient could not save the LaTeX download: ${cause.message}`,
-          ),
-        ),
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            failInstall(
+              "download-failed",
+              `Scient could not save the LaTeX download: ${cause.message}`,
+            ),
+        }),
         Effect.timeoutOption(DOWNLOAD_TIMEOUT),
         Effect.flatMap((finished) =>
           Option.isSome(finished)
@@ -342,12 +343,13 @@ export const make = Effect.gen(function* () {
           (hash, chunk) => hash.update(chunk),
         ),
         Effect.map((hash) => hash.digest("hex")),
-        Effect.catchTag("PlatformError", (cause) =>
-          failInstall(
-            "install-failed",
-            `Scient could not read the LaTeX download: ${cause.message}`,
-          ),
-        ),
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            failInstall(
+              "install-failed",
+              `Scient could not read the LaTeX download: ${cause.message}`,
+            ),
+        }),
       );
       if (digest !== input.asset.sha256.toLowerCase()) {
         return yield* failInstall(
@@ -364,13 +366,12 @@ export const make = Effect.gen(function* () {
   }) =>
     Effect.gen(function* () {
       yield* phase("unpacking");
-      yield* fileSystem
-        .makeDirectory(input.payloadPath, { recursive: true })
-        .pipe(
-          Effect.catchTag("PlatformError", (cause) =>
+      yield* fileSystem.makeDirectory(input.payloadPath, { recursive: true }).pipe(
+        Effect.catchTags({
+          PlatformError: (cause) =>
             failInstall("install-failed", `Scient could not prepare the install: ${cause.message}`),
-          ),
-        );
+        }),
+      );
       yield* unpacker
         .unpack({
           archivePath: input.archivePath,
@@ -398,16 +399,15 @@ export const make = Effect.gen(function* () {
       // entry point executable on POSIX, then prove it starts before the tree
       // is promoted or the state file can name it.
       if (platform !== "win32") {
-        yield* fileSystem
-          .chmod(executable, 0o755)
-          .pipe(
-            Effect.catchTag("PlatformError", (cause) =>
+        yield* fileSystem.chmod(executable, 0o755).pipe(
+          Effect.catchTags({
+            PlatformError: (cause) =>
               failInstall(
                 "unpack-failed",
                 `Scient could not make the LaTeX engine executable: ${cause.message}`,
               ),
-            ),
-          );
+          }),
+        );
       }
       const validation = yield* processRunner
         .run({
@@ -479,9 +479,10 @@ export const make = Effect.gen(function* () {
       );
       return installRoot;
     }).pipe(
-      Effect.catchTag("PlatformError", (cause) =>
-        failInstall("install-failed", `Scient could not finish the install: ${cause.message}`),
-      ),
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          failInstall("install-failed", `Scient could not finish the install: ${cause.message}`),
+      }),
     );
 
   /**
@@ -586,9 +587,10 @@ export const make = Effect.gen(function* () {
         ),
       );
     }).pipe(
-      Effect.catchTag("PlatformError", (cause) =>
-        failInstall("install-failed", `Scient could not prepare the install: ${cause.message}`),
-      ),
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          failInstall("install-failed", `Scient could not prepare the install: ${cause.message}`),
+      }),
       Effect.flatMap((packagesWarning) =>
         Effect.gen(function* () {
           // The probe caches its answer, so the newly installed engine only

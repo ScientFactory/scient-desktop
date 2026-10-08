@@ -32,7 +32,7 @@ import {
   ProviderRegistry,
   ProviderRegistryRefreshError,
   type ProviderRegistryShape,
-} from "../../provider/Services/ProviderRegistry.ts";
+} from "../../provider/ProviderRegistry.ts";
 import { ProviderActivity, type ProviderActivityShape } from "./ProviderActivity.ts";
 import {
   make as makeLifecycleCoordinator,
@@ -320,77 +320,78 @@ describe("ProviderRuntimeManager", () => {
     }),
   );
 
-  for (const action of ["install", "update", "repair", "remove"] as const) {
-    it.effect(
-      `closes V2 default-runtime peers before ${action} without touching custom accounts`,
-      () =>
-        Effect.gen(function* () {
-          const customInstance = ProviderInstanceId.make("codex-custom-executable");
-          const unavailableCustom = ProviderInstanceId.make("codex-unavailable-custom");
-          const unrelatedInstance = ProviderInstanceId.make("pi-native-instance");
-          const closed = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>([]);
-          const activated = yield* Ref.make(false);
-          const actions: ProviderManagedRuntimeActions = {
-            getSummary: Effect.succeed({ ...systemRuntime, actions: [action] }),
-            plan: () => Effect.succeed({ ...installPlan(), action }),
-            run: (_action, _revision, _report, activation = Effect.void) =>
-              activation.pipe(
-                Effect.andThen(
-                  Effect.gen(function* () {
-                    assert.deepEqual(yield* Ref.get(closed), [INSTANCE, SECOND_INSTANCE]);
-                    yield* Ref.set(activated, true);
-                  }),
-                ),
-              ),
-          };
-          const withRuntime = (
-            instanceId: ProviderInstanceId,
-            source: ProviderRuntimeSummary["source"],
-          ): ServerProvider => ({
-            ...systemProvider,
-            instanceId,
-            connection: { ...systemProvider.connection!, runtime: { ...systemRuntime, source } },
-          });
-          const { manager, providersRef, reloadedInstancesRef, lifecycleReleaseCountRef } =
-            yield* makeHarness(
-              actions,
-              [
-                systemProvider,
-                withRuntime(SECOND_INSTANCE, "scient_managed"),
-                withRuntime(customInstance, "custom"),
-                withRuntime(unavailableCustom, "unknown"),
-                {
-                  ...withRuntime(unrelatedInstance, "scient_managed"),
-                  driver: ProviderDriverKind.make("pi"),
-                },
-              ],
-              undefined,
-              undefined,
-              undefined,
-              {
-                useProductionLayer: true,
-                closeInstance: (instanceId) =>
-                  Ref.update(closed, (instances) => [...instances, instanceId]),
-              },
-            );
+  it.effect.each(
+    (["install", "update", "repair", "remove"] as const).map((action) => ({
+      caseTitle: `closes V2 default-runtime peers before ${action} without touching custom accounts`,
+      action,
+    })),
+  )("$caseTitle", ({ action }) =>
+    Effect.gen(function* () {
+      const customInstance = ProviderInstanceId.make("codex-custom-executable");
+      const unavailableCustom = ProviderInstanceId.make("codex-unavailable-custom");
+      const unrelatedInstance = ProviderInstanceId.make("pi-native-instance");
+      const closed = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>([]);
+      const activated = yield* Ref.make(false);
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed({ ...systemRuntime, actions: [action] }),
+        plan: () => Effect.succeed({ ...installPlan(), action }),
+        run: (_action, _revision, _report, activation = Effect.void) =>
+          activation.pipe(
+            Effect.andThen(
+              Effect.gen(function* () {
+                assert.deepEqual(yield* Ref.get(closed), [INSTANCE, SECOND_INSTANCE]);
+                yield* Ref.set(activated, true);
+              }),
+            ),
+          ),
+      };
+      const withRuntime = (
+        instanceId: ProviderInstanceId,
+        source: ProviderRuntimeSummary["source"],
+      ): ServerProvider => ({
+        ...systemProvider,
+        instanceId,
+        connection: { ...systemProvider.connection!, runtime: { ...systemRuntime, source } },
+      });
+      const { manager, providersRef, reloadedInstancesRef, lifecycleReleaseCountRef } =
+        yield* makeHarness(
+          actions,
+          [
+            systemProvider,
+            withRuntime(SECOND_INSTANCE, "scient_managed"),
+            withRuntime(customInstance, "custom"),
+            withRuntime(unavailableCustom, "unknown"),
+            {
+              ...withRuntime(unrelatedInstance, "scient_managed"),
+              driver: ProviderDriverKind.make("pi"),
+            },
+          ],
+          undefined,
+          undefined,
+          undefined,
+          {
+            useProductionLayer: true,
+            closeInstance: (instanceId) =>
+              Ref.update(closed, (instances) => [...instances, instanceId]),
+          },
+        );
 
-          yield* manager.start({ instanceId: INSTANCE, action, catalogRevision: "reviewed:1" });
-          yield* yieldUntil(
-            Ref.get(providersRef),
-            (providers) => providers[0]?.connection?.runtime?.operation?.status === "succeeded",
-          );
-          assert.equal(yield* Ref.get(activated), true);
-          assert.deepEqual(yield* Ref.get(closed), [
-            INSTANCE,
-            SECOND_INSTANCE,
-            INSTANCE,
-            SECOND_INSTANCE,
-          ]);
-          assert.deepEqual(yield* Ref.get(reloadedInstancesRef), [INSTANCE, SECOND_INSTANCE]);
-          assert.equal(yield* Ref.get(lifecycleReleaseCountRef), 1);
-        }),
-    );
-  }
+      yield* manager.start({ instanceId: INSTANCE, action, catalogRevision: "reviewed:1" });
+      yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => providers[0]?.connection?.runtime?.operation?.status === "succeeded",
+      );
+      assert.equal(yield* Ref.get(activated), true);
+      assert.deepEqual(yield* Ref.get(closed), [
+        INSTANCE,
+        SECOND_INSTANCE,
+        INSTANCE,
+        SECOND_INSTANCE,
+      ]);
+      assert.deepEqual(yield* Ref.get(reloadedInstancesRef), [INSTANCE, SECOND_INSTANCE]);
+      assert.equal(yield* Ref.get(lifecycleReleaseCountRef), 1);
+    }),
+  );
 
   it.effect("does not report success when post-mutation runtime reconciliation fails", () =>
     Effect.gen(function* () {
@@ -604,48 +605,50 @@ describe("ProviderRuntimeManager", () => {
 
   // Install is "Use Scient-managed"; Repair and Update of a copy that was never
   // selected put it in use the same way.
-  for (const action of ["install", "repair", "update"] as const)
-    it.effect(
-      `starts ${action} over a system runtime of unknown version only once it was accepted`,
-      () =>
-        Effect.gen(function* () {
-          const runCount = yield* Ref.make(0);
-          const summary = { ...systemRuntime, actions: [action] };
-          const actions: ProviderManagedRuntimeActions = {
-            getSummary: Effect.succeed(summary),
-            plan: () =>
-              Effect.succeed({
-                ...installPlan(),
-                action,
-                catalogRevision: "reviewed:1:system-version-unknown",
-                systemVersion: null,
-                olderThanSystem: false,
-              }),
-            run: () => Ref.update(runCount, (count) => count + 1),
-          };
-          const { manager } = yield* makeHarness(actions, [
-            { ...systemProvider, connection: { ...systemProvider.connection!, runtime: summary } },
-          ]);
-          const start = (acceptOlderThanSystem: boolean) =>
-            manager.start({
-              instanceId: INSTANCE,
-              action,
-              catalogRevision: "reviewed:1:system-version-unknown",
-              ...(acceptOlderThanSystem ? { acceptOlderThanSystem } : {}),
-            });
+  it.effect.each(
+    (["install", "repair", "update"] as const).map((action) => ({
+      caseTitle: `starts ${action} over a system runtime of unknown version only once it was accepted`,
+      action,
+    })),
+  )("$caseTitle", ({ action }) =>
+    Effect.gen(function* () {
+      const runCount = yield* Ref.make(0);
+      const summary = { ...systemRuntime, actions: [action] };
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(summary),
+        plan: () =>
+          Effect.succeed({
+            ...installPlan(),
+            action,
+            catalogRevision: "reviewed:1:system-version-unknown",
+            systemVersion: null,
+            olderThanSystem: false,
+          }),
+        run: () => Ref.update(runCount, (count) => count + 1),
+      };
+      const { manager } = yield* makeHarness(actions, [
+        { ...systemProvider, connection: { ...systemProvider.connection!, runtime: summary } },
+      ]);
+      const start = (acceptOlderThanSystem: boolean) =>
+        manager.start({
+          instanceId: INSTANCE,
+          action,
+          catalogRevision: "reviewed:1:system-version-unknown",
+          ...(acceptOlderThanSystem ? { acceptOlderThanSystem } : {}),
+        });
 
-          const unaccepted = yield* start(false).pipe(Effect.result);
-          assert.strictEqual(unaccepted._tag, "Failure");
-          if (unaccepted._tag === "Failure") {
-            assert.strictEqual(unaccepted.failure.reason, "runtime_plan_stale");
-            assert.include(unaccepted.failure.message, "system version unknown");
-          }
-          assert.strictEqual(yield* Ref.get(runCount), 0);
+      const unaccepted = yield* start(false).pipe(Effect.result);
+      assert.strictEqual(unaccepted._tag, "Failure");
+      if (unaccepted._tag === "Failure") {
+        assert.strictEqual(unaccepted.failure.reason, "runtime_plan_stale");
+        assert.include(unaccepted.failure.message, "system version unknown");
+      }
+      assert.strictEqual(yield* Ref.get(runCount), 0);
 
-          yield* start(true);
-          yield* yieldUntil(Ref.get(runCount), (count) => count === 1);
-        }),
-    );
+      yield* start(true);
+      yield* yieldUntil(Ref.get(runCount), (count) => count === 1);
+    }),
+  );
 
   it.effect("stages while turns run and switches only once the provider is idle", () =>
     Effect.gen(function* () {

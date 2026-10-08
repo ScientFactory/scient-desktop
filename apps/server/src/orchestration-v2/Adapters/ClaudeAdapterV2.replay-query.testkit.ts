@@ -474,6 +474,21 @@ function makeReplayQueryRunner(
         interrupt: replayEffect(() => {
           assertNextOutboundFrame({ type: "query.interrupt" });
         }),
+        setPermissionMode: (mode) =>
+          replayEffect(() => {
+            // Existing recordings have no permission mutation frame. Only the
+            // adapter's restoration of the captured query policy is admissible.
+            if (mode !== input.options.permissionMode) {
+              fail(
+                new ClaudeReplayUnexpectedOutboundError({
+                  scenario: transcript.scenario,
+                  cursor,
+                  expectedType: "restore captured query permission mode",
+                  actual: { type: "query.set_permission_mode", mode },
+                }),
+              );
+            }
+          }),
         close: Effect.void,
       };
     },

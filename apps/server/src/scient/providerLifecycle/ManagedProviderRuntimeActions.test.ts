@@ -20,8 +20,8 @@ import * as Option from "effect/Option";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import * as Stream from "effect/Stream";
 import { BUNDLED_MANAGED_RUNTIME_CATALOG, ManagedRuntimeCatalog } from "./ManagedRuntimeCatalog.ts";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import type * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type * as ChildProcess from "effect/process/ChildProcess";
 import * as Sink from "effect/Sink";
 
 import {

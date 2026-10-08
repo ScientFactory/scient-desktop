@@ -1,4 +1,4 @@
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as ByteSize from "effect/ByteSize";
 import * as Cause from "effect/Cause";
 import * as FileSystem from "effect/FileSystem";

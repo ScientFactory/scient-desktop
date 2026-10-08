@@ -19,7 +19,7 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ServerConfig } from "../config.ts";
-import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlite.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
   CodexOrchestratorReplayHarness,
@@ -31,7 +31,7 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { makeProviderReplayGate } from "./testkit/ProviderReplayGate.testkit.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 import {
@@ -197,8 +197,8 @@ it.live(
             replayGate: gate,
           }),
           {
-            serverConfigLayer: Layer.succeed(ServerConfig, config),
-            databaseLayer: database,
+            layerServerConfig: Layer.succeed(ServerConfig, config),
+            layerDatabase: database,
             configureMcp: false,
             runEffectWorker: true,
           },
@@ -278,9 +278,10 @@ it.live(
                 Stream.filter(predicate),
                 Stream.runHead,
                 Effect.timeout("15 seconds"),
-                Effect.catchTag("TimeoutError", () =>
-                  Effect.die(`Citation projection predicate did not settle: ${id}`),
-                ),
+                Effect.catchTags({
+                  TimeoutError: () =>
+                    Effect.die(`Citation projection predicate did not settle: ${id}`),
+                }),
               );
               assert.ok(Option.isSome(found));
               return found.value;
@@ -299,9 +300,9 @@ it.live(
             assert.isTrue(
               yield* Effect.promise(() => gate.waitForReached("citation-terminal")).pipe(
                 Effect.timeout("15 seconds"),
-                Effect.catchTag("TimeoutError", () =>
-                  Effect.die("Native citation terminal gate was not reached"),
-                ),
+                Effect.catchTags({
+                  TimeoutError: () => Effect.die("Native citation terminal gate was not reached"),
+                }),
               ),
             );
             const received = yield* waitFor(threadId, (p) =>
@@ -324,9 +325,9 @@ it.live(
                 Stream.take(rawEvents.length),
                 Stream.runCollect,
                 Effect.timeout("15 seconds"),
-                Effect.catchTag("TimeoutError", () =>
-                  Effect.die("Bounded citation event replay did not finish"),
-                ),
+                Effect.catchTags({
+                  TimeoutError: () => Effect.die("Bounded citation event replay did not finish"),
+                }),
               );
             assert.isTrue(
               rawEvents.some(

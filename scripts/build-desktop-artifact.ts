@@ -70,8 +70,8 @@ import type { PlatformError } from "effect/PlatformError";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Command, Flag } from "effect/unstable/cli";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Command, Flag } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = SCIENT_DESKTOP_IDENTITY.appId;
@@ -1002,6 +1002,7 @@ interface StagePackageJson {
   readonly private: true;
   readonly packageManager: string;
   readonly description: string;
+  readonly license: string;
   readonly homepage: string;
   readonly author: string;
   readonly main: string;
@@ -3015,6 +3016,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   if (platform === "linux") {
+    // electron-builder 26 defaults to its legacy AppImage runtime, which
+    // dynamically loads the system libfuse2 library. Pin the static runtime so
+    // the AppImage also launches on distributions that only provide FUSE 3.
+    buildConfig.toolsets = { appimage: "1.0.3" };
+    const path = yield* Path.Path;
+    const repoRoot = yield* RepoRoot;
     buildConfig.linux = {
       // Scient publishes an AppImage for Linux and holds the `.deb` channel. The
       // target is deliberately not enabled: electron-builder lists every built
@@ -3039,6 +3046,29 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           StartupWMClass: SCIENT_DESKTOP_IDENTITY.linuxWmClass,
         },
       },
+    };
+    buildConfig.deb = {
+      // FPM runs outside the staged app directory, so source paths must be absolute.
+      // AppStream consumers associate this metadata with our scient.desktop entry.
+      fpm: [
+        `${path.join(repoRoot, "apps/desktop/resources/linux/scient.metainfo.xml")}=/usr/share/metainfo/scient.metainfo.xml`,
+        `${path.join(repoRoot, "LICENSE")}=/usr/share/doc/scient/copyright`,
+      ],
+      // Electron's runtime libraries. Debian 13 and Ubuntu 24.04 renamed some
+      // for 64-bit time; the old name is the fallback for older releases.
+      depends: [
+        "libasound2t64 | libasound2",
+        "libatspi2.0-0t64 | libatspi2.0-0",
+        "libgbm1",
+        "libgtk-3-0t64 | libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libsecret-1-0",
+        "libuuid1",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+      ],
     };
   }
 
@@ -4154,6 +4184,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     author: "ScientFactory",
     // boot.cjs enables the compile cache before loading the main bundle, so
     // the cache covers main.cjs too.
+    license: "MIT",
     main: "apps/desktop/dist-electron/boot.cjs",
     build: yield* createBuildConfig(
       options.platform,

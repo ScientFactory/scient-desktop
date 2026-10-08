@@ -1,3 +1,4 @@
+import * as Crypto from "effect/Crypto";
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -39,6 +40,7 @@ describe("ClaudeAdapterV2 attachments", () => {
         });
         const offeredMessages: Array<SDKUserMessage> = [];
         const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          crypto: yield* Crypto.Crypto,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
@@ -50,6 +52,8 @@ describe("ClaudeAdapterV2 attachments", () => {
             allocateSessionId: Effect.succeed("native-thread-claude-attachments"),
             open: () =>
               Effect.succeed({
+                setPermissionMode: () =>
+                  Effect.die("Permission-mode mutation is outside this fixture."),
                 messages: Stream.never,
                 offer: (message) =>
                   Effect.sync(() => {
@@ -178,6 +182,7 @@ describe("ClaudeAdapterV2 attachments", () => {
         });
         let openCount = 0;
         const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          crypto: yield* Crypto.Crypto,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
@@ -191,6 +196,8 @@ describe("ClaudeAdapterV2 attachments", () => {
               Effect.sync(() => {
                 openCount += 1;
                 return {
+                  setPermissionMode: () =>
+                    Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.never,
                   offer: () => Effect.void,
                   setModel: () => Effect.void,

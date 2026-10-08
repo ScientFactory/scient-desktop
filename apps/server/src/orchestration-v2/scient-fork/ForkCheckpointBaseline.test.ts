@@ -125,7 +125,7 @@ it.layer(layer)("ScientForkCheckpointBaseline", (it) => {
         NodeFS.writeFileSync(NodePath.join(cwd, "evidence.txt"), "edited mid-turn\n");
         NodeFS.writeFileSync(NodePath.join(cwd, "new.txt"), "created mid-turn\n");
 
-        assert.isTrue(yield* baseline.capture({ cwd, toCheckpointRef: target }));
+        yield* baseline.capture({ cwd, toCheckpointRef: target });
         const edited = yield* process.run({
           operation: "ForkCheckpointBaseline.test.showEdited",
           command: "git",

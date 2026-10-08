@@ -3,6 +3,7 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import type * as PlatformError from "effect/PlatformError";
 
 const WINDOWS_RENAME_RETRY_BUDGET_MS = 5_000;
@@ -25,6 +26,11 @@ function windowsRenameRetryDelay(
   return Math.min(25 * 2 ** Math.min(attempt, 5), 500, WINDOWS_RENAME_RETRY_BUDGET_MS - elapsedMs);
 }
 
+/**
+ * Replaces a file's contents via a sibling temp file and rename. A symlinked
+ * target is resolved first so the link survives and its destination is
+ * rewritten, since renaming over the link itself would swap it for a regular file.
+ */
 export const writeFileStringAtomically = (input: {
   readonly filePath: string;
   readonly contents: string;
@@ -37,13 +43,20 @@ export const writeFileStringAtomically = (input: {
       const fs = yield* FileSystem.FileSystem;
       const platform = yield* HostProcessPlatform;
       const path = yield* Path.Path;
-      const targetDirectory = path.dirname(input.filePath);
+      const targetPath = yield* resolveSymlinkTarget(input.filePath);
+      const targetDirectory = path.dirname(targetPath);
 
       yield* fs.makeDirectory(targetDirectory, { recursive: true });
-      const tempDirectory = yield* fs.makeTempDirectoryScoped({
-        directory: targetDirectory,
-        prefix: `${path.basename(input.filePath)}.`,
-      });
+      // The temp directory is cleanup, not part of the write: failing to remove
+      // it (a virus scanner holding it on Windows) must not fail a write that
+      // already landed.
+      const tempDirectory = yield* Effect.acquireRelease(
+        fs.makeTempDirectory({
+          directory: targetDirectory,
+          prefix: `${path.basename(targetPath)}.`,
+        }),
+        (directory) => fs.remove(directory, { recursive: true }).pipe(Effect.ignore({ log: true })),
+      );
       const tempPath = path.join(tempDirectory, "contents.tmp");
 
       yield* fs.writeFileString(tempPath, input.contents);
@@ -62,7 +75,7 @@ export const writeFileStringAtomically = (input: {
       const started = yield* Clock.currentTimeMillis;
       let attempt = 0;
       for (;;) {
-        const renamed = yield* Effect.result(fs.rename(tempPath, input.filePath));
+        const renamed = yield* Effect.result(fs.rename(tempPath, targetPath));
         if (renamed._tag === "Success") break;
         const delay =
           platform === "win32"

@@ -1,3 +1,4 @@
+import * as Crypto from "effect/Crypto";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -33,7 +34,7 @@ import { ConversationForkService } from "../scient-fork/ConversationForkService.
 import { historicalMessage, historyCost, selectHistory } from "../ContextHandoffBudget.ts";
 import { createDeterministicAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
 import { CLAUDE_MODEL_SELECTION } from "./fixtures/shared.ts";
 
@@ -61,6 +62,7 @@ it.live(
         const nativeSession = "00000000-0000-4000-8000-000000000971";
         const childSession = "00000000-0000-4000-8000-000000000972";
         const adapter = Claude.makeClaudeAdapterV2({
+          crypto: yield* Crypto.Crypto,
           instanceId: Claude.CLAUDE_DEFAULT_INSTANCE_ID,
           settings,
           environment: {},
@@ -76,6 +78,8 @@ it.live(
                 const frames = child ? childFrames : sourceFrames;
                 if (!child) options = input.options;
                 return {
+                  setPermissionMode: () =>
+                    Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.fromQueue(frames),
                   offer: (message) =>
                     Queue.offer(
@@ -441,7 +445,7 @@ it.live(
           Effect.provide(
             makeOrchestratorV2ReplayLayerWithRegistry(
               { name: "native-question-handoff" },
-              Registry.makeSingleLayer(adapter),
+              Registry.layerSingle(adapter),
               { configureMcp: false },
             ),
           ),

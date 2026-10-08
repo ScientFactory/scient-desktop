@@ -17,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import { resolveAsset } from "../../assets/AssetAccess.ts";
 import * as NativeAppIconResolver from "../../assets/NativeAppIconResolver.ts";
 import { GeneratedDocumentStore } from "../documentArtifacts/GeneratedDocumentStore.ts";
@@ -45,7 +46,13 @@ import { captureProjectMarkdownFile, prepareMarkdownPdf } from "./MarkdownPdfPre
 import { buildMarkdownFileBundle, readProjectMarkdownFile } from "./MarkdownFileBundle.ts";
 
 const fixtures: string[] = [];
-const layer = Layer.orDie(documentExportTestLayer("scient-document-pdf-test-"));
+// These capture capabilities must not traverse provider tool-output state.
+const capturedFileLookup = Layer.mock(Orchestrator.OrchestratorV2)({
+  getTurnItem: () => Effect.die("Document capture attempted provider-item lookup"),
+});
+const layer = Layer.orDie(documentExportTestLayer("scient-document-pdf-test-")).pipe(
+  Layer.provideMerge(capturedFileLookup),
+);
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 const decodePageInput = Schema.decodeUnknownSync(Schema.fromJsonString(ScientDocumentPageInput));
 

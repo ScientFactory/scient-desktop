@@ -3,7 +3,7 @@ import {
   type DesktopBridge,
   type ScientDocumentPageRenderOutcome,
 } from "@t3tools/contracts";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Schema from "effect/Schema";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
@@ -63,7 +63,7 @@ export async function renderDocumentPagePdf(input: {
       warnings: artifact.warnings,
       sourceSignals: artifact.sourceSignals,
       blockedRequestCount: artifact.blockedRequestCount,
-      bytesBase64: Encoding.encodeBase64Url(artifact.data),
+      bytesBase64: Base64Url.encode(artifact.data),
     },
   };
 }

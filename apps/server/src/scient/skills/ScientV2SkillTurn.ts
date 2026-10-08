@@ -151,11 +151,13 @@ export const validateScientV2SteerInput = (input: {
       }),
     );
   return validateCurrent(input.prepared.text).pipe(
-    Effect.catchTag("ProviderCurrentInputError", (cause) => {
-      const fallback = input.prepared.textWithoutCatalogMarker;
-      if (fallback === undefined) return Effect.fail(cause);
-      input.useFallback(fallback);
-      return validateCurrent(fallback);
+    Effect.catchTags({
+      ProviderCurrentInputError: (cause) => {
+        const fallback = input.prepared.textWithoutCatalogMarker;
+        if (fallback === undefined) return Effect.fail(cause);
+        input.useFallback(fallback);
+        return validateCurrent(fallback);
+      },
     }),
   );
 };

@@ -134,33 +134,35 @@ export function makeAntigravityAcpAdapterFlavor(
     Effect.gen(function* () {
       // AcpAdapterV2 owns the runtime scope; sign-in and sign-out stop the
       // process by closing it, and the adapter respawns on the next turn.
-      const scope = yield* Effect.scope;
+      const scope = yield* Scope.fork(yield* Effect.scope);
       const platform = yield* HostProcessPlatform;
-      const runtime = yield* options.withProcess(
-        Scope.close(scope, Exit.void).pipe(
-          // Closing the reader's scope can interrupt its EOF notification.
-          // Retire this runtime generation explicitly so the next turn respawns.
-          Effect.ensuring(
-            Effect.suspend(
-              () =>
-                input.onTermination?.(
-                  new EffectAcpErrors.AcpTransportError({
-                    detail: "The Antigravity process stopped for account setup.",
-                    cause: "Antigravity auth owner closed the process scope",
-                  }),
-                ) ?? Effect.void,
+      const runtime = yield* options
+        .withProcess(
+          Scope.close(scope, Exit.void).pipe(
+            // Closing the reader's scope can interrupt its EOF notification.
+            // Retire this runtime generation explicitly so the next turn respawns.
+            Effect.ensuring(
+              Effect.suspend(
+                () =>
+                  input.onTermination?.(
+                    new EffectAcpErrors.AcpTransportError({
+                      detail: "The Antigravity process stopped for account setup.",
+                      cause: "Antigravity auth owner closed the process scope",
+                    }),
+                  ) ?? Effect.void,
+              ),
             ),
           ),
-        ),
-        options.makeRuntime({
-          ...input,
-          clientFileSystem: true,
-          ownDetachedProcessGroup: true,
-          ownDescendantProcessGroups: platform === "linux",
-          processGroupPlatform: platform,
-          additionalDirectories: [options.serverConfig.attachmentsDir],
-        }),
-      );
+          options.makeRuntime({
+            ...input,
+            clientFileSystem: true,
+            ownDetachedProcessGroup: true,
+            ownDescendantProcessGroups: platform === "linux",
+            processGroupPlatform: platform,
+            additionalDirectories: [options.serverConfig.attachmentsDir],
+          }),
+        )
+        .pipe(Effect.provideService(Scope.Scope, scope));
       return {
         ...runtime,
         start: () =>

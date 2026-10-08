@@ -1,3 +1,4 @@
+import { scientSkillDisplayName } from "@t3tools/shared/scientMcpToolPresentation";
 import { resolveT3McpToolName } from "@t3tools/shared/t3McpToolPresentation";
 
 const scientSkillLoadToolNames: ReadonlySet<string> = new Set(["scient_skill_load"]);
@@ -8,15 +9,7 @@ export function scientSkillUsageLabel(itemValue: unknown): string | null {
   if (!tool || resolveT3McpToolName(tool, scientSkillLoadToolNames) !== "scient_skill_load") {
     return null;
   }
-  const args = asRecord(item?.arguments);
-  const releaseKey = asTrimmedString(args?.releaseKey);
-  const name = asTrimmedString(args?.name) ?? releaseKey?.split("@")[0]?.split(".").at(-1);
-  if (!name) return null;
-  const displayName = name
-    .split("-")
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
+  const displayName = scientSkillDisplayName(asRecord(item?.arguments));
   if (!displayName) return null;
   switch (asTrimmedString(item?.status)) {
     case "completed":

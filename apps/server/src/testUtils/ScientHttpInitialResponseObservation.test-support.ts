@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type { HttpClientResponse } from "effect/unstable/http";
+import type { HttpClientResponse } from "effect/http";
 
 type InitialResponse = Pick<HttpClientResponse.HttpClientResponse, "status" | "headers">;
 type Publish = (message: string) => void;

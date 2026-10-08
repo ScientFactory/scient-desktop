@@ -9,7 +9,7 @@ import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { Effect, FileSystem, Redacted, Schema, Stream } from "effect";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { beforeAll } from "vite-plus/test";
 
 import type { ResolvedModelConnection } from "../../customModels.ts";

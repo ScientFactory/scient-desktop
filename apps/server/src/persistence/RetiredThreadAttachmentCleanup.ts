@@ -1,11 +1,11 @@
+import * as Base64Url from "effect/encoding/Base64Url";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import {
   parseAttachmentIdFromRelativePath,
@@ -76,7 +76,7 @@ function removeOwnedAttachmentFiles(
 }
 
 function terminalPrefix(threadId: string): string {
-  return `terminal_${Encoding.encodeBase64Url(threadId)}`;
+  return `terminal_${Base64Url.encode(threadId)}`;
 }
 
 function legacyTerminalFileName(threadId: string): string {

@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { COMPACT_SLASH_COMMAND } from "../../provider/providerSnapshot.ts";
-import type { ServerProviderShape } from "../../provider/Services/ServerProvider.ts";
+import type { ServerProviderShape } from "../../provider/ServerProvider.ts";
 
 /** Session command catalogs stay scoped to their workspace across health refreshes. */
 export const makeCursorCommandCatalog = Effect.fn("makeCursorCommandCatalog")(function* (

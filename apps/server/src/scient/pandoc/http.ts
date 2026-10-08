@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import { issueAssetUrl } from "../../assets/AssetAccess.ts";
 import {
@@ -62,7 +62,7 @@ export const scientWordExportHttpApiLayer = HttpApiBuilder.group(
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           const produced = yield* fileExport
             .export(payload)
-            .pipe(Effect.catchTag("ConversationExportFileError", internal));
+            .pipe(Effect.catchTags({ ConversationExportFileError: internal }));
           const asset = yield* issueAssetUrl({
             resource: {
               _tag: "environment-file",
@@ -89,7 +89,7 @@ export const scientWordExportHttpApiLayer = HttpApiBuilder.group(
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           const produced = yield* fileExport
             .exportLatex(payload)
-            .pipe(Effect.catchTag("ConversationExportFileError", internal));
+            .pipe(Effect.catchTags({ ConversationExportFileError: internal }));
           const asset = yield* issueAssetUrl({
             resource: {
               _tag: "environment-file",

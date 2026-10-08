@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import * as NodeOS from "node:os";
-import * as NodeCrypto from "node:crypto";
+import * as Crypto from "effect/Crypto";
+import * as Hex from "effect/encoding/Hex";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -18,8 +19,8 @@ import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import { ChildProcess } from "effect/unstable/process";
+import { Argument, Command, Flag } from "effect/cli";
+import { ChildProcess } from "effect/process";
 
 import { type DevShareError, shareDevServer, unshareDevServer } from "./lib/dev-share.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
@@ -307,7 +308,7 @@ export function createDevRunnerEnv({
   host,
   port,
   devUrl,
-}: CreateDevRunnerEnvInput): Effect.Effect<NodeJS.ProcessEnv, never, Path.Path> {
+}: CreateDevRunnerEnvInput): Effect.Effect<NodeJS.ProcessEnv, never, Path.Path | Crypto.Crypto> {
   return Effect.gen(function* () {
     const path = yield* Path.Path;
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
@@ -338,7 +339,11 @@ export function createDevRunnerEnv({
       NodeOS.homedir(),
       ".scient-next",
       "dev-scratch",
-      NodeCrypto.createHash("sha256").update(resolvedBaseDir).digest("hex"),
+      Hex.encode(
+        yield* (yield* Crypto.Crypto)
+          .digest("SHA-256", new TextEncoder().encode(resolvedBaseDir))
+          .pipe(Effect.orDie),
+      ),
       "scratch",
     );
 

@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ServerConfig from "../config.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -27,14 +27,17 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import {
-  makeLayer,
+  layerFromAdapters as makeLayer,
   ProviderAdapterRegistryV2,
   ProviderAdapterRegistryLookupError,
 } from "./ProviderAdapterRegistry.ts";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { cutOverLegacyQueue, cutOverLegacyQueues } from "./legacy/LegacyQueueCutover.ts";
 import { readQueue, writeQueue } from "./legacy/LegacyQueueLedger.ts";
-import { layer as legacyImporterLayer } from "./legacy/LegacyV1ThreadImporter.ts";
+import {
+  layer as legacyImporterLayer,
+  LegacyV1ThreadImporter,
+} from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import { legacyQueueFilePath } from "../scient/threadQueue/Store.ts";
@@ -47,7 +50,7 @@ import {
   CommandReceiptStoreReadError,
   layer as commandReceiptStoreLayer,
 } from "./CommandReceiptStore.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "test-model" };
@@ -138,96 +141,96 @@ const stageRecoveryUpload = Effect.fn("LegacyQueueAdmission.stageRecoveryUpload"
   return { fs, config, orchestrator, pendingPath };
 });
 
-for (const boundary of [
-  "rejected",
-  "interrupted-before",
-  "interrupted-after",
-  "ambiguous",
-] as const) {
-  it.effect(`reconciles legacy upload claims at the ${boundary} admission boundary`, () =>
-    Effect.gen(function* () {
-      const threadId = ThreadId.make(`claim-${boundary}`);
-      const { fs, config, orchestrator, pendingPath } = yield* stageRecoveryUpload(threadId);
-      const sql = yield* SqlClient.SqlClient;
-      const receipts = yield* CommandReceiptStoreV2;
-      const commandId = CommandId.make(`legacy-queue:${threadId}:qitem_recovery`);
-      const entered = yield* Deferred.make<void>();
-      const service = yield* makeLegacyQueueCompatibility;
-      const before = yield* orchestrator.getThreadProjection(threadId);
-      const recovery = yield* service
-        .execute({ method: "list", payload: { threadId } })
-        .pipe(Effect.flip);
-      assert.equal(recovery._tag, "ScientThreadQueueOperationError");
-      assert.include(recovery.message, "restart Scient");
-      assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), before);
-      if (boundary === "rejected" || boundary === "ambiguous") {
-        yield* sql.unsafe(`CREATE TRIGGER reject_legacy_commit BEFORE INSERT ON orchestration_events
+it.effect.each(
+  (["rejected", "interrupted-before", "interrupted-after", "ambiguous"] as const).map(
+    (boundary) => ({
+      caseTitle: `reconciles legacy upload claims at the ${boundary} admission boundary`,
+      boundary,
+    }),
+  ),
+)("$caseTitle", ({ boundary }) =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make(`claim-${boundary}`);
+    const { fs, config, orchestrator, pendingPath } = yield* stageRecoveryUpload(threadId);
+    const sql = yield* SqlClient.SqlClient;
+    const receipts = yield* CommandReceiptStoreV2;
+    const commandId = CommandId.make(`legacy-queue:${threadId}:qitem_recovery`);
+    const entered = yield* Deferred.make<void>();
+    const service = yield* makeLegacyQueueCompatibility;
+    const before = yield* orchestrator.getThreadProjection(threadId);
+    const recovery = yield* service
+      .execute({ method: "list", payload: { threadId } })
+      .pipe(Effect.flip);
+    assert.equal(recovery._tag, "ScientThreadQueueOperationError");
+    assert.include(recovery.message, "restart Scient");
+    assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), before);
+    if (boundary === "rejected" || boundary === "ambiguous") {
+      yield* sql.unsafe(`CREATE TRIGGER reject_legacy_commit BEFORE INSERT ON orchestration_events
         WHEN NEW.command_id = '${commandId}' BEGIN SELECT RAISE(FAIL, 'controlled acceptance failure'); END`);
-      }
-      let receiptReads = 0;
-      const observedReceipts = {
-        ...receipts,
-        getByCommandId: (id: CommandId) => {
-          if (id === commandId && ++receiptReads > 1 && boundary === "ambiguous")
-            return Effect.fail(new CommandReceiptStoreReadError({ commandId: id }));
-          return receipts.getByCommandId(id);
-        },
-      };
-      const observed = {
-        ...orchestrator,
-        dispatch: (command: Parameters<typeof orchestrator.dispatch>[0]) => {
-          if (command.type !== "legacy-queue.import") return orchestrator.dispatch(command);
-          if (boundary === "interrupted-before")
-            return Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never));
-          if (boundary === "interrupted-after")
-            return orchestrator
-              .dispatch(command)
-              .pipe(
-                Effect.andThen(Deferred.succeed(entered, undefined)),
-                Effect.andThen(Effect.never),
-              );
-          return orchestrator.dispatch(command);
-        },
-      };
-      const admission = cutOverLegacyQueue(threadId).pipe(
-        Effect.provideService(OrchestratorV2, observed),
-        Effect.provideService(CommandReceiptStoreV2, observedReceipts),
-      );
-      if (boundary.startsWith("interrupted")) {
-        const fiber = yield* Effect.forkScoped(admission);
-        yield* Deferred.await(entered);
-        yield* Fiber.interrupt(fiber);
-      } else assert.equal(Exit.isFailure(yield* Effect.exit(admission)), true);
-      assert.equal((yield* readQueue(threadId)).items.length, 1);
-      assert.equal(yield* fs.readFileString(pendingPath), "hi");
-      const files = yield* fs.readDirectory(config.attachmentsDir);
-      assert.equal(
-        files.length,
-        boundary === "interrupted-after" || boundary === "ambiguous" ? 2 : 1,
-      );
-      if (boundary === "rejected" || boundary === "ambiguous")
-        yield* sql`DROP TRIGGER reject_legacy_commit`;
-      if (boundary === "ambiguous") return; // Uncertain evidence retains its copy for recovery.
-      assert.equal(yield* cutOverLegacyQueue(threadId), 1);
-      const accepted = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(accepted.messages.length, 1);
-      assert.equal(accepted.runs[0]?.queueHeld, true);
-      assert.equal((yield* readQueue(threadId)).items.length, 0);
-      assert.equal((yield* fs.readDirectory(config.attachmentsDir)).length, 2);
-      const attachment = accepted.messages[0]!.attachments[0]!;
-      assert.equal(
-        yield* fs.readFileString(
-          resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!,
-        ),
-        "hi",
-      );
-      assert.equal(
-        (yield* service.execute({ method: "list", payload: { threadId } })).items.length,
-        1,
-      );
-    }).pipe(Effect.provide(recoveryLayer)),
-  );
-}
+    }
+    let receiptReads = 0;
+    const observedReceipts = {
+      ...receipts,
+      getByCommandId: (id: CommandId) => {
+        if (id === commandId && ++receiptReads > 1 && boundary === "ambiguous")
+          return Effect.fail(new CommandReceiptStoreReadError({ commandId: id }));
+        return receipts.getByCommandId(id);
+      },
+    };
+    const observed = {
+      ...orchestrator,
+      dispatch: (command: Parameters<typeof orchestrator.dispatch>[0]) => {
+        if (command.type !== "legacy-queue.import") return orchestrator.dispatch(command);
+        if (boundary === "interrupted-before")
+          return Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never));
+        if (boundary === "interrupted-after")
+          return orchestrator
+            .dispatch(command)
+            .pipe(
+              Effect.andThen(Deferred.succeed(entered, undefined)),
+              Effect.andThen(Effect.never),
+            );
+        return orchestrator.dispatch(command);
+      },
+    };
+    const admission = cutOverLegacyQueue(threadId).pipe(
+      Effect.provideService(OrchestratorV2, observed),
+      Effect.provideService(CommandReceiptStoreV2, observedReceipts),
+    );
+    if (boundary.startsWith("interrupted")) {
+      const fiber = yield* Effect.forkScoped(admission);
+      yield* Deferred.await(entered);
+      yield* Fiber.interrupt(fiber);
+    } else assert.equal(Exit.isFailure(yield* Effect.exit(admission)), true);
+    assert.equal((yield* readQueue(threadId)).items.length, 1);
+    assert.equal(yield* fs.readFileString(pendingPath), "hi");
+    const files = yield* fs.readDirectory(config.attachmentsDir);
+    assert.equal(
+      files.length,
+      boundary === "interrupted-after" || boundary === "ambiguous" ? 2 : 1,
+    );
+    if (boundary === "rejected" || boundary === "ambiguous")
+      yield* sql`DROP TRIGGER reject_legacy_commit`;
+    if (boundary === "ambiguous") return; // Uncertain evidence retains its copy for recovery.
+    assert.equal(yield* cutOverLegacyQueue(threadId), 1);
+    const accepted = yield* orchestrator.getThreadProjection(threadId);
+    assert.equal(accepted.messages.length, 1);
+    assert.equal(accepted.runs[0]?.queueHeld, true);
+    assert.equal((yield* readQueue(threadId)).items.length, 0);
+    assert.equal((yield* fs.readDirectory(config.attachmentsDir)).length, 2);
+    const attachment = accepted.messages[0]!.attachments[0]!;
+    assert.equal(
+      yield* fs.readFileString(
+        resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!,
+      ),
+      "hi",
+    );
+    assert.equal(
+      (yield* service.execute({ method: "list", payload: { threadId } })).items.length,
+      1,
+    );
+  }).pipe(Effect.provide(recoveryLayer)),
+);
 
 it.effect("releases only unused claims when two legacy admissions race the same receipt", () =>
   Effect.gen(function* () {
@@ -625,91 +628,94 @@ it.effect(
     ),
 );
 
-for (const pendingState of ["changed", "removed"] as const) {
-  it.effect(`retires accepted admission without reclaiming a ${pendingState} pending upload`, () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* OrchestratorV2;
-      const sink = yield* EventSinkV2;
-      const config = yield* ServerConfig.ServerConfig;
-      const fs = yield* FileSystem.FileSystem;
-      const threadId = ThreadId.make(`accepted-upload-${pendingState}`);
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make(`create:${threadId}`),
-        threadId,
-        projectId: ProjectId.make("receipt-project"),
-        title: "Pending upload",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-        createdBy: "user",
-        creationSource: "web",
-      });
-      const pendingId = createPendingAttachmentId();
-      assert.ok(pendingId);
-      const pendingPath = `${config.attachmentsDir}/${pendingId}.png`;
-      yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
-      yield* fs.writeFileString(pendingPath, "hi");
-      const source = yield* writeQueue(threadId, {
-        ...(yield* readQueue(threadId)),
-        migrated: true,
-        items: [
-          {
-            queueItemId: "qitem_pending",
-            threadId,
-            text: "Retained evidence",
-            modelSelection,
-            attachments: [
-              {
-                type: "image",
-                id: ChatAttachmentId.make(pendingId),
-                name: "evidence.png",
-                mimeType: "image/png",
-                sizeBytes: 2,
-              },
-            ],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          },
-        ],
-      });
-      assert.equal(yield* cutOverLegacyQueue(threadId), 1);
-      const accepted = yield* orchestrator.getThreadProjection(threadId);
-      const attachment = accepted.messages[0]?.attachments[0];
-      assert.ok(attachment);
-      const acceptedPath = resolveAttachmentPath({
-        attachmentsDir: config.attachmentsDir,
-        attachment,
-      });
-      assert.ok(acceptedPath);
-      assert.equal(yield* fs.readFileString(acceptedPath), "hi");
-      // Acceptance survived, but the source-retirement write did not.
-      yield* writeQueue(threadId, source);
-      if (pendingState === "removed") yield* fs.remove(pendingPath);
-      else yield* fs.writeFileString(pendingPath, "ha");
-      const filesBefore = yield* fs.readDirectory(config.attachmentsDir);
-      const sequenceBefore = yield* sink.latestSequence();
-      assert.equal(yield* cutOverLegacyQueue(threadId), 1);
-      assert.equal((yield* readQueue(threadId)).items.length, 0);
-      assert.equal(yield* sink.latestSequence(), sequenceBefore);
-      assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), accepted);
-      assert.equal(yield* fs.readFileString(acceptedPath), "hi");
-      assert.deepEqual(yield* fs.readDirectory(config.attachmentsDir), filesBefore);
-    }).pipe(
-      Effect.provide(
-        legacyImporterLayer.pipe(
-          Layer.provideMerge(
-            Layer.mergeAll(testLayer, SqlitePersistenceMemory).pipe(
-              Layer.provideMerge(NodeServices.layer),
-            ),
+it.effect.each(
+  (["changed", "removed"] as const).map((pendingState) => ({
+    caseTitle: `retires accepted admission without reclaiming a ${pendingState} pending upload`,
+    pendingState,
+  })),
+)("$caseTitle", ({ pendingState }) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const sink = yield* EventSinkV2;
+    const config = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    const threadId = ThreadId.make(`accepted-upload-${pendingState}`);
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`create:${threadId}`),
+      threadId,
+      projectId: ProjectId.make("receipt-project"),
+      title: "Pending upload",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const pendingId = createPendingAttachmentId();
+    assert.ok(pendingId);
+    const pendingPath = `${config.attachmentsDir}/${pendingId}.png`;
+    yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+    yield* fs.writeFileString(pendingPath, "hi");
+    const source = yield* writeQueue(threadId, {
+      ...(yield* readQueue(threadId)),
+      migrated: true,
+      items: [
+        {
+          queueItemId: "qitem_pending",
+          threadId,
+          text: "Retained evidence",
+          modelSelection,
+          attachments: [
+            {
+              type: "image",
+              id: ChatAttachmentId.make(pendingId),
+              name: "evidence.png",
+              mimeType: "image/png",
+              sizeBytes: 2,
+            },
+          ],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    assert.equal(yield* cutOverLegacyQueue(threadId), 1);
+    const accepted = yield* orchestrator.getThreadProjection(threadId);
+    const attachment = accepted.messages[0]?.attachments[0];
+    assert.ok(attachment);
+    const acceptedPath = resolveAttachmentPath({
+      attachmentsDir: config.attachmentsDir,
+      attachment,
+    });
+    assert.ok(acceptedPath);
+    assert.equal(yield* fs.readFileString(acceptedPath), "hi");
+    // Acceptance survived, but the source-retirement write did not.
+    yield* writeQueue(threadId, source);
+    if (pendingState === "removed") yield* fs.remove(pendingPath);
+    else yield* fs.writeFileString(pendingPath, "ha");
+    const filesBefore = yield* fs.readDirectory(config.attachmentsDir);
+    const sequenceBefore = yield* sink.latestSequence();
+    assert.equal(yield* cutOverLegacyQueue(threadId), 1);
+    assert.equal((yield* readQueue(threadId)).items.length, 0);
+    assert.equal(yield* sink.latestSequence(), sequenceBefore);
+    assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), accepted);
+    assert.equal(yield* fs.readFileString(acceptedPath), "hi");
+    assert.deepEqual(yield* fs.readDirectory(config.attachmentsDir), filesBefore);
+  }).pipe(
+    Effect.provide(
+      legacyImporterLayer.pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(testLayer, SqlitePersistenceMemory).pipe(
+            Layer.provideMerge(NodeServices.layer),
           ),
         ),
       ),
     ),
-  );
-}
+  ),
+);
 
 it.effect(
   "admits JSON and copied SQL entries in order while retaining the original image bytes and source file",
@@ -886,141 +892,142 @@ it.effect(
     }).pipe(Effect.provide(testLayer)),
 );
 
-for (const scenario of ["active", "renamed", "completed", "foreign-project"] as const) {
-  it.effect(
-    `releases held legacy title and plan metadata only on authorized Resume: ${scenario}`,
-    () =>
-      Effect.gen(function* () {
-        const orchestrator = yield* OrchestratorV2;
-        const sink = yield* EventSinkV2;
-        const sql = yield* SqlClient.SqlClient;
-        const threadId = ThreadId.make(`held-metadata:${scenario}`);
-        const sourceThreadId = ThreadId.make(`held-plan:${scenario}`);
-        const projectId = ProjectId.make("receipt-project");
-        const create = (id: ThreadId, project: ProjectId, title: string) =>
-          orchestrator.dispatch({
-            type: "thread.create",
-            commandId: CommandId.make(`create:${id}`),
-            threadId: id,
-            projectId: project,
-            title,
-            modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: null,
-            createdBy: "user",
-            creationSource: "web",
-          });
-        yield* create(threadId, projectId, "Original title");
-        yield* create(
-          sourceThreadId,
-          scenario === "foreign-project" ? ProjectId.make("other-project") : projectId,
-          "Plan source",
-        );
-        const now = yield* DateTime.now;
-        const planId = PlanId.make(`plan:${scenario}`);
-        yield* sink.writeWithEffects({
-          effects: [],
-          events: [
-            {
-              id: EventId.make(`plan-event:${scenario}`),
-              type: "plan.updated",
-              threadId: sourceThreadId,
-              occurredAt: now,
-              payload: {
-                id: planId,
-                threadId: sourceThreadId,
-                runId: null,
-                nodeId: NodeId.make(`historical-plan:${scenario}`),
-                kind: "proposed_plan",
-                status: scenario === "completed" ? "completed" : "active",
-                markdown: "# Plan\nImplement the requested change.",
-              },
-            },
-          ],
-        });
-        yield* orchestrator.dispatch({
-          type: "legacy-queue.import",
-          commandId: CommandId.make(`admit:${scenario}`),
-          threadId,
-          queueItemId: `qitem_${scenario}`,
-          messageId: MessageId.make(`held-message:${scenario}`),
-          text: "Implement the plan",
-          attachments: [],
-          titleSeed: "Captured title",
-          sourceProposedPlan: { threadId: sourceThreadId, planId },
-          createdAt: now,
-        });
-        const read = () => orchestrator.getThreadProjection(threadId);
-        const admitted = yield* read();
-        assert.equal(admitted.thread.title, "Original title");
-        assert.equal(
-          (yield* orchestrator.getThreadProjection(sourceThreadId)).plans[0]?.status,
-          scenario === "completed" ? "completed" : "active",
-        );
-        assert.equal(
-          (yield* sql<{
-            count: number;
-          }>`SELECT COUNT(*) AS count FROM orchestration_v2_effect_outbox`)[0]?.count,
-          0,
-        );
-        if (scenario === "renamed")
-          yield* orchestrator.dispatch({
-            type: "thread.metadata.update",
-            commandId: CommandId.make(`rename:${scenario}`),
-            threadId,
-            title: "User's chosen title",
-          });
-        yield* orchestrator.dispatch({
-          type: "queue.resume",
-          commandId: CommandId.make(`resume:${scenario}`),
-          threadId,
-        });
-        const after = yield* read();
-        const canDeliver = scenario === "active" || scenario === "renamed";
-        assert.equal(after.runs[0]?.status, canDeliver ? "starting" : "queued");
-        if (!canDeliver) {
-          assert.equal(after.runs[0]?.queueHeld, true);
-          assert.equal(after.runs[0]?.queuePosition, admitted.runs[0]?.queuePosition);
-          assert.deepEqual(after.messages, admitted.messages);
-          assert.ok(
-            after.turnItems.some(
-              (item) => item.type === "error" && item.failure.code === "queued_start_failed",
-            ),
-          );
-        }
-        assert.equal(
-          after.thread.title,
-          scenario === "active"
-            ? "Captured title"
-            : scenario === "renamed"
-              ? "User's chosen title"
-              : "Original title",
-        );
-        assert.equal(
-          (yield* orchestrator.getThreadProjection(sourceThreadId)).plans[0]?.status,
-          scenario === "completed" ? "completed" : "active",
-        );
-        const effectCount = (effectType: string) =>
-          sql<{
-            count: number;
-          }>`SELECT COUNT(*) AS count FROM orchestration_v2_effect_outbox WHERE effect_type = ${effectType}`;
-        assert.equal((yield* effectCount("provider-turn.start"))[0]?.count, canDeliver ? 1 : 0);
-        assert.equal(
-          (yield* effectCount("thread-title.generate"))[0]?.count,
-          scenario === "active" ? 1 : 0,
-        );
-        assert.equal(after.messages[0]?.text, "Implement the plan");
-        yield* orchestrator.dispatch({
-          type: "queue.resume",
-          commandId: CommandId.make(`resume:${scenario}`),
-          threadId,
-        });
-        assert.equal((yield* effectCount("provider-turn.start"))[0]?.count, canDeliver ? 1 : 0);
-      }).pipe(Effect.provide(testLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory)))),
-  );
-}
+it.effect.each(
+  (["active", "renamed", "completed", "foreign-project"] as const).map((scenario) => ({
+    caseTitle: `releases held legacy title and plan metadata only on authorized Resume: ${scenario}`,
+    scenario,
+  })),
+)("$caseTitle", ({ scenario }) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const sink = yield* EventSinkV2;
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = ThreadId.make(`held-metadata:${scenario}`);
+    const sourceThreadId = ThreadId.make(`held-plan:${scenario}`);
+    const projectId = ProjectId.make("receipt-project");
+    const create = (id: ThreadId, project: ProjectId, title: string) =>
+      orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${id}`),
+        threadId: id,
+        projectId: project,
+        title,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+    yield* create(threadId, projectId, "Original title");
+    yield* create(
+      sourceThreadId,
+      scenario === "foreign-project" ? ProjectId.make("other-project") : projectId,
+      "Plan source",
+    );
+    const now = yield* DateTime.now;
+    const planId = PlanId.make(`plan:${scenario}`);
+    yield* sink.writeWithEffects({
+      effects: [],
+      events: [
+        {
+          id: EventId.make(`plan-event:${scenario}`),
+          type: "plan.updated",
+          threadId: sourceThreadId,
+          occurredAt: now,
+          payload: {
+            id: planId,
+            threadId: sourceThreadId,
+            runId: null,
+            nodeId: NodeId.make(`historical-plan:${scenario}`),
+            kind: "proposed_plan",
+            status: scenario === "completed" ? "completed" : "active",
+            markdown: "# Plan\nImplement the requested change.",
+          },
+        },
+      ],
+    });
+    yield* orchestrator.dispatch({
+      type: "legacy-queue.import",
+      commandId: CommandId.make(`admit:${scenario}`),
+      threadId,
+      queueItemId: `qitem_${scenario}`,
+      messageId: MessageId.make(`held-message:${scenario}`),
+      text: "Implement the plan",
+      attachments: [],
+      titleSeed: "Captured title",
+      sourceProposedPlan: { threadId: sourceThreadId, planId },
+      createdAt: now,
+    });
+    const read = () => orchestrator.getThreadProjection(threadId);
+    const admitted = yield* read();
+    assert.equal(admitted.thread.title, "Original title");
+    assert.equal(
+      (yield* orchestrator.getThreadProjection(sourceThreadId)).plans[0]?.status,
+      scenario === "completed" ? "completed" : "active",
+    );
+    assert.equal(
+      (yield* sql<{
+        count: number;
+      }>`SELECT COUNT(*) AS count FROM orchestration_v2_effect_outbox`)[0]?.count,
+      0,
+    );
+    if (scenario === "renamed")
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make(`rename:${scenario}`),
+        threadId,
+        title: "User's chosen title",
+      });
+    yield* orchestrator.dispatch({
+      type: "queue.resume",
+      commandId: CommandId.make(`resume:${scenario}`),
+      threadId,
+    });
+    const after = yield* read();
+    const canDeliver = scenario === "active" || scenario === "renamed";
+    assert.equal(after.runs[0]?.status, canDeliver ? "starting" : "queued");
+    if (!canDeliver) {
+      assert.equal(after.runs[0]?.queueHeld, true);
+      assert.equal(after.runs[0]?.queuePosition, admitted.runs[0]?.queuePosition);
+      assert.deepEqual(after.messages, admitted.messages);
+      assert.ok(
+        after.turnItems.some(
+          (item) => item.type === "error" && item.failure.code === "queued_start_failed",
+        ),
+      );
+    }
+    assert.equal(
+      after.thread.title,
+      scenario === "active"
+        ? "Captured title"
+        : scenario === "renamed"
+          ? "User's chosen title"
+          : "Original title",
+    );
+    assert.equal(
+      (yield* orchestrator.getThreadProjection(sourceThreadId)).plans[0]?.status,
+      scenario === "completed" ? "completed" : "active",
+    );
+    const effectCount = (effectType: string) =>
+      sql<{
+        count: number;
+      }>`SELECT COUNT(*) AS count FROM orchestration_v2_effect_outbox WHERE effect_type = ${effectType}`;
+    assert.equal((yield* effectCount("provider-turn.start"))[0]?.count, canDeliver ? 1 : 0);
+    assert.equal(
+      (yield* effectCount("thread-title.generate"))[0]?.count,
+      scenario === "active" ? 1 : 0,
+    );
+    assert.equal(after.messages[0]?.text, "Implement the plan");
+    yield* orchestrator.dispatch({
+      type: "queue.resume",
+      commandId: CommandId.make(`resume:${scenario}`),
+      threadId,
+    });
+    assert.equal((yield* effectCount("provider-turn.start"))[0]?.count, canDeliver ? 1 : 0);
+  }).pipe(Effect.provide(testLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory)))),
+);
 
 it.effect(
   "invalid queues and deleted destinations preserve pending work while other threads cut over",
@@ -1127,6 +1134,156 @@ it.effect(
         ),
       ),
     ),
+);
+
+it.effect("a finished cutover skips its threads on the next boot; pending work still retries", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const config = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    const importer = yield* LegacyV1ThreadImporter;
+    const finishedId = ThreadId.make("a-finished-json-queue");
+    const pendingId = ThreadId.make("b-pending-sql-queue");
+    for (const threadId of [finishedId, pendingId]) {
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${threadId}`),
+        threadId,
+        projectId: ProjectId.make("receipt-project"),
+        title: "Cutover",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+    }
+    // The pending queue cannot be admitted: its destination is deleted.
+    yield* orchestrator.dispatch({
+      type: "thread.delete",
+      commandId: CommandId.make("delete-pending-queue"),
+      threadId: pendingId,
+    });
+    yield* writeQueue(pendingId, {
+      ...(yield* readQueue(pendingId)),
+      migrated: true,
+      items: [
+        {
+          queueItemId: "qitem_pending",
+          threadId: pendingId,
+          text: "Still pending",
+          attachments: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    yield* fs.makeDirectory(config.stateDir + "/scient/thread-queue", { recursive: true });
+    yield* fs.writeFileString(
+      legacyQueueFilePath(config.stateDir, finishedId),
+      encodeQueueSource({
+        formatVersion: 1,
+        threadId: finishedId,
+        items: [
+          {
+            queueItemId: "qitem_finished",
+            text: "Admitted once",
+            attachments: [],
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      }),
+    );
+    const hydrated: ThreadId[] = [];
+    const boot = cutOverLegacyQueues.pipe(
+      Effect.provideService(LegacyV1ThreadImporter, {
+        ...importer,
+        ensureTranscript: (threadId) =>
+          Effect.sync(() => hydrated.push(threadId)).pipe(
+            Effect.andThen(importer.ensureTranscript(threadId)),
+          ),
+      }),
+    );
+    assert.equal(yield* boot, 1);
+    assert.deepEqual(hydrated.toSorted(), [finishedId, pendingId]);
+    hydrated.length = 0;
+    assert.equal(yield* boot, 0);
+    assert.deepEqual(hydrated, [pendingId]);
+    assert.equal((yield* orchestrator.getThreadProjection(finishedId)).runs.length, 1);
+    assert.equal((yield* readQueue(pendingId)).items.length, 1);
+  }).pipe(
+    Effect.provide(
+      legacyImporterLayer.pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(testLayer, SqlitePersistenceMemory).pipe(
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    ),
+  ),
+);
+
+it.effect("schema-invalid migrated documents stay on the cutover retry path", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const sql = yield* SqlClient.SqlClient;
+    const importer = yield* LegacyV1ThreadImporter;
+    const documents = {
+      "numeric-migrated-flag":
+        '{"revision":1,"migrated":1,"items":[],"blocked":false,"turnId":null,"paused":null}',
+      "missing-ledger-fields": '{"migrated":true,"items":[]}',
+    };
+    for (const [name, document] of Object.entries(documents)) {
+      const threadId = ThreadId.make(name);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${threadId}`),
+        threadId,
+        projectId: ProjectId.make("receipt-project"),
+        title: "Damaged ledger",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* sql`INSERT INTO scient_thread_queue (thread_id, document, revision) VALUES (${threadId}, ${document}, 1)`;
+    }
+    const hydrated: ThreadId[] = [];
+    const imported = yield* cutOverLegacyQueues.pipe(
+      Effect.provideService(LegacyV1ThreadImporter, {
+        ...importer,
+        ensureTranscript: (threadId) =>
+          Effect.sync(() => hydrated.push(threadId)).pipe(
+            Effect.andThen(importer.ensureTranscript(threadId)),
+          ),
+      }),
+    );
+    assert.equal(imported, 0);
+    assert.deepEqual(hydrated.toSorted(), Object.keys(documents).toSorted());
+    for (const [name, document] of Object.entries(documents)) {
+      const [row] = yield* sql<{
+        document: string;
+      }>`SELECT document FROM scient_thread_queue WHERE thread_id = ${name}`;
+      assert.equal(row?.document, document);
+    }
+  }).pipe(
+    Effect.provide(
+      legacyImporterLayer.pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(testLayer, SqlitePersistenceMemory).pipe(
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    ),
+  ),
 );
 
 it.effect("refuses staged message identities owned by another conversation", () =>

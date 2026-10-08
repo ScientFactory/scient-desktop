@@ -10,17 +10,17 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { threadCreated, THREAD_ID } from "../../integration/TransferBudgetV2Fixture.integration.ts";
 import { ServerConfig } from "../config.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import { GitManager } from "../git/GitManager.ts";
-import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
-import * as EventSink from "../orchestration-v2/EventSink.ts";
-import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
-import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
-import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
+import * as EventSink from "./EventSink.ts";
+import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import * as Settings from "../serverSettings.ts";
 import * as StorageCleanup from "../storageCleanup.ts";
 import { TerminalManager } from "../terminal/Manager.ts";
@@ -131,243 +131,244 @@ const testLayer = Layer.merge(
   database,
   makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "storage-cleanup-lifecycle" },
-    ProviderAdapterRegistry.makeLayer([]),
-    { databaseLayer: database, runEffectWorker: false },
+    ProviderAdapterRegistry.layerFromAdapters([]),
+    { layerDatabase: database, runEffectWorker: false },
   ),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("V2 Compute worktree cleanup lifecycle", () => {
-  for (const protection of ["compute", "compute-nested", "deleted-compute"] as const) {
-    it.live(`retains ${protection} worktrees until all three physical runtime owners release`, () =>
-      Effect.gen(function* () {
-        const config = yield* ServerConfig;
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const sink = yield* EventSink.EventSinkV2;
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const projections = yield* ProjectionStore.ProjectionStoreV2;
-        const outbox = yield* EffectOutbox.EffectOutboxV2;
-        const now = yield* DateTime.now;
-        const worktreePath = path.join(yield* fs.realPath(config.worktreesDir), "feature");
-        yield* fs.makeDirectory(worktreePath, { recursive: true });
-        yield* fs.writeFileString(path.join(worktreePath, ".git"), "gitdir: /fixture/admin");
-        const created = threadCreated(ProviderDriverKind.make("codex"));
-        yield* sink.commitProjectCommand({
+  it.live.each(
+    (["compute", "compute-nested", "deleted-compute"] as const).map((protection) => ({
+      caseTitle: `retains ${protection} worktrees until all three physical runtime owners release`,
+      protection,
+    })),
+  )("$caseTitle", ({ protection }) =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sink = yield* EventSink.EventSinkV2;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const now = yield* DateTime.now;
+      const worktreePath = path.join(yield* fs.realPath(config.worktreesDir), "feature");
+      yield* fs.makeDirectory(worktreePath, { recursive: true });
+      yield* fs.writeFileString(path.join(worktreePath, ".git"), "gitdir: /fixture/admin");
+      const created = threadCreated(ProviderDriverKind.make("codex"));
+      yield* sink.commitProjectCommand({
+        commandId: CommandId.make("cleanup-project"),
+        projectId: created.payload.projectId!,
+        commandType: "project.create",
+        acceptedAt: now,
+        event: {
+          eventId: EventId.make("cleanup-project-created"),
+          aggregateKind: "project",
+          aggregateId: created.payload.projectId!,
+          occurredAt: DateTime.formatIso(now),
           commandId: CommandId.make("cleanup-project"),
-          projectId: created.payload.projectId!,
-          commandType: "project.create",
-          acceptedAt: now,
-          event: {
-            eventId: EventId.make("cleanup-project-created"),
-            aggregateKind: "project",
-            aggregateId: created.payload.projectId!,
-            occurredAt: DateTime.formatIso(now),
-            commandId: CommandId.make("cleanup-project"),
-            causationEventId: null,
-            correlationId: null,
-            metadata: {},
-            type: "project.created",
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          type: "project.created",
+          payload: {
+            projectId: created.payload.projectId!,
+            title: "Cleanup project",
+            workspaceRoot: config.baseDir,
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: DateTime.formatIso(now),
+            updatedAt: DateTime.formatIso(now),
+          },
+        },
+      });
+      yield* sink.write({
+        events: [
+          {
+            ...created,
             payload: {
-              projectId: created.payload.projectId!,
-              title: "Cleanup project",
-              workspaceRoot: config.baseDir,
-              defaultModelSelection: null,
-              scripts: [],
-              createdAt: DateTime.formatIso(now),
-              updatedAt: DateTime.formatIso(now),
+              ...created.payload,
+              createdAt: DateTime.subtract(now, { days: 2 }),
+              updatedAt: DateTime.subtract(now, { days: 2 }),
+              branch: "feature",
+              worktreePath,
             },
           },
-        });
-        yield* sink.write({
-          events: [
-            {
-              ...created,
-              payload: {
-                ...created.payload,
-                createdAt: DateTime.subtract(now, { days: 2 }),
-                updatedAt: DateTime.subtract(now, { days: 2 }),
-                branch: "feature",
-                worktreePath,
-              },
-            },
-          ],
-        });
-        const computeProject = ComputeProjectId.make("cleanup-compute");
-        const shutdownEntered = yield* Effect.forEach([0, 1, 2], () => Deferred.make<void>());
-        const shutdownFinish = yield* Effect.forEach([0, 1, 2], () => Deferred.make<void>());
-        const closed: string[] = [];
-        const runtimeLayer = makeComputeLayer(shutdownEntered, shutdownFinish, closed).pipe(
-          Layer.provideMerge(LocalComputeStore.layer),
-          Layer.provide(Layer.succeed(ServerConfig, config)),
-          Layer.provide(NodeServices.layer),
-        );
-        const compute = Context.get(yield* Layer.build(runtimeLayer), ComputeSessionService);
-        yield* Effect.addFinalizer(() =>
-          Effect.forEach(shutdownFinish, (finish) => Deferred.succeed(finish, undefined), {
-            discard: true,
-          }),
-        );
-        const sessions = yield* Effect.forEach([0, 1, 2], (index) =>
-          Effect.gen(function* () {
-            const root =
-              protection === "compute-nested"
-                ? path.join(worktreePath, `nested-${index}`)
-                : worktreePath;
-            yield* fs.makeDirectory(root, { recursive: true });
-            return yield* compute.startSession({
-              projectId: computeProject,
-              sessionId: ComputeSessionId.make(`owner-${index}`),
-              languageId: PYTHON,
-              label: `Owner ${index}`,
-              workingDirectory: root,
-              configuredExecutable: null,
-            });
-          }),
-        );
-        const deletionId = CommandId.make("cleanup-delete");
-        const deleted = protection === "deleted-compute";
-        if (deleted)
-          yield* orchestrator.dispatch({
-            type: "thread.delete",
-            commandId: deletionId,
-            threadId: THREAD_ID,
+        ],
+      });
+      const computeProject = ComputeProjectId.make("cleanup-compute");
+      const shutdownEntered = yield* Effect.forEach([0, 1, 2], () => Deferred.make<void>());
+      const shutdownFinish = yield* Effect.forEach([0, 1, 2], () => Deferred.make<void>());
+      const closed: string[] = [];
+      const runtimeLayer = makeComputeLayer(shutdownEntered, shutdownFinish, closed).pipe(
+        Layer.provideMerge(LocalComputeStore.layer),
+        Layer.provide(Layer.succeed(ServerConfig, config)),
+        Layer.provide(NodeServices.layer),
+      );
+      const compute = Context.get(yield* Layer.build(runtimeLayer), ComputeSessionService);
+      yield* Effect.addFinalizer(() =>
+        Effect.forEach(shutdownFinish, (finish) => Deferred.succeed(finish, undefined), {
+          discard: true,
+        }),
+      );
+      const sessions = yield* Effect.forEach([0, 1, 2], (index) =>
+        Effect.gen(function* () {
+          const root =
+            protection === "compute-nested"
+              ? path.join(worktreePath, `nested-${index}`)
+              : worktreePath;
+          yield* fs.makeDirectory(root, { recursive: true });
+          return yield* compute.startSession({
+            projectId: computeProject,
+            sessionId: ComputeSessionId.make(`owner-${index}`),
+            languageId: PYTHON,
+            label: `Owner ${index}`,
+            workingDirectory: root,
+            configuredExecutable: null,
           });
-        const effects = yield* outbox.listByCommandId(deletionId);
-        assert.equal(effects.length > 0, deleted);
-        assert.isTrue(effects.every((row) => row.status === "pending"));
-        const initialRead = yield* Deferred.make<void>();
-        let sweepRead = yield* Deferred.make<void>();
-        let completed = false;
+        }),
+      );
+      const deletionId = CommandId.make("cleanup-delete");
+      const deleted = protection === "deleted-compute";
+      if (deleted)
+        yield* orchestrator.dispatch({
+          type: "thread.delete",
+          commandId: deletionId,
+          threadId: THREAD_ID,
+        });
+      const effects = yield* outbox.listByCommandId(deletionId);
+      assert.equal(effects.length > 0, deleted);
+      assert.isTrue(effects.every((row) => row.status === "pending"));
+      const initialRead = yield* Deferred.make<void>();
+      let sweepRead = yield* Deferred.make<void>();
+      let completed = false;
 
-        const removals: string[] = [];
-        const settings = yield* Settings.ServerSettingsService.pipe(
-          Effect.provide(
-            Settings.layerTest({
-              storageCleanup: {
-                worktreeAfterDays: 1,
-                worktreeOnDelete: true,
-                worktreeOnMerge: false,
-                worktreeUnchanged: false,
-                browserArtifactsAfterDays: null,
-                logsAfterDays: null,
+      const removals: string[] = [];
+      const settings = yield* Settings.ServerSettingsService.pipe(
+        Effect.provide(
+          Settings.layerTest({
+            storageCleanup: {
+              worktreeAfterDays: 1,
+              worktreeOnDelete: true,
+              worktreeOnMerge: false,
+              worktreeUnchanged: false,
+              browserArtifactsAfterDays: null,
+              logsAfterDays: null,
+            },
+          }),
+        ),
+      );
+      const changes = yield* PubSub.unbounded<ServerSettings>();
+      const cleanup = yield* StorageCleanup.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(Settings.ServerSettingsService, {
+              ...settings,
+              subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
+            }),
+            Layer.succeed(ProjectionStore.ProjectionStoreV2, {
+              ...projections,
+              getShellSnapshot: (options) =>
+                projections
+                  .getShellSnapshot(options)
+                  .pipe(
+                    Effect.tap(() =>
+                      Deferred.succeed(completed ? sweepRead : initialRead, undefined),
+                    ),
+                  ),
+            }),
+            Layer.mock(GitManager)({ invalidateStatus: () => Effect.void }),
+            Layer.mock(TerminalManager)({
+              subscribeMetadata: (listener) =>
+                listener({ type: "snapshot", terminals: [] }).pipe(Effect.as(() => {})),
+            }),
+            Layer.mock(GitVcsDriver)({
+              statusDetailsLocal: () =>
+                Effect.succeed({
+                  isRepo: true,
+                  hasOriginRemote: false,
+                  isDefaultBranch: false,
+                  branch: "feature",
+                  upstreamRef: null,
+                  hasWorkingTreeChanges: false,
+                  workingTree: { files: [], insertions: 0, deletions: 0 },
+                  hasUpstream: false,
+                  aheadCount: 0,
+                  behindCount: 0,
+                  aheadOfDefaultCount: 0,
+                }),
+              resolveCommit: () =>
+                Effect.sync(() => ({
+                  commitSha: "a".repeat(40),
+                })),
+              execute: () =>
+                Effect.succeed({
+                  exitCode: ChildProcessSpawner.ExitCode(0),
+                  stdout: "",
+                  stderr: "",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                }),
+              removeWorktree: (input) => {
+                assert.strictEqual(input.force, false);
+                removals.push(input.path);
+                return fs.remove(input.path, { recursive: true }).pipe(Effect.orDie);
               },
             }),
           ),
-        );
-        const changes = yield* PubSub.unbounded<ServerSettings>();
-        const cleanup = yield* StorageCleanup.make.pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              Layer.succeed(Settings.ServerSettingsService, {
-                ...settings,
-                subscribeChanges: PubSub.subscribe(changes).pipe(
-                  Effect.map(Stream.fromSubscription),
-                ),
-              }),
-              Layer.succeed(ProjectionStore.ProjectionStoreV2, {
-                ...projections,
-                getShellSnapshot: (options) =>
-                  projections
-                    .getShellSnapshot(options)
-                    .pipe(
-                      Effect.tap(() =>
-                        Deferred.succeed(completed ? sweepRead : initialRead, undefined),
-                      ),
-                    ),
-              }),
-              Layer.mock(GitManager)({ invalidateStatus: () => Effect.void }),
-              Layer.mock(TerminalManager)({
-                subscribeMetadata: (listener) =>
-                  listener({ type: "snapshot", terminals: [] }).pipe(Effect.as(() => {})),
-              }),
-              Layer.mock(GitVcsDriver)({
-                statusDetailsLocal: () =>
-                  Effect.succeed({
-                    isRepo: true,
-                    hasOriginRemote: false,
-                    isDefaultBranch: false,
-                    branch: "feature",
-                    upstreamRef: null,
-                    hasWorkingTreeChanges: false,
-                    workingTree: { files: [], insertions: 0, deletions: 0 },
-                    hasUpstream: false,
-                    aheadCount: 0,
-                    behindCount: 0,
-                    aheadOfDefaultCount: 0,
-                  }),
-                resolveCommit: () =>
-                  Effect.sync(() => ({
-                    commitSha: "a".repeat(40),
-                  })),
-                execute: () =>
-                  Effect.succeed({
-                    exitCode: ChildProcessSpawner.ExitCode(0),
-                    stdout: "",
-                    stderr: "",
-                    stdoutTruncated: false,
-                    stderrTruncated: false,
-                  }),
-                removeWorktree: (input) => {
-                  assert.strictEqual(input.force, false);
-                  removals.push(input.path);
-                  return fs.remove(input.path, { recursive: true }).pipe(Effect.orDie);
-                },
-              }),
-            ),
-          ),
-        );
-        let sweepOrdinal = 0;
-        const sweep = Effect.fnUntraced(function* () {
-          sweepRead = yield* Deferred.make<void>();
-          const current = yield* settings.getSettings;
-          const updated = yield* settings.updateSettings({
-            storageCleanup: { ...current.storageCleanup, logsAfterDays: ++sweepOrdinal },
-          });
-          yield* PubSub.publish(changes, updated);
-          yield* Deferred.await(sweepRead);
-          yield* cleanup.drain;
+        ),
+      );
+      let sweepOrdinal = 0;
+      const sweep = Effect.fnUntraced(function* () {
+        sweepRead = yield* Deferred.make<void>();
+        const current = yield* settings.getSettings;
+        const updated = yield* settings.updateSettings({
+          storageCleanup: { ...current.storageCleanup, logsAfterDays: ++sweepOrdinal },
         });
-        yield* cleanup.start();
-        yield* Deferred.await(initialRead);
+        yield* PubSub.publish(changes, updated);
+        yield* Deferred.await(sweepRead);
         yield* cleanup.drain;
+      });
+      yield* cleanup.start();
+      yield* Deferred.await(initialRead);
+      yield* cleanup.drain;
+      assert.isTrue(yield* fs.exists(worktreePath));
+      assert.deepStrictEqual(removals, []);
+      completed = true;
+      for (const row of effects) {
+        const claimed = yield* outbox.claimNext({
+          workerId: "cleanup-test",
+          leaseDurationMs: 60_000,
+        });
+        assert.isTrue(Option.isSome(claimed));
+        if (Option.isNone(claimed)) return;
+        assert.isTrue(
+          yield* outbox.succeed({ effectId: claimed.value.id, workerId: "cleanup-test" }),
+        );
+        assert.strictEqual(Option.getOrNull(yield* outbox.get(row.id))?.status, "succeeded");
+      }
+      // A runtime's logical stop is insufficient: park the real channel shutdown
+      // and keep the reservation until its physical scope finalizer runs.
+      for (const [index, session] of sessions.entries()) {
+        const stopping = yield* compute
+          .stopSession({
+            projectId: computeProject,
+            sessionId: session.sessionId,
+            expectedGeneration: session.generation,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(shutdownEntered[index]!);
+        yield* sweep();
         assert.isTrue(yield* fs.exists(worktreePath));
-        assert.deepStrictEqual(removals, []);
-        completed = true;
-        for (const row of effects) {
-          const claimed = yield* outbox.claimNext({
-            workerId: "cleanup-test",
-            leaseDurationMs: 60_000,
-          });
-          assert.isTrue(Option.isSome(claimed));
-          if (Option.isNone(claimed)) return;
-          assert.isTrue(
-            yield* outbox.succeed({ effectId: claimed.value.id, workerId: "cleanup-test" }),
-          );
-          assert.strictEqual(Option.getOrNull(yield* outbox.get(row.id))?.status, "succeeded");
-        }
-        // A runtime's logical stop is insufficient: park the real channel shutdown
-        // and keep the reservation until its physical scope finalizer runs.
-        for (const [index, session] of sessions.entries()) {
-          const stopping = yield* compute
-            .stopSession({
-              projectId: computeProject,
-              sessionId: session.sessionId,
-              expectedGeneration: session.generation,
-            })
-            .pipe(Effect.forkChild);
-          yield* Deferred.await(shutdownEntered[index]!);
-          yield* sweep();
-          assert.isTrue(yield* fs.exists(worktreePath));
-          assert.deepEqual(removals, []);
-          assert.lengthOf(closed, index);
-          yield* Deferred.succeed(shutdownFinish[index]!, undefined);
-          yield* Fiber.join(stopping);
-          assert.lengthOf(closed, index + 1);
-          yield* sweep();
-          assert.equal(yield* fs.exists(worktreePath), index < 2);
-          assert.deepEqual(removals, index < 2 ? [] : [worktreePath]);
-        }
-      }).pipe(Effect.provide(testLayer), Effect.scoped, Effect.timeout("30 seconds")),
-    );
-  }
+        assert.deepEqual(removals, []);
+        assert.lengthOf(closed, index);
+        yield* Deferred.succeed(shutdownFinish[index]!, undefined);
+        yield* Fiber.join(stopping);
+        assert.lengthOf(closed, index + 1);
+        yield* sweep();
+        assert.equal(yield* fs.exists(worktreePath), index < 2);
+        assert.deepEqual(removals, index < 2 ? [] : [worktreePath]);
+      }
+    }).pipe(Effect.provide(testLayer), Effect.scoped, Effect.timeout("30 seconds")),
+  );
 });

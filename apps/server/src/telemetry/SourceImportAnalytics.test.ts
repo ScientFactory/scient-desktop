@@ -300,34 +300,37 @@ describe("source import outcome analytics", () => {
       }),
   );
 
-  for (const initial of ["off", "product"] as const) {
-    it.effect(`does not replay an in-progress import after ${initial} -> Off -> Product`, () =>
-      Effect.gen(function* () {
-        const f = analyticsFixture(initial);
-        const observer = yield* f.observer();
-        yield* Effect.promise(async () => {
-          const root = await project();
-          const resetDuringAttempt: SourceImportObserver = async () => {
-            const finish = await observer?.();
-            f.changeConsent("off");
-            f.changeConsent("product");
-            return finish;
-          };
-          await localOperation(root, "before");
-          await advanceSourceImport({ root, operationId: "before" }, resetDuringAttempt);
-          expect(f.events.map((event) => event.name)).toEqual(
-            initial === "off" ? [] : ["scient.operation.started"],
-          );
-          await localOperation(root, "after", "new private content");
-          await advanceSourceImport({ root, operationId: "after" }, observer);
-          expect(f.events.slice(-2).map((event) => event.name)).toEqual([
-            "scient.operation.started",
-            "scient.operation.completed",
-          ]);
-        });
-      }),
-    );
-  }
+  it.effect.each(
+    (["off", "product"] as const).map((initial) => ({
+      caseTitle: `does not replay an in-progress import after ${initial} -> Off -> Product`,
+      initial,
+    })),
+  )("$caseTitle", ({ initial }) =>
+    Effect.gen(function* () {
+      const f = analyticsFixture(initial);
+      const observer = yield* f.observer();
+      yield* Effect.promise(async () => {
+        const root = await project();
+        const resetDuringAttempt: SourceImportObserver = async () => {
+          const finish = await observer?.();
+          f.changeConsent("off");
+          f.changeConsent("product");
+          return finish;
+        };
+        await localOperation(root, "before");
+        await advanceSourceImport({ root, operationId: "before" }, resetDuringAttempt);
+        expect(f.events.map((event) => event.name)).toEqual(
+          initial === "off" ? [] : ["scient.operation.started"],
+        );
+        await localOperation(root, "after", "new private content");
+        await advanceSourceImport({ root, operationId: "after" }, observer);
+        expect(f.events.slice(-2).map((event) => event.name)).toEqual([
+          "scient.operation.started",
+          "scient.operation.completed",
+        ]);
+      });
+    }),
+  );
 
   it.effect(
     "leaves actual import and duplicate behavior intact when the analytics service defects",

@@ -39,7 +39,7 @@ import * as Predicate from "effect/Predicate";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import type { OmpRpcNotification } from "effect-omp-rpc/client";
 import { OMP_KNOWN_EVENT_TYPES, type OmpRpcResponse } from "effect-omp-rpc/schema";
 import * as ServerConfig from "../../config.ts";
@@ -599,125 +599,126 @@ const capturedTurn = Effect.fnUntraced(function* (name: OmpCaptureName, interrup
 });
 
 it.layer(TestLayer)("OmpAdapterV2", (it) => {
-  for (const target of [ompTarget, scientAgentTarget]) {
-    it.effect(
-      `${target.name} publishes only real content blocks and settles reasoning before turn end`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const peer = scriptedOmpRpc({
-              models: [{ provider: "test", id: "selected", input: ["text"] }],
-              initial: { provider: "test", id: "selected" },
-            });
-            const h = yield* harness(false, { target, makeProcess: peer.makeProcess });
-            yield* h.runtime.startTurn(h.input);
-            yield* peer.promptDelivered();
-            const envelope = { role: "assistant", responseId: "answer-response", content: [] };
-            const update = (type: string, contentIndex: number, content: string) => ({
-              type: "message_update",
-              messageId: "answer",
-              message: envelope,
-              assistantMessageEvent: {
-                type,
-                contentIndex,
-                ...(type.endsWith("delta") ? { delta: content } : { content }),
-              },
-            });
-            const end = {
-              type: "message_end",
-              messageId: "answer",
-              message: {
-                ...envelope,
-                stopReason: "stop",
-                content: [
-                  { type: "thinking", thinking: "Reason" },
-                  { type: "text", text: "Final answer" },
-                  { type: "text", text: "Snapshot only" },
-                ],
-              },
-            };
-            yield* peer.emit([
-              { type: "agent_start" },
-              {
-                type: "message_start",
-                messageId: "tool-envelope",
-                message: { role: "assistant", content: [{ type: "toolCall" }] },
-              },
-              {
-                type: "message_end",
-                messageId: "tool-envelope",
-                message: {
-                  role: "assistant",
-                  content: [{ type: "toolCall" }],
-                  stopReason: "toolUse",
-                },
-              },
-              nativeToolStart("read", "read", { path: "fixture.txt" }),
-              nativeToolEnd("read", "read", { content: [{ type: "text", text: "File" }] }),
-              { type: "message_start", messageId: "answer", message: envelope },
-              update("thinking_delta", 0, "Reason"),
-              update("thinking_end", 0, "Reason"),
-              update("text_delta", 1, "Draft"),
-              update("text_end", 1, "Final answer"),
-              update("text_end", 2, "Snapshot only"),
-              end,
-              end,
-              update("text_delta", 1, "LATE"),
-            ]);
-            yield* h.takeUntil(
-              (e) =>
-                e.type === "message.updated" &&
-                e.message.text === "Snapshot only" &&
-                !e.message.streaming,
-            );
-            assert.isFalse(h.recorded.some((e) => e.type === "turn.terminal"));
-            assert.isTrue(
-              h.recorded.some(
-                (e) =>
-                  e.type === "turn_item.updated" &&
-                  e.turnItem.type === "reasoning" &&
-                  !e.turnItem.streaming,
-              ),
-            );
-            yield* peer.finish();
-            yield* h.takeUntil((e) => e.type === "turn.terminal");
-            const latestMessages = [
-              ...new Map(
-                h.recorded.flatMap((e) =>
-                  e.type === "message.updated" ? [[e.message.id, e.message] as const] : [],
-                ),
-              ).values(),
-            ];
-            assert.deepEqual(
-              latestMessages.map((m) => [m.text, m.streaming]),
-              [
-                ["Final answer", false],
-                ["Snapshot only", false],
-              ],
-            );
-            assert.isFalse(
-              h.recorded.some((e) => e.type === "message.updated" && e.message.text.length === 0),
-            );
-            const latestItems = [
-              ...new Map(
-                h.recorded.flatMap((e) =>
-                  e.type === "turn_item.updated" ? [[e.turnItem.id, e.turnItem] as const] : [],
-                ),
-              ).values(),
-            ];
-            assert.deepEqual(
-              latestItems.map((item) => [item.type, item.ordinal, item.status]),
-              [
-                ["dynamic_tool", 101, "completed"],
-                ["reasoning", 102, "completed"],
-                ["assistant_message", 103, "completed"],
-                ["assistant_message", 104, "completed"],
-              ],
-            );
-          }),
-        ),
-    );
-  }
+  it.effect.each(
+    [ompTarget, scientAgentTarget].map((target) => ({
+      caseTitle: `${target.name} publishes only real content blocks and settles reasoning before turn end`,
+      target,
+    })),
+  )("$caseTitle", ({ target }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [{ provider: "test", id: "selected", input: ["text"] }],
+          initial: { provider: "test", id: "selected" },
+        });
+        const h = yield* harness(false, { target, makeProcess: peer.makeProcess });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        const envelope = { role: "assistant", responseId: "answer-response", content: [] };
+        const update = (type: string, contentIndex: number, content: string) => ({
+          type: "message_update",
+          messageId: "answer",
+          message: envelope,
+          assistantMessageEvent: {
+            type,
+            contentIndex,
+            ...(type.endsWith("delta") ? { delta: content } : { content }),
+          },
+        });
+        const end = {
+          type: "message_end",
+          messageId: "answer",
+          message: {
+            ...envelope,
+            stopReason: "stop",
+            content: [
+              { type: "thinking", thinking: "Reason" },
+              { type: "text", text: "Final answer" },
+              { type: "text", text: "Snapshot only" },
+            ],
+          },
+        };
+        yield* peer.emit([
+          { type: "agent_start" },
+          {
+            type: "message_start",
+            messageId: "tool-envelope",
+            message: { role: "assistant", content: [{ type: "toolCall" }] },
+          },
+          {
+            type: "message_end",
+            messageId: "tool-envelope",
+            message: {
+              role: "assistant",
+              content: [{ type: "toolCall" }],
+              stopReason: "toolUse",
+            },
+          },
+          nativeToolStart("read", "read", { path: "fixture.txt" }),
+          nativeToolEnd("read", "read", { content: [{ type: "text", text: "File" }] }),
+          { type: "message_start", messageId: "answer", message: envelope },
+          update("thinking_delta", 0, "Reason"),
+          update("thinking_end", 0, "Reason"),
+          update("text_delta", 1, "Draft"),
+          update("text_end", 1, "Final answer"),
+          update("text_end", 2, "Snapshot only"),
+          end,
+          end,
+          update("text_delta", 1, "LATE"),
+        ]);
+        yield* h.takeUntil(
+          (e) =>
+            e.type === "message.updated" &&
+            e.message.text === "Snapshot only" &&
+            !e.message.streaming,
+        );
+        assert.isFalse(h.recorded.some((e) => e.type === "turn.terminal"));
+        assert.isTrue(
+          h.recorded.some(
+            (e) =>
+              e.type === "turn_item.updated" &&
+              e.turnItem.type === "reasoning" &&
+              !e.turnItem.streaming,
+          ),
+        );
+        yield* peer.finish();
+        yield* h.takeUntil((e) => e.type === "turn.terminal");
+        const latestMessages = [
+          ...new Map(
+            h.recorded.flatMap((e) =>
+              e.type === "message.updated" ? [[e.message.id, e.message] as const] : [],
+            ),
+          ).values(),
+        ];
+        assert.deepEqual(
+          latestMessages.map((m) => [m.text, m.streaming]),
+          [
+            ["Final answer", false],
+            ["Snapshot only", false],
+          ],
+        );
+        assert.isFalse(
+          h.recorded.some((e) => e.type === "message.updated" && e.message.text.length === 0),
+        );
+        const latestItems = [
+          ...new Map(
+            h.recorded.flatMap((e) =>
+              e.type === "turn_item.updated" ? [[e.turnItem.id, e.turnItem] as const] : [],
+            ),
+          ).values(),
+        ];
+        assert.deepEqual(
+          latestItems.map((item) => [item.type, item.ordinal, item.status]),
+          [
+            ["dynamic_tool", 101, "completed"],
+            ["reasoning", 102, "completed"],
+            ["assistant_message", 103, "completed"],
+            ["assistant_message", 104, "completed"],
+          ],
+        );
+      }),
+    ),
+  );
 
   it.effect("retains an unobserved writer lock through manager scope finalization", () =>
     Effect.scoped(
@@ -772,77 +773,79 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         }),
       ),
   );
-  for (const uncertain of [false, true]) {
-    it.effect(
-      uncertain
+  it.effect.each(
+    [false, true].map((uncertain) => ({
+      caseTitle: uncertain
         ? "retains the exact conversation lock when shutdown cannot prove exit"
         : "releases its conversation lock after confirmed Stop while its manager scope remains open",
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const h = yield* harness(false, { shutdownUncertain: uncertain });
-            const fs = yield* FileSystem.FileSystem;
-            const path = yield* Path.Path;
-            assert.ok(h.processSessionDir);
-            const lockPath = path.join(h.processSessionDir, ".session.lock");
-            const token = yield* fs.readFileString(lockPath);
-            yield* h.runtime.startTurn(h.input);
-            yield* Deferred.await(h.promptDelivered);
-            const offered = yield* h.takeUntil(
-              (event) =>
-                event.type === "provider_turn.updated" && event.providerTurn.status === "running",
-            );
-            if (offered.type !== "provider_turn.updated")
-              return yield* Effect.die("No owned native turn");
-            const result = yield* Effect.result(
-              h.runtime.interruptTurn({
-                providerThread: h.input.providerThread,
-                providerTurnId: offered.providerTurn.id,
-              }),
-            );
-            if (uncertain) {
-              assert.equal(result._tag, "Failure");
-              assert.equal(yield* fs.readFileString(lockPath), token);
-            } else {
-              assert.equal(result._tag, "Success");
-              assert.isFalse(yield* fs.exists(lockPath));
-            }
+      uncertain,
+    })),
+  )("$caseTitle", ({ uncertain }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, { shutdownUncertain: uncertain });
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        assert.ok(h.processSessionDir);
+        const lockPath = path.join(h.processSessionDir, ".session.lock");
+        const token = yield* fs.readFileString(lockPath);
+        yield* h.runtime.startTurn(h.input);
+        yield* Deferred.await(h.promptDelivered);
+        const offered = yield* h.takeUntil(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+        );
+        if (offered.type !== "provider_turn.updated")
+          return yield* Effect.die("No owned native turn");
+        const result = yield* Effect.result(
+          h.runtime.interruptTurn({
+            providerThread: h.input.providerThread,
+            providerTurnId: offered.providerTurn.id,
           }),
-        ),
-    );
-  }
-  for (const uncertain of [false, true]) {
-    it.effect(
-      uncertain
+        );
+        if (uncertain) {
+          assert.equal(result._tag, "Failure");
+          assert.equal(yield* fs.readFileString(lockPath), token);
+        } else {
+          assert.equal(result._tag, "Success");
+          assert.isFalse(yield* fs.exists(lockPath));
+        }
+      }),
+    ),
+  );
+  it.effect.each(
+    [false, true].map((uncertain) => ({
+      caseTitle: uncertain
         ? "preserves the original process failure and lock when EOF cannot confirm exit"
         : "releases the exact exited writer on unexpected EOF before publishing failure",
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const h = yield* harness(false, { shutdownUncertain: uncertain });
-            const fs = yield* FileSystem.FileSystem;
-            const path = yield* Path.Path;
-            assert.ok(h.processSessionDir);
-            const lockPath = path.join(h.processSessionDir, ".session.lock");
-            const token = yield* fs.readFileString(lockPath);
-            yield* h.runtime.startTurn(h.input);
-            yield* Deferred.await(h.promptDelivered);
-            yield* Queue.end(h.notifications);
-            const failed = yield* h.takeUntil(
-              (event) =>
-                event.type === "provider_turn.updated" && event.providerTurn.status === "failed",
-            );
-            if (failed.type !== "provider_turn.updated")
-              return yield* Effect.die("No owned failed turn");
-            assert.equal(failed.threadId, h.input.threadId);
-            assert.equal(failed.providerTurn.nodeId, h.input.rootNodeId);
-            assert.equal(failed.providerTurn.runAttemptId, h.input.attemptId);
-            if (uncertain) assert.equal(yield* fs.readFileString(lockPath), token);
-            else assert.isFalse(yield* fs.exists(lockPath));
-          }),
-        ),
-    );
-  }
+      uncertain,
+    })),
+  )("$caseTitle", ({ uncertain }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, { shutdownUncertain: uncertain });
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        assert.ok(h.processSessionDir);
+        const lockPath = path.join(h.processSessionDir, ".session.lock");
+        const token = yield* fs.readFileString(lockPath);
+        yield* h.runtime.startTurn(h.input);
+        yield* Deferred.await(h.promptDelivered);
+        yield* Queue.end(h.notifications);
+        const failed = yield* h.takeUntil(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "failed",
+        );
+        if (failed.type !== "provider_turn.updated")
+          return yield* Effect.die("No owned failed turn");
+        assert.equal(failed.threadId, h.input.threadId);
+        assert.equal(failed.providerTurn.nodeId, h.input.rootNodeId);
+        assert.equal(failed.providerTurn.runAttemptId, h.input.attemptId);
+        if (uncertain) assert.equal(yield* fs.readFileString(lockPath), token);
+        else assert.isFalse(yield* fs.exists(lockPath));
+      }),
+    ),
+  );
 
   it.effect(
     "delivers native OMP images inline or through read according to actual RPC frame bytes",
@@ -955,49 +958,45 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     ),
   );
 
-  for (const failure of ["command", "decode"] as const) {
-    it.effect(
-      `keeps native OMP ${failure} model discovery failures out of text turns with safe diagnostics`,
-      () => {
-        const messages: unknown[] = [];
-        const logger = Logger.make(({ message }) => messages.push(message));
-        return Effect.scoped(
-          Effect.gen(function* () {
-            const h = yield* imageHarness(
-              1_048_576,
-              failure === "command"
-                ? { modelsError: "Rejected Bearer synthetic-secret-123" }
-                : {
-                    modelsResponse: {
-                      models: [
-                        { provider: "test", id: "selected", input: { private: "catalog-secret" } },
-                      ],
-                    },
-                  },
-            );
-            yield* h.send(1, "Text still works", []);
-            assert.lengthOf(h.peer.state.prompts, 1);
-            assert.isFalse(
-              h.recorded.some(
-                (event) =>
-                  event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool",
-              ),
-            );
-            const log = encodeDiagnostic(messages);
-            assert.include(log, "Oh My Pi model discovery failed.");
-            assert.include(log, "get_available_models");
-            assert.include(
-              log,
-              failure === "command" ? "OmpRpcCommandError" : "OmpRpcProtocolError",
-            );
-            if (failure === "decode") assert.include(log, "models.0.input");
-            assert.notInclude(log, "synthetic-secret-123");
-            assert.notInclude(log, "catalog-secret");
-          }),
-        ).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
-      },
-    );
-  }
+  it.effect.each(
+    (["command", "decode"] as const).map((failure) => ({
+      caseTitle: `keeps native OMP ${failure} model discovery failures out of text turns with safe diagnostics`,
+      failure,
+    })),
+  )("$caseTitle", ({ failure }) => {
+    const messages: unknown[] = [];
+    const logger = Logger.make(({ message }) => messages.push(message));
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* imageHarness(
+          1_048_576,
+          failure === "command"
+            ? { modelsError: "Rejected Bearer synthetic-secret-123" }
+            : {
+                modelsResponse: {
+                  models: [
+                    { provider: "test", id: "selected", input: { private: "catalog-secret" } },
+                  ],
+                },
+              },
+        );
+        yield* h.send(1, "Text still works", []);
+        assert.lengthOf(h.peer.state.prompts, 1);
+        assert.isFalse(
+          h.recorded.some(
+            (event) => event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool",
+          ),
+        );
+        const log = encodeDiagnostic(messages);
+        assert.include(log, "Oh My Pi model discovery failed.");
+        assert.include(log, "get_available_models");
+        assert.include(log, failure === "command" ? "OmpRpcCommandError" : "OmpRpcProtocolError");
+        if (failure === "decode") assert.include(log, "models.0.input");
+        assert.notInclude(log, "synthetic-secret-123");
+        assert.notInclude(log, "catalog-secret");
+      }),
+    ).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+  });
   it.effect(
     "retries native OMP image discovery and recovers on the same session without dispatching the rejection",
     () =>
@@ -1032,41 +1031,40 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         }),
       ),
   );
-  for (const input of [undefined, ["text"]] as const) {
-    it.effect(
-      `distinguishes native OMP ${input === undefined ? "unknown" : "unsupported"} image capability without poisoning text turns`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const h = yield* imageHarness(1_048_576, {
-              models: [
-                { provider: "test", id: "selected", ...(input === undefined ? {} : { input }) },
-              ],
-              initial: { provider: "test", id: "initial" },
-            });
-            const failed = yield* Effect.result(
-              h.runtime.startTurn({
-                ...h.input,
-                message: { ...h.input.message, attachments: [yield* h.image("capability", 20)] },
-              }),
-            );
-            assert.equal(failed._tag, "Failure");
-            if (failed._tag !== "Failure")
-              return yield* Effect.die("Unsupported image reached the peer");
-            assert.include(
-              Cause.pretty(Cause.fail(failed.failure)),
-              input === undefined ? "Couldn't verify image support" : "does not support images",
-            );
-            assert.lengthOf(h.peer.state.prompts, 0);
-            assert.isFalse(h.peer.state.log.some((entry) => entry.startsWith("set_")));
-            assert.deepEqual(h.peer.state.model, { provider: "test", id: "initial" });
-            yield* h.takeUntil((event) => event.type === "turn.terminal");
-            yield* h.send(2, "Text still works", []);
-            assert.lengthOf(h.peer.state.prompts, 1);
+  it.effect.each(
+    ([undefined, ["text"]] as const).map((input) => ({
+      caseTitle: `distinguishes native OMP ${input === undefined ? "unknown" : "unsupported"} image capability without poisoning text turns`,
+      input,
+    })),
+  )("$caseTitle", ({ input }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* imageHarness(1_048_576, {
+          models: [{ provider: "test", id: "selected", ...(input === undefined ? {} : { input }) }],
+          initial: { provider: "test", id: "initial" },
+        });
+        const failed = yield* Effect.result(
+          h.runtime.startTurn({
+            ...h.input,
+            message: { ...h.input.message, attachments: [yield* h.image("capability", 20)] },
           }),
-        ),
-    );
-  }
+        );
+        assert.equal(failed._tag, "Failure");
+        if (failed._tag !== "Failure")
+          return yield* Effect.die("Unsupported image reached the peer");
+        assert.include(
+          Cause.pretty(Cause.fail(failed.failure)),
+          input === undefined ? "Couldn't verify image support" : "does not support images",
+        );
+        assert.lengthOf(h.peer.state.prompts, 0);
+        assert.isFalse(h.peer.state.log.some((entry) => entry.startsWith("set_")));
+        assert.deepEqual(h.peer.state.model, { provider: "test", id: "initial" });
+        yield* h.takeUntil((event) => event.type === "turn.terminal");
+        yield* h.send(2, "Text still works", []);
+        assert.lengthOf(h.peer.state.prompts, 1);
+      }),
+    ),
+  );
   it.effect(
     "reports native OMP model capacity only for its own live instance and selected model",
     () =>
@@ -1098,175 +1096,177 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       ),
   );
 
-  for (const scenario of [
-    {
-      name: "success-text",
-      text: "Hello",
-      statuses: ["completed"],
-      warningCount: 0,
-      status: "completed",
-    },
-    {
-      name: "retry-recovered",
-      text: "Recovered after retry",
-      statuses: ["completed"],
-      warningCount: 0,
-      status: "completed",
-    },
-    {
-      name: "success-reasoning",
-      text: "Hello",
-      statuses: ["completed"],
-      warningCount: 0,
-      status: "completed",
-      reasoning: true,
-    },
-    {
-      name: "auth-401",
-      text: "",
-      statuses: [],
-      warningCount: 0,
-      status: "failed",
-      error: "401 Incorrect API key provided",
-    },
-    {
-      name: "provider-model-not-found",
-      text: "",
-      statuses: [],
-      warningCount: 0,
-      status: "failed",
-      error: "404 The model `stub-model` does not exist",
-    },
-    {
-      name: "retry-recovered-session",
-      text: "Recovered after session retry",
-      statuses: ["completed"],
-      warningCount: 1,
-      status: "completed",
-    },
-    {
-      name: "retry-exhausted",
-      text: "",
-      statuses: [],
-      warningCount: 2,
-      status: "failed",
-      error:
-        "429 Rate limit reached for requests. Please try again in 0.1s. retry-after-ms=100\nRate limit reached for requests. Please try again in 0.1s. (type=rate_limit_error param=rate_limit_exceeded)",
-    },
-    {
-      name: "length-stop",
-      text: "This answer is cut",
-      statuses: ["completed"],
-      warningCount: 0,
-      status: "completed",
-      stopReason: "length",
-    },
-    {
-      name: "stream-error-after-partial",
-      text: "Partial answer",
-      statuses: ["failed"],
-      warningCount: 0,
-      status: "failed",
-      error:
-        "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
-    },
-    {
-      name: "stream-error-event",
-      text: "Partial answer",
-      statuses: ["failed"],
-      warningCount: 0,
-      status: "failed",
-      error: "The server had an error while processing your request.",
-    },
-    {
-      name: "tool-call",
-      text: "The file says: stub fixture content.",
-      statuses: ["completed"],
-      warningCount: 0,
-      status: "completed",
-      tool: true,
-    },
-    {
-      name: "user-abort",
-      text: "tick0 ",
-      statuses: ["interrupted"],
-      warningCount: 0,
-      status: "interrupted",
-      interrupt: true,
-    },
-  ] as const) {
-    it.effect(
-      `projects the native OMP ${scenario.name} capture without duplicate or late outcomes`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const h = yield* capturedTurn(scenario.name, "interrupt" in scenario);
-            assert.deepEqual(
-              h.terminal.map((event) => event.status),
-              [scenario.status],
-            );
-            assert.equal(h.assistant.map((item) => item.text).join(""), scenario.text);
-            assert.deepEqual(
-              h.assistant.map((item) => item.status),
-              [...scenario.statuses],
-            );
-            assert.isTrue(
-              h.assistant.every(
-                (item) => item.title === null && item.streaming === false && item.text.length > 0,
-              ),
-            );
-            assert.lengthOf(h.warnings, scenario.warningCount);
-            if (scenario.name === "retry-recovered-session")
-              assert.include(h.warnings[0]?.output ?? "", "attempt 1 of 2");
-            if ("reasoning" in scenario)
-              assert.isTrue(
-                h.latestItems.some(
-                  (item) => item.type === "reasoning" && item.text.length > 0 && !item.streaming,
-                ),
-              );
-            if ("error" in scenario) {
-              const failure = h.terminal[0]?.failure;
-              assert.include(failure?.message ?? "", scenario.error);
-              if (scenario.name !== "auth-401" && scenario.name !== "provider-model-not-found")
-                assert.equal(failure?.message, scenario.error);
-              assert.equal(failure?.class, "provider_error");
-              assert.equal(h.terminal[0]?.threadDisposition, "reusable");
-              assert.equal(h.runtime.providerSession.lastError, failure?.message);
-              assert.equal(h.runtime.providerSession.status, "ready");
-            } else assert.isNull(h.terminal[0]?.failure);
-            if ("stopReason" in scenario)
-              assert.lengthOf(
-                h.latestItems.filter(
-                  (item) =>
-                    item.type === "notification" &&
-                    item.source.kind === "output_truncated" &&
-                    item.source.stopReason === scenario.stopReason,
-                ),
-                1,
-              );
-            if ("tool" in scenario)
-              assert.isTrue(
-                h.latestItems.some(
-                  (item) =>
-                    item.type === "dynamic_tool" &&
-                    item.toolName === "read" &&
-                    item.status === "completed",
-                ),
-              );
-            if (!("interrupt" in scenario)) assert.deepEqual(h.late, []);
-            assert.isFalse(
-              h.late.some(
-                (event) =>
-                  event.type !== "provider_session.updated" &&
-                  event.type !== "provider_thread.updated",
-              ),
-            );
-            if (scenario.status === "completed")
-              assert.equal(h.runtime.providerSession.status, "ready");
-          }),
-        ),
-    );
-  }
+  it.effect.each(
+    (
+      [
+        {
+          name: "success-text",
+          text: "Hello",
+          statuses: ["completed"],
+          warningCount: 0,
+          status: "completed",
+        },
+        {
+          name: "retry-recovered",
+          text: "Recovered after retry",
+          statuses: ["completed"],
+          warningCount: 0,
+          status: "completed",
+        },
+        {
+          name: "success-reasoning",
+          text: "Hello",
+          statuses: ["completed"],
+          warningCount: 0,
+          status: "completed",
+          reasoning: true,
+        },
+        {
+          name: "auth-401",
+          text: "",
+          statuses: [],
+          warningCount: 0,
+          status: "failed",
+          error: "401 Incorrect API key provided",
+        },
+        {
+          name: "provider-model-not-found",
+          text: "",
+          statuses: [],
+          warningCount: 0,
+          status: "failed",
+          error: "404 The model `stub-model` does not exist",
+        },
+        {
+          name: "retry-recovered-session",
+          text: "Recovered after session retry",
+          statuses: ["completed"],
+          warningCount: 1,
+          status: "completed",
+        },
+        {
+          name: "retry-exhausted",
+          text: "",
+          statuses: [],
+          warningCount: 2,
+          status: "failed",
+          error:
+            "429 Rate limit reached for requests. Please try again in 0.1s. retry-after-ms=100\nRate limit reached for requests. Please try again in 0.1s. (type=rate_limit_error param=rate_limit_exceeded)",
+        },
+        {
+          name: "length-stop",
+          text: "This answer is cut",
+          statuses: ["completed"],
+          warningCount: 0,
+          status: "completed",
+          stopReason: "length",
+        },
+        {
+          name: "stream-error-after-partial",
+          text: "Partial answer",
+          statuses: ["failed"],
+          warningCount: 0,
+          status: "failed",
+          error:
+            "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
+        },
+        {
+          name: "stream-error-event",
+          text: "Partial answer",
+          statuses: ["failed"],
+          warningCount: 0,
+          status: "failed",
+          error: "The server had an error while processing your request.",
+        },
+        {
+          name: "tool-call",
+          text: "The file says: stub fixture content.",
+          statuses: ["completed"],
+          warningCount: 0,
+          status: "completed",
+          tool: true,
+        },
+        {
+          name: "user-abort",
+          text: "tick0 ",
+          statuses: ["interrupted"],
+          warningCount: 0,
+          status: "interrupted",
+          interrupt: true,
+        },
+      ] as const
+    ).map((scenario) => ({
+      caseTitle: `projects the native OMP ${scenario.name} capture without duplicate or late outcomes`,
+      scenario,
+    })),
+  )("$caseTitle", ({ scenario }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* capturedTurn(scenario.name, "interrupt" in scenario);
+        assert.deepEqual(
+          h.terminal.map((event) => event.status),
+          [scenario.status],
+        );
+        assert.equal(h.assistant.map((item) => item.text).join(""), scenario.text);
+        assert.deepEqual(
+          h.assistant.map((item) => item.status),
+          [...scenario.statuses],
+        );
+        assert.isTrue(
+          h.assistant.every(
+            (item) => item.title === null && item.streaming === false && item.text.length > 0,
+          ),
+        );
+        assert.lengthOf(h.warnings, scenario.warningCount);
+        if (scenario.name === "retry-recovered-session")
+          assert.include(h.warnings[0]?.output ?? "", "attempt 1 of 2");
+        if ("reasoning" in scenario)
+          assert.isTrue(
+            h.latestItems.some(
+              (item) => item.type === "reasoning" && item.text.length > 0 && !item.streaming,
+            ),
+          );
+        if ("error" in scenario) {
+          const failure = h.terminal[0]?.failure;
+          assert.include(failure?.message ?? "", scenario.error);
+          if (scenario.name !== "auth-401" && scenario.name !== "provider-model-not-found")
+            assert.equal(failure?.message, scenario.error);
+          assert.equal(failure?.class, "provider_error");
+          assert.equal(h.terminal[0]?.threadDisposition, "reusable");
+          assert.equal(h.runtime.providerSession.lastError, failure?.message);
+          assert.equal(h.runtime.providerSession.status, "ready");
+        } else assert.isNull(h.terminal[0]?.failure);
+        if ("stopReason" in scenario)
+          assert.lengthOf(
+            h.latestItems.filter(
+              (item) =>
+                item.type === "notification" &&
+                item.source.kind === "output_truncated" &&
+                item.source.stopReason === scenario.stopReason,
+            ),
+            1,
+          );
+        if ("tool" in scenario)
+          assert.isTrue(
+            h.latestItems.some(
+              (item) =>
+                item.type === "dynamic_tool" &&
+                item.toolName === "read" &&
+                item.status === "completed",
+            ),
+          );
+        if (!("interrupt" in scenario)) assert.deepEqual(h.late, []);
+        assert.isFalse(
+          h.late.some(
+            (event) =>
+              event.type !== "provider_session.updated" && event.type !== "provider_thread.updated",
+          ),
+        );
+        if (scenario.status === "completed")
+          assert.equal(h.runtime.providerSession.status, "ready");
+      }),
+    ),
+  );
 
   it.effect(
     "reads native OMP reasoning after a model default reset and preserves a clamped selection across steering and another turn",
@@ -1321,65 +1321,64 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       ),
   );
 
-  for (const invalid of ["max", "plain"] as const) {
-    it.effect(
-      `refuses native OMP ${invalid} reasoning before mutation and keeps the current session reusable`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const h = yield* modelHarness({
-              models: [
-                reasoningModel("vendor", "a"),
-                reasoningModel("vendor", "b", ["low", "medium", "high"]),
-                { provider: "vendor", id: "plain", input: ["text"] },
-              ],
-            });
-            const error = yield* h
-              .start(
-                1,
-                invalid === "plain" ? "vendor/plain" : "vendor/b",
-                invalid === "plain" ? "high" : "max",
-              )
-              .pipe(Effect.flip);
-            const detail = encodeDiagnostic(error);
-            assert.include(
-              detail,
-              invalid === "plain" ? "no reasoning levels" : "low, medium, high",
-            );
-            assert.deepEqual(h.mutations(), []);
-            assert.deepEqual(h.peer.state.model, { provider: "vendor", id: "a" });
-            assert.equal(h.peer.state.thinkingLevel, "high");
-            assert.equal(h.peer.state.prompts.length, 0);
-            assert.equal(h.runtime.providerSession.status, "ready");
-          }),
-        ),
-    );
-  }
+  it.effect.each(
+    (["max", "plain"] as const).map((invalid) => ({
+      caseTitle: `refuses native OMP ${invalid} reasoning before mutation and keeps the current session reusable`,
+      invalid,
+    })),
+  )("$caseTitle", ({ invalid }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* modelHarness({
+          models: [
+            reasoningModel("vendor", "a"),
+            reasoningModel("vendor", "b", ["low", "medium", "high"]),
+            { provider: "vendor", id: "plain", input: ["text"] },
+          ],
+        });
+        const error = yield* h
+          .start(
+            1,
+            invalid === "plain" ? "vendor/plain" : "vendor/b",
+            invalid === "plain" ? "high" : "max",
+          )
+          .pipe(Effect.flip);
+        const detail = encodeDiagnostic(error);
+        assert.include(detail, invalid === "plain" ? "no reasoning levels" : "low, medium, high");
+        assert.deepEqual(h.mutations(), []);
+        assert.deepEqual(h.peer.state.model, { provider: "vendor", id: "a" });
+        assert.equal(h.peer.state.thinkingLevel, "high");
+        assert.equal(h.peer.state.prompts.length, 0);
+        assert.equal(h.runtime.providerSession.status, "ready");
+      }),
+    ),
+  );
 
-  for (const provider of ["scient_local", "ollama"] as const) {
-    it.effect(
-      `refreshes native OMP ${provider} registration before completing a late model selection`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const h = yield* modelHarness({ lateModels: [reasoningModel(provider, "late")] });
-            yield* h.start(1, `${provider}/late`, provider === "scient_local" ? "high" : undefined);
-            yield* h.peer.finish();
-            yield* h.terminal();
-            assert.include(h.peer.state.log, "refresh");
-            const writes = h.mutations();
-            assert.deepEqual(
-              writes,
-              provider === "scient_local"
-                ? ["set_model scient_local/late", "set_thinking_level high"]
-                : ["set_model ollama/late", "set_model ollama/late"],
-            );
-            assert.deepEqual(h.peer.state.model, { provider, id: "late" });
-            assert.equal(h.peer.state.prompts.length, 1);
-          }),
-        ),
-    );
-  }
+  it.effect.each(
+    (["scient_local", "ollama"] as const).map((provider) => ({
+      caseTitle: `refreshes native OMP ${provider} registration before completing a late model selection`,
+      provider,
+    })),
+  )("$caseTitle", ({ provider }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* modelHarness({ lateModels: [reasoningModel(provider, "late")] });
+        yield* h.start(1, `${provider}/late`, provider === "scient_local" ? "high" : undefined);
+        yield* h.peer.finish();
+        yield* h.terminal();
+        assert.include(h.peer.state.log, "refresh");
+        const writes = h.mutations();
+        assert.deepEqual(
+          writes,
+          provider === "scient_local"
+            ? ["set_model scient_local/late", "set_thinking_level high"]
+            : ["set_model ollama/late", "set_model ollama/late"],
+        );
+        assert.deepEqual(h.peer.state.model, { provider, id: "late" });
+        assert.equal(h.peer.state.prompts.length, 1);
+      }),
+    ),
+  );
 
   it.effect(
     "preserves the native OMP pending connection message without dispatch or selection mutation",
@@ -1420,44 +1419,45 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       ),
   );
 
-  for (const recoverable of [true, false] as const) {
-    it.effect(
-      `rechecks native OMP unknown reasoning before mutation with recovery=${recoverable}`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            let reportLevel = false;
-            const h = yield* modelHarness({
-              models: [
-                reasoningModel("vendor", "a"),
-                reasoningModel("vendor", "b", ["low", "high"], "high"),
-              ],
-              reportThinkingLevel: () => reportLevel,
-              setThinkingLevelError: (level) =>
-                level === "low" ? "Thinking level refused" : undefined,
-            });
-            reportLevel = recoverable;
-            const error = yield* h.start(1, "vendor/b", "low").pipe(Effect.flip);
-            assert.include(
-              encodeDiagnostic(error),
-              recoverable ? "Thinking level refused" : "current reasoning level",
-            );
-            assert.deepEqual(h.peer.state.model, { provider: "vendor", id: "a" });
-            assert.equal(h.peer.state.thinkingLevel, "high");
-            assert.equal(h.peer.state.prompts.length, 0);
-            assert.equal(h.runtime.providerSession.status, "ready");
-            if (!recoverable) {
-              assert.deepEqual(h.mutations(), []);
-              yield* h.terminal();
-              yield* h.start(2, "vendor/a");
-              yield* h.peer.finish();
-              yield* h.terminal();
-              assert.equal(h.peer.state.prompts.length, 1);
-            }
-          }),
-        ),
-    );
-  }
+  it.effect.each(
+    ([true, false] as const).map((recoverable) => ({
+      caseTitle: `rechecks native OMP unknown reasoning before mutation with recovery=${recoverable}`,
+      recoverable,
+    })),
+  )("$caseTitle", ({ recoverable }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let reportLevel = false;
+        const h = yield* modelHarness({
+          models: [
+            reasoningModel("vendor", "a"),
+            reasoningModel("vendor", "b", ["low", "high"], "high"),
+          ],
+          reportThinkingLevel: () => reportLevel,
+          setThinkingLevelError: (level) =>
+            level === "low" ? "Thinking level refused" : undefined,
+        });
+        reportLevel = recoverable;
+        const error = yield* h.start(1, "vendor/b", "low").pipe(Effect.flip);
+        assert.include(
+          encodeDiagnostic(error),
+          recoverable ? "Thinking level refused" : "current reasoning level",
+        );
+        assert.deepEqual(h.peer.state.model, { provider: "vendor", id: "a" });
+        assert.equal(h.peer.state.thinkingLevel, "high");
+        assert.equal(h.peer.state.prompts.length, 0);
+        assert.equal(h.runtime.providerSession.status, "ready");
+        if (!recoverable) {
+          assert.deepEqual(h.mutations(), []);
+          yield* h.terminal();
+          yield* h.start(2, "vendor/a");
+          yield* h.peer.finish();
+          yield* h.terminal();
+          assert.equal(h.peer.state.prompts.length, 1);
+        }
+      }),
+    ),
+  );
 
   it.effect(
     "retains native OMP's actual model when restoration is refused and reselects on the next turn",
@@ -1520,21 +1520,22 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       ),
   );
 
-  for (const command of ["/model", "/new", "/fork", "/review"] as const) {
-    it.effect(
-      `refuses native OMP ${command} before changing selection or delivering a prompt`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const h = yield* modelHarness();
-            yield* h.start(1, "vendor/b", "low", command).pipe(Effect.flip);
-            assert.deepEqual(h.mutations(), []);
-            assert.deepEqual(h.peer.state.model, { provider: "vendor", id: "a" });
-            assert.equal(h.peer.state.prompts.length, 0);
-          }),
-        ),
-    );
-  }
+  it.effect.each(
+    (["/model", "/new", "/fork", "/review"] as const).map((command) => ({
+      caseTitle: `refuses native OMP ${command} before changing selection or delivering a prompt`,
+      command,
+    })),
+  )("$caseTitle", ({ command }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* modelHarness();
+        yield* h.start(1, "vendor/b", "low", command).pipe(Effect.flip);
+        assert.deepEqual(h.mutations(), []);
+        assert.deepEqual(h.peer.state.model, { provider: "vendor", id: "a" });
+        assert.equal(h.peer.state.prompts.length, 0);
+      }),
+    ),
+  );
 
   it.effect(
     "refuses a foreign native OMP selection while preserving slash-path text and admitted commands",
@@ -1774,46 +1775,47 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       ),
   );
 
-  for (const trigger of ["stop", "process-exit"] as const) {
-    it.effect(
-      `terminalizes native OMP ordinary calls before ${trigger} receipts and retains partial output`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const h = yield* ordinaryToolsHarness();
-            yield* h.peer.emit([
-              nativeToolStart("shell", "bash", { command: "sleep 10" }),
-              { type: "tool_stream_update", toolCallId: "shell", update: { text: "partial text" } },
-            ]);
-            yield* h.takeUntil(
-              (event) =>
-                event.type === "turn_item.updated" &&
-                event.turnItem.type === "dynamic_tool" &&
-                event.turnItem.output === "partial text",
-            );
-            if (trigger === "stop") yield* h.stop();
-            else {
-              yield* h.peer.close();
-              yield* h.takeUntil((event) => event.type === "turn.terminal");
-            }
-            const terminal = h.recorded.findIndex((event) => event.type === "turn.terminal");
-            const finalTools = h.recorded.flatMap((event, index) =>
-              event.type === "turn_item.updated" &&
-              event.turnItem.type === "dynamic_tool" &&
-              event.turnItem.status !== "running"
-                ? [{ item: event.turnItem, index }]
-                : [],
-            );
-            assert.equal(finalTools.length, 1);
-            assert.isBelow(finalTools[0]!.index, terminal);
-            assert.equal(h.tool("shell")?.status, trigger === "stop" ? "interrupted" : "failed");
-            assert.deepEqual(h.tool("shell")?.input, { command: "sleep 10" });
-            assert.equal(h.tool("shell")?.output, "partial text");
-            assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
-          }),
-        ),
-    );
-  }
+  it.effect.each(
+    (["stop", "process-exit"] as const).map((trigger) => ({
+      caseTitle: `terminalizes native OMP ordinary calls before ${trigger} receipts and retains partial output`,
+      trigger,
+    })),
+  )("$caseTitle", ({ trigger }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* ordinaryToolsHarness();
+        yield* h.peer.emit([
+          nativeToolStart("shell", "bash", { command: "sleep 10" }),
+          { type: "tool_stream_update", toolCallId: "shell", update: { text: "partial text" } },
+        ]);
+        yield* h.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.output === "partial text",
+        );
+        if (trigger === "stop") yield* h.stop();
+        else {
+          yield* h.peer.close();
+          yield* h.takeUntil((event) => event.type === "turn.terminal");
+        }
+        const terminal = h.recorded.findIndex((event) => event.type === "turn.terminal");
+        const finalTools = h.recorded.flatMap((event, index) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "dynamic_tool" &&
+          event.turnItem.status !== "running"
+            ? [{ item: event.turnItem, index }]
+            : [],
+        );
+        assert.equal(finalTools.length, 1);
+        assert.isBelow(finalTools[0]!.index, terminal);
+        assert.equal(h.tool("shell")?.status, trigger === "stop" ? "interrupted" : "failed");
+        assert.deepEqual(h.tool("shell")?.input, { command: "sleep 10" });
+        assert.equal(h.tool("shell")?.output, "partial text");
+        assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
+      }),
+    ),
+  );
 
   it.effect("keeps native OMP failed calls terminal across duplicate frames and Stop", () =>
     Effect.scoped(
@@ -2117,224 +2119,223 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     ),
   );
 
-  for (const method of ["confirm", "select", "input"] as const) {
-    it.effect(
-      `answers native OMP ${method} while prompt acceptance is still pending and Stops once`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const peer = scriptedOmpRpc({
-              models: [],
-              initial: { provider: "test", id: "selected" },
-              silentReply: (frame) => frame.type === "prompt",
-            });
-            const h = yield* harness(false, { makeProcess: peer.makeProcess });
-            yield* h.runtime.startTurn(h.input);
-            yield* peer.promptDelivered();
-            yield* peer.emit([
-              { type: "agent_start" },
-              {
-                type: "extension_ui_request",
-                id: "native-dialog",
-                method,
-                title: "Choose",
-                message: "Continue?",
-                ...(method === "select" ? { options: ["one", "two"] } : {}),
-              },
-            ]);
-            const pending = yield* h.takeUntil(
-              (event) =>
-                event.type === "runtime_request.updated" &&
-                event.runtimeRequest.status === "pending",
-            );
-            if (pending.type !== "runtime_request.updated")
-              return yield* Effect.die("Missing native dialog");
-            if (method === "select") {
-              const invalid = yield* h.runtime
-                .respondToRuntimeRequest({
-                  requestId: pending.runtimeRequest.id,
-                  decision: "accept",
-                  answers: { "native-dialog": "not offered" },
-                })
-                .pipe(Effect.result);
-              assert.equal(invalid._tag, "Failure");
-              assert.equal(
-                peer.state.frames.filter((frame) => frame.type === "extension_ui_response").length,
-                0,
-              );
-            }
-            yield* h.runtime
-              .respondToRuntimeRequest({
-                requestId: pending.runtimeRequest.id,
-                decision: "accept",
-                ...(method === "confirm"
-                  ? {}
-                  : { answers: { "native-dialog": method === "select" ? "two" : "typed answer" } }),
-              })
-              .pipe(Effect.timeout("2 seconds"), TestClock.withLive);
-            const replies = peer.state.frames.filter(
-              (frame) => frame.type === "extension_ui_response",
-            );
-            assert.equal(replies.length, 1);
-            assert.equal(replies[0]?.id, "native-dialog");
-            if (method === "confirm") assert.equal(replies[0]?.confirmed, true);
-            else assert.equal(replies[0]?.value, method === "select" ? "two" : "typed answer");
-            const repeated = yield* h.runtime
-              .respondToRuntimeRequest({ requestId: pending.runtimeRequest.id, decision: "accept" })
-              .pipe(Effect.result);
-            assert.equal(repeated._tag, "Failure");
-            const turn = h.recorded.find((event) => event.type === "provider_turn.updated");
-            if (turn?.type !== "provider_turn.updated")
-              return yield* Effect.die("Missing native dialog turn");
-            yield* h.runtime
-              .interruptTurn({
-                providerThread: h.input.providerThread,
-                providerTurnId: turn.providerTurn.id,
-              })
-              .pipe(Effect.timeout("2 seconds"), TestClock.withLive);
-            const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
-            if (terminal.type !== "turn.terminal")
-              return yield* Effect.die("Missing native dialog Stop");
-            assert.equal(terminal.status, "interrupted");
-            assert.equal(peer.state.shutdowns, 1);
-            assert.equal(
-              peer.state.frames.some((frame) => frame.type === "abort"),
-              false,
-            );
-            assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
-          }),
-        ),
-    );
-  }
-
-  for (const accepted of [true, false] as const) {
-    it.effect(
-      `retains an unknown native OMP outcome on process loss with accepted=${accepted}`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const peer = scriptedOmpRpc({
-              models: [],
-              initial: { provider: "test", id: "selected" },
-              ...(accepted ? {} : { silentReply: (frame) => frame.type === "prompt" }),
-            });
-            const h = yield* harness(false, { makeProcess: peer.makeProcess });
-            yield* h.runtime.startTurn(h.input);
-            yield* peer.promptDelivered();
-            yield* peer.emit([
-              { type: "agent_start" },
-              nativeToolStart("unconfirmed-tool", "bash", { command: "could still have run" }),
-            ]);
-            yield* h.takeUntil(
-              (event) =>
-                event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool",
-            );
-            yield* peer.close();
-            const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
-            if (terminal.type !== "turn.terminal")
-              return yield* Effect.die("Missing unknown native outcome");
-            assert.equal(terminal.status, "failed");
-            assert.equal(terminal.failure?.class, "unknown");
-            assert.include(terminal.failure?.message ?? "", "outcome is unknown");
-            assert.equal(terminal.threadDisposition, "broken");
-            assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
-            assert.equal(h.runtime.providerSession.status, "error");
-          }),
-        ),
-    );
-  }
-
-  for (const granted of [true, false] as const) {
-    it.effect(`loads native OMP private Scient bootstrap with a tool credential=${granted}`, () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const threadId = ThreadId.make(`native-bootstrap-${granted}`);
-          const token = "Bearer synthetic-scient-omp-token";
-          yield* Effect.addFinalizer(() => Effect.sync(() => clearMcpProviderSession(threadId)));
-          const peer = scriptedOmpRpc({
-            models: [],
-            initial: { provider: "test", id: "selected" },
-          });
-          let extension: string | undefined;
-          let bootstrap:
-            | { path: string; value: ReturnType<typeof decodeNativeBootstrap> }
-            | undefined;
-          let launch: Parameters<typeof peer.makeProcess>[0] | undefined;
-          const h = yield* harness(false, {
-            threadId,
-            environment: ompProcessEnvironment({
-              platform: "darwin",
-              baseEnv: {
-                PATH: "/usr/bin",
-                SCIENT_OMP_MCP_ENDPOINT: "http://127.0.0.1:1/inherited",
-                SCIENT_OMP_MCP_AUTHORIZATION: "Bearer inherited",
-                SCIENT_OMP_AWARENESS: "inherited awareness",
-              },
-            }),
-            prepareOpen: (input) =>
-              Effect.sync(() => {
-                if (granted)
-                  setMcpProviderSession({
-                    environmentId: EnvironmentId.make("bootstrap-environment"),
-                    threadId,
-                    providerSessionId: "bootstrap-session",
-                    providerInstanceId: input.modelSelection.instanceId,
-                    endpoint: "http://127.0.0.1:43123/mcp",
-                    authorizationHeader: token,
-                    capabilities: new Set(["preview", "skills:read", "sources:read"]),
-                    agentDeviceEnvironment: { PATH: "/scient/device-shim", PATH_SEPARATOR: ":" },
-                  });
-              }),
-            makeProcess: (options) =>
-              Effect.gen(function* () {
-                launch = options;
-                const args = options.extraArgs ?? [];
-                extension = args[args.indexOf("--extension") + 1];
-                if (!extension) return yield* Effect.die("Missing native Scient extension");
-                assert.equal(NodeFS.statSync(extension).mode & 0o777, 0o600);
-                const source = NodeFS.readFileSync(extension, "utf8");
-                const embedded = /\bSCIENT_BOOTSTRAP_PATH = ("(?:[^"\\]|\\.)*");/u.exec(
-                  source,
-                )?.[1];
-                if (!embedded) return yield* Effect.die("Missing native private bootstrap path");
-                const bootstrapPath = decodeImagePath(embedded);
-                assert.equal(NodeFS.statSync(bootstrapPath).mode & 0o777, 0o600);
-                bootstrap = {
-                  path: bootstrapPath,
-                  value: decodeNativeBootstrap(NodeFS.readFileSync(bootstrapPath, "utf8")),
-                };
-                assert.equal(source, ompScientExtensionSource(ompTarget, bootstrapPath));
-                assert.notInclude(source, "synthetic-scient-omp-token");
-                assert.notInclude(source, "http://127.0.0.1:43123/mcp");
-                NodeFS.unlinkSync(bootstrapPath);
-                return yield* peer.makeProcess(options);
-              }),
-          });
-          if (!launch || !extension || !bootstrap)
-            return yield* Effect.die("Native bootstrap was not observed");
-          assert.deepEqual(launch.extraArgs, ["--extension", extension]);
-          assert.equal(h.path.dirname(extension), NodeFS.realpathSync(launch.sessionDir!));
-          assert.equal(h.path.dirname(bootstrap.path), h.path.dirname(extension));
-          assert.notInclude(encodeDiagnostic(launch.env), "synthetic-scient-omp-token");
-          assert.deepEqual(
-            Object.keys(launch.env ?? {}).filter((name) => name.startsWith("SCIENT_")),
-            [],
+  it.effect.each(
+    (["confirm", "select", "input"] as const).map((method) => ({
+      caseTitle: `answers native OMP ${method} while prompt acceptance is still pending and Stops once`,
+      method,
+    })),
+  )("$caseTitle", ({ method }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+          silentReply: (frame) => frame.type === "prompt",
+        });
+        const h = yield* harness(false, { makeProcess: peer.makeProcess });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        yield* peer.emit([
+          { type: "agent_start" },
+          {
+            type: "extension_ui_request",
+            id: "native-dialog",
+            method,
+            title: "Choose",
+            message: "Continue?",
+            ...(method === "select" ? { options: ["one", "two"] } : {}),
+          },
+        ]);
+        const pending = yield* h.takeUntil(
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+        );
+        if (pending.type !== "runtime_request.updated")
+          return yield* Effect.die("Missing native dialog");
+        if (method === "select") {
+          const invalid = yield* h.runtime
+            .respondToRuntimeRequest({
+              requestId: pending.runtimeRequest.id,
+              decision: "accept",
+              answers: { "native-dialog": "not offered" },
+            })
+            .pipe(Effect.result);
+          assert.equal(invalid._tag, "Failure");
+          assert.equal(
+            peer.state.frames.filter((frame) => frame.type === "extension_ui_response").length,
+            0,
           );
-          assert.equal(launch.env?.PATH, granted ? "/scient/device-shim:/usr/bin" : "/usr/bin");
-          assert.equal(bootstrap.value.endpoint, granted ? "http://127.0.0.1:43123/mcp" : null);
-          assert.equal(bootstrap.value.authorization, granted ? token : null);
-          assert.isTrue(bootstrap.value.awareness.startsWith(SCIENT_CORE_AWARENESS));
-          assert.notInclude(bootstrap.value.awareness, "inherited awareness");
-          if (granted) {
-            assert.include(bootstrap.value.awareness, "## Scient browser");
-            assert.include(bootstrap.value.awareness, "## Scient skills");
-            assert.include(bootstrap.value.awareness, "`scient_skill_load`");
-          } else assert.equal(bootstrap.value.awareness, SCIENT_CORE_AWARENESS);
-          assert.isFalse(NodeFS.existsSync(bootstrap.path));
-        }),
-      ),
-    );
-  }
+        }
+        yield* h.runtime
+          .respondToRuntimeRequest({
+            requestId: pending.runtimeRequest.id,
+            decision: "accept",
+            ...(method === "confirm"
+              ? {}
+              : { answers: { "native-dialog": method === "select" ? "two" : "typed answer" } }),
+          })
+          .pipe(Effect.timeout("2 seconds"), TestClock.withLive);
+        const replies = peer.state.frames.filter((frame) => frame.type === "extension_ui_response");
+        assert.equal(replies.length, 1);
+        assert.equal(replies[0]?.id, "native-dialog");
+        if (method === "confirm") assert.equal(replies[0]?.confirmed, true);
+        else assert.equal(replies[0]?.value, method === "select" ? "two" : "typed answer");
+        const repeated = yield* h.runtime
+          .respondToRuntimeRequest({ requestId: pending.runtimeRequest.id, decision: "accept" })
+          .pipe(Effect.result);
+        assert.equal(repeated._tag, "Failure");
+        const turn = h.recorded.find((event) => event.type === "provider_turn.updated");
+        if (turn?.type !== "provider_turn.updated")
+          return yield* Effect.die("Missing native dialog turn");
+        yield* h.runtime
+          .interruptTurn({
+            providerThread: h.input.providerThread,
+            providerTurnId: turn.providerTurn.id,
+          })
+          .pipe(Effect.timeout("2 seconds"), TestClock.withLive);
+        const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+        if (terminal.type !== "turn.terminal")
+          return yield* Effect.die("Missing native dialog Stop");
+        assert.equal(terminal.status, "interrupted");
+        assert.equal(peer.state.shutdowns, 1);
+        assert.equal(
+          peer.state.frames.some((frame) => frame.type === "abort"),
+          false,
+        );
+        assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
+      }),
+    ),
+  );
+
+  it.effect.each(
+    ([true, false] as const).map((accepted) => ({
+      caseTitle: `retains an unknown native OMP outcome on process loss with accepted=${accepted}`,
+      accepted,
+    })),
+  )("$caseTitle", ({ accepted }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+          ...(accepted ? {} : { silentReply: (frame) => frame.type === "prompt" }),
+        });
+        const h = yield* harness(false, { makeProcess: peer.makeProcess });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        yield* peer.emit([
+          { type: "agent_start" },
+          nativeToolStart("unconfirmed-tool", "bash", { command: "could still have run" }),
+        ]);
+        yield* h.takeUntil(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool",
+        );
+        yield* peer.close();
+        const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+        if (terminal.type !== "turn.terminal")
+          return yield* Effect.die("Missing unknown native outcome");
+        assert.equal(terminal.status, "failed");
+        assert.equal(terminal.failure?.class, "unknown");
+        assert.include(terminal.failure?.message ?? "", "outcome is unknown");
+        assert.equal(terminal.threadDisposition, "broken");
+        assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
+        assert.equal(h.runtime.providerSession.status, "error");
+      }),
+    ),
+  );
+
+  it.effect.each(
+    ([true, false] as const).map((granted) => ({
+      caseTitle: `loads native OMP private Scient bootstrap with a tool credential=${granted}`,
+      granted,
+    })),
+  )("$caseTitle", ({ granted }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const threadId = ThreadId.make(`native-bootstrap-${granted}`);
+        const token = "Bearer synthetic-scient-omp-token";
+        yield* Effect.addFinalizer(() => Effect.sync(() => clearMcpProviderSession(threadId)));
+        const peer = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+        });
+        let extension: string | undefined;
+        let bootstrap:
+          | { path: string; value: ReturnType<typeof decodeNativeBootstrap> }
+          | undefined;
+        let launch: Parameters<typeof peer.makeProcess>[0] | undefined;
+        const h = yield* harness(false, {
+          threadId,
+          environment: ompProcessEnvironment({
+            platform: "darwin",
+            baseEnv: {
+              PATH: "/usr/bin",
+              SCIENT_OMP_MCP_ENDPOINT: "http://127.0.0.1:1/inherited",
+              SCIENT_OMP_MCP_AUTHORIZATION: "Bearer inherited",
+              SCIENT_OMP_AWARENESS: "inherited awareness",
+            },
+          }),
+          prepareOpen: (input) =>
+            Effect.sync(() => {
+              if (granted)
+                setMcpProviderSession({
+                  environmentId: EnvironmentId.make("bootstrap-environment"),
+                  threadId,
+                  providerSessionId: "bootstrap-session",
+                  providerInstanceId: input.modelSelection.instanceId,
+                  endpoint: "http://127.0.0.1:43123/mcp",
+                  authorizationHeader: token,
+                  capabilities: new Set(["preview", "skills:read", "sources:read"]),
+                  agentDeviceEnvironment: { PATH: "/scient/device-shim", PATH_SEPARATOR: ":" },
+                });
+            }),
+          makeProcess: (options) =>
+            Effect.gen(function* () {
+              launch = options;
+              const args = options.extraArgs ?? [];
+              extension = args[args.indexOf("--extension") + 1];
+              if (!extension) return yield* Effect.die("Missing native Scient extension");
+              assert.equal(NodeFS.statSync(extension).mode & 0o777, 0o600);
+              const source = NodeFS.readFileSync(extension, "utf8");
+              const embedded = /\bSCIENT_BOOTSTRAP_PATH = ("(?:[^"\\]|\\.)*");/u.exec(source)?.[1];
+              if (!embedded) return yield* Effect.die("Missing native private bootstrap path");
+              const bootstrapPath = decodeImagePath(embedded);
+              assert.equal(NodeFS.statSync(bootstrapPath).mode & 0o777, 0o600);
+              bootstrap = {
+                path: bootstrapPath,
+                value: decodeNativeBootstrap(NodeFS.readFileSync(bootstrapPath, "utf8")),
+              };
+              assert.equal(source, ompScientExtensionSource(ompTarget, bootstrapPath));
+              assert.notInclude(source, "synthetic-scient-omp-token");
+              assert.notInclude(source, "http://127.0.0.1:43123/mcp");
+              NodeFS.unlinkSync(bootstrapPath);
+              return yield* peer.makeProcess(options);
+            }),
+        });
+        if (!launch || !extension || !bootstrap)
+          return yield* Effect.die("Native bootstrap was not observed");
+        assert.deepEqual(launch.extraArgs, ["--extension", extension]);
+        assert.equal(h.path.dirname(extension), NodeFS.realpathSync(launch.sessionDir!));
+        assert.equal(h.path.dirname(bootstrap.path), h.path.dirname(extension));
+        assert.notInclude(encodeDiagnostic(launch.env), "synthetic-scient-omp-token");
+        assert.deepEqual(
+          Object.keys(launch.env ?? {}).filter((name) => name.startsWith("SCIENT_")),
+          [],
+        );
+        assert.equal(launch.env?.PATH, granted ? "/scient/device-shim:/usr/bin" : "/usr/bin");
+        assert.equal(bootstrap.value.endpoint, granted ? "http://127.0.0.1:43123/mcp" : null);
+        assert.equal(bootstrap.value.authorization, granted ? token : null);
+        assert.isTrue(bootstrap.value.awareness.startsWith(SCIENT_CORE_AWARENESS));
+        assert.notInclude(bootstrap.value.awareness, "inherited awareness");
+        if (granted) {
+          assert.include(bootstrap.value.awareness, "## Scient browser");
+          assert.include(bootstrap.value.awareness, "## Scient skills");
+          assert.include(bootstrap.value.awareness, "`scient_skill_load`");
+        } else assert.equal(bootstrap.value.awareness, SCIENT_CORE_AWARENESS);
+        assert.isFalse(NodeFS.existsSync(bootstrap.path));
+      }),
+    ),
+  );
 
   it.effect(
     "refuses a foreign native OMP tool credential before launch and frees its lock for an immediate retry",
@@ -2382,155 +2383,157 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       ),
   );
 
-  for (const command of [
-    "set_subagent_subscription",
-    "new_session",
-    "get_state",
-    "get_available_commands",
-  ] as const) {
-    it.effect(`cleans native OMP ${command} startup failure before a same-owner retry`, () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const peer = scriptedOmpRpc({
-            models: [],
-            initial: { provider: "test", id: "selected" },
-            commandError: (frame) =>
-              frame.type === command ? "Synthetic startup failure" : undefined,
-          });
-          const healthy = scriptedOmpRpc({
-            models: [],
-            initial: { provider: "test", id: "selected" },
-          });
-          let launches = 0;
-          let root: string | undefined;
-          let retry: Effect.Effect<unknown, ProviderAdapterV2Error, Scope.Scope> =
-            Effect.die("Missing startup retry");
-          const refused = yield* harness(false, {
-            prepareOpen: (input, adapter) =>
-              Effect.sync(() => {
-                retry = adapter.openSession(input);
-              }),
-            makeProcess: (options) => {
-              root = options.sessionDir;
-              return (launches++ === 0 ? peer : healthy).makeProcess(options);
-            },
-          }).pipe(Effect.result);
-          assert.equal(refused._tag, "Failure");
-          assert.equal(peer.state.shutdowns, 1);
-          if (!root) return yield* Effect.die("Missing native startup root");
-          assert.isFalse(NodeFS.existsSync(`${root}/.session.lock`));
-          assert.deepEqual(
-            NodeFS.readdirSync(root).filter((file) => file.startsWith("scient-extension-")),
-            [],
+  it.effect.each(
+    (
+      ["set_subagent_subscription", "new_session", "get_state", "get_available_commands"] as const
+    ).map((command) => ({
+      caseTitle: `cleans native OMP ${command} startup failure before a same-owner retry`,
+      command,
+    })),
+  )("$caseTitle", ({ command }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+          commandError: (frame) =>
+            frame.type === command ? "Synthetic startup failure" : undefined,
+        });
+        const healthy = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+        });
+        let launches = 0;
+        let root: string | undefined;
+        let retry: Effect.Effect<unknown, ProviderAdapterV2Error, Scope.Scope> =
+          Effect.die("Missing startup retry");
+        const refused = yield* harness(false, {
+          prepareOpen: (input, adapter) =>
+            Effect.sync(() => {
+              retry = adapter.openSession(input);
+            }),
+          makeProcess: (options) => {
+            root = options.sessionDir;
+            return (launches++ === 0 ? peer : healthy).makeProcess(options);
+          },
+        }).pipe(Effect.result);
+        assert.equal(refused._tag, "Failure");
+        assert.equal(peer.state.shutdowns, 1);
+        if (!root) return yield* Effect.die("Missing native startup root");
+        assert.isFalse(NodeFS.existsSync(`${root}/.session.lock`));
+        assert.deepEqual(
+          NodeFS.readdirSync(root).filter((file) => file.startsWith("scient-extension-")),
+          [],
+        );
+        yield* retry;
+        assert.equal(launches, 2);
+      }),
+    ),
+  );
+
+  it.effect.each(
+    (["user-stop", "process-loss", "owner-close"] as const).map((closePath) => ({
+      caseTitle: `removes native OMP private files and lock on ${closePath}`,
+      closePath,
+    })),
+  )("$caseTitle", ({ closePath }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const owned = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(owned, Exit.void));
+        const peer = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+        });
+        let root: string | undefined;
+        const h = yield* harness(false, {
+          makeProcess: (options) => {
+            root = options.sessionDir;
+            return peer.makeProcess(options);
+          },
+        }).pipe(Effect.provideService(Scope.Scope, owned));
+        if (!root) return yield* Effect.die("Missing native close root");
+        const privateFiles = () =>
+          NodeFS.readdirSync(root!).filter(
+            (file) => file.startsWith("scient-extension-") || file === ".session.lock",
           );
-          yield* retry;
-          assert.equal(launches, 2);
-        }),
-      ),
-    );
-  }
-
-  for (const closePath of ["user-stop", "process-loss", "owner-close"] as const) {
-    it.effect(`removes native OMP private files and lock on ${closePath}`, () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const owned = yield* Scope.make();
-          yield* Effect.addFinalizer(() => Scope.close(owned, Exit.void));
-          const peer = scriptedOmpRpc({
+        assert.equal(privateFiles().length, 2);
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        yield* peer.emit([{ type: "agent_start" }]);
+        const turn = yield* h.takeUntil((event) => event.type === "provider_turn.updated");
+        if (turn.type !== "provider_turn.updated")
+          return yield* Effect.die("Missing native close turn");
+        if (closePath === "user-stop")
+          yield* h.runtime.interruptTurn({
+            providerThread: h.input.providerThread,
+            providerTurnId: turn.providerTurn.id,
+          });
+        else if (closePath === "process-loss") yield* peer.close();
+        else yield* Scope.close(owned, Exit.void);
+        if (closePath !== "owner-close") {
+          const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+          if (terminal.type !== "turn.terminal")
+            return yield* Effect.die("Missing native close terminal");
+          assert.equal(terminal.status, closePath === "user-stop" ? "interrupted" : "failed");
+          assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
+        }
+        yield* Effect.gen(function* () {
+          while (privateFiles().length > 0) yield* Effect.sleep("10 millis");
+        }).pipe(Effect.timeout("2 seconds"), TestClock.withLive);
+        assert.deepEqual(privateFiles(), []);
+        assert.equal(peer.state.shutdowns, 1);
+        if (closePath !== "owner-close") {
+          const replacement = scriptedOmpRpc({
             models: [],
             initial: { provider: "test", id: "selected" },
           });
-          let root: string | undefined;
-          const h = yield* harness(false, {
-            makeProcess: (options) => {
-              root = options.sessionDir;
-              return peer.makeProcess(options);
-            },
-          }).pipe(Effect.provideService(Scope.Scope, owned));
-          if (!root) return yield* Effect.die("Missing native close root");
-          const privateFiles = () =>
-            NodeFS.readdirSync(root!).filter(
-              (file) => file.startsWith("scient-extension-") || file === ".session.lock",
-            );
-          assert.equal(privateFiles().length, 2);
-          yield* h.runtime.startTurn(h.input);
-          yield* peer.promptDelivered();
-          yield* peer.emit([{ type: "agent_start" }]);
-          const turn = yield* h.takeUntil((event) => event.type === "provider_turn.updated");
-          if (turn.type !== "provider_turn.updated")
-            return yield* Effect.die("Missing native close turn");
-          if (closePath === "user-stop")
-            yield* h.runtime.interruptTurn({
-              providerThread: h.input.providerThread,
-              providerTurnId: turn.providerTurn.id,
-            });
-          else if (closePath === "process-loss") yield* peer.close();
-          else yield* Scope.close(owned, Exit.void);
-          if (closePath !== "owner-close") {
-            const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
-            if (terminal.type !== "turn.terminal")
-              return yield* Effect.die("Missing native close terminal");
-            assert.equal(terminal.status, closePath === "user-stop" ? "interrupted" : "failed");
-            assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
-          }
-          yield* Effect.gen(function* () {
-            while (privateFiles().length > 0) yield* Effect.sleep("10 millis");
-          }).pipe(Effect.timeout("2 seconds"), TestClock.withLive);
-          assert.deepEqual(privateFiles(), []);
-          assert.equal(peer.state.shutdowns, 1);
-          if (closePath !== "owner-close") {
-            const replacement = scriptedOmpRpc({
-              models: [],
-              initial: { provider: "test", id: "selected" },
-            });
-            // A fresh adapter on the same native conversation must acquire the released lock.
-            yield* harness(false, {
-              threadId: h.openInput.threadId,
-              makeProcess: (options) => replacement.makeProcess(options),
-            });
-            assert.equal(replacement.state.shutdowns, 0);
-          }
-        }),
-      ),
-    );
-  }
+          // A fresh adapter on the same native conversation must acquire the released lock.
+          yield* harness(false, {
+            threadId: h.openInput.threadId,
+            makeProcess: (options) => replacement.makeProcess(options),
+          });
+          assert.equal(replacement.state.shutdowns, 0);
+        }
+      }),
+    ),
+  );
 
-  for (const scenario of [
-    { version: "18.3.1", rejected: false, filters: 1 },
-    { version: "18.3.1", rejected: true, filters: 1 },
-    { version: "18.2.8", rejected: false, filters: 0 },
-  ] as const) {
-    it.effect(
-      `keeps native OMP ${scenario.version} startup healthy with event filter rejected=${scenario.rejected}`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const h = yield* imageHarness(1_048_576, {
-              version: scenario.version,
-              ...(scenario.rejected
-                ? { eventFilterError: "Unknown command: set_event_filter" }
-                : {}),
-            });
-            const filters = h.peer.state.frames.filter(
-              (frame) => frame.type === "set_event_filter",
-            );
-            assert.equal(filters.length, scenario.filters);
-            if (filters.length) assert.deepEqual(filters[0]?.events, [...OMP_KNOWN_EVENT_TYPES]);
-            assert.equal(h.runtime.providerSession.status, "ready");
-            yield* h.send(1, "Quiet text turn", []);
-            assert.equal(
-              h.recorded.some(
-                (event) =>
-                  event.type === "turn_item.updated" &&
-                  event.turnItem.type === "dynamic_tool" &&
-                  event.turnItem.title?.toLowerCase().includes("warning"),
-              ),
-              false,
-            );
-          }),
-        ),
-    );
-  }
+  it.effect.each(
+    (
+      [
+        { version: "18.3.1", rejected: false, filters: 1 },
+        { version: "18.3.1", rejected: true, filters: 1 },
+        { version: "18.2.8", rejected: false, filters: 0 },
+      ] as const
+    ).map((scenario) => ({
+      caseTitle: `keeps native OMP ${scenario.version} startup healthy with event filter rejected=${scenario.rejected}`,
+      scenario,
+    })),
+  )("$caseTitle", ({ scenario }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* imageHarness(1_048_576, {
+          version: scenario.version,
+          ...(scenario.rejected ? { eventFilterError: "Unknown command: set_event_filter" } : {}),
+        });
+        const filters = h.peer.state.frames.filter((frame) => frame.type === "set_event_filter");
+        assert.equal(filters.length, scenario.filters);
+        if (filters.length) assert.deepEqual(filters[0]?.events, [...OMP_KNOWN_EVENT_TYPES]);
+        assert.equal(h.runtime.providerSession.status, "ready");
+        yield* h.send(1, "Quiet text turn", []);
+        assert.equal(
+          h.recorded.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "dynamic_tool" &&
+              event.turnItem.title?.toLowerCase().includes("warning"),
+          ),
+          false,
+        );
+      }),
+    ),
+  );
 
   it.effect(
     "bounds native OMP startup before catalog discovery when a live peer stays silent",
@@ -2599,144 +2602,146 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     ),
   );
 
-  for (const scenario of [
-    {
-      name: "system-to-managed",
-      first: "/usr/local/bin/omp",
-      second: "/Users/test/.scient-next/provider-runtimes/omp/versions/18.3.1/darwin-arm64/omp",
-    },
-    {
-      name: "Homebrew-upgrade",
-      first: "/opt/homebrew/Cellar/omp/18.2.8/bin/omp",
-      second: "/opt/homebrew/Cellar/omp/18.3.1/bin/omp",
-    },
-    {
-      name: "custom-install",
-      first: "/opt/company/production/omp",
-      second: "/opt/company/testing/omp",
-    },
-    {
-      name: "tilde-to-absolute",
-      first: "omp",
-      second: "omp",
-      firstHome: "~/.omp-scient-resume-home",
-      secondHome: `${NodeOS.homedir()}/.omp-scient-resume-home`,
-    },
-    {
-      name: "absolute-to-tilde",
-      first: "omp",
-      second: "omp",
-      firstHome: `${NodeOS.homedir()}/.omp-scient-resume-home`,
-      secondHome: "~/.omp-scient-resume-home",
-    },
-  ]) {
-    it.effect(
-      `resumes native OMP across ${scenario.name} without changing conversation authority`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const firstScope = yield* Scope.make();
-            yield* Effect.addFinalizer(() => Scope.close(firstScope, Exit.void));
-            const firstPeer = scriptedOmpRpc({
-              models: [],
-              initial: { provider: "test", id: "selected" },
-              version: "18.2.8",
-            });
-            let firstCommand: string | undefined;
-            const first = yield* harness(false, {
-              binaryPath: scenario.first,
-              ...(scenario.firstHome ? { homePath: scenario.firstHome } : {}),
-              makeProcess: (options) => {
-                firstCommand = options.command;
-                return firstPeer.makeProcess(options);
-              },
-            }).pipe(Effect.provideService(Scope.Scope, firstScope));
-            const prior = first.input.providerThread;
-            assert.isDefined(prior.nativeMetadata?.resumeCursor);
-            const priorCursor = prior.nativeMetadata?.resumeCursor;
-            if (typeof priorCursor !== "object" || priorCursor === null)
-              return yield* Effect.die("Missing native cross-install cursor");
-            yield* Scope.close(firstScope, Exit.void);
-            const secondPeer = scriptedOmpRpc({
-              models: [],
-              initial: { provider: "test", id: "selected" },
-              version: "18.3.1",
-            });
-            let secondCommand: string | undefined;
-            const second = yield* harness(false, {
-              threadId: first.openInput.threadId,
-              binaryPath: scenario.second,
-              ...(scenario.secondHome ? { homePath: scenario.secondHome } : {}),
-              makeProcess: (options) => {
-                secondCommand = options.command;
-                return secondPeer.makeProcess(options);
-              },
-            });
-            const resumed = yield* second.runtime.resumeThread({ providerThread: prior });
-            assert.equal(firstCommand, scenario.first);
-            assert.equal(secondCommand, scenario.second);
-            assert.equal(resumed.id, prior.id);
-            assert.equal(resumed.nativeThreadRef?.nativeId, prior.nativeThreadRef?.nativeId);
-            assert.deepEqual(resumed.nativeMetadata?.resumeCursor, {
-              ...priorCursor,
-              ompVersion: "18.3.1",
-            });
-            assert.equal(
-              secondPeer.state.frames.filter((frame) => frame.type === "switch_session").length,
-              1,
-            );
-            assert.equal(firstPeer.state.shutdowns, 1);
-          }),
-        ),
-    );
-  }
+  it.effect.each(
+    [
+      {
+        name: "system-to-managed",
+        first: "/usr/local/bin/omp",
+        second: "/Users/test/.scient-next/provider-runtimes/omp/versions/18.3.1/darwin-arm64/omp",
+      },
+      {
+        name: "Homebrew-upgrade",
+        first: "/opt/homebrew/Cellar/omp/18.2.8/bin/omp",
+        second: "/opt/homebrew/Cellar/omp/18.3.1/bin/omp",
+      },
+      {
+        name: "custom-install",
+        first: "/opt/company/production/omp",
+        second: "/opt/company/testing/omp",
+      },
+      {
+        name: "tilde-to-absolute",
+        first: "omp",
+        second: "omp",
+        firstHome: "~/.omp-scient-resume-home",
+        secondHome: `${NodeOS.homedir()}/.omp-scient-resume-home`,
+      },
+      {
+        name: "absolute-to-tilde",
+        first: "omp",
+        second: "omp",
+        firstHome: `${NodeOS.homedir()}/.omp-scient-resume-home`,
+        secondHome: "~/.omp-scient-resume-home",
+      },
+    ].map((scenario) => ({
+      caseTitle: `resumes native OMP across ${scenario.name} without changing conversation authority`,
+      scenario,
+    })),
+  )("$caseTitle", ({ scenario }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(firstScope, Exit.void));
+        const firstPeer = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+          version: "18.2.8",
+        });
+        let firstCommand: string | undefined;
+        const first = yield* harness(false, {
+          binaryPath: scenario.first,
+          ...(scenario.firstHome ? { homePath: scenario.firstHome } : {}),
+          makeProcess: (options) => {
+            firstCommand = options.command;
+            return firstPeer.makeProcess(options);
+          },
+        }).pipe(Effect.provideService(Scope.Scope, firstScope));
+        const prior = first.input.providerThread;
+        assert.isDefined(prior.nativeMetadata?.resumeCursor);
+        const priorCursor = prior.nativeMetadata?.resumeCursor;
+        if (typeof priorCursor !== "object" || priorCursor === null)
+          return yield* Effect.die("Missing native cross-install cursor");
+        yield* Scope.close(firstScope, Exit.void);
+        const secondPeer = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+          version: "18.3.1",
+        });
+        let secondCommand: string | undefined;
+        const second = yield* harness(false, {
+          threadId: first.openInput.threadId,
+          binaryPath: scenario.second,
+          ...(scenario.secondHome ? { homePath: scenario.secondHome } : {}),
+          makeProcess: (options) => {
+            secondCommand = options.command;
+            return secondPeer.makeProcess(options);
+          },
+        });
+        const resumed = yield* second.runtime.resumeThread({ providerThread: prior });
+        assert.equal(firstCommand, scenario.first);
+        assert.equal(secondCommand, scenario.second);
+        assert.equal(resumed.id, prior.id);
+        assert.equal(resumed.nativeThreadRef?.nativeId, prior.nativeThreadRef?.nativeId);
+        assert.deepEqual(resumed.nativeMetadata?.resumeCursor, {
+          ...priorCursor,
+          ompVersion: "18.3.1",
+        });
+        assert.equal(
+          secondPeer.state.frames.filter((frame) => frame.type === "switch_session").length,
+          1,
+        );
+        assert.equal(firstPeer.state.shutdowns, 1);
+      }),
+    ),
+  );
 
-  for (const changed of ["home", "profile", "workspace"] as const) {
-    it.effect(
-      `refuses cross-install native OMP resume when its ${changed} changes before switching history`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const owned = yield* Scope.make();
-            yield* Effect.addFinalizer(() => Scope.close(owned, Exit.void));
-            const firstPeer = scriptedOmpRpc({
-              models: [],
-              initial: { provider: "test", id: "selected" },
-            });
-            const first = yield* harness(false, {
-              binaryPath: "/opt/company/production/omp",
-              homePath: "/synthetic/home-a",
-              profile: "production",
-              makeProcess: firstPeer.makeProcess,
-            }).pipe(Effect.provideService(Scope.Scope, owned));
-            yield* Scope.close(owned, Exit.void);
-            const otherWorkspace = first.path.join(first.config.stateDir, "other-workspace");
-            yield* first.fs.makeDirectory(otherWorkspace, { recursive: true });
-            const secondPeer = scriptedOmpRpc({
-              models: [],
-              initial: { provider: "test", id: "selected" },
-            });
-            const second = yield* harness(false, {
-              threadId: first.openInput.threadId,
-              binaryPath: "/opt/company/testing/omp",
-              homePath: changed === "home" ? "/synthetic/home-b" : "/synthetic/home-a",
-              profile: changed === "profile" ? "testing" : "production",
-              cwd: changed === "workspace" ? otherWorkspace : first.input.runtimePolicy.cwd,
-              makeProcess: secondPeer.makeProcess,
-            });
-            const result = yield* second.runtime
-              .resumeThread({ providerThread: first.input.providerThread })
-              .pipe(Effect.result);
-            assert.equal(result._tag, "Failure");
-            assert.equal(
-              secondPeer.state.frames.filter((frame) => frame.type === "switch_session").length,
-              0,
-            );
-            assert.equal(secondPeer.state.prompts.length, 0);
-          }),
-        ),
-    );
-  }
+  it.effect.each(
+    (["home", "profile", "workspace"] as const).map((changed) => ({
+      caseTitle: `refuses cross-install native OMP resume when its ${changed} changes before switching history`,
+      changed,
+    })),
+  )("$caseTitle", ({ changed }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const owned = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(owned, Exit.void));
+        const firstPeer = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+        });
+        const first = yield* harness(false, {
+          binaryPath: "/opt/company/production/omp",
+          homePath: "/synthetic/home-a",
+          profile: "production",
+          makeProcess: firstPeer.makeProcess,
+        }).pipe(Effect.provideService(Scope.Scope, owned));
+        yield* Scope.close(owned, Exit.void);
+        const otherWorkspace = first.path.join(first.config.stateDir, "other-workspace");
+        yield* first.fs.makeDirectory(otherWorkspace, { recursive: true });
+        const secondPeer = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+        });
+        const second = yield* harness(false, {
+          threadId: first.openInput.threadId,
+          binaryPath: "/opt/company/testing/omp",
+          homePath: changed === "home" ? "/synthetic/home-b" : "/synthetic/home-a",
+          profile: changed === "profile" ? "testing" : "production",
+          cwd: changed === "workspace" ? otherWorkspace : first.input.runtimePolicy.cwd,
+          makeProcess: secondPeer.makeProcess,
+        });
+        const result = yield* second.runtime
+          .resumeThread({ providerThread: first.input.providerThread })
+          .pipe(Effect.result);
+        assert.equal(result._tag, "Failure");
+        assert.equal(
+          secondPeer.state.frames.filter((frame) => frame.type === "switch_session").length,
+          0,
+        );
+        assert.equal(secondPeer.state.prompts.length, 0);
+      }),
+    ),
+  );
 
   it.effect("runs Scient Agent through its independent native target and runtime version", () =>
     Effect.scoped(
@@ -2913,72 +2918,65 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     ),
   );
 
-  for (const failure of [
-    "missing",
-    "malformed",
-    "workspace",
-    "home-profile",
-    "file",
-    "session",
-    "major",
-  ] as const) {
-    it.effect(
-      `rejects a ${failure} native cursor before switch and binds portable fallback to fresh state`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const h = yield* harness();
-            const stored = h.input.providerThread.nativeMetadata?.resumeCursor;
-            if (typeof stored !== "object" || stored === null)
-              return yield* Effect.die("Missing durable cursor");
-            const replacement =
-              failure === "missing"
-                ? undefined
-                : failure === "malformed"
-                  ? {}
-                  : {
-                      ...stored,
-                      ...(failure === "workspace"
-                        ? { workspaceFingerprint: "different-workspace" }
-                        : {}),
-                      ...(failure === "home-profile"
-                        ? { homeProfileFingerprint: "different-profile" }
-                        : {}),
-                      ...(failure === "file" ? { relativeSessionFile: "../escaped.jsonl" } : {}),
-                      ...(failure === "session" ? { sessionId: "different-session" } : {}),
-                      ...(failure === "major" ? { ompVersion: "19.0.0" } : {}),
-                    };
-            const prior = {
-              ...h.input.providerThread,
-              nativeMetadata: { resumeCursor: replacement },
-            };
-            const rejected = yield* Effect.result(
-              h.runtime.resumeThread({ providerThread: prior }),
-            );
-            assert.equal(rejected._tag, "Failure");
-            assert.equal(h.switches(), failure === "session" ? 1 : 0);
-            const fallback = yield* h.runtime.ensureThread({
-              threadId: h.input.threadId,
-              modelSelection: h.input.modelSelection,
-              runtimePolicy: h.input.runtimePolicy,
-              existingProviderThread: { ...prior, nativeThreadRef: null },
-            });
-            assert.equal(fallback.id, prior.id);
-            assert.isDefined(fallback.nativeMetadata?.resumeCursor);
-            assert.isDefined(fallback.nativeThreadRef);
-            if (failure === "session")
-              assert.notEqual(fallback.nativeThreadRef?.nativeId, prior.nativeThreadRef?.nativeId);
-            yield* h.runtime.startTurn({
-              ...h.input,
-              providerThread: fallback,
-              message: { ...h.input.message, text: "Portable history followed by current request" },
-            });
-            yield* Deferred.await(h.promptDelivered);
-            assert.equal(h.prompts(), 1);
-          }),
-        ),
-    );
-  }
+  it.effect.each(
+    (
+      ["missing", "malformed", "workspace", "home-profile", "file", "session", "major"] as const
+    ).map((failure) => ({
+      caseTitle: `rejects a ${failure} native cursor before switch and binds portable fallback to fresh state`,
+      failure,
+    })),
+  )("$caseTitle", ({ failure }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness();
+        const stored = h.input.providerThread.nativeMetadata?.resumeCursor;
+        if (typeof stored !== "object" || stored === null)
+          return yield* Effect.die("Missing durable cursor");
+        const replacement =
+          failure === "missing"
+            ? undefined
+            : failure === "malformed"
+              ? {}
+              : {
+                  ...stored,
+                  ...(failure === "workspace"
+                    ? { workspaceFingerprint: "different-workspace" }
+                    : {}),
+                  ...(failure === "home-profile"
+                    ? { homeProfileFingerprint: "different-profile" }
+                    : {}),
+                  ...(failure === "file" ? { relativeSessionFile: "../escaped.jsonl" } : {}),
+                  ...(failure === "session" ? { sessionId: "different-session" } : {}),
+                  ...(failure === "major" ? { ompVersion: "19.0.0" } : {}),
+                };
+        const prior = {
+          ...h.input.providerThread,
+          nativeMetadata: { resumeCursor: replacement },
+        };
+        const rejected = yield* Effect.result(h.runtime.resumeThread({ providerThread: prior }));
+        assert.equal(rejected._tag, "Failure");
+        assert.equal(h.switches(), failure === "session" ? 1 : 0);
+        const fallback = yield* h.runtime.ensureThread({
+          threadId: h.input.threadId,
+          modelSelection: h.input.modelSelection,
+          runtimePolicy: h.input.runtimePolicy,
+          existingProviderThread: { ...prior, nativeThreadRef: null },
+        });
+        assert.equal(fallback.id, prior.id);
+        assert.isDefined(fallback.nativeMetadata?.resumeCursor);
+        assert.isDefined(fallback.nativeThreadRef);
+        if (failure === "session")
+          assert.notEqual(fallback.nativeThreadRef?.nativeId, prior.nativeThreadRef?.nativeId);
+        yield* h.runtime.startTurn({
+          ...h.input,
+          providerThread: fallback,
+          message: { ...h.input.message, text: "Portable history followed by current request" },
+        });
+        yield* Deferred.await(h.promptDelivered);
+        assert.equal(h.prompts(), 1);
+      }),
+    ),
+  );
 
   it.effect("projects native tool input and output under the delivering run and instance", () =>
     Effect.scoped(
@@ -3023,7 +3021,9 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
   it.effect("refuses foreign native OMP history and rejects unregistered host tools", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const h = yield* imageHarness();
+        const owned = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(owned, Exit.void));
+        const h = yield* imageHarness().pipe(Effect.provideService(Scope.Scope, owned));
         const before = h.peer.state.frames.length;
         const refused = yield* Effect.result(
           h.runtime.resumeThread({
@@ -3087,7 +3087,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           (event) =>
             event.type === "provider_session.updated" && event.providerSession.status === "error",
         );
-        yield* Scope.close(yield* Effect.scope, Exit.void);
+        yield* Scope.close(owned, Exit.void);
         assert.equal(h.peer.state.shutdowns, 1);
       }),
     ),

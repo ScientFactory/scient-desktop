@@ -15,7 +15,7 @@ import {
 } from "./filePreview.ts";
 
 describe("workspace file previews", () => {
-  it.each(["report.html", "report.HTM", "document.pdf?download=1"])(
+  it.each(["report.html", "report.HTM", "document#draft.pdf", "reports?old/document.pdf"])(
     "recognizes browser preview path %s",
     (path) => {
       expect(isWorkspaceBrowserPreviewPath(path)).toBe(true);
@@ -23,14 +23,31 @@ describe("workspace file previews", () => {
     },
   );
 
-  it.each(["paper.pdf", "PAPER.PDF?download=1", "sources/report.pdf#page=4"])(
-    "recognizes PDF preview path %s",
-    (path) => {
-      expect(isWorkspacePdfPreviewPath(path)).toBe(true);
-    },
-  );
+  it.each([
+    "paper.pdf",
+    "PAPER.PDF",
+    "sources/report.pdf",
+    "document#draft.pdf",
+    "paper?draft.PDF",
+    "reports#archive/document.pdf",
+    "reports?old/document.pdf",
+    "report.pdf#copy.pdf",
+    "report.pdf?copy.pdf",
+  ])("recognizes literal PDF preview path %s", (path) => {
+    expect(isWorkspacePdfPreviewPath(path)).toBe(true);
+    expect(isWorkspaceBrowserPreviewPath(path)).toBe(true);
+  });
 
-  it.each(["paper.pdf.txt", "pdf", "paper.html"])("rejects non-PDF path %s", (path) => {
+  it.each([
+    "paper.pdf.txt",
+    "pdf",
+    "paper.html",
+    "PAPER.PDF?download=1",
+    "sources/report.pdf#page=4",
+    "paper.pdf#notes.txt",
+    "paper.pdf?notes.txt",
+    "paper%2Epdf",
+  ])("rejects literal non-PDF path %s", (path) => {
     expect(isWorkspacePdfPreviewPath(path)).toBe(false);
   });
 
@@ -38,7 +55,9 @@ describe("workspace file previews", () => {
     "icon.png",
     "photo.JPEG",
     "animation.gif",
-    "vector.svg#mark",
+    "vector#mark.svg",
+    "photo?edited.JPEG",
+    "images#archive/icon.png",
     "texture.webp",
     "image.avif",
   ])("recognizes image preview path %s", (path) => {
@@ -46,12 +65,19 @@ describe("workspace file previews", () => {
     expect(isWorkspacePreviewEntryPath(path)).toBe(true);
   });
 
-  it.each(["README.md", "src/index.ts", "image.png.ts", "png"])(
-    "rejects non-preview path %s",
-    (path) => {
-      expect(isWorkspacePreviewEntryPath(path)).toBe(false);
-    },
-  );
+  it.each([
+    "README.md",
+    "src/index.ts",
+    "image.png.ts",
+    "png",
+    "image.png#notes.txt",
+    "image.svg?notes.txt",
+    "document.pdf?download=1",
+    "report.html#notes.txt",
+    "image%2Epng",
+  ])("rejects non-preview path %s", (path) => {
+    expect(isWorkspacePreviewEntryPath(path)).toBe(false);
+  });
 
   it("serves audio in place from the host like video and browser documents", () => {
     expect(isWorkspaceAudioPreviewPath("notes/recording.WAV")).toBe(true);

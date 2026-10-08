@@ -25,7 +25,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -556,79 +556,80 @@ describe("managed runtime catalog resolution", () => {
 });
 
 describe("ManagedRuntimeCatalog service", () => {
-  for (const stalledStage of ["headers", "body"] as const) {
-    it.effect(
-      `aborts stalled ${stalledStage}, preserves the cache, and allows a later refresh`,
-      () =>
+  it.effect.each(
+    (["headers", "body"] as const).map((stalledStage) => ({
+      caseTitle: `aborts stalled ${stalledStage}, preserves the cache, and allows a later refresh`,
+      stalledStage,
+    })),
+  )("$caseTitle", ({ stalledStage }) =>
+    Effect.gen(function* () {
+      const requested = yield* Deferred.make<void>();
+      const headersReceived = yield* Deferred.make<void>();
+      const requests: Array<string | undefined> = [];
+      let stalledSignal: AbortSignal | undefined;
+      const client = HttpClient.make((request, _url, signal) =>
         Effect.gen(function* () {
-          const requested = yield* Deferred.make<void>();
-          const headersReceived = yield* Deferred.make<void>();
-          const requests: Array<string | undefined> = [];
-          let stalledSignal: AbortSignal | undefined;
-          const client = HttpClient.make((request, _url, signal) =>
-            Effect.gen(function* () {
-              requests.push(request.headers["if-none-match"]);
-              if (requests.length !== 2) {
-                return HttpClientResponse.fromWeb(
-                  request,
-                  Response.json(remoteCatalog(), { headers: { etag: '"good"' } }),
-                );
-              }
-              stalledSignal = signal;
-              yield* Deferred.succeed(requested, undefined);
-              if (stalledStage === "headers") return yield* Effect.never;
-              // The body gets only the time remaining after the headers arrive.
-              yield* Effect.sleep(6_000);
-              const body = new ReadableStream<Uint8Array>({
-                start(controller) {
-                  signal.addEventListener(
-                    "abort",
-                    () => controller.error(new Error("Request aborted")),
-                    { once: true },
-                  );
-                },
-              });
-              yield* Deferred.succeed(headersReceived, undefined);
-              return HttpClientResponse.fromWeb(
-                request,
-                new Response(body, { headers: { etag: '"incomplete"' } }),
-              );
-            }),
-          );
-          const service = yield* makeWithOptions({ startBackgroundRefresh: false }).pipe(
-            Effect.provideService(HttpClient.HttpClient, client),
-          );
-          const good = yield* service.refresh;
-          yield* TestClock.adjust(60 * 60_000);
-          const refresh = yield* Effect.forkChild(service.refresh);
-          yield* Deferred.await(requested);
-          if (stalledStage === "body") {
-            yield* TestClock.adjust(6_000);
-            yield* Deferred.await(headersReceived);
-            yield* TestClock.adjust(4_000);
-          } else {
-            yield* TestClock.adjust(10_000);
+          requests.push(request.headers["if-none-match"]);
+          if (requests.length !== 2) {
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json(remoteCatalog(), { headers: { etag: '"good"' } }),
+            );
           }
-          assert.deepStrictEqual(yield* Fiber.join(refresh), good);
-          assert.isTrue(stalledSignal?.aborted);
-          assert.deepStrictEqual(yield* service.current, good);
-          // The failed response must not poison the ETag or start a success TTL.
-          assert.deepStrictEqual(yield* service.refresh, good);
-          assert.strictEqual(requests.length, 2);
-          yield* TestClock.adjust(5 * 60_000);
-          assert.deepStrictEqual(yield* service.refresh, good);
-          assert.deepStrictEqual(requests, [undefined, '"good"', '"good"']);
-        }).pipe(
-          Effect.scoped,
-          Effect.provide(
-            serviceLayers({
-              prefix: `managed-runtime-catalog-stalled-${stalledStage}-test`,
-              response: () => Response.json(remoteCatalog()),
-            }),
-          ),
-        ),
-    );
-  }
+          stalledSignal = signal;
+          yield* Deferred.succeed(requested, undefined);
+          if (stalledStage === "headers") return yield* Effect.never;
+          // The body gets only the time remaining after the headers arrive.
+          yield* Effect.sleep(6_000);
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              signal.addEventListener(
+                "abort",
+                () => controller.error(new Error("Request aborted")),
+                { once: true },
+              );
+            },
+          });
+          yield* Deferred.succeed(headersReceived, undefined);
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(body, { headers: { etag: '"incomplete"' } }),
+          );
+        }),
+      );
+      const service = yield* makeWithOptions({ startBackgroundRefresh: false }).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+      );
+      const good = yield* service.refresh;
+      yield* TestClock.adjust(60 * 60_000);
+      const refresh = yield* Effect.forkChild(service.refresh);
+      yield* Deferred.await(requested);
+      if (stalledStage === "body") {
+        yield* TestClock.adjust(6_000);
+        yield* Deferred.await(headersReceived);
+        yield* TestClock.adjust(4_000);
+      } else {
+        yield* TestClock.adjust(10_000);
+      }
+      assert.deepStrictEqual(yield* Fiber.join(refresh), good);
+      assert.isTrue(stalledSignal?.aborted);
+      assert.deepStrictEqual(yield* service.current, good);
+      // The failed response must not poison the ETag or start a success TTL.
+      assert.deepStrictEqual(yield* service.refresh, good);
+      assert.strictEqual(requests.length, 2);
+      yield* TestClock.adjust(5 * 60_000);
+      assert.deepStrictEqual(yield* service.refresh, good);
+      assert.deepStrictEqual(requests, [undefined, '"good"', '"good"']);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        serviceLayers({
+          prefix: `managed-runtime-catalog-stalled-${stalledStage}-test`,
+          response: () => Response.json(remoteCatalog()),
+        }),
+      ),
+    ),
+  );
 
   it.live("prefers a valid remote catalog and restores it from the atomic disk cache", () =>
     Effect.gen(function* () {
@@ -804,56 +805,60 @@ describe("ManagedRuntimeCatalog service", () => {
 });
 
 describe("latest qualified repair selection", () => {
-  for (const { provider, resolve } of policies) {
-    it(`repairs latest for ${provider} and never downgrades a newer compatible receipt offline`, () => {
-      const bundled = resolve({ platform: "darwin", arch: "arm64" });
-      assert.isDefined(bundled);
-      const candidate = resolveManagedRuntimeCatalogCandidate({
-        bundledArtifact: bundled,
-        catalog: BUNDLED_MANAGED_RUNTIME_CATALOG,
-        contractRevision: MANAGED_RUNTIME_POLICY[provider].revision,
-      });
-      assert.isDefined(candidate);
-      const newer = {
-        ...candidate,
-        version: provider === "cursor" ? "2099.01.01-abcdef0" : "99.0.0",
-        catalogRevision: "fixture-newer",
-      };
-      assert.strictEqual(
-        resolveManagedRuntimeRepairArtifact({
-          bundledArtifact: bundled,
-          candidateArtifact: newer,
-          activeArtifact: managedRuntimeArtifactReceipt(candidate),
-        }),
-        newer,
-      );
-      assert.strictEqual(
-        resolveManagedRuntimeRepairArtifact({
-          bundledArtifact: bundled,
-          candidateArtifact: candidate,
-          activeArtifact: undefined,
-        }),
-        candidate,
-      );
-      assert.equal(
-        resolveManagedRuntimeRepairArtifact({
-          bundledArtifact: bundled,
-          candidateArtifact: candidate,
-          activeArtifact: managedRuntimeArtifactReceipt(newer),
-        })?.version,
-        newer.version,
-      );
-      assert.strictEqual(
-        resolveManagedRuntimeRepairArtifact({
-          bundledArtifact: bundled,
-          candidateArtifact: candidate,
-          activeArtifact: {
-            ...managedRuntimeArtifactReceipt(newer),
-            url: "https://untrusted.example/runtime",
-          },
-        }),
-        candidate,
-      );
+  it.each(
+    policies.map(({ provider, resolve }) => ({
+      caseTitle: `repairs latest for ${provider} and never downgrades a newer compatible receipt offline`,
+      provider,
+      resolve,
+    })),
+  )("$caseTitle", ({ provider, resolve }) => {
+    const bundled = resolve({ platform: "darwin", arch: "arm64" });
+    assert.isDefined(bundled);
+    const candidate = resolveManagedRuntimeCatalogCandidate({
+      bundledArtifact: bundled,
+      catalog: BUNDLED_MANAGED_RUNTIME_CATALOG,
+      contractRevision: MANAGED_RUNTIME_POLICY[provider].revision,
     });
-  }
+    assert.isDefined(candidate);
+    const newer = {
+      ...candidate,
+      version: provider === "cursor" ? "2099.01.01-abcdef0" : "99.0.0",
+      catalogRevision: "fixture-newer",
+    };
+    assert.strictEqual(
+      resolveManagedRuntimeRepairArtifact({
+        bundledArtifact: bundled,
+        candidateArtifact: newer,
+        activeArtifact: managedRuntimeArtifactReceipt(candidate),
+      }),
+      newer,
+    );
+    assert.strictEqual(
+      resolveManagedRuntimeRepairArtifact({
+        bundledArtifact: bundled,
+        candidateArtifact: candidate,
+        activeArtifact: undefined,
+      }),
+      candidate,
+    );
+    assert.equal(
+      resolveManagedRuntimeRepairArtifact({
+        bundledArtifact: bundled,
+        candidateArtifact: candidate,
+        activeArtifact: managedRuntimeArtifactReceipt(newer),
+      })?.version,
+      newer.version,
+    );
+    assert.strictEqual(
+      resolveManagedRuntimeRepairArtifact({
+        bundledArtifact: bundled,
+        candidateArtifact: candidate,
+        activeArtifact: {
+          ...managedRuntimeArtifactReceipt(newer),
+          url: "https://untrusted.example/runtime",
+        },
+      }),
+      candidate,
+    );
+  });
 });

@@ -1,3 +1,4 @@
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -26,7 +27,7 @@ import { persistChatAttachments } from "../AttachmentPersistence.ts";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { materializeGeneratedImageAttachment } from "../generatedImageAttachments.ts";
-import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlite.ts";
 import {
   attachmentHasReservations,
   reservationDirectory,
@@ -139,7 +140,7 @@ const fixture = Effect.gen(function* () {
         Layer.provide(Layer.mergeAll(stores, sink, reconciliation, IdAllocator.layer)),
       ),
     ).pipe(
-      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(Layer.merge(NodeServices.layer, ThreadCommandExecutor.layer)),
       Layer.provideMerge(Layer.succeed(ServerConfig, config)),
     );
   };
@@ -245,7 +246,7 @@ it.live(
             ).toEqual(bytes);
           }).pipe(Effect.provide(services())),
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, ThreadCommandExecutor.layer))),
     ),
 );
 
@@ -332,7 +333,7 @@ it.live(
             );
           }).pipe(Effect.provide(services())),
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, ThreadCommandExecutor.layer))),
     ),
 );
 
@@ -384,6 +385,6 @@ it.live(
             ).toEqual(bytes);
           }).pipe(Effect.provide(services())),
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, ThreadCommandExecutor.layer))),
     ),
 );

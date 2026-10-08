@@ -7,6 +7,7 @@
  */
 import { WS_METHODS, WsWorkspaceRpcGroup } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import type { ServerBrowser } from "../../preview/ServerBrowser.ts";
 
 import type { ScientRpcHandlerSubset, ScientRpcObservers } from "../ScientRpcObservers.ts";
 import { ConversationExportService } from "../conversationExport/ConversationExportService.ts";
@@ -21,11 +22,25 @@ export const makeDocumentPdfRpcHandlers = ({
   observeRpcEffect,
   generatedDocuments,
   conversationExports,
+  serverBrowser,
 }: Pick<ScientRpcObservers, "observeRpcEffect"> & {
+  readonly serverBrowser: ServerBrowser["Service"];
   readonly generatedDocuments: GeneratedDocumentStore.GeneratedDocumentStore["Service"];
   readonly conversationExports: ConversationExportService["Service"];
 }) =>
   ({
+    [WS_METHODS.documentsExportServerBrowserPdf]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.documentsExportServerBrowserPdf,
+        serverBrowser.exportDocumentPdf(input, generatedDocuments),
+        { "rpc.aggregate": "documents" },
+      ),
+    [WS_METHODS.documentsNavigateServerBrowser]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.documentsNavigateServerBrowser,
+        serverBrowser.navigateDocument(input),
+        { "rpc.aggregate": "documents" },
+      ),
     [WS_METHODS.documentsPublishBrowserPdfExport]: (input) =>
       observeRpcEffect(
         WS_METHODS.documentsPublishBrowserPdfExport,
@@ -60,6 +75,8 @@ export const makeDocumentPdfRpcHandlers = ({
       ),
   }) satisfies ScientRpcHandlerSubset<
     typeof WsWorkspaceRpcGroup,
+    | typeof WS_METHODS.documentsExportServerBrowserPdf
+    | typeof WS_METHODS.documentsNavigateServerBrowser
     | typeof WS_METHODS.documentsPublishBrowserPdfExport
     | typeof WS_METHODS.documentsPrepareMarkdownPdf
     | typeof WS_METHODS.documentsPrepareConversationPdf

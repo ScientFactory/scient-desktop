@@ -4,6 +4,7 @@ import {
   isWorkspaceVideoPreviewPath,
 } from "@t3tools/shared/filePreview";
 import { workspaceRelativeFilePath } from "@t3tools/client-runtime/markdown-links";
+import type { ProjectReadFileError } from "@t3tools/contracts";
 import { isAbsolutePath } from "~/terminal-links";
 
 /** Resolve workspace links before choosing between the explorer and a file preview. */
@@ -22,12 +23,33 @@ export function resolveFilePreviewKind(path: string | null): FilePreviewKind {
   if (path === null) return "empty";
   if (isWorkspaceVideoPreviewPath(path)) return "video";
   if (isWorkspaceImagePreviewPath(path)) return "image";
-  if (isWorkspacePdfPreviewPath(path)) return "pdf";
+  if (isWorkspacePdfPreviewPath(path.split(/[?#]/u, 1)[0] ?? "")) return "pdf";
   return "text";
 }
 
 export function shouldLoadFileAsText(path: string | null): boolean {
   return resolveFilePreviewKind(path) === "text";
+}
+
+/** Describe existing failure codes without exposing the underlying platform cause. */
+export function filePreviewReadErrorMessage(error: ProjectReadFileError): string {
+  switch (error.failure) {
+    case "path_not_file":
+      return "The path is a directory or special file, not a regular file.";
+    case "binary_file":
+      return "The file is binary and cannot be displayed as text.";
+    case "workspace_path_outside_root":
+      return "The requested path is outside the workspace.";
+    case "resolved_path_outside_root":
+      return "The path resolves to a location outside the workspace.";
+    case "operation_failed":
+      // A realpath failure can mean a missing path, permissions, or another I/O error.
+      return error.operation === "realpath-workspace-root"
+        ? "The workspace folder could not be accessed."
+        : "The file could not be accessed or read. It may be missing or inaccessible.";
+    default:
+      return error.message;
+  }
 }
 
 export function shouldShowFileExplorer(input: {

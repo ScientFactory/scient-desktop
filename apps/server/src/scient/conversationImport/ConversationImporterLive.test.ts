@@ -27,7 +27,7 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { ServerConfig } from "../../config.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
@@ -40,7 +40,7 @@ import { ConversationImportCommit } from "./ConversationImportCommit.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import { conversationSnapshotProjection } from "../conversationExport/conversationSnapshotProjection.ts";
 
-import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
+import { OrchestrationCommandReceiptRepository } from "../../persistence/OrchestrationCommandReceipts.ts";
 import {
   ConversationImporter,
   ConversationImportStagingError,

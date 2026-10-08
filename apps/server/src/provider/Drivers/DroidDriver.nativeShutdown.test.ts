@@ -1,3 +1,4 @@
+import * as ThreadCommandExecutor from "../../orchestration-v2/ThreadCommandExecutor.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -29,9 +30,9 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as NetAddress from "effect/unstable/net/NetAddress";
-import { HttpClient, HttpServer } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import * as NetAddress from "effect/net/NetAddress";
+import { HttpClient, HttpServer } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
@@ -47,12 +48,12 @@ import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapter
 import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
 import * as ProviderEventIngestor from "../../orchestration-v2/ProviderEventIngestor.ts";
 import * as ProviderSessionManager from "../../orchestration-v2/ProviderSessionManager.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
-import { makeProviderInstanceRegistry } from "../Layers/ProviderInstanceRegistryLive.ts";
-import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
-import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
+import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import { makeProviderInstanceRegistry } from "../ProviderInstanceRegistry.ts";
+import { ProviderInstanceRegistry } from "../ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "../ProviderRegistry.ts";
 import { DroidDriver } from "./DroidDriver.ts";
 
 const first = ProviderInstanceId.make("droid-shutdown-target");
@@ -95,6 +96,7 @@ const mcp = Layer.effect(
 );
 const testLayer = ServerConfig.layerTest(process.cwd(), { prefix: "droid-native-shutdown-" }).pipe(
   Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(ThreadCommandExecutor.layer),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(ProviderContinuationRequests.layer),
   Layer.provideMerge(ServerSettingsService.layerTest()),

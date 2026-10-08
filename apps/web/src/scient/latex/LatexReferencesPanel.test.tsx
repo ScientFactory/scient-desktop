@@ -12,7 +12,7 @@ vi.mock("~/state/projects", () => ({
   projectEnvironment: { fileChanges: () => ({}) },
 }));
 vi.mock("@effect/atom-react", async () => {
-  const { AsyncResult } = await import("effect/unstable/reactivity");
+  const { AsyncResult } = await import("effect/reactivity");
   return { useAtomValue: () => AsyncResult.initial() };
 });
 vi.mock("~/components/files/projectFilesQueryState", () => ({

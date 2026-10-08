@@ -27,7 +27,7 @@ describe("ChatMarkdown math seam", () => {
       'import { remarkScientSingleDollarMath } from "../scient/math/scientSingleDollarMath";',
     );
     expect(chatMarkdownSource).toContain("useScientMathMarkdownText,");
-    expect(chatMarkdownSource).toContain("useScientMathRemarkPlugins,");
+    expect(chatMarkdownSource).toMatch(/\buseScientMathRemarkPlugins[\s,]*\}/u);
     expect(chatMarkdownSource).toContain(
       'import { ScientDisplayMath, ScientInlineMath } from "../scient/math/ScientMath";',
     );

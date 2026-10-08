@@ -9,7 +9,7 @@ import type {
   ProviderAdapterV2SessionRuntime,
 } from "../ProviderAdapter.ts";
 import type { ProjectionRecords } from "../ProjectionStore.ts";
-import type { McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
+import type { McpThreadCaller } from "../../mcp/McpInvocationContext.ts";
 
 type AuthoritySessionEntry = {
   readonly runtime: ProviderAdapterV2SessionRuntime;
@@ -25,7 +25,7 @@ export const makeSessionAuthority = <Entry extends AuthoritySessionEntry, E>(inp
   readonly sessionKey: (providerSessionId: ProviderSessionId) => string;
   readonly releasingRuntimes: WeakSet<ProviderAdapterV2SessionRuntime>;
   readonly readThreadRecords: (
-    invocation: Pick<McpInvocationScope, "threadId" | "providerSessionId">,
+    invocation: Pick<McpThreadCaller, "threadId" | "providerSessionId">,
   ) => Effect.Effect<ProjectionRecords<"runs" | "attempts" | "providerThreads">, E>;
 }) => {
   const { sessions, sessionKey, releasingRuntimes } = input;
@@ -67,10 +67,7 @@ export const makeSessionAuthority = <Entry extends AuthoritySessionEntry, E>(inp
       }),
     resolveMcpInvocationPolicy: Effect.fn("ProviderSessionManagerV2.resolveMcpInvocationPolicy")(
       function* (
-        invocation: Pick<
-          McpInvocationScope,
-          "threadId" | "providerInstanceId" | "providerSessionId"
-        >,
+        invocation: Pick<McpThreadCaller, "threadId" | "providerInstanceId" | "providerSessionId">,
       ) {
         const entries = [...(yield* Ref.get(sessions)).values()].filter(
           (entry) =>

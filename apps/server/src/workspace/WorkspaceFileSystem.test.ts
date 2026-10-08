@@ -20,13 +20,13 @@ import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
-const ProjectLayer = WorkspaceFileSystem.layer.pipe(
+const layerProject = WorkspaceFileSystem.layer.pipe(
   Layer.provide(WorkspacePaths.layer),
   Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
 );
 
-const TestLayer = Layer.empty.pipe(
-  Layer.provideMerge(ProjectLayer),
+const layerTest = Layer.empty.pipe(
+  Layer.provideMerge(layerProject),
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
@@ -59,7 +59,7 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
   yield* fileSystem.writeFileString(absolutePath, contents).pipe(Effect.orDie);
 });
 
-it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
+it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
   describe("readFile", () => {
     it.effect("reads UTF-8 files relative to the workspace root", () =>
       Effect.gen(function* () {
@@ -1194,75 +1194,78 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
   });
 
   describe("renameFile", () => {
-    for (const aliasKind of ["root", "parent"] as const) {
-      it.effect(`serializes saves and renames through a ${aliasKind} alias`, () =>
-        Effect.gen(function* () {
-          if ((yield* HostProcessPlatform) === "win32") return;
-          const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const temporaryRoot = yield* makeTempDir;
-          const cwd = yield* fileSystem.realPath(temporaryRoot);
-          const actualRoot = path.join(cwd, "actual");
-          const aliasRoot = path.join(cwd, "alias");
-          yield* fileSystem.makeDirectory(actualRoot);
-          yield* fileSystem.symlink(actualRoot, aliasRoot);
+    it.effect.each(
+      (["root", "parent"] as const).map((aliasKind) => ({
+        caseTitle: `serializes saves and renames through a ${aliasKind} alias`,
+        aliasKind,
+      })),
+    )("$caseTitle", ({ aliasKind }) =>
+      Effect.gen(function* () {
+        if ((yield* HostProcessPlatform) === "win32") return;
+        const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temporaryRoot = yield* makeTempDir;
+        const cwd = yield* fileSystem.realPath(temporaryRoot);
+        const actualRoot = path.join(cwd, "actual");
+        const aliasRoot = path.join(cwd, "alias");
+        yield* fileSystem.makeDirectory(actualRoot);
+        yield* fileSystem.symlink(actualRoot, aliasRoot);
 
-          for (let round = 0; round < 25; round += 1) {
-            const relativePath = `${round}.md`;
-            const destinationRelativePath = `${round}-renamed.md`;
-            const baseline = yield* api.writeFile({
-              cwd: actualRoot,
-              relativePath,
-              contents: "before",
-            });
-            const [edit, rename] = yield* Effect.all(
-              [
-                api
-                  .writeFile({
-                    cwd: actualRoot,
-                    relativePath,
-                    contents: "edited 😀",
-                    expectedRevision: baseline.revision,
-                  })
-                  .pipe(Effect.result),
-                api
-                  .renameFile({
-                    cwd: aliasKind === "root" ? aliasRoot : cwd,
-                    relativePath: aliasKind === "root" ? relativePath : `alias/${relativePath}`,
-                    destinationRelativePath:
-                      aliasKind === "root"
-                        ? destinationRelativePath
-                        : `alias/${destinationRelativePath}`,
-                    expectedRevision: baseline.revision,
-                  })
-                  .pipe(Effect.result),
-              ],
-              { concurrency: 2 },
+        for (let round = 0; round < 25; round += 1) {
+          const relativePath = `${round}.md`;
+          const destinationRelativePath = `${round}-renamed.md`;
+          const baseline = yield* api.writeFile({
+            cwd: actualRoot,
+            relativePath,
+            contents: "before",
+          });
+          const [edit, rename] = yield* Effect.all(
+            [
+              api
+                .writeFile({
+                  cwd: actualRoot,
+                  relativePath,
+                  contents: "edited 😀",
+                  expectedRevision: baseline.revision,
+                })
+                .pipe(Effect.result),
+              api
+                .renameFile({
+                  cwd: aliasKind === "root" ? aliasRoot : cwd,
+                  relativePath: aliasKind === "root" ? relativePath : `alias/${relativePath}`,
+                  destinationRelativePath:
+                    aliasKind === "root"
+                      ? destinationRelativePath
+                      : `alias/${destinationRelativePath}`,
+                  expectedRevision: baseline.revision,
+                })
+                .pipe(Effect.result),
+            ],
+            { concurrency: 2 },
+          );
+
+          expect([edit, rename].filter((result) => result._tag === "Success")).toHaveLength(1);
+          if (edit._tag === "Success") {
+            const saved = yield* api.readFile({ cwd: actualRoot, relativePath });
+            expect(saved.contents).toBe("edited 😀");
+            expect(saved.revision).toBe(edit.success.revision);
+            expect(yield* fileSystem.exists(path.join(actualRoot, destinationRelativePath))).toBe(
+              false,
             );
-
-            expect([edit, rename].filter((result) => result._tag === "Success")).toHaveLength(1);
-            if (edit._tag === "Success") {
-              const saved = yield* api.readFile({ cwd: actualRoot, relativePath });
-              expect(saved.contents).toBe("edited 😀");
-              expect(saved.revision).toBe(edit.success.revision);
-              expect(yield* fileSystem.exists(path.join(actualRoot, destinationRelativePath))).toBe(
-                false,
-              );
-            } else {
-              expect(rename._tag).toBe("Success");
-              const moved = yield* api.readFile({
-                cwd: actualRoot,
-                relativePath: destinationRelativePath,
-              });
-              expect(moved.contents).toBe("before");
-              expect(moved.revision).toBe(baseline.revision);
-              expect(yield* fileSystem.exists(path.join(actualRoot, relativePath))).toBe(false);
-            }
+          } else {
+            expect(rename._tag).toBe("Success");
+            const moved = yield* api.readFile({
+              cwd: actualRoot,
+              relativePath: destinationRelativePath,
+            });
+            expect(moved.contents).toBe("before");
+            expect(moved.revision).toBe(baseline.revision);
+            expect(yield* fileSystem.exists(path.join(actualRoot, relativePath))).toBe(false);
           }
-        }),
-      );
-    }
+        }
+      }),
+    );
 
     it.effect("rejects a rename onto the same canonical file through an alias", () =>
       Effect.gen(function* () {

@@ -2,7 +2,7 @@
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
+import { layer as OrchestrationCommandReceiptRepositoryLive } from "../../persistence/OrchestrationCommandReceipts.ts";
 
 import { CodexProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ClaudeProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
@@ -32,7 +32,7 @@ export function importHistoryTestLayer() {
     openSession: () => Effect.die("Import history fixture must never execute a provider"),
   };
   return nativeImportRuntimeTestLayer(
-    ProviderAdapterRegistry.makeLayer([
+    ProviderAdapterRegistry.layerFromAdapters([
       adapter,
       {
         ...adapter,

@@ -936,53 +936,50 @@ describe("Droid per-turn request limits", () => {
     "anthropic-messages": "/v1/messages",
   };
 
-  for (const protocol of Object.keys(truncatedBodies) as Array<CustomModelProtocol>) {
-    it.effect(
-      `stops a truncation loop after five consecutive truncated responses (${protocol})`,
-      () =>
-        Effect.gen(function* () {
-          const upstream = yield* Effect.promise(() =>
-            startUpstream((_request, response) => {
-              response.writeHead(200, { "content-type": "text/event-stream" });
-              response.end(truncatedBodies[protocol]());
-            }),
-          );
-          yield* Effect.addFinalizer(() => Effect.promise(upstream.close));
-          const target = connection(protocol, "loop", upstream.origin);
-          const scope = yield* Scope.make("sequential");
-          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-          const broker = yield* makeDroidKeyBroker({
-            connections: [target],
-            isCurrent: () => true,
-            retire: Effect.void,
-          }).pipe(Scope.provide(scope));
-          yield* broker.beginTurn;
-          const breached = yield* broker.turnBreached.pipe(Effect.forkChild);
-          for (let index = 0; index < 5; index++) {
-            const reply = yield* Effect.promise(() =>
-              droidRequest(broker, target, paths[protocol]),
-            );
-            expect(reply.status).toBe(200);
-            yield* Effect.promise(() => reply.text());
-          }
-          const breach = yield* Fiber.join(breached);
-          expect(breach.reason).toBe("truncated-responses");
-          expect(broker.currentBreach()).toEqual(breach);
-          // Droid's "Continue where you left off." never reaches the provider.
-          const refused = yield* Effect.promise(() =>
-            droidRequest(broker, target, paths[protocol]),
-          );
-          expect(refused.status).toBe(400);
-          expect(yield* Effect.promise(() => refused.text())).toContain("output limit");
-          expect(upstream.requests).toHaveLength(5);
-          // A new turn starts with a fresh budget.
-          yield* broker.beginTurn;
-          expect(broker.currentBreach()).toBeUndefined();
-          const next = yield* Effect.promise(() => droidRequest(broker, target, paths[protocol]));
-          expect(next.status).toBe(200);
-        }).pipe(Effect.scoped),
-    );
-  }
+  it.effect.each(
+    (Object.keys(truncatedBodies) as Array<CustomModelProtocol>).map((protocol) => ({
+      caseTitle: `stops a truncation loop after five consecutive truncated responses (${protocol})`,
+      protocol,
+    })),
+  )("$caseTitle", ({ protocol }) =>
+    Effect.gen(function* () {
+      const upstream = yield* Effect.promise(() =>
+        startUpstream((_request, response) => {
+          response.writeHead(200, { "content-type": "text/event-stream" });
+          response.end(truncatedBodies[protocol]());
+        }),
+      );
+      yield* Effect.addFinalizer(() => Effect.promise(upstream.close));
+      const target = connection(protocol, "loop", upstream.origin);
+      const scope = yield* Scope.make("sequential");
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+      const broker = yield* makeDroidKeyBroker({
+        connections: [target],
+        isCurrent: () => true,
+        retire: Effect.void,
+      }).pipe(Scope.provide(scope));
+      yield* broker.beginTurn;
+      const breached = yield* broker.turnBreached.pipe(Effect.forkChild);
+      for (let index = 0; index < 5; index++) {
+        const reply = yield* Effect.promise(() => droidRequest(broker, target, paths[protocol]));
+        expect(reply.status).toBe(200);
+        yield* Effect.promise(() => reply.text());
+      }
+      const breach = yield* Fiber.join(breached);
+      expect(breach.reason).toBe("truncated-responses");
+      expect(broker.currentBreach()).toEqual(breach);
+      // Droid's "Continue where you left off." never reaches the provider.
+      const refused = yield* Effect.promise(() => droidRequest(broker, target, paths[protocol]));
+      expect(refused.status).toBe(400);
+      expect(yield* Effect.promise(() => refused.text())).toContain("output limit");
+      expect(upstream.requests).toHaveLength(5);
+      // A new turn starts with a fresh budget.
+      yield* broker.beginTurn;
+      expect(broker.currentBreach()).toBeUndefined();
+      const next = yield* Effect.promise(() => droidRequest(broker, target, paths[protocol]));
+      expect(next.status).toBe(200);
+    }).pipe(Effect.scoped),
+  );
 
   it.effect("lets long agentic turns and occasional truncation through", () =>
     Effect.gen(function* () {

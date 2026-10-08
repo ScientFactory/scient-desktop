@@ -10,6 +10,15 @@ below so code existence cannot be mistaken for a Scient service or release promi
 This document describes the model the access paths share and where each piece lives. The user-facing
 setup authority is [remote access](../user/remote-access.md).
 
+An environment keeps its ID across server restarts and endpoint changes. Saved
+connections are local to a client profile; the server's identity and state are
+not. A repository identity can correlate clones across environments, but never
+routes work between them. A project and its threads belong to one environment.
+The canonical key follows the `upstream` remote when one exists, so pull request
+features target the repository a fork tracks. A fork also reports its own
+`origin`, and clients group and label by that, so a fork never collapses into a
+checkout of its upstream.
+
 ## The model
 
 Scient inherits one runtime boundary: a client talks to one environment server over HTTP and
@@ -36,6 +45,35 @@ authority.
 │  terminals, git, filesystem                  │
 └──────────────────────────────────────────────┘
 ```
+
+A saved environment holds an ordered list of routes, and the
+[driver](../../packages/client-runtime/src/connection/driver.ts) connects over
+the first that works. Each direct route is first checked with the public
+descriptor, so a saved LAN address that a different machine answers on another
+network receives no credential. That check is not proof of a working route:
+when every route stays silent, each is still tried. A route that fails to
+connect, including a blocked one such as a signed-out T3 Connect, moves on to
+the next; only an incompatible server stops the walk, because it is the same
+server on every route. While connected over a later route the
+[supervisor](../../packages/client-runtime/src/connection/supervisor.ts)
+preflights the earlier ones and replaces the session when one would connect.
+Preflight includes authorization so a route that answers but rejects this
+client never costs a working session; a route that still fails afterwards is
+held back for a cooldown so a flaky network cannot bounce the connection.
+
+A connected server reports the LAN and tailnet addresses it is bound to, and the
+client saves them as learned routes. A learned route reuses the credential of
+the route it was learned over: the T3 Connect access token, which is not bound
+to an origin because each DPoP proof names the URL it signs, or the paired
+bearer token. Learned routes the server stops reporting are dropped, which is
+how a changed LAN address replaces the old one; routes the user saved are never
+touched. The reported addresses are hints like any advertised endpoint, so a
+learned route still has to answer as this environment before it is used.
+
+GitHub routing trust covers the whole route list. Adding or changing a route
+revokes it; reordering does not, because the same addresses remain trusted.
+
+## Hosted web is a client
 
 ### ExecutionEnvironment
 

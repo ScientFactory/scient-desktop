@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The Promise RPC fixture assigns isolated random names outside the Effect runtime.
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import type * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
@@ -7,8 +8,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
 
 import type { ScientRpcServerTestHarness } from "../../server.test.ts";
 

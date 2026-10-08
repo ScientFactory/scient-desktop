@@ -1,4 +1,5 @@
-import * as NetAddress from "effect/unstable/net/NetAddress";
+import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
+import * as NetAddress from "effect/net/NetAddress";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert } from "@effect/vitest";
 import {
@@ -18,21 +19,22 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import { HttpServer } from "effect/unstable/http";
-import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
+import { HttpServer } from "effect/http";
+import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
 import * as EventSink from "../EventSink.ts";
@@ -61,23 +63,42 @@ const TestEventSinkLayer = EventSink.layer.pipe(
   Layer.provide(Layer.mergeAll(TestStoresLayer, TestDatabaseLayer)),
 );
 
-const FailingReleaseEventSinkLayer = Layer.effect(
-  EventSink.EventSinkV2,
-  Effect.gen(function* () {
-    const delegate = yield* EventSink.EventSinkV2;
-    return EventSink.EventSinkV2.of({
-      ...delegate,
-      write: (input) =>
-        input.events.some(
-          (event) =>
-            event.type === "provider-session.updated" &&
-            (event.payload.status === "stopped" || event.payload.status === "error"),
-        )
-          ? Effect.fail(new EventSink.EventSinkWriteError({ eventCount: input.events.length }))
-          : delegate.write(input),
-    });
-  }),
-).pipe(Layer.provide(TestEventSinkLayer));
+interface ReleaseWriteFailureControl {
+  readonly failing: Ref.Ref<boolean>;
+  readonly attempted: Deferred.Deferred<void>;
+  readonly persisted: Deferred.Deferred<void>;
+}
+
+function failingReleaseEventSinkLayer(control: ReleaseWriteFailureControl) {
+  return Layer.effect(
+    EventSink.EventSinkV2,
+    Effect.gen(function* () {
+      const delegate = yield* EventSink.EventSinkV2;
+      return EventSink.EventSinkV2.of({
+        ...delegate,
+        write: (input) => {
+          const isRelease = input.events.some(
+            (event) =>
+              event.type === "provider-session.updated" &&
+              (event.payload.status === "stopped" || event.payload.status === "error"),
+          );
+          if (!isRelease) return delegate.write(input);
+          return Effect.gen(function* () {
+            if (yield* Ref.get(control.failing)) {
+              yield* Deferred.succeed(control.attempted, undefined);
+              return yield* Effect.fail(
+                new EventSink.EventSinkWriteError({ eventCount: input.events.length }),
+              );
+            }
+            const result = yield* delegate.write(input);
+            yield* Deferred.succeed(control.persisted, undefined);
+            return result;
+          });
+        },
+      });
+    }),
+  ).pipe(Layer.provide(TestEventSinkLayer));
+}
 
 const CodexCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
 
@@ -203,11 +224,12 @@ function makeProviderThread(input: {
   readonly threadId: ThreadId;
   readonly providerSessionId: ProviderSessionId;
   readonly now: DateTime.Utc;
+  readonly nativeThreadId?: string;
 }): OrchestrationV2ProviderThread {
   return {
     id: input.idAllocator.derive.providerThread({
       driver: CODEX_DRIVER,
-      nativeThreadId: "native-thread",
+      nativeThreadId: input.nativeThreadId ?? "native-thread",
     }),
     driver: CODEX_DRIVER,
     providerInstanceId: modelSelection.instanceId,
@@ -216,7 +238,7 @@ function makeProviderThread(input: {
     ownerNodeId: null,
     nativeThreadRef: {
       driver: CODEX_DRIVER,
-      nativeId: "native-thread",
+      nativeId: input.nativeThreadId ?? "native-thread",
       strength: "strong",
     },
     nativeConversationHeadRef: null,
@@ -251,6 +273,7 @@ function makeProviderAdapter(
     readonly mcpConfigs?: Ref.Ref<
       ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
     >;
+    readonly spawnBeforeOpen?: boolean;
     readonly beforeOpen?: (input: {
       readonly providerSessionId: ProviderSessionId;
       readonly initialProviderItemIdentityVersion?: 2;
@@ -258,6 +281,7 @@ function makeProviderAdapter(
       readonly configureMcp?: boolean;
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
+    readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
     readonly closeSession?: (id: ProviderSessionId) => Effect.Effect<void>;
     readonly interruptSession?: (
       id: ProviderSessionId,
@@ -282,7 +306,7 @@ function makeProviderAdapter(
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (input) =>
       Effect.gen(function* () {
-        if (options.beforeOpen !== undefined) {
+        if (options.spawnBeforeOpen !== true && options.beforeOpen !== undefined) {
           yield* options.beforeOpen(input);
         }
         if (options.mcpConfigs !== undefined) {
@@ -325,6 +349,10 @@ function makeProviderAdapter(
           yield* Effect.addFinalizer(() => Effect.never);
         }
 
+        if (options.spawnBeforeOpen === true && options.beforeOpen !== undefined) {
+          yield* options.beforeOpen(input);
+        }
+
         return {
           instanceId,
           driver,
@@ -350,6 +378,11 @@ function makeProviderAdapter(
           ...(options.hasPendingBackgroundWork === undefined
             ? {}
             : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
+          ...(options.hasPendingBackgroundWorkForThread === undefined
+            ? {}
+            : {
+                hasPendingBackgroundWorkForThread: () => options.hasPendingBackgroundWorkForThread!,
+              }),
           ...(options.invalidateInitiatedWork === undefined
             ? {}
             : { invalidateInitiatedWork: options.invalidateInitiatedWork }),
@@ -413,15 +446,17 @@ function makeTestLayer(input: {
   readonly mcpConfigs?: Ref.Ref<
     ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
   >;
+  readonly spawnBeforeOpen?: boolean;
   readonly beforeOpen?: (input: {
     readonly providerSessionId: ProviderSessionId;
     readonly initialProviderItemIdentityVersion?: 2;
     readonly threadId: ThreadId;
     readonly configureMcp?: boolean;
   }) => Effect.Effect<void>;
-  readonly failReleaseEventWrites?: boolean;
+  readonly releaseWriteFailure?: ReleaseWriteFailureControl;
   readonly onAuthenticationFailure?: ProviderRegistry.ProviderRegistry["Service"]["setProviderAuthenticationFailure"];
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
+  readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
   readonly closeSession?: (id: ProviderSessionId) => Effect.Effect<void>;
   readonly interruptSession?: (
     id: ProviderSessionId,
@@ -435,9 +470,10 @@ function makeTestLayer(input: {
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
 }) {
-  const configuredEventSinkLayer = input.failReleaseEventWrites
-    ? FailingReleaseEventSinkLayer
-    : TestEventSinkLayer;
+  const configuredEventSinkLayer =
+    input.releaseWriteFailure === undefined
+      ? TestEventSinkLayer
+      : failingReleaseEventSinkLayer(input.releaseWriteFailure);
   const configuredAdapter = makeProviderAdapter(input.state, {
     failEventStream: input.failEventStream ?? false,
     ...(input.liveStatus === undefined ? {} : { liveStatus: input.liveStatus }),
@@ -448,9 +484,13 @@ function makeTestLayer(input: {
     ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
     ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
     ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
+    ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
     ...(input.hasPendingBackgroundWork === undefined
       ? {}
       : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
+    ...(input.hasPendingBackgroundWorkForThread === undefined
+      ? {}
+      : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
     ...(input.closeSession === undefined ? {} : { closeSession: input.closeSession }),
     ...(input.interruptSession === undefined ? {} : { interruptSession: input.interruptSession }),
     ...(input.hangSessionScopeClose === undefined
@@ -467,7 +507,7 @@ function makeTestLayer(input: {
   const registryLayer =
     input.adapterRegistryLayer ??
     (injectionEnabled === undefined
-      ? ProviderAdapterRegistry.makeSingleLayer(configuredAdapter)
+      ? ProviderAdapterRegistry.layerSingle(configuredAdapter)
       : Layer.succeed(
           ProviderAdapterRegistry.ProviderAdapterRegistryV2,
           ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
@@ -511,7 +551,7 @@ function makeTestLayer(input: {
         ),
       ),
     ),
-  ).pipe(Layer.provide(NodeServices.layer));
+  ).pipe(Layer.provide(ThreadCommandExecutor.layer), Layer.provide(NodeServices.layer));
 }
 
 const fakeHttpServer = HttpServer.HttpServer.of({
@@ -569,6 +609,9 @@ function runBrowserAccessScenario(input: {
     const mcpConfigs = yield* Ref.make<
       ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
     >([]);
+    const createAfterPolicyCapture = yield* Ref.make<Effect.Effect<void>>(
+      Effect.die("The missing-thread fixture must install its durable creation before open."),
+    );
     const projectId = ProjectId.make("project-provider-session-manager-browser-access");
     const threadId = ThreadId.make("thread-provider-session-manager-browser-access");
     const projectServiceLayer = Layer.mock(ProjectService.ProjectService)({
@@ -589,14 +632,30 @@ function runBrowserAccessScenario(input: {
         providerInstanceId: modelSelection.instanceId,
         threadId,
       });
+      const created = yield* makeThreadCreatedEvent({ idAllocator, threadId, now, projectId });
       if (input.createThread !== false) {
-        yield* eventSink.write({
-          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now, projectId })],
-        });
+        yield* eventSink.write({ events: [created] });
+      } else {
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        yield* Ref.set(
+          createAfterPolicyCapture,
+          Effect.gen(function* () {
+            // openSession starts after capability capture. The thread is genuinely
+            // absent for that capture, then becomes durable for native retirement.
+            const absent = yield* projections.getThreadProjection(threadId).pipe(Effect.flip);
+            assert.equal(absent._tag, "ProjectionStoreThreadNotFoundError");
+            const captured = McpProviderSession.readMcpProviderSession(threadId);
+            assert.isDefined(captured);
+            assert.isFalse(captured!.capabilities.has("preview"));
+            yield* eventSink.write({ events: [created] });
+          }).pipe(Effect.orDie),
+        );
       }
-      yield* manager
-        .open({ threadId, providerSessionId, modelSelection, runtimePolicy })
-        .pipe(Effect.ignore);
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      if (input.createThread === false) {
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        assert.equal((yield* projections.getThreadProjection(threadId)).thread.id, threadId);
+      }
       const captured = (yield* Ref.get(mcpConfigs))[0];
       assert.isDefined(captured);
       const registry = yield* McpSessionRegistry.McpSessionRegistry;
@@ -611,6 +670,11 @@ function runBrowserAccessScenario(input: {
           state,
           idleTimeoutMs: 1_000,
           mcpConfigs,
+          ...(input.createThread === false
+            ? {
+                beforeOpen: () => Ref.get(createAfterPolicyCapture).pipe(Effect.flatten),
+              }
+            : {}),
           projectServiceLayer,
           serverSettingsLayer: ServerSettings.layerTest({
             enableAgentBrowserAccess: input.enableAgentBrowserAccess,
@@ -772,6 +836,7 @@ export {
   makeProviderSession,
   makeThreadCreatedEvent,
   makeProviderThread,
+  makeBrowserAccessProject,
   makeProviderAdapter,
   makeTestLayer,
   TestLegacyImporterLayer,

@@ -10,7 +10,7 @@
 import type { EnvironmentAuthorizationError } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
-import type { RpcGroup } from "effect/unstable/rpc";
+import type { RpcGroup } from "effect/rpc";
 
 export interface ScientRpcObservers {
   readonly observeRpcEffect: <A, E, R>(
