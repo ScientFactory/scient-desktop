@@ -1053,6 +1053,7 @@ it.live("captures ordinary and queued execution modes before worker delivery", (
       const name = "captured-run-modes";
       const cwd = yield* checkpointWorkspace(name);
       const threadId = ThreadId.make(`thread:${name}`);
+      const stoppedDelegatedTaskParents: Array<ThreadId> = [];
       const state = yield* Ref.make<RestartAdapterState>({
         activeTurn: null,
         opened: [],
@@ -1143,6 +1144,7 @@ it.live("captures ordinary and queued execution modes before worker delivery", (
           "Queue admission must leave active thread policy untouched",
         );
         assert.equal(projected.thread.interactionMode, "default");
+        assert.isEmpty(projected.subagents);
         yield* orchestrator.dispatch({
           type: "run.interrupt",
           commandId: CommandId.make(`${name}:interrupt`),
@@ -1151,6 +1153,7 @@ it.live("captures ordinary and queued execution modes before worker delivery", (
           holdQueue: true,
         });
         yield* worker.drain();
+        assert.deepEqual(stoppedDelegatedTaskParents, [threadId]);
         yield* awaitModesProjection(
           orchestrator,
           threadId,
@@ -1190,7 +1193,18 @@ it.live("captures ordinary and queued execution modes before worker delivery", (
           makeOrchestratorV2ReplayLayerWithRegistry(
             { name },
             ProviderAdapterRegistry.layerSingle(makeRestartAdapter(state)),
-            { runEffectWorker: false },
+            {
+              runEffectWorker: false,
+              threads: {
+                // This fixture has no delegated tasks; retain the native Stop effect boundary.
+                stopDelegatedTasks: (input) =>
+                  Effect.sync(() => {
+                    assert.equal(input.threadId, threadId);
+                    assert.equal(input.commandId, CommandId.make(`${name}:interrupt`));
+                    stoppedDelegatedTaskParents.push(input.threadId);
+                  }),
+              },
+            },
           ),
         ),
       );

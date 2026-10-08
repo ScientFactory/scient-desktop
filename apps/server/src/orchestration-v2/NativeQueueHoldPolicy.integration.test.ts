@@ -187,6 +187,10 @@ const withNativeQueue = <A, E, R>(
     readonly preparationAttempts: () => number;
     readonly failNextStarts: (count: number) => void;
     readonly nativeInterruptions: () => number;
+    readonly delegatedStops: ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly commandId: CommandId;
+    }>;
     readonly interruptEntered: Effect.Effect<void>;
     readonly releaseInterrupt: Effect.Effect<void>;
     readonly takeOffer: Effect.Effect<NativeOffer, Cause.TimeoutError>;
@@ -249,6 +253,12 @@ const withNativeQueue = <A, E, R>(
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = options.cwd ?? (yield* checkpointWorkspace(name));
+      const stopBoundary = yield* Deferred.make<{
+        readonly orchestrator: OrchestratorV2["Service"];
+        readonly outbox: EffectOutboxV2["Service"];
+      }>();
+      const delegatedStops: Array<{ readonly threadId: ThreadId; readonly commandId: CommandId }> =
+        [];
       let startupRefusals = 0;
       const allocator = yield* IdAllocatorV2;
       const scope = yield* Scope.Scope;
@@ -513,6 +523,41 @@ const withNativeQueue = <A, E, R>(
                 ).pipe(Layer.provide(VcsProcess.layer), Layer.provide(NodeServices.layer)),
               }
             : {}),
+          threads: {
+            stopDelegatedTasks: (input) =>
+              Effect.gen(function* () {
+                const { orchestrator, outbox } = yield* Deferred.await(stopBoundary);
+                const { subagents } = yield* orchestrator.getThreadRecords(input.threadId, [
+                  "subagents",
+                ]);
+                // The delegated-child cases stop the child itself, which has no grandchildren.
+                // Never substitute an empty parent model when that parent owns a real child.
+                assert.isEmpty(
+                  subagents.filter(
+                    (task) => task.origin === "app_owned" && task.childThreadId !== null,
+                  ),
+                );
+                const effects = yield* outbox.listByCommandId(input.commandId).pipe(Effect.orDie);
+                const stops = effects.filter(
+                  (effect) => effect.request.type === "delegated-tasks.stop",
+                );
+                assert.lengthOf(stops, 1);
+                const stop = stops[0]!;
+                assert.ok(stop.request.type === "delegated-tasks.stop");
+                assert.deepEqual(input, {
+                  threadId: stop.threadId,
+                  commandId: stop.commandId,
+                  reason: stop.request.reason,
+                });
+                assert.isEmpty(
+                  delegatedStops.filter(
+                    (prior) =>
+                      prior.threadId === input.threadId && prior.commandId === input.commandId,
+                  ),
+                );
+                delegatedStops.push({ threadId: input.threadId, commandId: input.commandId });
+              }),
+          },
           ...(options.databaseLayer === undefined ? {} : { layerDatabase: options.databaseLayer }),
           ...(options.serverConfigLayer === undefined
             ? {}
@@ -535,6 +580,8 @@ const withNativeQueue = <A, E, R>(
       );
       return yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
+        const outbox = yield* EffectOutboxV2;
+        yield* Deferred.succeed(stopBoundary, { orchestrator, outbox });
         const threadId = ThreadId.make(`thread:${name}`);
         if (!options.existingThread)
           yield* orchestrator.dispatch({
@@ -598,6 +645,7 @@ const withNativeQueue = <A, E, R>(
           waitForThread,
           waitFor: (predicate) => waitForThread(threadId, predicate),
           nativeInterruptions: () => nativeInterruptions,
+          delegatedStops,
           interruptEntered: Deferred.await(interruptEntered),
           releaseInterrupt: Deferred.succeed(interruptReleased, undefined).pipe(Effect.asVoid),
         });
@@ -1468,7 +1516,15 @@ it.live(
   () =>
     withNativeQueue(
       "queue-policy-stop-hold",
-      ({ orchestrator, threadId, takeOffer, offers, waitFor, nativeInterruptions }) =>
+      ({
+        orchestrator,
+        threadId,
+        takeOffer,
+        offers,
+        waitFor,
+        nativeInterruptions,
+        delegatedStops,
+      }) =>
         Effect.gen(function* () {
           yield* send(orchestrator, threadId, "foreground");
           const foreground = yield* takeOffer;
@@ -1577,6 +1633,9 @@ it.live(
               projection.runs.find((run) => run.id === first.id)?.status === "completed",
           );
           assert.deepEqual(offers, ["foreground", "second", "first"]);
+          assert.deepEqual(delegatedStops, [
+            { threadId, commandId: CommandId.make(`${threadId}:stop`) },
+          ]);
         }),
       { holdFirstSend: true },
     ),

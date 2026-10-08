@@ -371,7 +371,9 @@ it.effect(
           threadId: secondThreadId,
           providerSessionId,
           now,
+          nativeThreadId: "native-thread-b",
         });
+        assert.notEqual(firstProviderThread.id, secondProviderThread.id);
         const firstRunId = idAllocator.derive.run({ threadId: firstThreadId, ordinal: 1 });
         const secondRunId = idAllocator.derive.run({ threadId: secondThreadId, ordinal: 1 });
         const firstProviderTurnId = idAllocator.derive.providerTurn({

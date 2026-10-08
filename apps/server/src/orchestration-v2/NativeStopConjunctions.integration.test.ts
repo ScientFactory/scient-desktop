@@ -373,6 +373,8 @@ emit({ kind: "ready" });
         })),
       ),
   };
+  let fixtureOrchestrator: OrchestratorV2["Service"] | undefined;
+  const delegatedStops: Array<{ readonly threadId: ThreadId; readonly commandId: CommandId }> = [];
   const layer = makeOrchestratorV2ReplayLayerWithRegistry(
     { name: scenario.name, runtimePolicyOverride: { cwd } },
     makeLayer([adapter]),
@@ -384,6 +386,26 @@ emit({ kind: "ready" });
       configureMcp: false,
       runEffectWorker: false,
       responseStreamingMode: "paragraph",
+      threads: {
+        stopDelegatedTasks: (input) =>
+          Effect.gen(function* () {
+            assert.ok(fixtureOrchestrator);
+            const { subagents } = yield* fixtureOrchestrator.getThreadRecords(input.threadId, [
+              "subagents",
+            ]);
+            assert.isEmpty(
+              subagents.filter(
+                (task) => task.origin === "app_owned" && task.childThreadId !== null,
+              ),
+            );
+            assert.deepEqual(input, {
+              threadId,
+              commandId: CommandId.make("stop:public"),
+              reason: undefined,
+            });
+            delegatedStops.push({ threadId: input.threadId, commandId: input.commandId });
+          }),
+      },
     },
   );
   const save = (name: string, value: unknown) =>
@@ -408,7 +430,18 @@ emit({ kind: "ready" });
         );
     }
   });
-  return { layer, cwd, peers, events, save, capture };
+  return {
+    layer,
+    cwd,
+    peers,
+    events,
+    save,
+    capture,
+    delegatedStops,
+    bindOrchestrator: (orchestrator: OrchestratorV2["Service"]) => {
+      fixtureOrchestrator = orchestrator;
+    },
+  };
 });
 
 it.effect.each(
@@ -422,6 +455,7 @@ it.effect.each(
         yield* Effect.scoped(
           Effect.gen(function* () {
             const orchestrator = yield* OrchestratorV2;
+            h.bindOrchestrator(orchestrator);
             const worker = yield* OrchestrationEffectWorkerV2;
             const manager = yield* ProviderSessionManagerV2;
             const outbox = yield* EffectOutboxV2;
@@ -603,6 +637,11 @@ it.effect.each(
             }
             const after = yield* orchestrator.getThreadProjection(threadId);
             const stopEffects = yield* outbox.listByCommandId(stopId);
+            assert.deepEqual(h.delegatedStops, [{ threadId, commandId: stopId }]);
+            assert.equal(
+              stopEffects.find((effect) => effect.request.type === "delegated-tasks.stop")?.status,
+              "succeeded",
+            );
             const publicObservation = {
               before,
               after,

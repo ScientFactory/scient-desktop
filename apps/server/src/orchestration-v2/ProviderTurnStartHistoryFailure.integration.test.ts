@@ -77,6 +77,7 @@ it.live.each(
       let nativeOffers = 0;
       let nativeResumeFailures = 0;
       let observeResume = false;
+      const stoppedDelegatedTaskParents: Array<ThreadId> = [];
       const admissionReads: Array<{
         operation: "readiness" | "records";
         outcome: "Success" | "Failure";
@@ -127,6 +128,15 @@ it.live.each(
           configureMcp: false,
           runEffectWorker: false,
           layerDatabase: SqlitePersistenceMemory,
+          threads: {
+            // These recovery cases have no delegated children; retain real Stop delivery.
+            stopDelegatedTasks: (input) =>
+              Effect.sync(() => {
+                assert.equal(input.threadId, ThreadId.make("history-failure-thread"));
+                assert.equal(input.commandId, CommandId.make("history-failure-stop"));
+                stoppedDelegatedTaskParents.push(input.threadId);
+              }),
+          },
           decorateProjectionStore: (store) => ({
             ...store,
             canStartQueuedRun: (threadId) =>
@@ -241,6 +251,7 @@ it.live.each(
         const queued = admitted.runs.find((run) => run.userMessageId === queuedMessageId);
         assert.ok(foreground);
         assert.ok(queued);
+        assert.isEmpty(admitted.subagents);
         const recoveryRead =
           recovery === "recovery projection" || recovery === "displaced recovery owner";
         if (recoveryRead) {
@@ -478,6 +489,7 @@ it.live.each(
           yield* sql`UPDATE orchestration_v2_effect_outbox SET available_at = created_at
           WHERE effect_id = ${start.effect_id}`;
           yield* worker.drain(8);
+          assert.deepEqual(stoppedDelegatedTaskParents, [threadId]);
           const effect = yield* outbox.get(start.effect_id);
           assert.isTrue(Option.isSome(effect));
           if (Option.isNone(effect)) return assert.fail("Missing native start effect");

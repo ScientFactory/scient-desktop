@@ -67,11 +67,17 @@ const gitLayer = GitWorkflow.layer.pipe(
     Layer.mergeAll(
       GitVcs.layer,
       VcsRegistry.layer,
-      Layer.mock(GitManager.GitManager)({
-        invalidateLocalStatus: () => Effect.void,
-        invalidateRemoteStatus: () => Effect.void,
-        invalidateStatus: () => Effect.void,
-      }),
+      Layer.unwrap(
+        Effect.map(GitVcs.GitVcsDriver, (git) =>
+          Layer.mock(GitManager.GitManager)({
+            // Execute real checkouts; this fixture has no settings overrides or submodules.
+            createWorktree: git.createWorktree,
+            invalidateLocalStatus: () => Effect.void,
+            invalidateRemoteStatus: () => Effect.void,
+            invalidateStatus: () => Effect.void,
+          }),
+        ),
+      ).pipe(Layer.provide(GitVcs.layer)),
     ),
   ),
   Layer.provide(vcsLayer),

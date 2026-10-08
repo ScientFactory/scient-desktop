@@ -19,9 +19,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type {
@@ -143,8 +145,12 @@ const stopEarlierBackgroundWork = ({
             };
           }),
       };
+      let fixtureOrchestrator: Orchestrator.OrchestratorV2["Service"] | undefined;
+      const delegatedStops: Array<{ readonly threadId: ThreadId; readonly commandId: CommandId }> =
+        [];
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
+        fixtureOrchestrator = orchestrator;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const sink = yield* EventSink.EventSinkV2;
         const threadId = ThreadId.make("thread:background-work-stop");
@@ -244,6 +250,13 @@ const stopEarlierBackgroundWork = ({
                   payload: run,
                 },
                 {
+                  id: EventId.make("stale-provider-turn"),
+                  type: "provider-turn.updated",
+                  threadId,
+                  occurredAt: now,
+                  payload: codexTurn,
+                },
+                {
                   id: EventId.make("stale-node"),
                   type: "node.updated",
                   threadId,
@@ -259,6 +272,13 @@ const stopEarlierBackgroundWork = ({
                 },
               ],
             });
+            assert.equal(
+              (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]?.status,
+              "running",
+            );
+            assert.isTrue(
+              Option.isNone(yield* sessions.get(first.providerThread.providerSessionId!)),
+            );
           }
           const messageId = MessageId.make("partial-output");
           const item = before.turnItems.find((candidate) => candidate.id === devServerId)!;
@@ -360,6 +380,17 @@ const stopEarlierBackgroundWork = ({
           );
           yield* worker.drain();
           const after = yield* orchestrator.getThreadProjection(threadId);
+          // Direct Orchestrator.thread.stop leaves child stopping to its sender;
+          // MCP cancelTask calls ThreadManagementService.stopDelegatedTasks separately.
+          assert.deepEqual(delegatedStops, []);
+          const stopEffects = yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
+            CommandId.make(
+              stalledRun === "superseded-attempt" ? "late-settle" : "stop-stalled-run",
+            ),
+          );
+          assert.isEmpty(
+            stopEffects.filter((effect) => effect.request.type === "delegated-tasks.stop"),
+          );
           const interrupted = stalledRun !== "superseded-attempt";
           assert.equal(after.runs[0]?.status, interrupted ? "interrupted" : "running");
           assert.equal(after.attempts[0]?.status, interrupted ? "interrupted" : "running");
@@ -723,6 +754,21 @@ const stopEarlierBackgroundWork = ({
         );
         yield* worker.drain();
 
+        // Native run.interrupt(holdQueue:true) schedules child stopping in its
+        // outbox. Direct thread.stop delegates that responsibility to its sender.
+        assert.deepEqual(
+          delegatedStops,
+          stopWithQueue === "run.interrupt"
+            ? [{ threadId, commandId: CommandId.make("stop-background-work") }]
+            : [],
+        );
+        const stopEffects = yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
+          CommandId.make("stop-background-work"),
+        );
+        assert.equal(
+          stopEffects.filter((effect) => effect.request.type === "delegated-tasks.stop").length,
+          stopWithQueue === "run.interrupt" ? 1 : 0,
+        );
         // The Codex interrupt targets its latest pending work, the subagent's parent turn,
         // so its settlement covers the Codex background work.
         assert.sameDeepMembers(
@@ -757,7 +803,33 @@ const stopEarlierBackgroundWork = ({
           ProviderReplayHarness.layerWithRegistry(
             { name: "background-work-stop" },
             ProviderAdapterRegistry.layerSingle(adapter),
-            { runEffectWorker: false },
+            {
+              runEffectWorker: false,
+              threads: {
+                stopDelegatedTasks: (input) =>
+                  Effect.gen(function* () {
+                    assert.ok(fixtureOrchestrator);
+                    const { subagents } = yield* fixtureOrchestrator.getThreadRecords(
+                      input.threadId,
+                      ["subagents"],
+                    );
+                    // Provider-native background subagents have no app-owned child thread.
+                    assert.isEmpty(
+                      subagents.filter(
+                        (task) => task.origin === "app_owned" && task.childThreadId !== null,
+                      ),
+                    );
+                    assert.deepEqual(input, {
+                      threadId: ThreadId.make("thread:background-work-stop"),
+                      commandId: CommandId.make(
+                        stalledRun === undefined ? "stop-background-work" : "stop-stalled-run",
+                      ),
+                      reason: undefined,
+                    });
+                    delegatedStops.push({ threadId: input.threadId, commandId: input.commandId });
+                  }),
+              },
+            },
           ),
         ),
       );

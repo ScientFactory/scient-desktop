@@ -238,6 +238,7 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
   const decodedQueue = yield* Queue.unbounded<AcpProtocolLogEvent>();
   const instanceId = ProviderInstanceId.make(`droid-steer-${name}`);
   const threadId = ThreadId.make(`droid-steer:${name}`);
+  const stoppedDelegatedTaskParents: Array<ThreadId> = [];
   const selection = { instanceId, model: "droid-native" };
   const otherSelection = {
     instanceId: ProviderInstanceId.make(`droid-steer-other-${name}`),
@@ -375,6 +376,22 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
         layerDatabase: databaseLayer,
         runtimePolicyLayer: policyLayer,
         layerServerConfig: Layer.succeed(Config.ServerConfig, config),
+        ...(name === "policy"
+          ? {
+              threads: {
+                // The captured-policy case has no children; preserve native Stop's outbox seam.
+                stopDelegatedTasks: (input: {
+                  readonly threadId: ThreadId;
+                  readonly commandId: CommandId;
+                }) =>
+                  Effect.sync(() => {
+                    assert.equal(input.threadId, threadId);
+                    assert.equal(input.commandId, CommandId.make(`${name}:stop`));
+                    stoppedDelegatedTaskParents.push(input.threadId);
+                  }),
+              },
+            }
+          : {}),
       },
     ).pipe(Layer.provideMerge(Layer.merge(databaseLayer, threadCommandExecutorLayer))),
   );
@@ -711,6 +728,7 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
     pids,
     terminalProbes,
     lockTrace,
+    stoppedDelegatedTaskParents,
     send,
     waitFor,
     waitDecoded,
@@ -1948,8 +1966,10 @@ it.live(
           "cancel",
           ordinaryPhase.text,
         ]);
+        assert.isEmpty(restarted.subagents);
         yield* h.stop(target.id);
         yield* h.worker.drain(12);
+        assert.deepEqual(h.stoppedDelegatedTaskParents, [h.threadId]);
         yield* h.waitFor((p) => p.runs[0]?.status === "interrupted");
         yield* h.worker.drain(12);
         const stopped = yield* h.waitFor((p) =>

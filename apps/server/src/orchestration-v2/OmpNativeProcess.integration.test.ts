@@ -147,16 +147,43 @@ describe.skipIf(HostProcessPlatform.defaultValue() === "win32")(
               continuations: { offer: () => Effect.void },
               makeProcess,
             });
+            let fixtureOrchestrator: OrchestratorV2["Service"] | undefined;
+            const delegatedStops: Array<{
+              readonly threadId: ThreadId;
+              readonly commandId: CommandId;
+            }> = [];
             const runtimeLayer = makeOrchestratorV2ReplayLayerWithRegistry(
               { name: `omp-default-process-${interrupted}`, runtimePolicyOverride: { cwd } },
               makeLayer([adapter]),
               {
                 configureMcp: false,
+                threads: {
+                  stopDelegatedTasks: (input) =>
+                    Effect.gen(function* () {
+                      assert.ok(fixtureOrchestrator);
+                      const { subagents } = yield* fixtureOrchestrator.getThreadRecords(
+                        input.threadId,
+                        ["subagents"],
+                      );
+                      assert.isEmpty(
+                        subagents.filter(
+                          (task) => task.origin === "app_owned" && task.childThreadId !== null,
+                        ),
+                      );
+                      assert.deepEqual(input, {
+                        threadId,
+                        commandId: CommandId.make(`${threadId}:stop`),
+                        reason: undefined,
+                      });
+                      delegatedStops.push({ threadId: input.threadId, commandId: input.commandId });
+                    }),
+                },
                 layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
               },
             );
             yield* Effect.gen(function* () {
               const orchestrator = yield* OrchestratorV2;
+              fixtureOrchestrator = orchestrator;
               const sessions = yield* ProviderSessionManagerV2;
               yield* orchestrator.dispatch({
                 type: "thread.create",
@@ -268,6 +295,10 @@ describe.skipIf(HostProcessPlatform.defaultValue() === "win32")(
                       run.status === "completed" ||
                       (interrupted && run.id === foreground.id && run.status === "interrupted"),
                   ),
+              );
+              assert.deepEqual(
+                delegatedStops,
+                interrupted ? [{ threadId, commandId: CommandId.make(`${threadId}:stop`) }] : [],
               );
               assert.equal(
                 final.runs.filter((run) => run.status === "completed").length,

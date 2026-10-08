@@ -96,6 +96,9 @@ function codexReplayPreamble(input: {
           },
           capabilities: {
             experimentalApi: true,
+            extensions: {
+              "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] },
+            },
             optOutNotificationMethods: ["turn/diff/updated"],
           },
         },
