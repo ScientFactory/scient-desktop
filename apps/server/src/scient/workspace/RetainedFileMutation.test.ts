@@ -271,3 +271,41 @@ it.skipIf(!available)("reports late writes through a handle to a restored staged
     }
   }, true),
 );
+
+describe.skipIf(!available)("restoration revision continuity", () => {
+  it.each(["between-rounds", "round-admitted", "crash-intent"])(
+    "keeps C written at %s without blessing it as harmless displacement",
+    (point) =>
+      fixture(async (input, target, root) => {
+        const swap = async (value: string) => {
+          const writer = NodePath.join(root, "writer");
+          await NodeFSP.writeFile(writer, value);
+          await NodeFSP.rename(writer, target);
+        };
+        let wrote = false,
+          crashed = false;
+        const applying = mutateRetainedFile(input, target, {
+          at: async (p) => {
+            if (p === "checked") await swap("A");
+            if (p === "restore-intent") await swap("B");
+            if (
+              !wrote &&
+              p === (point === "between-rounds" ? "between-rounds" : "round-admitted")
+            ) {
+              wrote = true;
+              await NodeFSP.writeFile(target, "C newest");
+            }
+            if (point === "crash-intent" && p === "return-intent" && !crashed) {
+              crashed = true;
+              throw new Error("crash");
+            }
+          },
+        });
+        if (point === "crash-intent") await expect(applying).rejects.toThrow("crash");
+        else await applying;
+        const recovered = await mutateRetainedFile(input, target);
+        expect(recovered.outcome).toBe("attention");
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("C newest");
+      }, true),
+  );
+});

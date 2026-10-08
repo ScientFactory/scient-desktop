@@ -71,6 +71,8 @@ export type MutationPoint =
   | "restored"
   | "return-intent"
   | "returned"
+  | "between-rounds"
+  | "round-admitted"
   | "done";
 /** Fault/race seam for synthetic tests; never supplied by a transport. */
 export interface RetainedMutationHooks {
@@ -318,14 +320,21 @@ async function run(
       } else {
         if (!targetId) return finish((await exclusiveLink(slot, target)) ? "skipped" : "attention");
         if (record.rounds >= 3) return finish("attention");
-        if (record.rounds > 0 && !same(targetId, record.restoreSlot)) return finish("attention");
+        if (
+          record.rounds > 0 &&
+          (!same(targetId, record.restoreSlot) ||
+            (await fileRevision(target)) !== record.restoreSlotRevision)
+        )
+          return finish("attention");
         const returning = record.rounds > 0;
+        const installedRevision = record.restoreSlotRevision;
+        if (returning) await point("round-admitted");
         await save({
           phase: returning ? "returning-newer" : "restoring",
           restoreSlot: slotId,
           restoreTarget: targetId,
           restoreSlotRevision: await fileRevision(slot),
-          restoreTargetRevision: await fileRevision(target),
+          restoreTargetRevision: returning ? installedRevision : await fileRevision(target),
           rounds: record.rounds + 1,
         });
         await point(returning ? "return-intent" : "restore-intent");
@@ -349,6 +358,7 @@ async function run(
         (await fileRevision(target)) !== record.restoreSlotRevision
       )
         return finish("attention");
+      await point("between-rounds");
     }
   };
   if (record.phase === "restoring" || record.phase === "returning-newer") return restore();
