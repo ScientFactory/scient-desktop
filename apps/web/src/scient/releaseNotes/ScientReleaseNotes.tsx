@@ -275,9 +275,14 @@ function ScientReleaseParagraphs({
           <li className="min-w-0 pl-0.5" key={highlight.id}>
             <div className="min-w-0">
               <p className="text-sm font-semibold leading-5 text-foreground">{highlight.title}</p>
-              <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
-                {highlight.description}
-              </p>
+              {highlight.description.split(/\n\n+/u).map((paragraph, index) => (
+                <p
+                  key={`${highlight.id}-${index}`}
+                  className="mt-1 text-[13px] leading-relaxed text-muted-foreground"
+                >
+                  {paragraph}
+                </p>
+              ))}
             </div>
           </li>
         ))}
