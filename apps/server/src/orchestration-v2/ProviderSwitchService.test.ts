@@ -379,9 +379,11 @@ it.effect("keeps the live native owner when the target is a symlink to the same 
   }).pipe(
     Effect.scoped,
     Effect.provide(
-      layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+      Layer.mergeAll(
+        layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+        NodeServices.layer,
+      ),
     ),
-    Effect.provide(NodeServices.layer),
   ),
 );
 
@@ -408,9 +410,11 @@ it.effect("restarts the live owner for genuinely different canonical workspaces"
   }).pipe(
     Effect.scoped,
     Effect.provide(
-      layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+      Layer.mergeAll(
+        layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+        NodeServices.layer,
+      ),
     ),
-    Effect.provide(NodeServices.layer),
   ),
 );
 
