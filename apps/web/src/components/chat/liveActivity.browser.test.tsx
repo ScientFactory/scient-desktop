@@ -303,11 +303,17 @@ it("never sweeps the setup popover beside the timeline's current activity", asyn
     document.querySelector<HTMLButtonElement>('button[aria-label$="Show setup progress."]');
   await expect.poll(chip).not.toBeNull();
   chip()!.click();
-  await expect
-    .poll(() => document.querySelector('[data-worktree-setup-stage="setup-script"]'))
-    .not.toBeNull();
-  // The popover's running stage stays still: one sweep on the whole page.
+  // The popover's own card, rendered outside the timeline.
+  const popoverStage = () =>
+    Array.from(document.querySelectorAll('[data-worktree-setup-stage="setup-script"]')).find(
+      (stage) => !host!.contains(stage),
+    );
+  await expect.poll(popoverStage).toBeDefined();
+  const popoverCard = popoverStage()!.closest("section")!;
+  // Its running stage stays still: one sweep on the whole page, on the timeline.
+  expect(popoverCard.querySelector(".live-activity-focus")).toBeNull();
   expect(document.querySelectorAll(".live-activity-focus")).toHaveLength(1);
+  expect(host!.contains(document.querySelector(".live-activity-focus"))).toBe(true);
 });
 
 async function emulate(feature: "prefers-reduced-motion" | "forced-colors", value: string) {
@@ -343,6 +349,14 @@ it("in high contrast mode: the dot keeps the system text color", async () => {
     expect(dot.forcedColorAdjust).toBe("none");
     expect(dot.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
     expect(dot.animationName).toBe("none");
+    // No sweep (overlay hidden, no motion) and no dimmed text either.
+    await expect.poll(() => host!.querySelector(".live-activity-focus")).not.toBeNull();
+    const overlay = host!.querySelector(".live-activity-focus")!;
+    expect(getComputedStyle(overlay).opacity).toBe("0");
+    expect(getComputedStyle(overlay).animationName).toBe("none");
+    const counter = overlay.querySelector(".live-activity-focus-counter")!;
+    expect(getComputedStyle(counter).animationName).toBe("none");
+    expect(getComputedStyle(host!.querySelector(".live-activity-rest")!).opacity).toBe("1");
   } finally {
     await emulate("forced-colors", "");
   }
