@@ -61,10 +61,6 @@ const SCIENT_SANITIZE_SCHEMA = {
     ...CHAT_MARKDOWN_SANITIZE_SCHEMA.attributes,
     img: [...CHAT_MARKDOWN_SANITIZE_SCHEMA.attributes.img, "dataScientImageCard"],
   },
-  protocols: {
-    ...CHAT_MARKDOWN_SANITIZE_SCHEMA.protocols,
-    href: [...CHAT_MARKDOWN_SANITIZE_SCHEMA.protocols.href, "scient-file-citation"],
-  },
 } satisfies Parameters<typeof rehypeSanitize>[0];
 
 function withScientMath(plugins: NonNullable<ReactMarkdownOptions["remarkPlugins"]>) {

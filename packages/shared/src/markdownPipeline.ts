@@ -13,6 +13,9 @@ import {
 } from "./codexMarkdownDirectives.ts";
 import { isWindowsDrivePathHref } from "./markdownLinks.ts";
 import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
+// SCIENT-FORK:START — shared quote protocol owner.
+import { FILE_CITATION_PROTOCOL } from "./composerCitations.ts";
+// SCIENT-FORK:END
 
 type MarkdownImageHastNode = {
   type?: string;
@@ -162,6 +165,10 @@ export const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
       ...(defaultSchema.protocols?.href ?? []),
       "file",
       "t3-citation",
+      // SCIENT-FORK:START — retain quote data for the validated citation renderer/index.
+      // Protocol preservation is not navigation authority; consumers still parse the payload.
+      FILE_CITATION_PROTOCOL,
+      // SCIENT-FORK:END
       "t3-context",
       THREAD_LINK_PROTOCOL,
     ],

@@ -9,7 +9,8 @@ import {
   serializeAssistantCitation,
 } from "./assistantCitations.ts";
 
-const PREFIX = "scient-file-citation://v1/";
+export const FILE_CITATION_PROTOCOL = "scient-file-citation";
+const PREFIX = `${FILE_CITATION_PROTOCOL}://v1/`;
 const MAX_HREF_LENGTH = 240_000;
 // Generated URLs encode parentheses. Reject raw opening parentheses too so a
 // run of unfinished link prefixes cannot repeatedly scan the entire prompt.
@@ -22,7 +23,7 @@ export function parseFileCitationHref(href: string): FileCitation | null {
     const url = new URL(href);
     if (
       url.origin !== "null" ||
-      url.protocol !== "scient-file-citation:" ||
+      url.protocol !== `${FILE_CITATION_PROTOCOL}:` ||
       url.hostname !== "v1" ||
       url.pathname !== "/" ||
       url.hash ||

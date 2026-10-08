@@ -1,6 +1,6 @@
 import { EnvironmentId, MessageId, ThreadId, type FileCitation } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
-import { serializeComposerCitation } from "./composerCitations.ts";
+import { parseComposerCitationHref, serializeComposerCitation } from "./composerCitations.ts";
 import { formatEnvironmentQualifiedThreadLink } from "./threadLinks.ts";
 import { serializeAssistantCitation } from "./assistantCitations.ts";
 import { searchableMessageSegments } from "./threadFindText.ts";
@@ -202,4 +202,15 @@ it("keeps the authored label of environment-qualified thread links", () => {
       formatEnvironmentQualifiedThreadLink("remote", "thread", "Readable conversation"),
     ),
   ).toEqual(["Readable conversation"]);
+});
+
+it.each([
+  "scient-file-citation://v1/?data=bad",
+  "scient-file-citation://v2/?data=%7B%7D",
+  "scient-file-citation://v1/?data=%7B%7D&unknown=1",
+  "javascript:alert",
+  "scient-file-citation-unsafe://v1/?data=%7B%7D",
+])("leaves unsupported or malformed quote links as authored labels: %s", (href) => {
+  expect(parseComposerCitationHref(href)).toBeNull();
+  expect(assistantSegments(`[File quote](${href})`)).toEqual(["File quote"]);
 });
