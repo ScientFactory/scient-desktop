@@ -224,6 +224,18 @@ documentation was removed from user Help: `docs/internals/scient-mobile-release-
 records that there is no supported Scient mobile app and prohibits presenting that
 channel as Scient distribution.
 
+The next qualified alignment is recorded in
+[the 2026-10-08 receipt](docs/internals/t3-upstream-sync-20261008-468ade3049.md)
+and `upstream-state.json`. It receives 366 first-parent official commits through
+`468ade30495c450ae4e731483187f77bc3c5e42b` onto owned base
+`c8ec17b2a03ed567c5cbda21e01df158a55af55c`. Literal merge
+`e434651620b6ad9e5a9b9c610199e0820fd3268f` retains that exact official target;
+`6c51d1e2f74bac676cb033b344d8caaa75814f47` preserves the later owned-main catch-up.
+Native Effect/RPC, scopes, MCP Apps and provider metadata compose with Scient's
+policy, workspace and scientific owners. The receipt distinguishes complete local
+qualification, independent reviews, actual-app approval and hosted delivery,
+including retained publication holds and measured enforcement debt.
+
 ## Receiving T3 updates
 
 The local alignment through `1ab2dfb5` is documented in the
