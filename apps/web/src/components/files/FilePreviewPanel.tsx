@@ -111,6 +111,7 @@ import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLangua
 import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
 import { computeFileContextId } from "~/scient/compute/computeContextStore";
 import { FileRenameButton } from "./FileRenameButton";
+import { useNewDocument } from "~/scient/documents/useNewDocument";
 import { normalizeMarkdownCreatePath } from "~/scient/markdownEditor/ui/ScientMarkdownCreateButton";
 import type { LatexRenameContext } from "~/scient/latex/ScientLatexSurface";
 import {
@@ -1504,6 +1505,26 @@ export default function FilePreviewPanel({
     effectiveSourcePending ||
     (latexRename?.blocked ?? false) ||
     (file.data === null && file.failure !== "binary_file");
+  // A document started from the Documents menu: its template row, then its one rename.
+  const newDocument = useNewDocument({
+    environmentId,
+    cwd,
+    relativePath,
+    lease: markdownLease,
+    snapshot: markdownSnapshot ?? null,
+    renameDisabled,
+    onRenamed: (destinationRelativePath) => {
+      if (relativePath === null) return;
+      applyScientFileRename({
+        environmentId,
+        cwd,
+        relativePath,
+        usesDocumentSession,
+        destinationRelativePath,
+        onFileRenamed,
+      });
+    },
+  });
   // A LaTeX document's own exports, published by its surface.
   const [latexDownloads, setLatexDownloads] = useState<DocumentDownloadActions | null>(null);
   // SCIENT-FORK:END
@@ -1963,6 +1984,7 @@ export default function FilePreviewPanel({
                   key={`${relativePath}:${resolvedTheme}`}
                   onDownloadActions={setLatexDownloads}
                   onRenameContext={setLatexRename}
+                  startBar={newDocument.startBar}
                   environmentId={environmentId}
                   cwd={cwd}
                   relativePath={relativePath}

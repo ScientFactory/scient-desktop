@@ -9,13 +9,7 @@ import { lazy, Suspense, type ReactNode } from "react";
 import type { OpenFileOptions } from "~/rightPanelStore";
 
 import type { ScientRightPanelSurface } from "./surfaces";
-import { focusNewDocumentWhenOpen } from "../documents/focusNewDocument";
 
-const ScientDocumentsPanel = lazy(() =>
-  import("../documents/ScientDocumentsPanel").then((module) => ({
-    default: module.ScientDocumentsPanel,
-  })),
-);
 const ScientSourcesPanel = lazy(() =>
   import("../sources/ScientSourcesPanel").then((module) => ({
     default: module.ScientSourcesPanel,
@@ -79,7 +73,6 @@ export function ScientRightPanelContent(input: ScientRightPanelContentProps): Re
     availableEditors,
     keybindings,
     closeRightPanelSurface,
-    openFileSourceSurface,
     openScientSourcePdf,
   } = input;
   return renderedRightPanelSurface?.kind === "scient" &&
@@ -149,24 +142,6 @@ export function ScientRightPanelContent(input: ScientRightPanelContentProps): Re
         fileName={renderedRightPanelSurface.fileName}
         root={activeWorkspaceRoot}
         sourceId={renderedRightPanelSurface.sourceId}
-      />
-    </Suspense>
-  ) : renderedRightPanelSurface?.kind === "scient" &&
-    renderedRightPanelSurface.module === "documents" &&
-    activeThreadRef &&
-    activeWorkspaceRoot ? (
-    <Suspense fallback={null}>
-      <ScientDocumentsPanel
-        key={`${activeThreadRef.environmentId}:${activeWorkspaceRoot}:${renderedRightPanelSurface.format}`}
-        environmentId={activeThreadRef.environmentId}
-        cwd={activeWorkspaceRoot}
-        format={renderedRightPanelSurface.format}
-        onCreated={(path) => {
-          openFileSourceSurface(path, undefined, { latexPreviewMode: "visual" });
-          closeRightPanelSurface(renderedRightPanelSurface);
-          focusNewDocumentWhenOpen();
-        }}
-        onCancel={() => closeRightPanelSurface(renderedRightPanelSurface)}
       />
     </Suspense>
   ) : renderedRightPanelSurface?.kind === "scient" &&

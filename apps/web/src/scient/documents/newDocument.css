@@ -1,0 +1,51 @@
+/* The template and language row over a new LaTeX document, until its first edit. */
+.scient-new-document-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 2px 14px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-sans);
+  font-size: 12px;
+}
+
+.scient-new-document-bar [role="radiogroup"] {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.scient-new-document-bar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.scient-new-document-bar button:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+.scient-new-document-bar button[aria-checked="true"] {
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.scient-new-document-bar button svg {
+  width: 12px;
+  height: 12px;
+}
+
+.scient-new-document-bar button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}

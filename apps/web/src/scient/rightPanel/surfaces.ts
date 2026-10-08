@@ -11,7 +11,6 @@ import {
   MAX_COMPUTE_CONTEXT_ID_LENGTH,
   type ComputeContextId,
 } from "~/scient/compute/computeContextStore";
-import type { NewDocumentFormat } from "~/scient/documents/documentTemplates";
 
 type GeneratedPdfSourceDescriptor = Extract<
   PdfSourceDescriptorType,
@@ -20,12 +19,6 @@ type GeneratedPdfSourceDescriptor = Extract<
 const isPdfSourceDescriptor = Schema.is(PdfSourceDescriptor);
 
 export type ScientRightPanelSurface =
-  | {
-      readonly id: "scient:documents";
-      readonly kind: "scient";
-      readonly module: "documents";
-      readonly format: NewDocumentFormat;
-    }
   | { readonly id: "scient:sources"; readonly kind: "scient"; readonly module: "sources" }
   | {
       readonly id: `scient:compute:${string}`;
@@ -72,13 +65,6 @@ export type ScientRightPanelSurface =
 
 export function scientSourcesSurface(): Extract<ScientRightPanelSurface, { module: "sources" }> {
   return { id: "scient:sources", kind: "scient", module: "sources" };
-}
-
-/** The new-document page: one at a time, for the format chosen from the Documents menu. */
-export function scientDocumentsSurface(
-  format: NewDocumentFormat,
-): Extract<ScientRightPanelSurface, { module: "documents" }> {
-  return { id: "scient:documents", kind: "scient", module: "documents", format };
 }
 
 export function scientComputeSurface(input: {
@@ -173,8 +159,6 @@ export function normalizeScientRightPanelSurface(value: unknown): ScientRightPan
   if (typeof value !== "object" || value === null) return null;
   const surface = value as Record<string, unknown>;
   if (surface.kind !== "scient") return null;
-  if (surface.id === "scient:documents" && surface.module === "documents")
-    return scientDocumentsSurface(surface.format === "markdown" ? "markdown" : "latex");
   if (surface.id === "scient:sources" && surface.module === "sources") {
     return scientSourcesSurface();
   }
@@ -252,8 +236,6 @@ export function normalizeScientRightPanelSurface(value: unknown): ScientRightPan
 
 export function scientRightPanelSurfaceTitle(surface: ScientRightPanelSurface): string {
   switch (surface.module) {
-    case "documents":
-      return "New document";
     case "sources":
       return "Sources";
     case "compute":

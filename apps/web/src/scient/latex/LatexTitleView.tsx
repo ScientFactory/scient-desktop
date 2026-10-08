@@ -159,6 +159,7 @@ export function LatexTitleView({
     >
       <LatexTextField
         aria-label="Document title"
+        placeholder="Title"
         rows={1}
         disabled={!editable || sourceMeta?.titleEditable === false}
         draftKey={draftKey ? `${draftKey}:title` : undefined}

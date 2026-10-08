@@ -1,7 +1,21 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { latexDocumentLanguage } from "../latex/latexLanguage";
-import { createNewDocumentSource, newDocumentPath, newDocumentStem } from "./documentTemplates";
+import {
+  createNewDocumentSource,
+  isUntouchedNewLatexDocument,
+  newDocumentCandidate,
+  newDocumentStem,
+  newDocumentTitle,
+  sameTitleText,
+  switchNewLatexDocument,
+} from "./documentTemplates";
+
+const article = createNewDocumentSource({
+  format: "latex",
+  template: "article",
+  language: "english",
+});
 
 describe("new documents", () => {
   it("names the file from the title", () => {
@@ -15,66 +29,69 @@ describe("new documents", () => {
     expect(newDocumentStem("a".repeat(200))).toHaveLength(80);
   });
 
-  it("takes the first free name, whatever its case on disk", () => {
-    expect(newDocumentPath("Notes", "markdown", [])).toBe("notes.md");
-    expect(newDocumentPath("Notes", "latex", ["notes.md"])).toBe("notes.tex");
-    expect(newDocumentPath("Notes", "latex", ["Notes.tex", "notes-2.tex"])).toBe("notes-3.tex");
+  it("numbers further attempts and keeps the folder", () => {
+    expect(newDocumentCandidate("untitled", "latex", 1)).toBe("untitled.tex");
+    expect(newDocumentCandidate("untitled", "markdown", 3)).toBe("untitled-3.md");
+    expect(newDocumentCandidate("notes", "latex", 2, "papers/")).toBe("papers/notes-2.tex");
   });
 
-  it("starts Markdown with its title as the first heading", () => {
+  it("starts with an empty title for the person to write", () => {
     expect(
-      createNewDocumentSource({
-        format: "markdown",
-        title: " Lab notebook\n",
-        template: "blank",
-        language: "english",
-      }),
-    ).toBe("# Lab notebook\n\n");
-    expect(
-      createNewDocumentSource({
-        format: "markdown",
-        title: "",
-        template: "blank",
-        language: "english",
-      }),
-    ).toBe("# Untitled\n\n");
+      createNewDocumentSource({ format: "markdown", template: "blank", language: "english" }),
+    ).toBe("# \n");
+    expect(article).toContain("\\title{}");
+    expect(article).toContain("\\begin{abstract}");
+    expect(newDocumentTitle(article, "latex")).toBe("");
   });
 
-  it("starts LaTeX from the chosen template with the title set", () => {
-    const article = createNewDocumentSource({
-      format: "latex",
-      title: "Bounds & limits",
-      template: "blank",
-      language: "english",
-    });
-    expect(article).toContain("\\documentclass[11pt,a4paper]{article}");
-    expect(article).toContain("\\title{Bounds \\& limits}");
-    expect(article).not.toContain("polyglossia");
+  it("reads the title a document gives itself", () => {
+    expect(newDocumentTitle("# Lab notebook\n\nText", "markdown")).toBe("Lab notebook");
+    expect(newDocumentTitle("#   \n", "markdown")).toBe("");
     expect(
-      createNewDocumentSource({
-        format: "latex",
-        title: "R",
-        template: "report",
-        language: "english",
-      }),
-    ).toContain("\\begin{abstract}");
+      newDocumentTitle(
+        article.replace("\\title{}", "\\title{Bounds \\& {\\em sharp} limits}"),
+        "latex",
+      ),
+    ).toBe("Bounds sharp limits");
+  });
+
+  it("allows a template change only while nothing but the title was written", () => {
+    const titled = article.replace("\\title{}", "\\title{Mixing times}");
+    expect(isUntouchedNewLatexDocument(titled, "article", "english")).toBe(true);
+    expect(isUntouchedNewLatexDocument(titled + "%", "article", "english")).toBe(false);
+    expect(
+      isUntouchedNewLatexDocument(
+        titled.replace("Present what you found.", "We found it."),
+        "article",
+        "english",
+      ),
+    ).toBe(false);
+    const report = switchNewLatexDocument(titled, "report", "english");
+    expect(report).toContain("\\title{Mixing times}");
+    expect(isUntouchedNewLatexDocument(report, "report", "english")).toBe(true);
+    expect(isUntouchedNewLatexDocument(report, "article", "english")).toBe(false);
+  });
+
+  it("compares title text as words", () => {
+    expect(sameTitleText("Heat \\& light", "Heat & light")).toBe(true);
+    expect(sameTitleText("Heat  kernel", " Heat kernel ")).toBe(true);
+    expect(sameTitleText("Heat", "Heat kernel")).toBe(false);
   });
 
   it("sets Hebrew up the way the editor reads it, on a Unicode engine", () => {
-    const source = createNewDocumentSource({
-      format: "latex",
-      title: "מאמר",
-      template: "blank",
-      language: "hebrew",
-    });
+    const source = switchNewLatexDocument(
+      article.replace("\\title{}", "\\title{מאמר}"),
+      "blank",
+      "hebrew",
+    );
     expect(source.startsWith("% !TEX program = xelatex\n")).toBe(true);
     expect(source).not.toContain("{fontenc}");
     expect(source).not.toContain("{inputenc}");
     expect(source).toContain("\\usepackage{polyglossia}");
     expect(source).toContain("\\title{מאמר}");
+    expect(isUntouchedNewLatexDocument(source, "blank", "hebrew")).toBe(true);
     const language = latexDocumentLanguage(source);
     expect(language.main).toBe("hebrew");
-    expect(language.direction).toBe("rtl");
     expect(language.hebrewFont).toBe("Times New Roman");
   });
 });

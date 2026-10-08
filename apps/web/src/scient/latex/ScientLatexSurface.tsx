@@ -30,6 +30,7 @@ import {
   useState,
   useSyncExternalStore,
   type MouseEvent,
+  type ReactNode,
 } from "react";
 
 import { MarkdownSourceSurface } from "~/components/files/FilePreviewPanel";
@@ -132,6 +133,8 @@ interface ScientLatexSurfaceProps {
    * and whether unsaved Visual work makes renaming wait.
    */
   readonly onRenameContext: (context: LatexRenameContext | null) => void;
+  /** A row shown above the editor, such as a new document's template choice. */
+  readonly startBar: ReactNode;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly relativePath: string;
@@ -1515,6 +1518,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           save succeeds.
         </p>
       ) : null}
+      {props.startBar}
       <div className="scient-latex-content" ref={containerRef}>
         {showEditor ? (
           <ScientTooltip

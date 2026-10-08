@@ -8,17 +8,26 @@ import {
   useRightPanelStore,
 } from "~/rightPanelStore";
 import { createComputeContextId } from "~/scient/compute/computeContextStore";
-import type { NewDocumentFormat } from "~/scient/documents/documentTemplates";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  refreshProjectFiles,
+  setProjectFileQueryData,
+} from "~/components/files/projectFilesQueryState";
+import { toastManager } from "~/components/ui/toast";
+import {
+  createNewDocumentSource,
+  newDocumentCandidate,
+  type NewDocumentFormat,
+} from "~/scient/documents/documentTemplates";
+import { focusNewDocumentWhenOpen } from "~/scient/documents/focusNewDocument";
+import { newDocuments, pathHasLeftoverDrafts } from "~/scient/documents/newDocuments";
+import { projectEnvironment } from "~/state/projects";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
 import { useScientFileOpening } from "~/scient/fileOpening/useScientFileOpening";
 import type { useActivePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
 
-import {
-  scientComputeSurface,
-  scientDocumentsSurface,
-  scientSourcePdfSurface,
-  scientSourcesSurface,
-} from "./surfaces";
+import { scientComputeSurface, scientSourcePdfSurface, scientSourcesSurface } from "./surfaces";
 
 /**
  * Openers for the right-panel surfaces Scient adds: agents, sources, compute,
@@ -37,16 +46,6 @@ export function useScientRightPanelOpeners(input: {
       useRightPanelStore.getState().open(activeThreadRef, "agents");
     });
   }, [activeThreadRef, runAfterPendingFileSave]);
-  const addDocumentsSurface = useCallback(
-    (format: NewDocumentFormat) => {
-      if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
-      const surface = scientDocumentsSurface(format);
-      runAfterPendingFileSave(surface.id, () => {
-        useRightPanelStore.getState().openScient(activeThreadRef, surface);
-      });
-    },
-    [activeThreadRef, activeWorkspaceRoot, runAfterPendingFileSave],
-  );
   const addSourcesSurface = useCallback(() => {
     if (!activeThreadRef || !activeProject || activeWorkspaceRoot === undefined) return;
     const surface = scientSourcesSurface();
@@ -103,6 +102,55 @@ export function useScientRightPanelOpeners(input: {
       });
     },
     [openFileSourceSurfaceNow, runAfterPendingFileSave],
+  );
+  // A document started by hand: `untitled` is created and opens in its editor,
+  // where it takes its title's name once the title is written.
+  const writeFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
+  const addDocumentsSurface = useCallback(
+    (format: NewDocumentFormat) => {
+      if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
+      const environmentId = activeThreadRef.environmentId;
+      const cwd = activeWorkspaceRoot;
+      const template = "article" as const;
+      const language = "english" as const;
+      const contents = createNewDocumentSource({ format, template, language });
+      void (async () => {
+        for (let attempt = 1; attempt <= 50; attempt++) {
+          const relativePath = newDocumentCandidate("untitled", format, attempt);
+          if (pathHasLeftoverDrafts({ environmentId, cwd, relativePath })) continue;
+          const result = await writeFile({
+            environmentId,
+            input: { cwd, relativePath, contents, createOnly: true },
+          });
+          if (result._tag === "Success") {
+            setProjectFileQueryData(
+              environmentId,
+              cwd,
+              relativePath,
+              contents,
+              result.value.revision,
+            );
+            refreshProjectFiles(environmentId, cwd);
+            newDocuments.set(
+              { environmentId, cwd, relativePath },
+              { format, template, language, seenUntouched: false, settled: format === "markdown" },
+            );
+            openFileSourceSurface(relativePath, undefined, { latexPreviewMode: "visual" });
+            focusNewDocumentWhenOpen("title");
+            return;
+          }
+          const cause = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
+          const taken =
+            typeof cause === "object" &&
+            cause !== null &&
+            "failure" in cause &&
+            cause.failure === "path_exists";
+          if (!taken) break;
+        }
+        toastManager.add({ type: "error", title: "The document could not be created." });
+      })();
+    },
+    [activeThreadRef, activeWorkspaceRoot, openFileSourceSurface, writeFile],
   );
   return {
     addAgentsSurface,
