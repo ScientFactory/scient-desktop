@@ -110,7 +110,7 @@ export function useScientFileEditorBindings<Annotation>({
   }, [mathInput, surfaceRef]);
   useEffect(() => {
     const host = surfaceRef.current;
-    if (!host || !/\.tex$/iu.test(relativePath)) return;
+    if (!host || !editor || !/\.tex$/iu.test(relativePath)) return;
     return installLatexFileCompletion(editor, host, () => mathEditable.current);
   }, [editor, relativePath, surfaceRef]);
   reportEditorSelectionRef.current = reportEditorSelection;
