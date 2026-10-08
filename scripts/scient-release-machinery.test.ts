@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import { assert, describe, expect, it } from "@effect/vitest";
 
@@ -350,6 +351,43 @@ describe("Scient release machinery", () => {
       }),
       "# More AI choices. Smoother work.\n\n## Highlights\n\n- **Bring your own models** — Connect your own API keys or local models to Pi and Droid.\n\n## Also included\n\nClearer Settings controls and more reliable provider update checks.\n",
     );
+  });
+
+  it("uses the complete extended catalog note in release preflight and keeps its paragraphs in one bullet", async () => {
+    const releaseNotesRoot = NodePath.join(
+      import.meta.dirname,
+      "../apps/web/src/scient/releaseNotes",
+    );
+    const [
+      { SCIENT_RELEASE_NOTES: importedCatalog },
+      { validateScientReleaseNotesCatalog: importedValidator },
+    ] = await Promise.all([
+      import(NodeURL.pathToFileURL(NodePath.join(releaseNotesRoot, "catalog.ts")).href),
+      import(NodeURL.pathToFileURL(NodePath.join(releaseNotesRoot, "model.ts")).href),
+    ]);
+    const SCIENT_RELEASE_NOTES = importedCatalog as readonly Parameters<
+      typeof renderScientReleaseNotesMarkdown
+    >[0][];
+    const validateScientReleaseNotesCatalog = importedValidator as (
+      catalog: typeof SCIENT_RELEASE_NOTES,
+    ) => readonly string[];
+    const result = resolveReleaseNoteSource({
+      catalog: SCIENT_RELEASE_NOTES,
+      issues: validateScientReleaseNotesCatalog(SCIENT_RELEASE_NOTES),
+      version: "0.6.22",
+      allowNoteFree: false,
+    });
+    expect(result).toBe("catalog");
+    const note = SCIENT_RELEASE_NOTES[0]!;
+    if (note.format !== "paragraphs") throw new Error("Expected the expanded paragraph note.");
+    const markdown = renderScientReleaseNotesMarkdown(note);
+    expect(markdown.match(/^- \*\*/gmu)).toHaveLength(9);
+    for (const highlight of note.highlights) {
+      expect(markdown).toContain(`**${highlight.title}**`);
+      expect(markdown).toContain(highlight.description.replace(/\n/gu, "\n  "));
+    }
+    expect(markdown).toContain("\n  \n  It can launch and manage multiple subagents");
+    expect(markdown).toContain(note.alsoIncluded);
   });
 
   it("prepares a GitHub-distributed server package without workspace dependencies", () => {

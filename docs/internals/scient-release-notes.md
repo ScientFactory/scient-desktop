@@ -3,7 +3,7 @@
 - Status: Active
 - Owner: Yaacov
 - Created: 2026-08-09
-- Last updated: 2026-09-06
+- Last updated: 2026-10-08
 - Purpose: Define the reusable in-app release-note system and its release boundary.
 - Document type: Current implementation
 
@@ -49,6 +49,16 @@ content there. The complete visible note is limited to 1,600 characters. A
 headline is limited to 80 characters, paragraph titles to 72, paragraph bodies
 to 240, and `Also included` to 320. These bounds keep the note readable while
 leaving enough room for a release with several meaningful improvements.
+
+Scient 0.6.22 has an explicitly approved extended note: up to nine highlights,
+500 characters per description, 400 for `Also included`, and 4,000 characters
+of complete visible copy. Headline and title limits stay unchanged. This
+exception is keyed to that exact version in the shared validator, which both
+the app and release preflight use; all other releases retain the normal limits.
+
+Descriptions may contain blank lines to separate paragraphs within a highlight.
+The app renders each paragraph separately, and release preflight indents the
+continuation paragraphs within the same Markdown bullet.
 
 Published notes from before this format retain their original kicker and
 summary so release history remains unchanged.
