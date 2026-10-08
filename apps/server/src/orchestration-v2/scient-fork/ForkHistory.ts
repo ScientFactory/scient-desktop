@@ -204,6 +204,7 @@ export interface ForkHistoryIndexRow extends ForkHistoryEntry {
 export const readForkHistoryIndex = Effect.fn("ForkHistory.readIndex")(function* (
   sql: SqlClient.SqlClient,
   threadId: ThreadId,
+  positions?: readonly [first: number, last: number],
 ) {
   const rows = yield* sql<{
     readonly position: number;
@@ -217,6 +218,7 @@ export const readForkHistoryIndex = Effect.fn("ForkHistory.readIndex")(function*
     SELECT position, source_thread_id, source_item_id, item_type, message_id, turn_start, user_turn
     FROM scient_fork_history
     WHERE thread_id = ${threadId}
+      ${positions === undefined ? sql`` : sql`AND position BETWEEN ${positions[0]} AND ${positions[1]}`}
     ORDER BY position
   `;
   return rows.map((row): ForkHistoryIndexRow => ({
@@ -275,16 +277,31 @@ export const readForkHistoryRows = Effect.fn("ForkHistory.readRows")(function* (
   );
 });
 
+/** Whether the thread is a fork with a history list. */
+export const hasForkHistory = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
+  sql<{ readonly present: number }>`
+    SELECT 1 AS present FROM scient_fork_history WHERE thread_id = ${threadId} LIMIT 1
+  `.pipe(Effect.map((rows) => rows.length > 0));
+
+/** The fork's own copies listed in its history (shown in place, not as local rows). */
+export const readForkCopyIds = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
+  sql<{ readonly source_item_id: string }>`
+    SELECT source_item_id FROM scient_fork_history
+    WHERE thread_id = ${threadId} AND source_thread_id = ${threadId}
+  `.pipe(Effect.map((rows) => new Set(rows.map((row) => row.source_item_id))));
+
 /**
- * Which inherited rows a history window shows, by the projection store's
+ * The run of history positions a window shows, by the projection store's
  * window rule (`readCanonicalProjection`) applied to the whole conversation:
- * the inherited rows, then the fork's own rows that `following` describes.
- * The window holds rows at or before the anchor, from the oldest of the last
+ * the history, then the fork's own rows that `following` describes. The
+ * window holds rows at or before the anchor, from the oldest of the last
  * `userTurnLimit + 2` user turns among the last `maxRawTurns + 2` turn starts,
- * or the last `rowLimit` rows when no user turn is in range.
+ * or the last `rowLimit` rows when no user turn is in range. Reads only the
+ * history's turn starts, never its items.
  */
-export function selectForkHistoryWindow(
-  index: ReadonlyArray<ForkHistoryIndexRow>,
+export const readForkHistoryWindow = Effect.fn("ForkHistory.readWindow")(function* (
+  sql: SqlClient.SqlClient,
+  threadId: ThreadId,
   window: {
     readonly rowLimit: number;
     readonly userTurnLimit?: number | undefined;
@@ -292,31 +309,51 @@ export function selectForkHistoryWindow(
     readonly maxRawTurns: number;
   },
   following: ReadonlyArray<Pick<ForkHistoryEntry, "turnStart" | "userTurn">> = [],
-): ReadonlyArray<ForkHistoryIndexRow> {
+) {
   if (window.rowLimit === 0) return [];
+  const [size] = yield* sql<{ readonly size: number | null }>`
+    SELECT MAX(position) + 1 AS size FROM scient_fork_history WHERE thread_id = ${threadId}
+  `;
   const anchor =
     window.anchorItemId === undefined
-      ? -1
-      : index.findIndex((row) => row.sourceItemId === window.anchorItemId);
-  const eligible: ReadonlyArray<Pick<ForkHistoryEntry, "turnStart" | "userTurn">> =
-    anchor < 0 ? [...index, ...following] : index.slice(0, anchor + 1);
-  const turnStarts =
-    window.userTurnLimit === undefined
+      ? undefined
+      : (yield* sql<{ readonly position: number }>`
+          SELECT position FROM scient_fork_history
+          WHERE thread_id = ${threadId} AND source_item_id = ${window.anchorItemId}
+        `)[0]?.position;
+  const shown = anchor === undefined ? (size?.size ?? 0) : anchor + 1;
+  if (shown === 0) return [];
+  // Turn starts of the history, then of the fork's own rows that follow it.
+  const starts = [
+    ...(window.userTurnLimit === undefined
       ? []
-      : eligible.flatMap((row, at) => (row.turnStart ? [at] : [])).slice(-(window.maxRawTurns + 2));
+      : yield* sql<{ readonly position: number; readonly user_turn: number }>`
+          SELECT position, user_turn FROM scient_fork_history
+          WHERE thread_id = ${threadId} AND turn_start = 1 AND position < ${shown}
+          ORDER BY position
+        `
+    ).map((row) => ({ at: row.position, userTurn: row.user_turn === 1 })),
+    ...(anchor !== undefined || window.userTurnLimit === undefined
+      ? []
+      : following.flatMap((row, at) =>
+          row.turnStart ? [{ at: shown + at, userTurn: row.userTurn }] : [],
+        )),
+  ];
+  const eligible = anchor === undefined ? shown + following.length : shown;
+  const turnStarts = starts.slice(-(window.maxRawTurns + 2));
   const userTurns = turnStarts
-    .filter((at) => eligible[at]!.userTurn)
+    .filter((start) => start.userTurn)
     .slice(-((window.userTurnLimit ?? 0) + 2));
   const start =
     userTurns.length >= (window.userTurnLimit ?? 0) + 2
-      ? userTurns[0]!
+      ? userTurns[0]!.at
       : turnStarts.length >= window.maxRawTurns + 2
-        ? turnStarts[0]!
+        ? turnStarts[0]!.at
         : 0;
-  const first = userTurns.length > 0 ? start : Math.max(start, eligible.length - window.rowLimit);
-  const shown = anchor < 0 ? index.length : anchor + 1;
-  return index.slice(Math.min(first, shown), shown);
-}
+  const first = userTurns.length > 0 ? start : Math.max(start, eligible - window.rowLimit);
+  if (first >= shown) return [];
+  return yield* readForkHistoryIndex(sql, threadId, [first, shown - 1]);
+});
 
 /** Whether the thread is a fork with inherited history. */
 /**

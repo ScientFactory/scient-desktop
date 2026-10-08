@@ -110,8 +110,9 @@ import {
   countForkHistoryMessages,
   readForkHistoryIndex,
   readForkHistoryRows,
-  selectForkHistoryWindow,
-  type ForkHistoryIndexRow,
+  readForkHistoryWindow,
+  readForkCopyIds,
+  hasForkHistory,
 } from "./scient-fork/ForkHistory.ts";
 // SCIENT-FORK:END
 
@@ -3169,7 +3170,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     // SCIENT-FORK:START — the fork's inherited rows, then its own, in one window.
     const readForkProjection = (
       threadId: ThreadId,
-      forkHistory: ReadonlyArray<ForkHistoryIndexRow>,
       window?: {
         readonly rowLimit: number;
         readonly userTurnLimit?: number | undefined;
@@ -3180,10 +3180,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       },
     ) =>
       Effect.gen(function* () {
-        const inherited = new Set<string>(forkHistory.map((row) => row.sourceItemId));
+        // A full read shows the whole history; a window reads only what it shows.
+        const forkHistory =
+          window === undefined ? yield* readForkHistoryIndex(sql, threadId) : undefined;
+        const copies = yield* readForkCopyIds(sql, threadId);
         const anchor = window?.historyAnchor?.itemId ?? window?.anchorItemId;
         // Paging into inherited history reads only the inherited rows.
-        const anchorInHistory = anchor !== undefined && inherited.has(anchor);
+        const anchorInHistory =
+          anchor !== undefined &&
+          (yield* sql<{ readonly present: number }>`
+            SELECT 1 AS present FROM scient_fork_history
+            WHERE thread_id = ${threadId} AND source_item_id = ${anchor} LIMIT 1
+          `).length > 0;
         // A page anchored in shared history ends there: none of the fork's own
         // rows. Anchoring the local read at the fork's boundary with no rows
         // keeps it from reading any of them.
@@ -3204,12 +3212,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const projection = yield* readCanonicalProjection(threadId, localWindow);
         // The fork's own copies of in-flight items and plans are listed in its history.
         const local = localVisibleTurnItems(projection).filter(
-          (row) => !inherited.has(row.sourceItemId),
+          (row) => !copies.has(row.sourceItemId),
         );
-        const localTurns = projection.turnItems.filter((item) => !inherited.has(item.id));
+        const localTurns = projection.turnItems.filter((item) => !copies.has(item.id));
         const shown =
           window === undefined
-            ? forkHistory
+            ? (forkHistory ?? [])
             : // A row-limited local page without turn anchors finishes paging locally first.
               localWindow !== undefined &&
                 localWindow.rowLimit > 0 &&
@@ -3217,8 +3225,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 localTurns.length >= localWindow.rowLimit &&
                 !localTurns.some(isThreadHistoryUserTurn)
               ? []
-              : selectForkHistoryWindow(
-                  forkHistory,
+              : yield* readForkHistoryWindow(
+                  sql,
+                  threadId,
                   {
                     rowLimit: window.rowLimit,
                     userTurnLimit: window.userTurnLimit,
@@ -3277,10 +3286,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     ): Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error> =>
       Effect.gen(function* () {
         // SCIENT-FORK:START — a fork's inherited history is its frozen membership.
-        const forkHistory = yield* readForkHistoryIndex(sql, threadId);
-        if (forkHistory.length > 0) {
-          return yield* readForkProjection(threadId, forkHistory, window);
-        }
+        if (yield* hasForkHistory(sql, threadId))
+          return yield* readForkProjection(threadId, window);
         // SCIENT-FORK:END
         const localWindow =
           window?.suppressLocal === true ||
