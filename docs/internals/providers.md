@@ -211,12 +211,16 @@ completed runtime. Client disconnects and instance rebuilds do not cancel instal
 The fixed [release table][antigravity-release] supplies the bundled floor. Scient's qualified
 catalog may advance immutable release facts under the separate `antigravityAcp` key; the app
 still owns the allowed targets, Google URL family, exact executable pair, and launch policy.
-The catalog's semver is distinct from the agent's native build version. Downloads stream to disk.
+The catalog's semver is distinct from the agent's native build version. When the bundled
+native release advances, reconcile Scient's registry floor, catalog receipts and accepted
+native build identities together. Preserve the approved targets and exact native URL, hash,
+archive and executable-member facts; artifact availability alone does not qualify a new target.
+Downloads stream to disk.
 Lazy `yauzl` entry streams extract only that pair, with member names, types, duplicates, and
 sizes checked. Validation runs ACP `initialize` in a temporary profile without authentication
 or a session. Progress updates are bounded, not sent for every network chunk.
 
-Complete releases live in immutable version directories under the T3 home
+Complete releases live in immutable version directories under the owning Scient environment's state root
 `tools/antigravity-acp/<platform>-<arch>/versions`. An atomic `active.json` change selects the
 release for new processes. Each process holds a version lease until it exits. Updates do not
 replace running executables. Removal refuses active leases or explicit binary paths that still

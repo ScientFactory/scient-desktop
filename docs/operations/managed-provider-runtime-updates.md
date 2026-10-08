@@ -122,7 +122,8 @@ Grok, Pi, Oh My Pi, and Scient Agent. The release-family runs are intentionally 
    release are qualified by the shared lifecycle checks.
    Official Antigravity ACP uses T3's paired-executable installer instead of the generic
    runtime engine. Its five runners cover Apple-silicon macOS, Linux x64/ARM64, and Windows
-   x64/ARM64; no ACP artifact exists for Intel macOS. Its qualification initializes the
+   x64/ARM64. Intel macOS has a native artifact but is not yet approved for Scient-managed
+   ACP installation. Its qualification initializes the
    actual agent without authentication, then checks repair, activation recovery from a new
    service instance, and removal. Linux musl policy variants have archive/policy tests;
    the hosted Linux jobs exercise glibc, not native musl, and must not be reported
