@@ -2,7 +2,7 @@
  * Live activity (chat/liveActivity.tsx). One readable sweep, on the current
  * activity only: a light passing over its words, with a full-strength core
  * about a word wide, at the same pace for any label length (its duration is
- * set per label as --live-activity-duration), resting briefly between passes.
+ * set per label as --live-activity-duration), looping continuously.
  * While it sweeps, the label rests lighter, so the light is clearly seen.
  * The working header carries a small breathing dot instead.
  *
@@ -45,25 +45,24 @@
   animation-timing-function: linear;
 }
 
-/* The pass takes the first 80% of the cycle; the light then rests past the
-   label before the next pass. */
+/* A continuous loop: each pass ends just as the light leaves the label (one
+   band width short of the full overlay travel), and the next begins with it
+   just entering, so the light never parks out of sight. */
 @keyframes scient-live-activity-sweep {
-  0% {
+  from {
     transform: translateX(0);
   }
-  80%,
-  100% {
-    transform: translateX(100%);
+  to {
+    transform: translateX(calc(100% - var(--live-activity-focus-width)));
   }
 }
 
 @keyframes scient-live-activity-sweep-counter {
-  0% {
+  from {
     transform: translateX(0);
   }
-  80%,
-  100% {
-    transform: translateX(-100%);
+  to {
+    transform: translateX(calc(-100% + var(--live-activity-focus-width)));
   }
 }
 

@@ -43,13 +43,13 @@ describe("currentLiveActivityRowId", () => {
 });
 
 describe("liveActivitySweepSeconds", () => {
-  it("keeps one pace for any label length, with a pause between passes", () => {
+  it("keeps one pace for any label length, looping without a pause", () => {
     const short = liveActivitySweepSeconds(60, 16);
     const long = liveActivitySweepSeconds(300, 16);
     // The light moves at the same speed: the extra time is the extra distance.
-    expect(long - short).toBeCloseTo((300 - 60) / 160 / 0.8, 5);
-    // A short label: 60px + two 7rem band widths at 160px/s, over 80% of the cycle.
-    expect(short).toBeCloseTo((60 + 2 * 112) / 160 / 0.8, 5);
+    expect(long - short).toBeCloseTo((300 - 60) / 160, 5);
+    // A short label: 60px plus one 7rem band width, at 160px/s, nothing else.
+    expect(short).toBeCloseTo((60 + 112) / 160, 5);
   });
 });
 

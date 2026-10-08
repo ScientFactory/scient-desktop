@@ -11,8 +11,8 @@ import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
  * - The working header carries a small breathing dot instead of a sweep; its
  *   label sweeps only while it is the activity itself (compacting, or
  *   preparing a worktree before that has a row of its own).
- * - The sweep moves at one pace for any label length and rests between
- *   passes (scient/presentation/scient-live-activity.css).
+ * - The sweep moves at one pace for any label length and loops continuously
+ *   (scient/presentation/scient-live-activity.css).
  */
 
 /**
@@ -61,9 +61,6 @@ export function currentLiveActivityRowId(
 const SWEEP_PX_PER_SECOND = 160;
 /** The band's width (the CSS --live-activity-focus-width), in rem. */
 const SWEEP_BAND_REM = 7;
-/** The pass takes this share of each cycle; the rest is a pause between passes. */
-const SWEEP_PASS_SHARE = 0.8;
-
 const SWEEP_ANIMATION_NAMES = new Set([
   "scient-live-activity-sweep",
   "scient-live-activity-sweep-counter",
@@ -71,9 +68,10 @@ const SWEEP_ANIMATION_NAMES = new Set([
 
 /** A label's sweep cycle, in seconds: the same pace for any width. */
 export function liveActivitySweepSeconds(labelWidthPx: number, remPx: number): number {
-  // The light travels the label plus its own width on both sides.
-  const travelPx = labelWidthPx + 2 * SWEEP_BAND_REM * remPx;
-  return travelPx / SWEEP_PX_PER_SECOND / SWEEP_PASS_SHARE;
+  // The light travels from just before the label to just past it (the label
+  // plus its own width), and the next pass starts right away.
+  const travelPx = labelWidthPx + SWEEP_BAND_REM * remPx;
+  return travelPx / SWEEP_PX_PER_SECOND;
 }
 
 /**

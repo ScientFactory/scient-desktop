@@ -144,10 +144,11 @@ Owners: `chat/timelineWorkingState.ts`, `chat/workingRowExit.ts`,
   work in progress (earlier groups still running, entries in an expanded group,
   the setup popover) stays still, so the page never shimmers all over.
   - **The light:** a band 7rem wide with a full-strength core about a word wide
-    (2.5rem), passing at 160px per second for any label length. Each pass takes
-    80% of the cycle, then the light rests past the label. The pace is measured
-    again between passes, so a new tool label keeps it (the next pass then
-    starts cleanly from the left).
+    (2.5rem), passing at 160px per second for any label length, looping
+    continuously: each pass ends as the light leaves the label and the next
+    begins as it enters, with no pause. The pace is measured again between
+    passes, so a new tool label keeps it (the next pass then starts cleanly
+    from the left).
   - **The resting text:** while a row sweeps, its own text rests at 55%, so the
     light (full color) is clearly seen.
   - **Pausing:** it pauses off screen and in hidden tabs.
@@ -302,27 +303,27 @@ clipped.
 
 ## Numbers in one place
 
-| What                                      | Value                                                               | Where                                                                   |
-| ----------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Top margin for placed messages            | 24px                                                                | `chat/timelineScrollAnchoring.ts`                                       |
-| End allowance                             | 3 lines, at least 40px (40px for your own message)                  | `chat/readerScrollPolicy.ts`                                            |
-| Gap kept above the composer at the bottom | 16px (12px narrow)                                                  | `chat/useBoundedAnswerFollow.ts`, footer                                |
-| Scroll to end show delay                  | 150ms (hide instant)                                                | `chat/useTimelineEndControl.ts`                                         |
-| Follow top speed / acceleration           | 1px/ms / 0.004px/ms²                                                | `chat/useBoundedAnswerFollow.ts`                                        |
-| Follow yields after your scroll           | 250ms                                                               | `chat/useBoundedAnswerFollow.ts`                                        |
-| First lines shown of a message below      | 48px                                                                | `chat/useBoundedAnswerFollow.ts`, `chat/liveFollowOffset.ts`            |
-| Answer reveal wait / pace / catch-up      | 1s / 4 lines a second / above 8 waiting lines                       | `chat/useStreamingBlockEntrance.ts`                                     |
-| Gap speed-up / newest-line strength       | 5× / 65%                                                            | `chat/useStreamingBlockEntrance.ts`, `index.css`                        |
-| Composer glide (first send)               | 260ms, cubic-bezier(0.2, 0, 0, 1)                                   | `chat/timelineEntranceMotion.ts`, `chat/draftHeroTransition.ts`         |
-| First message entrance                    | 300ms after 100ms                                                   | `chat/timelineEntranceMotion.ts`                                        |
-| Working header exit                       | 320ms, cubic-bezier(0.45, 0, 0.55, 1)                               | `chat/workingRowExit.ts`                                                |
-| Thinking fade                             | 300ms                                                               | `chat/ThinkingRowFade.tsx`                                              |
-| Live sweep / working dot                  | 7rem band (2.5rem core), 160px/s, 20% rest, text at 55% / 6px, 1.6s | `chat/liveActivity.tsx`, `scient/presentation/scient-live-activity.css` |
-| Interaction settle / disclosure settle    | 400ms / 2 frames                                                    | `chat/MessagesTimeline.tsx`                                             |
-| Position storage                          | 120ms debounce, 100 threads                                         | `chat/timelineScrollAnchoring.ts`                                       |
-| Restore history                           | up to 2 pages; citations up to 20                                   | `chat/MessagesTimeline.tsx`, citations                                  |
-| Page keys                                 | screen − 36px in 150ms; hold ramps to 2× over 400ms                 | `chat/pageScrollController.ts`                                          |
-| Citation offset / pulse                   | min(120px, ⅓ view) / 3s                                             | `chat/AssistantCitationSource.tsx`                                      |
+| What                                      | Value                                                                      | Where                                                                   |
+| ----------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Top margin for placed messages            | 24px                                                                       | `chat/timelineScrollAnchoring.ts`                                       |
+| End allowance                             | 3 lines, at least 40px (40px for your own message)                         | `chat/readerScrollPolicy.ts`                                            |
+| Gap kept above the composer at the bottom | 16px (12px narrow)                                                         | `chat/useBoundedAnswerFollow.ts`, footer                                |
+| Scroll to end show delay                  | 150ms (hide instant)                                                       | `chat/useTimelineEndControl.ts`                                         |
+| Follow top speed / acceleration           | 1px/ms / 0.004px/ms²                                                       | `chat/useBoundedAnswerFollow.ts`                                        |
+| Follow yields after your scroll           | 250ms                                                                      | `chat/useBoundedAnswerFollow.ts`                                        |
+| First lines shown of a message below      | 48px                                                                       | `chat/useBoundedAnswerFollow.ts`, `chat/liveFollowOffset.ts`            |
+| Answer reveal wait / pace / catch-up      | 1s / 4 lines a second / above 8 waiting lines                              | `chat/useStreamingBlockEntrance.ts`                                     |
+| Gap speed-up / newest-line strength       | 5× / 65%                                                                   | `chat/useStreamingBlockEntrance.ts`, `index.css`                        |
+| Composer glide (first send)               | 260ms, cubic-bezier(0.2, 0, 0, 1)                                          | `chat/timelineEntranceMotion.ts`, `chat/draftHeroTransition.ts`         |
+| First message entrance                    | 300ms after 100ms                                                          | `chat/timelineEntranceMotion.ts`                                        |
+| Working header exit                       | 320ms, cubic-bezier(0.45, 0, 0.55, 1)                                      | `chat/workingRowExit.ts`                                                |
+| Thinking fade                             | 300ms                                                                      | `chat/ThinkingRowFade.tsx`                                              |
+| Live sweep / working dot                  | 7rem band (2.5rem core), 160px/s, continuous loop, text at 55% / 6px, 1.6s | `chat/liveActivity.tsx`, `scient/presentation/scient-live-activity.css` |
+| Interaction settle / disclosure settle    | 400ms / 2 frames                                                           | `chat/MessagesTimeline.tsx`                                             |
+| Position storage                          | 120ms debounce, 100 threads                                                | `chat/timelineScrollAnchoring.ts`                                       |
+| Restore history                           | up to 2 pages; citations up to 20                                          | `chat/MessagesTimeline.tsx`, citations                                  |
+| Page keys                                 | screen − 36px in 150ms; hold ramps to 2× over 400ms                        | `chat/pageScrollController.ts`                                          |
+| Citation offset / pulse                   | min(120px, ⅓ view) / 3s                                                    | `chat/AssistantCitationSource.tsx`                                      |
 
 ## Where Scient differs from upstream T3
 

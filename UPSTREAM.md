@@ -23,8 +23,8 @@ with the opt-in panel animation setting; reduced motion skips it. A first prompt
 and fades in on the same curve (clip and opacity only, never a transform, so the reveal's
 measurements hold), and the "Working for" header carries a small breathing dot (`chat/liveActivity.tsx`); its line just
 appears. Live activity (Scient): only the current activity row sweeps (`currentLiveActivityRowId`:
-Thinking, the running-tool bar, an active compaction, a running setup stage), with a wider light at
-one pace per label (`--live-activity-duration`) over text resting at 55%
+Thinking, the running-tool bar, an active compaction, a running setup stage), with a wider light looping continuously
+at one pace per label (`--live-activity-duration`) over text resting at 55%
 (`scient/presentation/scient-live-activity.css` refines the upstream live-activity utilities); the
 upstream stepped `live-tool-shine` is no longer applied, and other live rows stay still
 (`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount). While an

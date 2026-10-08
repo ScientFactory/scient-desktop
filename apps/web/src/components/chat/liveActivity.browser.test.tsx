@@ -159,11 +159,11 @@ it("gives a longer label a longer cycle at the same pace", async () => {
   );
   await expect.poll(() => rowOf(sweeps()[0] ?? document.body)).toBe("work-live");
   const long = cycleSeconds(sweeps()[0]!);
-  expect(short).toBeGreaterThan(1.5);
+  expect(short).toBeGreaterThan(0.9);
   expect(long).toBeGreaterThan(short + 0.5);
 });
 
-it("runs the light at the label's own pace: the real animation duration and its 80% pass", async () => {
+it("runs the light at the label's own pace, looping with no pause", async () => {
   render("live:timing", [entry(1, "Timing")], working);
   await expect.poll(() => sweeps().length).toBe(1);
   const overlay = sweeps()[0]!;
@@ -175,8 +175,9 @@ it("runs the light at the label's own pace: the real animation duration and its 
     .getAnimations()
     .find((candidate) => candidate instanceof CSSAnimation) as CSSAnimation;
   expect(animation.animationName).toBe("scient-live-activity-sweep");
+  // A continuous loop: straight from the start to the end, no held frames.
   const offsets = (animation.effect as KeyframeEffect).getKeyframes().map((frame) => frame.offset);
-  expect(offsets).toContain(0.8);
+  expect(offsets).toEqual([0, 1]);
 });
 
 it("lets the header's own label sweep while compacting before the compaction row exists", async () => {
