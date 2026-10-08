@@ -224,9 +224,8 @@ documentation was removed from user Help: `docs/internals/scient-mobile-release-
 records that there is no supported Scient mobile app and prohibits presenting that
 channel as Scient distribution.
 
-The next qualified alignment is recorded in
-[the 2026-10-08 receipt](docs/internals/t3-upstream-sync-20261008-468ade3049.md)
-and `upstream-state.json` ([Scient PR #472](https://github.com/ScientFactory/scient-desktop/pull/472)).
+The preceding qualified alignment is recorded in
+[the 2026-10-08 receipt](docs/internals/t3-upstream-sync-20261008-468ade3049.md) ([Scient PR #472](https://github.com/ScientFactory/scient-desktop/pull/472)).
 It receives 366 first-parent official commits through
 `468ade30495c450ae4e731483187f77bc3c5e42b` onto owned base
 `c8ec17b2a03ed567c5cbda21e01df158a55af55c`. Literal merge
@@ -236,6 +235,19 @@ Native Effect/RPC, scopes, MCP Apps and provider metadata compose with Scient's
 policy, workspace and scientific owners. The receipt distinguishes complete local
 qualification, independent reviews, actual-app approval and hosted delivery,
 including retained publication holds and measured enforcement debt.
+
+The current qualified alignment is recorded in
+[the b24f0fbba0 receipt](docs/internals/t3-upstream-sync-20261008-b24f0fbba0.md)
+and `upstream-state.json`. It receives all 27 subsequent first-parent official
+commits through `b24f0fbba09d8623c896081b4ff70aa7190c8fda` onto owned base
+`3498143f7221634d9dd6b38e95f84839dc4d2bfe`. Literal merge
+`71015aa7484971d7c84101b2294c88988bee2203` retains both as exact parents.
+Server responsiveness, rich composition, diff search, current-title references,
+Browser continuation and provider maintenance compose with Scient ownership.
+Snapshot indexes append as migration 064; existing migration identities, the
+Approvability guard and privacy-link withholding remain. The receipt records
+two independent source reviews, complete local qualification, actual-app visual
+evidence and the remaining hosted/platform boundaries.
 
 ## Receiving T3 updates
 
