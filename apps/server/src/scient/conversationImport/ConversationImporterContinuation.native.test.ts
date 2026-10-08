@@ -2724,33 +2724,59 @@ it.live(
           },
         });
         const pageOwnerId = ThreadId.make("reuse-release-page-owner");
-        const toolId = ThreadId.make("reuse-release-tool");
+        const firstToolId = ThreadId.make("reuse-release-first-tool");
+        const lastToolId = ThreadId.make("reuse-release-last-tool");
         const ownersPage = createAttachmentId(pageOwnerId, "html")!;
-        const toolsPage = createAttachmentId(toolId, "html")!;
-        yield* conversation(pageOwnerId, []);
-        yield* conversation(toolId, []);
+        const lastToolsPage = createAttachmentId(lastToolId, "html")!;
+        for (const threadId of [pageOwnerId, firstToolId, lastToolId])
+          yield* conversation(threadId, []);
         yield* sink.write({
-          events: [toolPage(pageOwnerId, ownersPage), toolPage(toolId, toolsPage)],
+          events: [
+            toolPage(pageOwnerId, ownersPage),
+            toolPage(firstToolId, ownersPage),
+            toolPage(lastToolId, lastToolsPage),
+          ],
         });
         yield* sink.write({
           events: [
             {
-              ...toolPage(toolId, ownersPage),
-              id: EventId.make("reuse-release-tool-foreign"),
+              ...toolPage(lastToolId, ownersPage),
+              id: EventId.make("reuse-release-last-tool-foreign"),
               payload: {
-                ...toolPage(toolId, ownersPage).payload,
-                id: TurnItemId.make("reuse-release-tool-foreign"),
+                ...toolPage(lastToolId, ownersPage).payload,
+                id: TurnItemId.make("reuse-release-last-tool-foreign"),
                 ordinal: 2,
               },
             },
           ],
         });
-        // Its owner goes first: the page stays while a live tool output shows it.
+        const fs = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig;
+        // Pages are stored as `<id>.html`.
+        const pagePath = (id: string) => NodePath.join(config.attachmentsDir, `${id}.html`);
+        for (const page of [ownersPage, lastToolsPage]) {
+          yield* fs.makeDirectory(NodePath.dirname(pagePath(page)), { recursive: true });
+          yield* fs.writeFileString(pagePath(page), "<p>page</p>");
+        }
+        // A conversation whose tool output names a live conversation's page
+        // never frees it.
+        yield* remove(firstToolId);
+        assert.deepEqual(yield* released(firstToolId), []);
+        // The page's owner goes: the page stays while a live tool output shows it.
         yield* remove(pageOwnerId);
         assert.deepEqual(yield* released(pageOwnerId), []);
-        yield* remove(toolId);
-        assert.deepEqual(yield* released(toolId), [toolsPage.toLowerCase()]);
-        assert.deepEqual(yield* released(pageOwnerId), [ownersPage.toLowerCase()]);
+        // The last conversation showing it goes: its release frees the orphaned
+        // page with its own.
+        yield* remove(lastToolId);
+        assert.sameMembers(yield* released(lastToolId), [
+          ownersPage.toLowerCase(),
+          lastToolsPage.toLowerCase(),
+        ]);
+        yield* (yield* ThreadFileRelease.pipe(Effect.provide(threadFileReleaseLayer))).release(
+          lastToolId,
+        );
+        assert.isFalse(yield* fs.exists(pagePath(ownersPage)));
+        assert.isFalse(yield* fs.exists(pagePath(lastToolsPage)));
       }),
     ),
 );

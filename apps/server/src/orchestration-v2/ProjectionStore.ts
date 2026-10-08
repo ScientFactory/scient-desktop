@@ -4899,16 +4899,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       });
     /**
      * Every file a conversation names: its own records, and what it shows from
-     * its history. With `owners`, tool pages and system-message files count
-     * only when minted for one of those conversations (attachment segments):
-     * a tool's output can name any file, so it cannot make one releasable.
+     * its history. With `releasable`, tool pages and system-message files
+     * count only when it accepts their minting conversation's attachment
+     * segment: a tool's output can name any file, so it cannot make a live
+     * conversation's file releasable.
      */
-    const namedFiles = (threadId: ThreadId, owners?: ReadonlySet<string>) =>
+    const namedFiles = (threadId: ThreadId, releasable?: (segment: string | null) => boolean) =>
       Effect.gen(function* () {
         const owned = (ids: ReadonlyArray<string>) =>
-          owners === undefined
+          releasable === undefined
             ? ids
-            : ids.filter((id) => owners.has(parseThreadSegmentFromAttachmentId(id) ?? ""));
+            : ids.filter((id) => releasable(parseThreadSegmentFromAttachmentId(id)));
         const tools = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_turn_items
           WHERE thread_id = ${threadId} AND type = 'dynamic_tool'
@@ -4943,22 +4944,32 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       });
     /**
      * Files the deleted conversations of a thread's lineage name (tool pages and
-     * system-message files only when minted in the lineage) that no live
-     * conversation names: none in the lineage (messages, question answers, tool
-     * pages, system messages, shown history), and no message, question answer,
-     * tool page or fork's shared files anywhere else. Names compare without case: on a case-insensitive
-     * disk an alias names the same file.
+     * system-message files only when minted in the lineage or by a conversation
+     * that is gone) that no live conversation names: none in the lineage
+     * (messages, question answers, tool pages, system messages, shown history),
+     * and no message, question answer, tool page or fork's shared files
+     * anywhere else. Names compare without case: on a case-insensitive disk an
+     * alias names the same file.
      */
     const getReleasableFiles = (threadId: ThreadId) =>
       Effect.gen(function* () {
         const family = yield* readForkFamily(sql, threadId);
-        const owners = new Set(
+        // A page or system file is the lineage's to release when minted in it,
+        // or when the conversation that minted it is gone.
+        const lineage = new Set(
           family.flatMap((member) => toSafeThreadAttachmentSegment(member.threadId) ?? []),
         );
+        const live = new Set(
+          (yield* sql<{ readonly thread_id: string }>`
+            SELECT thread_id FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL
+          `).flatMap((row) => toSafeThreadAttachmentSegment(row.thread_id) ?? []),
+        );
+        const releasable = (segment: string | null) =>
+          segment !== null && (lineage.has(segment) || !live.has(segment));
         const candidates = new Set<string>();
         for (const member of family) {
           if (!member.deleted) continue;
-          for (const id of yield* namedFiles(member.threadId, owners)) candidates.add(id);
+          for (const id of yield* namedFiles(member.threadId, releasable)) candidates.add(id);
         }
         const named = new Set<string>();
         for (const member of family) {
