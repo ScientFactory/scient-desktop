@@ -605,6 +605,8 @@ it.live(
             assert.equal(copied.status, "completed");
             assert.equal(copied.text, "");
             assert.notEqual(copied.messageId, sourceItem.messageId);
+            // The fork's baseline answer is the message it shows: its copy.
+            assert.equal(frozen.thread.forkLineage?.baselineAssistantMessageId, copied.messageId);
             assert.equal(copied.inheritedFrom?.threadId, threadId);
             assert.isFalse(copied.streaming);
             assert.deepEqual(copied.attachments, sourceItem.attachments);

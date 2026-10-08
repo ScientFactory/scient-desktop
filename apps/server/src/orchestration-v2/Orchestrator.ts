@@ -11004,7 +11004,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
             ),
           );
-        return yield* mapDispatchError(command)(
+        const deletion = yield* mapDispatchError(command)(
           planThreadDeletion({
             command,
             projection,
@@ -11015,6 +11015,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             idAllocator,
           }),
         );
+        // SCIENT-FORK:START — a fork lineage shares files; release them once the
+        // deletion has committed, so concurrent deletions see each other.
+        if (
+          !(yield* projectionStore.isInForkFamily(command.threadId).pipe(mapDispatchError(command)))
+        )
+          return deletion;
+        return {
+          ...deletion,
+          effects: [
+            ...deletion.effects,
+            {
+              id: `effect:${command.commandId}:scient-fork.release-files`,
+              commandId: command.commandId,
+              threadId: command.threadId,
+              request: { type: "scient-fork.release-files" },
+            },
+          ],
+        };
+        // SCIENT-FORK:END
       }
       case "thread.archive":
       case "thread.unarchive":

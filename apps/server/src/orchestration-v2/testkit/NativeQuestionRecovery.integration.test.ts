@@ -315,7 +315,20 @@ it.live.each(
                 transfer.id.includes("provider_resume_fallback"),
             ),
           );
-        } else assert.equal(resumed, 0, "Imported answers grant no native resume authority");
+        } else {
+          assert.equal(resumed, 0, "Imported answers grant no native resume authority");
+          // Deleting the last conversation that shows the answer releases its file
+          // (this harness's cleanup service only records the decision).
+          yield* orchestrator.dispatch({
+            type: "thread.delete",
+            commandId: CommandId.make(`${name}-delete-target`),
+            threadId: target,
+          });
+          yield* (yield* OrchestrationEffectWorkerV2).drain();
+          assert.deepEqual(yield* (yield* ConversationForkService).releasableFiles(target), [
+            file.id,
+          ]);
+        }
       }).pipe(
         Effect.provide(
           makeOrchestratorV2ReplayLayerWithRegistry(

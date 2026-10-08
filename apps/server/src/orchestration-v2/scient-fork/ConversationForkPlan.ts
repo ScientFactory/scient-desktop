@@ -175,18 +175,21 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
   const runOrdinals = new Map(projection.runs.map((run) => [run.id, run.ordinal]));
   // A later request can be recorded before the selected answer finishes.
   // Durable run ownership prevents that overlap from extending this prefix.
-  const retained = rows
-    .slice(0, end + 1)
-    .filter(
-      ({ item }) =>
-        selectedRun === undefined ||
-        item.runId === null ||
-        (runOrdinals.get(item.runId) ?? Infinity) <= selectedRun.ordinal,
-    );
+  const retained = rows.slice(0, end + 1).filter(
+    ({ item, visibility }) =>
+      selectedRun === undefined ||
+      // Inherited rows carry other conversations' runs; they all precede local ones.
+      visibility !== "local" ||
+      item.runId === null ||
+      (runOrdinals.get(item.runId) ?? Infinity) <= selectedRun.ordinal,
+  );
   // The fork shares the retained history by reference (its frozen membership)
   // and owns copies only of what still changes or what it can act on.
   const openRuns = openRunIds(projection.runs);
-  const copied = retained.filter(({ item }) => isCopiedForkItem(item, openRuns));
+  // A synthetic row (upstream's fork marker) exists only in memory: copy it too.
+  const copies = (row: (typeof retained)[number]) =>
+    row.visibility === "synthetic" || isCopiedForkItem(row.item, openRuns);
+  const copied = retained.filter(copies);
   for (const { item } of retained)
     if (
       item.type === "user_input_request" &&
@@ -200,19 +203,11 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
         "A retained submitted question answer has no authoritative turn boundary.",
       );
   const copyIds = new Map<TurnItemId, TurnItemId>(
-    retained.flatMap(({ item }, index) =>
-      isCopiedForkItem(item, openRuns)
-        ? [[item.id, TurnItemId.make(`scient-fork:${targetThreadId}:item:${index}`)] as const]
+    retained.flatMap((row, index) =>
+      copies(row)
+        ? [[row.item.id, TurnItemId.make(`scient-fork:${targetThreadId}:item:${index}`)] as const]
         : [],
     ),
-  );
-  const history: ReadonlyArray<ForkHistoryEntry> = retained.map(
-    ({ item, sourceThreadId, sourceItemId }) => {
-      const copyId = copyIds.get(item.id);
-      return copyId === undefined
-        ? forkHistoryEntry(sourceThreadId, sourceItemId, item)
-        : forkHistoryEntry(targetThreadId, copyId, item);
-    },
   );
   const messageIds = new Map<MessageId, MessageId>();
   for (const { item } of copied)
@@ -224,6 +219,19 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
         item.messageId,
         MessageId.make(`scient-fork:${targetThreadId}:message:${messageIds.size}`),
       );
+  const history: ReadonlyArray<ForkHistoryEntry> = retained.map(
+    ({ item, sourceThreadId, sourceItemId }) => {
+      const copyId = copyIds.get(item.id);
+      if (copyId === undefined) return forkHistoryEntry(sourceThreadId, sourceItemId, item);
+      const entry = forkHistoryEntry(targetThreadId, copyId, item);
+      return entry.messageId === null
+        ? entry
+        : {
+            ...entry,
+            messageId: messageIds.get(MessageId.make(entry.messageId)) ?? entry.messageId,
+          };
+    },
+  );
   const messages = projection.messages
     .filter((message) => messageIds.has(message.id))
     .map((source) => {
@@ -239,9 +247,10 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
     });
   const plans = new Map<PlanId, OrchestrationV2PlanArtifact>();
   const nodes = new Map<NodeId, OrchestrationV2ExecutionNode>();
+  const positions = new Map(retained.map(({ item }, index) => [item.id, index]));
   const items = copied.map(({ item: sourceItem }): OrchestrationV2TurnItem => {
     const original = Schema.decodeSync(itemJson)(Schema.encodeSync(itemJson)(sourceItem));
-    const ordinal = retained.findIndex(({ item }) => item.id === sourceItem.id);
+    const ordinal = positions.get(sourceItem.id)!;
     const base = {
       ...frozenHistoryFields(original),
       id: copyIds.get(original.id)!,
@@ -380,9 +389,15 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
   }
   for (const message of projection.messages)
     if (retainedMessageIds.has(message.id)) share(message.attachments);
+  const lastAssistant = retained.findLast(({ item }) => item.type === "assistant_message")?.item;
   return {
     /** The retained prefix as the source shows it, in order. */
     retained: retained.map(({ item }) => item),
+    /** The fork's last retained answer, by the message id the fork shows for it. */
+    baselineAssistantMessageId:
+      lastAssistant?.type === "assistant_message"
+        ? (messageIds.get(lastAssistant.messageId) ?? lastAssistant.messageId)
+        : null,
     attachmentCopies: [...sharedAttachments.values()].map(
       (attachment): ThreadForkAttachmentCopy => ({ source: attachment, target: attachment }),
     ),

@@ -9,6 +9,7 @@ import {
   type NativeModelCapacityOwner,
 } from "./scient-fork/NativeModelContextWindow.ts";
 import { writeForkHistory, type ForkHistoryEntry } from "./scient-fork/ForkHistory.ts";
+import { freezeShownHistory } from "./scient-fork/ForkHistoryFreeze.ts";
 import {
   pendingStartOwnerIsCurrent,
   type PendingStartOwner,
@@ -355,8 +356,8 @@ const layerBase: Layer.Layer<
       const consumeSourcePlan = makeSourcePlanConsumer({ sql, projectionStore });
       return Effect.gen(function* () {
         const normalized: OrchestrationV2DomainEvent[] = [];
-        for (const event of events) {
-          const positioned = yield* event.type === "turn-item.updated"
+        const position = (event: OrchestrationV2DomainEvent) =>
+          event.type === "turn-item.updated"
             ? turnItemPositions
                 .normalize(
                   event.payload,
@@ -364,7 +365,11 @@ const layerBase: Layer.Layer<
                 )
                 .pipe(Effect.map((payload) => ({ ...event, payload })))
             : Effect.succeed(event);
-          normalized.push(positioned);
+        for (const event of events) {
+          // Forks showing what this event rewrites keep a frozen copy first.
+          for (const frozen of yield* freezeShownHistory(sql, event))
+            normalized.push(yield* position(frozen));
+          normalized.push(yield* position(event));
           const consumption = consumeSourcePlan(event);
           const consumed = consumption === undefined ? undefined : yield* consumption;
           if (consumed !== undefined) normalized.push(consumed);

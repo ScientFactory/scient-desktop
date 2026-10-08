@@ -231,6 +231,8 @@ it.effect(
           getTurnStartContext: () => Effect.die("unused"),
           getForkHistoryItems: () => Effect.succeed([]),
           getProjectThreadTitles: () => Effect.succeed([]),
+          isInForkFamily: () => Effect.succeed(false),
+          getReleasableForkFiles: () => Effect.succeed([]),
           getTurnStartHistory: () => Effect.die("unused"),
           getRuntimeRecoveryProjection: () => Effect.die("unused getRuntimeRecoveryProjection"),
           getPlan: () => Effect.die("unused"),

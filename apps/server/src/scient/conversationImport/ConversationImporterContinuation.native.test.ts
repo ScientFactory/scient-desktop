@@ -2167,6 +2167,22 @@ it.live(
           afterPosition = page.items.at(-1)!.position;
         }
         assert.deepEqual(paged, frozen.visibleTurnItems);
+        // A page anchored in shared history ends at its anchor.
+        const anchor = frozen.visibleTurnItems.find(
+          (row) => row.sourceThreadId === sourceId && row.item.type === "assistant_message",
+        )!;
+        const anchored = yield* store.getThreadSnapshotWindow(forkId, {
+          rowLimit: 2,
+          userTurnLimit: 1,
+          anchorItemId: anchor.sourceItemId,
+        });
+        assert.equal(
+          anchored.projection.visibleTurnItems.at(-1)?.sourceItemId,
+          anchor.sourceItemId,
+        );
+        assert.isTrue(
+          anchored.projection.visibleTurnItems.every((row) => row.sourceThreadId !== forkId),
+        );
         const window = yield* store.getThreadSnapshotWindow(forkId, { rowLimit: 4 });
         assert.deepEqual(
           window.projection.visibleTurnItems.map((row) => row.item),
@@ -2183,6 +2199,53 @@ it.live(
         const rebuilt = yield* store.getThreadProjection(forkId);
         assert.deepEqual(rebuilt.visibleTurnItems, frozen.visibleTurnItems);
         assert.deepEqual(rebuilt.messages, frozen.messages);
+
+        // Rewriting history the fork shows leaves the fork as it was.
+        const shownText = (projection: typeof frozen) => ({
+          items: projection.visibleTurnItems.map(({ item }) =>
+            "text" in item ? [item.type, item.text] : [item.type],
+          ),
+          messages: projection.messages.map((message) => [message.role, message.text]),
+        });
+        const shownBefore = shownText(frozen);
+        const sharedAnswer = frozen.visibleTurnItems.find(
+          (row) => row.sourceThreadId === sourceId && row.item.type === "assistant_message",
+        )!;
+        const storedAnswer = (yield* store.getThreadProjection(sourceId)).turnItems.find(
+          (item) => item.id === sharedAnswer.sourceItemId,
+        )!;
+        assert.ok(storedAnswer.type === "assistant_message");
+        const storedQuestion = (yield* store.getThreadProjection(sourceId)).messages.find(
+          (message) => message.text === "Question 2",
+        )!;
+        const rewriteAt = yield* DateTime.now;
+        yield* (yield* EventSinkV2).write({
+          events: [
+            {
+              id: EventId.make("frozen-live-rewrite-item"),
+              threadId: sourceId,
+              type: "turn-item.updated",
+              occurredAt: rewriteAt,
+              payload: { ...storedAnswer, text: "Rewritten answer" },
+            },
+            {
+              id: EventId.make("frozen-live-rewrite-message"),
+              threadId: sourceId,
+              type: "message.updated",
+              occurredAt: rewriteAt,
+              payload: { ...storedQuestion, text: "Rewritten question" },
+            },
+          ],
+        });
+        assert.include(
+          (yield* store.getThreadProjection(sourceId)).messages.map((message) => message.text),
+          "Rewritten question",
+        );
+        assert.deepEqual(shownText(yield* store.getThreadProjection(forkId)), shownBefore);
+        yield* ProjectionMaintenanceV2.use((maintenance) => maintenance.rebuild).pipe(
+          Effect.provide(projectionMaintenanceLayer),
+        );
+        assert.deepEqual(shownText(yield* store.getThreadProjection(forkId)), shownBefore);
 
         // The fork can queue a file its shared history shows.
         const sharedFile = frozen.messages.flatMap((message) => message.attachments)[0]!;
@@ -2223,6 +2286,80 @@ it.live(
         );
       }),
     ).pipe(Effect.timeout("60 seconds")),
+);
+
+it.live(
+  "a fork of an upstream run fork copies its in-memory marker and shows its whole history",
+  () =>
+    withImporter(
+      Effect.gen(function* () {
+        const { lease } = yield* leaseFor(importFixture({ turns: 2 }));
+        const sourceId = (yield* importOnce(lease)).result.threadId;
+        const store = yield* ProjectionStoreV2;
+        yield* continueImport(sourceId, MessageId.make("upstream-fork-request"), "Continue");
+        const source = yield* store.getThreadProjection(sourceId);
+        const run = source.runs.at(-1)!;
+        // An upstream run fork: inherits the source through `forkedFrom` at read time.
+        const runForkId = ThreadId.make("upstream-run-fork");
+        const now = yield* DateTime.now;
+        yield* (yield* EventSinkV2).write({
+          events: [
+            {
+              id: EventId.make("upstream-run-fork-created"),
+              threadId: runForkId,
+              type: "thread.created",
+              occurredAt: now,
+              payload: {
+                ...source.thread,
+                id: runForkId,
+                title: "Upstream run fork",
+                forkedFrom: { type: "run", threadId: sourceId, runId: run.id },
+                lineage: {
+                  parentThreadId: sourceId,
+                  rootThreadId: source.thread.lineage.rootThreadId,
+                  relationshipToParent: "fork",
+                },
+                conversationFork: null,
+                forkLineage: null,
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+          ],
+        });
+        yield* continueImport(runForkId, MessageId.make("upstream-run-fork-request"), "Continue");
+        const runFork = yield* store.getThreadProjection(runForkId);
+        const marker = runFork.visibleTurnItems.find((row) => row.visibility === "synthetic");
+        assert.ok(marker);
+        // The run fork's own answer, after the marker.
+        const answer = runFork.visibleTurnItems.findLast(
+          ({ item }) => item.type === "assistant_message",
+        )?.item;
+        assert.ok(answer?.type === "assistant_message" && answer.threadId === runForkId);
+        const forkId = ThreadId.make("fork-of-upstream-run-fork");
+        yield* (yield* ConversationForkService).dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("fork-of-upstream-run-fork"),
+          originThreadId: runForkId,
+          newThreadId: forkId,
+          sourceAssistantMessageId: answer.messageId,
+          workspaceMode: "local",
+        });
+        const fork = yield* store.getThreadProjection(forkId);
+        const shownMarker = fork.visibleTurnItems.find(
+          (row) => row.item.type === "fork" && row.item.inheritedFrom?.itemId === marker.item.id,
+        );
+        assert.equal(shownMarker?.sourceThreadId, forkId);
+        const shown = (rows: typeof fork.visibleTurnItems) =>
+          rows.map(({ item }) => ("text" in item ? [item.type, item.text] : [item.type]));
+        // Everything the run fork shows, then this fork's own boundary.
+        assert.deepEqual(
+          shown(fork.visibleTurnItems).slice(0, -1),
+          shown(runFork.visibleTurnItems),
+        );
+        assert.equal(fork.thread.forkLineage?.baselineAssistantMessageId, answer.messageId);
+      }),
+    ),
 );
 
 it.live(

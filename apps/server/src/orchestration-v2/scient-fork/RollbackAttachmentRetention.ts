@@ -64,6 +64,8 @@ export const retainedRollbackAttachmentIds = (
       if (candidates.has(id.toLowerCase())) retained.add(id.toLowerCase());
     });
   for (const projection of projections) {
+    // A deleted conversation shows nothing, so it keeps no file.
+    if (projection.thread.deletedAt !== null && projection.thread.id !== input.threadId) continue;
     const recoverable = new Set(
       projection.turnItems
         .filter(

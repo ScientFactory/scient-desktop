@@ -112,9 +112,6 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           boundaryRunId: history.boundaryRunId,
           sourceKind: "settled-run",
         });
-        const lastAssistant = history.retained.findLast(
-          (item) => item.type === "assistant_message",
-        );
         const targetThread: OrchestrationV2AppThread = {
           ...input.sourceProjection.thread,
           createdBy: input.createdBy,
@@ -134,8 +131,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           conversationImport: null,
           forkLineage: {
             originThreadId: input.sourceProjection.thread.id,
-            baselineAssistantMessageId:
-              lastAssistant?.type === "assistant_message" ? lastAssistant.messageId : null,
+            baselineAssistantMessageId: history.baselineAssistantMessageId,
             ...(input.sourceProjection.thread.conversationImport != null
               ? { sourceImport: input.sourceProjection.thread.conversationImport }
               : input.sourceProjection.thread.forkLineage?.sourceImport === undefined

@@ -40,7 +40,7 @@ import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
-import { ProjectionStoreV2 } from "../ProjectionStore.ts";
+import { ProjectionStoreV2, type ProjectionStoreV2Error } from "../ProjectionStore.ts";
 import { ProjectStoreV2 } from "../ProjectStore.ts";
 import { ThreadCommandExecutor } from "../ThreadCommandExecutor.ts";
 import { randomUuidV4 } from "../RandomUuid.ts";
@@ -70,6 +70,10 @@ export class ConversationForkService extends Context.Service<
       threadId: ThreadId,
       willRetry: boolean,
     ) => Effect.Effect<void, OrchestrationDispatchCommandError>;
+    /** Files a committed deletion in this thread's lineage leaves no live conversation naming. */
+    readonly releasableFiles: (
+      threadId: ThreadId,
+    ) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
   }
 >()("t3/orchestration-v2/scient-fork/ConversationForkService") {}
 
@@ -539,7 +543,6 @@ const make = Effect.gen(function* () {
         "conversation-fork-titles",
         Effect.gen(function* () {
           const projectThreads = yield* projections.getProjectThreadTitles(projection.thread.id);
-          const lastAssistant = plan.retained.findLast((item) => item.type === "assistant_message");
           const thread: OrchestrationV2AppThread = {
             ...projection.thread,
             id: command.newThreadId,
@@ -563,8 +566,7 @@ const make = Effect.gen(function* () {
             conversationImport: null,
             forkLineage: {
               originThreadId: projection.thread.id,
-              baselineAssistantMessageId:
-                lastAssistant?.type === "assistant_message" ? lastAssistant.messageId : null,
+              baselineAssistantMessageId: plan.baselineAssistantMessageId,
               ...(projection.thread.conversationImport == null
                 ? projection.thread.forkLineage?.sourceImport === undefined
                   ? {}
@@ -844,24 +846,19 @@ const make = Effect.gen(function* () {
                 };
                 const event = yield* metadataEvent(updated, now);
                 const fork = thread.conversationFork;
-                // An abandoned fork is deleted: it releases what deleting it would,
-                // such as a deleted source's files it was the last to show.
-                const released = abandoned
-                  ? yield* projections.getThreadAttachmentIds(threadId)
-                  : [];
+                // An abandoned fork is deleted: it releases what deleting it would.
                 yield* sink.writeWithEffects({
                   events: [abandoned ? { ...event, type: "thread.deleted" } : event],
-                  effects:
-                    released.length === 0
-                      ? []
-                      : [
-                          {
-                            id: `scient-fork:${fork.commandId}:abandoned:attachments`,
-                            commandId: fork.commandId,
-                            threadId,
-                            request: { type: "attachment.cleanup", attachmentIds: released },
-                          },
-                        ],
+                  effects: abandoned
+                    ? [
+                        {
+                          id: `scient-fork:${fork.commandId}:abandoned:release-files`,
+                          commandId: fork.commandId,
+                          threadId,
+                          request: { type: "scient-fork.release-files" },
+                        },
+                      ]
+                    : [],
                 });
               }),
             ),
@@ -882,6 +879,7 @@ const make = Effect.gen(function* () {
               }),
         ),
       ),
+    releasableFiles: (threadId) => projections.getReleasableForkFiles(threadId),
     provision: (threadId, willRetry) =>
       provision(threadId, willRetry).pipe(
         Effect.mapError((cause) =>

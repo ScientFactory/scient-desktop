@@ -33,6 +33,8 @@ export interface ForkHistoryEntry {
   readonly sourceThreadId: ThreadId;
   readonly sourceItemId: TurnItemId;
   readonly type: OrchestrationV2TurnItem["type"];
+  /** The message a user or assistant item stands for. */
+  readonly messageId: string | null;
   /** A message that started a turn, and whether the user wrote it: history windows count these. */
   readonly turnStart: boolean;
   readonly userTurn: boolean;
@@ -51,6 +53,8 @@ export function forkHistoryEntry(
     sourceThreadId,
     sourceItemId,
     type: item.type,
+    messageId:
+      item.type === "user_message" || item.type === "assistant_message" ? item.messageId : null,
     turnStart,
     userTurn: turnStart && item.createdBy === "user",
   };
@@ -149,15 +153,17 @@ export const writeForkHistory = (
     ? Effect.void
     : sql`
         INSERT INTO scient_fork_history
-          (thread_id, position, source_thread_id, source_item_id, item_type, turn_start, user_turn)
+          (thread_id, position, source_thread_id, source_item_id, item_type, message_id,
+            turn_start, user_turn)
         SELECT ${threadId}, CAST(key AS INTEGER), json_extract(value, '$[0]'),
           json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'),
-          json_extract(value, '$[4]')
+          json_extract(value, '$[4]'), json_extract(value, '$[5]')
         FROM json_each(${encodeJson(
           entries.map((entry) => [
             entry.sourceThreadId,
             entry.sourceItemId,
             entry.type,
+            entry.messageId,
             entry.turnStart ? 1 : 0,
             entry.userTurn ? 1 : 0,
           ]),
@@ -182,10 +188,11 @@ export const readForkHistoryIndex = Effect.fn("ForkHistory.readIndex")(function*
     readonly source_thread_id: string;
     readonly source_item_id: string;
     readonly item_type: OrchestrationV2TurnItem["type"];
+    readonly message_id: string | null;
     readonly turn_start: number;
     readonly user_turn: number;
   }>`
-    SELECT position, source_thread_id, source_item_id, item_type, turn_start, user_turn
+    SELECT position, source_thread_id, source_item_id, item_type, message_id, turn_start, user_turn
     FROM scient_fork_history
     WHERE thread_id = ${threadId}
     ORDER BY position
@@ -195,6 +202,7 @@ export const readForkHistoryIndex = Effect.fn("ForkHistory.readIndex")(function*
     sourceThreadId: ThreadId.make(row.source_thread_id),
     sourceItemId: TurnItemId.make(row.source_item_id),
     type: row.item_type,
+    messageId: row.message_id,
     turnStart: row.turn_start === 1,
     userTurn: row.user_turn === 1,
   }));
@@ -257,10 +265,11 @@ export const readForkHistoryRows = Effect.fn("ForkHistory.readRows")(function* (
 
 /**
  * Which inherited rows a history window shows, by the projection store's
- * window rule (`readCanonicalProjection`): rows at or before the anchor, from
- * the oldest of the last `userTurnLimit + 2` user turns among the last
- * `maxRawTurns + 2` turn starts, or the last `rowLimit` rows when no user turn
- * is in range.
+ * window rule (`readCanonicalProjection`) applied to the whole conversation:
+ * the inherited rows, then the fork's own rows that `following` describes.
+ * The window holds rows at or before the anchor, from the oldest of the last
+ * `userTurnLimit + 2` user turns among the last `maxRawTurns + 2` turn starts,
+ * or the last `rowLimit` rows when no user turn is in range.
  */
 export function selectForkHistoryWindow(
   index: ReadonlyArray<ForkHistoryIndexRow>,
@@ -270,13 +279,15 @@ export function selectForkHistoryWindow(
     readonly anchorItemId?: TurnItemId | undefined;
     readonly maxRawTurns: number;
   },
+  following: ReadonlyArray<Pick<ForkHistoryEntry, "turnStart" | "userTurn">> = [],
 ): ReadonlyArray<ForkHistoryIndexRow> {
   if (window.rowLimit === 0) return [];
   const anchor =
     window.anchorItemId === undefined
       ? -1
       : index.findIndex((row) => row.sourceItemId === window.anchorItemId);
-  const eligible = anchor < 0 ? index : index.slice(0, anchor + 1);
+  const eligible: ReadonlyArray<Pick<ForkHistoryEntry, "turnStart" | "userTurn">> =
+    anchor < 0 ? [...index, ...following] : index.slice(0, anchor + 1);
   const turnStarts =
     window.userTurnLimit === undefined
       ? []
@@ -290,42 +301,72 @@ export function selectForkHistoryWindow(
       : turnStarts.length >= window.maxRawTurns + 2
         ? turnStarts[0]!
         : 0;
-  const fromStart = eligible.slice(start);
-  return userTurns.length > 0 ? fromStart : fromStart.slice(-window.rowLimit);
+  const first = userTurns.length > 0 ? start : Math.max(start, eligible.length - window.rowLimit);
+  const shown = anchor < 0 ? index.length : anchor + 1;
+  return index.slice(Math.min(first, shown), shown);
 }
 
 /** Whether the thread is a fork with inherited history. */
 /**
- * Whether a live conversation other than `exceptThreadId` still shows part of
- * `sourceThreadId`'s history. Its files are kept while one does.
+ * The conversations of a thread's lineage (same root), with whether each is
+ * deleted and whether it is a fork. Forks share files across a lineage, so file
+ * release looks at all of them.
  */
-export const hasLiveForkInheritors = (
-  sql: SqlClient.SqlClient,
-  sourceThreadId: ThreadId,
-  exceptThreadId: ThreadId,
-) =>
-  sql<{ readonly present: number }>`
-    SELECT 1 AS present
-    FROM scient_fork_history AS history
-    JOIN orchestration_v2_projection_threads AS fork ON fork.thread_id = history.thread_id
-    WHERE history.source_thread_id = ${sourceThreadId}
-      AND history.thread_id <> ${sourceThreadId}
-      AND history.thread_id <> ${exceptThreadId}
-      AND fork.deleted_at IS NULL
-    LIMIT 1
-  `.pipe(Effect.map((rows) => rows.length > 0));
+export const readForkFamily = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
+  sql<{ readonly thread_id: string; readonly deleted: number; readonly fork: number }>`
+    SELECT member.thread_id,
+      member.deleted_at IS NOT NULL AS deleted,
+      json_extract(member.payload_json, '$.conversationFork') IS NOT NULL AS fork
+    FROM orchestration_v2_projection_threads AS member
+    WHERE json_extract(member.payload_json, '$.lineage.rootThreadId') = (
+      SELECT json_extract(payload_json, '$.lineage.rootThreadId')
+      FROM orchestration_v2_projection_threads
+      WHERE thread_id = ${threadId}
+    )
+  `.pipe(
+    Effect.map((rows) =>
+      rows.map((row) => ({
+        threadId: ThreadId.make(row.thread_id),
+        deleted: row.deleted === 1,
+        fork: row.fork === 1,
+      })),
+    ),
+  );
 
-/** Deleted conversations whose history this fork shows. */
-export const readDeletedForkSources = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
-  sql<{ readonly source_thread_id: string }>`
-    SELECT DISTINCT history.source_thread_id
+/** The files a fork shares from its history, recorded when it was accepted. */
+export const readForkSharedFileIds = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
+  sql<{ readonly id: string | null }>`
+    SELECT json_extract(copy.value, '$.source.id') AS id
+    FROM orchestration_v2_projection_threads AS thread,
+      json_each(thread.payload_json, '$.conversationFork.attachmentCopies') AS copy
+    WHERE thread.thread_id = ${threadId}
+  `.pipe(Effect.map((rows) => rows.flatMap((row) => (row.id === null ? [] : [row.id]))));
+
+/** Files attached to the thread's own submitted question answers. */
+export const readQuestionAnswerFileIds = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
+  sql<{ readonly id: string | null }>`
+    SELECT DISTINCT json_extract(file.value, '$.id') AS id
+    FROM orchestration_v2_projection_turn_items AS item,
+      json_each(item.payload_json, '$.questionAnswer.attachmentsByQuestionId') AS answer,
+      json_each(answer.value) AS file
+    WHERE item.thread_id = ${threadId} AND item.type = 'user_input_request'
+  `.pipe(Effect.map((rows) => rows.flatMap((row) => (row.id === null ? [] : [row.id]))));
+
+/** Shown tool items that may name a stored page or app document. */
+export const readForkShownToolPayloads = (
+  sql: SqlClient.SqlClient,
+  threadId: ThreadId,
+  mcpAppOutputKey: string,
+) =>
+  sql<{ readonly payload_json: string }>`
+    SELECT item.payload_json
     FROM scient_fork_history AS history
-    JOIN orchestration_v2_projection_threads AS source
-      ON source.thread_id = history.source_thread_id
+    JOIN orchestration_v2_projection_turn_items AS item
+      ON item.turn_item_id = history.source_item_id
     WHERE history.thread_id = ${threadId}
-      AND history.source_thread_id <> ${threadId}
-      AND source.deleted_at IS NOT NULL
-  `.pipe(Effect.map((rows) => rows.map((row) => ThreadId.make(row.source_thread_id))));
+      AND history.item_type = 'dynamic_tool'
+      AND (item.payload_json LIKE '%htmlRender%' OR item.payload_json LIKE ${`%${mcpAppOutputKey}%`})
+  `.pipe(Effect.map((rows) => rows.map((row) => row.payload_json)));
 
 /** The given attachment ids that a shared item of `sourceThreadId`, shown by a live fork, names. */
 export const readLiveForkSharedAttachmentIds = (

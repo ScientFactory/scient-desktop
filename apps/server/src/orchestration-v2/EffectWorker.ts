@@ -133,6 +133,22 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
+          case "scient-fork.release-files":
+            return conversationForks.releasableFiles(effect.threadId).pipe(
+              Effect.flatMap((attachmentIds) =>
+                attachmentIds.length === 0
+                  ? Effect.void
+                  : resourceCleanup.cleanupAttachments(attachmentIds),
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
             return continueRestartedRun({
