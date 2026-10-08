@@ -1,6 +1,15 @@
 // @vitest-environment happy-dom
 import { RegistryContext } from "@effect/atom-react";
-import { ChatAttachmentId, EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  ChatAttachmentId,
+  EnvironmentId,
+  MessageId,
+  RunId,
+  sessionGrantsScope,
+  type AuthEnvironmentScope,
+  type SessionGrantInput,
+} from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { act } from "react";
@@ -13,6 +22,7 @@ const transport = vi.hoisted(() => ({
   command: vi.fn(),
   upload: vi.fn(),
   read: vi.fn(),
+  sessions: new Map<EnvironmentId, SessionGrantInput>(),
 }));
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
   createEnvironmentRpcCommand: () => Symbol("command"),
@@ -32,7 +42,23 @@ vi.mock("expo-file-system/legacy", () => ({
 }));
 vi.mock("./session", () => {
   const connection = Atom.make(Option.some({ httpBaseUrl: "https://environment.example/" }));
-  return { environmentSession: { preparedConnectionValueAtom: () => connection } };
+  const readEnvironmentScope = (environmentId: EnvironmentId, scope: AuthEnvironmentScope) => {
+    const session = transport.sessions.get(environmentId);
+    return session !== undefined && sessionGrantsScope(session, scope);
+  };
+  return {
+    environmentSession: { preparedConnectionValueAtom: () => connection },
+    readEnvironmentScope,
+    useEnvironmentsWithScope: (
+      environments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
+      scope: AuthEnvironmentScope,
+    ) =>
+      new Set(
+        environments
+          .filter(({ environmentId }) => readEnvironmentScope(environmentId, scope))
+          .map(({ environmentId }) => environmentId),
+      ),
+  };
 });
 vi.mock("./assets", () => ({ assetEnvironment: { createUrl: (input: unknown) => input } }));
 vi.mock("./attachments", () => ({
@@ -138,6 +164,12 @@ async function mount() {
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.clearAllMocks();
+  transport.sessions.clear();
+  transport.sessions.set(environmentId, {
+    authenticated: true,
+    scopes: [AuthOrchestrationOperateScope],
+    permissions: [AuthOrchestrationOperateScope],
+  });
   transport.verify.mockResolvedValue({ _tag: "Success", value: {} });
   appAtomRegistry.set(composerDraftsAtom, {});
   appAtomRegistry.set(queuedRunEditsAtom, {});
@@ -149,6 +181,23 @@ afterEach(async () => {
 });
 
 describe("mounted composer background attachment preparation", () => {
+  it("retains a connected target's draft without preparing or retrying uploads when its operation grant is absent", async () => {
+    transport.sessions.set(environmentId, {
+      authenticated: true,
+      scopes: [AuthOrchestrationOperateScope],
+      permissions: [],
+    });
+    const draft = { text: "Keep denied target draft", attachments: images(1) };
+    appAtomRegistry.set(composerDraftsAtom, { [threadKey]: draft });
+    await mount();
+    await act(() => retryComposerAttachmentUpload(environmentId, "image-0"));
+    expect(transport.verify).not.toHaveBeenCalled();
+    expect(transport.command).not.toHaveBeenCalled();
+    expect(transport.upload).not.toHaveBeenCalled();
+    expect(transport.read).not.toHaveBeenCalled();
+    expect(appAtomRegistry.get(composerDraftsAtom)[threadKey]).toBe(draft);
+    expect(appAtomRegistry.get(composerAttachmentUploadsAtom)).toEqual({});
+  });
   it("refuses nine images before verification/upload and retries the same preserved draft after trimming to eight", async () => {
     const draft = { text: "Keep recovered draft", attachments: images(9) };
     appAtomRegistry.set(composerDraftsAtom, { [threadKey]: draft });

@@ -3,11 +3,15 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { RegistryContext } from "@effect/atom-react";
 import {
+  AuthOrchestrationOperateScope,
   CommandId,
   EnvironmentId,
   MessageId,
   ProviderInstanceId,
   ServerConfig,
+  sessionGrantsScope,
+  type AuthEnvironmentScope,
+  type SessionGrantInput,
   type ModelSelection,
 } from "@t3tools/contracts";
 import {
@@ -30,8 +34,27 @@ const calls = vi.hoisted(() => ({
   writeConfig: vi.fn<(value: ServerConfig) => void>(),
   writeThreadShells: vi.fn<(values: readonly EnvironmentThreadShell[]) => void>(),
   storage: new Map<MessageId, QueuedThreadMessage>(),
+  sessions: new Map<EnvironmentId, SessionGrantInput>(),
 }));
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
+vi.mock("./session", () => {
+  const readEnvironmentScope = (environmentId: EnvironmentId, scope: AuthEnvironmentScope) => {
+    const session = calls.sessions.get(environmentId);
+    return session !== undefined && sessionGrantsScope(session, scope);
+  };
+  return {
+    readEnvironmentScope,
+    useEnvironmentsWithScope: (
+      environments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
+      scope: AuthEnvironmentScope,
+    ) =>
+      new Set(
+        environments
+          .filter(({ environmentId }) => readEnvironmentScope(environmentId, scope))
+          .map(({ environmentId }) => environmentId),
+      ),
+  };
+});
 vi.mock("../lib/attachmentUpload", () => ({
   prepareTurnAttachments: async () => ({
     status: "ready",
@@ -219,6 +242,12 @@ let root: Root;
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   calls.storage.clear();
+  calls.sessions.clear();
+  calls.sessions.set(environmentId, {
+    authenticated: true,
+    scopes: [AuthOrchestrationOperateScope],
+    permissions: [AuthOrchestrationOperateScope],
+  });
   await threadOutboxManager.clearEnvironment(environmentId);
   for (const command of [
     calls.startTurn,
@@ -238,7 +267,7 @@ afterEach(async () => {
   await act(() => root.unmount());
   vi.unstubAllGlobals();
 });
-async function deliver(current: ModelSelection, captured: ModelSelection) {
+async function deliver(current: ModelSelection, captured: ModelSelection, permitted = true) {
   const thread = presentThreadShell(
     environmentId,
     makeRawThreadShell({ modelSelection: current, itemCount: 1 }),
@@ -266,6 +295,15 @@ async function deliver(current: ModelSelection, captured: ModelSelection) {
       </RegistryContext.Provider>,
     ),
   );
+  if (!permitted) {
+    expect(calls.storage.get(message.messageId)).toEqual(message);
+    expect(calls.startTurn).not.toHaveBeenCalled();
+    expect(calls.updateMetadata).not.toHaveBeenCalled();
+    expect(calls.setRuntimeMode).not.toHaveBeenCalled();
+    expect(calls.setInteractionMode).not.toHaveBeenCalled();
+    expect(appAtomRegistry.get(acknowledgedThreadMessagesAtom)).toEqual([]);
+    return;
+  }
   await act(async () => {
     await vi.waitFor(() => expect(calls.storage.size).toBe(0));
   });
@@ -284,6 +322,14 @@ async function deliver(current: ModelSelection, captured: ModelSelection) {
   expect(calls.setRuntimeMode).not.toHaveBeenCalled();
   expect(calls.setInteractionMode).not.toHaveBeenCalled();
 }
+it("keeps a connected target's captured selection queued when its exact operation grant is absent", async () => {
+  calls.sessions.set(environmentId, {
+    authenticated: true,
+    scopes: [AuthOrchestrationOperateScope],
+    permissions: [],
+  });
+  await deliver(baseSelection, { ...baseSelection, model: "model-b" }, false);
+});
 it.each([
   [baseSelection, { ...baseSelection, options: [] }],
   [{ ...baseSelection, options: [] }, baseSelection],
