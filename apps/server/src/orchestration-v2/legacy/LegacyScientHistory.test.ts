@@ -1321,3 +1321,212 @@ it.live(
       );
     }).pipe(Effect.provide(TestLayer), Effect.timeout("10 seconds")),
 );
+
+const command = (status: string, data: Record<string, unknown>) =>
+  JSON.stringify({
+    itemType: "command_execution",
+    toolCallId: "call-1",
+    status,
+    title: "Ran command",
+    data,
+  });
+const seedToolLifecycles = Effect.gen(function* () {
+  yield* seed;
+  const sql = yield* SqlClient.SqlClient;
+  // Real V1 shapes: started and progress rows carry the command, the completed
+  // row does not repeat every field; progress rows also report the icon.
+  const rows: ReadonlyArray<readonly [string, string, string, string, string]> = [
+    [
+      "c1-start",
+      "tool.started",
+      "Ran command started",
+      command("inProgress", { command: "ls" }),
+      "2026-01-03T01:00:00.000Z",
+    ],
+    [
+      "c1-u1",
+      "tool.updated",
+      "Ran command",
+      command("inProgress", { item: { output: "a" } }),
+      "2026-01-03T01:00:01.000Z",
+    ],
+    [
+      "meter",
+      "context-window.updated",
+      "Context window updated",
+      '{"usedTokens":10}',
+      "2026-01-03T01:00:01.500Z",
+    ],
+    [
+      "c1-u2",
+      "tool.updated",
+      "Ran command",
+      JSON.stringify({
+        itemType: "command_execution",
+        toolCallId: "call-1",
+        status: "inProgress",
+        toolIcon: "terminal",
+        data: { item: { output: "ab" } },
+      }),
+      "2026-01-03T01:00:02.000Z",
+    ],
+    [
+      "c1-done",
+      "tool.completed",
+      "Ran command",
+      command("completed", { toolName: "bash", rawOutput: "ab" }),
+      "2026-01-03T01:00:03.000Z",
+    ],
+    ["checkpoint", "checkpoint.captured", "Checkpoint captured", "{}", "2026-01-03T01:00:04.000Z"],
+    [
+      "c1-again",
+      "tool.completed",
+      "Ran command",
+      command("failed", { command: "ls missing" }),
+      "2026-01-03T01:00:05.000Z",
+    ],
+    [
+      "c2-start",
+      "tool.started",
+      "Edited file started",
+      JSON.stringify({ itemType: "file_change", toolCallId: "call-2", status: "inProgress" }),
+      "2026-01-03T01:00:06.000Z",
+    ],
+    [
+      "c3-failing",
+      "tool.updated",
+      "Searched",
+      JSON.stringify({ itemType: "web_search", toolCallId: "call-3", status: "failed" }),
+      "2026-01-03T01:00:07.000Z",
+    ],
+    [
+      "task",
+      "task.progress",
+      "Working",
+      '{"taskId":"task-1","summary":"Working"}',
+      "2026-01-03T01:00:08.000Z",
+    ],
+  ];
+  for (const [id, kind, summary, payload, createdAt] of rows) {
+    yield* sql`INSERT INTO projection_thread_activities (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at)
+      VALUES (${id}, ${THREAD}, 'tool-turn', 'tool', ${kind}, ${summary}, ${payload}, NULL, ${createdAt})`;
+  }
+});
+const activityItem = (id: string) => TurnItemId.make(`migration:v1:history:activity:${id}`);
+
+it.effect("imports one item per tool call with its full content and true outcome", () =>
+  Effect.gen(function* () {
+    yield* seedToolLifecycles;
+    const sql = yield* SqlClient.SqlClient;
+    const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    yield* migration.reconcileShells;
+    yield* migration.ensureTranscript(THREAD);
+    const projection = yield* projections.getThreadProjection(THREAD);
+    const tools = projection.turnItems.filter(
+      (item) =>
+        item.type === "dynamic_tool" && item.id.startsWith("migration:v1:history:activity:"),
+    );
+    // Telemetry is gone; each call is one item placed where it started.
+    assert.deepEqual(
+      tools.map((item) => item.id),
+      [
+        activityItem("c1-start"),
+        activityItem("c1-again"),
+        activityItem("c2-start"),
+        activityItem("c3-failing"),
+        activityItem("task"),
+        activityItem("tool-call"),
+      ],
+    );
+    const call = tools.find((item) => item.id === activityItem("c1-start"));
+    assert.ok(call?.type === "dynamic_tool");
+    assert.equal(call.status, "completed");
+    assert.equal(call.title, "Ran command");
+    assert.equal(call.toolName, "tool.completed");
+    assert.equal(DateTime.formatIso(call.startedAt!), "2026-01-03T01:00:00.000Z");
+    assert.equal(DateTime.formatIso(call.completedAt!), "2026-01-03T01:00:03.000Z");
+    const input = call.input as { activityId: string; kind: string; payload: unknown };
+    assert.equal(input.activityId, "c1-start");
+    assert.equal(input.kind, "tool.completed");
+    assert.deepEqual(input.payload, {
+      itemType: "command_execution",
+      toolCallId: "call-1",
+      status: "completed",
+      title: "Ran command",
+      toolIcon: "terminal",
+      data: { toolName: "bash", rawOutput: "ab", item: { output: "ab" }, command: "ls" },
+    });
+    const status = (id: string) => tools.find((item) => item.id === activityItem(id))?.status;
+    assert.equal(status("c1-again"), "failed");
+    assert.equal(status("c2-start"), "interrupted");
+    assert.equal(status("c3-failing"), "failed");
+    assert.equal(status("task"), "completed");
+    // Every item has its own position, in order, with no gaps left by folded rows.
+    const positions = yield* sql<{ turn_item_id: string; ordinal: number }>`
+      SELECT turn_item_id, ordinal FROM orchestration_v2_turn_item_positions
+      WHERE thread_id = ${THREAD} ORDER BY ordinal`;
+    const itemIds = new Set(projection.turnItems.map((item) => item.id));
+    assert.isTrue(
+      positions.every((position) => itemIds.has(TurnItemId.make(position.turn_item_id))),
+    );
+    assert.deepEqual(
+      positions.map((position) => position.ordinal),
+      positions.map((_, index) => index + 1),
+    );
+    // Importing again changes nothing; a rebuild from the event log matches.
+    const sequence = yield* (yield* EventStore.EventStoreV2).latestSequence();
+    yield* Effect.gen(function* () {
+      yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
+    }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)));
+    assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
+    yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+    assert.deepEqual(
+      (yield* projections.getThreadProjection(THREAD)).turnItems,
+      projection.turnItems,
+    );
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("keeps a thread an earlier build imported row by row in that shape", () =>
+  Effect.gen(function* () {
+    yield* seedToolLifecycles;
+    const sql = yield* SqlClient.SqlClient;
+    const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    yield* migration.reconcileShells;
+    yield* migration.ensureTranscript(THREAD);
+    // Model the earlier build's result: a progress row imported as its own item.
+    const call = (yield* projections.getThreadProjection(THREAD)).turnItems.find(
+      (item) => item.id === activityItem("c1-start"),
+    );
+    assert.ok(call);
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(activityItem("c1-u1")),
+          type: "turn-item.updated",
+          threadId: THREAD,
+          occurredAt: call.updatedAt,
+          payload: { ...call, id: activityItem("c1-u1") },
+        },
+      ],
+    });
+    yield* sql`UPDATE orchestration_v2_legacy_imports SET history_repair_version = 1 WHERE thread_id = ${THREAD}`;
+    // A later repair must not leave that item without a position.
+    yield* Effect.gen(function* () {
+      yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
+    }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)));
+    const items = (yield* projections.getThreadProjection(THREAD)).turnItems;
+    const positioned = new Set(
+      (yield* sql<{ turn_item_id: string }>`
+        SELECT turn_item_id FROM orchestration_v2_turn_item_positions WHERE thread_id = ${THREAD}`).map(
+        (row) => row.turn_item_id,
+      ),
+    );
+    assert.isTrue(items.every((item) => positioned.has(item.id)));
+    yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+    assert.equal((yield* projections.getThreadProjection(THREAD)).turnItems.length, items.length);
+  }).pipe(Effect.provide(TestLayer)),
+);
