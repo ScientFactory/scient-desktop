@@ -835,7 +835,8 @@ mounts through upstream reconciliation;
 Local voice dictation is isolated under `packages/scient-voice`,
 `apps/web/src/scient/voice`, and `apps/desktop/src/app/DesktopVoice.ts`. The
 inherited-host seams are limited to typed IPC/preload registration, one
-composer mount plus a positioned footer, one ready-model-only citation-comment
+composer mount plus busy-state footer layout and an icon-only provider trigger,
+one ready-model-only citation-comment
 mount, and one desktop-packaging call into `scripts/lib/scient-voice-build.ts`.
 Future T3 merges should preserve those narrow mounts rather than moving voice
 orchestration into inherited T3 components. See
@@ -887,6 +888,13 @@ section rather than inside an extra padded wrapper. Pi's mark is Pi's own colour
 mark in both web `Icons.tsx` (`PiIcon`) and mobile `ProviderIcon.tsx`, replacing
 T3's monochrome glyph. When T3 changes these spots, keep its surrounding layout and
 reapply only the marked lines.
+
+Scient's model picker gives assisted provider setup an intrinsic, scrollable body independent
+of T3's model-row content sizing. Preserve that branch when integrating picker sizing changes:
+providers with no models still need install and sign-in actions. Setup eligibility is shared by
+mouse and keyboard navigation, and returning to models reattaches list measurement. Provider
+views keep their own lifecycle policy; Scient Agent reuses its existing account view in the
+composer connection dialog. See [provider lifecycle architecture](docs/internals/provider-lifecycle.md).
 
 Scient keeps ordinary browser interaction visually quiet: `PreviewView` shows
 the control badge only during agent control. Preserve the underlying human-input

@@ -44,6 +44,19 @@ function renderMarkdownLinkHref(markdown: string): string | undefined {
   return renderedHref;
 }
 
+describe("relative file destinations with punctuation and Unicode", () => {
+  it.each([
+    "LTC - Cystic Fibrosis - new (readable).md",
+    "סיכום.md",
+    "Résumé & results.md",
+    "Folder (draft)/Study [final].md",
+  ])("resolves the rendered href for %s in its workspace", (path) => {
+    const href = renderMarkdownLinkHref(`[Open file](<${path}>)`);
+    expect(href).toBeDefined();
+    expect(resolveMarkdownFileLinkTarget(href!, "/work")).toBe(`/work/${path}`);
+  });
+});
+
 describe("extractMarkdownLinkHrefs", () => {
   it("extracts ordinary and angle-bracketed destinations containing spaces", () => {
     expect(

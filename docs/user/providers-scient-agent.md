@@ -37,7 +37,8 @@ shell and code can reach whatever your user account can.
 
 Scient Agent starts with no sign-ins. Give it a model in one of these ways:
 
-- **Sign in to a model account.** In **Settings > Providers**, open **Manage** on Scient Agent.
+- **Sign in to a model account.** Select Scient Agent in the composer model picker and choose
+  **Connect models**, or open **Manage** in **Settings > Providers**.
   **Model accounts** lists every sign-in the agent supports: accounts you sign in to in your
   browser, and services you add an API key for. Choose one, finish in the browser, and paste a
   code or key if the agent asks for one. **Sign out** removes a sign-in the agent stored.

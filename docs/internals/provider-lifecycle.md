@@ -31,6 +31,21 @@ led here; it is not a second source of current behavior.
    storage belong to the machine running the Scient server, not necessarily the device displaying the
    UI.
 
+## Composer setup presentation
+
+The model picker keeps assisted setup in normal flow, independently of the virtualized model
+list's measured height. Empty catalogs must still expose installation, sign-in, progress and
+recovery. The same setup eligibility controls the body, provider rail and keyboard navigation;
+conversation locks remain authoritative. Authentication and active connection operations are
+checked independently of cached ready status. Hidden models and search/favorites filters do not
+establish missing installation or authentication.
+
+When setup completes, the model list mounts and subscribes to its own current measurement.
+Provider-specific views and server-advertised actions remain the owners of the next step.
+Scient Agent's composer model connection dialog reuses its Model accounts view alongside Custom
+models. Agents without advertised account support retain their existing model connection path.
+Opening the picker or dialog does not start installation or authentication.
+
 ## Ownership boundaries
 
 | Owner                                     | Responsibilities                                                                                                                                                                                                                                                       |
@@ -304,14 +319,21 @@ runtime summary. It does not reload the provider, interrupt sessions, change aut
 runtime, or start an update. This makes the existing **Update** action visible without requiring an app
 restart while preserving any concurrent user-started runtime operation.
 
-The remote catalog can change only immutable release facts: version, artifact name, URL, digest, and
-size. It cannot add a provider or target, widen an allowed host, escape a provider-owned URL path
+The remote catalog can change only immutable release facts: version, artifact name, URL, digest,
+size, and bounded qualified same-date Cursor predecessor identities (`supersedes`). It cannot add a provider or target, widen an allowed host, escape a provider-owned URL path
 family, change the checksum algorithm, alter archive or extraction policy, choose executable paths,
 change smoke commands or environments, or raise a support tier. Missing providers, unsupported
 targets, contract drift, malformed data, provider-channel downgrades, and same-version repacks fail
 closed. A newer app-bundled catalog also outranks an older disk cache. An authoritative catalog commit
 may withdraw a previously cached candidate down to this app's bundled floor; it never downgrades an
 already active runtime.
+
+Catalog decoding isolates provider entries: a malformed or incompatible sibling falls back locally
+without discarding a healthy family's update. Cursor hashes have no numeric order. Its shared
+comparator uses qualified same-date predecessor identities through refresh, cache restore, Update
+eligibility and install receipts. Known older same-date entries cannot replace cached successors.
+Repair keeps a pinned installed receipt when same-date order is unknown, including legacy receipts.
+The app's smoke check requires the native Cursor version to match the selected immutable release.
 
 An installer-policy change advances only the affected provider's contract revision. Older app builds
 reject releases requiring a newer revision while retaining their compatible installed runtime; a

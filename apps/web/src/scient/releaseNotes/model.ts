@@ -110,6 +110,18 @@ export function formatScientReleaseMonth(publishedAt: string): string {
   }).format(new Date(Date.UTC(year, month - 1, 1)));
 }
 
+const STANDARD_PARAGRAPH_LIMITS = {
+  highlights: 7,
+  description: 240,
+  alsoIncluded: 320,
+  totalCopy: 1_600,
+};
+
+// Only the approved 0.6.22 feature release gets an expanded, still bounded note.
+const PARAGRAPH_LIMIT_OVERRIDES: Readonly<Record<string, typeof STANDARD_PARAGRAPH_LIMITS>> = {
+  "0.6.22": { highlights: 9, description: 500, alsoIncluded: 400, totalCopy: 4_000 },
+};
+
 export function validateScientReleaseNotesCatalog(
   catalog: readonly ScientReleaseNote[],
 ): readonly string[] {
@@ -118,6 +130,7 @@ export function validateScientReleaseNotesCatalog(
 
   for (const [releaseIndex, release] of catalog.entries()) {
     const releasePath = `release[${releaseIndex}]`;
+    const limits = PARAGRAPH_LIMIT_OVERRIDES[release.version] ?? STANDARD_PARAGRAPH_LIMITS;
     if (parseSemver(release.version) === null) {
       issues.push(`${releasePath}.version must be a valid semantic version.`);
     }
@@ -134,7 +147,13 @@ export function validateScientReleaseNotesCatalog(
     if (release.format === "paragraphs") {
       validateText(releasePath, "alsoIncluded", release.alsoIncluded, issues);
       validateMaximumLength(releasePath, "headline", release.headline, 80, issues);
-      validateMaximumLength(releasePath, "alsoIncluded", release.alsoIncluded, 320, issues);
+      validateMaximumLength(
+        releasePath,
+        "alsoIncluded",
+        release.alsoIncluded,
+        limits.alsoIncluded,
+        issues,
+      );
     } else {
       validateText(releasePath, "kicker", release.kicker, issues);
       validateText(releasePath, "summary", release.summary, issues);
@@ -143,7 +162,7 @@ export function validateScientReleaseNotesCatalog(
     if (release.highlights.length === 0) {
       issues.push(`${releasePath}.highlights must contain at least one item.`);
     }
-    const maximumHighlights = release.format === "paragraphs" ? 7 : 5;
+    const maximumHighlights = release.format === "paragraphs" ? limits.highlights : 5;
     if (release.highlights.length > maximumHighlights) {
       issues.push(
         `${releasePath}.highlights must contain no more than ${numberName(maximumHighlights)} items.`,
@@ -157,7 +176,13 @@ export function validateScientReleaseNotesCatalog(
       validateText(highlightPath, "description", highlight.description, issues);
       if (release.format === "paragraphs") {
         validateMaximumLength(highlightPath, "title", highlight.title, 72, issues);
-        validateMaximumLength(highlightPath, "description", highlight.description, 240, issues);
+        validateMaximumLength(
+          highlightPath,
+          "description",
+          highlight.description,
+          limits.description,
+          issues,
+        );
       }
       if (highlightIds.has(highlight.id)) {
         issues.push(`${highlightPath}.id duplicates ${highlight.id} in this release.`);
@@ -174,8 +199,10 @@ export function validateScientReleaseNotesCatalog(
           (total, highlight) => total + highlight.title.length + highlight.description.length,
           0,
         );
-      if (totalCopyLength > 1_600) {
-        issues.push(`${releasePath} must contain no more than 1600 characters of visible copy.`);
+      if (totalCopyLength > limits.totalCopy) {
+        issues.push(
+          `${releasePath} must contain no more than ${limits.totalCopy} characters of visible copy.`,
+        );
       }
     }
   }

@@ -29,11 +29,31 @@ contracts.
   keep correction disabled by default.
 
 The direct inherited-host changes are deliberately narrow: one composer mount,
-one ready-model-only citation-comment mount, one positioned-footer class, one
+one ready-model-only citation-comment mount, footer busy-state layout, one
 IPC method-group loop, one preload-adapter mount, and one call from the desktop
 artifact builder into the Scient-owned runtime staging adapter. Voice behavior
 does not live in `ChatComposer.tsx`, the inherited preload, or the artifact
 orchestrator.
+
+Voice uses the host footer's surface and normal layout. While busy, the composer
+retains the provider icon, hides and inerts ordinary toolbar actions, and stays
+expanded. The citation microphone shares the idle card's right-side actions.
+Both hosts keep the voice control mounted as its presentation changes. Recording
+uses a centered lane beside a reserved action rail. Permission, transcription
+and correction labels align with the waveform's left edge inside that lane,
+using softer placeholder-colored, regular-weight text.
+
+The waveform retains 112 recent levels in fixed-width bars with fixed gaps.
+The lane reserves its full width, but bars appear progressively from left to
+right as audio arrives. The worklet emits 20 measurements per second at the
+actual sample rate, rounding chunks to whole samples. The full-width waveform
+fills in about 5.6 seconds. Narrow viewports fill sooner and clip the oldest bars from the left
+as soon as their visible width is filled; new speech stays visible at the right.
+Audio capture retains all frames independently of the display history.
+Waveform updates follow incoming worklet messages rather than a continuous
+animation loop. Inline errors have a bounded width and ellipsis with the full
+human-readable message available on hover. Presentation strips internal error
+names and uses concise copy for recording-duration validation.
 
 ## Reliability invariants
 

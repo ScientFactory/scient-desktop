@@ -1,5 +1,7 @@
 import {
   ManagedProviderRuntimeError,
+  compareManagedRuntimeReleases,
+  type ManagedRuntimeArtifactReceipt,
   hydrateManagedRuntimeArtifact,
   type ManagedProviderRuntime,
   type ManagedProviderRuntimeProgress,
@@ -33,7 +35,7 @@ import {
   resolveManagedRuntimeCatalogCandidate,
   resolveManagedRuntimeRepairArtifact,
 } from "./ManagedRuntimeCatalog.ts";
-import { compareManagedRuntimeVersions, isManagedRuntimeUpdate } from "./managedRuntimeVersion.ts";
+import { compareManagedRuntimeVersions } from "./managedRuntimeVersion.ts";
 
 const runtimeError = (message: string, cause?: unknown) =>
   new ProviderConnectionActionError({
@@ -194,6 +196,7 @@ export function resolveManagedRuntimePolicy(input: {
   readonly artifact: ManagedRuntimeArtifact | undefined;
   readonly installed: boolean;
   readonly installedVersion: string | null;
+  readonly installedArtifact?: ManagedRuntimeArtifactReceipt | null | undefined;
   readonly managedInstallationAllowed: boolean;
   readonly systemToManagedSwitchAllowed: boolean;
 }): {
@@ -216,11 +219,15 @@ export function resolveManagedRuntimePolicy(input: {
         : input.source === "scient_managed"
           ? input.installed &&
             input.artifact &&
-            isManagedRuntimeUpdate({
+            input.installedVersion !== null &&
+            compareManagedRuntimeReleases({
               provider: input.artifact.provider,
-              current: input.installedVersion,
-              candidate: input.artifact.version,
-            })
+              current:
+                input.installedArtifact?.version === input.installedVersion
+                  ? input.installedArtifact
+                  : { version: input.installedVersion },
+              candidate: input.artifact,
+            }) === "newer"
             ? ["update", "repair", "remove"]
             : ["repair", "remove"]
           : [];
@@ -386,6 +393,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
     artifact: artifact ?? inspection?.artifact,
     installed: managedInstalled,
     installedVersion: Option.isSome(managedStatus) ? managedStatus.value.activeVersion : null,
+    installedArtifact: Option.isSome(managedStatus) ? managedStatus.value.activeArtifact : null,
     managedInstallationAllowed,
     systemToManagedSwitchAllowed: input.systemToManagedSwitchAllowed,
   });
@@ -416,6 +424,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
       artifact: availableArtifact,
       installed: latestManagedInstalled,
       installedVersion: latest?.activeVersion ?? null,
+      installedArtifact: latest?.activeArtifact,
       managedInstallationAllowed,
       systemToManagedSwitchAllowed: input.systemToManagedSwitchAllowed,
     });
@@ -510,6 +519,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
             artifact: candidateArtifact ?? managedInspection?.artifact,
             installed: true,
             installedVersion: managed.activeVersion,
+            installedArtifact: managed.activeArtifact,
             managedInstallationAllowed,
             systemToManagedSwitchAllowed: input.systemToManagedSwitchAllowed,
           }).actions
