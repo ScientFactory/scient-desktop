@@ -423,20 +423,22 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     [editor, nodePos],
   );
 
-  // Undo a fresh insertion: drop the chip and the spaces inserted with it.
+  // SCIENT-FORK:START — removal stays available after the insertion popover closes.
+  // A fresh cancelled insertion also drops only the spaces inserted with it.
   const removeOnCancel = commentTarget?.removeOnCancel;
   const onRemove = useCallback(() => {
-    if (!editor.isEditable || !removeOnCancel) return;
+    if (!editor.isEditable) return;
     const pos = nodePos();
     if (pos === null) return;
     const { doc } = editor.state;
     const current = doc.nodeAt(pos);
     if (!current) return;
     const end = pos + current.nodeSize;
-    const from = removeOnCancel.before && doc.textBetween(pos - 1, pos) === " " ? pos - 1 : pos;
-    const to = removeOnCancel.after && doc.textBetween(end, end + 1) === " " ? end + 1 : end;
+    const from = removeOnCancel?.before && doc.textBetween(pos - 1, pos) === " " ? pos - 1 : pos;
+    const to = removeOnCancel?.after && doc.textBetween(end, end + 1) === " " ? end + 1 : end;
     editor.chain().focus().deleteRange({ from, to }).run();
   }, [editor, nodePos, removeOnCancel]);
+  // SCIENT-FORK:END
 
   // Put the caret right after the chip so Enter sends and typing continues the prompt.
   const onRestoreFocus = useCallback(() => {
