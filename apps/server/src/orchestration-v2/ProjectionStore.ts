@@ -106,6 +106,7 @@ import {
   readQuestionAnswerFileIds,
   readLiveMessageFileReferences,
   readLiveForkSharedFileReferences,
+  readLiveToolPageReferences,
   presentInheritedItem,
   presentInheritedMessage,
   readForkHistoryMessageRows,
@@ -4944,8 +4945,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
      * Files the deleted conversations of a thread's lineage name (tool pages and
      * system-message files only when minted in the lineage) that no live
      * conversation names: none in the lineage (messages, question answers, tool
-     * pages, system messages, shown history), and no message or fork's shared
-     * files anywhere else. Names compare without case: on a case-insensitive
+     * pages, system messages, shown history), and no message, question answer,
+     * tool page or fork's shared files anywhere else. Names compare without case: on a case-insensitive
      * disk an alias names the same file.
      */
     const getReleasableFiles = (threadId: ThreadId) =>
@@ -4968,6 +4969,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const elsewhere = new Set([
           ...(yield* readLiveMessageFileReferences(sql, remaining)),
           ...(yield* readLiveForkSharedFileReferences(sql, remaining)),
+          ...(yield* readLiveToolPageReferences(sql, remaining)),
         ]);
         return remaining.filter((id) => !elsewhere.has(id.toLowerCase()));
       }).pipe(

@@ -526,6 +526,46 @@ export const readLiveForkSharedFileReferences = (
           )
       `.pipe(Effect.map((rows) => new Set(rows.map((row) => row.id))));
 
+/**
+ * Which of `ids` (any case) a tool page of any live conversation names,
+ * lowercased: its own tool items, and those a live fork shows (kept versions
+ * included). Any mention counts: a kept file costs less than a missing page.
+ */
+export const readLiveToolPageReferences = (sql: SqlClient.SqlClient, ids: ReadonlyArray<string>) =>
+  ids.length === 0
+    ? Effect.succeed(new Set<string>())
+    : // One pass over the tool pages, whatever the number of files.
+      sql<{ readonly id: string }>`
+        WITH wanted(id) AS MATERIALIZED (
+          SELECT lower(value) FROM json_each(${encodeJson(ids)})
+        ),
+        live(thread_id) AS MATERIALIZED (
+          SELECT thread_id FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL
+        ),
+        pages(thread_id, turn_item_id, payload) AS (
+          SELECT thread_id, turn_item_id, lower(payload_json)
+          FROM orchestration_v2_projection_turn_items
+          WHERE type = 'dynamic_tool'
+            AND (payload_json LIKE '%htmlRender%' OR payload_json LIKE '%t3McpApp%')
+        ),
+        named(id, thread_id, turn_item_id) AS (
+          SELECT wanted.id, pages.thread_id, pages.turn_item_id
+          FROM pages CROSS JOIN wanted
+          WHERE instr(pages.payload, wanted.id) > 0
+        )
+        SELECT DISTINCT id FROM named
+        WHERE thread_id IN (SELECT thread_id FROM live)
+          OR EXISTS (
+            SELECT 1 FROM scient_fork_history AS history
+            WHERE history.source_item_id = named.turn_item_id
+              AND history.thread_id IN (SELECT thread_id FROM live)
+          )
+        UNION
+        SELECT wanted.id FROM scient_fork_frozen_items AS frozen CROSS JOIN wanted
+        WHERE frozen.thread_id IN (SELECT thread_id FROM live)
+          AND instr(lower(frozen.item_json), wanted.id) > 0
+      `.pipe(Effect.map((rows) => new Set(rows.map((row) => row.id))));
+
 /** Files attached to the thread's own submitted question answers. */
 export const readQuestionAnswerFileIds = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
   sql<{ readonly id: string | null }>`

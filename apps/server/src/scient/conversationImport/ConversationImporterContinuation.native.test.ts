@@ -2745,8 +2745,12 @@ it.live(
             },
           ],
         });
+        // Its owner goes first: the page stays while a live tool output shows it.
+        yield* remove(pageOwnerId);
+        assert.deepEqual(yield* released(pageOwnerId), []);
         yield* remove(toolId);
         assert.deepEqual(yield* released(toolId), [toolsPage.toLowerCase()]);
+        assert.deepEqual(yield* released(pageOwnerId), [ownersPage.toLowerCase()]);
       }),
     ),
 );
