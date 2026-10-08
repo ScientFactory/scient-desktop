@@ -401,7 +401,12 @@ describe("managed provider runtime update workflow", () => {
   });
 
   it("republishes nothing when what Droid's protocol qualification runs changed on main meanwhile", () => {
-    const guarded = publicationGuards().flatMap((guard) => guard.pathspecs);
+    const guarded = publicationGuards()
+      .filter(
+        (guard) =>
+          guard.condition === undefined || guard.condition === '[[ "$PROVIDER" == droid ]]',
+      )
+      .flatMap((guard) => guard.pathspecs);
     expect(guarded.length).toBeGreaterThan(0);
     // A renamed path or a pattern that matches nothing would silently stop guarding anything.
     for (const pathspec of guarded) {

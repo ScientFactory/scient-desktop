@@ -309,6 +309,8 @@ jobs:
           # whole tree; the quoted pattern is matched by git in both commits, so a
           # server module added on main counts too.
           if [[ "$PROVIDER" == droid ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            apps/server/package.json \
+            packages/effect-acp \
             ':(glob)apps/server/src/*.ts' \
             apps/server/src/auth \
             apps/server/src/background \

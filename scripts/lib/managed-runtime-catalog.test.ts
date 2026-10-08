@@ -1078,6 +1078,20 @@ const cursorPointer = (version: string) =>
   );
 
 describe("independent provider publication", () => {
+  it("preserves unknown family names as own data without changing the catalog prototype", () => {
+    const unknown = currentCatalog.providers.claudeAgent!;
+    const providers = Object.fromEntries([
+      ["__proto__", unknown],
+      ["claudeAgent", unknown],
+    ]);
+    const decoded = readManagedRuntimeCatalog({ schemaVersion: 1, providers }, "claudeAgent");
+    expect(Object.hasOwn(decoded.providers, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(decoded.providers)).toBe(Object.prototype);
+    expect(Object.entries(decoded.providers).find(([name]) => name === "__proto__")?.[1]).toEqual(
+      unknown,
+    );
+  });
+
   it("reads historical and future siblings without granting them current execution policy", () => {
     const historical = {
       ...currentCatalog.providers.antigravityAcp!,

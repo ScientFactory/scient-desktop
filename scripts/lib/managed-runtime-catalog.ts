@@ -320,14 +320,6 @@ function candidateProvider(input: {
   };
 }
 
-/**
- * Decode a published catalog without upgrading its policy revisions. Current
- * releases are checked against app-owned policy; known historical revisions
- * are retained as data so a policy transition cannot block other providers.
- * Automation reads the generated branch through Git, so it must not trust a
- * TypeScript cast to establish current-policy compatibility. Candidate validation
- * additionally requires the current revision and every approved target.
- */
 /** Read siblings structurally; execution policy is applied only to the selected family. */
 export function readManagedRuntimeCatalog(
   input: unknown,
@@ -337,7 +329,7 @@ export function readManagedRuntimeCatalog(
   const root = record(input, "Managed runtime catalog");
   if (root.schemaVersion !== 1) throw new Error("Managed runtime catalog schema is unsupported.");
   const rawProviders = record(root.providers, "Managed runtime catalog providers");
-  const providers = Object.fromEntries<ManagedRuntimeCatalogProviderData>([]);
+  const entries = new Map<string, ManagedRuntimeCatalogProviderData>();
   for (const [provider, value] of Object.entries(rawProviders)) {
     try {
       const release = record(value, "Provider release");
@@ -384,7 +376,7 @@ export function readManagedRuntimeCatalog(
         }
       }
       // Valid siblings are preserved verbatim, including newer contracts and unknown fields.
-      providers[provider] = value as ManagedRuntimeCatalogProviderData;
+      entries.set(provider, value as ManagedRuntimeCatalogProviderData);
     } catch (cause) {
       if (provider === selected) throw cause;
       report(
@@ -392,6 +384,7 @@ export function readManagedRuntimeCatalog(
       );
     }
   }
+  const providers = Object.fromEntries(entries);
   const catalog: ManagedRuntimeCatalogData = {
     schemaVersion: 1,
     providers,
