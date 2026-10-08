@@ -55,7 +55,9 @@ and recovery may be needed to restore a path after a crash.
 
 A direct writer's displaced file is compared after exchange. Mismatches are
 restored without overwrite-capable rename; a competing newer file is retained
-or returned and the apply reports attention. Writes through handles held across
+or returned and the apply reports attention. Restoration is bounded to three
+exchange rounds; continued interference can leave the latest bytes in retention
+with attention required, rather than at the original path. Writes through handles held across
 a replacement land in retained copies. Those copies are rechecked at completion
 and subsequent invocations and are never automatically removed by this layer.
 The coordinator must own the retention period and user-facing compare/restore.
@@ -77,7 +79,9 @@ ordinary Markdown underline headings are not publication failures.
 Before exposing operations, implement connection ownership/binding checks,
 prepare/apply/publish recovery, bounded inventory and repository retention,
 checkout suspension for checkpoint restores and worktree/VCS operations, and
-the editor-flush bridge. Qualify unsaved editor buffers, reloads and LaTeX builds
+the editor-flush bridge. The coordinator must implement cancellation between
+stages; the local filesystem critical section completes before cancellation can
+release its save lock. Qualify unsaved editor buffers, reloads and LaTeX builds
 in the development app. Real Overleaf Cloud protocol behavior and packaged,
 signed macOS helper behavior are separate gates. A local bare Git remote does
 not establish the Cloud bridge's commit/history or publication-acknowledgement
