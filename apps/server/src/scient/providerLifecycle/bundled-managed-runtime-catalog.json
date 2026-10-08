@@ -404,7 +404,7 @@
       }
     },
     "antigravityAcp": {
-      "contractRevision": 1,
+      "contractRevision": 2,
       "channel": "stable",
       "version": "1.3.0",
       "artifacts": {

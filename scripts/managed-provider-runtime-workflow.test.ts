@@ -147,6 +147,39 @@ function qualificationInputs(roots: ReadonlyArray<string>) {
 }
 
 describe("managed provider runtime update workflow", () => {
+  it("lets sibling families finish and queues every serialized publication", () => {
+    const caller = workflow("managed-provider-runtime-updates.yml");
+    const reusable = workflow("managed-provider-runtime-update-provider.yml");
+    expect(caller.jobs.provider.strategy["fail-fast"]).toBe(false);
+    expect(reusable.jobs.qualify.strategy["fail-fast"]).toBe(false);
+    expect(reusable.jobs.qualify.needs).toBe("discover");
+    expect(reusable.jobs.publish.needs).toEqual(["discover", "qualify"]);
+    expect(caller.concurrency).toMatchObject({ "cancel-in-progress": false, queue: "max" });
+    expect(reusable.jobs.publish.concurrency).toMatchObject({
+      "cancel-in-progress": false,
+      queue: "max",
+    });
+  });
+
+  it("guards the ACP qualification import graph without invalidating sibling families", () => {
+    const guards = publicationGuards();
+    const guarded = guards
+      .filter(
+        (guard) =>
+          guard.condition === undefined ||
+          guard.condition === '[[ "$PROVIDER" == antigravityAcp ]]',
+      )
+      .flatMap((guard) => guard.pathspecs);
+    const inputs = qualificationInputs(["apps/server/scripts/qualify-antigravity-acp-catalog.ts"]);
+    const unguarded = [...inputs.modules, ...inputs.packages]
+      .filter(([path]) => !guarded.some((pathspec) => pathspecCovers(pathspec, path)))
+      .map(([path, importer]) => `${path} (imported by ${importer})`);
+    expect(unguarded).toEqual([]);
+    expect(guards.find((guard) => guard.condition === undefined)?.pathspecs).not.toContain(
+      "apps/server/src/provider/acp",
+    );
+  });
+
   it("checks exactly the app-approved release families in both dispatch and the schedule", () => {
     const caller = workflow("managed-provider-runtime-updates.yml");
     expect(caller.on.workflow_dispatch.inputs.provider.options).toEqual([
@@ -340,7 +373,7 @@ describe("managed provider runtime update workflow", () => {
   });
 
   it("voids every provider's publication only for what its own qualification runs", () => {
-    const [everyProvider, droid, scient, ...others] = publicationGuards();
+    const [everyProvider, acp, droid, scient, ...others] = publicationGuards();
     expect(others).toEqual([]);
     // Discovery, artifact qualification and publication: the same for every provider.
     expect(everyProvider).toEqual({
@@ -349,16 +382,8 @@ describe("managed provider runtime update workflow", () => {
         ".github/workflows/managed-provider-runtime-update-provider.yml",
         "apps/server/src/scient/providerLifecycle/ManagedRuntimeCatalog.ts",
         "apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json",
-        "apps/server/src/provider/AntigravityInstallation.ts",
-        "apps/server/src/provider/runtimeFilesystem.ts",
-        "apps/server/src/provider/antigravityRelease.ts",
-        "apps/server/src/provider/antigravityAuthSupport.ts",
-        "apps/server/src/provider/acp",
-        "apps/server/scripts/qualify-antigravity-acp-catalog.ts",
-        "apps/server/src/scient/providerLifecycle/antigravityAcpCatalog.ts",
-        "apps/server/package.json",
-        "packages/effect-acp",
         "packages/scient-provider-runtime",
+        "packages/shared",
         "pnpm-lock.yaml",
         "scripts/package.json",
         "scripts/lib/managed-runtime-catalog.ts",
@@ -368,13 +393,20 @@ describe("managed provider runtime update workflow", () => {
         "scripts/update-managed-runtime-catalog.ts",
       ],
     });
-    // Only Droid's qualification runs protocol suites that load the server.
+    expect(acp?.condition).toBe('[[ "$PROVIDER" == antigravityAcp ]]');
+    expect(acp?.pathspecs).toContain("apps/server/src/provider/AntigravityInstallation.ts");
+    // Each server qualifier invalidates its own family.
     expect(droid?.condition).toBe('[[ "$PROVIDER" == droid ]]');
     expect(scient?.condition).toBe('[[ "$PROVIDER" == scient ]]');
   });
 
   it("republishes nothing when what Droid's protocol qualification runs changed on main meanwhile", () => {
-    const guarded = publicationGuards().flatMap((guard) => guard.pathspecs);
+    const guarded = publicationGuards()
+      .filter(
+        (guard) =>
+          guard.condition === undefined || guard.condition === '[[ "$PROVIDER" == droid ]]',
+      )
+      .flatMap((guard) => guard.pathspecs);
     expect(guarded.length).toBeGreaterThan(0);
     // A renamed path or a pattern that matches nothing would silently stop guarding anything.
     for (const pathspec of guarded) {
