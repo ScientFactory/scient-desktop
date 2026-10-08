@@ -14,7 +14,10 @@ import {
   isRuntimePlanStale,
   managedRuntimeSwitchNeedsDecision,
 } from "./ManagedRuntimeSwitchDecision";
-import type { ProviderSettingsLifecyclePresentation } from "./providerSettingsLifecyclePresentation";
+import {
+  providerSettingsLifecyclePresentation,
+  type ProviderSettingsLifecyclePresentation,
+} from "./providerSettingsLifecyclePresentation";
 import {
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
@@ -97,13 +100,45 @@ function resolveProviderSettingsHeaderAction(
 
 export function ProviderSettingsLifecycleAction(props: ProviderSettingsLifecycleActionProps) {
   const action = resolveProviderSettingsHeaderAction(props.provider);
+  const presentation = providerSettingsLifecyclePresentation(props.provider, props.displayName);
+  const operationActive = presentation.kind === "installing" || presentation.kind === "signing-in";
+  const externalUpdateActive =
+    props.externalUpdateRunning === true ||
+    props.provider.updateState?.status === "queued" ||
+    props.provider.updateState?.status === "running";
+  const progressLabel = operationActive
+    ? presentation.statusLabel
+    : externalUpdateActive
+      ? "Updating"
+      : null;
   return (
     <ProviderSettingsActions
       displayName={props.displayName}
       onManage={props.onManage}
-      labeled={action === "manage"}
+      labeled={progressLabel === null && action === "manage"}
     >
-      {action === "install" ? (
+      {progressLabel !== null ? (
+        <Button
+          aria-label={`${progressLabel} ${props.displayName}`}
+          onClick={() => props.onManage()}
+          size="compact"
+          type="button"
+          variant="ghost-primary"
+        >
+          <LoaderIcon aria-hidden />
+          <span role="status" className="inline-flex items-baseline gap-1.5">
+            {progressLabel}
+            {operationActive && presentation.downloadPercent !== undefined ? (
+              <span
+                aria-label={`Download progress ${presentation.downloadPercent}%`}
+                className="text-[11px] font-normal tabular-nums"
+              >
+                {presentation.downloadPercent}%
+              </span>
+            ) : null}
+          </span>
+        </Button>
+      ) : action === "install" ? (
         <ManagedRuntimeActionButton
           action="install"
           displayName={props.displayName}

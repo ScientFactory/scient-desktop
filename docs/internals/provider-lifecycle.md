@@ -114,11 +114,14 @@ errors appear in the selected provider's detail pane rather than repeating in th
 
 Provider settings and onboarding share the same header actions. An enabled missing runtime with
 advertised install capability shows Install; an enabled installed runtime needing authentication
-with an advertised login method shows Sign in. Both retain an icon-only Manage entry. Other states,
-including disabled providers and active operations, show a labeled Manage button. Manage opens
-the existing lifecycle dialog; updates, repairs, enablement, and ongoing-operation details remain
-available there according to the server's advertised capabilities. Version update indicators stay
-visible in the provider list.
+with an advertised login method shows Sign in. Both retain an icon-only Manage entry. Active runtime,
+sign-in, and external update operations show a compact progress control alongside icon-only Manage,
+including a download percentage only while downloading with a known total. Progress comes from the
+server's operation state and remains visible when the lifecycle dialog closes. Clicking progress or
+Manage opens that existing dialog without starting another operation. Idle states, including disabled
+providers, show a labeled Manage button; updates, repairs, and enablement remain available there
+according to the server's advertised capabilities. Version update indicators stay visible in the
+provider list.
 
 Configuration fields use compact secondary typography. Repetitive binary-path explanations are
 omitted; other field guidance remains available through keyboard-accessible information controls,

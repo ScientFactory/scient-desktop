@@ -165,7 +165,7 @@ export function GettingStartedAgentStep(props: {
   return (
     <div>
       <GettingStartedStepHeading
-        description="Use a ChatGPT, Claude, or Google subscription you already have, or skip this for now."
+        description="Use a ChatGPT, Claude, or Google subscription you already have."
         title="Choose an AI"
       />
       <div
@@ -173,7 +173,7 @@ export function GettingStartedAgentStep(props: {
         role="region"
         aria-label="AI providers"
         tabIndex={0}
-        className="mt-6 max-h-[14rem] overflow-y-auto overscroll-y-contain divide-y divide-border/70 border-t border-border/70"
+        className="mt-3 max-h-[14rem] overflow-y-auto overscroll-y-contain divide-y divide-border/70 border-t border-border/70"
       >
         {props.choices.map((choice) => (
           <div

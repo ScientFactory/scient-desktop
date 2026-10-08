@@ -111,10 +111,12 @@ it failed, with **Retry**. **Settings** opens the provider in the correct enviro
 **Install** or **Update** starts the operation directly, without a second confirmation; the one
 exception is an install that would use an older Scient-managed version instead of your system
 installation, which waits for the decision described above. In Settings, it runs without opening the
-management card: the button shows **Installing**, **Updating**, or **Verifying**, with a small
-download percentage when available. Click that button to open details. A **Failed** button opens the
-existing error and recovery controls; errors before an operation starts appear as notifications. The
-local computer independently verifies and tests the release before activation.
+management card: Settings and onboarding show **Installing**, **Updating**, or **Verifying**, with a
+small download percentage when available, beside an icon-only **Manage** button. Progress remains
+visible when you close the card. Click either control to reopen details without starting another
+operation. After a failure, **Manage** opens the existing error and recovery controls; errors before
+an operation starts appear as notifications. The local computer independently verifies and tests the
+release before activation.
 
 Scient downloads, verifies, and tests a new runtime while you keep working. Switching to it restarts
 that provider, so while one of its turns or background tasks (subagents, workflows, monitors) is
