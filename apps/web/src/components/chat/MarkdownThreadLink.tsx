@@ -1,31 +1,52 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  formatEnvironmentQualifiedThreadLink,
+  formatThreadLink,
+  percentDecodedThreadLinkId,
+} from "@t3tools/shared/threadLinks";
 import { Link } from "@tanstack/react-router";
 import { MessageSquareTextIcon } from "lucide-react";
-import type { ReactNode } from "react";
 
 import { useProject, useThreadShell } from "../../state/entities";
 import { ProjectFavicon } from "../ProjectFavicon";
 
 /**
- * A `t3-thread://` link in chat. It leads with the thread's project icon, like
- * a web link leads with its favicon, so it reads as a thread link before you
- * hover it. Opens the thread in the app.
+ * A `t3-thread://` link in chat. It shows the thread's current title, so a rename
+ * reaches every message that links to it, and leads with the thread's project icon
+ * the way a web link leads with its favicon. `label` is what the message wrote,
+ * shown only when this client cannot see the thread. Opens the thread in the app.
  */
 export function MarkdownThreadLink(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
-  readonly children: ReactNode;
+  readonly label: string;
+  readonly environmentQualified?: boolean;
 }) {
-  const thread = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
+  const decodedId = props.environmentQualified ? null : percentDecodedThreadLinkId(props.threadId);
+  const written = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
+  const decoded = useThreadShell(
+    written === null && decodedId !== null ? scopeThreadRef(props.environmentId, decodedId) : null,
+  );
+  const thread = written ?? decoded;
+  const threadId = thread?.id ?? props.threadId;
   const project = useProject(
     thread === null ? null : scopeProjectRef(props.environmentId, thread.projectId),
   );
+  const title = thread?.title.trim() || props.label;
   return (
     <Link
       to="/$environmentId/$threadId"
-      params={{ environmentId: props.environmentId, threadId: props.threadId }}
-      title={project?.title}
+      params={{ environmentId: props.environmentId, threadId }}
+      // Like an attached thread chip: archived threads are not in the index but still open.
+      title={thread === null ? "Thread no longer available" : project?.title}
+      // SCIENT-FORK:START — copied legacy links preserve cross-environment identity.
+      data-markdown-copy={
+        props.environmentQualified
+          ? formatEnvironmentQualifiedThreadLink(props.environmentId, threadId, title)
+          : formatThreadLink(threadId, title)
+      }
+      // SCIENT-FORK:END
     >
       <span
         className="ms-[0.25em] me-[0.2em] inline-flex size-[14px] [vertical-align:-0.125em]"
@@ -37,7 +58,7 @@ export function MarkdownThreadLink(props: {
           <ProjectFavicon project={project} className="size-full" />
         )}
       </span>
-      {props.children}
+      {title}
     </Link>
   );
 }

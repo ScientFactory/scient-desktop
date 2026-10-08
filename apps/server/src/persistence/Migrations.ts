@@ -84,6 +84,7 @@ import Migration0061 from "./Migrations/061_ScheduledTaskWebhooks.ts";
 import Migration0062 from "./Migrations/062_WebhookRelayDeliveries.ts";
 import Migration0063 from "./Migrations/063_McpAppModelContext.ts";
 // Incoming migrations follow Scient's immutable shipped ledger.
+import Migration0064 from "./Migrations/064_ThreadSnapshotWindowIndexes.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -171,6 +172,7 @@ export const migrationEntries = [
   [61, "ScheduledTaskWebhooks", Migration0061],
   [62, "WebhookRelayDeliveries", Migration0062],
   [63, "McpAppModelContext", Migration0063],
+  [64, "ThreadSnapshotWindowIndexes", Migration0064],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

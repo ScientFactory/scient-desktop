@@ -1,5 +1,6 @@
 import { isFileCitation, type ComposerCitation, type FileCitation } from "@t3tools/contracts";
 import { serializeComposerCitation } from "@t3tools/shared/composerCitations";
+import { assistantCitationLabel } from "@t3tools/shared/assistantCitations";
 import {
   fileCitationHash,
   fileCitationNavigation,
@@ -110,7 +111,7 @@ export function AssistantCitationChip({
   const excerpt = preview.length > 64 ? `${preview.slice(0, 64)}…` : preview;
   const label = isFileCitation(citation)
     ? `${basenameOfPath(citation.path)} · ${excerpt}`
-    : excerpt;
+    : assistantCitationLabel(citation);
   const sourceLinkProps = {
     to: "/$environmentId/$threadId" as const,
     params: { environmentId: citation.environmentId, threadId: citation.threadId },

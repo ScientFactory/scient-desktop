@@ -373,6 +373,16 @@ approved environment authority. Reading a complete terminal result from a
 direct app-owned child also acknowledges that child's completion delivery.
 This is separate from the narrow `scient_thread_read` history reader.
 
+Agents mention another thread as `[title](t3-thread://v1/<threadId>)`. The
+link carries only the id, which resolves in the environment of the message that
+holds it. Clients show the thread's current title rather than the label, so a
+rename never leaves a stale link.
+
+Native list and inspect results report `snoozed` and `snoozedUntil`, and
+`scient_thread_list` filters on `snoozed`. The server's `isSnoozed` follows the
+client's `effectiveSnoozed`, so agents and the sidebar agree: a snoozed thread
+wakes early when it has a pending request, fails, or completes after the snooze.
+
 ### `scient_thread_update`
 
 Updates metadata for the calling thread or another thread in its project.

@@ -17,7 +17,7 @@ import * as ServerConfig from "../config.ts";
 import { assetRouteHandler } from "../http.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
-import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as GitHubApi from "../sourceControl/GitHubApi.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl } from "./AssetAccess.ts";
@@ -38,7 +38,7 @@ const testLayer = Layer.mergeAll(
     getTurnItem: () =>
       Effect.die("This fixture serves files and never reads provider tool output."),
   }),
-  GitHubCli.layer.pipe(
+  GitHubApi.layerWithDependencies.pipe(
     Layer.provideMerge(VcsProcess.layer),
     Layer.provide(GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer))),
     Layer.provide(ServerSettings.layerTest()),

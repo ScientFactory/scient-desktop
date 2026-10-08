@@ -187,7 +187,7 @@ export const CreateThreadsTool = Tool.make("create_threads", {
 
 const ThreadListTool = Tool.make("scient_thread_list", {
   description:
-    "List Scient threads in the calling thread's project, newest first. Filter by durable run status, title, or settled state (settled=true lists threads the user or auto-settlement moved out of the active list) and paginate with the returned cursor. Threads from other projects are never exposed. Threads include links and snooze state; paste the link when mentioning a thread.",
+    "List Scient threads in the calling thread's project, newest first. Filter by durable run status, title, snoozed state, or settled state (settled=true lists threads the user or auto-settlement moved out of the active list) and paginate with the returned cursor. Threads from other projects are never exposed. Threads include snooze state; a snoozed thread wakes early when it asks for something, fails, or completes. To mention a thread, write `[title](t3-thread://v1/<threadId>)` with the exact threadId, not URL-encoded; Scient shows the current title.",
   parameters: OrchestratorMcpThreadListInput,
   success: OrchestratorMcpThreadListResult,
   failure: OrchestratorMcpFailure,
@@ -201,7 +201,7 @@ const ThreadListTool = Tool.make("scient_thread_list", {
 
 const ThreadReadTool = Tool.make("scient_thread_inspect", {
   description:
-    "Read durable state and a paginated timeline from a Scient thread in the calling project, or from a thread the user attached to this conversation as context. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. Reading an untruncated terminal assistant result from this parent thread's direct app-owned child acknowledges that child's automatic completion delivery. Continue with afterPosition=nextPosition. Recover long item text with itemId and textOffset=nextTextOffset until nextTextOffset is null; offsets count UTF-16 code units.",
+    "Read durable state and a paginated timeline from a Scient thread in the calling project, or from a thread the user attached to this conversation as context. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. Reading an untruncated terminal assistant result from this parent thread's direct app-owned child acknowledges that child's automatic completion delivery. Continue with afterPosition=nextPosition. Recover long item text with itemId and textOffset=nextTextOffset until nextTextOffset is null; offsets count UTF-16 code units. The thread also reports its snooze state. To mention a thread, write `[title](t3-thread://v1/<threadId>)` with the exact threadId, not URL-encoded; Scient shows the current title.",
   parameters: OrchestratorMcpThreadReadInput,
   success: OrchestratorMcpThreadReadResult,
   failure: OrchestratorMcpFailure,

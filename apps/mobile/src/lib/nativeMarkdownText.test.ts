@@ -84,19 +84,24 @@ describe("nativeMarkdownTextRuns", () => {
     ]);
   });
 
-  it("keeps a thread link's href so a press can open the thread", () => {
+  it.each([
+    "t3-thread://v1/thread-1",
+    "t3-thread://v1/local/thread-1",
+    "t3-thread://v1/remote/thread-1",
+    "t3-thread://v1/remote/thread%252F1",
+  ])("keeps the thread link %s so the feed can preserve its environment and identity", (href) => {
     expect(
       nativeMarkdownTextRuns({
         type: "paragraph",
         children: [
           {
             type: "link",
-            href: "t3-thread://v1/env/thread-1",
+            href,
             children: [{ type: "text", content: "Fix the build" }],
           },
         ],
       }),
-    ).toEqual([{ text: "Fix the build", href: "t3-thread://v1/env/thread-1" }]);
+    ).toEqual([{ text: "Fix the build", href }]);
   });
 
   it("preserves the destination of a link with a code-formatted label", () => {
