@@ -14,7 +14,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2TurnItem,
-  type TurnItemId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -2687,6 +2687,66 @@ it.live(
         // another lineage minted it.
         yield* remove(reuserForkId);
         assert.include(yield* released(reuserForkId), file.id.toLowerCase());
+
+        // A tool's output can name any file: deleting its conversation frees
+        // only pages minted there, never another conversation's page.
+        const toolPage = (threadId: ThreadId, page: string) => ({
+          id: EventId.make(`${threadId}-tool`),
+          threadId,
+          type: "turn-item.updated" as const,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(`${threadId}-tool`),
+            type: "dynamic_tool" as const,
+            threadId,
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "completed" as const,
+            title: "Weather",
+            toolName: "weather.get_weather",
+            input: {},
+            output: {
+              t3McpApp: {
+                attachmentId: page,
+                server: "weather",
+                tool: "get_weather",
+                resourceUri: "ui://weather/dashboard",
+              },
+            },
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+          },
+        });
+        const pageOwnerId = ThreadId.make("reuse-release-page-owner");
+        const toolId = ThreadId.make("reuse-release-tool");
+        const ownersPage = createAttachmentId(pageOwnerId, "html")!;
+        const toolsPage = createAttachmentId(toolId, "html")!;
+        yield* conversation(pageOwnerId, []);
+        yield* conversation(toolId, []);
+        yield* sink.write({
+          events: [toolPage(pageOwnerId, ownersPage), toolPage(toolId, toolsPage)],
+        });
+        yield* sink.write({
+          events: [
+            {
+              ...toolPage(toolId, ownersPage),
+              id: EventId.make("reuse-release-tool-foreign"),
+              payload: {
+                ...toolPage(toolId, ownersPage).payload,
+                id: TurnItemId.make("reuse-release-tool-foreign"),
+                ordinal: 2,
+              },
+            },
+          ],
+        });
+        yield* remove(toolId);
+        assert.deepEqual(yield* released(toolId), [toolsPage.toLowerCase()]);
       }),
     ),
 );

@@ -82,7 +82,11 @@ import {
   HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME,
   readHistoricalSystemMessage,
 } from "./legacy/HistoricalSystemMessage.ts";
-import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
+import {
+  parseThreadSegmentFromAttachmentId,
+  threadHtmlRenderAttachmentIds,
+  toSafeThreadAttachmentSegment,
+} from "../attachmentStore.ts";
 import {
   isThreadHistoryUserTurn,
   isThreadHistoryTurnStart,
@@ -4892,9 +4896,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           htmlRenderFromToolItem(tool)?.attachmentId ?? mcpAppFromToolItem(tool)?.attachmentId;
         return id === undefined ? [] : [id];
       });
-    /** Every file a conversation names: its own records, and what it shows from its history. */
-    const namedFiles = (threadId: ThreadId) =>
+    /**
+     * Every file a conversation names: its own records, and what it shows from
+     * its history. With `owners`, tool pages and system-message files count
+     * only when minted for one of those conversations (attachment segments):
+     * a tool's output can name any file, so it cannot make one releasable.
+     */
+    const namedFiles = (threadId: ThreadId, owners?: ReadonlySet<string>) =>
       Effect.gen(function* () {
+        const owned = (ids: ReadonlyArray<string>) =>
+          owners === undefined
+            ? ids
+            : ids.filter((id) => owners.has(parseThreadSegmentFromAttachmentId(id) ?? ""));
         const tools = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_turn_items
           WHERE thread_id = ${threadId} AND type = 'dynamic_tool'
@@ -4918,15 +4931,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ...(yield* readThreadAttachmentIds(threadId)),
           ...(yield* readQuestionAnswerFileIds(sql, threadId)),
           ...(yield* readForkSharedFileIds(sql, threadId)),
-          ...renderAttachmentIds(tools.map((row) => row.payload_json)),
-          ...renderAttachmentIds(
-            yield* readForkShownToolPayloads(sql, threadId, MCP_APP_OUTPUT_KEY),
+          ...owned(renderAttachmentIds(tools.map((row) => row.payload_json))),
+          ...owned(
+            renderAttachmentIds(
+              yield* readForkShownToolPayloads(sql, threadId, MCP_APP_OUTPUT_KEY),
+            ),
           ),
-          ...systemFiles,
+          ...owned(systemFiles),
         ];
       });
     /**
-     * Files the deleted conversations of a thread's lineage name that no live
+     * Files the deleted conversations of a thread's lineage name (tool pages and
+     * system-message files only when minted in the lineage) that no live
      * conversation names: none in the lineage (messages, question answers, tool
      * pages, system messages, shown history), and no message or fork's shared
      * files anywhere else. Names compare without case: on a case-insensitive
@@ -4935,10 +4951,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const getReleasableFiles = (threadId: ThreadId) =>
       Effect.gen(function* () {
         const family = yield* readForkFamily(sql, threadId);
+        const owners = new Set(
+          family.flatMap((member) => toSafeThreadAttachmentSegment(member.threadId) ?? []),
+        );
         const candidates = new Set<string>();
         for (const member of family) {
           if (!member.deleted) continue;
-          for (const id of yield* namedFiles(member.threadId)) candidates.add(id);
+          for (const id of yield* namedFiles(member.threadId, owners)) candidates.add(id);
         }
         const named = new Set<string>();
         for (const member of family) {

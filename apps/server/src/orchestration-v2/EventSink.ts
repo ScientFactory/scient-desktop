@@ -636,7 +636,9 @@ const layerBase: Layer.Layer<
           const normalized = yield* normalizeEvents(input.events);
           const storedEvents = yield* eventStore.append({ events: normalized });
           yield* applyStoredEvents(storedEvents);
-          const projection = yield* readRunningForkOwner(input.owner);
+          yield* readRunningForkOwner(input.owner);
+          // The fork's one full read of its source, at the captured frame.
+          const projection = yield* projectionStore.getThreadProjection(input.owner.threadId);
           const sourceSequence = yield* eventStore.latestSequence({
             threadId: input.owner.threadId,
           });

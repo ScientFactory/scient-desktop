@@ -133,7 +133,13 @@ const make = Effect.gen(function* () {
   // beside new forks instead of delaying server startup.
   yield* checkpointOwnership.recover().pipe(Effect.forkScoped);
 
-  const resolveSource = (projection: OrchestrationV2ThreadProjection, input: GetForkOptionsInput) =>
+  const resolveSource = (
+    projection: Pick<
+      OrchestrationV2ThreadProjection,
+      "providerTurns" | "attempts" | "runs" | "visibleTurnItems"
+    >,
+    input: GetForkOptionsInput,
+  ) =>
     Effect.gen(function* () {
       const selected = [
         input.sourceAssistantMessageId,
@@ -300,8 +306,14 @@ const make = Effect.gen(function* () {
       return null;
     if (Option.isSome(yield* receipts.getByCommandId(command.commandId))) return null;
     yield* legacyImporter.ensureTranscript(command.originThreadId);
-    const projection = yield* projections.getThreadProjection(command.originThreadId);
-    const source = yield* resolveSource(projection, command);
+    // Control records only: the capture reads the source's history once, at its frame.
+    const projection = yield* projections.getThreadRecords(command.originThreadId, [
+      "runs",
+      "attempts",
+      "providerThreads",
+      "providerTurns",
+    ]);
+    const source = yield* resolveSource({ ...projection, visibleTurnItems: [] }, command);
     if (source.kind !== "running-turn") return null;
     const run = projection.runs.find((row) => row.id === source.runId);
     const thread = projection.providerThreads.find((row) => row.id === run?.providerThreadId);
