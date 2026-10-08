@@ -37,7 +37,7 @@ import * as SourceControlRepositoryService from "../sourceControl/SourceControlR
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as AzureDevOpsCli from "../sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
-import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as GitHubApi from "../sourceControl/GitHubApi.ts";
 import * as GitLabCli from "../sourceControl/GitLabCli.ts";
 import * as ForgejoCli from "../sourceControl/ForgejoCli.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -220,7 +220,7 @@ const ProjectCliCloneTrackerLive = ProjectCloneTracker.layer.pipe(
             Layer.mergeAll(
               AzureDevOpsCli.layer,
               BitbucketApi.layer,
-              GitHubCli.layer,
+              GitHubApi.layerWithDependencies,
               GitLabCli.layer,
               ForgejoCli.layer,
             ),

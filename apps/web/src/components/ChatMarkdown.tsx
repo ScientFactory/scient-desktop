@@ -90,7 +90,11 @@ import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { useStreamingBlockEntrance } from "./chat/useStreamingBlockEntrance";
 // SCIENT-FORK:END
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
-import { parseThreadLinkHref, THREAD_LINK_PROTOCOL } from "@t3tools/shared/threadLinks";
+import {
+  parseEnvironmentQualifiedThreadLinkHref,
+  parseThreadLinkHref,
+  THREAD_LINK_PROTOCOL,
+} from "@t3tools/shared/threadLinks";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
 import remarkGfm from "remark-gfm";
 import { remarkKeepWindowsPathDestinations } from "../markdown-windows-path-destinations";
@@ -2401,7 +2405,9 @@ function useChatMarkdownState({
   const markdownUrlTransform = useCallback((href: string) => {
     if (parseComposerCitationHref(href)) return href;
     if (parseComposerContextHref(href)) return href;
-    if (parseThreadLinkHref(href)) return href;
+    // SCIENT-FORK:START — keep saved qualified thread URLs through Markdown sanitization.
+    if (parseEnvironmentQualifiedThreadLinkHref(href) || parseThreadLinkHref(href)) return href;
+    // SCIENT-FORK:END
     if (isWindowsDrivePathHref(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
@@ -3090,15 +3096,24 @@ const CHAT_MARKDOWN_COMPONENTS = {
     } = use(ChatMarkdownRendererContext);
     const citation = href ? parseComposerCitationHref(href) : null;
     if (citation) return <AssistantCitationChip citation={citation} />;
-    // A thread link opens the thread here, never a browser.
-    const threadLink = href ? parseThreadLinkHref(href) : null;
-    if (threadLink) {
-      return (
-        <MarkdownThreadLink {...threadLink}>
-          <MarkdownLinkContext value>{children}</MarkdownLinkContext>
-        </MarkdownThreadLink>
+    // SCIENT-FORK:START — older saved links retain their explicit environment.
+    const qualifiedThread = href ? parseEnvironmentQualifiedThreadLinkHref(href) : null;
+    const linkedThreadId = qualifiedThread?.threadId ?? (href ? parseThreadLinkHref(href) : null);
+    const linkedEnvironmentId = qualifiedThread?.environmentId ?? environmentId;
+    if (linkedThreadId) {
+      const label = hastPlainTextDeep(node) || linkedThreadId;
+      return linkedEnvironmentId ? (
+        <MarkdownThreadLink
+          environmentId={linkedEnvironmentId}
+          threadId={linkedThreadId}
+          label={label}
+          environmentQualified={qualifiedThread !== null}
+        />
+      ) : (
+        <span>{label}</span>
       );
     }
+    // SCIENT-FORK:END
     const contextReference = href ? parseComposerContextHref(href) : null;
     if (contextReference) {
       const label = hastPlainTextDeep(node) || contextReference.contextId;

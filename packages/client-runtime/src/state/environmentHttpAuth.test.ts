@@ -8,6 +8,7 @@ import {
   ProjectId,
   type AuthSessionState,
   type OrchestrationV2ShellSnapshot,
+  OrchestrationV2ShellSnapshotJson,
   OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2ThreadBoundedSnapshot,
   type OrchestrationV2ThreadHistoryPage,
@@ -42,7 +43,7 @@ import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 import { fetchEnvironmentBoundedThreadSnapshot } from "./boundedThreadSnapshotHttp.ts";
 import * as BoundedThreadSnapshotHttp from "./boundedThreadSnapshotHttp.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
-import { v2Projection } from "./orchestrationV2TestFixtures.ts";
+import { v2Projection, v2ShellSnapshot } from "./orchestrationV2TestFixtures.ts";
 
 const encodeThreadSnapshot = Schema.encodeSync(OrchestrationV2ThreadDetailSnapshot);
 const encodeBoundedSnapshot = Schema.encodeSync(OrchestrationV2ThreadBoundedSnapshot);
@@ -257,7 +258,11 @@ const LOADERS: ReadonlyArray<{
     path: "/api/orchestration/shell",
     response: SHELL,
     expected: SHELL,
-    load: fetchEnvironmentShellSnapshot,
+    // Pull request links decode separately; the rows match the response on their own.
+    load: (input: HttpInput) =>
+      fetchEnvironmentShellSnapshot(input).pipe(
+        Effect.map(({ loadPullRequests: _links, ...snapshot }) => snapshot),
+      ),
   },
   {
     name: "thread snapshot",
@@ -296,6 +301,65 @@ const LOADERS: ReadonlyArray<{
 ];
 
 describe("authenticated environment HTTP requests", () => {
+  it.effect(
+    "recovers shell authorization before deferring unreadable PR badges independently of rows",
+    () =>
+      Effect.gen(function* () {
+        const shell = yield* Schema.encodeEffect(OrchestrationV2ShellSnapshotJson)(v2ShellSnapshot);
+        const link = {
+          host: "github.com",
+          repository: "ScientFactory/scient-desktop",
+          number: 472,
+          url: "https://github.com/ScientFactory/scient-desktop/pull/472",
+          source: "agent",
+          linkedAt: "2026-10-08T00:00:00.000Z",
+          snapshot: null,
+          stack: null,
+        };
+        const harness = makeHarness((attempt) =>
+          attempt === 1
+            ? credentialRejectedResponse()
+            : Response.json({
+                ...shell,
+                threads: [
+                  {
+                    ...shell.threads[0]!,
+                    title: "Unreadable badge",
+                    pullRequests: [{ invalid: true }],
+                  },
+                  {
+                    ...shell.threads[0]!,
+                    id: "other-thread",
+                    title: "Valid badge",
+                    pullRequests: [link],
+                  },
+                ],
+              }),
+        );
+        const rows = yield* fetchEnvironmentShellSnapshot(harness.input).pipe(
+          Effect.provide(harness.httpLayer),
+        );
+        expect(rows.threads.map((thread) => thread.title)).toEqual([
+          "Unreadable badge",
+          "Valid badge",
+        ]);
+        expect(rows.threads.every((thread) => thread.pullRequests === undefined)).toBe(true);
+        expect(harness.calls).toHaveLength(2);
+        expect(harness.authorizations[1]).toEqual({
+          expectedEnvironmentId: TARGET.environmentId,
+          rejectedAccessToken: "current-token",
+        });
+        expect(new Headers(harness.calls[1]!.init.headers).get("authorization")).toBe(
+          "DPoP renewed-token",
+        );
+        const fill = yield* rows.loadPullRequests!.pipe(Effect.forkChild);
+        yield* TestClock.adjust("1 millis");
+        const links = yield* Fiber.join(fill);
+        expect(links.get(rows.threads[0]!.id)).toBeUndefined();
+        expect(links.get(rows.threads[1]!.id)).toEqual([link]);
+      }),
+  );
+
   it.effect.each(LOADERS.filter((loader) => loader.name.startsWith("Scient ")))(
     "retries $name once after credential rejection without losing the payload",
     (loader) =>
@@ -337,6 +401,20 @@ describe("authenticated environment HTTP requests", () => {
         .pipe(Effect.provide(harness.httpLayer), Effect.asVoid, Effect.flip);
       expect(result._tag).toBe("RemoteEnvironmentAuthInvalidJsonError");
       expect(harness.calls).toHaveLength(1);
+    }),
+  );
+
+  it.effect("keeps the status of a shell snapshot error that is not a declared error", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => Response.json({ error: "bad_gateway" }, { status: 502 }));
+      const error = yield* fetchEnvironmentShellSnapshot(harness.input).pipe(
+        Effect.provide(harness.httpLayer),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({
+        _tag: "RemoteEnvironmentAuthUndeclaredStatusError",
+        status: 502,
+      });
     }),
   );
 

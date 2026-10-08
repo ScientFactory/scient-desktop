@@ -281,6 +281,7 @@ function makeProviderAdapter(
       readonly configureMcp?: boolean;
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
+    readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
     readonly closeSession?: (id: ProviderSessionId) => Effect.Effect<void>;
     readonly interruptSession?: (
       id: ProviderSessionId,
@@ -377,6 +378,11 @@ function makeProviderAdapter(
           ...(options.hasPendingBackgroundWork === undefined
             ? {}
             : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
+          ...(options.hasPendingBackgroundWorkForThread === undefined
+            ? {}
+            : {
+                hasPendingBackgroundWorkForThread: () => options.hasPendingBackgroundWorkForThread!,
+              }),
           ...(options.invalidateInitiatedWork === undefined
             ? {}
             : { invalidateInitiatedWork: options.invalidateInitiatedWork }),
@@ -450,6 +456,7 @@ function makeTestLayer(input: {
   readonly releaseWriteFailure?: ReleaseWriteFailureControl;
   readonly onAuthenticationFailure?: ProviderRegistry.ProviderRegistry["Service"]["setProviderAuthenticationFailure"];
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
+  readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
   readonly closeSession?: (id: ProviderSessionId) => Effect.Effect<void>;
   readonly interruptSession?: (
     id: ProviderSessionId,
@@ -481,6 +488,9 @@ function makeTestLayer(input: {
     ...(input.hasPendingBackgroundWork === undefined
       ? {}
       : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
+    ...(input.hasPendingBackgroundWorkForThread === undefined
+      ? {}
+      : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
     ...(input.closeSession === undefined ? {} : { closeSession: input.closeSession }),
     ...(input.interruptSession === undefined ? {} : { interruptSession: input.interruptSession }),
     ...(input.hangSessionScopeClose === undefined

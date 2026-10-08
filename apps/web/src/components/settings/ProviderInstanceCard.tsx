@@ -619,6 +619,18 @@ export function ProviderInstanceCard({
   // Custom instances of a driver still come from the same company.
   const vendorLabel = driverOption?.vendorLabel;
   const usesScientManagedRuntime = liveProvider?.connection?.runtime?.source === "scient_managed";
+  const updateState = liveProvider?.updateState;
+  // The server reports each update step. `isUpdating` also covers the moment
+  // between the click and the server's first report.
+  const updateProgress = isUpdating
+    ? ((updateState?.status === "queued" || updateState?.status === "running"
+        ? updateState.message
+        : null) ?? "Starting update")
+    : null;
+  const updateProblem =
+    !isUpdating && (updateState?.status === "failed" || updateState?.status === "unchanged")
+      ? updateState.message
+      : null;
   const hasCompatibilityWarning =
     compatibility !== undefined &&
     compatibility.status !== "supported" &&
@@ -825,7 +837,9 @@ export function ProviderInstanceCard({
     : connectionPresentation.kind === "sign-in-required"
       ? null
       : statusDetail;
-  const editorStatusNode = !showStatus ? null : isAuthenticated && authEmail ? (
+  const editorStatusNode = updateProgress ? (
+    <span aria-live="polite">Updating · {updateProgress}</span>
+  ) : !showStatus ? null : isAuthenticated && authEmail ? (
     <div className="grid gap-1">
       {authLabel ? (
         <p className="text-sm text-foreground/80 [overflow-wrap:anywhere]">{authLabel}</p>
@@ -860,20 +874,26 @@ export function ProviderInstanceCard({
                   size={mode === "list" ? "icon-micro" : "icon-xs"}
                   variant="ghost-muted"
                   className={mode === "list" ? "pointer-events-auto relative shrink-0" : undefined}
-                  aria-label={`${versionAdvisory.title} — view details`}
+                  aria-label={`${updateProgress ? "Updating" : versionAdvisory.title} — view details`}
                 >
-                  <VersionAdvisoryIcon
-                    className={cn(
-                      mode === "list" && "size-3.5",
-                      hasCompatibilityWarning && "text-warning",
-                    )}
-                  />
+                  {updateProgress ? (
+                    <Spinner tone="muted" {...(mode === "list" ? { size: "sm" as const } : {})} />
+                  ) : (
+                    <VersionAdvisoryIcon
+                      className={cn(
+                        mode === "list" && "size-3.5",
+                        hasCompatibilityWarning && "text-warning",
+                      )}
+                    />
+                  )}
                 </Button>
               }
             />
           }
         />
-        <TooltipPopup side="top">{versionAdvisory.title}</TooltipPopup>
+        <TooltipPopup side="top">
+          {updateProgress ? "Updating" : versionAdvisory.title}
+        </TooltipPopup>
       </Tooltip>
       <PopoverPopup side="bottom" align="end" width="md" aria-label={versionAdvisory.title}>
         <div className="grid min-w-0 gap-3">
@@ -906,6 +926,17 @@ export function ProviderInstanceCard({
                   ? `Install ${getProviderVersionLabel(versionAdvisory.targetVersion)}`
                   : "Update now"}
             </Button>
+          ) : null}
+          {updateProgress || updateProblem ? (
+            <p
+              aria-live="polite"
+              className={cn(
+                "text-xs leading-snug [overflow-wrap:anywhere]",
+                updateProblem ? "text-warning" : "text-muted-foreground",
+              )}
+            >
+              {updateProgress ?? updateProblem}
+            </p>
           ) : null}
           {onRunVersionAction && updateCommand ? (
             <div className="flex items-center gap-2 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -986,6 +1017,16 @@ export function ProviderInstanceCard({
                 {vendorLabel}
               </span>
             ) : null}
+            {/* SCIENT-FORK:START — keep vendor identity; report update progress separately. */}
+            {updateProgress || updateProblem ? (
+              <span
+                className="mt-0.5 block text-xs text-muted-foreground/80 [overflow-wrap:anywhere]"
+                aria-live="polite"
+              >
+                {updateProgress ? `Updating · ${updateProgress}` : updateProblem}
+              </span>
+            ) : null}
+            {/* SCIENT-FORK:END */}
           </span>
         </div>
         <span className="flex h-5 shrink-0 items-center">

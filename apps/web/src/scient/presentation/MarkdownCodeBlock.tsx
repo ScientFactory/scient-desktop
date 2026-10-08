@@ -1,4 +1,13 @@
-import { Suspense, use, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  Suspense,
+  use,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+  type ElementType,
+  type HTMLAttributes,
+} from "react";
 import { toHtml } from "hast-util-to-html";
 import { RenderErrorBoundary } from "~/components/RenderErrorBoundary";
 import { HighlightedCodeLines } from "~/components/chat/HighlightedCodeLines";
@@ -45,20 +54,14 @@ export function MarkdownCodeBlock({
   );
 
   return (
-    <div
-      className={cn(
-        "chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-[var(--radius)] border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32",
-        className,
-      )}
-      dir={copyTextDirection}
-      data-language={language}
-      data-copy-text-direction={copyTextDirection}
-      data-wrap={wrapped ? "true" : "false"}
-    >
-      <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
-        <span className="inline-flex min-w-0 items-center gap-[0.4rem] [font-family:var(--font-mono,ui-monospace,SFMono-Regular,monospace)] [font-size:var(--scient-font-size-code-label,0.6875rem)]">
-          <CodeBlockTitle fenceTitle={fenceTitle} language={language} theme={theme} />
-        </span>
+    <MarkdownCodeBlockFrame
+      language={language}
+      fenceTitle={fenceTitle}
+      theme={theme}
+      wrapped={wrapped}
+      className={className}
+      copyTextDirection={copyTextDirection}
+      actions={
         <CodeBlockActions
           wrapped={wrapped}
           onWrapChange={setWrapped}
@@ -67,7 +70,8 @@ export function MarkdownCodeBlock({
           {...(onRunShellCommand ? { onRunShellCommand } : {})}
           {...(onCopyFailure ? { onCopyFailure } : {})}
         />
-      </div>
+      }
+    >
       <RenderErrorBoundary
         resetKeys={[code, language, themeName, isStreaming]}
         fallback={plainSource}
@@ -81,7 +85,63 @@ export function MarkdownCodeBlock({
           />
         </Suspense>
       </RenderErrorBoundary>
-    </div>
+    </MarkdownCodeBlockFrame>
+  );
+}
+
+/** Shared chrome for rendered fences and editable composer fences. */
+export function MarkdownCodeBlockFrame({
+  as: Wrapper = "div",
+  language,
+  fenceTitle,
+  theme,
+  wrapped = true,
+  className,
+  copyTextDirection,
+  title,
+  actions,
+  headerProps,
+  children,
+}: {
+  as?: ElementType;
+  language: string;
+  fenceTitle: string | null;
+  theme: "light" | "dark";
+  wrapped?: boolean;
+  className?: string | undefined;
+  copyTextDirection?: "auto" | "rtl" | "ltr";
+  title?: ReactNode;
+  actions?: ReactNode;
+  headerProps?: HTMLAttributes<HTMLDivElement>;
+  children: ReactNode;
+}) {
+  return (
+    <Wrapper
+      className={cn(
+        "chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-[var(--radius)] border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32",
+        className,
+      )}
+      dir={copyTextDirection}
+      data-language={language}
+      data-copy-text-direction={copyTextDirection}
+      data-wrap={wrapped ? "true" : "false"}
+    >
+      <div
+        {...headerProps}
+        className={cn(
+          "chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none",
+          headerProps?.className,
+        )}
+      >
+        {title ?? (
+          <span className="inline-flex min-w-0 items-center gap-[0.4rem] [font-family:var(--font-mono,ui-monospace,SFMono-Regular,monospace)] [font-size:var(--scient-font-size-code-label,0.6875rem)]">
+            <CodeBlockTitle fenceTitle={fenceTitle} language={language} theme={theme} />
+          </span>
+        )}
+        {actions}
+      </div>
+      {children}
+    </Wrapper>
   );
 }
 

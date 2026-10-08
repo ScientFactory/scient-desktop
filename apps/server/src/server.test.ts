@@ -289,7 +289,7 @@ import * as VcsDriver from "./vcs/VcsDriver.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
-import * as GitHubCli from "./sourceControl/GitHubCli.ts";
+import * as GitHubApi from "./sourceControl/GitHubApi.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
@@ -1383,7 +1383,7 @@ const buildAppUnderTest = (options?: {
             ? FetchHttpClient.layer
             : Layer.succeed(HttpClient.HttpClient, options.layers.httpClient),
         ),
-        Layer.provide(GitHubCli.layer.pipe(Layer.provideMerge(VcsProcess.layer))),
+        Layer.provide(GitHubApi.layerWithDependencies.pipe(Layer.provideMerge(VcsProcess.layer))),
         Layer.provide(gitVcsDriverLayer),
         Layer.provide(serverSettingsLayer),
         Layer.provide(ThreadCommandExecutor.layer),

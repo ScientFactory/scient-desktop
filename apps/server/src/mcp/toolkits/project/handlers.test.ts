@@ -83,7 +83,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
           return Effect.succeed({
             threadId: input.threadId,
             projection: {
-              thread: { id: input.threadId, projectId, modelSelection, title: input.title },
+              thread: { id: input.threadId, projectId, modelSelection },
               runs: [],
             },
             resumed: false,
@@ -162,12 +162,7 @@ it.effect("launches a scratch thread into the Scratch project", () =>
           return Effect.succeed({
             threadId: input.threadId,
             projection: {
-              thread: {
-                id: input.threadId,
-                projectId: input.projectId,
-                modelSelection,
-                title: input.title,
-              },
+              thread: { id: input.threadId, projectId: input.projectId, modelSelection },
               runs: [],
             },
             resumed: false,
@@ -403,7 +398,6 @@ const projectLaunchHarness = (input: {
               id: launch.threadId,
               projectId: launch.projectId,
               modelSelection: launch.modelSelection,
-              title: launch.title,
             },
             runs: [],
           },

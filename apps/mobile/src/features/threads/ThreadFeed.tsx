@@ -25,7 +25,10 @@ import {
 } from "@t3tools/contracts";
 import { renderComposerCitationsAsText } from "@t3tools/shared/composerCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import {
+  parseEnvironmentQualifiedThreadLinkHref,
+  parseThreadLinkHref,
+} from "@t3tools/shared/threadLinks";
 import {
   parseComposerContextHref,
   collectComposerContextReferences,
@@ -198,6 +201,7 @@ import {
 } from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { usePreparedConnection } from "../../state/session";
+import { useLiveThreadLinkLabels } from "../../state/entities";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
@@ -902,16 +906,15 @@ interface MarkdownLinkHandlers {
 
 const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly markdown: string;
+  readonly environmentId: EnvironmentId;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
-  const segments = useMemo(
-    () => splitCodexArtifactTemplateMarkdown(props.markdown),
-    [props.markdown],
-  );
+  const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
+  const segments = useMemo(() => splitCodexArtifactTemplateMarkdown(liveMarkdown), [liveMarkdown]);
 
   return segments.map((segment) => {
     if (segment.kind === "artifact-template") {
@@ -1241,7 +1244,9 @@ function useMarkdownStyles(
         }
         const linkHref = presentation.href;
         // A thread link opens the thread in the app, through the feed's link handler.
-        const isThreadLink = parseThreadLinkHref(href) !== null;
+        const isThreadLink =
+          parseEnvironmentQualifiedThreadLinkHref(href) !== null ||
+          parseThreadLinkHref(href) !== null;
         return (
           <MarkdownLinkLabelContext.Provider value="other">
             <NativeText
@@ -1624,6 +1629,7 @@ function renderFeedEntry(
         summaryToolIcon={entry.summaryToolIcon}
         hasFailure={entry.hasFailure}
         shimmer={entry.shimmer}
+        thought={entry.thought}
         onToggle={() => props.onToggleWorkGroup(entry.groupId, entry.id)}
       />
     );
@@ -1904,6 +1910,7 @@ function renderFeedEntry(
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
             <AssistantMarkdownContent
               markdown={renderedText}
+              environmentId={props.environmentId}
               markdownStyles={styles}
               linkHandlers={props.markdownLinkHandlers}
               onUseArtifactTemplate={props.onUseArtifactTemplate}
@@ -2001,7 +2008,8 @@ function UserMessageContent(props: UserMessageContentProps) {
   const [selected, setSelected] = useState<{ contextId: string; label: string } | null>(null);
   const navigation = useNavigation();
   const { selectedThread } = useThreadSelection();
-  const text = replaceComposerContextReferences(props.text, (ref) => {
+  const liveText = useLiveThreadLinkLabels(props.text, props.environmentId);
+  const text = replaceComposerContextReferences(liveText, (ref) => {
     const available = props.context?.records.some((record) => record.contextId === ref.contextId);
     return `[${ref.label}${available ? "" : " (unavailable)"}](t3-context://v1/${ref.kind}/${ref.contextId})`;
   });
@@ -2291,11 +2299,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const userBubbleColor = theme["--color-user-bubble"];
   const onMarkdownLinkPress = useCallback(
     (href: string) => {
-      const threadLink = parseThreadLinkHref(href);
-      if (threadLink) {
+      // SCIENT-FORK:START — saved qualified links retain their originating environment.
+      const qualifiedThread = parseEnvironmentQualifiedThreadLinkHref(href);
+      const linkedThreadId = qualifiedThread?.threadId ?? parseThreadLinkHref(href);
+      // SCIENT-FORK:END
+      if (linkedThreadId) {
         navigation.navigate("Thread", {
-          environmentId: String(threadLink.environmentId),
-          threadId: String(threadLink.threadId),
+          environmentId: String(qualifiedThread?.environmentId ?? props.environmentId),
+          threadId: String(linkedThreadId),
         });
         return;
       }
@@ -2506,13 +2517,20 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     (text: string) => (
       <AssistantMarkdownContent
         markdown={text}
+        environmentId={props.environmentId}
         markdownStyles={markdownStyles.assistant}
         linkHandlers={markdownLinkHandlers}
         renderImage={renderMarkdownImage}
         skills={props.skills}
       />
     ),
-    [markdownStyles.assistant, markdownLinkHandlers, renderMarkdownImage, props.skills],
+    [
+      markdownStyles.assistant,
+      markdownLinkHandlers,
+      renderMarkdownImage,
+      props.skills,
+      props.environmentId,
+    ],
   );
   const reviewCommentColors = useReviewCommentColors();
   const unsettledTurnId = threadFeedRunIsUnsettled(props.latestRun) ? props.latestRun.runId : null;
@@ -2940,6 +2958,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         case "run-fold":
           return resolveThreadFeedFixedItemSize(entry.type);
         case "work-toggle":
+          // A live thought wraps up to four lines, so that row measures itself.
+          return entry.thought ? undefined : WORK_GROUP_TOGGLE_HEIGHT;
         case "thinking":
           return WORK_GROUP_TOGGLE_HEIGHT;
         case "activity-group":
