@@ -125,10 +125,17 @@ it.live(
           ["Question", "Persisted answer"],
         );
         assert.deepEqual(
-          projection.turnItems.map((item) => item.type),
+          projection.visibleTurnItems.map((row) => row.item.type),
           ["user_message", "assistant_message", "fork"],
         );
-        assert.notEqual(projection.messages.at(-1)?.id, "answer");
+        // The fork shows the persisted answer by reference, not the V1 placeholder.
+        assert.equal(projection.messages.at(-1)?.id, "answer");
+        assert.isNull(projection.messages.at(-1)?.runId);
+        assert.ok(
+          projection.visibleTurnItems
+            .slice(0, 2)
+            .every((row) => row.visibility === "inherited" && row.sourceThreadId === source),
+        );
         assert.equal(
           projection.thread.forkLineage?.baselineAssistantMessageId,
           projection.messages.at(-1)?.id,
@@ -197,14 +204,17 @@ it.live(
           first.projection.messages.map((message) => message.text),
           ["First prompt", "First answer"],
         );
-        assert.isFalse(first.projection.turnItems.some((item) => item.historyTurnId === "carried"));
+        assert.isFalse(
+          first.projection.visibleTurnItems.some(({ item }) => item.historyTurnId === "carried"),
+        );
         const second = yield* forkAt(source, "e-second-answer", "ordered-second-fork");
         assert.deepEqual(
           second.projection.messages.map((message) => message.text),
           ["First prompt", "First answer", "Lost prompt", "Second prompt", "Second answer"],
         );
         assert.equal(
-          second.projection.turnItems.filter((item) => item.historyTurnId === "carried").length,
+          second.projection.visibleTurnItems.filter(({ item }) => item.historyTurnId === "carried")
+            .length,
           2,
         );
         const inheritedAnswer = second.projection.messages.find(
@@ -221,7 +231,7 @@ it.live(
           ["First prompt", "First answer"],
         );
         assert.isFalse(
-          refork.projection.turnItems.some((item) => item.historyTurnId === "carried"),
+          refork.projection.visibleTurnItems.some(({ item }) => item.historyTurnId === "carried"),
         );
       }),
     ),

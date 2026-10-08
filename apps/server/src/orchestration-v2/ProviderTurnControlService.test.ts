@@ -229,6 +229,8 @@ it.effect(
           getThreadsWithPullRequests: () => Effect.die("unused getThreadsWithPullRequests"),
           getThreadProjection: () => Effect.die("control effects must not load transcript"),
           getTurnStartContext: () => Effect.die("unused"),
+          getForkHistoryItems: () => Effect.succeed([]),
+          getProjectThreadTitles: () => Effect.succeed([]),
           getTurnStartHistory: () => Effect.die("unused"),
           getRuntimeRecoveryProjection: () => Effect.die("unused getRuntimeRecoveryProjection"),
           getPlan: () => Effect.die("unused"),

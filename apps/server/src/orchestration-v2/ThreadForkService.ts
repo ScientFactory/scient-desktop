@@ -106,17 +106,15 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
               }),
           ),
         );
-        const retainedIds = new Set(history.items.map((item) => item.inheritedFrom?.itemId));
         const native = freezeConversationForkNativeSource({
           projection: input.sourceProjection,
-          retainedSourceItems: input.sourceProjection.visibleTurnItems
-            .toSorted((a, b) => a.position - b.position)
-            .filter(({ item }) => retainedIds.has(item.id))
-            .map(({ item }) => item),
+          retainedSourceItems: history.retained,
           boundaryRunId: history.boundaryRunId,
           sourceKind: "settled-run",
         });
-        const lastAssistant = history.items.findLast((item) => item.type === "assistant_message");
+        const lastAssistant = history.retained.findLast(
+          (item) => item.type === "assistant_message",
+        );
         const targetThread: OrchestrationV2AppThread = {
           ...input.sourceProjection.thread,
           createdBy: input.createdBy,
@@ -148,7 +146,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
             commandId: input.commandId,
             sourceThreadId: input.sourceProjection.thread.id,
             workspaceMode: "local",
-            status: history.attachmentCopies.length === 0 ? "ready" : "pending",
+            status: "ready",
             cwd: input.cwd,
             checkpointRef: null,
             checkpointOid: null,
@@ -199,7 +197,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         };
         const boundaryItem = conversationForkBoundaryItem({
           targetThreadId: input.targetThreadId,
-          ordinal: history.items.length,
+          ordinal: history.history.length,
           createdAt: input.createdAt,
           source: {
             type: "run",

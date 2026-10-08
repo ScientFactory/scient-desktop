@@ -554,32 +554,20 @@ it.live(
 
             yield* capture("receivedRunning", source);
             const forkCommandId = CommandId.make(`${mode}-running-fork`);
-            const forkEvents = yield* Stream.toPull(
-              orchestrator.streamStoredEventsFrom({ threadId: forkId, afterSequence: 0 }),
-            );
-            const forking = yield* (yield* ConversationForkService)
-              .dispatch({
-                type: "thread.fork",
-                commandId: forkCommandId,
-                originThreadId: threadId,
-                newThreadId: forkId,
-                sourceRunningTurnId: TurnId.make(source.runs[0]!.id),
-                workspaceMode: "local",
-              })
-              .pipe(Effect.forkScoped);
-            yield* Stream.fromPull(Effect.succeed(forkEvents)).pipe(
-              Stream.filter((event) => event.event.type === "thread.created"),
-              Stream.runHead,
-              Effect.timeout("15 seconds"),
-            );
-            assert.isTrue(
+            yield* (yield* ConversationForkService).dispatch({
+              type: "thread.fork",
+              commandId: forkCommandId,
+              originThreadId: threadId,
+              newThreadId: forkId,
+              sourceRunningTurnId: TurnId.make(source.runs[0]!.id),
+              workspaceMode: "local",
+            });
+            // A local fork needs no provisioning and is ready at once.
+            assert.isFalse(
               (yield* (yield* EffectOutboxV2).listByCommandId(forkCommandId)).some(
-                (entry) =>
-                  entry.request.type === "scient-fork.provision" && entry.status === "pending",
+                (entry) => entry.request.type === "scient-fork.provision",
               ),
             );
-            yield* worker.drain(12);
-            yield* Fiber.join(forking);
             const frozen = yield* orchestrator.getThreadProjection(forkId);
             assert.equal(frozen.thread.conversationFork?.status, "ready");
             assert.isEmpty(frozen.runs);
@@ -596,11 +584,19 @@ it.live(
             yield* capture("frozenChild", frozen);
             yield* capture("sourceAfterFork", stillRunning);
 
+            // The answer finished inside a run that is still going, which the source
+            // may still touch, so the fork owns a frozen copy. Its file is shared.
             const copied = frozen.turnItems.find(
-              (item) =>
-                item.type === "assistant_message" && item.inheritedFrom?.itemId === sourceItem!.id,
+              (item) => item.inheritedFrom?.itemId === sourceItem!.id,
             );
             assert.ok(copied?.type === "assistant_message");
+            assert.notEqual(copied.id, sourceItem.id);
+            assert.equal(copied.threadId, forkId);
+            assert.isTrue(
+              frozen.visibleTurnItems.some(
+                (row) => row.sourceThreadId === forkId && row.sourceItemId === copied.id,
+              ),
+            );
             assert.equal(copied.inheritedFrom?.runId, source.runs[0]!.id);
             assert.isNull(copied.runId);
             assert.isNull(copied.nativeItemRef);
@@ -611,22 +607,19 @@ it.live(
             assert.notEqual(copied.messageId, sourceItem.messageId);
             assert.equal(copied.inheritedFrom?.threadId, threadId);
             assert.isFalse(copied.streaming);
-            assert.ok(copied.attachments);
-            assert.lengthOf(copied.attachments, 1);
-            assert.notEqual(copied.attachments[0]!.id, sourceItem.attachments[0]!.id);
-            assert.deepEqual(copied.attachments[0], {
-              ...attachment,
-              id: copied.attachments[0]!.id,
-            });
-            assert.deepEqual(
-              frozen.messages.find((message) => message.id === copied.messageId)?.attachments,
-              copied.attachments,
+            assert.deepEqual(copied.attachments, sourceItem.attachments);
+            const inheritedMessage = frozen.messages.find(
+              (message) => message.id === copied.messageId,
             );
+            assert.deepEqual(inheritedMessage?.attachments, copied.attachments);
+            assert.isNull(inheritedMessage?.runId);
+            assert.isFalse(inheritedMessage?.streaming);
             const childOwned = resolveAttachmentPath({
               attachmentsDir: config.attachmentsDir,
-              attachment: copied.attachments[0]!,
+              attachment: copied.attachments![0]!,
             });
             assert.ok(childOwned);
+            assert.equal(childOwned, sourceOwned);
             assert.deepEqual(yield* fs.readFile(childOwned), bytes);
             if (evidenceDirectory !== undefined) {
               yield* fs.copy(sourcePath, path.join(evidenceDirectory, "native-original.png"));
@@ -706,7 +699,12 @@ it.live(
             }).pipe(Effect.provide(layerMemory));
             assert.deepEqual(rebuilt.source.messages, completed.messages);
             assert.deepEqual(rebuilt.source.turnItems, completed.turnItems);
-            assert.deepEqual(rebuilt.child.messages, frozen.messages);
+            // Inherited history lives in the SQL fork-history table, not the event log;
+            // the event replay rebuilds the fork's own records.
+            assert.deepEqual(
+              rebuilt.child.messages,
+              frozen.messages.filter((message) => message.threadId === forkId),
+            );
             assert.deepEqual(rebuilt.child.turnItems, frozen.turnItems);
             yield* capture("rebuilt", rebuilt);
             yield* (yield* ProviderSessionManagerV2).closeInstance(modelSelection.instanceId);

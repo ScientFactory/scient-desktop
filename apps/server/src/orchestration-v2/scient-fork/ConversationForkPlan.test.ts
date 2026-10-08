@@ -18,13 +18,16 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
   HistoricalSystemMessage,
   HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME,
+  readHistoricalSystemMessage,
 } from "../legacy/HistoricalSystemMessage.ts";
 import { emptyProjection } from "../ProjectionStore.ts";
 import { planConversationFork } from "./ConversationForkPlan.ts";
+import { presentInheritedItem } from "./ForkHistory.ts";
 import { historicalMessage } from "../ContextHandoffBudget.ts";
 
 const now = DateTime.makeUnsafe("2026-10-03T00:00:00.000Z");
@@ -260,8 +263,27 @@ function makeProjection() {
   };
 }
 
+/** The fork's history as readers show it: shared items frozen, copies as planned. */
+function shown(
+  plan: Effect.Success<ReturnType<typeof planConversationFork>>,
+  projection: {
+    readonly visibleTurnItems: ReadonlyArray<{
+      readonly sourceItemId: TurnItemId;
+      readonly item: OrchestrationV2TurnItem;
+    }>;
+  },
+): ReadonlyArray<OrchestrationV2TurnItem> {
+  const copies = new Map(plan.items.map((item) => [item.id, item]));
+  const sources = new Map(projection.visibleTurnItems.map((row) => [row.sourceItemId, row.item]));
+  return plan.history.map((entry, position) =>
+    entry.sourceThreadId === targetThreadId
+      ? copies.get(entry.sourceItemId)!
+      : presentInheritedItem(sources.get(entry.sourceItemId)!, position),
+  );
+}
+
 it.effect(
-  "freezes a completed prefix and gives retained attachments and context to the destination",
+  "freezes a completed prefix and shares its attachments and context with the destination",
   () =>
     Effect.gen(function* () {
       const projection = makeProjection();
@@ -270,21 +292,24 @@ it.effect(
         targetThreadId,
         source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
       });
+      const history = shown(plan, projection);
       assert.deepEqual(
-        plan.items.map((item) => item.type),
+        history.map((item) => item.type),
         ["user_message", "command_execution", "assistant_message"],
       );
-      assert.equal(plan.messages.length, 2);
-      assert.ok(
-        plan.items.every(
-          (item) => item.threadId === targetThreadId && item.runId === null && item.nodeId === null,
-        ),
+      // Nothing settled is copied: the fork lists the original items in order.
+      assert.deepEqual(plan.items, []);
+      assert.deepEqual(plan.messages, []);
+      assert.deepEqual(
+        plan.history.map((entry) => entry.sourceThreadId),
+        [threadId, threadId, threadId],
       );
-      assert.equal(plan.attachmentCopies.length, 1);
-      assert.notEqual(plan.attachmentCopies[0]!.target.id, attachment.id);
-      const user = plan.items[0]!;
+      assert.ok(history.every((item) => item.runId === null && item.nodeId === null));
+      // Files are shared, not copied: each retained file maps to itself.
+      assert.deepEqual(plan.attachmentCopies, [{ source: attachment, target: attachment }]);
+      const user = history[0]!;
       assert.ok(user.type === "user_message");
-      assert.equal(user.attachments[0]!.id, plan.attachmentCopies[0]!.target.id);
+      assert.equal(user.attachments[0]!.id, attachment.id);
       assert.equal(user.context?.records[0]?.kind, "file");
       assert.deepEqual(user.inheritedFrom, {
         threadId,
@@ -292,10 +317,6 @@ it.effect(
         runId: completed,
         status: "completed",
       });
-      projection.turnItems.splice(0);
-      projection.messages.splice(0);
-      assert.equal(plan.items.length, 3);
-      assert.equal(plan.messages[1]!.text, "First answer");
     }),
 );
 
@@ -308,10 +329,10 @@ it.effect("a user or steering-message fork retains the prefix before its run", (
         source: { kind: "user-message", messageId: MessageId.make(id) },
       });
       assert.deepEqual(
-        plan.items.map((item) => item.type),
+        shown(plan, makeProjection()).map((item) => item.type),
         ["user_message", "command_execution", "assistant_message"],
       );
-      assert.equal(plan.messages.length, 2);
+      assert.deepEqual(plan.messages, []);
     }
   }),
 );
@@ -474,8 +495,11 @@ it.effect("accepts a direct assistant-message child owned by the response's run"
       source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
     });
     assert.equal(plan.boundaryRunId, completed);
-    assert.equal(plan.messages.at(-1)?.text, "First answer");
-    assert.ok(plan.items.every((item) => item.runId === null && item.nodeId === null));
+    const history = shown(plan, projection);
+    const last = history.at(-1);
+    assert.ok(last?.type === "assistant_message");
+    assert.equal(last.text, "First answer");
+    assert.ok(history.every((item) => item.runId === null && item.nodeId === null));
   }),
 );
 
@@ -568,25 +592,24 @@ it.effect(
         source: { kind: "assistant-response" as const, messageId: MessageId.make("answer-one") },
       };
       const plan = yield* planConversationFork(input);
-      const copiedItem = plan.items[1]!;
-      assert.ok(copiedItem.type === "dynamic_tool");
-      const record = yield* decodeHistoricalSystemMessage(copiedItem.input);
-      assert.notEqual(record.messageId, "historical-system");
+      const sharedItem = shown(plan, projection)[1]!;
+      assert.ok(sharedItem.type === "dynamic_tool");
+      const record = yield* decodeHistoricalSystemMessage(sharedItem.input);
+      assert.equal(record.messageId, "historical-system");
       assert.equal(record.text, "System history");
-      const ownedId = plan.attachmentCopies.find(({ source }) => source.id === systemAttachment.id)
-        ?.target.id;
-      assert.ok(ownedId);
-      assert.equal(record.attachments?.[0]?.id, ownedId);
-      assert.deepEqual(record.context, {
-        ...context,
-        records: [{ ...context.records[0]!, attachmentId: ownedId }],
-      });
+      // The system message's file is shared with the fork, under its own id.
+      assert.deepEqual(
+        plan.attachmentCopies.find(({ source }) => source.id === systemAttachment.id),
+        { source: systemAttachment, target: systemAttachment },
+      );
+      assert.equal(record.attachments?.[0]?.id, systemAttachment.id);
+      assert.deepEqual(record.context, context);
       projection.visibleTurnItems[1] = {
         ...projection.visibleTurnItems[1]!,
         item: { ...systemItem, input: {} },
       };
       const invalid = yield* planConversationFork(input);
-      const generic = invalid.items[1]!;
+      const generic = shown(invalid, projection)[1]!;
       assert.ok(generic.type === "dynamic_tool");
       assert.deepEqual(generic.input, {});
       assert.notInclude(
@@ -605,12 +628,12 @@ it.effect(
         },
       };
       const partial = yield* planConversationFork(input);
-      const sanitized = partial.items[1]!;
-      assert.ok(sanitized.type === "dynamic_tool");
-      const safeRecord = yield* decodeHistoricalSystemMessage(sanitized.input);
-      assert.equal(safeRecord.text, "System history");
-      assert.isNull(safeRecord.attachments);
-      assert.isNull(safeRecord.context);
+      // Readers degrade the malformed fields; no file is shared for them.
+      const safeRecord = readHistoricalSystemMessage(shown(partial, projection)[1]!);
+      assert.ok(Option.isSome(safeRecord));
+      assert.equal(safeRecord.value.text, "System history");
+      assert.isNull(safeRecord.value.attachments);
+      assert.isNull(safeRecord.value.context);
       assert.notInclude(
         partial.attachmentCopies.map((copy) => copy.source.id),
         systemAttachment.id,
@@ -625,7 +648,7 @@ it.effect(
         native.attachmentCopies.map((copy) => copy.source.id),
         systemAttachment.id,
       );
-      const nativeItem = native.items[1]!;
+      const nativeItem = shown(native, projection)[1]!;
       assert.ok(nativeItem.type === "dynamic_tool");
       assert.deepEqual(nativeItem.input, systemItem.input);
     }),
@@ -641,14 +664,12 @@ it.effect("freezes a settled native run through its trailing facts and excludes 
     });
     assert.equal(plan.boundaryRunId, completed);
     assert.deepEqual(
-      plan.items.map((item) => item.inheritedFrom?.itemId),
+      plan.history.map((entry) => entry.sourceItemId),
       projection.visibleTurnItems
         .filter(({ item }) => item.runId === completed)
         .map(({ item }) => item.id),
     );
-    assert.isTrue(
-      plan.items.every((item) => item.threadId === targetThreadId && item.runId === null),
-    );
+    assert.isTrue(shown(plan, projection).every((item) => item.runId === null));
   }),
 );
 
@@ -670,7 +691,7 @@ it.effect("a cancelled run with no rendered facts keeps only the earlier frozen 
     });
     assert.equal(plan.boundaryRunId, cancelledId);
     assert.deepEqual(
-      plan.items.map((item) => item.inheritedFrom?.itemId),
+      plan.history.map((entry) => entry.sourceItemId),
       projection.visibleTurnItems
         .filter(({ item }) => item.runId === completed)
         .map(({ item }) => item.id),
@@ -748,7 +769,8 @@ it.effect(
         targetThreadId,
         source: { kind: "running-turn", runId: running },
       });
-      const copied = plan.items.filter((item) => item.inheritedFrom?.runId === unanswered);
+      const history = shown(plan, projection);
+      const copied = history.filter((item) => item.inheritedFrom?.runId === unanswered);
       assert.lengthOf(copied, 2);
       assert.isTrue(copied.every((item) => item.runId === null));
       assert.equal(
@@ -758,7 +780,7 @@ it.effect(
         1,
       );
       assert.equal(
-        plan.items.filter(
+        history.filter(
           (item) =>
             item.inheritedFrom?.runId === running &&
             item.type === "user_message" &&
@@ -766,9 +788,11 @@ it.effect(
         ).length,
         1,
       );
-      assert.ok(plan.messages.some((message) => message.text === "First answer"));
+      assert.ok(
+        history.some((item) => item.type === "assistant_message" && item.text === "First answer"),
+      );
       assert.isFalse(
-        plan.items.some(
+        history.some(
           (item) =>
             item.inheritedFrom?.runId === running && item.inheritedFrom?.itemId === request.id,
         ),
@@ -800,11 +824,14 @@ it.effect(
         targetThreadId,
         source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
       });
+      const history = shown(plan, projection);
       assert.deepEqual(
-        plan.messages.map((message) => message.text),
+        history.flatMap((item) =>
+          item.type === "user_message" || item.type === "assistant_message" ? [item.text] : [],
+        ),
         ["First question", "First answer"],
       );
-      assert.isFalse(plan.items.some((item) => item.inheritedFrom?.runId === running));
+      assert.isFalse(history.some((item) => item.inheritedFrom?.runId === running));
     }),
 );
 
@@ -870,7 +897,9 @@ it.effect(
         targetThreadId,
         source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
       });
-      const answers = plan.items.filter((item) => item.type === "user_input_request");
+      const answers = shown(plan, {
+        visibleTurnItems: items.map((item) => ({ sourceItemId: item.id, item })),
+      }).filter((item) => item.type === "user_input_request");
       assert.lengthOf(answers, 3);
       assert.isFalse(answers.some((item) => item.inheritedFrom?.itemId === later.id));
       const replayed = answers.flatMap((item) => {

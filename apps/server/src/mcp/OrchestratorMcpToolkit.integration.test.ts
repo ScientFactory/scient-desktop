@@ -2824,7 +2824,8 @@ describe("orchestrator MCP toolkit", () => {
             expect(
               forkedProjection.visibleTurnItems.some(
                 (row) =>
-                  row.sourceThreadId === forkedThreadId &&
+                  row.visibility === "inherited" &&
+                  row.sourceThreadId === promptedThread.threadId &&
                   row.item.inheritedFrom?.threadId === promptedThread.threadId &&
                   row.item.type === "user_message",
               ),
@@ -2839,7 +2840,7 @@ describe("orchestrator MCP toolkit", () => {
             expect(
               forkedRead.items.find((item) => item.text === createdThreadPrompt),
             ).toMatchObject({
-              sourceThreadId: forkedThreadId,
+              sourceThreadId: promptedThread.threadId,
               createdBy: "agent",
               creationSource: "mcp",
             });

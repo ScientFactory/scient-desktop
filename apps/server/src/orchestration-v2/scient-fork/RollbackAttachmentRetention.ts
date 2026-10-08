@@ -3,6 +3,7 @@
 import { type OrchestrationV2ThreadProjection, type RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type * as SqlClient from "effect/sql/SqlClient";
+import { readLiveForkSharedAttachmentIds } from "./ForkHistory.ts";
 
 type RollbackAttachmentOwner = Pick<
   OrchestrationV2ThreadProjection,
@@ -32,7 +33,14 @@ export const readRollbackAttachmentOwners = <E>(
         rows.forEach((row) => threadIds.add(ThreadId.make(row.thread_id)));
       }
       const owners = yield* Effect.forEach(threadIds, (threadId) => readOwner(threadId));
-      return retainedRollbackAttachmentIds(input, owners);
+      // A live fork shares the original's items by reference: what its frozen
+      // history shows stays, even after the original rolls those runs back.
+      return [
+        ...new Set([
+          ...retainedRollbackAttachmentIds(input, owners),
+          ...(yield* readLiveForkSharedAttachmentIds(sql, input.threadId, input.attachmentIds)),
+        ]),
+      ];
     }),
   );
 

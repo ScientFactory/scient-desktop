@@ -27,6 +27,7 @@ import {
   makeNativeSessionAdapterV2,
   NativeSessionOperationError,
 } from "../Adapters/NativeSessionAdapterV2.ts";
+import { OrchestrationEffectWorkerV2 } from "../EffectWorker.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import type { ProviderAdapterV2TurnInput } from "../ProviderAdapter.ts";
@@ -205,25 +206,22 @@ it.live.each(
             workspaceMode: "local",
           });
           const child = yield* orchestrator.getThreadProjection(target);
-          const answer = child.turnItems.find((item) => item.type === "user_input_request");
+          const answer = child.visibleTurnItems.find(
+            (row) => row.visibility === "inherited" && row.item.type === "user_input_request",
+          )?.item;
           if (answer?.type !== "user_input_request")
             return assert.fail("Expected typed inherited submitted answer");
           questionId = answer.requestId;
-          const ownedId = receipt.forkAttachmentIdMap[file.id];
-          if (ownedId === undefined) return assert.fail("Expected destination-owned answer file");
-          assert.equal(answer.questionAnswer?.attachmentsByQuestionId.dataset?.[0]?.id, ownedId);
-          const ownedPath = resolveAttachmentPath({
-            attachmentsDir: config.attachmentsDir,
-            attachment: { ...file, id: ownedId },
-          });
-          if (ownedPath === null) return assert.fail("Expected destination-owned file path");
+          // The fork shares the source's answer file rather than copying it.
+          assert.equal(receipt.forkAttachmentIdMap[file.id], file.id);
+          assert.equal(answer.questionAnswer?.attachmentsByQuestionId.dataset?.[0]?.id, file.id);
           yield* orchestrator.dispatch({
             type: "thread.delete",
             commandId: CommandId.make(`${name}-delete`),
             threadId: source,
           });
-          yield* fs.remove(sourcePath, { force: true });
-          assert.equal(yield* fs.readFileString(ownedPath), "measured");
+          yield* (yield* OrchestrationEffectWorkerV2).drain();
+          assert.equal(yield* fs.readFileString(sourcePath), "measured");
           assert.deepEqual(child.runtimeRequests, []);
           assert.deepEqual(child.providerSessions, []);
         } else {

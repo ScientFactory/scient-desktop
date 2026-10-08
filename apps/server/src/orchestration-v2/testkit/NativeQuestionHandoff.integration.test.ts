@@ -378,33 +378,11 @@ it.live(
           assert.isTrue(available.available);
           assert.equal(available.sourceAssistantMessageId, assistant.messageId);
           yield* assertNoForkAdviceMutation;
+          // The fork shares the answer's file rather than copying it, so the
+          // file's bytes are not needed to fork.
           const evidenceBytes = yield* fileSystem.readFile(stored);
           yield* fileSystem.remove(stored);
-          const unavailable = yield* forks.getOptions(forkCommand);
-          assert.isFalse(unavailable.available);
-          assert.include(unavailable.reason!, attachment.name);
-          yield* assertNoForkAdviceMutation;
-          assert.equal((yield* Effect.result(forks.dispatch(forkCommand)))._tag, "Failure");
-          assert.equal(
-            (yield* Effect.result((yield* ProjectionStoreV2).getThreadProjection(childId)))._tag,
-            "Failure",
-          );
-          assert.isTrue(
-            Option.isNone(
-              yield* (yield* CommandReceiptStoreV2).getByCommandId(forkCommand.commandId),
-            ),
-          );
-          assert.deepEqual(
-            (yield* orchestrator.getThreadProjection(threadId)).turnItems,
-            completed.turnItems,
-          );
-          yield* fileSystem.writeFile(stored, evidenceBytes);
-          assert.deepEqual(yield* fileSystem.readFile(stored), evidenceBytes);
           assert.deepEqual(yield* forks.getOptions(forkCommand), available);
-          yield* assertNoForkAdviceMutation;
-          yield* fileSystem.remove(stored);
-          const missingAfterAdvice = yield* forks.dispatch(forkCommand).pipe(Effect.flip);
-          assert.include(missingAfterAdvice.message, attachment.name);
           yield* assertNoForkAdviceMutation;
           yield* fileSystem.writeFile(stored, evidenceBytes);
           yield* forks.dispatch(forkCommand);
@@ -412,10 +390,17 @@ it.live(
           assert.deepEqual(child.runtimeRequests, []);
           assert.deepEqual(child.providerSessions, []);
           assert.deepEqual(child.runs, []);
-          const copiedAnswer = child.turnItems.find((item) => item.type === "user_input_request");
+          const inheritedAnswer = child.visibleTurnItems.find(
+            (row) => row.item.type === "user_input_request",
+          );
+          const copiedAnswer = inheritedAnswer?.item;
           if (copiedAnswer?.type !== "user_input_request")
             return assert.fail("Expected frozen callback history");
-          assert.notEqual(copiedAnswer.requestId, request.id);
+          assert.equal(inheritedAnswer?.visibility, "inherited");
+          assert.equal(inheritedAnswer?.sourceThreadId, threadId);
+          assert.equal(inheritedAnswer?.sourceItemId, pendingItem.id);
+          assert.isNull(copiedAnswer.runId);
+          assert.equal(copiedAnswer.inheritedFrom?.itemId, pendingItem.id);
           assert.deepEqual(copiedAnswer.questionAnswer?.answers, answerCommand.answers);
           yield* orchestrator.dispatch({
             type: "message.dispatch",

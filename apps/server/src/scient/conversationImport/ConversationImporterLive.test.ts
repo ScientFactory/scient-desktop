@@ -1401,7 +1401,7 @@ describe("ConversationImporter", () => {
     );
   });
 
-  it.effect("a fork of an imported folded answer names the fork's copy of its message", () =>
+  it.effect("a fork of an imported folded answer names the message it shows", () =>
     withNativeImporter(
       Effect.gen(function* () {
         const fixture = importFixture({ turns: 2 });
@@ -1453,9 +1453,9 @@ describe("ConversationImporter", () => {
           (activity) => activity.kind === "user-input.answer-submitted",
         )!;
         const folded = fork.messages.find((message) => message.text === "Blue")!;
-        assert.notInclude(
-          imported.messages.map((message) => message.id),
+        assert.strictEqual(
           folded.id,
+          imported.messages.find((message) => message.text === "Blue")!.id,
         );
         assert.strictEqual(
           (answer.payload as { readonly messageId?: string }).messageId,
@@ -1819,7 +1819,7 @@ describe("ConversationImporter", () => {
           );
           assert.strictEqual(
             new Set(
-              forkNative.turnItems.flatMap((item) =>
+              forkNative.visibleTurnItems.flatMap(({ item }) =>
                 item.historyTurnId === undefined ? [] : [item.historyTurnId],
               ),
             ).size,

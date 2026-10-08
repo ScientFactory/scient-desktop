@@ -18,7 +18,6 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -310,21 +309,10 @@ readline.createInterface({input:process.stdin}).on("line", async line => {
               workspaceMode: "local" as const,
             };
             const forkService = yield* ConversationForkService;
-            const forkFiber = yield* forkService.dispatch(forkCommand).pipe(Effect.forkScoped);
+            // A local fork shares its history and is ready at once.
+            const receipt = yield* forkService.dispatch(forkCommand);
             const outbox = yield* EffectOutboxV2;
-            yield* TestClock.withLive(
-              Effect.gen(function* () {
-                while ((yield* outbox.listByCommandId(forkCommand.commandId)).length === 0)
-                  yield* Effect.sleep("10 millis");
-              }).pipe(Effect.timeout("15 seconds")),
-            );
-            const pendingFork = yield* store.getThreadProjection(targetId);
-            assert.equal(pendingFork.thread.conversationFork?.status, "pending");
-            const provisioning = yield* outbox.listByCommandId(forkCommand.commandId);
-            assert.lengthOf(provisioning, 1);
-            assert.equal(provisioning[0]?.request.type, "scient-fork.provision");
-            yield* worker.drain(24);
-            const receipt = yield* Fiber.join(forkFiber);
+            assert.isEmpty(yield* outbox.listByCommandId(forkCommand.commandId));
             const frozen = yield* store.getThreadProjection(targetId);
             assert.equal(frozen.thread.conversationFork?.status, "ready");
             assert.deepEqual(

@@ -5,7 +5,6 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ConversationForkService from "./scient-fork/ConversationForkService.ts";
 import { ScientForkCheckpointBaselineLive } from "./scient-fork/ForkCheckpointBaseline.ts";
-import { ScientForkAttachmentCopierLive } from "./scient-fork/ForkAttachmentCopier.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AttachmentReservationReconciliation from "./AttachmentReservationReconciliation.ts";
 import * as AttachmentRollbackPruneService from "./AttachmentRollbackPruneService.ts";
@@ -329,7 +328,6 @@ const layerConversationForkProvided = ConversationForkService.layer.pipe(
       ThreadCommandExecutor.layer,
       layerLegacyV1ThreadImporterProvided,
       ScientForkCheckpointBaselineLive.pipe(Layer.provide(VcsProcess.layer)),
-      ScientForkAttachmentCopierLive,
       Layer.effect(SqlClient.SqlClient, SqlClient.SqlClient),
     ),
   ),

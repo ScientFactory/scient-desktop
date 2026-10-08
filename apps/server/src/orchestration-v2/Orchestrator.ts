@@ -92,6 +92,7 @@ import {
   conversationForkHistoryEvents,
   conversationForkProvisionEffect,
 } from "./scient-fork/ConversationForkPlan.ts";
+import type { ForkHistoryEntry } from "./scient-fork/ForkHistory.ts";
 import {
   classifyProviderWorkAdmission,
   commitProviderWorkAdmission,
@@ -1028,6 +1029,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       )
       .pipe(
         Effect.map((records) => records.turnItems),
+        // SCIENT-FORK:START — a fork's inherited history is history too, ahead of its own items.
+        Effect.flatMap((local) =>
+          runIds !== undefined && !runIds.includes(null)
+            ? Effect.succeed(local)
+            : projectionStore.getForkHistoryItems(threadId).pipe(
+                Effect.map((history) => {
+                  const inherited = new Set<string>(history.map((item) => item.id));
+                  return [...history, ...local.filter((item) => !inherited.has(item.id))];
+                }),
+              ),
+        ),
+        // SCIENT-FORK:END
         Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
       );
 
@@ -3897,6 +3910,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* emitEvent(event);
     const provision = conversationForkProvisionEffect(command.commandId, targetThread);
     if (provision !== undefined) yield* Ref.update(effects, (existing) => [...existing, provision]);
+    return history.history;
     // SCIENT-FORK:END
   });
 
@@ -10910,6 +10924,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
         readonly reason: string;
       };
+      // SCIENT-FORK: a new fork's inherited history, committed with it.
+      readonly forkHistory?: ReadonlyArray<ForkHistoryEntry>;
     },
     OrchestratorV2Error
   > {
@@ -10922,6 +10938,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
     const effects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
     let providerWorkOwner: ProviderAdapterV2SessionRuntime | undefined;
+    let forkHistory: ReadonlyArray<ForkHistoryEntry> | undefined;
     let cancelUnsettledEffects:
       | {
           readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
@@ -11286,7 +11303,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchBackgroundWorkSettle(command, events, effects);
         break;
       case "thread.fork":
-        yield* dispatchThreadFork(command, events, effects);
+        forkHistory = yield* dispatchThreadFork(command, events, effects);
         break;
       case "thread.merge_back":
         yield* dispatchThreadMergeBack(command, events);
@@ -11315,6 +11332,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       effects: yield* Ref.get(effects),
       ...(providerWorkOwner === undefined ? {} : { providerWorkOwner }),
       ...(cancelUnsettledEffects === undefined ? {} : { cancelUnsettledEffects }),
+      ...(forkHistory === undefined ? {} : { forkHistory }),
     };
   });
 
@@ -11496,6 +11514,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(plan.cancelUnsettledEffects === undefined
           ? {}
           : { cancelUnsettledEffects: plan.cancelUnsettledEffects }),
+        ...(plan.forkHistory === undefined ? {} : { forkHistory: plan.forkHistory }),
       })
       .pipe(
         Effect.mapError(

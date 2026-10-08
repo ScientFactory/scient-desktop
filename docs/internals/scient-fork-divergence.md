@@ -39,8 +39,9 @@ Otherwise, it starts a fresh provider session and receives bounded context from
 the saved transcript. The provider session tip alone does not establish a safe
 historical fork boundary.
 
-The client navigates to the new conversation only after durable provisioning
-has completed. A failed fork is returned as an error instead of exposing a
+The client navigates to the new conversation only after the fork is ready. A
+same-workspace fork is ready when it is accepted; only a new worktree needs
+provisioning first. A failed fork is returned as an error instead of exposing a
 half-ready conversation as successful.
 
 The destination also inherits safe, durable right-panel intent: files, diffs,
@@ -48,10 +49,10 @@ pull requests, Agents, Sources, source PDFs, and portable Scient artifacts.
 Live terminal sessions are intentionally dropped. Live browser tab identities
 are replaced by one fresh browser surface rather than reusing another thread's
 session. Workspace-backed or attachment-backed transient artifact surfaces are
-dropped. Open attachment previews use the server's durable copy receipt to
-switch to fork-owned attachment IDs; attachments outside the retained prefix,
-or without a verifiable mapping from an older server, are omitted. This receipt
-survives client reloads with the pending fork attempt.
+dropped. Open attachment previews stay open on the same file, which the fork
+shares; the server's receipt lists the retained files. Attachments outside the
+retained prefix, or without a mapping from an older server, are omitted. This
+receipt survives client reloads with the pending fork attempt.
 
 PDF reading state belongs to the thread as well as the document. The fork copies
 the origin's current reading state once, then the two conversations navigate
@@ -66,9 +67,8 @@ newer position. Continuity is best-effort and cannot make a provisioned fork fai
 
 The fork lifecycle has three separate readiness milestones:
 
-1. **Server provisioning complete:** the durable fork workflow has created and
-   verified the destination thread, retained transcript, attachments, and
-   requested workspace substrate.
+1. **Server ready:** the destination thread and its frozen history list are
+   committed and, for a new worktree, the worktree is created and verified.
 2. **Route selected:** after the server receipt, the client opens the destination
    route. The route may still be loading its authoritative detail subscription.
 3. **Thread visible:** the destination detail has reached the client store and
@@ -84,7 +84,7 @@ The clicked message ID is the public boundary. The server validates its role
 and durable projection, then resolves the completed conversation boundary and
 checkpoint authoritatively; the client never supplies those implementation
 details. A first user message legitimately produces an empty retained prefix and becomes the
-destination's unsent draft. Re-forking inherited history uses the destination's frozen items;
+destination's unsent draft. Re-forking inherited history uses the destination's frozen history list;
 its workspace baseline cannot substitute for an earlier historical checkpoint. A user can fork a sent
 message or the latest completed response while a newer turn is active. Git
 checkpoint availability only decides whether the independent-worktree choice
@@ -105,21 +105,26 @@ the same planner. Native run-fork and Scient's checkpoint/worktree choice are di
    attachments, and checkpoint eligibility. Source and destination thread locks use a stable
    order. Automatic titles are allocated on the server; a preview is not permission to use
    stale dependencies.
-2. The plan allocates destination-owned messages, items, context, and attachment identities.
-   Copied facts have causal lineage but no executable source run, live callback, or provider-native
-   item authority. System messages and submitted question answers remain inert historical facts.
-   Historical answer-file references do not themselves reattach bytes; retained projected
-   attachments follow the separate verified copy and destination-ownership path.
-3. `EventSink` commits the destination, copied prefix, lineage/context-transfer facts, command
-   receipt, and `scient-fork.provision` outbox effect together. `conversationFork` metadata owns
-   provisioning status; the old Scient lineage table/reactor is not the live authority.
-4. The V2 effect worker calls `ConversationForkService.provision` to copy and verify attachment
-   bytes and create/verify the requested worktree from the frozen checkpoint. Deterministic
-   identities allow recovery and retry. A changed existing worktree is not adopted or erased.
-5. Only verified substrates produce `ready`. Dispatch waits on persisted metadata/events before
+2. The plan freezes the retained prefix as a history list: an ordered list of the source
+   items the fork shows (`scient_fork_history`, see "History by reference" below). It copies
+   only what the source may still change or what the fork can act on: items still in flight,
+   every item of a run that has not settled, and proposed plans, todo lists and handoffs.
+   Shown and copied items have causal lineage but no executable source run, live callback, or
+   provider-native item authority. System messages and submitted question answers remain inert
+   historical facts. Retained files are shared, not copied.
+3. `EventSink` commits the destination, its history list, the copies, lineage/context-transfer
+   facts and the command receipt together, plus a `scient-fork.provision` outbox effect for a new
+   worktree. `conversationFork` metadata owns provisioning status; the old Scient lineage
+   table/reactor is not the live authority.
+4. For a new worktree, the V2 effect worker calls `ConversationForkService.provision` to create
+   and verify the worktree from the frozen checkpoint. Deterministic identities allow recovery and
+   retry. A changed existing worktree is not adopted or erased. Setup errors reach clients as plain
+   messages; Git output and workspace paths stay in the server log.
+5. Only a verified worktree produces `ready`. Dispatch waits on persisted metadata/events before
    returning the attachment-ID map. A transient failure remains retryable with the same command;
-   retry schedules provisioning again. Terminal failure records abandonment/deletion and cleanup.
-   Process-loss recovery requeues safe provisioning effects; live events are wakeups, not authority.
+   retry schedules provisioning again. Terminal failure records abandonment/deletion and releases
+   what deleting the fork would. Process-loss recovery requeues safe provisioning effects; live
+   events are wakeups, not authority.
 6. Turn admission rejects an unready destination. First provider delivery lazily resolves the
    context transfer to exact native continuity or a bounded portable handoff. The frozen
    destination history remains usable if the source is later edited or deleted.
@@ -127,8 +132,8 @@ the same planner. Native run-fork and Scient's checkpoint/worktree choice are di
 Conversation-only forks share current files without rewinding them. A new worktree requires a
 verified historical checkpoint, or a frozen current-file capture for a running cut. Capturing files
 and copying the transcript are separate operations while the source keeps running; neither claims
-an atomic snapshot of an external provider and the filesystem. Re-forking copied history uses the
-local frozen prefix rather than borrowing mutable ancestor projections. Rollback preserves that
+an atomic snapshot of an external provider and the filesystem. Re-forking shown history uses the
+fork's frozen history list rather than the ancestor's current projection. Rollback preserves that
 inherited prefix.
 
 A running local fork has no fork-time file ref or OID. Its first provider turn captures the
@@ -222,15 +227,15 @@ their original conversation. Forking emits no turn-start request.
 ### History and workspace fidelity
 
 Retained messages and items are bounded by the selected source's durable position, including
-system messages: later system facts cannot leak into an earlier fork. The V2 planner remaps
-message/item/context identities and clears live native execution references. Its local frozen
-prefix, rather than an ancestor lookup, owns re-fork and rollback history.
+system messages: later system facts cannot leak into an earlier fork. Shown items keep their
+source identities, presented without live native execution references; copies get destination
+identities. The fork's frozen history list, rather than an ancestor lookup, owns re-fork and
+rollback history.
 
-Attachment copies publish by rename only after size verification. Retries can
-reuse a complete destination-owned attachment even if the original was removed
-after copying. Temporary `.part` files are cleaned on ordinary completion or
-failure and use the existing stale-partial sweep after a crash. A missing
-attachment is never silently omitted to make a fork appear successful.
+Retained files are shared by identity. A file stays on disk while any conversation that shows it
+remains: deleting the source leaves files a live fork still shows, and deleting the last such fork
+releases them. A file missing from disk does not block a fork; the fork shows what the source
+shows.
 
 A local fork requires its actual workspace directory. If an original worktree
 was removed, an explicitly selected new-worktree fork may resolve the historical
@@ -243,9 +248,9 @@ Git availability for valid non-Git local workspaces.
 | Owner                                                                                                         | Current role                                                                |
 | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | `orchestration-v2/scient-fork/ConversationForkService.ts`                                                     | Message-boundary options, durable admission, provisioning, retry, readiness |
-| `orchestration-v2/scient-fork/ConversationForkPlan.ts`                                                        | Exact destination-owned prefix and attachment/context remapping             |
+| `orchestration-v2/scient-fork/ConversationForkPlan.ts`                                                        | Exact retained prefix: history list, copies and shared files                |
 | `orchestration-v2/scient-fork/ConversationForkNativeSource.ts`                                                | Frozen native ownership and boundary proof                                  |
-| `orchestration-v2/scient-fork/ForkAttachmentCopier.ts`, `ForkCheckpointBaseline.ts`                           | Verified bytes and checkpoint/worktree substrate                            |
+| `orchestration-v2/scient-fork/ForkHistory.ts`, `ForkCheckpointBaseline.ts`                                    | History list reads and writes; checkpoint/worktree substrate                |
 | `orchestration-v2/ThreadForkService.ts`, `Orchestrator.ts`                                                    | Native run-fork, lineage/context transfer, admission, merge-back            |
 | `orchestration-v2/EventSink.ts`, `ProjectionStore.ts`, `EffectWorker.ts`                                      | Atomic persistence, read models, provisioning execution                     |
 | `orchestration-v2/ProviderTurnStartService.ts`, `ProviderSessionManager.ts`                                   | Native clone or portable context, exact-session delivery and recovery       |
@@ -397,11 +402,23 @@ current files into a frozen ref before provisioning; retries use that captured r
 approval, or question state is copied only as history. A native clone needs a completed exact root
 boundary, so a running cut takes the portable path. Source execution continues independently.
 
-## Copy cost and request recovery
+## History by reference and request recovery
 
-`ConversationForkPlan` copies the retained durable work log as destination-owned facts in the V2
-admission transaction. Do not prune tool-progress rows merely to reduce copy size: timeline
-presentation depends on their ordering, titles and payload. Provider delivery may omit whole
+A fork does not copy its history. `scient_fork_history (thread_id, position, source_thread_id,
+source_item_id)` lists, in order, the items it shows, written once in the admission transaction.
+Entries point at the item's owner, so a fork of a fork points straight at the original items, and
+at the parent's copies where it has them. The history list is fixed: nothing later changes it,
+and settled source items do not change, so the fork keeps showing what it showed when created.
+Source rollback, edits and deletion keep the items the list names (rollback and deletion are soft).
+
+`ProjectionStore` reads the list wherever it reads a fork: full projections and windows,
+timeline pages, message counts, shell item counts, turn-start history and handoff items. Shown
+items are presented the way copies always looked: no run, node or provider references,
+in-flight status as interrupted, `inheritedFrom` set, and their position as ordinal. A
+projection rebuild replays events and keeps the list, which is not an event projection.
+
+Forking time no longer grows with history size beyond reading the source once to plan: a
+37,000-item conversation forks in about 0.4 s (was 5.6 s). Provider delivery may omit whole
 items for context capacity without deleting app history.
 
 The client journals the command/destination identity before dispatch. An uncertain transport
@@ -450,8 +467,8 @@ under distinct names and retain honest side-effect annotations.
   MCP-injected provider session. The calling thread comes from the host-issued
   invocation. It may read itself or a non-deleted thread, including an archived
   one, in the same project. Other projects fail with `thread_outside_project`.
-  A projectless thread can read only itself. A fork reads its own copied
-  transcript even after the origin is deleted. Explicitly user-attached context
+  A projectless thread can read only itself. A fork reads its shared history
+  even after the origin is deleted. Explicitly user-attached context
   from other projects is available only through orchestration inspection.
   Historical imports may lazily materialize the projection before reading it;
   reading never acknowledges delegated-child completion or starts work, so the
@@ -466,15 +483,15 @@ under distinct names and retain honest side-effect annotations.
   blocking an older fork point.
 - A new worktree fails closed if the historical Git checkpoint is unavailable
   (a running-turn fork snapshots the current files instead).
-- Rollback never removes a fork's destination-owned inherited prefix; copied facts are history,
-  not executable source runs.
+- Rollback never removes a fork's inherited prefix, in the fork or in its source; shown and
+  copied facts are history, not executable source runs.
 - An untouched proposed title is recomputed by the server at commit time. Only
   an explicit non-empty user edit bypasses automatic numbering.
 - Same-workspace mode is honest about sharing current files; only its
   conversation and checkpoint lineage are independent.
 - A fork requires a real owning project. Legacy projectless records fail
   closed rather than inventing a workspace or project during replay.
-- Every retained attachment gets a new fork-owned ID and verified file copy, so
+- Retained files are shared, and kept while any conversation that shows them remains, so
   deletion or cleanup of the origin cannot invalidate the fork.
 - Portable handoffs keep whole items within a model-window-derived budget and
   account for encoded delivery wrappers; omitted items stay readable through `scient_thread_read`.

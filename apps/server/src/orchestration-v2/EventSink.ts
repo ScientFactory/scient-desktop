@@ -8,6 +8,7 @@ import {
   recordNativeModelContextWindow,
   type NativeModelCapacityOwner,
 } from "./scient-fork/NativeModelContextWindow.ts";
+import { writeForkHistory, type ForkHistoryEntry } from "./scient-fork/ForkHistory.ts";
 import {
   pendingStartOwnerIsCurrent,
   type PendingStartOwner,
@@ -188,6 +189,8 @@ export interface EventSinkV2Shape {
     };
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
+    /** SCIENT-FORK: a new fork's inherited history, recorded with its creation. */
+    readonly forkHistory?: ReadonlyArray<ForkHistoryEntry>;
     readonly cancelUnsettledEffects?: {
       readonly effectTypes: ReadonlyArray<EffectOutbox.OrchestrationEffectRequestV2["type"]>;
       readonly reason: string;
@@ -731,6 +734,19 @@ const layerBase: Layer.Layer<
               new Error(`Command ${input.commandId} produced no orchestration events.`),
             );
           }
+          // SCIENT-FORK:START
+          if (input.forkHistory !== undefined)
+            yield* writeForkHistory(sql, input.threadId, input.forkHistory).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new EventSinkWriteError({
+                    commandId: input.commandId,
+                    eventCount: input.events.length,
+                    cause,
+                  }),
+              ),
+            );
+          // SCIENT-FORK:END
           yield* applyStoredEvents(storedEvents);
           yield* effectOutbox.enqueue(input.effects);
           const receipt: CommandReceiptStore.CommandReceiptV2 = {

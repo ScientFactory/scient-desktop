@@ -11471,11 +11471,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               fresh.messages.map((message) => [message.role, message.text]),
               tombstone.messages.map((message) => [message.role, message.text]),
             );
-            assert.isTrue(fresh.messages.every((message) => message.threadId === freshId));
+            // The fresh fork shows the source's history by reference, frozen.
             assert.isTrue(
-              fresh.turnItems.every(
-                (item) =>
-                  item.threadId === freshId && item.runId === null && item.providerTurnId === null,
+              fresh.messages.every((message) => message.threadId === transferV2ThreadId),
+            );
+            assert.isTrue(fresh.turnItems.every((item) => item.threadId === freshId));
+            assert.isTrue(
+              fresh.visibleTurnItems.every(
+                ({ item }) => item.runId === null && item.providerTurnId === null,
               ),
             );
             assert.deepEqual(fresh.runs, []);

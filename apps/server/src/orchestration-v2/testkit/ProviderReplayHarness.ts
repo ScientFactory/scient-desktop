@@ -73,7 +73,6 @@ import {
   ScientForkCheckpointBaselineLive,
   type ScientForkCheckpointBaselineShape,
 } from "../scient-fork/ForkCheckpointBaseline.ts";
-import { ScientForkAttachmentCopierLive } from "../scient-fork/ForkAttachmentCopier.ts";
 import {
   runOrchestratorV2Scenario,
   type OrchestratorV2ScenarioStepError,
@@ -345,8 +344,6 @@ export function layerWithRegistry<Error>(
       | V2DatabaseImportError
     >;
     readonly runEffectWorker?: boolean;
-    /** Inject a fault around the production copier without replacing native provisioning. */
-    readonly forkAttachmentCopierLayer?: typeof ScientForkAttachmentCopierLive;
     /** Run actual attachment cleanup on isolated test profiles. */
     readonly resourceCleanupLayer?: Layer.Layer<
       never,
@@ -659,7 +656,6 @@ export function layerWithRegistry<Error>(
               ScientForkCheckpointBaseline,
               Effect.map(ScientForkCheckpointBaseline, options.decorateForkCheckpointBaseline),
             ).pipe(Layer.provide(ScientForkCheckpointBaselineLive)),
-        options.forkAttachmentCopierLayer ?? ScientForkAttachmentCopierLive,
       ).pipe(Layer.provideMerge(layerThreadCommandExecutor)),
     ),
     Layer.provide(

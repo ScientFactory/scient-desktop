@@ -12,6 +12,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -56,11 +57,6 @@ import {
   ProjectionMaintenanceV2,
   layer as projectionMaintenanceLayer,
 } from "../../orchestration-v2/ProjectionMaintenance.ts";
-import {
-  ScientForkAttachmentCopier,
-  ScientForkAttachmentCopierLive,
-  ScientForkAttachmentCopyError,
-} from "../../orchestration-v2/scient-fork/ForkAttachmentCopier.ts";
 import { historicalMessage } from "../../orchestration-v2/ContextHandoffBudget.ts";
 import {
   ConversationImporter,
@@ -562,7 +558,7 @@ describe("native import continuation and forks", () => {
     ),
   );
 
-  it.live("a fork of an imported folded answer names the fork's copy of its message", () =>
+  it.live("a fork of an imported folded answer names the message it shows", () =>
     withImporter(
       Effect.gen(function* () {
         const fixture = importFixture({ turns: 2 });
@@ -616,9 +612,9 @@ describe("native import continuation and forks", () => {
           (activity) => activity.kind === "user-input.answer-submitted",
         )!;
         const folded = fork.messages.find((message) => message.text === "Blue")!;
-        assert.notInclude(
-          imported.messages.map((message) => message.id),
+        assert.strictEqual(
           folded.id,
+          imported.messages.find((message) => message.text === "Blue")!.id,
         );
         assert.strictEqual(
           (answer.payload as { readonly messageId?: string }).messageId,
@@ -1214,7 +1210,7 @@ describe("native import continuation and forks", () => {
           assert.deepStrictEqual(nativeFork.runs, []);
           assert.deepStrictEqual(nativeFork.providerThreads, []);
           const retained = new Set(
-            nativeFork.turnItems.flatMap((item) =>
+            nativeFork.visibleTurnItems.flatMap(({ item }) =>
               item.historyTurnId === undefined ? [] : [item.historyTurnId],
             ),
           );
@@ -1498,7 +1494,9 @@ it.live(
           workspaceMode: "local",
         });
         const frozen = yield* store.getThreadProjection(target);
-        const retainedThinking = frozen.turnItems.find((item) => item.type === "reasoning");
+        const retainedThinking = frozen.visibleTurnItems
+          .map((row) => row.item)
+          .find((item) => item.type === "reasoning");
         assert.ok(retainedThinking);
         assert.isUndefined(retainedThinking.historyTurnId);
         assert.equal(retainedThinking.inheritedFrom?.runId, source.runs.at(-1)?.id);
@@ -2090,30 +2088,107 @@ it.live(
 );
 
 it.live(
-  "native fork history and question files survive retry, deletion, rollback, replay and refork",
-  () => {
-    let attempts = 0;
-    const copier = Layer.effect(
-      ScientForkAttachmentCopier,
+  "a fork stays as it was when its source rolls back, and pages, counts, rebuilds and exports its shared history",
+  () =>
+    withImporter(
       Effect.gen(function* () {
-        const real = yield* ScientForkAttachmentCopier;
-        return {
-          ...real,
-          copyAll: (input: Parameters<typeof real.copyAll>[0]) =>
-            Effect.suspend(() => {
-              if (input.threadId === ThreadId.make("durable-history-fork") && ++attempts === 1)
-                return Effect.fail(
-                  new ScientForkAttachmentCopyError({
-                    threadId: input.threadId,
-                    reason: "target-write-failed",
-                    detail: "Temporary fixture disk failure",
-                  }),
-                );
-              return real.copyAll(input);
-            }),
-        };
+        const fixture = importFixture({
+          turns: 3,
+          reasoning: true,
+          workLog: true,
+          attachments: true,
+        });
+        const { lease } = yield* leaseFor(fixture);
+        const sourceId = (yield* importOnce(lease)).result.threadId;
+        const store = yield* ProjectionStoreV2;
+        const forks = yield* ConversationForkService;
+        yield* continueImport(sourceId, MessageId.make("frozen-live-request"), "Continue");
+        const live = yield* store.getThreadProjection(sourceId);
+        const answer = live.messages.find((message) => message.text === "Continued")!;
+        const forkId = ThreadId.make("frozen-live-fork");
+        yield* forks.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("frozen-live-fork"),
+          originThreadId: sourceId,
+          newThreadId: forkId,
+          sourceAssistantMessageId: answer.id,
+          workspaceMode: "local",
+        });
+        const frozen = yield* store.getThreadProjection(forkId);
+        const inherited = frozen.visibleTurnItems.filter((row) => row.visibility === "inherited");
+        assert.isAbove(inherited.length, 0);
+        // Settled history is shared; the fork copies only what it can act on.
+        for (const row of inherited)
+          if (row.sourceThreadId !== sourceId) {
+            assert.equal(row.sourceThreadId, forkId);
+            assert.include(["proposed_plan", "todo_list", "handoff"], row.item.type);
+          }
+        assert.deepEqual(
+          frozen.messages.slice(1).map((message) => message.text),
+          ["Answer 1", "Question 2", "Answer 2", "Question 3", "Answer 3", "Continue", "Continued"],
+        );
+        const exported = (yield* readThread(forkId))!;
+        assert.deepEqual(
+          exported.messages
+            .filter((message) => message.role === "user" || message.role === "assistant")
+            .map((message) => message.text),
+          frozen.messages.map((message) => message.text),
+        );
+
+        // The source takes its live turn back; the fork keeps what it showed.
+        yield* rollbackToBaseline(sourceId, "frozen-live");
+        assert.notInclude(
+          (yield* readThread(sourceId))!.messages.map((message) => message.text),
+          "Continued",
+        );
+        assert.deepEqual(yield* store.getThreadProjection(forkId), frozen);
+        assert.deepEqual((yield* readThread(forkId))!, exported);
+
+        // Counts, pages and windows read the same shared history.
+        assert.equal(yield* store.getMessageCount(forkId), frozen.messages.length);
+        assert.equal(
+          (yield* store.getThreadShell(forkId))?.itemCount,
+          frozen.visibleTurnItems.length,
+        );
+        const paged: Array<(typeof frozen.visibleTurnItems)[number]> = [];
+        let afterPosition: number | undefined;
+        while (true) {
+          const page = yield* store.getTimelinePage(forkId, {
+            limit: 3,
+            view: "activity",
+            ...(afterPosition === undefined ? {} : { afterPosition }),
+          });
+          paged.push(...page.items);
+          if (!page.hasMore) break;
+          afterPosition = page.items.at(-1)!.position;
+        }
+        assert.deepEqual(paged, frozen.visibleTurnItems);
+        const window = yield* store.getThreadSnapshotWindow(forkId, { rowLimit: 4 });
+        assert.deepEqual(
+          window.projection.visibleTurnItems.map((row) => row.item),
+          frozen.visibleTurnItems
+            .slice(-window.projection.visibleTurnItems.length)
+            .map((row) => row.item),
+        );
+
+        // A projection rebuild replays events; the fork's shared history is unchanged.
+        const verification = yield* ProjectionMaintenanceV2.use(
+          (maintenance) => maintenance.rebuild,
+        ).pipe(Effect.provide(projectionMaintenanceLayer));
+        assert.isTrue(verification.valid);
+        const rebuilt = yield* store.getThreadProjection(forkId);
+        assert.deepEqual(rebuilt.visibleTurnItems, frozen.visibleTurnItems);
+        assert.deepEqual(rebuilt.messages, frozen.messages);
       }),
-    ).pipe(Layer.provide(ScientForkAttachmentCopierLive));
+    ).pipe(Effect.timeout("60 seconds")),
+);
+
+it.live(
+  "native fork history and question files survive deletion, rollback, replay and refork",
+  () => {
+    const shown = (projection: {
+      readonly visibleTurnItems: ReadonlyArray<{ readonly item: OrchestrationV2TurnItem }>;
+    }) => projection.visibleTurnItems.map((row) => row.item);
     return withImporter(
       Effect.gen(function* () {
         const fixture = importFixture({
@@ -2163,22 +2238,25 @@ it.live(
           Effect.forkScoped,
         );
         const receipt = yield* forks.dispatch(command);
-        assert.equal(attempts, 2);
         const frozen = yield* store.getThreadProjection(childId);
         const baseline = (yield* readThread(childId))!;
-        const inherited = frozen.turnItems.filter((item) => item.type !== "fork");
+        const inherited = frozen.visibleTurnItems
+          .filter((row) => row.visibility === "inherited")
+          .map((row) => row.item);
+        assert.isAbove(inherited.length, 0);
         const files = frozen.thread.conversationFork!.attachmentCopies;
         assert.isAbove(files.length, 0);
         const bytes = new Map<string, Uint8Array>();
         for (const copy of files) {
+          // The fork shares the source's files.
+          assert.deepEqual(copy.target, copy.source);
           const path = resolveAttachmentPath({
             attachmentsDir: config.attachmentsDir,
             attachment: copy.target,
           })!;
           bytes.set(copy.target.id, yield* fs.readFile(path));
-          assert.notEqual(copy.source.id, copy.target.id);
         }
-        const question = frozen.turnItems.find((item) => item.type === "user_input_request");
+        const question = inherited.find((item) => item.type === "user_input_request");
         assert.ok(question?.type === "user_input_request" && question.questionAnswer);
         const questionFiles = Object.values(question.questionAnswer.attachmentsByQuestionId).flat();
         assert.isAbove(questionFiles.length, 0);
@@ -2259,7 +2337,7 @@ it.live(
         assert.equal(localRefork.thread.forkLineage?.originThreadId, childId);
         assert.deepEqual(localRefork.runs, []);
         assert.isTrue(
-          localRefork.turnItems.every(
+          shown(localRefork).every(
             (item) =>
               item.runId === null &&
               item.nativeItemRef === null &&
@@ -2288,7 +2366,9 @@ it.live(
         const reverted = yield* store.getThreadProjection(childId);
         assert.deepEqual((yield* readThread(childId))!.messages, baseline.messages);
         assert.deepEqual(
-          reverted.turnItems.filter((item) => item.runId === null && item.type !== "fork"),
+          reverted.visibleTurnItems
+            .filter((row) => row.visibility === "inherited")
+            .map((row) => row.item),
           inherited,
         );
         assert.equal(
@@ -2311,45 +2391,45 @@ it.live(
             yield* (yield* CommandReceiptStoreV2).getByCommandId(failedCommand.commandId),
           ),
         );
-        yield* orchestrator.dispatch({
-          type: "thread.delete",
-          commandId: CommandId.make("durable-delete-source"),
-          threadId: sourceId,
-        });
         const outbox = yield* EffectOutboxV2;
         const completion = yield* Stream.toPull(
           Stream.merge(yield* outbox.subscribeCompletions, Stream.tick("10 millis")),
         );
-        while (true) {
-          const jobs = yield* outbox.listByCommandId(CommandId.make("durable-delete-source"));
-          if (jobs.every((job) => ["succeeded", "failed", "cancelled"].includes(job.status))) {
-            assert.isTrue(jobs.every((job) => job.status === "succeeded"));
-            break;
+        const deleteThread = Effect.fn("test.deleteThread")(function* (threadId: ThreadId) {
+          const commandId = CommandId.make(`durable-delete-${threadId}`);
+          yield* orchestrator.dispatch({ type: "thread.delete", commandId, threadId });
+          while (true) {
+            const jobs = yield* outbox.listByCommandId(commandId);
+            if (jobs.every((job) => ["succeeded", "failed", "cancelled"].includes(job.status))) {
+              assert.isTrue(jobs.every((job) => job.status === "succeeded"));
+              return;
+            }
+            yield* completion;
           }
-          yield* completion;
-        }
+        });
+        yield* deleteThread(sourceId);
         assert.isNotNull((yield* store.getThreadProjection(sourceId)).thread.deletedAt);
+        // The deleted source's files stay while a fork still shows its history.
         for (const copy of files) {
-          const sourcePath = resolveAttachmentPath({
-            attachmentsDir: config.attachmentsDir,
-            attachment: copy.source,
-          })!;
-          assert.isFalse(yield* fs.exists(sourcePath));
           const path = resolveAttachmentPath({
             attachmentsDir: config.attachmentsDir,
             attachment: copy.target,
           })!;
           assert.deepEqual(yield* fs.readFile(path), bytes.get(copy.target.id));
         }
+        assert.deepEqual(
+          (yield* store.getThreadProjection(childId)).visibleTurnItems,
+          reverted.visibleTurnItems,
+        );
         const replayed = yield* forks.dispatch(command);
         assert.deepEqual(replayed, receipt);
-        assert.equal(attempts, 2);
         const verification = yield* ProjectionMaintenanceV2.use(
           (maintenance) => maintenance.rebuild,
         ).pipe(Effect.provide(projectionMaintenanceLayer));
         assert.isTrue(verification.valid);
         const rebuilt = yield* store.getThreadProjection(childId);
         assert.deepEqual(rebuilt.turnItems, reverted.turnItems);
+        assert.deepEqual(rebuilt.visibleTurnItems, reverted.visibleTurnItems);
         assert.deepEqual((yield* readThread(childId))!.messages, baseline.messages);
         assert.deepEqual(rebuilt.thread.conversationFork?.attachmentCopies, files);
         const reforkId = ThreadId.make("durable-baseline-refork");
@@ -2373,9 +2453,9 @@ it.live(
           refork.messages.map((message) => message.text),
           "Continued",
         );
-        assert.equal(refork.turnItems.filter((item) => item.type === "reasoning").length, 3);
-        assert.equal(refork.turnItems.filter((item) => item.type === "dynamic_tool").length, 3);
-        const reforkQuestion = refork.turnItems.find((item) => item.type === "user_input_request");
+        assert.equal(shown(refork).filter((item) => item.type === "reasoning").length, 3);
+        assert.equal(shown(refork).filter((item) => item.type === "dynamic_tool").length, 3);
+        const reforkQuestion = shown(refork).find((item) => item.type === "user_input_request");
         assert.ok(reforkQuestion?.type === "user_input_request" && reforkQuestion.questionAnswer);
         assert.equal(
           Object.values(reforkQuestion.questionAnswer.attachmentsByQuestionId).flat().length,
@@ -2397,7 +2477,7 @@ it.live(
           questionCopies.map((copy) => copy.target),
         );
         for (const [index, file] of reforkQuestionFiles.entries()) {
-          assert.notEqual(file.id, questionFiles[index]!.id);
+          assert.equal(file.id, questionFiles[index]!.id);
           assert.deepEqual(
             yield* fs.readFile(
               resolveAttachmentPath({
@@ -2410,7 +2490,7 @@ it.live(
         }
         for (const copy of refork.thread.conversationFork!.attachmentCopies) {
           assert.isTrue(bytes.has(copy.source.id));
-          assert.notEqual(copy.source.id, copy.target.id);
+          assert.deepEqual(copy.target, copy.source);
           assert.deepEqual(
             yield* fs.readFile(
               resolveAttachmentPath({
@@ -2440,16 +2520,26 @@ it.live(
         const encodedReferences = yield* encodeQuestionFileReferences(references);
         const suppliedAnswer = `Question: Which figure?\nAnswer: This one\nAttachment references (bytes not replayed): ${encodedReferences}`;
         assert.equal(sent.message.text.split(suppliedAnswer).length - 1, 1);
-        for (const file of questionFiles) assert.notInclude(sent.message.text, file.id);
         const delivered = (yield* store.getThreadProjection(reforkId)).contextHandoffs.at(
           -1,
         )!.delivery!;
         assert.include(delivered.itemIds, reforkQuestion.id);
         assert.notInclude(delivered.omittedItemIds ?? [], reforkQuestion.id);
+        // Deleting the last conversation that shows them releases the files.
+        const paths = files.map((copy) =>
+          resolveAttachmentPath({
+            attachmentsDir: config.attachmentsDir,
+            attachment: copy.source,
+          })!,
+        );
+        yield* deleteThread(childId);
+        yield* deleteThread(localReforkId);
+        for (const path of paths) assert.isTrue(yield* fs.exists(path));
+        yield* deleteThread(reforkId);
+        for (const path of paths) assert.isFalse(yield* fs.exists(path));
       }),
       {
         runtimeOptions: {
-          forkAttachmentCopierLayer: copier,
           resourceCleanupLayer: resourceCleanupLayer.pipe(
             Layer.provide(Layer.mock(TerminalManager)({ close: () => Effect.void })),
           ),
