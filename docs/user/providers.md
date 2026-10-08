@@ -47,39 +47,25 @@ Scient distinguishes three local runtime sources:
 - **System**: a healthy provider tool already available on the Scient server.
 - **Scient-managed**: a qualified copy stored privately in Scient's app data.
 
-A healthy custom or system installation remains first-class. Scient does not silently replace or
-modify it. **Use Scient-managed** is offered beside a healthy system installation whichever of the
-two versions is newer: a private copy that Scient installs and maintains is a choice of its own, and
-a tool that updates itself is usually ahead of the release Scient has qualified. In Settings and in
-a provider's **Manage** dialog, choosing it first shows both versions; confirming installs and
-verifies a private copy for default provider instances while leaving the system installation
-untouched. Removing that private copy returns eligible instances to the healthy system runtime.
+A healthy custom or system installation remains first-class. **Use Scient-managed** is offered
+beside a healthy system installation and starts from one click. Scient installs its latest qualified
+release, even when your system version is newer or unknown. You do not need to compare versions or
+confirm again. The first action is blue in the provider card and runtime controls.
 
-When the Scient-managed version is older than your installation, the switch never starts from one
-click. Scient says so with both versions, for example "Scient-managed Droid 0.230.0 is older than
-your installed Droid 0.231.0. Scient will use its own verified copy; your installation stays as it
-is.", and waits for **Back** or **Use Scient-managed**. The same holds when Scient does not know the
-installed version, because the tool reports none it can read or because the provider is disabled
-(Scient never runs a disabled provider's tool, not even to ask its version): the decision then says
-"system version unknown" and that the Scient-managed version may be older. This applies on every
-surface, including the **Use Scient-managed** button under a failed setup's runtime diagnostics,
-which starts right away only when the managed version is known to be the same or newer. Scient reads
-the installed version again when it prepares the switch and when it starts it. If the installation
-was updated in between, so that what you decided on changed, Scient does not carry out the earlier
-decision: it shows the switch again with the current versions.
+Scient downloads and verifies its private copy before putting it in use. Your system installation
+and credentials stay untouched. Removing the private copy returns eligible instances to the healthy
+system runtime. If the catalog changes between preparing and starting the action, Scient refreshes
+the plan and retries once with the current qualified release. A second change reports an error;
+it does not keep retrying.
 
-Repair and Update of a private copy you never chose (one left by an earlier Scient version that was
-never selected) would put that copy in use too, so beside a system installation they are the same
-decision as **Use Scient-managed**: both versions, or "system version unknown", then **Back** or
-**Use Scient-managed**. Codex keeps one refusal of its own: while Codex from your `PATH` stands in
-for a private copy that failed its check, Scient does not repair or update that copy with a version
-older than the `PATH` one, and names both versions when it declines.
+Repair and Update of a private copy that was never selected also start directly when available.
+Codex keeps one maintenance rule: while Codex from your `PATH` stands in for a private copy that
+failed its check, Scient does not repair or update that copy with a version older than the `PATH`
+one, and names both versions when it declines. **Use Scient-managed** remains the explicit way to
+choose Scient's qualified release.
 
-The versions shown are those of the provider instance you act on. The Scient-managed copy is shared:
-once it is in use, every instance of that provider that uses the default runtime switches to it.
-Another instance of the same provider whose environment sets a different `PATH` is not checked, so
-if its own system installation is newer than the qualified release, it moves to the older managed
-copy too, without a decision that named its version. Give such an instance an explicit binary path
+The Scient-managed copy is shared: once it is in use, every instance of that provider in the
+environment that uses the default runtime switches to it. Give an instance an explicit binary path
 to keep it on its own installation; custom paths are never switched.
 
 Runtime controls always apply to the machine running the Scient server. A remote browser controls
@@ -108,10 +94,8 @@ providers** in Settings also checks the catalog immediately without changing its
 schedule. If a Scient-managed runtime has an update, Scient shows a notice with **Update** and
 **Settings**. **Update** installs it in place and reports when the verified version is active or why
 it failed, with **Retry**. **Settings** opens the provider in the correct environment. Clicking
-**Install** or **Update** starts the operation directly, without a second confirmation; the one
-exception is an install that would use an older Scient-managed version instead of your system
-installation, which waits for the decision described above. In Settings, it runs without opening the
-management card: Settings and onboarding show **Installing**, **Updating**, or **Verifying**, with a
+**Install** or **Update** starts the operation directly, without a second confirmation. In Settings,
+it runs without opening the management card: Settings and onboarding show **Installing**, **Updating**, or **Verifying**, with a
 small download percentage when available, beside an icon-only **Manage** button. Progress remains
 visible when you close the card. Click either control to reopen details without starting another
 operation. After a failure, **Manage** opens the existing error and recovery controls; errors before

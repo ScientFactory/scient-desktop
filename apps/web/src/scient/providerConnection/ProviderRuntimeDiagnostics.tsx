@@ -114,7 +114,7 @@ export function ProviderRuntimeDiagnosticsDetails(props: {
               onClick={props.onUseManaged}
               size="xs"
               type="button"
-              variant="outline"
+              variant="ghost-primary"
             >
               Use Scient-managed {props.displayName}
             </Button>

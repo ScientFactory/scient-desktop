@@ -519,7 +519,7 @@ describe("ProviderSettingsLifecycleAction", () => {
     },
   );
 
-  it("opens the decision instead of starting an install that replaces a newer system runtime", async () => {
+  it("starts an install that replaces a newer system runtime without another decision", async () => {
     // Offered as a first installation; the plan found a newer system runtime.
     const value = provider({ source: "missing" });
     const onManage = vi.fn();
@@ -538,13 +538,12 @@ describe("ProviderSettingsLifecycleAction", () => {
 
     await settingsButton(value, onManage).props.onClick();
 
-    expect(commands.start).not.toHaveBeenCalled();
+    expect(commands.start).toHaveBeenCalledTimes(1);
     expect(commands.toast).not.toHaveBeenCalled();
-    // The dialog plans the install again and shows both versions with Back / Use Scient-managed.
-    expect(onManage).toHaveBeenCalledExactlyOnceWith("install");
+    expect(onManage).not.toHaveBeenCalled();
   });
 
-  it("opens the decision instead of starting an install over a system runtime of unknown version", async () => {
+  it("starts an install over a system runtime of unknown version directly", async () => {
     const value = provider({ source: "missing" });
     const onManage = vi.fn();
     commands.plan.mockResolvedValue({
@@ -562,11 +561,11 @@ describe("ProviderSettingsLifecycleAction", () => {
 
     await settingsButton(value, onManage).props.onClick();
 
-    expect(commands.start).not.toHaveBeenCalled();
-    expect(onManage).toHaveBeenCalledExactlyOnceWith("install");
+    expect(commands.start).toHaveBeenCalledTimes(1);
+    expect(onManage).not.toHaveBeenCalled();
   });
 
-  it("opens the decision when the system runtime was upgraded after the plan", async () => {
+  it("reports a stale plan after the controller exhausts its bounded retry", async () => {
     const value = provider({ source: "missing" });
     const onManage = vi.fn();
     commands.start.mockRejectedValue(
@@ -578,8 +577,8 @@ describe("ProviderSettingsLifecycleAction", () => {
     await settingsButton(value, onManage).props.onClick();
 
     expect(commands.start).toHaveBeenCalledTimes(1);
-    expect(commands.toast).not.toHaveBeenCalled();
-    expect(onManage).toHaveBeenCalledExactlyOnceWith("install");
+    expect(commands.toast).toHaveBeenCalledTimes(1);
+    expect(onManage).not.toHaveBeenCalled();
   });
 
   it.each(["install", "update", "repair", "remove"] as const)(

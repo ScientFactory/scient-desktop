@@ -11,10 +11,6 @@ import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { startCodexBrowserSignIn } from "./codexLifecycleActions";
 import {
-  isRuntimePlanStale,
-  managedRuntimeSwitchNeedsDecision,
-} from "./ManagedRuntimeSwitchDecision";
-import {
   providerSettingsLifecyclePresentation,
   type ProviderSettingsLifecyclePresentation,
 } from "./providerSettingsLifecyclePresentation";
@@ -266,18 +262,8 @@ function ManagedRuntimeActionButton(props: {
     setPending(true);
     try {
       const plan = await controller.planRuntime(props.action);
-      // Replacing a newer system runtime, or one of unknown version, is decided
-      // in the dialog, which plans the action again; this click starts nothing.
-      if (managedRuntimeSwitchNeedsDecision(plan)) {
-        props.onManage(props.action);
-        return;
-      }
       await controller.startRuntime(plan);
     } catch (error) {
-      if (isRuntimePlanStale(error)) {
-        props.onManage(props.action);
-        return;
-      }
       toastManager.add(
         stackedThreadToast({
           type: "error",
