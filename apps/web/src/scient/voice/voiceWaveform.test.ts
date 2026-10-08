@@ -2,8 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 import { buildVoiceWaveformLevels, VOICE_WAVEFORM_LEVEL_COUNT } from "./voiceWaveform.ts";
 
 describe("live waveform window", () => {
-  it("reserves its full width before audio arrives", () => {
-    expect(buildVoiceWaveformLevels([])).toEqual(Array<number>(112).fill(0));
+  it("starts empty and grows as measurements arrive", () => {
+    expect(buildVoiceWaveformLevels([])).toEqual([]);
+    expect(buildVoiceWaveformLevels([0.1])).toEqual([0.1]);
+    expect(buildVoiceWaveformLevels([0.1, 0.2])).toEqual([0.1, 0.2]);
   });
 
   it("shows fresh speech immediately after a compact row fills, before the history fills", () => {
@@ -19,7 +21,7 @@ describe("live waveform window", () => {
     for (let sample = 1; sample <= 4_500; sample += 1) {
       history = [...history, sample].slice(-VOICE_WAVEFORM_LEVEL_COUNT);
       const window = buildVoiceWaveformLevels(history);
-      expect(window).toHaveLength(112);
+      expect(window).toHaveLength(Math.min(sample, 112));
       for (const visibleBars of [1, 8, 32, 64, 96, 112]) {
         const visible = window.slice(-visibleBars);
         expect(visible.at(-1)).toBe(sample);

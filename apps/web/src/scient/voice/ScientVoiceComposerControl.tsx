@@ -81,10 +81,10 @@ const VoiceWaveform = memo(function VoiceWaveform({
     <div
       data-scient-voice-waveform="true"
       dir="ltr"
-      className="flex h-7 w-full min-w-0 max-w-[calc(--spacing(0.5)*223)] items-center justify-end overflow-hidden"
+      className="flex h-7 min-w-0 flex-1 items-center justify-end overflow-hidden"
       aria-hidden="true"
     >
-      <div className="flex shrink-0 items-center gap-0.5">
+      <div className="flex min-w-full shrink-0 items-center gap-0.5">
         {buildVoiceWaveformLevels(levels).map((level, index) => (
           <span
             key={WAVEFORM_BAR_KEYS[index]}
@@ -105,15 +105,23 @@ function VoiceErrorText({
   readonly onOpenSettings?: () => void;
 }): ReactNode {
   return (
-    <div className="flex items-center gap-1 text-destructive text-xs" role="alert">
-      <CircleAlertIcon aria-hidden="true" className="size-3.5 shrink-0" />
-      <span>{message}</span>
-      {onOpenSettings ? (
-        <InlineButton tone="destructive" onClick={onOpenSettings} type="button">
-          Open Settings
-        </InlineButton>
-      ) : null}
-    </div>
+    <TooltipProvider delay={40} closeDelay={0} timeout={300}>
+      <div
+        className="flex min-w-0 max-w-36 items-center gap-1 text-destructive/80 text-xs sm:max-w-48"
+        role="alert"
+      >
+        <CircleAlertIcon aria-hidden="true" className="size-3.5 shrink-0" />
+        <Tooltip>
+          <TooltipTrigger render={<span className="min-w-0 truncate" />}>{message}</TooltipTrigger>
+          <TooltipPopup>{message}</TooltipPopup>
+        </Tooltip>
+        {onOpenSettings ? (
+          <InlineButton tone="destructive" onClick={onOpenSettings} type="button">
+            Open Settings
+          </InlineButton>
+        ) : null}
+      </div>
+    </TooltipProvider>
   );
 }
 
@@ -253,112 +261,118 @@ export function ScientVoiceComposerControl({
       data-scient-voice-surface="true"
       className="flex min-h-8 w-full min-w-0 items-center gap-2"
     >
+      <div data-scient-voice-center="true" className="flex min-w-0 flex-1 justify-center">
+        <div
+          data-scient-voice-content="true"
+          className="flex w-full min-w-0 max-w-[calc(--spacing(0.5)*267)] items-center gap-2"
+        >
+          {controller.phase === "recording" ? (
+            <>
+              <span aria-hidden="true" className="flex w-9 shrink-0 justify-end">
+                <span className="size-2 rounded-full bg-destructive" />
+              </span>
+              <VoiceWaveform levels={controller.levels} />
+              <span dir="ltr" className="w-9 shrink-0 text-muted-foreground text-xs tabular-nums">
+                {formatVoiceTimer(controller.elapsedMs)}
+              </span>
+              <span className="sr-only" role="status">
+                Recording
+              </span>
+            </>
+          ) : (
+            <>
+              <span aria-hidden="true" className="flex w-9 shrink-0 justify-end">
+                <Loader2Icon className="size-4 animate-spin" />
+              </span>
+              <span
+                data-scient-voice-status="true"
+                className="min-w-0 flex-1 text-start font-(family-name:--font-composer,var(--font-sans)) text-sm font-normal text-placeholder/75"
+                role="status"
+              >
+                {controller.phase === "requesting-permission"
+                  ? "Waiting for microphone access…"
+                  : controller.phase === "transcribing"
+                    ? "Transcribing…"
+                    : "Correcting transcript…"}
+              </span>
+              <span aria-hidden="true" className="w-9 shrink-0" />
+            </>
+          )}
+        </div>
+      </div>
       {controller.phase === "recording" ? (
-        <>
-          <div
-            data-scient-voice-center="true"
-            className="flex min-w-0 flex-1 items-center justify-center gap-2"
-          >
-            <span aria-hidden="true" className="flex w-9 shrink-0 justify-end">
-              <span className="size-2 rounded-full bg-destructive" />
-            </span>
-            <VoiceWaveform levels={controller.levels} />
-            <span dir="ltr" className="w-9 shrink-0 text-muted-foreground text-xs tabular-nums">
-              {formatVoiceTimer(controller.elapsedMs)}
-            </span>
-            <span className="sr-only" role="status">
-              Recording
-            </span>
-          </div>
-          <TooltipProvider delay={40} closeDelay={0} timeout={300}>
-            <div data-scient-voice-actions="true" className={actionsClassName}>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      aria-label="Cancel recording (Esc)"
-                      onClick={() => void controller.cancel()}
-                      size="icon-sm"
-                      variant="ghost"
-                    />
-                  }
-                >
-                  <XIcon />
-                </TooltipTrigger>
-                <TooltipPopup>Cancel recording (Esc)</TooltipPopup>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      aria-label="Transcribe and insert (Enter)"
-                      onClick={() => void controller.stop(false)}
-                      size="icon-sm"
-                      variant="ghost"
-                    />
-                  }
-                >
-                  <CornerDownLeftIcon />
-                </TooltipTrigger>
-                <TooltipPopup>Transcribe and insert (Enter)</TooltipPopup>
-              </Tooltip>
-              {onRequestSubmit ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        aria-label="Transcribe and send"
-                        onClick={() => void controller.stop(true)}
-                        size="icon-sm"
-                        variant="round-primary"
-                      />
-                    }
-                  >
-                    <ArrowUpIcon />
-                  </TooltipTrigger>
-                  <TooltipPopup>Transcribe and send</TooltipPopup>
-                </Tooltip>
-              ) : null}
-            </div>
-          </TooltipProvider>
-        </>
-      ) : (
-        <>
-          <div
-            data-scient-voice-center="true"
-            className="flex min-w-0 flex-1 items-center justify-center gap-2 text-center text-muted-foreground text-xs"
-            role="status"
-          >
-            <Loader2Icon aria-hidden="true" className="size-4 shrink-0 animate-spin" />
-            <span className="min-w-0">
-              {controller.phase === "requesting-permission"
-                ? "Waiting for microphone access…"
-                : controller.phase === "transcribing"
-                  ? "Transcribing…"
-                  : "Correcting transcript…"}
-            </span>
-          </div>
+        <TooltipProvider delay={40} closeDelay={0} timeout={300}>
           <div data-scient-voice-actions="true" className={actionsClassName}>
-            {controller.phase === "correcting" ? (
-              <Button onClick={controller.useOriginal} size="xs" variant="ghost-muted">
-                Use original
-              </Button>
-            ) : (
-              <Button
-                aria-label={
-                  controller.phase === "requesting-permission"
-                    ? "Cancel microphone request"
-                    : "Cancel transcription"
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label="Cancel recording (Esc)"
+                    onClick={() => void controller.cancel()}
+                    size="icon-sm"
+                    variant="ghost"
+                  />
                 }
-                onClick={() => void controller.cancel()}
-                size="icon-sm"
-                variant="ghost"
               >
                 <XIcon />
-              </Button>
-            )}
+              </TooltipTrigger>
+              <TooltipPopup>Cancel recording (Esc)</TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label="Transcribe and insert (Enter)"
+                    onClick={() => void controller.stop(false)}
+                    size="icon-sm"
+                    variant="ghost"
+                  />
+                }
+              >
+                <CornerDownLeftIcon />
+              </TooltipTrigger>
+              <TooltipPopup>Transcribe and insert (Enter)</TooltipPopup>
+            </Tooltip>
+            {onRequestSubmit ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      aria-label="Transcribe and send"
+                      onClick={() => void controller.stop(true)}
+                      size="icon-sm"
+                      variant="round-primary"
+                    />
+                  }
+                >
+                  <ArrowUpIcon />
+                </TooltipTrigger>
+                <TooltipPopup>Transcribe and send</TooltipPopup>
+              </Tooltip>
+            ) : null}
           </div>
-        </>
+        </TooltipProvider>
+      ) : (
+        <div data-scient-voice-actions="true" className={actionsClassName}>
+          {controller.phase === "correcting" ? (
+            <Button onClick={controller.useOriginal} size="xs" variant="ghost-muted">
+              Use original
+            </Button>
+          ) : (
+            <Button
+              aria-label={
+                controller.phase === "requesting-permission"
+                  ? "Cancel microphone request"
+                  : "Cancel transcription"
+              }
+              onClick={() => void controller.cancel()}
+              size="icon-sm"
+              variant="ghost"
+            >
+              <XIcon />
+            </Button>
+          )}
+        </div>
       )}
     </div>
   ) : null;

@@ -79,15 +79,18 @@ describe("ScientVoiceComposerControl recording actions", () => {
   });
 
   it.each(["composer", "compact"] as const)(
-    "keeps the latest sample at the visible right edge with fixed bar geometry in %s",
+    "grows from the left then clips old samples, retaining fixed bar geometry in %s",
     (presentation) => {
       controllerState.levels = [...Array<number>(32).fill(0), 0.2];
       const markup = renderToStaticMarkup(
         <ScientVoiceComposerControl presentation={presentation} onTranscript={() => undefined} />,
       );
       expect(markup).toContain("justify-end overflow-hidden");
-      expect(markup.match(/w-0\.5 shrink-0 rounded-full bg-primary\/60/g)).toHaveLength(112);
+      expect(markup.match(/w-0\.5 shrink-0 rounded-full bg-primary\/60/g)).toHaveLength(33);
       expect(markup).toContain("height:22px");
+      expect(markup).toContain("min-w-full shrink-0");
+      expect(markup).toContain('data-scient-voice-content="true"');
+      expect(markup).toContain("max-w-[calc(--spacing(0.5)*267)]");
       expect(markup).toContain('dir="ltr"');
     },
   );
@@ -97,7 +100,7 @@ describe("ScientVoiceComposerControl recording actions", () => {
     ["transcribing", "Transcribing…", "Cancel transcription"],
     ["correcting", "Correcting transcript…", "Use original"],
   ] as const)(
-    "centers %s with a separate action rail on both surfaces",
+    "aligns %s with the waveform start and preserves the action rail on both surfaces",
     (phase, status, action) => {
       controllerState.phase = phase;
       for (const presentation of ["composer", "compact"] as const) {
@@ -105,7 +108,11 @@ describe("ScientVoiceComposerControl recording actions", () => {
           <ScientVoiceComposerControl presentation={presentation} onTranscript={() => undefined} />,
         );
         expect(markup).toContain('data-scient-voice-center="true"');
-        expect(markup).toContain("justify-center");
+        expect(markup).toContain('data-scient-voice-content="true"');
+        expect(markup).toContain("max-w-[calc(--spacing(0.5)*267)]");
+        expect(markup).toContain("text-start");
+        expect(markup).toContain("text-sm font-normal text-placeholder/75");
+        expect(markup).not.toContain("text-center");
         expect(markup).toContain('role="status"');
         expect(markup).toContain(status);
         expect(markup).toContain(action);
@@ -114,6 +121,34 @@ describe("ScientVoiceComposerControl recording actions", () => {
       }
     },
   );
+
+  it("does not prefill the waveform before microphone samples arrive", () => {
+    const markup = renderToStaticMarkup(
+      <ScientVoiceComposerControl onTranscript={() => undefined} />,
+    );
+    expect(markup).toContain('data-scient-voice-waveform="true"');
+    expect(markup).not.toContain("w-0.5 shrink-0 rounded-full bg-primary/60");
+  });
+
+  it("bounds long errors without displacing the microphone or recovery action", () => {
+    controllerState.phase = "idle";
+    controllerState.errorMessage = "An explanatory voice failure ".repeat(20);
+    controllerState.microphonePermissionDenied = true;
+    vi.stubGlobal("window", {
+      desktopBridge: { getClientPlatform: () => "darwin", openSystemSettings: vi.fn() },
+    });
+    const markup = renderToStaticMarkup(
+      <ScientVoiceComposerControl onTranscript={() => undefined} />,
+    );
+    expect(markup).toContain("max-w-36");
+    expect(markup).toContain("sm:max-w-48");
+    expect(markup).toContain("truncate");
+    expect(markup).toContain(controllerState.errorMessage);
+    expect(markup).not.toContain('title="');
+    expect(markup).toContain('role="alert"');
+    expect(markup).toContain("Open Settings");
+    expect(markup).toContain('aria-label="Dictate a voice message"');
+  });
 
   it("offers transcript submission when the host supplies a submit callback", () => {
     const markup = renderToStaticMarkup(

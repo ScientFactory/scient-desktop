@@ -39,14 +39,21 @@ Voice uses the host footer's surface and normal layout. While busy, the composer
 retains the provider icon, hides and inerts ordinary toolbar actions, and stays
 expanded. The citation microphone shares the idle card's right-side actions.
 Both hosts keep the voice control mounted as its presentation changes. Recording
-and processing status share a centered lane beside a reserved action rail.
+uses a centered lane beside a reserved action rail. Permission, transcription
+and correction labels align with the waveform's left edge inside that lane,
+using softer placeholder-colored, regular-weight text.
 
 The waveform retains 112 recent levels in fixed-width bars with fixed gaps.
-Unused slots render as baseline dots; narrow viewports clip the oldest slots
-from the left, so the newest audio remains visible before the full history
-fills. Audio capture retains all frames independently of the display history.
+The lane reserves its full width, but bars appear progressively from left to
+right as audio arrives. Worklet chunks follow the actual sample rate at about
+56 measurements per second, filling the full-width waveform in about two
+seconds. Narrow viewports fill sooner and clip the oldest bars from the left
+as soon as their visible width is filled; new speech stays visible at the right.
+Audio capture retains all frames independently of the display history.
 Waveform updates follow incoming worklet messages rather than a continuous
-animation loop.
+animation loop. Inline errors have a bounded width and ellipsis with the full
+human-readable message available on hover. Presentation strips internal error
+names and uses concise copy for recording-duration validation.
 
 ## Reliability invariants
 
