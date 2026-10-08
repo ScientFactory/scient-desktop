@@ -177,20 +177,18 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
   const runOrdinals = new Map(projection.runs.map((run) => [run.id, run.ordinal]));
   // A later request can be recorded before the selected answer finishes.
   // Durable run ownership prevents that overlap from extending this prefix.
-  const retained = rows.slice(0, end + 1).filter(
-    ({ item, visibility }) =>
-      selectedRun === undefined ||
-      // Inherited rows carry other conversations' runs; they all precede local ones.
-      visibility !== "local" ||
-      item.runId === null ||
-      (runOrdinals.get(item.runId) ?? Infinity) <= selectedRun.ordinal,
-  );
+  const retained = rows
+    .slice(0, end + 1)
+    .filter(
+      ({ item }) =>
+        selectedRun === undefined ||
+        item.runId === null ||
+        (runOrdinals.get(item.runId) ?? Infinity) <= selectedRun.ordinal,
+    );
   // The fork shares the retained history by reference (its frozen membership)
   // and owns copies only of what still changes or what it can act on.
   const openRuns = openRunIds(projection.runs);
-  // A synthetic row (upstream's fork marker) exists only in memory: copy it too.
-  const copies = (row: (typeof retained)[number]) =>
-    row.visibility === "synthetic" || isCopiedForkItem(row.item, openRuns);
+  const copies = (row: (typeof retained)[number]) => isCopiedForkItem(row.item, openRuns);
   const copied = retained.filter(copies);
   for (const { item } of retained)
     if (

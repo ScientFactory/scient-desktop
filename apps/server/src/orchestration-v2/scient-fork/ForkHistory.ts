@@ -292,12 +292,17 @@ export const hasForkHistory = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
   `.pipe(Effect.map((rows) => rows.length > 0));
 
 /**
- * The fork's own rows from its boundary on (its copies come before it), with
- * their turn starts and user turns; undefined without a boundary. Counts the
+ * The fork's own rows from its boundary on (its copies come before it), up to
+ * `anchorItemId` when given, with their turn starts and user turns; undefined
+ * without a boundary. Counts the
  * rows `readCanonicalProjection` keeps, by the same rules, so a window of
  * this many rows ends at the boundary.
  */
-export const readForkLocalExtent = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
+export const readForkLocalExtent = (
+  sql: SqlClient.SqlClient,
+  threadId: ThreadId,
+  anchorItemId?: TurnItemId,
+) =>
   sql<{
     readonly boundary: number | null;
     readonly rows: number;
@@ -316,6 +321,13 @@ export const readForkLocalExtent = (sql: SqlClient.SqlClient, threadId: ThreadId
     LEFT JOIN orchestration_v2_projection_turn_items AS item
       ON item.thread_id = boundary.thread_id
       AND item.ordinal >= boundary.ordinal
+      AND item.ordinal <= COALESCE(
+        (
+          SELECT anchor.ordinal FROM orchestration_v2_projection_turn_items AS anchor
+          WHERE anchor.thread_id = boundary.thread_id AND anchor.turn_item_id = ${anchorItemId ?? null}
+        ),
+        9223372036854775807
+      )
       AND NOT EXISTS (
         SELECT 1 FROM orchestration_v2_projection_runs AS run
         WHERE run.run_id = item.run_id

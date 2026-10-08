@@ -28,6 +28,8 @@ export default Effect.gen(function* () {
     ON scient_fork_history (source_thread_id, source_item_id)`;
   yield* sql`CREATE INDEX IF NOT EXISTS scient_fork_history_source_message
     ON scient_fork_history (source_thread_id, message_id)`;
+  yield* sql`CREATE INDEX IF NOT EXISTS scient_fork_history_type
+    ON scient_fork_history (thread_id, item_type)`;
   yield* sql`CREATE TABLE IF NOT EXISTS scient_fork_frozen_items (
     thread_id TEXT NOT NULL,
     position INTEGER NOT NULL,

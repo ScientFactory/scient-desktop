@@ -2550,7 +2550,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     /** When a fork's shared user messages were last updated, as it shows them (thread `t`). */
     const inheritedUserMessageAt = (authored: boolean) => sql`
       SELECT COALESCE(json_extract(frozen.message_json, '$.updatedAt'), message.updated_at) AS at
-      FROM scient_fork_history AS history
+      FROM scient_fork_history AS history INDEXED BY scient_fork_history_type
       JOIN orchestration_v2_projection_messages AS message
         ON message.message_id = history.message_id
       LEFT JOIN scient_fork_frozen_items AS frozen
@@ -3217,15 +3217,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           window !== undefined &&
           (anchorInHistory ||
             (window.historyAnchor !== undefined && window.historyAnchor.threadId !== threadId));
-        // While the fork's own turns cannot fill a user-turn window, the window
-        // reaches into its history and holds every row from its boundary on:
-        // reading only those keeps the local read off its older copies.
+        // While the fork's own turns (up to a local anchor) cannot fill a
+        // user-turn window, the window reaches into its history and holds every
+        // row from its boundary on: reading only those keeps the local read off
+        // its older copies.
         const extent =
-          window !== undefined &&
-          !redirected &&
-          anchor === undefined &&
-          window.userTurnLimit !== undefined
-            ? yield* readForkLocalExtent(sql, threadId)
+          window !== undefined && !redirected && window.userTurnLimit !== undefined
+            ? yield* readForkLocalExtent(sql, threadId, anchor)
             : undefined;
         const localWindow =
           window === undefined
@@ -5355,24 +5353,32 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS pending_secret_request_payload_json,
               (
+                -- SCIENT-FORK: the later of the thread's own latest and its fork's shared one.
                 SELECT MAX(at) FROM (
-                  SELECT message.updated_at AS at
-                  FROM orchestration_v2_projection_messages message
-                  WHERE message.thread_id = t.thread_id AND message.role = 'user'
+                  SELECT (
+                    SELECT message.updated_at
+                    FROM orchestration_v2_projection_messages message
+                    WHERE message.thread_id = t.thread_id AND message.role = 'user'
+                    ORDER BY message.updated_at DESC, message.message_id DESC
+                    LIMIT 1
+                  ) AS at
                   UNION ALL
-                  -- SCIENT-FORK: a fork's shared user messages, as it shows them.
-                  ${inheritedUserMessageAt(false)}
+                  SELECT MAX(at) FROM (${inheritedUserMessageAt(false)})
                 )
               ) AS latest_user_message_at,
               (
+                -- SCIENT-FORK: the later of the thread's own latest and its fork's shared one.
                 SELECT MAX(at) FROM (
-                  SELECT message.updated_at AS at
-                  FROM orchestration_v2_projection_messages message
-                  WHERE message.thread_id = t.thread_id AND message.role = 'user'
-                    AND json_extract(message.payload_json, '$.createdBy') = 'user'
+                  SELECT (
+                    SELECT message.updated_at
+                    FROM orchestration_v2_projection_messages message
+                    WHERE message.thread_id = t.thread_id AND message.role = 'user'
+                      AND json_extract(message.payload_json, '$.createdBy') = 'user'
+                    ORDER BY message.updated_at DESC, message.message_id DESC
+                    LIMIT 1
+                  ) AS at
                   UNION ALL
-                  -- SCIENT-FORK: a fork's shared user messages, as it shows them.
-                  ${inheritedUserMessageAt(true)}
+                  SELECT MAX(at) FROM (${inheritedUserMessageAt(true)})
                 )
               ) AS latest_user_authored_message_at,
               EXISTS (
@@ -5585,24 +5591,32 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               json_extract(r.payload_json, '$.startedAt') AS latest_run_started_at,
               r.completed_at AS latest_run_completed_at,
               (
+                -- SCIENT-FORK: the later of the thread's own latest and its fork's shared one.
                 SELECT MAX(at) FROM (
-                  SELECT message.updated_at AS at
-                  FROM orchestration_v2_projection_messages message
-                  WHERE message.thread_id = t.thread_id AND message.role = 'user'
+                  SELECT (
+                    SELECT message.updated_at
+                    FROM orchestration_v2_projection_messages message
+                    WHERE message.thread_id = t.thread_id AND message.role = 'user'
+                    ORDER BY message.updated_at DESC, message.message_id DESC
+                    LIMIT 1
+                  ) AS at
                   UNION ALL
-                  -- SCIENT-FORK: a fork's shared user messages, as it shows them.
-                  ${inheritedUserMessageAt(false)}
+                  SELECT MAX(at) FROM (${inheritedUserMessageAt(false)})
                 )
               ) AS latest_user_message_at,
               (
+                -- SCIENT-FORK: the later of the thread's own latest and its fork's shared one.
                 SELECT MAX(at) FROM (
-                  SELECT message.updated_at AS at
-                  FROM orchestration_v2_projection_messages message
-                  WHERE message.thread_id = t.thread_id AND message.role = 'user'
-                    AND json_extract(message.payload_json, '$.createdBy') = 'user'
+                  SELECT (
+                    SELECT message.updated_at
+                    FROM orchestration_v2_projection_messages message
+                    WHERE message.thread_id = t.thread_id AND message.role = 'user'
+                      AND json_extract(message.payload_json, '$.createdBy') = 'user'
+                    ORDER BY message.updated_at DESC, message.message_id DESC
+                    LIMIT 1
+                  ) AS at
                   UNION ALL
-                  -- SCIENT-FORK: a fork's shared user messages, as it shows them.
-                  ${inheritedUserMessageAt(true)}
+                  SELECT MAX(at) FROM (${inheritedUserMessageAt(true)})
                 )
               ) AS latest_user_authored_message_at
             FROM orchestration_v2_projection_threads t

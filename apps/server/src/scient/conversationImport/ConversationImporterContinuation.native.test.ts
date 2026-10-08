@@ -14,6 +14,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2TurnItem,
+  type TurnItemId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -2485,7 +2486,7 @@ it.live("opening a recent fork window never reads its older copies", () =>
       const plan = (yield* store.getThreadProjection(forkId)).turnItems.find(
         (item) => item.type === "proposed_plan",
       )!;
-      const tripwire = Effect.fn("test.tripwire")(function* () {
+      const tripwire = Effect.fn("test.tripwire")(function* (anchorItemId?: TurnItemId) {
         // The fork's own copy of the old plan cannot be decoded.
         yield* (yield* SqlClient.SqlClient)`
           UPDATE orchestration_v2_projection_turn_items SET payload_json = '{invalid-copy-tripwire'
@@ -2493,6 +2494,7 @@ it.live("opening a recent fork window never reads its older copies", () =>
         const window = yield* store.getThreadSnapshotWindow(forkId, {
           rowLimit: 10,
           userTurnLimit: 1,
+          ...(anchorItemId === undefined ? {} : { anchorItemId }),
         });
         assert.isFalse(
           window.projection.visibleTurnItems.some((row) => row.sourceItemId === plan.id),
@@ -2510,82 +2512,18 @@ it.live("opening a recent fork window never reads its older copies", () =>
       yield* continueImport(forkId, MessageId.make("recent-window-local"), "Temporary follow-up");
       yield* rollbackToBaseline(forkId, "recent-window");
       yield* tripwire();
+      yield* (yield* SqlClient.SqlClient)`
+        UPDATE orchestration_v2_projection_turn_items SET payload_json = ${stored[0]!.payload_json}
+        WHERE turn_item_id = ${plan.id}`;
+      // Nor a page anchored on a turn of the fork's own.
+      yield* continueImport(forkId, MessageId.make("recent-window-anchor"), "Continue");
+      const anchorItem = (yield* store.getThreadProjection(forkId)).turnItems.findLast(
+        (item) => item.type === "user_message",
+      )!;
+      const anchored = yield* tripwire(anchorItem.id);
+      assert.equal(anchored.projection.visibleTurnItems.at(-1)?.sourceItemId, anchorItem.id);
     }),
   ),
-);
-
-it.live(
-  "a fork of an upstream run fork copies its in-memory marker and shows its whole history",
-  () =>
-    withImporter(
-      Effect.gen(function* () {
-        const { lease } = yield* leaseFor(importFixture({ turns: 2 }));
-        const sourceId = (yield* importOnce(lease)).result.threadId;
-        const store = yield* ProjectionStoreV2;
-        yield* continueImport(sourceId, MessageId.make("upstream-fork-request"), "Continue");
-        const source = yield* store.getThreadProjection(sourceId);
-        const run = source.runs.at(-1)!;
-        // An upstream run fork: inherits the source through `forkedFrom` at read time.
-        const runForkId = ThreadId.make("upstream-run-fork");
-        const now = yield* DateTime.now;
-        yield* (yield* EventSinkV2).write({
-          events: [
-            {
-              id: EventId.make("upstream-run-fork-created"),
-              threadId: runForkId,
-              type: "thread.created",
-              occurredAt: now,
-              payload: {
-                ...source.thread,
-                id: runForkId,
-                title: "Upstream run fork",
-                forkedFrom: { type: "run", threadId: sourceId, runId: run.id },
-                lineage: {
-                  parentThreadId: sourceId,
-                  rootThreadId: source.thread.lineage.rootThreadId,
-                  relationshipToParent: "fork",
-                },
-                conversationFork: null,
-                forkLineage: null,
-                createdAt: now,
-                updatedAt: now,
-              },
-            },
-          ],
-        });
-        yield* continueImport(runForkId, MessageId.make("upstream-run-fork-request"), "Continue");
-        const runFork = yield* store.getThreadProjection(runForkId);
-        const marker = runFork.visibleTurnItems.find((row) => row.visibility === "synthetic");
-        assert.ok(marker);
-        // The run fork's own answer, after the marker.
-        const answer = runFork.visibleTurnItems.findLast(
-          ({ item }) => item.type === "assistant_message",
-        )?.item;
-        assert.ok(answer?.type === "assistant_message" && answer.threadId === runForkId);
-        const forkId = ThreadId.make("fork-of-upstream-run-fork");
-        yield* (yield* ConversationForkService).dispatch({
-          type: "thread.fork",
-          commandId: CommandId.make("fork-of-upstream-run-fork"),
-          originThreadId: runForkId,
-          newThreadId: forkId,
-          sourceAssistantMessageId: answer.messageId,
-          workspaceMode: "local",
-        });
-        const fork = yield* store.getThreadProjection(forkId);
-        const shownMarker = fork.visibleTurnItems.find(
-          (row) => row.item.type === "fork" && row.item.inheritedFrom?.itemId === marker.item.id,
-        );
-        assert.equal(shownMarker?.sourceThreadId, forkId);
-        const shown = (rows: typeof fork.visibleTurnItems) =>
-          rows.map(({ item }) => ("text" in item ? [item.type, item.text] : [item.type]));
-        // Everything the run fork shows, then this fork's own boundary.
-        assert.deepEqual(
-          shown(fork.visibleTurnItems).slice(0, -1),
-          shown(runFork.visibleTurnItems),
-        );
-        assert.equal(fork.thread.forkLineage?.baselineAssistantMessageId, answer.messageId);
-      }),
-    ),
 );
 
 it.live(
