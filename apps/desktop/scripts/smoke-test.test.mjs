@@ -104,6 +104,41 @@ describe("actual desktop smoke child lifecycle", () => {
     assert.equal(result.forcedKill, false);
   });
 
+  it.skipIf(isWindows)(
+    "allows bounded native cleanup beyond two seconds with the default grace",
+    async () => {
+      const fixture = makeFixture();
+      const result = await runDesktopSmoke({
+        executable: process.execPath,
+        args: [
+          "-e",
+          `
+        setInterval(() => {}, 1000);
+        process.on("SIGTERM", () => {
+          setTimeout(() => {
+            process.stdout.write("scoped cleanup complete", () => process.exit(0));
+          }, 2250);
+        });
+      `,
+        ],
+        cwd: fixture.root,
+        env: fixture.env,
+        survivalMs: 1_000,
+        // Omit shutdownGraceMs: this case exercises the production default.
+      });
+      assert.equal(result.passed, true);
+      assert.equal(result.shutdownRequested, true);
+      assert.equal(result.code, 0);
+      assert.equal(result.signal, null);
+      assert.equal(result.forcedKill, false);
+      assert.equal(result.drainageTimedOut, false);
+      assert.deepEqual(result.failures, []);
+      assert.equal(result.stdout, "scoped cleanup complete");
+      assert.equal(result.stderr, "");
+      assert.throws(() => process.kill(result.pid, 0), /ESRCH/);
+    },
+  );
+
   it.skipIf(isWindows)("rejects a nonzero exit during requested shutdown", async () => {
     const result = await runChild(`
       setInterval(() => {}, 1000);
