@@ -70,6 +70,28 @@ afterEach(async () => {
 });
 
 describe("fork lifecycle across navigation and remounts", () => {
+  it("submits from the checked menu without checking again, but rechecks the latest response", async () => {
+    await render();
+    await act(() => hook.prepareFork(source));
+    expect(commands.options).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace");
+    });
+    expect(commands.options).toHaveBeenCalledTimes(1);
+    expect(commands.dispatch).toHaveBeenCalledTimes(1);
+    // The menu's check is used once: another fork from the same point checks again.
+    await act(async () => {
+      await hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace");
+    });
+    expect(commands.options).toHaveBeenCalledTimes(2);
+    const latest = { kind: "assistant-response" as const, messageId: null, latest: true };
+    await act(() => hook.prepareFork(latest));
+    await act(async () => {
+      await hook.forkFromMessage(latest, { workspaceMode: "local" }, "/workspace");
+    });
+    expect(commands.options).toHaveBeenCalledTimes(4);
+  });
+
   it.each([true, false])(
     "dispatches a missing-image fork only after confirmation (%s)",
     async (proceed) => {
