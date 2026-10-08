@@ -237,6 +237,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
             path: path.join(configDir, "skills", "kane-cli", "SKILL.md"),
             enabled: true,
             scope: "user",
+            canSetEnabled: true,
             description,
             userInvocationOnly: true,
             userInvocable: false,

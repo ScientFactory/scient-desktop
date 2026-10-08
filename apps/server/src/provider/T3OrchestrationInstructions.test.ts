@@ -16,7 +16,7 @@ describe("Scient orchestration provider instructions", () => {
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "call `delegate_task` again");
     assert.include(
       T3_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "Do not use `t3_thread_send` on `childThreadId`",
+      "Do not use `scient_thread_send` on `childThreadId`",
     );
   });
 
