@@ -4,6 +4,8 @@
  * published, or applied to the folder, whichever side it came from.
  */
 
+import { manuscriptCollisionKey } from "./unicodeCaseFold.ts";
+
 export type ManuscriptPathProblem =
   | "empty"
   | "too-long"
@@ -29,7 +31,11 @@ export function manuscriptPathProblem(path: string): ManuscriptPathProblem | nul
   const segments = path.split("/");
   for (const segment of segments) {
     if (segment.length === 0 || segment === "." || segment === "..") return "traversal";
-    if (RESERVED_SEGMENTS.has(segment.toLowerCase())) return "reserved";
+    if (
+      RESERVED_SEGMENTS.has(segment.toLowerCase()) ||
+      segment.toLowerCase().startsWith(".scient-overleaf-apply-")
+    )
+      return "reserved";
     if (
       /^ |[ .]$/u.test(segment) ||
       /[<>:"|?*]/u.test(segment) ||
@@ -74,7 +80,7 @@ export function manuscriptTreeProblem(paths: ReadonlyArray<string>): ManuscriptT
   }
   for (const name of [...files, ...folders.keys()]) {
     const normalized = name.normalize("NFC");
-    const key = normalized.toLocaleLowerCase("en-US").normalize("NFC");
+    const key = manuscriptCollisionKey(name);
     const earlier = folded.get(key);
     if (earlier !== undefined && earlier !== name) {
       return {

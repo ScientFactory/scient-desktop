@@ -365,10 +365,10 @@ export const make = Effect.gen(function* () {
         string,
         string,
       ];
-      if (type !== "blob" || (mode !== "100644" && mode !== "100755")) {
+      if (type !== "blob" || mode !== "100644") {
         return yield* new OverleafRepositoryError({
           reason: "unsupported-entry",
-          detail: `"${entryPath}" is not a regular file (links and submodules cannot be synchronized).`,
+          detail: `"${entryPath}" is not a supported manuscript entry (executable files, links and submodules cannot be synchronized).`,
         });
       }
       entries.push({ path: entryPath, oid });
@@ -533,12 +533,13 @@ export const make = Effect.gen(function* () {
       ).pipe(
         Effect.map((result) => parsePushPorcelain(text(result.stdout), result.stderr)),
         // A timeout or a broken connection says nothing about what Overleaf did.
-        Effect.catchTag("OverleafGitError", (error) =>
-          Effect.succeed<PushOutcome>({
-            _tag: "unknown",
-            detail: `${error.reason}: ${error.detail}`,
-          }),
-        ),
+        Effect.catchTags({
+          OverleafGitError: (error) =>
+            Effect.succeed<PushOutcome>({
+              _tag: "unknown",
+              detail: `${error.reason}: ${error.detail}`,
+            }),
+        }),
       );
     },
   );

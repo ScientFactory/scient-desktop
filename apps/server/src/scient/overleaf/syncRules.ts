@@ -148,7 +148,14 @@ export function conflictGroups(input: {
       separator = path.indexOf("/", separator + 1)
     ) {
       const parent = path.slice(0, separator);
-      if (knownPaths.has(parent)) link(parent, path);
+      // Historical files absent on both sides must not connect independent child conflicts.
+      if (
+        knownPaths.has(parent) &&
+        (input.trees.local.has(parent) ||
+          input.trees.remote.has(parent) ||
+          input.trees.merged.has(parent))
+      )
+        link(parent, path);
     }
   }
   const closeOverPaths = (paths: ReadonlyArray<string>) => {

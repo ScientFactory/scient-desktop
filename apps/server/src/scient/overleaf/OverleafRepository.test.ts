@@ -15,7 +15,13 @@ import {
   parseRemoteBranchAdvertisement,
 } from "./OverleafRepository.ts";
 
-import { applyChoices, applyUnits, conflictGroups, hasConflictMarkers } from "./syncRules.ts";
+import {
+  applyChoices,
+  applyUnits,
+  conflictGroups,
+  hasConflictMarkers,
+  canMergeInEditor,
+} from "./syncRules.ts";
 
 const bytes = (value: string) => new TextEncoder().encode(value);
 const text = (value: Uint8Array) => new TextDecoder().decode(value);
@@ -446,67 +452,65 @@ describe("OverleafRepository transport", () => {
 });
 
 describe("OverleafRepository structural conflict decisions", () => {
-  for (const reverse of [false, true]) {
-    for (const choice of ["mine", "theirs"] as const) {
-      it.effect(
-        `chooses ${choice} for a ${reverse ? "remote" : "local"} file against a folder`,
-        () =>
-          withHarness((h) =>
-            Effect.gen(function* () {
-              const repo = yield* h.repo("structure");
-              const base = yield* h.tree(repo, {});
-              const file = { section: "file", "section2.tex": "unrelated" };
-              const folder = {
-                "section/intro.tex": "intro",
-                "section/nested/methods.tex": "methods",
-                "section2.tex": "unrelated",
-              };
-              const local = yield* h.tree(repo, reverse ? folder : file);
-              const remote = yield* h.tree(repo, reverse ? file : folder);
-              const merged = yield* h.repos.merge({ repo, base, local, remote });
-              const asMap = (entries: ReadonlyArray<OverleafRepository.TreeEntry>) =>
-                new Map(entries.map((e) => [e.path, e.oid]));
-              const trees = {
-                base: asMap(yield* h.repos.readTree({ repo, tree: base })),
-                local: asMap(yield* h.repos.readTree({ repo, tree: local })),
-                remote: asMap(yield* h.repos.readTree({ repo, tree: remote })),
-                merged: asMap(yield* h.repos.readTree({ repo, tree: merged.tree })),
-              };
-              const groups = conflictGroups({
-                trees,
-                merge: merged.conflicts,
-                guarded: [],
-                interrupted: [],
-                renames: [],
-              });
-              expect(groups).toHaveLength(1);
-              expect(groups[0]?.paths).toContain("section/intro.tex");
-              expect(groups[0]?.paths).toContain("section/nested/methods.tex");
-              expect(groups[0]?.paths).not.toContain("section2.tex");
-              const chosen = applyChoices({
-                merged: trees.merged,
-                local: trees.local,
-                remote: trees.remote,
-                conflicts: groups,
-                choices: [choice],
-              });
-              const chosenTree = yield* h.repos.writeTree({
-                repo,
-                entries: [...chosen].map(([path, oid]) => ({ path, oid })),
-              });
-              expect(yield* h.read(repo, chosenTree)).toEqual(
-                choice === "mine" ? (reverse ? folder : file) : reverse ? file : folder,
-              );
-              const changes = yield* h.repos.diff({ repo, from: local, to: chosenTree });
-              if (changes.length)
-                expect(applyUnits({ changes, renames: [], conflicts: groups })).toEqual([
-                  changes.map((_, i) => i),
-                ]);
-            }),
-          ),
-      );
-    }
-  }
+  it.effect.each(
+    [false, true].flatMap((reverse) =>
+      (["mine", "theirs"] as const).map((choice) => ({ reverse, choice })),
+    ),
+  )("chooses $choice for reverse=$reverse file against folder", ({ reverse, choice }) =>
+    withHarness((h) =>
+      Effect.gen(function* () {
+        const repo = yield* h.repo("structure");
+        const base = yield* h.tree(repo, {});
+        const file = { section: "file", "section2.tex": "unrelated" };
+        const folder = {
+          "section/intro.tex": "intro",
+          "section/nested/methods.tex": "methods",
+          "section2.tex": "unrelated",
+        };
+        const local = yield* h.tree(repo, reverse ? folder : file);
+        const remote = yield* h.tree(repo, reverse ? file : folder);
+        const merged = yield* h.repos.merge({ repo, base, local, remote });
+        const asMap = (entries: ReadonlyArray<OverleafRepository.TreeEntry>) =>
+          new Map(entries.map((e) => [e.path, e.oid]));
+        const trees = {
+          base: asMap(yield* h.repos.readTree({ repo, tree: base })),
+          local: asMap(yield* h.repos.readTree({ repo, tree: local })),
+          remote: asMap(yield* h.repos.readTree({ repo, tree: remote })),
+          merged: asMap(yield* h.repos.readTree({ repo, tree: merged.tree })),
+        };
+        const groups = conflictGroups({
+          trees,
+          merge: merged.conflicts,
+          guarded: [],
+          interrupted: [],
+          renames: [],
+        });
+        expect(groups).toHaveLength(1);
+        expect(groups[0]?.paths).toContain("section/intro.tex");
+        expect(groups[0]?.paths).toContain("section/nested/methods.tex");
+        expect(groups[0]?.paths).not.toContain("section2.tex");
+        const chosen = applyChoices({
+          merged: trees.merged,
+          local: trees.local,
+          remote: trees.remote,
+          conflicts: groups,
+          choices: [choice],
+        });
+        const chosenTree = yield* h.repos.writeTree({
+          repo,
+          entries: [...chosen].map(([path, oid]) => ({ path, oid })),
+        });
+        expect(yield* h.read(repo, chosenTree)).toEqual(
+          choice === "mine" ? (reverse ? folder : file) : reverse ? file : folder,
+        );
+        const changes = yield* h.repos.diff({ repo, from: local, to: chosenTree });
+        if (changes.length)
+          expect(applyUnits({ changes, renames: [], conflicts: groups })).toEqual([
+            changes.map((_, i) => i),
+          ]);
+      }),
+    ),
+  );
 
   it.effect("includes a child renamed on Overleaf in the same structural decision", () =>
     withHarness((h) =>
@@ -604,7 +608,7 @@ describe("OverleafRepository Unicode path collisions", () => {
         const raw = yield* h.git.execute({
           cwd: repo,
           args: ["mktree", "-z"],
-          stdin: bytes(`100644 blob ${one}\t${first}\0` + `100644 blob ${two}\t${second}\0`),
+          stdin: bytes(`100644 blob ${one}\t${first}\u0000100644 blob ${two}\t${second}\0`),
         });
         const incomingError = yield* h.repos
           .readTree({ repo, tree: text(raw.stdout).trim() })
@@ -624,3 +628,66 @@ describe("OverleafRepository Unicode path collisions", () => {
     ),
   );
 });
+
+describe("independent conflicts under a historical file", () => {
+  it.effect("keeps each new child conflict editor-resolvable", () =>
+    withHarness((h) =>
+      Effect.gen(function* () {
+        const repo = yield* h.repo("historical-parent");
+        const base = yield* h.tree(repo, { notes: "old file" });
+        const local = yield* h.tree(repo, {
+          "notes/a.tex": "A local\n",
+          "notes/b.tex": "B local\n",
+        });
+        const remote = yield* h.tree(repo, {
+          "notes/a.tex": "A remote\n",
+          "notes/b.tex": "B remote\n",
+        });
+        const merge = yield* h.repos.merge({ repo, base, local, remote });
+        const read = Effect.fnUntraced(function* (tree: string) {
+          return new Map(
+            (yield* h.repos.readTree({ repo, tree })).map((entry) => [entry.path, entry.oid]),
+          );
+        });
+        const trees = {
+          base: yield* read(base),
+          local: yield* read(local),
+          remote: yield* read(remote),
+          merged: yield* read(merge.tree),
+        };
+        const groups = conflictGroups({
+          trees,
+          merge: merge.conflicts,
+          renames: [],
+          guarded: [],
+          interrupted: [],
+        });
+        const merged = yield* h.read(repo, merge.tree);
+        expect(groups.map((group) => group.paths)).toEqual([["notes/a.tex"], ["notes/b.tex"]]);
+        expect(
+          groups.map((group) => canMergeInEditor(group, (p) => hasConflictMarkers(merged[p]!))),
+        ).toEqual([true, true]);
+      }),
+    ),
+  );
+});
+
+it.effect(
+  "rejects executable entries rather than reconstructing them with altered permissions",
+  () =>
+    withHarness((h) =>
+      Effect.gen(function* () {
+        const repo = yield* h.repo("executable");
+        const oid = yield* h.repos.writeBlob({ repo, bytes: bytes("helper") });
+        const made = yield* h.git.execute({
+          cwd: repo,
+          args: ["mktree"],
+          stdin: bytes(`100755 blob ${oid}\thelper.sh\n`),
+        });
+        const error = yield* h.repos
+          .readTree({ repo, tree: text(made.stdout).trim() })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({ reason: "unsupported-entry" });
+      }),
+    ),
+);

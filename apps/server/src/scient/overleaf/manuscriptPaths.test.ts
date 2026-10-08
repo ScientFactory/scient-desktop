@@ -88,3 +88,29 @@ describe("Unicode path identity", () => {
     expect(manuscriptTreeProblem(["caf\u00e9.tex", "cafe.tex"])).toBeNull();
   });
 });
+
+describe("full Unicode case folding", () => {
+  it.each([
+    ["straße.tex", "STRASSE.tex"],
+    ["ﬁgure.tex", "figure.tex"],
+    ["ß.tex", "ẞ.tex"],
+    ["straße.tex", "STRAẞE.tex"],
+    ["ς.tex", "Σ.tex"],
+    ["ſ.tex", "S.tex"],
+    ["K.tex", "k.tex"],
+  ])("rejects aliases %s and %s in both orders and folder components", (a, b) => {
+    for (const [first, second] of [
+      [a, b],
+      [b, a],
+    ]) {
+      expect(manuscriptTreeProblem([first!, second!])?.kind).toBe("case-collision");
+      expect(manuscriptTreeProblem([`${first}/a.tex`, `${second}/b.tex`])?.kind).toBe(
+        "case-collision",
+      );
+    }
+  });
+  it("does not conflate dotted and dotless i", () => {
+    expect(manuscriptTreeProblem(["i.tex", "ı.tex"])).toBeNull();
+    expect(manuscriptTreeProblem(["ı.tex", "i.tex"])).toBeNull();
+  });
+});
