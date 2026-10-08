@@ -428,9 +428,20 @@ it.effect("a running fork's copied answered question keeps its folded answer mes
     const steer = projection.turnItems.find((item) => item.id === "steer")!;
     // Codex answers a message-mode question by steering `async-answer:<request id>`.
     const question: OrchestrationV2TurnItem = {
-      ...steer,
       id: TurnItemId.make("running-question"),
+      threadId,
+      runId: running,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
       ordinal: 7,
+      status: "completed",
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
       type: "user_input_request",
       requestId: RuntimeRequestId.make("running-request"),
       responseMode: "message",
@@ -477,6 +488,41 @@ it.effect("a running fork's copied answered question keeps its folded answer mes
     assert.ok(copiedAnswer);
     assert.notEqual(copiedAnswer.id, answerMessage.id);
     assert.equal(questionAnswerMessageId(copied.questionAnswer), copiedAnswer.id);
+  }),
+);
+
+it.effect("a running fork's copies name copied parents by their copies", () =>
+  Effect.gen(function* () {
+    const projection = makeProjection();
+    const turnItems = projection.turnItems.map((item) =>
+      item.id === "partial-answer"
+        ? { ...item, parentItemId: TurnItemId.make("pending-approval") }
+        : item.id === "steer"
+          ? { ...item, parentItemId: TurnItemId.make("answer-one") }
+          : item,
+    );
+    const plan = yield* planConversationFork({
+      projection: {
+        ...projection,
+        turnItems,
+        visibleTurnItems: turnItems.map((item, position) => ({
+          item,
+          position,
+          sourceThreadId: threadId,
+          sourceItemId: item.id,
+          visibility: "local" as const,
+        })),
+      },
+      targetThreadId,
+      source: { kind: "running-turn", runId: running },
+    });
+    const approval = plan.items.find((item) => item.type === "approval_request")!;
+    const partial = plan.items.find((item) => item.inheritedFrom?.itemId === "partial-answer")!;
+    const steer = plan.items.find((item) => item.inheritedFrom?.itemId === "steer")!;
+    assert.equal(partial.parentItemId, approval.id);
+    assert.notEqual(approval.id, "pending-approval");
+    // The completed run's answer is shared, under its own id.
+    assert.equal(steer.parentItemId, "answer-one");
   }),
 );
 

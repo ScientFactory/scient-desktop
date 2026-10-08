@@ -2418,7 +2418,7 @@ it.live("file release ignores name case and subagent conversations' copied fork 
       });
       // The source still shows the file, in any case.
       assert.isFalse(
-        (yield* forks.releasableFiles(forkId)).some(
+        (yield* store.getReleasableFiles(forkId)).some(
           (id) => id.toLowerCase() === file.id.toLowerCase(),
         ),
       );
@@ -2464,7 +2464,7 @@ it.live("file release ignores name case and subagent conversations' copied fork 
           commandId: CommandId.make(`release-rules-delete-${threadId}`),
           threadId,
         });
-      assert.include(yield* forks.releasableFiles(otherForkId), file.id);
+      assert.include(yield* store.getReleasableFiles(otherForkId), file.id);
     }),
   ),
 );
@@ -2629,8 +2629,8 @@ it.live(
             threadId,
           });
         const released = (threadId: ThreadId) =>
-          forks
-            .releasableFiles(threadId)
+          store
+            .getReleasableFiles(threadId)
             .pipe(Effect.map((ids) => ids.map((id) => id.toLowerCase())));
 
         // Deleting a conversation outside any fork lineage that reused the file

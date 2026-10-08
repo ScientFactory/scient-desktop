@@ -34,6 +34,7 @@ import type { ProviderAdapterV2TurnInput } from "../ProviderAdapter.ts";
 import * as Registry from "../ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 import { ProjectStoreV2 } from "../ProjectStore.ts";
+import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
 import { ensureQueuedMessageBudget } from "../QueuedMessageBudget.ts";
 import { ConversationForkService } from "../scient-fork/ConversationForkService.ts";
@@ -332,9 +333,7 @@ it.live.each(
             threadId: target,
           });
           yield* (yield* OrchestrationEffectWorkerV2).drain();
-          assert.deepEqual(yield* (yield* ConversationForkService).releasableFiles(target), [
-            file.id,
-          ]);
+          assert.deepEqual(yield* (yield* ProjectionStoreV2).getReleasableFiles(target), [file.id]);
         }
       }).pipe(
         Effect.provide(

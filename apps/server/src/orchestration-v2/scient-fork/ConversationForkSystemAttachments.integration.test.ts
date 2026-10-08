@@ -251,7 +251,9 @@ it.live(
           commandId: CommandId.make("system-file-target-delete"),
           threadId: target,
         });
-        assert.deepEqual(yield* forks.releasableFiles(target), [attachment.id]);
+        assert.deepEqual(yield* (yield* ProjectionStoreV2).getReleasableFiles(target), [
+          attachment.id,
+        ]);
       }).pipe(Effect.provide(testLayer), Effect.timeout("15 seconds")),
     ),
 );

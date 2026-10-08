@@ -231,3 +231,35 @@ it.live(
     ),
   120000,
 );
+
+it.live(
+  "a fork window lists the copies it shows with their plans, as a full read does",
+  () =>
+    run(
+      Effect.gen(function* () {
+        const source = yield* seed({ turns: 3 });
+        const child = (yield* fork(source.thread.id, "copy-window-child")).projection;
+        const store = yield* ProjectionStoreV2;
+        const copies = child.turnItems.filter((item) => item.type === "proposed_plan");
+        assert.isNotEmpty(copies);
+        const window = (yield* store.getThreadSnapshotWindow(child.thread.id, { rowLimit: 200 }))
+          .projection;
+        assert.isTrue(
+          window.visibleTurnItems.some((row) => copies.some((copy) => copy.id === row.item.id)),
+        );
+        for (const copy of copies) {
+          assert.deepEqual(
+            window.turnItems.find((item) => item.id === copy.id),
+            copy,
+          );
+          assert.ok(copy.type === "proposed_plan");
+          assert.deepEqual(
+            window.plans.find((plan) => plan.id === copy.planId),
+            child.plans.find((plan) => plan.id === copy.planId),
+          );
+          assert.ok(window.nodes.some((node) => node.id === copy.nodeId));
+        }
+      }),
+    ),
+  120000,
+);

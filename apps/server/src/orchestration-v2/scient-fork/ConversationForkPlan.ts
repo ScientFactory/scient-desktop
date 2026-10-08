@@ -262,7 +262,12 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
       ...frozenHistoryFields(original),
       id: copyIds.get(original.id)!,
       threadId: targetThreadId,
-      parentItemId: original.parentItemId,
+      // A copied parent is named by its copy; a shared one keeps its id.
+      parentItemId:
+        original.parentItemId === null
+          ? null
+          : (copyIds.get(original.parentItemId) ??
+            (positions.has(original.parentItemId) ? original.parentItemId : null)),
       ordinal,
     };
     if (original.type === "proposed_plan" || original.type === "todo_list") {

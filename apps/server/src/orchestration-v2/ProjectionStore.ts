@@ -3276,6 +3276,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     : local.map(({ item }) => forkHistoryEntry(threadId, item.id, item)),
                 );
         const inheritedRows = yield* readForkHistoryRows(sql, threadId, shown);
+        // A window lists the copies it shows, and the plans, nodes and handoffs
+        // they name, as a full read does.
+        const listedItems = new Set(projection.turnItems.map((item) => item.id));
+        const shownCopies =
+          window === undefined
+            ? []
+            : inheritedRows.flatMap((row) =>
+                row.sourceThreadId === threadId && !listedItems.has(row.item.id) ? [row.item] : [],
+              );
+        const copyRecords = yield* readForkCopyRecords(threadId, shownCopies, projection);
         // A full read already lists the inherited messages; a window adds those it shows.
         // A full read already lists them; a window reads those of the rows it
         // shows, the fork's own copies included.
@@ -3302,7 +3312,69 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 (shownAt.get(right.message.id) ?? Number.MAX_SAFE_INTEGER) || left.at - right.at,
           )
           .map(({ message }) => message);
-        return { ...projection, messages, visibleTurnItems };
+        return {
+          ...projection,
+          ...copyRecords,
+          messages,
+          visibleTurnItems,
+        };
+      });
+
+    // As SQLite orders text: by code unit.
+    const compareIds = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
+    /** The fork's own copies a window shows, merged with what they name. */
+    const readForkCopyRecords = (
+      threadId: ThreadId,
+      copies: ReadonlyArray<OrchestrationV2TurnItem>,
+      projection: OrchestrationV2ThreadProjection,
+    ) =>
+      Effect.gen(function* () {
+        if (copies.length === 0) return {};
+        const named = (field: string, listed: ReadonlyArray<{ readonly id: string }>) => {
+          const known = new Set(listed.map((record) => String(record.id)));
+          return encodeIdList([
+            ...new Set(
+              copies.flatMap((item) => {
+                const value = nullableStringField(item, field);
+                return value === null || known.has(value) ? [] : [value];
+              }),
+            ),
+          ]);
+        };
+        const [planRows, nodeRows, handoffRows] = yield* Effect.all([
+          sql<PayloadRow>`
+            SELECT payload_json FROM orchestration_v2_projection_plans
+            WHERE thread_id = ${threadId}
+              AND plan_id IN (SELECT value FROM json_each(${named("planId", projection.plans)}))
+          `,
+          sql<PayloadRow>`
+            SELECT payload_json FROM orchestration_v2_projection_nodes
+            WHERE thread_id = ${threadId}
+              AND node_id IN (SELECT value FROM json_each(${named("nodeId", projection.nodes)}))
+          `,
+          sql<PayloadRow>`
+            SELECT payload_json FROM orchestration_v2_projection_context_handoffs
+            WHERE thread_id = ${threadId}
+              AND context_handoff_id IN (
+                SELECT value FROM json_each(${named("contextHandoffId", projection.contextHandoffs)})
+              )
+          `,
+        ]);
+        const [plans, nodes, contextHandoffs] = yield* Effect.all([
+          decodeRows(decodePlanPayload, threadId)(planRows),
+          decodeRows(decodeNodePayload, threadId)(nodeRows),
+          decodeRows(decodeContextHandoffPayload, threadId)(handoffRows),
+        ]);
+        return {
+          turnItems: [...copies, ...projection.turnItems].toSorted(
+            (left, right) => left.ordinal - right.ordinal || compareIds(left.id, right.id),
+          ),
+          plans: [...projection.plans, ...plans].toSorted((left, right) =>
+            compareIds(left.id, right.id),
+          ),
+          nodes: [...projection.nodes, ...nodes],
+          contextHandoffs: [...projection.contextHandoffs, ...contextHandoffs],
+        };
       });
     // SCIENT-FORK:END
 

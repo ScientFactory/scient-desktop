@@ -40,7 +40,7 @@ import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
-import { ProjectionStoreV2, type ProjectionStoreV2Error } from "../ProjectionStore.ts";
+import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { ProjectStoreV2 } from "../ProjectStore.ts";
 import { ThreadCommandExecutor } from "../ThreadCommandExecutor.ts";
 import { randomUuidV4 } from "../RandomUuid.ts";
@@ -70,10 +70,6 @@ export class ConversationForkService extends Context.Service<
       threadId: ThreadId,
       willRetry: boolean,
     ) => Effect.Effect<void, OrchestrationDispatchCommandError>;
-    /** Files a committed deletion in this thread's lineage leaves no live conversation naming. */
-    readonly releasableFiles: (
-      threadId: ThreadId,
-    ) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
   }
 >()("t3/orchestration-v2/scient-fork/ConversationForkService") {}
 
@@ -883,7 +879,6 @@ const make = Effect.gen(function* () {
               }),
         ),
       ),
-    releasableFiles: (threadId) => projections.getReleasableFiles(threadId),
     provision: (threadId, willRetry) =>
       provision(threadId, willRetry).pipe(
         Effect.mapError((cause) =>
