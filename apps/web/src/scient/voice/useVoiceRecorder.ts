@@ -15,8 +15,6 @@ import {
 import { acquireCurrentMicrophone } from "./voiceMedia.ts";
 import { VOICE_WAVEFORM_LEVEL_COUNT } from "./voiceWaveform.ts";
 
-export { VOICE_WAVEFORM_LEVEL_COUNT } from "./voiceWaveform.ts";
-
 export type VoiceRecorderStatus = "idle" | "requesting-permission" | "recording" | "error";
 
 export type VoiceRecorderErrorKind =
