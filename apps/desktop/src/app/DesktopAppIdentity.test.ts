@@ -246,7 +246,7 @@ describe("DesktopAppIdentity", () => {
         assert.match(runtimeName.replaceAll(" ", ""), /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/);
         assert.equal(
           calls.setAboutPanelOptions[0]?.applicationName,
-          stage === "Dev" ? "Scient Dev" : "Scient",
+          stage === "Dev" ? "Scient (Dev)" : "Scient",
         );
       }),
       { calls, environment },

@@ -3038,6 +3038,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       authoredMathText,
     } = use(ChatMarkdownRendererContext);
 
+    // SCIENT-FORK:START — retain scientific inline math while Find reveals authored source.
     if (isScientMathCodeClassName(className)) {
       const tex = nodeToPlainText(children);
       return (
@@ -3046,6 +3047,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         </ScientMathFindSurface>
       );
     }
+    // SCIENT-FORK:END
     if (node?.properties?.dataInlineCode != null) {
       const codeText = nodeToPlainText(children);
       const fileLinkMeta =
@@ -3104,6 +3106,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;
     }
+    // SCIENT-FORK:START — retain scientific display math while Find reveals authored source.
     if (isScientMathCodeClassName(codeBlock.className)) {
       return (
         <ScientMathFindSurface
@@ -3114,6 +3117,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       );
     }
 
+    // SCIENT-FORK:END
     const language = extractFenceLanguage(codeBlock.className);
     const fenceMeta = extractPreCodeMeta(node);
     const fenceTitle = extractFenceTitle(fenceMeta);

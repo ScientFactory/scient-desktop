@@ -51,6 +51,7 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
     };
     const visit = (node: Node, inPre = false) => {
       const element = node.nodeType === 1 ? (node as Element) : null;
+      // SCIENT-FORK:START — scientific Find traverses canonical source exactly once.
       // Scientific renderers keep their visual DOM stable and expose the same
       // canonical source text as the shared index. Do not count KaTeX's repeated
       // visual/MathML descendants or insert a boundary into an inline formula.
@@ -59,6 +60,7 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
         if (source) visit(source, inPre);
         return;
       }
+      // SCIENT-FORK:END
       if (element?.matches("svg")) return;
       if (element?.matches(`${THREAD_FIND_IGNORE_SELECTOR}, [role="toolbar"]`)) {
         flush();

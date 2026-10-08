@@ -22,7 +22,9 @@ import {
 } from "./markdownLinks.ts";
 import { upgradeLegacyContextMessage } from "./composerContextLegacy.ts";
 import { parseComposerContextHref } from "./composerContextReferences.ts";
+// SCIENT-FORK:START — shared citation labels include scientific quotations and comments.
 import { composerCitationLabel, parseComposerCitationHref } from "./composerCitations.ts";
+// SCIENT-FORK:END
 import type { OrchestrationV2ConversationMessage } from "@t3tools/contracts";
 import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "./proposedPlanText.ts";
 import { unified } from "unified";
@@ -136,6 +138,7 @@ function markdownThreadFindText(
       flush();
       return;
     }
+    // SCIENT-FORK:START — index the same citation label the scientific chip renders.
     const citation =
       node.tagName === "a" && typeof href === "string" ? parseComposerCitationHref(href) : null;
     if (citation) {
@@ -143,6 +146,7 @@ function markdownThreadFindText(
       text += composerCitationLabel(citation);
       return;
     }
+    // SCIENT-FORK:END
     {
       let candidate: string | null = null;
       if (node.tagName === "a" && typeof href === "string") {
