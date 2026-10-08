@@ -243,6 +243,8 @@ export function LatexMathPalette({
   const panelId = useId();
   const ownerId = useId();
   const panelRoot = useRef<HTMLElement>(null);
+  const dragHandle = useRef<HTMLButtonElement>(null);
+  const panelPosition = useRef({ x: 0, y: 0 });
   const [portalHost, setPortalHost] = useState<Element | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
@@ -250,6 +252,153 @@ export function LatexMathPalette({
   useLayoutEffect(() => {
     setPortalHost(root.current?.closest(".scient-latex-reader-footer") ?? null);
   }, []);
+  useLayoutEffect(() => {
+    const panel = panelRoot.current;
+    const handle = dragHandle.current;
+    if (!open || !panel || !handle) return;
+    const workspace = root.current?.closest(".scient-latex-visual-workspace");
+    const listeners = new AbortController();
+    let position = { x: 0, y: 0 };
+    let drag: {
+      pointerId: number;
+      x: number;
+      y: number;
+      start: { x: number; y: number };
+      latest: { x: number; y: number };
+    } | null = null;
+    let frame = 0;
+    const move = (next: { x: number; y: number }) => {
+      const bounds = panel.getBoundingClientRect();
+      const viewport = workspace?.getBoundingClientRect();
+      const left = Math.max(8, (viewport?.left ?? 0) + 8);
+      const top = Math.max(8, (viewport?.top ?? 0) + 8);
+      const right = Math.min(window.innerWidth, viewport?.right ?? window.innerWidth) - 8;
+      const bottom = Math.min(window.innerHeight, viewport?.bottom ?? window.innerHeight) - 8;
+      const baseLeft = bounds.left - position.x;
+      const baseTop = bounds.top - position.y;
+      position = {
+        x:
+          Math.max(left, Math.min(Math.max(left, right - bounds.width), baseLeft + next.x)) -
+          baseLeft,
+        y:
+          Math.max(top, Math.min(Math.max(top, bottom - bounds.height), baseTop + next.y)) -
+          baseTop,
+      };
+      panelPosition.current = position;
+      panel.style.translate = `${position.x}px ${position.y}px`;
+    };
+    const applyPointer = () => {
+      frame = 0;
+      if (drag)
+        move({
+          x: drag.start.x + drag.latest.x - drag.x,
+          y: drag.start.y + drag.latest.y - drag.y,
+        });
+    };
+    const endDrag = (cancel = false) => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+      const previous = drag;
+      drag = null;
+      if (!previous) return;
+      if (cancel) move(previous.start);
+      panel.removeAttribute("data-dragging");
+      if (handle.hasPointerCapture(previous.pointerId))
+        handle.releasePointerCapture(previous.pointerId);
+    };
+    handle.addEventListener(
+      "pointerdown",
+      (event) => {
+        if (event.button !== 0 || !event.isPrimary || drag) return;
+        event.preventDefault();
+        event.stopPropagation();
+        handle.focus({ preventScroll: true });
+        drag = {
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          latest: { x: event.clientX, y: event.clientY },
+          start: { ...position },
+        };
+        panel.setAttribute("data-dragging", "");
+        handle.setPointerCapture(event.pointerId);
+      },
+      { signal: listeners.signal },
+    );
+    handle.addEventListener(
+      "pointermove",
+      (event) => {
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        drag.latest = { x: event.clientX, y: event.clientY };
+        if (!frame) frame = requestAnimationFrame(applyPointer);
+      },
+      { signal: listeners.signal },
+    );
+    handle.addEventListener(
+      "pointerup",
+      (event) => {
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        drag.latest = { x: event.clientX, y: event.clientY };
+        if (frame) cancelAnimationFrame(frame);
+        applyPointer();
+        endDrag();
+      },
+      { signal: listeners.signal },
+    );
+    const cancel = (event: PointerEvent) => {
+      if (drag?.pointerId === event.pointerId) endDrag(true);
+    };
+    handle.addEventListener("pointercancel", cancel, { signal: listeners.signal });
+    handle.addEventListener("lostpointercapture", cancel, { signal: listeners.signal });
+    handle.addEventListener(
+      "keydown",
+      (event) => {
+        if (event.altKey || event.ctrlKey || event.metaKey) return;
+        if (event.key === "Escape" && drag) {
+          event.preventDefault();
+          event.stopPropagation();
+          endDrag(true);
+          return;
+        }
+        if (
+          event.key !== "Home" &&
+          !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+        )
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        endDrag();
+        const step = event.shiftKey ? 1 : 10;
+        move(
+          event.key === "Home"
+            ? { x: 0, y: 0 }
+            : {
+                x:
+                  position.x +
+                  (event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0),
+                y:
+                  position.y +
+                  (event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0),
+              },
+        );
+      },
+      { signal: listeners.signal },
+    );
+    const resize = () => move(position);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(resize);
+    observer?.observe(panel);
+    if (workspace) observer?.observe(workspace);
+    window.addEventListener("resize", resize, { signal: listeners.signal });
+    move(panelPosition.current);
+    return () => {
+      endDrag();
+      listeners.abort();
+      observer?.disconnect();
+      panel.style.removeProperty("translate");
+    };
+  }, [open, portalHost]);
   useEffect(() => {
     if (!openRequest) return;
     setOpen(true);
@@ -372,7 +521,14 @@ export function LatexMathPalette({
       }}
     >
       <div className="scient-latex-symbol-palette-header">
-        <strong>Symbols</strong>
+        <button
+          ref={dragHandle}
+          type="button"
+          className="scient-latex-symbol-palette-move"
+          aria-label="Move Symbols"
+        >
+          Symbols
+        </button>
         <Button variant="ghost" size="icon-xs" aria-label="Close Symbols" onClick={close}>
           <X />
         </Button>

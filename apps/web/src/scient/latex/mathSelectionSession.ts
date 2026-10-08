@@ -1,11 +1,11 @@
 import type { MathfieldElement } from "mathlive";
 import { enterMathFormattingArgument } from "./mathTextFormatting";
 import { registerLatexSelection } from "./latexSelectionSession";
-import { mathEditingGuideRects } from "./mathEditingGuides";
+import { mathEditingGuideRects, mathEmptyGuideRects } from "./mathEditingGuides";
 import { latexContainerScope } from "./latexStructuredSelection";
 import {
   mathEditingScopes,
-  mathScopeRects,
+  mathSelectionRects,
   mathSelectionRevision,
   mathCellRectangle,
   mathSelectionAtOffset,
@@ -16,9 +16,11 @@ export function installMathSelectionSession(
   math: MathfieldElement,
   options: {
     rectangle: () => MathRectangleSelection | null;
+    endpoints: () => readonly [number, number];
     apply: (
       selection: MathfieldElement["selection"],
       rectangle: MathRectangleSelection | null,
+      endpoints?: readonly [number, number],
     ) => void;
     exit: (direction: -1 | 1) => void;
   },
@@ -27,6 +29,7 @@ export function installMathSelectionSession(
     selection: MathfieldElement["selection"];
     rectangle: MathRectangleSelection | null;
     scopeIndex: number;
+    endpoints: readonly [number, number];
   }[] = [];
   let expanding = false;
   let candidates = mathEditingScopes(math);
@@ -37,7 +40,8 @@ export function installMathSelectionSession(
   });
   const selectionStyle = document.createElement("style");
   selectionStyle.textContent = `
-    .ML__selection { opacity: 0 !important; }
+    ::selection { background: transparent; color: inherit; }
+    .ML__selection, .ML__contains-highlight { display: none !important; }
     .ML__empty-line-anchor.ML__selected::after { background: transparent !important; }
   `;
   math.shadowRoot?.append(selectionStyle);
@@ -46,6 +50,7 @@ export function installMathSelectionSession(
     capture: () => {
       const selection = copySelection(),
         rectangle = options.rectangle();
+      const endpoints = options.endpoints();
       const revision = mathSelectionRevision(math),
         value = math.getValue();
       const selectedScope = candidates[scopeIndex - 1];
@@ -62,12 +67,13 @@ export function installMathSelectionSession(
         selectionKind: rectangle ? ("cells" as const) : ("text" as const),
         scopePadding: 0,
         scopes: () => mathEditingGuideRects(math),
+        emptyScopes: () => mathEmptyGuideRects(math),
         selection: () =>
-          rectangle
-            ? rectangle.ranges.flatMap((range) => mathScopeRects(math, range))
-            : selection.ranges.flatMap((range) =>
-                range[0] === range[1] ? [] : mathScopeRects(math, range, true),
-              ),
+          mathSelectionRects(
+            math,
+            rectangle?.ranges ?? selection.ranges.filter(([from, to]) => from !== to),
+            rectangle?.anchor.array,
+          ),
         restore: (focus) => {
           if (
             !math.isConnected ||
@@ -76,7 +82,7 @@ export function installMathSelectionSession(
           )
             return false;
           expanding = true;
-          options.apply(selection, rectangle);
+          options.apply(selection, rectangle, endpoints);
           if (focus) math.focus();
           lastSelection = JSON.stringify(math.selection.ranges);
           expanding = false;
@@ -100,7 +106,7 @@ export function installMathSelectionSession(
         if (!previous) return false;
         expanding = true;
         scopeIndex = previous.scopeIndex;
-        options.apply(previous.selection, previous.rectangle);
+        options.apply(previous.selection, previous.rectangle, previous.endpoints);
         expanding = false;
       } else if (command === "selectionExpand" || command === "selectionScopeExpand") {
         if (!history.length) candidates = mathEditingScopes(math);
@@ -120,12 +126,20 @@ export function installMathSelectionSession(
         );
         const scope = candidates[next];
         if (!scope) return false;
-        history.push({ selection: copySelection(), rectangle: options.rectangle(), scopeIndex });
+        history.push({
+          selection: copySelection(),
+          rectangle: options.rectangle(),
+          scopeIndex,
+          endpoints: options.endpoints(),
+        });
         scopeIndex = next + 1;
         expanding = true;
         const cell =
-          scope.kind === "cell" && scope.range[0] === scope.range[1]
-            ? mathSelectionAtOffset(math, math.position).path.at(-1)
+          scope.kind === "cell"
+            ? mathSelectionAtOffset(math, math.position).path.findLast(
+                (candidate) =>
+                  candidate.cell[0] === scope.range[0] && candidate.cell[1] === scope.range[1],
+              )
             : null;
         options.apply(
           { ranges: [[...scope.range]], direction: "forward" },
@@ -175,7 +189,7 @@ export function installMathSelectionSession(
   math.addEventListener("keydown", keydown);
   math.addEventListener("selection-change", changed);
   math.addEventListener("input", input);
-  math.addEventListener("pointerdown", reset);
+  math.addEventListener("pointerdown", reset, true);
   return {
     refresh: session.refresh,
     dispose: () => {
@@ -184,7 +198,7 @@ export function installMathSelectionSession(
       math.removeEventListener("keydown", keydown);
       math.removeEventListener("selection-change", changed);
       math.removeEventListener("input", input);
-      math.removeEventListener("pointerdown", reset);
+      math.removeEventListener("pointerdown", reset, true);
     },
   };
 }

@@ -8,6 +8,9 @@ interface MathAtom {
   readonly command?: string;
   readonly args?: readonly unknown[];
   readonly skipBoundary?: boolean;
+  readonly isFirstSibling?: boolean;
+  readonly isLastSibling?: boolean;
+  readonly inCaptureSelection?: boolean;
   readonly isRoot?: boolean;
   readonly environmentName?: string;
   readonly parent?: MathAtom | null;
@@ -29,6 +32,7 @@ interface MathAtom {
 }
 
 interface MathModel {
+  readonly root?: MathAtom;
   readonly atoms: readonly MathAtom[];
   at(offset: number): MathAtom;
   offsetOf(atom: MathAtom): number;
@@ -69,6 +73,26 @@ interface MathMutationController {
   snapshot?: () => void;
   stopCoalescingUndo?: () => void;
   flushInlineShortcutBuffer?: () => void;
+  defaultStyle?: Style;
+  styleBias?: "left" | "right" | "none";
+}
+
+/** Preserve native typing/history preparation while owning the pointer gesture. */
+export function prepareMathPointerSelection(math: MathfieldElement): void {
+  const controller = (math as unknown as { _mathfield?: MathMutationController })._mathfield;
+  controller?.flushInlineShortcutBuffer?.();
+  controller?.stopCoalescingUndo?.();
+  refreshMathGeometry(math);
+}
+
+export function setMathPointerPosition(math: MathfieldElement, offset: number): void {
+  const controller = (math as unknown as { _mathfield?: MathMutationController })._mathfield;
+  if (controller && offset !== math.position) {
+    const variantStyle = controller.defaultStyle?.variantStyle;
+    controller.defaultStyle = variantStyle === undefined ? {} : { variantStyle };
+    controller.styleBias = "left";
+  }
+  math.position = offset;
 }
 
 /** MathLive caches screen coordinates until rendering, even when an ancestor scrolls. */
@@ -426,10 +450,10 @@ function isMathFormattingScope(atom: MathAtom): boolean {
 }
 
 /** Accent bodies have less vertical room than the enclosing accented expression. */
-export function mathCaretInAccentBody(math: MathfieldElement): boolean {
+export function mathCaretInAccentBody(math: MathfieldElement, offset = math.position): boolean {
   const model = mathModel(math);
   if (!model) return false;
-  for (let atom = model.at(math.position); atom?.parent; atom = atom.parent) {
+  for (let atom = model.at(offset); atom?.parent; atom = atom.parent) {
     if (atom.parent.type === "accent" && atom.parentBranch === "body") return true;
   }
   return false;
@@ -442,7 +466,11 @@ export function mathGuideScopeId(math: MathfieldElement): string | null {
   for (let atom = model.at(math.position); atom?.parent; atom = atom.parent) {
     const owner = atom.parent;
     if (owner.isRoot) return null;
-    if (!isMathFormattingScope(owner)) return owner.id ?? null;
+    if (
+      !isMathFormattingScope(owner) &&
+      !(owner.type === "group" && owner.skipBoundary && !owner.command)
+    )
+      return owner.id ?? null;
   }
   return null;
 }
@@ -462,6 +490,36 @@ function mathOwnerRange(model: MathModel, owner: MathAtom): [number, number] {
   const before = base && base.type !== "first" ? base.leftSibling : owner.leftSibling;
   const after = owner.rightSibling?.type === "subsup" ? owner.rightSibling : owner;
   return [before ? model.offsetOf(before) : 0, model.offsetOf(after)];
+}
+
+/** Selecting a complete base also selects scripts rendered beside that base. */
+function includeCompleteMathScriptBases(
+  model: MathModel,
+  range: readonly [number, number],
+): [number, number] {
+  let from = Math.min(...range),
+    to = Math.max(...range);
+  if (from === to) return [from, to];
+  for (
+    let offset = Math.max(0, from + 1);
+    offset <= Math.min(to, model.atoms.length - 1);
+    offset++
+  ) {
+    const atom = model.at(offset);
+    const script = atom ? mathScriptOwner(atom) : null;
+    if (!script) continue;
+    const base = script.type === "subsup" ? script.leftSibling : script;
+    if (!base || base.type === "first") continue;
+    const before = base.leftSibling ? model.offsetOf(base.leftSibling) : 0;
+    const baseEnd = model.offsetOf(base);
+    if (before < 0 || from > before || to < baseEnd) continue;
+    const whole = mathOwnerRange(model, script);
+    if (whole[0] >= 0 && whole[1] >= baseEnd) {
+      from = Math.min(from, whole[0]);
+      to = Math.max(to, whole[1]);
+    }
+  }
+  return [from, to];
 }
 
 export interface MathEditingScope {
@@ -680,32 +738,269 @@ export function mathEditingScopes(math: MathfieldElement): MathEditingScope[] {
   return result;
 }
 
+const emptySlotAnchors = new WeakMap<HTMLElement, { baseline: HTMLElement; atom: MathAtom }>();
+const caretBaselines = new WeakMap<HTMLElement, HTMLElement>();
+
+/** A zero-size baseline anchor measures the same DOM stop where MathLive paints a caret. */
+function mathCaretBaseline(after: HTMLElement): HTMLElement {
+  let baseline = caretBaselines.get(after);
+  if (!baseline || baseline.parentElement !== after.parentElement) {
+    baseline = after.ownerDocument.createElement("span");
+    baseline.setAttribute("data-scient-math-caret-anchor", "");
+    baseline.setAttribute("aria-hidden", "true");
+    after.after(baseline);
+    caretBaselines.set(after, baseline);
+  }
+  return baseline;
+}
+
+/** Painted stroke bounds use the native baseline, pseudo-element offsets and local font size. */
+export function mathCaretRect(
+  math: MathfieldElement,
+  caret: HTMLElement,
+  inAccentBody = mathCaretInAccentBody(math),
+): DOMRect {
+  const baseline = caret.hasAttribute("data-scient-math-caret-anchor")
+    ? caret
+    : mathCaretBaseline(caret);
+  const bounds = baseline.getBoundingClientRect();
+  const after = getComputedStyle(caret, "::after");
+  const scale = math.getBoundingClientRect().width / (math.offsetWidth || 1);
+  const height = parseFloat(after.height) * scale * (inAccentBody ? 0.85 : 1);
+  const width = parseFloat(after.borderRightWidth) * scale;
+  return new DOMRect(
+    bounds.left + parseFloat(after.left) * scale,
+    bounds.top - parseFloat(after.bottom) * scale - height,
+    width,
+    height,
+  );
+}
+
+function mathEmptySlotAnchor(math: MathfieldElement, slot: HTMLElement) {
+  const cached = emptySlotAnchors.get(slot);
+  if (cached?.baseline.isConnected) return cached;
+  const model = mathModel(math);
+  if (!model) return null;
+  let atom: MathAtom | undefined;
+  if (slot.hasAttribute("data-scient-math-cell")) {
+    const table = slot.closest(".ML__mtable");
+    const column = slot.closest(".col-align-l,.col-align-c,.col-align-r");
+    if (!table || !column) return null;
+    const columns = [...table.children].filter((element) =>
+      element.matches(".col-align-l,.col-align-c,.col-align-r"),
+    );
+    const cells = [...column.querySelectorAll<HTMLElement>("[data-scient-math-cell]")].filter(
+      (cell) => cell.closest(".ML__mtable") === table,
+    );
+    for (let element: Element | null = table; element; element = element.parentElement) {
+      const id = element.getAttribute("data-atom-id");
+      if (!id) continue;
+      const array = [model.root, ...model.atoms].find(
+        (candidate) => candidate?.type === "array" && candidate.id === id,
+      );
+      if (!array) continue;
+      atom = array.getCell?.(cells.indexOf(slot), columns.indexOf(column))?.[0];
+      break;
+    }
+  } else {
+    const id = slot.closest("[data-atom-id]")?.getAttribute("data-atom-id");
+    atom = id
+      ? model.atoms.find((candidate) => candidate.id === id && candidate.type === "placeholder")
+      : undefined;
+  }
+  if (!atom?.id) return null;
+  const selector = `[data-atom-id="${CSS.escape(atom.id)}"]`;
+  const rendered = slot.matches(selector) ? slot : slot.querySelector<HTMLElement>(selector);
+  const after = rendered ?? math.shadowRoot?.querySelector<HTMLElement>(selector);
+  if (!after) return null;
+  const anchor = { baseline: mathCaretBaseline(after), atom };
+  emptySlotAnchors.set(slot, anchor);
+  return anchor;
+}
+
+/** Empty markers follow their insertion stop, without moving the native caret. */
+export function mathEmptySlotRect(math: MathfieldElement, slot: HTMLElement): DOMRect {
+  const anchor = mathEmptySlotAnchor(math, slot);
+  const bounds = anchor
+    ? mathCaretRect(
+        math,
+        anchor.baseline,
+        mathCaretInAccentBody(math, mathModel(math)?.offsetOf(anchor.atom)),
+      )
+    : slot.getBoundingClientRect();
+  const scale = math.getBoundingClientRect().width / (math.offsetWidth || 1);
+  const em = parseFloat(getComputedStyle(anchor?.baseline ?? slot).fontSize) * scale;
+  return new DOMRect(
+    bounds.left + (bounds.width - 0.6 * em) / 2,
+    bounds.top + (bounds.height - 0.75 * em) / 2,
+    0.6 * em,
+    0.75 * em,
+  );
+}
+
+/** Marker painting and pointer placement refer to the same native model offset. */
+export function mathEmptySlotOffset(math: MathfieldElement, slot: HTMLElement): number | null {
+  const anchor = mathEmptySlotAnchor(math, slot);
+  const offset = anchor ? mathModel(math)?.offsetOf(anchor.atom) : undefined;
+  return offset !== undefined && offset >= 0 ? offset : null;
+}
+
 export function mathScopeRects(
   math: MathfieldElement,
   range: readonly [number, number],
-  selection = false,
 ): DOMRect[] {
-  // Repaint from current screen coordinates, including retained menu selections.
-  refreshMathGeometry(math);
-  const cell = mathCellPathAt(math, range[0]).at(-1);
-  if (cell && cell.cell[0] === range[0] && cell.cell[1] === range[1]) {
-    const rect = mathRenderedCellBounds(math, cell);
-    if (rect) return [rect];
-  }
-  const bounds = math.shadowRoot
+  const rects = mathSelectionRects(math, [range]);
+  if (rects.length) return rects;
+  const caret = math.shadowRoot
     ?.querySelector(".ML__caret,.ML__text-caret")
     ?.getBoundingClientRect();
-  const rectangles: DOMRect[] = [];
-  for (let offset = range[0] + (selection ? 1 : 0); offset <= range[1]; offset++) {
-    const rect = math.getElementInfo(offset)?.bounds;
-    if (rect?.height) rectangles.push(rect);
-  }
-  if (!rectangles.length) return bounds ? [bounds] : [];
+  return caret ? [caret] : [];
+}
+
+function isMathRowFlow(atom: MathAtom): boolean {
+  return (
+    atom.type === "array" &&
+    /^(?:lines|align\*?|aligned|alignat\*?|alignedat|gather\*?|gathered|multline\*?|split|eqnarray\*?)$/u.test(
+      atom.environmentName ?? "",
+    ) &&
+    (Boolean(atom.isRoot) ||
+      (Boolean(atom.parent?.isRoot) &&
+        (!atom.leftSibling || atom.leftSibling.type === "first") &&
+        !atom.rightSibling))
+  );
+}
+
+function unionMathRects(rectangles: readonly DOMRect[]): DOMRect | null {
+  if (!rectangles.length) return null;
   const left = Math.min(...rectangles.map((rect) => rect.left)),
     top = Math.min(...rectangles.map((rect) => rect.top));
   const right = Math.max(...rectangles.map((rect) => rect.right)),
     bottom = Math.max(...rectangles.map((rect) => rect.bottom));
-  return [new DOMRect(left, top, Math.max(4, right - left), bottom - top)];
+  return new DOMRect(left, top, Math.max(2, right - left), bottom - top);
+}
+
+/** Measure glyphs and printed rules, excluding VBox struts and caret anchors. */
+function mathAtomInkBounds(math: MathfieldElement, atom: MathAtom): DOMRect | null {
+  if (!atom.id || atom.type === "first") return null;
+  const nodes = math.shadowRoot?.querySelectorAll<HTMLElement>(
+    `[data-atom-id="${CSS.escape(atom.id)}"]`,
+  );
+  const rectangles: DOMRect[] = [];
+  for (const node of nodes ?? []) {
+    if (node.matches(".ML__pstrut,.ML__empty-line-anchor")) continue;
+    if (atom.type === "placeholder") {
+      const slot = node.matches(".ML__placeholder,[data-scient-math-slot]")
+        ? node
+        : node.querySelector<HTMLElement>(".ML__placeholder,[data-scient-math-slot]");
+      if (slot) rectangles.push(mathEmptySlotRect(math, slot));
+      continue;
+    }
+    for (const slot of node.querySelectorAll<HTMLElement>(
+      ".ML__placeholder,[data-scient-math-slot]",
+    ))
+      rectangles.push(
+        mathEmptySlotRect(
+          math,
+          slot.closest<HTMLElement>("[data-scient-math-cell][data-empty]") ?? slot,
+        ),
+      );
+    const texts = math.ownerDocument.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    for (let text = texts.nextNode(); text; text = texts.nextNode()) {
+      if (
+        !text.nodeValue?.trim() ||
+        text.parentElement?.closest(".ML__pstrut,.ML__tooltip-content")
+      )
+        continue;
+      const range = math.ownerDocument.createRange();
+      range.selectNodeContents(text);
+      for (const bounds of range.getClientRects())
+        if (bounds.height > 0 && bounds.width > 0) rectangles.push(bounds);
+    }
+    for (const ink of node.querySelectorAll(
+      "svg,.ML__frac-line,.ML__sqrt-line,.overline-line,.underline-line,.ML__rule,.ML__notation",
+    )) {
+      const bounds = ink.getBoundingClientRect();
+      if (bounds.height > 0 && bounds.width > 0) rectangles.push(bounds);
+    }
+    if (node.matches("svg,.ML__frac-line,.ML__sqrt-line,.ML__rule,.ML__notation")) {
+      const bounds = node.getBoundingClientRect();
+      if (bounds.height > 0 && bounds.width > 0) rectangles.push(bounds);
+    }
+    if (atom.type === "spacing") {
+      const bounds = node.getBoundingClientRect();
+      if (bounds.height > 0 && bounds.width > 0) rectangles.push(bounds);
+    }
+  }
+  return unionMathRects(rectangles);
+}
+
+/** One selection painter for partial content, complete cells and equation rows. */
+export function mathSelectionRects(
+  math: MathfieldElement,
+  ranges: readonly (readonly [number, number])[],
+  cellArray?: MathAtom,
+): DOMRect[] {
+  refreshMathGeometry(math);
+  const model = mathModel(math);
+  if (!model) return [];
+  const empty: DOMRect[] = [];
+  const selected = new Set<MathAtom>();
+  for (const range of ranges) {
+    const cell = mathCellPathAt(math, range[0]).at(-1);
+    const rendered =
+      cell && cell.cell[0] === range[0] && cell.cell[1] === range[1]
+        ? mathRenderedCell(math, cell)
+        : null;
+    if (rendered?.hasAttribute("data-empty")) {
+      const marker = mathEmptySlotRect(math, rendered);
+      const inset = Math.min(1, marker.width / 4, marker.height / 4);
+      empty.push(
+        new DOMRect(
+          marker.left + inset,
+          marker.top + inset,
+          marker.width - 2 * inset,
+          marker.height - 2 * inset,
+        ),
+      );
+      continue;
+    }
+    // Every range excludes its first caret offset; internal first atoms are
+    // anchors too and must never borrow the bounds of an enclosing row.
+    for (
+      let offset = Math.max(0, range[0] + 1);
+      offset <= Math.min(range[1], math.lastOffset);
+      offset++
+    ) {
+      const atom = model.at(offset);
+      if (atom?.type !== "first") selected.add(atom);
+    }
+  }
+  const groups = new Map<string, DOMRect[]>();
+  for (const atom of selected) {
+    if (isMathRowFlow(atom)) continue;
+    let key = "expression";
+    for (let child = atom; child.parent; child = child.parent) {
+      const owner = child.parent;
+      const branch = child.parentBranch;
+      if (Array.isArray(branch) && (isMathRowFlow(owner) || owner === cellArray))
+        key = `${owner.id ?? "root"}:${branch[0]}${isMathRowFlow(owner) ? "" : `:${branch[1]}`}`;
+    }
+    // A selected owner's rendered box may omit its scripts; detached subsup
+    // atoms have no bound box at all. Measure selected children as well and
+    // merge their ink into the same row rectangle, without another paint layer.
+    const bounds = mathAtomInkBounds(math, atom);
+    if (!bounds) continue;
+    const group = groups.get(key) ?? [];
+    group.push(bounds);
+    groups.set(key, group);
+  }
+  return [
+    ...empty,
+    ...[...groups.values()].flatMap((rects) => {
+      const bounds = unionMathRects(rects);
+      return bounds ? [bounds] : [];
+    }),
+  ];
 }
 
 /** Tab visits structural slots, including blank cells, without stopping on styling. */
@@ -756,43 +1051,67 @@ export function mathVerticalTarget(
   math: MathfieldElement,
   direction: -1 | 1,
   intent: number | null,
+  offset = math.position,
 ): { position: number; intent: number } | null {
   const model = mathModel(math);
   if (!model) return null;
-  const caret = math.shadowRoot
-    ?.querySelector(".ML__caret,.ML__text-caret")
-    ?.getBoundingClientRect();
-  const x = intent ?? caret?.left ?? math.getElementInfo(math.position)?.bounds?.right;
-  if (x === undefined) return null;
-  const nearest = (range: readonly [number, number]) => {
-    let position = range[0],
+  const x = intent ?? mathSelectionAtOffset(math, offset).x;
+  const nearest = (contents: readonly MathAtom[]) => {
+    let position = model.offsetOf(contents[0]!),
       distance = Infinity;
-    for (let offset = range[0]; offset <= range[1]; offset++) {
-      const bounds = math.getElementInfo(offset)?.bounds;
-      if (!bounds) continue;
-      const dx = Math.abs(x - (offset === range[0] ? bounds.left : bounds.right));
+    for (const atom of contents) {
+      const candidate = model.offsetOf(atom);
+      if (candidate < 0) continue;
+      const dx = Math.abs(x - mathSelectionAtOffset(math, candidate).x);
       if (dx < distance) {
-        position = offset;
+        position = candidate;
         distance = dx;
       }
     }
     return { position, intent: x };
   };
-  let atom = model.at(math.position);
-  while (atom?.parent && !atom.parent.isRoot) {
+  let atom = model.at(offset);
+  while (atom?.parent) {
     const owner = atom.parent,
       branch = atom.parentBranch;
     if (owner.type === "array" && Array.isArray(branch)) {
-      const cell = arrayCell(model, owner, branch[0] + direction, branch[1]);
-      if (cell) return nearest(cell.cell);
+      const contents = owner.getCell?.(branch[0] + direction, branch[1]);
+      if (contents?.length) return nearest(contents);
     } else if ((branch === "above" && direction > 0) || (branch === "below" && direction < 0)) {
       const contents = owner.branch?.(direction < 0 ? "above" : "below");
-      if (contents?.length)
-        return nearest([model.offsetOf(contents[0]!), model.offsetOf(contents.at(-1)!)]);
+      if (contents?.length) return nearest(contents);
     }
+    if (owner.isRoot) break;
     atom = owner;
   }
   return null;
+}
+
+/** Visit native caret stops without invoking MathLive's separate range-expansion rules. */
+export function mathHorizontalSelectionTarget(
+  math: MathfieldElement,
+  offset: number,
+  direction: -1 | 1,
+): number {
+  const model = mathModel(math);
+  if (!model) return Math.max(0, Math.min(math.lastOffset, offset + direction));
+  for (let next = offset + direction; next >= 0 && next <= math.lastOffset; next += direction) {
+    const atom = model.at(next);
+    let captured = false;
+    for (let parent = atom.parent; parent; parent = parent.parent)
+      if (parent.inCaptureSelection) {
+        captured = true;
+        break;
+      }
+    if (captured) continue;
+    if (
+      atom.parent?.skipBoundary &&
+      (atom.type === "first" || (!atom.isFirstSibling && atom.isLastSibling))
+    )
+      continue;
+    return next;
+  }
+  return direction < 0 ? 0 : math.lastOffset;
 }
 
 export function mathSelectionEndpoints(math: MathfieldElement): readonly [number, number] | null {
@@ -854,11 +1173,11 @@ function arrayCell(
   if (!cell?.length) return null;
   const from = model.offsetOf(cell[0]!);
   const to = model.offsetOf(cell[cell.length - 1]!);
-  const environmentEnd = model.offsetOf(array);
+  const environmentEnd = array.isRoot ? model.atoms.length - 1 : model.offsetOf(array);
   const firstCell = array.getCell?.(0, 0);
   const beforeFirstCell = firstCell?.[0] ? model.offsetOf(firstCell[0]) - 1 : -1;
   const predecessor = array.leftSibling ? model.offsetOf(array.leftSibling) : -1;
-  const environmentStart = predecessor >= 0 ? predecessor : beforeFirstCell;
+  const environmentStart = array.isRoot ? 0 : predecessor >= 0 ? predecessor : beforeFirstCell;
   if (from < 0 || to < from || environmentStart < 0 || environmentEnd < 0) return null;
   return {
     array,
@@ -997,21 +1316,19 @@ function mathCellBounds(
   const key = `${cell.row}:${cell.column}`;
   const cached = geometry?.cells.get(cell.array)?.get(key);
   if (cached !== undefined) return cached;
-  let left = Infinity;
-  let top = Infinity;
-  let right = -Infinity;
-  let bottom = -Infinity;
-  for (let offset = cell.cell[0]; offset <= cell.cell[1]; offset += 1) {
-    const bounds = math.getElementInfo(offset)?.bounds;
-    if (!bounds) continue;
-    left = Math.min(left, bounds.left);
-    top = Math.min(top, bounds.top);
-    right = Math.max(right, bounds.right);
-    bottom = Math.max(bottom, bounds.bottom);
-  }
   const rendered = mathRenderedCellBounds(math, cell);
+  const ink = unionMathRects(mathSelectionRects(math, [cell.cell]));
+  // Preserve column hit width while deriving the row's height from its content.
+  // A VBox can extend through the row gap and is not a useful vertical target.
   const bounds =
-    rendered ?? (left === Infinity ? null : new DOMRect(left, top, right - left, bottom - top));
+    ink && rendered
+      ? new DOMRect(
+          Math.min(rendered.left, ink.left),
+          ink.top,
+          Math.max(rendered.right, ink.right) - Math.min(rendered.left, ink.left),
+          ink.height,
+        )
+      : (ink ?? rendered);
   if (geometry) {
     let cells = geometry.cells.get(cell.array);
     if (!cells) {
@@ -1025,6 +1342,24 @@ function mathCellBounds(
 
 /** Include the reserved hit box of an empty cell, rather than its zero-width sentinel. */
 function mathRenderedCellBounds(math: MathfieldElement, cell: MathCellSelection): DOMRect | null {
+  const rendered = mathRenderedCell(math, cell);
+  if (!rendered) return null;
+  const bounds = rendered.getBoundingClientRect();
+  if (!rendered.hasAttribute("data-empty")) return bounds;
+  // Empty native spans can have zero height. The visible marker is also a
+  // navigation target, including when a drag starts above the row baseline.
+  const marker = mathEmptySlotRect(math, rendered);
+  const left = Math.min(bounds.left, marker.left),
+    top = Math.min(bounds.top, marker.top);
+  return new DOMRect(
+    left,
+    top,
+    Math.max(bounds.right, marker.right) - left,
+    Math.max(bounds.bottom, marker.bottom) - top,
+  );
+}
+
+function mathRenderedCell(math: MathfieldElement, cell: MathCellSelection): HTMLElement | null {
   if (!cell.array.id) return null;
   const wrapper = math.shadowRoot?.querySelector(`[data-atom-id="${CSS.escape(cell.array.id)}"]`);
   const table = wrapper?.matches(".ML__mtable") ? wrapper : wrapper?.querySelector(".ML__mtable");
@@ -1035,7 +1370,7 @@ function mathRenderedCellBounds(math: MathfieldElement, cell: MathCellSelection)
   const rendered = [
     ...(column?.querySelectorAll<HTMLElement>("[data-scient-math-cell]") ?? []),
   ].filter((element) => element.closest(".ML__mtable") === table)[cell.row];
-  return rendered?.getBoundingClientRect() ?? null;
+  return rendered ?? null;
 }
 
 function nearestCell(
@@ -1105,6 +1440,19 @@ export function mathSelectionPoint(
   offset = math.getOffsetFromPoint(x, y, { bias: 0 }),
   geometry?: MathSelectionGeometry,
 ): MathSelectionPoint {
+  for (const slot of math.shadowRoot?.querySelectorAll<HTMLElement>(
+    "[data-scient-math-cell][data-empty][data-guide-active],.ML__placeholder[data-guide-active],[data-scient-math-slot][data-guide-active]",
+  ) ?? []) {
+    if (
+      !slot.hasAttribute("data-scient-math-cell") &&
+      slot.closest("[data-scient-math-cell][data-empty]")
+    )
+      continue;
+    if (!containsPoint(mathEmptySlotRect(math, slot), x, y)) continue;
+    const insertion = mathEmptySlotOffset(math, slot);
+    if (insertion !== null)
+      return { x, y, offset: insertion, path: mathCellPathAt(math, insertion), nearby: null };
+  }
   // MathLive can resolve a closing fence to the adjacent script sentinel.
   // Use the actual delimiter hit target before resolving enclosing grid cells.
   const delimiter = math.shadowRoot
@@ -1153,12 +1501,24 @@ export function mathSelectionPoint(
 }
 
 export function mathSelectionAtOffset(math: MathfieldElement, offset: number): MathSelectionPoint {
-  const bounds = math.getElementInfo(offset)?.bounds;
+  const atom = mathModel(math)?.at(offset);
+  const first = atom?.type === "first";
+  const target = first ? atom.rightSibling : atom;
+  const bounds = target ? mathAtomInkBounds(math, target) : null;
+  const path = mathCellPathAt(math, offset);
+  const cell = path.at(-1);
+  const rendered = cell ? mathRenderedCell(math, cell) : null;
+  const empty =
+    !bounds && cell
+      ? rendered?.hasAttribute("data-empty")
+        ? mathEmptySlotRect(math, rendered)
+        : mathCellBounds(math, cell)
+      : null;
   return {
-    x: bounds ? bounds.left + bounds.width / 2 : 0,
-    y: bounds ? bounds.top + bounds.height / 2 : 0,
+    x: bounds ? (first ? bounds.left : bounds.right) : empty ? empty.left + empty.width / 2 : 0,
+    y: bounds ? bounds.top + bounds.height / 2 : empty ? empty.top + empty.height / 2 : 0,
     offset,
-    path: mathCellPathAt(math, offset),
+    path,
     nearby: null,
   };
 }
@@ -1227,19 +1587,11 @@ function mathBranchBounds(
   }
   const cached = branches.get(scope.branch);
   if (cached !== undefined) return cached;
-  let left = Infinity,
-    top = Infinity,
-    right = -Infinity,
-    bottom = -Infinity;
-  for (let offset = scope.content[0]; offset <= scope.content[1]; offset++) {
-    const bounds = math.getElementInfo(offset)?.bounds;
-    if (!bounds) continue;
-    left = Math.min(left, bounds.left);
-    top = Math.min(top, bounds.top);
-    right = Math.max(right, bounds.right);
-    bottom = Math.max(bottom, bounds.bottom);
-  }
-  const bounds = left === Infinity ? null : new DOMRect(left, top, right - left, bottom - top);
+  const bounds = unionMathRects(
+    mathSelectionRects(math, [
+      scope.branch === scriptedExpressionBranch ? scope.whole : scope.content,
+    ]),
+  );
   branches.set(scope.branch, bounds);
   return bounds;
 }
@@ -1417,46 +1769,44 @@ export function selectMathRectangle(
 ): void {
   const model = mathModel(math);
   if (!model || rectangle.ranges.length === 0) return;
-  const first = rectangle.ranges[0]!;
-  const last = rectangle.ranges[rectangle.ranges.length - 1]!;
-  const start = Math.min(first[0], last[0]);
-  const end = Math.max(first[1], last[1]);
   const backward =
     rectangle.focus.row < rectangle.anchor.row ||
     (rectangle.focus.row === rectangle.anchor.row &&
       rectangle.focus.column < rectangle.anchor.column);
   const direction = backward ? "backward" : "forward";
-  // The public setter schedules MathLive's own selection paint but flattens
-  // disjoint cell ranges. Restore the ranges before that paint runs.
-  math.selection = { ranges: [[start, end]], direction };
-  model._selection = {
-    ranges: rectangle.ranges.map(([from, to]) => [from, to]),
-    direction,
-  };
-  model._anchor = backward ? rectangle.anchor.cell[1] : rectangle.anchor.cell[0];
-  model._position = backward ? rectangle.focus.cell[0] : rectangle.focus.cell[1];
-  model.selectionDidChange();
+  applyMathSelection(
+    math,
+    { ranges: rectangle.ranges.map(([from, to]) => [from, to]), direction },
+    {
+      anchor: backward ? rectangle.anchor.cell[1] : rectangle.anchor.cell[0],
+      head: backward ? rectangle.focus.cell[0] : rectangle.focus.cell[1],
+    },
+  );
 }
 
-/** Resolve a rendered empty-cell guide through the owning array's atom id. */
-export function focusMathCellGuide(
+/** Our scope rules determine ranges; the native setter only schedules rendering. */
+export function applyMathSelection(
   math: MathfieldElement,
-  table: Element,
-  row: number,
-  column: number,
-): boolean {
+  selection: MathfieldElement["selection"],
+  endpoints?: { readonly anchor: number; readonly head: number },
+): void {
   const model = mathModel(math);
-  if (!model || row < 0 || column < 0) return false;
-  for (let element: Element | null = table; element; element = element.parentElement) {
-    const id = element.getAttribute("data-atom-id");
-    if (!id) continue;
-    const array = model.atoms.find((atom) => atom.type === "array" && atom.id === id);
-    if (!array) continue;
-    const cell = arrayCell(model, array, row, column);
-    if (!cell) return false;
-    math.focus();
-    math.position = cell.cell[0];
-    return true;
+  if (!model || !selection.ranges.length) {
+    math.selection = selection;
+    return;
   }
-  return false;
+  const ranges = selection.ranges.map((range) => includeCompleteMathScriptBases(model, range));
+  const from = Math.min(...ranges.flat()),
+    to = Math.max(...ranges.flat());
+  const direction = selection.direction ?? "none";
+  // MathLive expands attached scripts and flattens cells in its public setter.
+  // Restore the resolved ranges before either its renderer or ours reads them.
+  math.selection = { ranges: [[from, to]], direction };
+  model._selection = {
+    ranges,
+    direction,
+  };
+  model._anchor = endpoints?.anchor ?? (direction === "backward" ? to : from);
+  model._position = endpoints?.head ?? (direction === "backward" ? from : to);
+  model.selectionDidChange();
 }

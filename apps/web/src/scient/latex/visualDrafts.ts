@@ -10,6 +10,9 @@ type Draft = typeof Draft.Type;
 // This window's checkpoints that are not written yet. Anything written is read
 // from storage each time, because other windows share it.
 const drafts = new Map<string, Draft>();
+// Compare the slot against the version this writer observed. A delayed timer
+// must not replace a newer checkpoint written by a different app window.
+const observed = new Map<string, string | null>();
 const pending = new Map<string, ReturnType<typeof setTimeout>>();
 // Stored records that wait in their slot for the user's choice.
 const held = new Map<string, Draft>();
@@ -24,6 +27,13 @@ export function checkpointVisualDraft(
   source: string,
   baseRevision: string,
 ): void {
+  if (!observed.has(key)) {
+    try {
+      observed.set(key, localStorage.getItem(storageKey(key)));
+    } catch {
+      window.dispatchEvent(new CustomEvent("scient-latex-recovery-error", { detail: key }));
+    }
+  }
   drafts.set(key, { source, baseRevision });
   if (pending.has(key)) return;
   pending.set(
@@ -42,7 +52,15 @@ export function flushVisualDraft(key: string): boolean {
   // unwritten, in memory, until that work is resolved.
   if (occupiedByHeldDraft(key, draft)) return false;
   try {
+    const persisted = readPersisted(key);
+    const identity = localStorage.getItem(storageKey(key));
+    const expected = observed.get(key);
+    if (identity !== null && identity !== expected && (!persisted || !same(persisted, draft))) {
+      window.dispatchEvent(new CustomEvent("scient-latex-recovery-error", { detail: key }));
+      return false;
+    }
     setLocalStorageItem(storageKey(key), draft, Draft);
+    observed.set(key, localStorage.getItem(storageKey(key)));
     drafts.delete(key);
     return true;
   } catch {
@@ -59,11 +77,13 @@ function readPersisted(key: string): Draft | null {
   }
 }
 
-function removePersisted(key: string): void {
+function removePersisted(key: string): boolean {
   try {
     removeLocalStorageItem(storageKey(key));
+    return true;
   } catch {
-    /* Workspace saves remain authoritative. */
+    window.dispatchEvent(new CustomEvent("scient-latex-recovery-error", { detail: key }));
+    return false;
   }
 }
 
@@ -71,6 +91,7 @@ function dropUnwritten(key: string): void {
   clearTimeout(pending.get(key));
   pending.delete(key);
   drafts.delete(key);
+  observed.delete(key);
 }
 
 function occupiedByHeldDraft(key: string, incoming: Draft): boolean {
@@ -117,8 +138,8 @@ function clearMatching(key: string, matches: (draft: Draft) => boolean): boolean
   const unwrittenMatches = unwritten !== undefined && matches(unwritten);
   const persistedMatches = persisted !== null && matches(persisted);
   if (unwrittenMatches) dropUnwritten(key);
-  if (persistedMatches) removePersisted(key);
-  return unwrittenMatches || persistedMatches;
+  const removed = persistedMatches && removePersisted(key);
+  return unwrittenMatches || removed;
 }
 
 export function confirmVisualDraft(key: string, source: string): boolean {
@@ -154,6 +175,5 @@ export function readPersistedVisualDraft(key: string): Draft | null {
 export function removePersistedVisualDraft(key: string, draft: Draft): boolean {
   const persisted = readPersisted(key);
   if (!persisted || !same(persisted, draft)) return false;
-  removePersisted(key);
-  return true;
+  return removePersisted(key);
 }

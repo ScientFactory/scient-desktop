@@ -213,6 +213,9 @@ export const ScientLatexArtworkRequest = Schema.Struct({
   preamble: Schema.String.check(Schema.isMaxLength(200_000)),
   source: Schema.String.check(Schema.isMaxLength(100_000)),
   widthInches: Schema.Number.check(Schema.isBetween({ minimum: 0.1, maximum: 30 })),
+  algorithmNumber: Schema.optional(
+    Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 100_000 })),
+  ),
 });
 export type ScientLatexArtworkRequest = typeof ScientLatexArtworkRequest.Type;
 

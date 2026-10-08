@@ -26,8 +26,13 @@ export function LatexPageThumbnails(props: {
     const visible = new Set<HTMLElement>();
     const refresh = createEditorBackgroundTask(500, 2000);
     let styles: CSSStyleSheet | null = null;
+    let lastInput = 0;
     const update = () => {
       if (!visible.size) return;
+      if (performance.now() - lastInput < 500) {
+        refresh.schedule(update);
+        return;
+      }
       const measured = measureLatexPagePreview(source);
       if (!measured) return;
       styles ??= latexPagePreviewStyles(source.ownerDocument);
@@ -53,7 +58,29 @@ export function LatexPageThumbnails(props: {
       { root: nav.closest("aside"), rootMargin: "240px" },
     );
     for (const host of nav.querySelectorAll<HTMLElement>("[data-page]")) observer.observe(host);
-    const mutations = new MutationObserver(schedule);
+    const mutations = new MutationObserver((records) => {
+      // Measurement flags and selection adornments do not change the printed
+      // page. In particular, observing our own measurement flags creates a
+      // continual thumbnail/pagination refresh loop.
+      if (
+        records.some(
+          (record) =>
+            record.type !== "attributes" ||
+            ![
+              "data-latex-measuring",
+              "data-latex-column-measuring",
+              "data-selected",
+              "data-document-selected",
+              "data-reference-highlight",
+              "data-scient-active-slot",
+              "data-scient-selection-active",
+              "data-scient-selection-held",
+              "data-math-viewport-active",
+            ].includes(record.attributeName ?? ""),
+        )
+      )
+        schedule();
+    });
     mutations.observe(source, {
       childList: true,
       subtree: true,
@@ -70,6 +97,11 @@ export function LatexPageThumbnails(props: {
       characterData: true,
     });
     source.addEventListener("input", schedule);
+    const typing = () => {
+      lastInput = performance.now();
+      schedule();
+    };
+    source.addEventListener("beforeinput", typing, true);
     source.addEventListener("load", schedule, true);
     source.ownerDocument.fonts.addEventListener("loadingdone", schedule);
     return () => {
@@ -78,6 +110,7 @@ export function LatexPageThumbnails(props: {
       mutations.disconnect();
       styleChanges.disconnect();
       source.removeEventListener("input", schedule);
+      source.removeEventListener("beforeinput", typing, true);
       source.removeEventListener("load", schedule, true);
       source.ownerDocument.fonts.removeEventListener("loadingdone", schedule);
     };

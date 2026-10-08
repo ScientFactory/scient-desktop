@@ -248,6 +248,7 @@ function typingEntry(draft: TypingDraft, snapshot: string): ParkedEntry {
 // Identities of work still in a live slot are prefixed, so they never collide with parked ones.
 const LIVE_SOURCE = "live-source:";
 const LIVE_TYPING = "live-typing:";
+const LIVE_FIELD = "live-field:";
 // Work that could be stored nowhere and is held by the editor that offers it.
 const UNSTORED = "unstored:";
 
@@ -274,6 +275,7 @@ export function readStartupRecovery(
   readonly typingIdentity: string | null;
   readonly recovery: LatexVisualRecovery | null;
 } {
+  const fields = parkVisualFieldDrafts(key, true);
   // Read once: the identity and the content must be the same stored version.
   const stored = typingDraftIdentity(key);
   const typing = stored === null ? null : parseTypingDraft(stored);
@@ -306,7 +308,7 @@ export function readStartupRecovery(
     }
   }
   // The source slot is resolved first: applying other work checkpoints into it.
-  const unparked = unparkedSource ?? unparkedTyping;
+  const unparked = unparkedSource ?? unparkedTyping ?? (fields?.parked === false ? fields : null);
   // Nothing is reinstalled while work waits in a live slot: typing would replace it.
   return unparked
     ? { typing: null, typingIdentity: null, recovery: unparked }
@@ -315,6 +317,55 @@ export function readStartupRecovery(
         typingIdentity: reinstall ? stored : null,
         recovery: readStoredRecovery(key),
       };
+}
+
+/** Saved field positions may belong to an older projection. Offer exact input
+ * for review instead of silently installing it into a different object. */
+export function parkVisualFieldDrafts(key: string, retire = false): LatexVisualRecovery | null {
+  const prefix = `scient.latex.field:${key}:`;
+  const slots: string[] = [];
+  try {
+    for (let index = 0; index < localStorage.length; index++) {
+      const slot = localStorage.key(index);
+      if (slot?.startsWith(prefix)) slots.push(slot);
+    }
+    for (const slot of slots) {
+      const record = localStorage.getItem(slot);
+      if (record === null) continue;
+      let value: unknown;
+      try {
+        value = JSON.parse(record);
+      } catch {
+        continue;
+      }
+      if (
+        !value ||
+        typeof value !== "object" ||
+        !("text" in value) ||
+        typeof value.text !== "string" ||
+        !("base" in value) ||
+        typeof value.base !== "string" ||
+        value.text === value.base
+      )
+        continue;
+      const entry: ParkedEntry = {
+        origin: "typing",
+        source: null,
+        text: value.text,
+        baseRevision: null,
+        snapshot: JSON.stringify({ kind: "field-input", slot, record }),
+      };
+      if (!park(key, entry)) {
+        window.dispatchEvent(new CustomEvent("scient-latex-recovery-error", { detail: key }));
+        return offered(entry, LIVE_FIELD + JSON.stringify({ slot, record }), false);
+      }
+      // Transfer the exact version only after the recovery copy has landed.
+      if (retire && localStorage.getItem(slot) === record) localStorage.removeItem(slot);
+    }
+  } catch {
+    window.dispatchEvent(new CustomEvent("scient-latex-recovery-error", { detail: key }));
+  }
+  return readStoredRecovery(key);
 }
 
 /**
@@ -413,6 +464,17 @@ export function isRecoveryStored(key: string, recovery: LatexVisualRecovery): bo
   if (recovery.identity.startsWith(UNSTORED)) return true;
   if (recovery.identity.startsWith(LIVE_TYPING))
     return typingDraftIdentity(key) === recovery.identity.slice(LIVE_TYPING.length);
+  if (recovery.identity.startsWith(LIVE_FIELD)) {
+    const field = JSON.parse(recovery.identity.slice(LIVE_FIELD.length)) as {
+      slot: string;
+      record: string;
+    };
+    try {
+      return localStorage.getItem(field.slot) === field.record;
+    } catch {
+      return false;
+    }
+  }
   const persisted = readPersistedVisualDraft(key);
   return (
     persisted !== null && JSON.stringify(persisted) === recovery.identity.slice(LIVE_SOURCE.length)
@@ -421,6 +483,18 @@ export function isRecoveryStored(key: string, recovery: LatexVisualRecovery): bo
 
 /** Remove one recovered record, and only that one. False when it could not be removed. */
 export function removeRecovery(key: string, recovery: LatexVisualRecovery): boolean {
+  if (recovery.identity.startsWith(LIVE_FIELD)) {
+    const field = JSON.parse(recovery.identity.slice(LIVE_FIELD.length)) as {
+      slot: string;
+      record: string;
+    };
+    try {
+      if (localStorage.getItem(field.slot) === field.record) localStorage.removeItem(field.slot);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   if (recovery.parked) {
     const identities = readParked(key).map((item) => item.identity);
     if (!identities.includes(recovery.identity)) return true;

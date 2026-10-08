@@ -604,81 +604,65 @@ describe("recovering unsaved work", () => {
     expect(bar()).toBeNull();
   });
 
-  it("keeps writing that was refused as recoverable work, without a source copy of it", async () => {
+  it("retains immediately painted typing when its source changes before publication", async () => {
     const base = tex("Old base");
     await mount(base, 1);
     const newer = tex("Old base\n\nAgent paragraph added on Tuesday.");
     await act(async () => {
       pm().commands.setTextSelection(9);
-      pm().commands.insertContent(" typed");
-      // The file moves to r2 while the typing is still waiting to be converted.
       disk = { source: newer, revision: 2 };
+      shown = disk;
+      pm().commands.insertContent(" typed");
       coordinator.syncConfirmedFileRevision("r2");
       show(disk);
     });
     await settle(300);
     flushVisualDraft(KEY);
-    // The conversion ran over the old source and the host refused it. Nothing
-    // was written, and no source copy claims the newer revision: the writing is
-    // kept as a typing snapshot over the source it was typed on.
-    expect(writes).not.toHaveBeenCalled();
+    // Publication cannot overwrite the outside revision. Exact typing survives.
     expect(disk.source).toBe(newer);
     expect(checkpoint()).toBeNull();
-    expect(readTypingDraft(KEY)?.baseSource).toBe(base);
-    // Reopening shows the file and offers the writing; it is not reinstalled.
+    expect(JSON.stringify(readTypingDraft(KEY)?.content)).toContain("Old base typed");
     await reopen();
     await settle(300);
     expect(page()).toContain("Agent paragraph added on Tuesday.");
-    expect(message()).toBe("Unsaved changes");
-    await click("Compare");
-    expect(sides("recovered")).toEqual(["Old base typed"]);
+    expect(parked()?.text).toContain("Old base typed");
   });
 
   it("discards only its own refused writing, not a snapshot another view stored since", async () => {
     const base = tex("Old base");
-    await mount(base, 1);
-    await act(async () => {
-      pm().commands.setTextSelection(9);
-      pm().commands.insertContent(" typed");
-      disk = { source: tex("Old base\n\nAgent paragraph."), revision: 2 };
-      coordinator.syncConfirmedFileRevision("r2");
-      show(disk);
-    });
+    storeTypingDraft(base, [paragraph("Old base typed")]);
+    await mount(tex("Old base\n\nAgent paragraph."), 2);
     await settle(300);
-    expect(button("Discard draft")).toBeDefined();
+    expect(button("Discard")).toBeDefined();
     // Another view of the same document stores its own unsaved typing.
     const theirs = JSON.stringify({
       baseSource: base,
       content: { type: "doc", content: [paragraph("Written in the other view")] },
     });
     localStorage.setItem(TYPING_SLOT, theirs);
-    await click("Discard draft");
-    expect(localStorage.getItem(TYPING_SLOT)).toBe(theirs);
+    await click("Discard");
+    expect(readStoredRecovery(KEY)?.text).toContain("Written in the other view");
     expect(page()).toContain("Agent paragraph.");
   });
 
   it("removes its own refused writing when the user discards it", async () => {
     const base = tex("Old base");
-    await mount(base, 1);
-    await act(async () => {
-      pm().commands.setTextSelection(9);
-      pm().commands.insertContent(" typed");
-      disk = { source: tex("Old base\n\nAgent paragraph."), revision: 2 };
-      coordinator.syncConfirmedFileRevision("r2");
-      show(disk);
-    });
+    storeTypingDraft(base, [paragraph("Old base typed")]);
+    await mount(tex("Old base\n\nAgent paragraph."), 2);
     await settle(300);
-    expect(readTypingDraft(KEY)).not.toBeNull();
-    await click("Discard draft");
+    expect(readStoredRecovery(KEY)?.text).toContain("Old base typed");
+    await click("Discard");
     expect(readTypingDraft(KEY)).toBeNull();
+    expect(readStoredRecovery(KEY)).toBeNull();
   });
 
-  it("keeps an edit that was not published yet when the file changes underneath it", async () => {
+  it("keeps an admitted edit recoverable when an outside source arrives before disk acknowledgement", async () => {
     const base = tex("Old base");
     await mount(base, 1);
+    save = "fails";
     const newer = tex("Old base\n\nAgent paragraph.");
     await act(async () => {
-      // A structural change is accepted into the editor and waits to be published.
+      // Source admission is immediate; disk acknowledgement still waits.
       pm().commands.setTextSelection(3);
       pm().commands.setNode("heading", { level: 1 });
       disk = { source: newer, revision: 2 };
@@ -686,8 +670,10 @@ describe("recovering unsaved work", () => {
       show(disk);
     });
     await settle(300);
-    // The outside source is shown; the edit is offered, not lost and not applied.
-    expect(writes).not.toHaveBeenCalled();
+    expect(writes).toHaveBeenCalledTimes(1);
+    flushVisualDraft(KEY);
+    expect(checkpoint()?.source).toContain("\\section{Old base}");
+    await reopen();
     expect(page()).toContain("Agent paragraph.");
     expect(message()).toBe("Unsaved changes");
     await click("Compare");

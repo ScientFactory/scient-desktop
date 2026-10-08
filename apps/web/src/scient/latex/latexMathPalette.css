@@ -33,8 +33,22 @@
   padding: 10px 12px 6px;
   flex: none;
 }
-.scient-latex-symbol-palette-header strong {
+.scient-latex-symbol-palette-move {
+  flex: 1;
+  align-self: stretch;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
   font-weight: 600;
+  text-align: start;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.scient-latex-symbol-palette-panel[data-dragging] .scient-latex-symbol-palette-move {
+  cursor: grabbing;
 }
 .scient-latex-symbol-palette-search {
   padding: 0 12px 10px;

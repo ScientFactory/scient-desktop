@@ -1,7 +1,9 @@
 import type { MathfieldElement } from "mathlive";
 import {
-  focusMathCellGuide,
+  mathCaretRect,
   mathCaretInAccentBody,
+  mathEmptySlotRect,
+  mathEmptySlotOffset,
   mathGuideScopeId,
   mathEditingScopes,
   mathScopeRects,
@@ -11,19 +13,17 @@ import {
 // MathLive 0.108 lays out array columns with a VBox. Decorate its rendered
 // cell boxes, never its atoms: empty guides must not enter source or undo.
 export const mathArrayCellSelector =
-  ".ML__mtable > :is(.col-align-l,.col-align-c,.col-align-r) > .ML__vlist-t > .ML__vlist-r:first-child > .ML__vlist > span > span:last-child";
+  ".ML__mtable > :is(.col-align-l,.col-align-c,.col-align-r) > .ML__vlist-t > .ML__vlist-r:first-child > .ML__vlist > span > span:not(.ML__pstrut,.ML__caret,.ML__text-caret,[data-scient-math-caret-anchor])";
 const cellSelector = mathArrayCellSelector;
 // Figure space reserves a click target with no ink, even before decoration.
 // MathLive can render placeholders as ordinary font boxes (for example in
 // accents), so its ML__placeholder class is not a reliable slot selector.
 const emptySlotCharacter = "\u2007";
 
-/** Active and vacant slots share one measured box and one overlay renderer. */
-export function mathEditingGuideRects(math: MathfieldElement): DOMRect[] {
+function emptyGuideSlots(math: MathfieldElement): HTMLElement[] {
   const root = math.shadowRoot;
   if (!root || math.readOnly) return [];
-  const scale = math.getBoundingClientRect().width / (math.offsetWidth || 1);
-  const empty = [
+  return [
     ...root.querySelectorAll<HTMLElement>(
       "[data-scient-math-cell][data-empty][data-guide-active],.ML__placeholder[data-guide-active],[data-scient-math-slot][data-guide-active]",
     ),
@@ -32,43 +32,37 @@ export function mathEditingGuideRects(math: MathfieldElement): DOMRect[] {
       slot.hasAttribute("data-scient-math-cell") ||
       !slot.closest("[data-scient-math-cell][data-empty]"),
   );
-  const rectFor = (slot: HTMLElement) => {
-    const bounds = slot.getBoundingClientRect();
-    const em = parseFloat(getComputedStyle(slot).fontSize) * scale;
-    if (slot.hasAttribute("data-scient-math-cell")) {
-      const baseline = parseFloat(slot.style.getPropertyValue("--scient-guide-baseline"));
-      return new DOMRect(
-        bounds.left + 0.175 * em,
-        Number.isFinite(baseline) ? bounds.top + baseline * scale - 0.675 * em : bounds.top,
-        0.6 * em,
-        0.75 * em,
-      );
-    }
-    return new DOMRect(
-      bounds.left + (bounds.width - 0.6 * em) / 2,
-      bounds.top + (bounds.height - 0.75 * em) / 2,
-      0.6 * em,
-      0.75 * em,
-    );
-  };
-  const rects = empty.map(rectFor);
+}
+
+/** Vacant guides survive cell selection; occupied scope guides do not. */
+export function mathEmptyGuideRects(math: MathfieldElement): DOMRect[] {
+  return emptyGuideSlots(math).map((slot) => mathEmptySlotRect(math, slot));
+}
+
+/** Active and vacant slots share one measured box and one overlay renderer. */
+export function mathEditingGuideRects(math: MathfieldElement): DOMRect[] {
+  const root = math.shadowRoot;
+  if (!root || math.readOnly) return [];
+  const empty = emptyGuideSlots(math);
+  const rects = empty.map((slot) => mathEmptySlotRect(math, slot));
   // Keep the identical empty-slot marker when the caret enters that slot.
   if (empty.some((slot) => slot.hasAttribute("data-guide-current"))) return rects;
   if (math.hasAttribute("data-scient-empty")) {
     const caret = root.querySelector<HTMLElement>(".ML__caret,.ML__text-caret");
     if (caret) {
-      const bounds = caret.getBoundingClientRect();
+      const bounds = mathCaretRect(math, caret);
+      const scale = math.getBoundingClientRect().width / (math.offsetWidth || 1);
       const em = parseFloat(getComputedStyle(caret).fontSize) * scale;
-      rects.push(
-        new DOMRect(bounds.left - 0.3 * em, bounds.bottom - 0.675 * em, 0.6 * em, 0.75 * em),
-      );
+      const x = bounds.left + bounds.width / 2;
+      const y = bounds.top + bounds.height / 2;
+      rects.push(new DOMRect(x - 0.3 * em, y - 0.375 * em, 0.6 * em, 0.75 * em));
       return rects;
     }
   }
   const scope = mathEditingScopes(math)[0];
   // The first offset is a caret anchor, not slot content. Its zero-height
   // sentinel can resolve to the enclosing accent, delimiter, or previous atom.
-  if (scope) rects.push(...mathScopeRects(math, scope.range, true));
+  if (scope) rects.push(...mathScopeRects(math, scope.range));
   return rects;
 }
 
@@ -82,6 +76,28 @@ export function installMathEditingGuides(math: MathfieldElement): () => void {
       --_caret-width: 1px;
       border-radius: 0;
       border-right-color: currentColor;
+    }
+    [data-scient-math-caret-anchor] {
+      display: inline-block;
+      position: relative;
+      width: 0;
+      height: 0;
+      line-height: 0;
+      vertical-align: baseline;
+      pointer-events: none;
+    }
+    :is(.ML__caret,.ML__text-caret,[data-scient-math-caret-anchor])::after {
+      height: .76em;
+      left: -.045em;
+      bottom: -.05em;
+    }
+    /* Read the same computed stroke metrics at each future insertion point. */
+    [data-scient-math-caret-anchor]::after {
+      content: '';
+      position: absolute;
+      width: 0;
+      border-right: 1px solid transparent;
+      visibility: hidden;
     }
     :host(:is([data-scient-selection-held],[data-scient-selection-active])) :is(.ML__caret,.ML__text-caret,.ML__latex-caret)::after {
       visibility: hidden;
@@ -125,7 +141,7 @@ export function installMathEditingGuides(math: MathfieldElement): () => void {
   let frame = 0;
   const update = () => {
     frame = 0;
-    const caret = root.querySelector(".ML__caret,.ML__text-caret");
+    const caret = root.querySelector<HTMLElement>(".ML__caret,.ML__text-caret");
     const inAccentBody = mathCaretInAccentBody(math);
     for (const caret of root.querySelectorAll(".ML__caret,.ML__text-caret"))
       caret.toggleAttribute("data-scient-accent-body", inAccentBody);
@@ -170,7 +186,9 @@ export function installMathEditingGuides(math: MathfieldElement): () => void {
     const guideScope = guideScopeId
       ? root.querySelector(`[data-atom-id="${CSS.escape(guideScopeId)}"]`)
       : formula;
-    for (const slot of root.querySelectorAll(".ML__placeholder,[data-scient-math-slot]")) {
+    for (const slot of root.querySelectorAll<HTMLElement>(
+      ".ML__placeholder,[data-scient-math-slot]",
+    )) {
       slot.toggleAttribute(
         "data-guide-active",
         Boolean(guideScope?.contains(slot)) && slot.closest(".ML__mtable") === activeTable,
@@ -179,9 +197,9 @@ export function installMathEditingGuides(math: MathfieldElement): () => void {
         slot.toggleAttribute(
           "data-guide-current",
           Boolean(caret) &&
-            (slot.contains(caret) ||
-              slot === caret?.previousElementSibling ||
-              slot.parentElement === caret?.parentElement),
+            (mathEmptySlotOffset(math, slot) === math.position ||
+              slot.contains(caret) ||
+              Boolean(slot.closest(".ML__placeholder-selected"))),
         );
     }
     for (const cell of root.querySelectorAll<HTMLElement>(cellSelector)) {
@@ -191,16 +209,6 @@ export function installMathEditingGuides(math: MathfieldElement): () => void {
       const structure = cell.querySelector("svg,.ML__mtable,.ML__sqrt,.ML__frac");
       const empty = !text && !structure;
       cell.toggleAttribute("data-empty", empty);
-      if (empty) {
-        // MathLive's existing strut ends at the row baseline. Both offsets
-        // share the positioned row wrapper and remain local under CSS zoom.
-        // Reading it avoids inserting an inline box that changes the baseline.
-        const strut = cell.parentElement?.querySelector<HTMLElement>(":scope > .ML__pstrut");
-        if (strut) {
-          const baseline = strut.offsetTop + strut.offsetHeight - cell.offsetTop;
-          cell.style.setProperty("--scient-guide-baseline", `${baseline}px`);
-        }
-      }
       cell.toggleAttribute(
         "data-guide-active",
         Boolean(guideScope?.contains(cell)) && cell.closest(".ML__mtable") === activeTable,
@@ -217,42 +225,19 @@ export function installMathEditingGuides(math: MathfieldElement): () => void {
   const schedule = () => {
     if (!frame) frame = requestAnimationFrame(update);
   };
-  const click = (event: MouseEvent) => {
-    if (math.readOnly || !math.selectionIsCollapsed) return;
-    const target = event
-      .composedPath()
-      .find(
-        (item): item is HTMLElement =>
-          item instanceof HTMLElement &&
-          item.hasAttribute("data-scient-math-cell") &&
-          item.hasAttribute("data-empty"),
-      );
-    const table = target?.closest(".ML__mtable");
-    const column = target?.closest(".col-align-l,.col-align-c,.col-align-r");
-    if (!target || !table || !column) return;
-    const columns = [...table.children].filter((element) =>
-      element.matches(".col-align-l,.col-align-c,.col-align-r"),
-    );
-    const cells = [...column.querySelectorAll<HTMLElement>("[data-scient-math-cell]")].filter(
-      (cell) => cell.closest(".ML__mtable") === table,
-    );
-    if (focusMathCellGuide(math, table, cells.indexOf(target), columns.indexOf(column)))
-      event.stopPropagation();
-  };
-  math.addEventListener("click", click);
   math.addEventListener("focusin", schedule);
   math.addEventListener("selection-change", schedule);
   const observer = new MutationObserver(schedule);
   observer.observe(root, { childList: true, characterData: true, subtree: true });
   schedule();
   return () => {
-    math.removeEventListener("click", click);
     math.removeEventListener("focusin", schedule);
     math.removeEventListener("selection-change", schedule);
     observer.disconnect();
     cancelAnimationFrame(frame);
     for (const caret of root.querySelectorAll("[data-scient-accent-body]"))
       caret.removeAttribute("data-scient-accent-body");
+    for (const anchor of root.querySelectorAll("[data-scient-math-caret-anchor]")) anchor.remove();
     style.remove();
   };
 }

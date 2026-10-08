@@ -12,6 +12,8 @@ export function LatexTikzArtwork(props: {
   readonly environmentId: EnvironmentId | null;
   readonly cwd: string | null;
   readonly relativePath: string | null;
+  readonly algorithmNumber?: number | undefined;
+  readonly label?: string | undefined;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -23,13 +25,16 @@ export function LatexTikzArtwork(props: {
     props.preamble,
     props.source,
     widthInches,
+    props.algorithmNumber,
   ]);
   const [resultState, setResultState] = useState<{ key: string; message: string | null } | null>(
     null,
   );
   const status = resultState?.key === requestKey ? resultState.message : "Rendering drawing…";
   useLayoutEffect(() => {
-    const panel = root.current?.closest<HTMLElement>(".scient-latex-figure-panel");
+    const panel = root.current?.closest<HTMLElement>(
+      ".scient-latex-figure-panel, .scient-latex-compiled-algorithm",
+    );
     if (!panel) return;
     const measure = () => {
       if (panel.clientWidth > 0)
@@ -61,6 +66,9 @@ export function LatexTikzArtwork(props: {
             preamble: props.preamble,
             source: props.source,
             widthInches,
+            ...(props.algorithmNumber === undefined
+              ? {}
+              : { algorithmNumber: props.algorithmNumber }),
           };
           const result = await runtime.runPromise(
             renderEnvironmentLatexArtwork({ prepared, request }),
@@ -118,10 +126,16 @@ export function LatexTikzArtwork(props: {
     props.source,
     widthInches,
     requestKey,
+    props.algorithmNumber,
   ]);
   return (
     <div ref={root} className="scient-latex-tikz" contentEditable={false}>
-      <canvas ref={canvas} role="img" aria-label="TikZ drawing" hidden={status !== null} />
+      <canvas
+        ref={canvas}
+        role="img"
+        aria-label={props.label ?? "TikZ drawing"}
+        hidden={status !== null}
+      />
       {status !== null && (
         <div className="scient-latex-tikz-status" role="status">
           {status}

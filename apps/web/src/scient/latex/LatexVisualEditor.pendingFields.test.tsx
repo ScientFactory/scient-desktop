@@ -35,6 +35,7 @@ describe("pending fields across outside document changes", () => {
   let root: ReturnType<typeof createRoot>;
   let shown: string;
   let finish: (() => boolean) | null;
+  let acceptWrites: boolean;
   const writes = vi.fn();
   const pending = vi.fn();
   beforeEach(() => {
@@ -45,6 +46,7 @@ describe("pending fields across outside document changes", () => {
     localStorage.clear();
     shown = SOURCE;
     finish = null;
+    acceptWrites = true;
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -73,7 +75,7 @@ describe("pending fields across outside document changes", () => {
           }}
           onEdit={(expected, next) => {
             writes(expected, next);
-            if (expected !== shown) return false;
+            if (!acceptWrites || expected !== shown) return false;
             shown = next;
             return true;
           }}
@@ -111,7 +113,7 @@ describe("pending fields across outside document changes", () => {
     expect(writes).not.toHaveBeenCalled();
   }
 
-  it("clears restored rich-cell drafts with a rectangle and allows finish, including after undo", async () => {
+  it("offers saved rich-cell drafts for review without installing them into a new projection", async () => {
     shown = "\\begin{tabular}{ll}\nAlpha & Text $x$\\\\\nKeep & Last\\\\\n\\end{tabular}";
     const tableNode = projectLatexVisualDocument(shown).content.content![0]!;
     const draftKeys = [0, 1].map(
@@ -132,46 +134,15 @@ describe("pending fields across outside document changes", () => {
       container.querySelector<HTMLElement>(`[data-table-cell="0-${column}"]`)!,
     );
     const inner = fields.map((element) => (element as HTMLElement & { editor: Editor }).editor);
-    expect(inner.map((cell) => cell.state.doc.textContent)).toEqual(["Restored 0", "Restored 1"]);
-    await act(() => expect(finish?.()).toBe(false));
-    await act(() => inner[0]!.commands.focus("end"));
-    await advance(40);
-    await act(() =>
-      fields[0]!.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "ArrowRight",
-          shiftKey: true,
-          bubbles: true,
-          cancelable: true,
-        }),
-      ),
-    );
-    const table = container.querySelector<HTMLElement>('[data-table-selection="cells"]')!;
-    expect(table).not.toBeNull();
-    await act(() =>
-      table.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Delete",
-          bubbles: true,
-          cancelable: true,
-        }),
-      ),
-    );
-    await advance(400);
-    expect(inner.map((cell) => cell.state.doc.textContent)).toEqual(["", ""]);
-    expect(editor().state.doc.firstChild!.attrs.rows).toEqual([
-      ["", ""],
-      ["Keep", "Last"],
-    ]);
+    expect(inner.map((cell) => cell.state.doc.textContent)).toEqual(["Alpha", "Text "]);
+    expect(readStoredRecovery(KEY)?.text).toMatch(/^Restored [01]$/u);
+    expect(writes).not.toHaveBeenCalled();
     expect(draftKeys.map((key) => localStorage.getItem(`scient.latex.field:${key}`))).toEqual([
       null,
       null,
     ]);
     await act(() => expect(finish?.()).toBe(true));
     expect(pending).toHaveBeenLastCalledWith(false);
-    await act(() => editor().commands.undo());
-    await advance(400);
-    expect(inner.map((cell) => cell.state.doc.textContent)).toEqual(["Alpha", "Text "]);
     expect(inner[1]!.getJSON().content![0]!.content).toContainEqual({
       type: "latexInlineMath",
       attrs: expect.objectContaining({ tex: "x" }),
@@ -205,8 +176,7 @@ describe("pending fields across outside document changes", () => {
         expect(typing.baseSource).toBe(SOURCE);
         expect(JSON.stringify(typing.content)).toContain("Local unfinished title");
       } else {
-        expect(recovery?.source).toContain("Local unfinished title");
-        expect(recovery?.baseRevision).toBe("r1");
+        expect(recovery?.text).toContain("Local unfinished title");
       }
     },
   );
@@ -230,7 +200,7 @@ describe("pending fields across outside document changes", () => {
     );
     await advance(500);
     expect(shown).toContain("Agent title");
-    expect(readTypingDraft(KEY)?.baseSource).toBe(SOURCE);
+    expect(readStoredRecovery(KEY)?.text).toBe("Local unfinished title");
   });
 
   it("adopts the deferred source once the local field edit is canceled", async () => {
@@ -244,11 +214,53 @@ describe("pending fields across outside document changes", () => {
         "Original title",
       );
       field().dispatchEvent(new Event("input", { bubbles: true }));
+      field().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
     });
     await advance(500);
     expect(writes).not.toHaveBeenCalled();
     expect(editor().state.doc.firstChild?.attrs.title).toBe("Agent title");
     expect(readTypingDraft(KEY)).toBeNull();
-    expect(readStoredRecovery(KEY)).toBeNull();
+    expect(readStoredRecovery(KEY)?.text).toBe("Local unfinished title");
+  });
+
+  it("paints ordinary typing before publication and retains it if publication is refused", async () => {
+    shown = "\\documentclass{article}\n\\begin{document}\nBody text.\n\\end{document}";
+    await render();
+    await advance(40);
+    await act(() => editor().commands.setTextSelection({ from: 2, to: 5 }));
+    const source = shown;
+    acceptWrites = false;
+    await act(() => editor().commands.insertContent("Unavailable"));
+    expect(editor().state.doc.textContent).toContain("Unavailable");
+    expect(writes).not.toHaveBeenCalled();
+    expect(shown).toBe(source);
+    await advance(500);
+    expect(writes).toHaveBeenCalled();
+    expect(shown).toBe(source);
+    expect(JSON.stringify(readTypingDraft(KEY)?.content)).toContain("Unavailable");
+    expect(editor().state.doc.textContent).toContain("Unavailable");
+  });
+
+  it("coalesces consecutive typing without a parent render and preserves title metadata", async () => {
+    shown =
+      "\\documentclass{article}\n\\title{Keep title}\n\\begin{document}\n\\maketitle\nBody text.\n\\end{document}";
+    await render();
+    await advance(40);
+    let position = 0;
+    editor().state.doc.descendants((node, at) => {
+      if (node.type.name === "paragraph") position = at + 1;
+    });
+    await act(() => {
+      editor().commands.setTextSelection(position);
+      editor().commands.insertContent("A");
+      editor().commands.insertContent("B");
+    });
+    expect(editor().state.doc.textContent).toContain("ABBody text.");
+    expect(writes).not.toHaveBeenCalled();
+    await advance(500);
+    expect(shown).toContain("ABBody text.");
+    expect(shown).toContain("\\title{Keep title}");
+    expect(writes).toHaveBeenCalledTimes(1);
+    expect(finish?.()).toBe(true);
   });
 });

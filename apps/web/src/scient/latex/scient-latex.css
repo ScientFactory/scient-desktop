@@ -194,16 +194,20 @@
   display: none;
 }
 .scient-latex-visual-notice {
-  position: absolute;
-  z-index: 50;
-  inset-inline: 12px;
-  bottom: 38px;
-  padding: 7px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--popover);
-  color: var(--popover-foreground);
+  display: flex;
+  flex: none;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
+}
+.scient-latex-visual-notice > span {
+  flex: 1;
+  min-width: 0;
 }
 
 .scient-latex-visual-body {
@@ -423,6 +427,7 @@
 }
 
 .scient-latex-visual-scroll {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -639,7 +644,7 @@
 
 .scient-latex-visual-document {
   --scient-latex-selection-background: color-mix(in oklab, var(--primary) 22%, transparent);
-  --scient-latex-cell-selection-background: color-mix(in oklab, var(--primary) 14%, transparent);
+  --scient-latex-cell-selection-background: var(--scient-latex-selection-background);
   --scient-latex-retained-selection-background: color-mix(
     in oklab,
     var(--muted-foreground) 24%,
@@ -669,8 +674,18 @@
   display: flow-root;
 }
 .scient-latex-visual-document ::selection {
-  background: var(--scient-latex-selection-background);
+  background: transparent;
   color: inherit;
+}
+.scient-latex-visual-document[data-scient-active-slot] ::selection,
+.scient-latex-visual-document [data-scient-active-slot]::selection,
+.scient-latex-visual-document [data-scient-active-slot] ::selection {
+  background: var(--scient-latex-selection-background);
+}
+.scient-latex-visual-document[data-scient-selection-overlay] ::selection,
+.scient-latex-visual-document [data-scient-selection-overlay]::selection,
+.scient-latex-visual-document [data-scient-selection-overlay] ::selection {
+  background: transparent;
 }
 .scient-latex-pagination-gap {
   position: relative;
@@ -1021,6 +1036,23 @@ tr[data-latex-longtable-band] {
 .scient-latex-visual-display-math[data-equation-numbered] {
   padding-inline: 3em;
 }
+/* Keep document/selection ownership intact while skipping distant math paint. */
+.scient-latex-visual-document[data-latex-windowed] :is(p, .scient-latex-visual-display-math) {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto var(--scient-latex-block-height, 100px);
+}
+.scient-latex-visual-document[data-latex-measuring] :is(p, .scient-latex-visual-display-math),
+.scient-latex-visual-document :is(h4, h5) + p,
+.scient-latex-visual-document :is(.scient-latex-rich-preview, .scient-latex-inline-field) p,
+.scient-latex-visual-display-math:is(:focus-within, [data-selected], [data-document-selected]),
+.scient-latex-page-preview .scient-latex-visual-display-math {
+  content-visibility: visible;
+}
+@media print {
+  .scient-latex-visual-document :is(p, .scient-latex-visual-display-math) {
+    content-visibility: visible !important;
+  }
+}
 .scient-latex-equation-numbers {
   position: absolute;
   inset: 0 0 0 auto;
@@ -1058,6 +1090,9 @@ tr[data-latex-longtable-band] {
   box-shadow: none;
   background: transparent;
 }
+.scient-latex-mathfield {
+  position: relative;
+}
 .scient-latex-mathfield math-field {
   display: inline-block;
   min-width: 0.5em;
@@ -1082,10 +1117,19 @@ tr[data-latex-longtable-band] {
   --placeholder-color: #6883a2;
   --placeholder-opacity: 0;
 }
-.scient-latex-visual-inline-math[data-document-selected] math-field,
-.scient-latex-visual-display-math[data-document-selected] math-field {
-  background: var(--scient-latex-selection-background);
-  --selection-background-color: transparent;
+.scient-latex-math-preview {
+  display: inline-block;
+  min-width: 0.5em;
+  min-height: 1em;
+  direction: ltr;
+  cursor: text;
+}
+.scient-latex-math-preview[hidden] {
+  display: none;
+}
+.scient-latex-visual-display-math .scient-latex-math-preview {
+  width: max-content;
+  max-width: none;
 }
 .scient-latex-mathfield math-field:focus-within {
   --placeholder-opacity: 0.5;
@@ -1233,30 +1277,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-math-source-popover textarea:focus-visible {
   outline: 1px solid var(--ring);
   outline-offset: -1px;
-}
-.scient-latex-math-completions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 5px;
-  overflow-x: auto;
-}
-.scient-latex-math-completions button {
-  flex: none;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 5px;
-  background: var(--background);
-  color: var(--foreground);
-}
-.scient-latex-math-completions button:hover {
-  border-color: var(--ring);
-  background: var(--accent);
-}
-.scient-latex-math-completions > span {
-  flex: none;
-  color: var(--muted-foreground);
-  font-size: 10px;
 }
 .scient-latex-math-source-error {
   margin-top: 6px;
@@ -1806,9 +1826,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   overflow: hidden;
   resize: none;
 }
-.scient-latex-listing-editor::selection {
-  background: rgb(90 150 230 / 28%);
-}
 .scient-latex-listing-caption {
   display: flex;
   justify-content: center;
@@ -2308,10 +2325,12 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-rich-preview th[data-align="right"] {
   text-align: right;
 }
-.scient-latex-rich-preview :is(td, th)[data-cell-selection] {
+.scient-latex-rich-preview figure[data-scient-active-slot] :is(td, th)[data-cell-selection] {
   background: var(--scient-latex-cell-selection-background);
 }
-.scient-latex-rich-preview[data-kind="table"][data-document-selected] :is(td, th) {
+.scient-latex-rich-preview
+  figure[data-scient-active-slot][data-table-selection="whole"]
+  :is(td, th) {
   background: var(--scient-latex-selection-background);
 }
 .scient-latex-rich-preview :is(td, th):focus-within:not([data-cell-selection]) {
@@ -2357,14 +2376,12 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-rich-preview[data-kind="table"] textarea {
   user-select: text;
 }
-.scient-latex-rich-preview figure[data-table-selection="whole"],
-.scient-latex-rich-preview[data-kind="table"][data-document-selected] figure {
+.scient-latex-rich-preview
+  figure[data-scient-active-slot][data-table-selection="whole"]
+  figcaption {
   background: var(--scient-latex-selection-background);
-  border-radius: 3px;
-  box-shadow: 0 0 0 3px var(--scient-latex-selection-background);
 }
-.scient-latex-rich-preview figure[data-table-selection] ::selection,
-.scient-latex-rich-preview[data-kind="table"][data-document-selected] ::selection {
+.scient-latex-rich-preview figure[data-scient-active-slot][data-table-selection] ::selection {
   background: transparent;
 }
 .scient-latex-rich-preview figure[data-table-selection] {
@@ -2656,7 +2673,13 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-algorithm-line {
   position: relative;
   text-indent: 0;
-  line-height: var(--scient-latex-line-height);
+  line-height: inherit;
+}
+.scient-latex-algorithm-line-content .ProseMirror-trailingBreak {
+  display: none;
+}
+.scient-latex-compiled-algorithm {
+  margin: 1em 0;
 }
 .scient-latex-algorithm-line-body {
   padding-left: calc(var(--algorithm-indent, 0) * 1.5em);
@@ -3682,6 +3705,11 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   --scient-latex-selection-background: var(--scient-latex-retained-selection-background);
   --scient-latex-cell-selection-background: var(--scient-latex-retained-selection-background);
 }
+.scient-latex-visual-workspace[data-scient-selection-held]
+  .scient-latex-visual-document
+  ::selection {
+  background: transparent;
+}
 .scient-latex-visual-document[contenteditable="true"] .scient-latex-rich-preview dt input {
   min-width: 3ch;
 }
@@ -3897,8 +3925,11 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   display: none;
 }
 .scient-latex-selection-overlay {
-  position: fixed;
-  inset: 0;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
   pointer-events: none;
   z-index: 30;
 }
@@ -3911,24 +3942,24 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 
 .scient-latex-scope-outline {
   --scient-scope-ink: rgba(100, 106, 116, 0.8);
-  --scient-scope-corner: min(3px, 25%);
+  --scient-scope-corner: min(calc(3 * var(--scient-scope-pixel, 1px)), 25%);
   background:
     linear-gradient(var(--scient-scope-ink), var(--scient-scope-ink)) left top /
-      var(--scient-scope-corner) 1px,
-    linear-gradient(var(--scient-scope-ink), var(--scient-scope-ink)) left top / 1px
-      var(--scient-scope-corner),
+      var(--scient-scope-corner) var(--scient-scope-pixel, 1px),
+    linear-gradient(var(--scient-scope-ink), var(--scient-scope-ink)) left top /
+      var(--scient-scope-pixel, 1px) var(--scient-scope-corner),
     linear-gradient(var(--scient-scope-ink), var(--scient-scope-ink)) right top /
-      var(--scient-scope-corner) 1px,
-    linear-gradient(var(--scient-scope-ink), var(--scient-scope-ink)) right top / 1px
-      var(--scient-scope-corner),
+      var(--scient-scope-corner) var(--scient-scope-pixel, 1px),
+    linear-gradient(var(--scient-scope-ink), var(--scient-scope-ink)) right top /
+      var(--scient-scope-pixel, 1px) var(--scient-scope-corner),
     linear-gradient(var(--scient-scope-ink), var(--scient-scope-ink)) left bottom /
-      var(--scient-scope-corner) 1px,
-    linear-gradient(var(--scient-scope-ink), var(--scient-scope-ink)) left bottom / 1px
-      var(--scient-scope-corner),
+      var(--scient-scope-corner) var(--scient-scope-pixel, 1px),
+    linear-gradient(var(--scient-scope-ink), var(--scient-scope-ink)) left bottom /
+      var(--scient-scope-pixel, 1px) var(--scient-scope-corner),
     linear-gradient(var(--scient-scope-ink), var(--scient-scope-ink)) right bottom /
-      var(--scient-scope-corner) 1px,
-    linear-gradient(var(--scient-scope-ink), var(--scient-scope-ink)) right bottom / 1px
-      var(--scient-scope-corner);
+      var(--scient-scope-corner) var(--scient-scope-pixel, 1px),
+    linear-gradient(var(--scient-scope-ink), var(--scient-scope-ink)) right bottom /
+      var(--scient-scope-pixel, 1px) var(--scient-scope-corner);
   background-repeat: no-repeat;
   border-radius: 0;
 }

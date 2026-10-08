@@ -1,12 +1,28 @@
 import { MATRIX_ENVIRONMENTS } from "../math/input/matrix";
 import { MATH_SYMBOLS } from "./mathSymbols";
 import { MATH_FORMATTING_ARGUMENTS } from "./mathTextFormatting";
+import { latexCommandChoices, type LatexCompletionContext } from "./latexCommandCompletion";
 
 export interface MathCommandCompletion {
   readonly label: string;
   readonly latex: string;
   readonly argument?: boolean;
   readonly text?: boolean;
+  readonly preview?: string;
+}
+
+export function mathCommandCompletions(query: string, context: LatexCompletionContext = {}) {
+  if (/^\\beg(?:i(?:n)?)?$/u.test(query))
+    return [
+      { label: "\\begin{}", latex: "\\begin{}", preview: "\\begin{environment}", argument: true },
+    ];
+  const environments = mathEnvironmentCompletions(query);
+  if (environments.length)
+    return environments.map((choice) => ({
+      ...choice,
+      preview: choice.latex.replace(/#\?/gu, "").replace(/\s+/gu, " "),
+    }));
+  return latexCommandChoices(query, "math", context);
 }
 
 const argumentTemplates = new Map(

@@ -23,6 +23,16 @@ export function isLatexEditingMenuEvent(event: Event, element: Element): boolean
   const workspace = element.closest(".scient-latex-visual-workspace");
   if (!workspace) return false;
   const owner = latexSelectEventOwner(event);
+  if (
+    owner &&
+    workspace.contains(owner) &&
+    event
+      .composedPath()
+      .some(
+        (target) => target instanceof Element && target.closest(".scient-latex-command-completion"),
+      )
+  )
+    return true;
   const targets = owner ? [owner] : event.composedPath();
   return targets.some((target) => {
     if (!(target instanceof Element)) return false;

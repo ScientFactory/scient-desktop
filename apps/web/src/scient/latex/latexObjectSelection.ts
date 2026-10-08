@@ -6,45 +6,50 @@ type ObjectBounds = Pick<DOMRect, "left" | "right" | "top" | "bottom">;
 type PointerPoint = Pick<PointerEvent, "clientX" | "clientY">;
 
 export const LATEX_SELECTION_OBJECT_SELECTOR =
-  '.scient-latex-visual-inline-math, .scient-latex-visual-display-math, .scient-latex-rich-preview[data-kind="table"]';
+  '.scient-latex-visual-inline-math, .scient-latex-visual-display-math, [data-node-view-wrapper][contenteditable="false"]';
 
-export function isLatexSelectionObject(node: DocumentNode | null): boolean {
-  return Boolean(
-    node &&
-    (node.type.name === "latexInlineMath" ||
-      node.type.name === "latexDisplayMath" ||
-      (node.type.name === "latexRichPreview" && node.attrs.kind === "table")),
+/** These two surfaces already hand their own pointer gestures to the document. */
+export function latexObjectOwnsPointerSelection(node: DocumentNode): boolean {
+  return (
+    node.type.name === "latexInlineMath" ||
+    node.type.name === "latexDisplayMath" ||
+    (node.type.name === "latexRichPreview" && node.attrs.kind === "table")
   );
 }
 
-/** A drag ending inside an embedded editor includes that editor's whole object. */
-export function latexDocumentSelectionAtPointer(
-  view: EditorView,
-  anchor: number,
-  point: PointerPoint,
-): Selection | null {
-  const { doc } = view.state;
-  const hit = view.posAtCoords({ left: point.clientX, top: point.clientY });
-  if (!hit) return null;
-  let head = hit.pos;
-  const target = view.dom.ownerDocument
-    .elementFromPoint(point.clientX, point.clientY)
-    ?.closest(LATEX_SELECTION_OBJECT_SELECTOR);
-  if (target && view.dom.contains(target)) {
-    const position =
-      hit.inside >= 0 && isLatexSelectionObject(doc.nodeAt(hit.inside))
-        ? hit.inside
-        : view.posAtDOM(target, 0);
-    const node = doc.nodeAt(position);
-    if (isLatexSelectionObject(node)) {
-      const end = position + node!.nodeSize;
-      head = anchor <= position ? end : anchor >= end ? position : head;
+export function isLatexSelectionObject(node: DocumentNode | null): boolean {
+  return Boolean(node && node.isAtom && !node.isText && node.type.name.startsWith("latex"));
+}
+
+/** Resolve in this view's model, even when the hit belongs to a nested editor. */
+export function latexSelectionObjectAtElement(view: EditorView, element: Element) {
+  const target = element.closest(LATEX_SELECTION_OBJECT_SELECTOR);
+  if (!target || !view.dom.contains(target)) return null;
+  try {
+    const at = view.posAtDOM(target, 0);
+    for (const position of [at, at - 1]) {
+      if (position < 0) continue;
+      const node = view.state.doc.nodeAt(position);
+      const dom = view.nodeDOM(position);
+      if (isLatexSelectionObject(node) && dom instanceof Element && dom.contains(target))
+        return { position, node: node!, element: dom };
     }
+  } catch {
+    // A node view being replaced is no longer a pointer target in this model.
   }
-  const direction = head >= anchor ? 1 : -1;
+  return null;
+}
+
+/** Text endpoints must not trim away an included atom at either end. */
+export function latexSelectionBetween(
+  doc: DocumentNode,
+  anchor: number,
+  head: number,
+  direction = head >= anchor ? 1 : -1,
+): Selection {
   const nearby = TextSelection.between(doc.resolve(anchor), doc.resolve(head), direction);
-  const from = Math.min(anchor, head);
-  const to = Math.max(anchor, head);
+  const from = Math.min(anchor, head),
+    to = Math.max(anchor, head);
   let missesObject = false;
   doc.nodesBetween(from, to, (node, position) => {
     if (!isLatexSelectionObject(node)) return;
@@ -57,6 +62,25 @@ export function latexDocumentSelectionAtPointer(
     return false;
   });
   return missesObject ? TextSelection.create(doc, anchor, head) : nearby;
+}
+
+/** A drag ending inside an embedded editor includes that editor's whole object. */
+export function latexDocumentSelectionAtPointer(
+  view: EditorView,
+  anchor: number,
+  point: PointerPoint,
+): Selection | null {
+  const { doc } = view.state;
+  const hit = view.posAtCoords({ left: point.clientX, top: point.clientY });
+  if (!hit) return null;
+  let head = hit.pos;
+  const target = view.dom.ownerDocument.elementFromPoint(point.clientX, point.clientY);
+  const object = target ? latexSelectionObjectAtElement(view, target) : null;
+  if (object) {
+    const end = object.position + object.node.nodeSize;
+    head = anchor <= object.position ? end : anchor >= end ? object.position : head;
+  }
+  return latexSelectionBetween(doc, anchor, head);
 }
 
 export function pointerInsideLatexObject(point: PointerPoint, bounds: ObjectBounds): boolean {
@@ -78,7 +102,7 @@ export function selectionIncludingLatexObject(
 ): Selection {
   const end = position + doc.nodeAt(position)!.nodeSize;
   const coversObject = (selection: Selection) => selection.from <= position && selection.to >= end;
-  const nearby = TextSelection.between(doc.resolve(anchor), doc.resolve(head), direction);
+  const nearby = latexSelectionBetween(doc, anchor, head, direction);
   if (coversObject(nearby)) return nearby;
   const exact = TextSelection.create(doc, anchor, head);
   return coversObject(exact) ? exact : NodeSelection.create(doc, position);

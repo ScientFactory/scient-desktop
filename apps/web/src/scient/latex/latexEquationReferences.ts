@@ -543,20 +543,23 @@ function equationReferences(
           title: "Listing",
         });
     }
-    if (node.type.name === "latexScientific" && node.attrs.layout?.kind === "algorithm") {
-      if (node.attrs.layout.captioned) algorithmCounter++;
-      const number =
-        algorithmsReliable && node.attrs.layout.captioned ? String(algorithmCounter) : null;
+    if (
+      (node.type.name === "latexScientific" && node.attrs.layout?.kind === "algorithm") ||
+      (node.type.name === "latexRichPreview" && node.attrs.kind === "compiledAlgorithm")
+    ) {
+      const layout = node.attrs.layout ?? node.attrs.sourceMeta;
+      if (layout.captioned) algorithmCounter++;
+      const number = algorithmsReliable && layout.captioned ? String(algorithmCounter) : null;
       result.algorithms.set(position, { number });
       const names: string[] = [];
       node.forEach((line) => names.push(String(line.attrs.command)));
-      const lines = algorithmLineLayout(names, Number(node.attrs.layout.interval));
+      const lines = algorithmLineLayout(names, Number(layout.interval));
       if (lines)
         node.forEach((_line, offset, index) =>
           result.algorithmLines.set(position + 1 + offset, lines[index]!),
         );
-      if (node.attrs.layout.label)
-        addLabel(String(node.attrs.layout.label), {
+      if (layout.label)
+        addLabel(String(layout.label), {
           position,
           row: 0,
           number,

@@ -1,10 +1,19 @@
 import type { Editor } from "@tiptap/core";
 import { Selection } from "@tiptap/pm/state";
-import { createContext, useCallback, useContext } from "react";
+import {
+  createContext,
+  createElement,
+  useCallback,
+  useContext,
+  type ContextType,
+  type ReactNode,
+} from "react";
 import { projectLatexVisualDocument, serializeLatexVisualBlock } from "./latexVisualDocument";
 
 export const LatexAuthoringContext = createContext<{
   source: string;
+  /** Only declaration changes invalidate objects that render from the preamble. */
+  preamble?: string;
   prepare: () => boolean;
   reportError?: (message: string | null) => void;
   renameLabel?: (before: string, after: string, fieldId?: string) => boolean;
@@ -13,9 +22,26 @@ export const LatexAuthoringContext = createContext<{
   prepare: () => true,
 });
 
+const LatexActionNoticeContext = createContext<((message: string | null) => void) | null>(null);
+
+/** Source readers update independently of the stable notice callback. */
+export function LatexDocumentAuthoring({
+  value,
+  children,
+}: {
+  value: ContextType<typeof LatexAuthoringContext>;
+  children: ReactNode;
+}) {
+  return createElement(
+    LatexActionNoticeContext,
+    { value: value.reportError ?? null },
+    createElement(LatexAuthoringContext, { value }, children),
+  );
+}
+
 /** Object menus report action failures through the document's notice area. */
 export function useLatexActionNotice() {
-  const { reportError } = useContext(LatexAuthoringContext);
+  const reportError = useContext(LatexActionNoticeContext);
   return useCallback((message: string | null) => reportError?.(message || null), [reportError]);
 }
 

@@ -5,7 +5,6 @@ import { Input } from "~/components/ui/input";
 import { LatexSelect } from "./LatexSelect";
 import { latexVisualLayoutProfile, type LatexVisualLayoutUpdate } from "./latexVisualDocument";
 import { LATEX_PAPER_SIZES } from "./latexVisualLayout";
-import { latexDocumentMathSetup } from "./latexDocumentMacros";
 
 export type LatexDocumentSettingsSection = "page" | "style";
 
@@ -142,7 +141,6 @@ export function LatexDocumentSettings(props: {
   // The parent mounts a fresh settings form for each opening.
   const [original] = useState(props.source);
   const [current] = useState(() => currentSettings(original));
-  const [mathSetup] = useState(() => latexDocumentMathSetup(original));
   const { profile } = current;
   const [changes, setChanges] = useState<Partial<LatexVisualLayoutUpdate>>({});
   const [marginChoice, setMarginChoice] = useState<MarginChoice>(current.margin);
@@ -331,30 +329,6 @@ export function LatexDocumentSettings(props: {
               })}
             </div>
           ) : null}
-          {/* What Visual reads from the setup; changed in Source. */}
-          <div
-            className="col-span-2 grid gap-1 text-xs"
-            role="group"
-            aria-label="Packages and macros"
-          >
-            <span className="text-muted-foreground">Packages and macros</span>
-            <p>
-              {mathSetup.packages.declarations.length
-                ? mathSetup.packages.declarations
-                    .map(({ name, options }) => (options ? `${name} [${options}]` : name))
-                    .join(", ")
-                : "No packages declared."}
-            </p>
-            {mathSetup.declarations.length > 0 && (
-              <p>{mathSetup.declarations.map((name) => `\\${name}`).join(", ")}</p>
-            )}
-            {mathSetup.unsupported.length > 0 && (
-              <p className="text-muted-foreground">
-                Shown only in Source and PDF:{" "}
-                {mathSetup.unsupported.map((name) => `\\${name}`).join(", ")}
-              </p>
-            )}
-          </div>
         </fieldset>
         {stale && (
           <p role="alert" className="text-xs">

@@ -1,13 +1,20 @@
 import type { Node as DocumentNode } from "@tiptap/pm/model";
 import { Decoration, type EditorView } from "@tiptap/pm/view";
 
-export type ParagraphSpacingCache = WeakMap<DocumentNode, { key: string; spacing: number }>;
+export type ParagraphSpacingCache = WeakMap<
+  DocumentNode,
+  { key: string; spacing: number; element: HTMLElement; width: number; previous: Element | null }
+>;
 
 /** Fit a short paragraph using shrinkable spaces, as TeX does before wrapping.
  * Keep glyph widths, indentation and the text area unchanged. This is bounded
  * single-line fitting, not a replacement for TeX's paragraph breaking algorithm.
  */
-export function latexParagraphSpacing(view: EditorView, cache: ParagraphSpacingCache) {
+export function latexParagraphSpacing(
+  view: EditorView,
+  cache: ParagraphSpacingCache,
+  unchanged?: (element: HTMLElement) => boolean,
+) {
   const decorations: Decoration[] = [];
   const context = document.createElement("canvas").getContext("2d");
   if (!context) return decorations;
@@ -18,6 +25,29 @@ export function latexParagraphSpacing(view: EditorView, cache: ParagraphSpacingC
     if (!node.childCount || !node.content.content.every((child) => child.isText)) return false;
     const paragraph = view.nodeDOM(position);
     if (!(paragraph instanceof HTMLElement)) return false;
+    const previous = paragraph.previousElementSibling;
+    const widthOnScreen = paragraph.clientWidth;
+    let cached = cache.get(node);
+    const decorate = (spacing: number) => {
+      if (spacing)
+        decorations.push(
+          Decoration.node(
+            position,
+            position + node.nodeSize,
+            { style: `word-spacing: ${spacing}px` },
+            { latexParagraphSpacing: spacing },
+          ),
+        );
+    };
+    if (
+      cached?.element === paragraph &&
+      cached.width === widthOnScreen &&
+      cached.previous === previous &&
+      unchanged?.(paragraph)
+    ) {
+      decorate(cached.spacing);
+      return false;
+    }
     const style = getComputedStyle(paragraph);
     if (
       style.textAlign !== "justify" ||
@@ -65,7 +95,6 @@ export function latexParagraphSpacing(view: EditorView, cache: ParagraphSpacingC
     const last = runs.at(-1);
     if (last) last.text = last.text.replace(/ +$/u, "");
     const key = JSON.stringify([available, runs]);
-    let cached = cache.get(node);
     if (cached?.key !== key) {
       let natural = 0,
         spaces = 0,
@@ -83,18 +112,13 @@ export function latexParagraphSpacing(view: EditorView, cache: ParagraphSpacingC
       // A subpixel allowance prevents browser rounding from wrapping again.
       const adjustment = spaces ? Math.ceil(((excess + 0.25) / spaces) * 100) / 100 : 0;
       const spacing = excess > 0 && adjustment > 0 && adjustment <= shrink ? -adjustment : 0;
-      cached = { key, spacing };
+      cached = { key, spacing, element: paragraph, width: widthOnScreen, previous };
+      cache.set(node, cached);
+    } else {
+      cached = { ...cached, element: paragraph, width: widthOnScreen, previous };
       cache.set(node, cached);
     }
-    if (cached.spacing)
-      decorations.push(
-        Decoration.node(
-          position,
-          position + node.nodeSize,
-          { style: `word-spacing: ${cached.spacing}px` },
-          { latexParagraphSpacing: cached.spacing },
-        ),
-      );
+    decorate(cached.spacing);
     return false;
   });
   return decorations;

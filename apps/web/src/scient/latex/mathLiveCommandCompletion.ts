@@ -3,10 +3,12 @@ import { getKeyboardPreferences } from "../keyboard/preferences";
 import {
   mathArgumentCompletion,
   mathEnvironmentCompletions,
+  mathCommandCompletions,
   type MathCommandCompletion,
 } from "./mathCommandCompletion";
 import "./mathCommandCompletion.css";
 import { enterMathFormattingArgument, mathTextFormattingInput } from "./mathTextFormatting";
+import { latexArgumentChoices, type LatexCompletionContext } from "./latexCommandCompletion";
 
 interface CommandAtom {
   readonly type?: string;
@@ -46,6 +48,7 @@ function commandDraft(math: MathfieldElement) {
 export function installMathCommandCompletion(
   math: MathfieldElement,
   hasDocumentMacro: (command: string) => boolean,
+  context: () => LatexCompletionContext = () => ({}),
 ) {
   const document = math.ownerDocument;
   const menu = document.createElement("div");
@@ -53,7 +56,7 @@ export function installMathCommandCompletion(
   menu.className = "scient-latex-command-completion";
   menu.dataset.latexSelectOwner = math.id;
   menu.setAttribute("role", "listbox");
-  menu.setAttribute("aria-label", "Math environment completions");
+  menu.setAttribute("aria-label", "LaTeX completions");
   menu.hidden = true;
   let choices: MathCommandCompletion[] = [];
   let active = 0;
@@ -74,11 +77,11 @@ export function installMathCommandCompletion(
       document.defaultView?.removeEventListener("resize", position);
     }
   };
-  const hide = () => {
+  const hide = (keepNativeHidden = false) => {
+    if (!keepNativeHidden) math.removeAttribute("data-environment-completion");
     if (menu.hidden) return;
     menu.hidden = true;
     watchPosition(false);
-    math.removeAttribute("data-environment-completion");
     math.removeAttribute("aria-activedescendant");
     math.removeAttribute("aria-controls");
   };
@@ -88,13 +91,18 @@ export function installMathCommandCompletion(
     // Reject the raw command before inserting; surrounding formula atoms stay intact.
     math.executeCommand(["complete", "reject"]);
     if (completion.argument) {
-      math.executeCommand(["switchMode", "latex", "", completion.latex]);
-      math.position -= 1;
+      const latex = completion.latex.replace(/#[0-9?]/gu, "");
+      math.executeCommand(["switchMode", "latex", "", latex]);
+      const firstArgument = Math.max(0, latex.indexOf("{}")) + 1;
+      math.position -= latex.length - firstArgument;
+    } else if (/^\\color\{[^{}]+\}$/u.test(completion.latex) && !hasDocumentMacro("\\color")) {
+      math.executeCommand(["switchMode", "math"]);
+      math.applyStyle({ color: completion.latex.slice(7, -1) });
     } else {
       math.insert(
         hasDocumentMacro("\\htmlData")
           ? completion.latex
-          : mathTextFormattingInput(completion.latex),
+          : mathTextFormattingInput(completion.latex, context().macros),
         {
           format: "latex",
           mode: "math",
@@ -122,26 +130,36 @@ export function installMathCommandCompletion(
     if (disposed) return;
     const draft = math.hasFocus() && !math.readOnly ? commandDraft(math) : null;
     const nextQuery = draft?.before ?? "";
-    choices =
-      draft &&
-      /^\}?$/u.test(draft.after) &&
-      preferences().completion !== "off" &&
-      !hasDocumentMacro("\\begin")
-        ? mathEnvironmentCompletions(nextQuery)
-        : [];
+    choices = [];
+    if (draft && preferences().completion !== "off") {
+      const argumentChoices = latexArgumentChoices(draft.typed, draft.before.length, context());
+      choices = argumentChoices.map((choice) => {
+        const before = draft.typed.slice(0, choice.from) + choice.replacement;
+        let after = draft.typed.slice(choice.to);
+        if (!after.startsWith("}")) after = "}" + after;
+        const latex = (before + after).replace(/\{\}/gu, "{#?}");
+        const pendingColor = /^\\fcolorbox\{[^{}]+\}\{\}/u.test(latex.replace(/#\?/gu, ""));
+        return { label: choice.label, preview: before + after, latex, argument: pendingColor };
+      });
+      if (!choices.length && /^\}?$/u.test(draft.after))
+        choices =
+          hasDocumentMacro("\\begin") && nextQuery.startsWith("\\begin")
+            ? []
+            : mathCommandCompletions(nextQuery, context());
+    }
     if (nextQuery !== query) {
       query = nextQuery;
       active = 0;
       dismissed = "";
     }
-    if (!choices.length || dismissed === query) return hide();
+    if (!choices.length || dismissed === query) return hide(Boolean(choices.length));
     active = Math.min(active, choices.length - 1);
     menu.replaceChildren(
       ...choices.map((choice, index) => {
         const option = document.createElement("button");
         option.type = "button";
         option.id = `${menu.id}-${index}`;
-        option.textContent = choice.label;
+        option.textContent = choice.preview ?? choice.latex.replace(/#[0-9?]/gu, "");
         option.setAttribute("role", "option");
         option.setAttribute("aria-selected", String(index === active));
         option.addEventListener("pointerdown", (event) => event.preventDefault());
@@ -223,7 +241,7 @@ export function installMathCommandCompletion(
     }
     if (!menu.hidden && event.key === "Escape") {
       dismissed = query;
-      hide();
+      hide(true);
       return consume();
     }
     const accepts =
@@ -275,7 +293,8 @@ export function installMathCommandCompletion(
   document.addEventListener("click", suggested, true);
   for (const name of ["input", "selection-change", "mode-change", "focus"])
     math.addEventListener(name, schedule);
-  math.addEventListener("blur", hide);
+  const blur = () => hide();
+  math.addEventListener("blur", blur);
   return {
     handleKeyDown,
     completeTyped,
@@ -286,7 +305,7 @@ export function installMathCommandCompletion(
       menu.remove();
       for (const name of ["input", "selection-change", "mode-change", "focus"])
         math.removeEventListener(name, schedule);
-      math.removeEventListener("blur", hide);
+      math.removeEventListener("blur", blur);
       document.removeEventListener("click", suggested, true);
     },
   };

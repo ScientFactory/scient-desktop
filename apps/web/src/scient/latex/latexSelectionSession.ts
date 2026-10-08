@@ -24,6 +24,8 @@ export function latexSelectionCommand(id: string): LatexSelectionCommand | null 
 export interface LatexSelectionSnapshot {
   readonly path: readonly string[];
   readonly scopes: () => readonly DOMRect[];
+  /** Vacant slots remain identifiable while their contents are selected. */
+  readonly emptyScopes?: () => readonly DOMRect[];
   readonly scopePadding?: number;
   readonly selection: () => readonly DOMRect[];
   /** False means the surface paints its selection even while a menu owns focus. */
@@ -35,6 +37,7 @@ export interface LatexSelectionSnapshot {
 interface Participant {
   readonly element: HTMLElement;
   readonly capture: () => LatexSelectionSnapshot | null;
+  readonly enterFrom?: (child: HTMLElement) => void;
   readonly command: (command: LatexSelectionCommand) => boolean;
 }
 
@@ -53,10 +56,11 @@ const clearParentHistory = () => {
 const workspace = (participant: Participant | null) =>
   participant?.element.closest(".scient-latex-visual-workspace");
 
-function present(participant: Participant | null, selected = false) {
+function present(participant: Participant | null, selected = false, selectionOverlay = false) {
   if (presentation !== participant) {
     presentation?.element.removeAttribute("data-scient-active-slot");
     presentation?.element.removeAttribute("data-scient-selection-active");
+    presentation?.element.removeAttribute("data-scient-selection-overlay");
     presentation = participant;
   }
   const next =
@@ -71,6 +75,7 @@ function present(participant: Participant | null, selected = false) {
   }
   participant?.element.toggleAttribute("data-scient-active-slot", true);
   participant?.element.toggleAttribute("data-scient-selection-active", selected);
+  participant?.element.toggleAttribute("data-scient-selection-overlay", selectionOverlay);
   guideOwner?.toggleAttribute("data-scient-editing-guides", true);
   guideOwner?.toggleAttribute("data-scient-selection-active", selected);
 }
@@ -129,19 +134,24 @@ function paint() {
     overlay = document.createElement("div");
     overlay.className = "scient-latex-selection-overlay";
     overlay.setAttribute("aria-hidden", "true");
-    document.body.append(overlay);
   }
-  const viewport = active.element.closest(".scient-latex-visual-scroll") ?? root;
-  const documentClip = viewport.getBoundingClientRect();
-  const mathClip = active.element
-    .closest(".scient-latex-mathfield[data-math-viewport-active]")
-    ?.getBoundingClientRect();
-  const clip = {
-    left: Math.max(documentClip.left, mathClip?.left ?? documentClip.left),
-    top: Math.max(documentClip.top, mathClip?.top ?? documentClip.top),
-    right: Math.min(documentClip.right, mathClip?.right ?? documentClip.right),
-    bottom: Math.min(documentClip.bottom, mathClip?.bottom ?? documentClip.bottom),
-  };
+  // Paint in the same scrolling layer as the ink. A fixed body overlay waits
+  // for main-thread measurement while compositor scrolling moves the page.
+  // Math's own viewport carries its overlay during horizontal panning too.
+  const anchor =
+    active.element.closest(".scient-latex-mathfield") ??
+    active.element.closest(".scient-latex-page-zoom-frame") ??
+    active.element.closest(".scient-latex-visual-scroll") ??
+    root;
+  if (overlay.parentElement !== anchor) anchor.append(overlay);
+  // The layer is one CSS pixel square. Its measured dimensions give the exact
+  // ancestor scale without offsetWidth rounding at fractional document zoom.
+  const origin = overlay.getBoundingClientRect();
+  if (origin.width <= 0 || origin.height <= 0) {
+    overlay.replaceChildren();
+    return;
+  }
+  overlay.style.setProperty("--scient-scope-pixel", `${1 / origin.width}px`);
   const boxes = (
     rects: readonly DOMRect[],
     kind: string,
@@ -149,23 +159,26 @@ function paint() {
   ) =>
     rects.flatMap((rect) => {
       const padding = kind === "scient-latex-scope-outline" ? scopePadding : 0;
-      const left = Math.max(clip.left, rect.left - padding),
-        top = Math.max(clip.top, rect.top - padding);
-      const right = Math.min(clip.right, rect.right + padding),
-        bottom = Math.min(clip.bottom, rect.bottom + padding);
+      // Keep complete rectangles, including offscreen ones. The scrolling
+      // ancestors clip them natively; truncating at today's viewport edges
+      // would leave cut-off highlights when that content scrolls into view.
+      const left = rect.left - padding,
+        top = rect.top - padding;
+      const right = rect.right + padding,
+        bottom = rect.bottom + padding;
       if (right < left || bottom <= top) return [];
       const box = document.createElement("span");
       box.className = kind;
       Object.assign(box.style, {
-        left: `${left}px`,
-        top: `${top}px`,
-        width: `${Math.max(2, right - left)}px`,
-        height: `${bottom - top}px`,
+        left: `${(left - origin.left) / origin.width}px`,
+        top: `${(top - origin.top) / origin.height}px`,
+        width: `${Math.max(2, right - left) / origin.width}px`,
+        height: `${(bottom - top) / origin.height}px`,
       });
       return [box];
     });
   const selection = snapshot.selection();
-  present(active, selection.length > 0);
+  present(active, selection.length > 0, snapshot.selectionOverlay === true);
   const documentStyle = getComputedStyle(
     active.element.closest(".scient-latex-visual-document") ?? root,
   );
@@ -182,7 +195,7 @@ function paint() {
   overlay.toggleAttribute("data-scient-selection-held", Boolean(held));
   overlay.replaceChildren(
     ...(selection.length
-      ? []
+      ? boxes(snapshot.emptyScopes?.() ?? [], "scient-latex-scope-outline", 0)
       : [
           ...boxes(emptyText, "scient-latex-scope-outline", 0),
           ...(activeEmptyText ? [] : boxes(snapshot.scopes(), "scient-latex-scope-outline")),
@@ -201,6 +214,19 @@ function paint() {
 }
 function schedule() {
   if (!frame) frame = requestAnimationFrame(paint);
+}
+function scrolled(event: Event) {
+  const anchor = overlay?.parentElement;
+  if (!anchor || !overlay?.isConnected) {
+    schedule();
+    return;
+  }
+  const target = event.target;
+  // Ancestor scrolling already moves the layer and clips it with the content.
+  // Only scrolling within the anchored content (such as a textarea) changes
+  // the measured selection relative to that layer.
+  if (target === document || (target instanceof Element && target.contains(anchor))) return;
+  if (target instanceof Element && anchor.contains(target)) schedule();
 }
 function release() {
   held = null;
@@ -278,7 +304,7 @@ export function registerLatexSelection(participant: Participant): {
     document.addEventListener("selectionchange", schedule);
     document.addEventListener("scient-latex-selection-change", schedule);
     document.addEventListener("input", clearParentHistory, true);
-    document.addEventListener("scroll", schedule, true);
+    document.addEventListener("scroll", scrolled, true);
     window.addEventListener("resize", schedule);
     disposeListeners = () => {
       document.removeEventListener("pointerdown", activate, true);
@@ -287,7 +313,7 @@ export function registerLatexSelection(participant: Participant): {
       document.removeEventListener("selectionchange", schedule);
       document.removeEventListener("scient-latex-selection-change", schedule);
       document.removeEventListener("input", clearParentHistory, true);
-      document.removeEventListener("scroll", schedule, true);
+      document.removeEventListener("scroll", scrolled, true);
       window.removeEventListener("resize", schedule);
     };
   }
@@ -343,6 +369,7 @@ export function runLatexSelectionCommand(
     const snapshot = child.capture();
     for (let parent = child.element.parentElement; parent; parent = parent.parentElement) {
       const participant = [...participants].find((candidate) => candidate.element === parent);
+      participant?.enterFrom?.(child.element);
       if (participant?.command(command)) {
         if (snapshot && (command === "selectionExpand" || command === "selectionScopeExpand"))
           parentHistory.push({ participant: child, snapshot });

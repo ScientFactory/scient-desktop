@@ -1,6 +1,33 @@
 # Source-derived writing canvas
 
-Status: implementation candidate; human visual review pending.
+Status: owner reviewed the current Visual editor on 2026-10-08. Two fixes remain:
+responsiveness and math caret/selection positioning. Ctrl+A is owner-verified.
+
+## Remaining fixes
+
+The owner reports that the other items in the previous verification list work
+well. Keep the current fix list to these two:
+
+1. **Responsiveness:** drastically reduce delays in insertion, initial rendering,
+   typing and changes generally. Measure these paths on large documents and
+   identify the remaining work that blocks input or painting. Preserve source,
+   saving, recovery and undo while improving speed; earlier batching changes
+   have not resolved the owner's observed delays.
+2. **Math caret and selection positioning:** eliminate unexpected caret jumps,
+   make its location clear, and make clicking/dragging inside a formula select
+   the intended content. Check nested slots, accents, scripts, empty cells,
+   zoom, scrolling and focus changes. Existing scope rules remain the target;
+   current positioning still needs work.
+
+The owner's verification closes the other previous checks: Ctrl+A, source preservation
+and draft recovery, table behavior and guides, writing around math, boxes and
+source fields, TikZ/pgfplots previews, menu/scroll selection retention, and the
+remaining document workflow checks. This records the owner's running-app review;
+it does not claim a new automated test run or exhaustive LaTeX coverage.
+
+This section replaces the workspace's former `things to add.md` checklist.
+Command-placement decisions and deferred product proposals live in
+[Editing-command placement](../design/editing-commands-placement.md).
 
 The [Visual authoring proposal](./scient-latex-visual-authoring-proposal.md)
 describes planned capabilities, source ownership, minimal menu placement and a
@@ -89,8 +116,8 @@ argument terminators, nonbreaking `~`, thin spaces, TeX quotes/dashes and explic
 line breaks have distinct handling. `\\` and `\newline` insert a break inside a
 paragraph; a blank source line still starts a new paragraph. Unknown macros and
 breaks with unsupported spacing/placement options retain exact-source fallback.
-Automated regressions cover these source projections and edits. Human visual
-qualification remains pending.
+Automated regressions cover these source projections and edits. The owner's
+current verification status is recorded under [Remaining fixes](#remaining-fixes).
 
 Visual choice fields use the shared themed Select primitives through
 `LatexSelect.tsx`, including matrix brackets, insertion dialogs, document settings
@@ -545,8 +572,10 @@ No inline guide nodes are inserted. Minimum cell
 targets apply through the structural selector from the first render, independent
 of observer attributes, focus and emptiness, so decorating a replacement render
 does not resize the formula. Markers disappear when editing leaves the structure,
-while menu ownership retains them. The active empty slot keeps its marker beside
-the caret. Content/cell selection suppresses guides.
+while menu ownership retains them. The active empty slot keeps its marker and
+centers the painted caret inside it without changing formula layout. Cell-only
+selection uses the same compact geometry, inset within the empty marker; empty
+markers survive selection. Content selection suppresses occupied-slot guides.
 The adapter never modifies math atoms, selection history, or serialization.
 Empty-cell clicks resolve through the owning array's atom ID in the existing
 MathLive adapter. Native placeholder atoms reserve invisible figure-space
@@ -767,14 +796,23 @@ overrides). MathLive's inline shortcuts are explicitly empty, and the shared mat
 controller does not replace bare words or punctuation pairs. Command completion
 requires a backslash. User-declared macros and explicit keyboard bindings remain
 available; symbol previews do not create document macros.
-`mathCommandCompletion.ts` derives argument templates from the symbol catalog and
-limits environment completions to the supported formula environments.
+`latexCommandCompletion.ts` owns the shared insertion templates and visible
+previews, combining the symbol catalog, text/document commands and bounded
+document macro declarations. Argument completion uses the root's literal color
+inventory, xcolor mix percentages, and available label/manual citation keys.
+`mathCommandCompletion.ts` limits math environment completions to supported
+formula environments.
 `mathLiveCommandCompletion.ts` reads the active MathLive command draft at the
 library boundary, excluding ghost characters. It pairs braces without replacing
 typed arguments and extends native acceptance with editable argument slots and
-matching environment ends. Its local environment list retains field focus and
-uses the existing popup ownership route. It never alters the Source editor or
-adds macro declarations. Cursor movement, blur, disabled completion, and disposal
+matching environment ends. Its command and argument list retains field focus and
+uses the existing popup ownership route. `latexProseCompletion.ts` accepts text
+styles, headings and inline math from prose and table editors. Inline reference,
+link and footnote templates are edited as literal drafts until explicitly
+finished into supported nodes. `latexFileCompletion.ts` applies source templates
+through Pierre's edit/undo API, retaining existing arguments and navigating empty
+template arguments with Tab. Neither adapter adds macro declarations.
+Cursor movement, blur, disabled completion, and disposal
 hide the list; scrolling positions it without scrolling the document selection.
 Simple symbol-plus-script combinations do not get additional palette entries.
 `mathMacroEditing.ts` unlocks document macros whose entire definition is a
@@ -854,7 +892,12 @@ which keeps a constant height. Activation is scoped to the Visual workspace.
 editable bodies and keyboard caret movement; nested math takes precedence over
 its enclosing statement or table. Separate canvases do not share activation.
 The symbol palette portals to the footer so the inspector's scroll area cannot
-clip it; it retains the same ownership chain. `LatexTitleView.tsx` keeps native text editing on the paper;
+clip it; it retains the same ownership chain. Its header moves the panel using
+pointer capture and a screen-only translation, clamped to the workspace and
+window. Pointer updates are batched per animation frame; resizing reclamps the
+panel. Position lasts for the mounted picker, and header arrow/Home keys provide
+keyboard movement/reset. Dragging preserves the menu's retained selection.
+`LatexTitleView.tsx` keeps native text editing on the paper;
 author visibility and date mode live in the footer. Hiding an author writes
 `\author{}` and retains the hidden name in the document's local app preferences.
 Showing it restores `\author`. No new app metadata is written into the LaTeX
@@ -1096,32 +1139,48 @@ and toolbar history target that editor until the caret leaves it. An inline-to-
 display conversion splits a paragraph around the formula; aligned and gathered
 bodies keep an inner math environment when their outer wrapper changes. Empty
 slots are local caret targets with subtle focused indicators, omitted from source.
-Math and object fields coalesce source publication for 180 ms while preserving
-native input and selection, flush on blur, and retain unacknowledged field drafts.
-Ordinary prose insertion, deletion, replacement and paragraph edits paint without
-calling the LaTeX adapter. `visualTyping.ts` classifies the editor steps without
-parsing or serializing source; the live immutable editor document is retained
-separately from the last synchronized source projection. `editorBackgroundTask.ts`
-coalesces conversion and toolbar state during typing: a 120 ms quiet window,
-with a one-second scheduling bound during continuous input, followed by
-`afterEditorPaint` (animation frame then a task, with a hidden-window fallback).
-These delays apply to bookkeeping; native text and MathLive paint immediately.
-Following ordinary input replaces the queued document without synchronously
-flushing earlier text. Selection changes and explicit formatting remain immediate.
-Recognition of structured math typed as prose also happens after its text paints.
-Structural actions and explicit finish/reload flush outstanding typing and source
-publication to preserve revision ordering. Composition stays local until it ends.
+Visual uses the projection's existing editing capabilities before allowing
+ordinary typing. The input check inspects the changed text slot and its source
+block; it does not serialize, reparse or publish the document. Prose and heading
+typing paints immediately, with conversion coalesced after paint (120 ms quiet,
+at most 1000 ms between scheduled batches). Introducing a new style or changing
+structure still uses the LaTeX adapter and revision-checked file session before
+the transaction takes effect. A refused structural edit leaves the document,
+selection and undo history unchanged. Opaque blocks remain Source-only, and
+protected math row/tag structures keep their existing disabled controls.
+MathLive, paper text fields and rich table cells retain their exact local input
+and coalesce publication after paint. Text and math use a 180 ms quiet period;
+cell publication uses 120 ms. These tasks have a 1000 ms maximum batching wait,
+so continuous typing still advances the working source. IME and unfinished math
+commands wait for completion. Blur, field navigation and document preparation
+flush pending edits; preparation flushes all rich table cells, including those
+that no longer have focus. Recovery journaling also runs after paint or on exit.
+Unexpected conversion/publication failures keep the input as a recoverable draft
+instead of rolling back what the user just typed. Failed document synchronization
+pauses further editing until the draft or conflict is resolved. Source recovery
+checkpoints remain coalesced; working-source admission is separate from disk save.
+Visual pauses further edits when a file session reports a save error or conflict.
+The accepted source remains in the session and recovery journal until disk
+acknowledgement. Conversion refusals use a compact status strip outside the paper,
+with Open Source and Dismiss, rather than an overlay over the writing area.
+Outside source refreshes map the selection through content changes, including
+insertions before the current paragraph and backwards ranges; removed selections
+fall back to a nearby caret. Source IDs alone do not move a selection.
 Package edits that would change more than one physical file are refused before
 publication; add the required declaration in Source first.
-Rejected text conversion or source conflicts retain the live text and a raw editor
-recovery snapshot; they never reset the typing document to the prior source. That
+Pre-existing raw editor snapshots remain recoverable. A typing
 snapshot reopens after reload only over the exact source it was typed on. Over a
 newer file, or when the editor cannot load it, it is offered through the same
 recovery line instead: as source when it converts, and as readable, copyable
 text when it does not. That text is read from the snapshot on a best-effort
 basis, so the parked entry also keeps the snapshot itself. Successful conversion hands recovery to the
-validated source journal before clearing the raw snapshot. Plain prose bypasses
-per-character source tokenization; round-trip signatures are cached for immutable
+validated source journal before clearing the raw snapshot. Stored object-field
+drafts are transferred to readable recovery on opening rather than silently
+installed at an old object position. An outside refresh checkpoints pending field
+input before deferring to its owner; View/Copy remains available even if that
+object is later moved or removed. A field slot is retired only after its exact
+record has a stored recovery copy; failed transfers keep the original and pause
+editing until the user resolves it. Round-trip signatures are cached for immutable
 nodes. Recovery storage writes happen after painting or on explicit exit.
 Pagination waits 220 ms after input and maps existing decorations while waiting;
 measurements and resize-observer refreshes run after painting, not on every input.
@@ -1335,11 +1394,91 @@ applying a draft checks both the source generation and the original block.
 Export freshness reuses the revision-scoped dependency hashes in the build evidence.
 There is no second visual revision manifest or PDF-overlay interaction host. The
 Write editor loads lazily; Source uses the shared file editor and does not load MathLive.
-Native math fields mount in short shared batches after paint so a long manuscript
-does not initialize every equation in one blocking task. Focus, insertion and
-flush make a queued field ready immediately; removed views cancel their pending
-mounts. Queued mounts recheck attachment and use the same connected host for the
-native field and its listeners. Equation-number positioning attaches when its native field is ready.
+Unopened formulas use MathLive's static markup and fonts, with the same document
+macros and colors, instead of allocating a live input model for every equation.
+One temporary field obtains the library's built-in macro dictionary and is removed
+immediately. A shared worker renders previews serially; jobs are cancelled on
+activation, source changes and removal. Worker startup is bounded to 15 seconds,
+each formula to three seconds, and output to two million characters. A failed or
+timed-out preview shows its exact formula source and remains editable. The worker
+is released after two idle seconds. These bounds isolate reading-mode rendering;
+they do not preempt an active native MathLive editing operation.
+
+Preview layout uses a shared constructed stylesheet inside each preview's shadow
+root. Prose styling does not enter mathematical boxes, and source edits do not
+invalidate their internal style trees. `LatexDocumentAuthoring` supplies a
+separate, stable action-notice context; formulas that only report action failures
+do not subscribe to the full changing source just to obtain that callback.
+
+Pointer entry, touch/pen presses, keyboard entry and explicit insertion activate
+the complete native field. A first touch press is replayed at its coordinates so
+caret placement and drag selection still belong to MathLive. Save/flush does not
+mount an unopened formula, and hover alone does not allocate an input. A shared
+pool keeps eight recently used native fields. It suspends only inactive,
+collapsed, acknowledged fields after capturing plain native model, selection
+and undo data; drafts, composition, command entry and menu-held selections pin
+their fields. The limit is soft when protection requires more inputs. The
+guarded MathLive adapter retains the live field if capture is incompatible.
+Snapshots are scoped to their field and source/macro/display configuration;
+outside source adoption does not revive obsolete state. Preview DOM updates yield
+after a four-millisecond batch and pending input takes priority. The preview
+worker receives shared document dictionaries once per context, retaining at most
+sixteen contexts until its existing idle termination. Equation numbers measure both
+reading previews and native fields. Pagination coalesces preview, font and resize
+bursts after 180 ms quiet with a 1200 ms maximum wait, retaining the typing quiet
+interval and composition protection.
+
+Equivalent immutable macro/color contexts share a preview identity, so ordinary
+source reparsing does not rebuild unchanged formula DOM. Releasing an unchanged
+native field can reuse its existing ready preview. Actual source, display-mode,
+macro and color changes still regenerate the affected previews.
+
+Pagination reuses measured units for unchanged top-level blocks and translates
+their positions as preceding content moves. Source changes, native input,
+preview completion and size changes dirty the owning block and its neighbors.
+Paragraph spacing changes invalidate the corresponding measurements rather
+than the whole line cache. Fonts, document dimensions and reference presentation
+retain full invalidation; the inexpensive pagination plan still runs over all
+units. Cached footnote heights avoid repeating hidden layout for unchanged notes.
+
+Large initial document projections, quiet ordinary-text source conversions, and
+large reference/bibliography indexes use a shared serial worker. Initial preparation
+keeps Source available and offers retry on failure. Worker startup has a 15-second
+production deadline (60 seconds for development dependency compilation), individual
+jobs have a three-second deadline, and 30 seconds without work releases the worker.
+Canceled requests do not publish. Ordinary writing enters recovery before conversion;
+results require the same document, source, projection and project setup identities.
+Explicit structural operations and mandatory flush boundaries retain their existing
+synchronous guarded path. Worker failure never becomes permission to overwrite source.
+
+Pagination yields between spacing, measurement and planning, restores its temporary
+measurement flags before yielding, and discards superseded work. Each individual
+DOM measurement stage still runs atomically. Formula preview queues prioritize the
+viewport through one observer without scanning bounding boxes for every queued job.
+Browser content visibility skips distant paragraphs and display math after the first
+page measurement, using measured heights. ProseMirror retains its content DOM and
+selection ownership; this is rendering containment, not removal of document nodes.
+Editing, measurement, print and thumbnail snapshots opt back into full rendering.
+Thumbnails share CSS-variable reads and wait for typing to become quiet.
+
+Node views subscribe only to presentation state used by their object type. Reference
+presentation omits changing source positions; clicking resolves the current target.
+Preamble-stable authoring context and the memoized file surface reduce surrounding
+UI updates. These changes do not establish LyX-equivalent latency; thesis captures
+and preservation checks are recorded separately from native LyX import coverage.
+
+Projection reconciliation skips identical canvas content and replaces only the
+changed ProseMirror range for genuine replacements. It retains unaffected node
+views, maps the caret and restores scrolling, and releases its applying guard in
+`finally`. Local source lineage guards still distinguish acknowledgements from
+outside edits; external-source adoption still clears obsolete document history.
+
+Typing snapshots, source checkpoints and individual text/math/object-field
+journals check the exact stored version before replacing or retiring it. A
+delayed writer cannot intentionally replace recovery data it did not observe;
+failed writes retain live input and surface a document-level recovery notice.
+These are synchronous identity checks, not an atomic cross-window storage
+transaction. Workspace persistence sessions remain authoritative for disk saves.
 
 ## Adapter direction
 
@@ -1452,18 +1591,27 @@ retains the original source; editing a formula may serialize modern font command
 Proof titles retain their original inline source and resolve `ref`/`eqref` through
 the same reference index as body text. Algorithm floats accept a standard font-size
 declaration before `algorithmic`; prose spacing commands round-trip as spacing.
+Standard delimiter-size commands such as `bigl`/`bigr` remain supported inside
+proofs, so they do not hide an entire proof and its reference targets. Editable
+algorithm lines suppress ProseMirror's trailing layout break before their printed
+keywords. Algorithms with TikZ overlays use a read-only compiled preview of the
+whole float, preserving minipages and brace alignment. The preview resolves known
+references from the document index and retains the original algorithm source.
 
 For external BibTeX bibliographies, the build service captures the generated
 `.bbl` from the private build directory after a successful compile. Presentation
 is bounded to 1 MB and persisted with the PDF artifact/revision in build evidence;
 status exposes it only for that successful, current revision. Older evidence
-without it remains readable and needs a rebuild to populate it. A bounded client
+without it remains readable. Project Visual also reads an existing root-adjacent
+`.bbl` as the last compiled presentation when current build evidence is absent;
+that read never creates a persistence session or establishes PDF currentness.
+A successful build supersedes this fallback. A bounded client
 parser extracts ordinary `thebibliography`/`bibitem` entries without executing
 helper definitions. Citation numbers follow the compiled order. Generated output
 is never a save target; Document ? References edits the original `.bib` files.
 Bibliography/style commands split from adjacent prose without requiring blank
 lines, and the style command remains invisible and source-preserved. Missing or
-stale presentation requests a PDF rebuild. BibLaTeX output remains unsupported.
+presentation without a generated `.bbl` requests a PDF rebuild. BibLaTeX output remains unsupported.
 
 ### Shared selection ownership
 
@@ -1475,12 +1623,14 @@ context into portaled submenus; nested selects follow their trigger ownership.
 after root Escape. Selection commands use the existing configurable keyboard
 catalog and route through the active participant, with parent expansion/shrink.
 
-Overlay painting measures current screen coordinates on captured scroll and resize
-events. Math range geometry clears MathLive's render-time atom bounds cache before
-measuring, so scrolling without an edit cannot reuse old screen coordinates.
-Retained menu snapshots also measure when painted. The overlay intersects the
-document viewport with an active math viewport, keeping panned highlights inside
-the visible formula area.
+The selection overlay is absolutely positioned inside the page zoom frame, or
+inside the active field's math wrapper. Screen rectangles are converted to that
+layer's local coordinates using its measured origin and scale. Complete rectangles
+remain attached to the content during document scrolling and math panning; native
+overflow clips them without waiting for a scroll-triggered repaint. Scrolling a
+descendant field still requests geometry measurement. Resize and selection changes
+also repaint, including retained menu snapshots. Math range measurement clears
+MathLive's render-time atom bounds cache before reading current geometry.
 
 `LatexStructuredSelection` maps retained ProseMirror bookmarks through transactions
 and exposes authored formatting ranges using `latexInlineEditingScopes` when the
@@ -1529,17 +1679,72 @@ retains the formatting braces without exporting the editing slots. Document
 macros overriding these commands bypass this adaptation.
 
 Scope corner marks and muted retained highlights are clipped, noninteractive DOM
-overlays outside the source model. Empty matrix cells use their rendered hit boxes
-for selection painting. The footer shows only the environment type, word count
+overlays outside the source model. Empty matrix cells share compact marker bounds
+for cell-only selection painting; their larger rendered hit boxes remain navigation
+targets. The footer shows only the environment type, word count
 and contextual controls; nested scope paths are not rendered. These
 changes do not add source tokens or undo entries. Only the innermost slot is
-marked; content selections suppress these marks. Text/prose and math selections
-use Markdown's primary-color mix at 22%; rectangular table/math cell selections
-use its 14% mix. The overlay inherits the document's computed selection variables
-so placement outside the document cannot change the theme or menu-held color.
+marked; content selections suppress occupied-slot marks, while selected empty math
+slots retain theirs. Text/prose, math and rectangular table/math cell selections
+share the primary-color mix at 22%; the cell-selection variable aliases the same
+fill. Selection painting follows the active participant attribute, so inactive
+parent document ranges cannot paint behind a nested editor's current selection.
+Document object coverage includes every LaTeX atom, rather than only formulas and
+tables. `latexSelectionBetween` preserves included atoms at snapped text endpoints.
+`LatexStructuredSelection` uses one document-range overlay in both active and held
+states. It measures visible text leaves, field text, math surfaces, table cells,
+images, SVGs and canvases without overlapping wrapper rectangles. Math and table
+CSS no longer paints a second background for a document-owned range. Native math
+and table participants retain their own local selection geometry. Hidden measures,
+page gaps and controls are excluded. `latexTextSelectionRects` shares field
+geometry between local native selection and document selection, including wrapping,
+scrolling and RTL. Browser selection in math shadow roots is suppressed; document
+participants suppress browser text paint using `data-scient-selection-overlay`.
+Generic atomic node views transfer outward pointer drags to the document while
+math/table views retain their existing handoff. Completed drags suppress the
+following click so it cannot open an editor and replace the range. Generic atom
+scopes use NodeSelection; document scope uses AllSelection, and raw source fields
+register with the shared scope session. The parent's `enterFrom` hook resolves the
+child's containing atom before scope expansion, so title/caption/source fields
+cannot expand from an unrelated document caret. Figure node selection does not
+autofocus its caption. The overlay inherits the document's computed selection
+variables so placement outside the document cannot change the theme or menu-held
+color.
+The document participant observes the measured surfaces for resize and watches
+host content/visibility changes and font completion, refreshing after image loads
+or math preview replacement. Inactive participants release their resize targets;
+observers and font listeners are removed with the view.
+`mathSelectionRects` measures selected glyphs, SVGs and printed rules instead of
+VBox row wrappers, skips every caret sentinel, and emits a connected rectangle
+per outer equation row. Whole structures within a row retain one connected fill;
+selected children remain part of ink measurement even when their owner is
+selected. MathLive can render attached scripts outside the owner's bound DOM
+box, and detached `subsup` atoms have no bound DOM box of their own. Children
+merge into the same row rectangle rather than painting another layer.
+`applyMathSelection` includes detached scripts whenever their complete base is
+selected, while leaving selections confined to a body or script unchanged.
+Row spacing is excluded. Cell-only highlights keep the compact empty-slot inset.
+MathLive's native selection/contains-highlight layers are suppressed. The field
+owns pointer selection from pointerdown, including Shift-click, double-click cell
+selection and drag; the document wrapper retains the existing handoff when the
+pointer leaves the field. Model notifications retain matching rectangular cell
+ranges rather than flattening or dropping them.
+Shift+Arrow also applies `resolveMathDragSelection` instead of MathLive's native
+range extension. Horizontal moves visit native caret stops; vertical moves use
+the logical head and retain horizontal intent. The field records the unsnapped
+anchor/head separately from the painted ranges so mouse, Shift-click and keyboard
+can continue each other after crossing a structure or selecting whole cells.
+Matching menu restoration retains this continuation; content changes, new caret
+placement or a different explicit range discard it. Root math row arrays retain
+cell ownership and use the equation's complete offset range.
 `mathEditingGuides` gives the
 native caret a thin stroke in local text color. Its em-based size follows the
 rendered math style; inside accent bodies a baseline-anchored paint transform
 shortens it by 15% without changing layout. Selection and menu retention suppress
-the editing caret. Page-preview snapshots strip guide state. These visual changes
+the editing caret. Empty markers use zero-size DOM baseline anchors at the native
+insertion stop and the caret's computed stroke metrics, including accent scaling.
+Their centers and hit targets share that model offset; entering a slot does not
+translate the caret. Cell lookup excludes carets and measurement anchors, including
+bare empty equation rows. Page-preview snapshots omit the measurement anchors.
+Page-preview snapshots strip guide state. These visual changes
 have not been qualified with live interaction tests.

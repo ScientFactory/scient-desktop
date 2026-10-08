@@ -23,12 +23,27 @@ import {
 } from "react";
 import { LatexDraftContext, restoredLatexFieldDraft } from "./LatexTextField";
 import { afterEditorPaint } from "./afterEditorPaint";
-import { scheduleMathFieldMount } from "./mathFieldMountQueue";
+import { createEditorBackgroundTask } from "./editorBackgroundTask";
+import {
+  scheduleMathFieldMount,
+  observeMathReadingPriority,
+  mathReadingPriority,
+} from "./mathFieldMountQueue";
+import { retainMathField } from "./mathFieldPool";
+import { captureMathField, restoreMathField, type MathFieldSnapshot } from "./mathFieldSnapshot";
+import {
+  installMathReadingPreview,
+  mathReadingPreview,
+  mathReadingPreviewContextId,
+} from "./mathReadingPreview";
+import { createLatexFieldJournal } from "./latexFieldJournal";
 import "mathlive/fonts.css";
 import { installMathEditingGuides } from "./mathEditingGuides";
 import { editableMathMacros, installMathMacroEditing } from "./mathMacroEditing";
 import { mathSymbolMacros } from "./mathSymbolPresentation";
 import { LatexDocumentMathContext } from "./LatexDocumentMathContext";
+import { LatexCommandContext } from "./LatexCompletionContext";
+import { latexColorCss } from "./latexColorBoxes";
 import { mathLiveFontDeclarations } from "./mathLiveFontDeclarations";
 import { installMathCommandCompletion } from "./mathLiveCommandCompletion";
 import { installLatexMathViewport } from "./latexMathViewport";
@@ -36,6 +51,9 @@ import { installMathSelectionSession } from "./mathSelectionSession";
 import { latexSelectionCommand, runLatexSelectionCommand } from "./latexSelectionSession";
 import {
   createMathSelectionGeometry,
+  applyMathSelection,
+  prepareMathPointerSelection,
+  setMathPointerPosition,
   mathArrayContext,
   mathStructureCommandReason,
   type MathArrayContext,
@@ -46,13 +64,14 @@ import {
   unwrapEmptyMathCell,
   mathFieldIsEmpty,
   firstMathCell,
-  mathCellAtCoordinates,
   mathCellRectangle,
   mathLeftCellBoundary,
   mathRightCellBoundary,
   mathSelectionAtOffset,
   mathSelectionPoint,
   mathSelectionEndpoints,
+  mathSelectionRevision,
+  mathHorizontalSelectionTarget,
   mathSelectionWrapReason,
   moveMathSlot,
   mathVerticalTarget,
@@ -137,7 +156,12 @@ export const LatexMathField = forwardRef<
   forwardedRef,
 ) {
   const host = useRef<HTMLSpanElement>(null);
+  const preview = useRef<HTMLSpanElement>(null);
+  const renderPreview = useRef<() => void>(() => {});
   const field = useRef<MathfieldElement | null>(null);
+  const suspended = useRef<
+    { source: string; signature: string; display: boolean; state: MathFieldSnapshot } | undefined
+  >(undefined);
   const mountField = useRef<() => void>(() => {});
   const viewport = useRef<ReturnType<typeof installLatexMathViewport> | null>(null);
   const viewportEditing = useRef(editing);
@@ -146,6 +170,11 @@ export const LatexMathField = forwardRef<
     viewport.current?.setEditing(Boolean(display && editing && !disabled));
   }, [display, editing, disabled]);
   const documentMacros = useContext(LatexDocumentMathContext);
+  const commandContext = useContext(LatexCommandContext);
+  const completionContext = useRef(commandContext);
+  useLayoutEffect(() => {
+    completionContext.current = commandContext;
+  }, [commandContext]);
   const initialMacros = useRef(documentMacros);
   const currentConfiguration = useRef({ value, display, disabled });
   const baseMacros = useRef<MacroDictionary>({});
@@ -215,7 +244,8 @@ export const LatexMathField = forwardRef<
         field.current?.focus();
       },
       flush: () => {
-        mountField.current();
+        // Unopened reading previews have no input to publish. A document save
+        // must never initialize every formula just to ask whether it is dirty.
         return flush.current();
       },
       isEmpty: () => {
@@ -293,10 +323,24 @@ export const LatexMathField = forwardRef<
   useEffect(() => {
     const container = host.current;
     if (!container) return;
+    const stopObserving = observeMathReadingPriority(container);
+    const priority = () => mathReadingPriority(container);
     let frame = 0;
     let dispose: (() => void) | undefined;
     let queued: ReturnType<typeof scheduleMathFieldMount> | undefined;
+    let cancelPreview: (() => void) | undefined;
+    let previewConfiguration = "";
+    let previewPending = false;
+    const reading = preview.current
+      ? installMathReadingPreview(preview.current).querySelector<HTMLElement>(
+          "[data-math-preview-content]",
+        )
+      : null;
     const initialize = () => {
+      let lease: ReturnType<typeof retainMathField> | undefined;
+      cancelPreview?.();
+      previewPending = false;
+      if (preview.current) preview.current.hidden = true;
       const math = new MathfieldElement();
       math.id = `scient-latex-math-${draftId}`;
       container.append(math);
@@ -309,8 +353,10 @@ export const LatexMathField = forwardRef<
           !currentConfiguration.current.disabled,
         ),
       );
-      const commandCompletion = installMathCommandCompletion(math, (command) =>
-        Object.hasOwn(initialMacros.current, command.slice(1)),
+      const commandCompletion = installMathCommandCompletion(
+        math,
+        (command) => Object.hasOwn(initialMacros.current, command.slice(1)),
+        () => ({ ...completionContext.current, macros: initialMacros.current }),
       );
       const removeEditingGuides = installMathEditingGuides(math);
       const macroEditing = installMathMacroEditing(math);
@@ -328,6 +374,24 @@ export const LatexMathField = forwardRef<
       math.popoverPolicy = "auto";
       math.environmentPopoverPolicy = "off";
       math.menuItems = [];
+      const nativeColorMap = math.colorMap;
+      math.colorMap = (name) => {
+        const colors = completionContext.current.colors;
+        const expression = colors && latexColorCss(name, { ...colors });
+        return expression
+          ? expression.replace(
+              /var\(--scient-color-([A-Za-z0-9-]+)\)/gu,
+              (_token, color: string) => colors![color]!,
+            )
+          : nativeColorMap(name);
+      };
+      const nativeBackgroundColorMap = math.backgroundColorMap;
+      math.backgroundColorMap = (name) => {
+        const colors = completionContext.current.colors;
+        return colors && latexColorCss(name, { ...colors })
+          ? math.colorMap(name)
+          : nativeBackgroundColorMap(name);
+      };
       let formattingState = "";
       refreshFormatting.current = () => {
         const next =
@@ -342,8 +406,13 @@ export const LatexMathField = forwardRef<
       };
       baseMacros.current = { ...math.macros, ...mathSymbolMacros() };
       math.macros = { ...baseMacros.current, ...editableMathMacros(initialMacros.current) };
-      appliedMacroSignature.current = JSON.stringify(initialMacros.current);
+      appliedMacroSignature.current = JSON.stringify({
+        macros: initialMacros.current,
+        colors: completionContext.current.colors,
+      });
       lastAcknowledged.current = currentConfiguration.current.value;
+      const fieldJournal = createLatexFieldJournal();
+      fieldJournal.observe(journalKey.current, lastAcknowledged.current);
       const recovered = restoredLatexFieldDraft(journalKey.current, lastAcknowledged.current);
       math.setValue(
         mathTextFormattingInput(mathLiveFontDeclarations(recovered), initialMacros.current),
@@ -354,6 +423,20 @@ export const LatexMathField = forwardRef<
       macroEditing.refresh();
       const firstCell = firstMathCell(math);
       if (firstCell) math.position = firstCell.cell[0];
+      const retained = suspended.current;
+      suspended.current = undefined;
+      if (
+        retained?.source === recovered &&
+        retained.signature === appliedMacroSignature.current &&
+        retained.display === currentConfiguration.current.display &&
+        !restoreMathField(math, retained.state)
+      ) {
+        // Restore exact source if the native adapter becomes incompatible.
+        math.setValue(
+          mathTextFormattingInput(mathLiveFontDeclarations(recovered), initialMacros.current),
+          { silenceNotifications: true },
+        );
+      }
       dirty.current = recovered !== lastAcknowledged.current;
       reportDraft(draftId, dirty.current);
       math.smartFence = true;
@@ -445,31 +528,26 @@ export const LatexMathField = forwardRef<
           return true;
         },
       });
-      let publishTimer: ReturnType<typeof setTimeout> | undefined;
-      let cancelPublish: (() => void) | undefined;
+      const publication = createEditorBackgroundTask(180);
+      let cancelJournal: (() => void) | undefined;
+      let composing = false;
       const journal = () => {
         if (!journalKey.current) return;
-        try {
-          const key = `scient.latex.field:${journalKey.current}`;
-          if (dirty.current)
-            localStorage.setItem(
-              key,
-              JSON.stringify({ base: lastAcknowledged.current, text: math.getValue("latex") }),
-            );
-          else localStorage.removeItem(key);
-        } catch {
-          /* Keep the live draft when recovery storage is unavailable. */
-        }
+        fieldJournal.observe(journalKey.current, lastAcknowledged.current);
+        if (dirty.current)
+          fieldJournal.write(journalKey.current, lastAcknowledged.current, math.getValue("latex"));
+        else fieldJournal.clear(journalKey.current);
+      };
+      const checkpoint = (event: Event) => {
+        if (event instanceof CustomEvent && journalKey.current?.startsWith(`${event.detail}:`))
+          journal();
       };
       const publish = () => {
-        cancelPublish?.();
-        cancelPublish = undefined;
-        clearTimeout(publishTimer);
-        publishTimer = undefined;
+        publication.cancel();
         if (!dirty.current) return true;
         // A command under construction (including its ghost suggestion) is a
         // local draft. Publish only after MathLive turns it into math atoms.
-        if (math.mode === "latex" || field.current !== math) {
+        if (composing || math.mode === "latex" || field.current !== math) {
           journal();
           return false;
         }
@@ -481,28 +559,37 @@ export const LatexMathField = forwardRef<
         );
         const previousAcknowledged = lastAcknowledged.current;
         const result = change.current(source);
-        lastAcknowledged.current = result.value;
+        if (result.accepted) {
+          lastAcknowledged.current = result.value;
+        }
+        // A failed publication remains exact local input, available for recovery.
         dirty.current = !result.accepted;
         if (result.accepted && result.value !== previousAcknowledged) math.resetUndo();
         journal();
         reportDraft(draftId, dirty.current);
-        // A rejected, unfinished formula stays editable. Replacing the live field
-        // here discards keystrokes and sends its caret back to the beginning.
         return result.accepted;
       };
       flush.current = publish;
       const revealCaret = () => mathViewport.revealCaret();
       const input = () => {
+        lease?.touch();
         verticalIntent = null;
+        selectionContinuation = null;
         refreshFormatting.current();
         revealCaret();
         dirty.current = true;
         reportDraft(draftId, true);
-        clearTimeout(publishTimer);
-        cancelPublish?.();
-        publishTimer = setTimeout(() => {
-          cancelPublish = afterEditorPaint(publish);
-        }, 180);
+        publication.schedule(publish);
+        cancelJournal?.();
+        cancelJournal = afterEditorPaint(journal);
+      };
+      const compositionStart = () => {
+        composing = true;
+        publication.cancel();
+      };
+      const compositionEnd = () => {
+        composing = false;
+        if (dirty.current) publication.schedule(publish);
       };
       const contextMenu = (event: Event) => {
         event.preventDefault();
@@ -517,6 +604,7 @@ export const LatexMathField = forwardRef<
         if (completedCommand) queueMicrotask(input);
       };
       const focused = () => {
+        lease?.touch();
         if (!math.readOnly) {
           mathViewport.setEditing(currentConfiguration.current.display);
           revealCaret();
@@ -526,6 +614,7 @@ export const LatexMathField = forwardRef<
         }
       };
       const blurred = () => {
+        lease?.touch();
         if (viewportEditing.current === undefined) mathViewport.setEditing(false);
         if (math.readOnly) return;
         // Preserve what was actually typed when leaving an unfinished command;
@@ -537,13 +626,72 @@ export const LatexMathField = forwardRef<
       };
       let rectangle: MathRectangleSelection | null = null;
       let applyingSelection = false;
+      // Painted ranges can include an entire structure; extension keeps the
+      // actual gesture endpoints so changing input or reversing can shrink it.
+      let selectionContinuation: {
+        anchor: number;
+        head: number;
+        revision: object | null;
+        selection: string;
+      } | null = null;
+      const selectionKey = () => JSON.stringify(math.selection);
+      const continuedEndpoints = (): readonly [number, number] => {
+        if (
+          selectionContinuation &&
+          selectionContinuation.revision === mathSelectionRevision(math) &&
+          selectionContinuation.selection === selectionKey()
+        )
+          return [selectionContinuation.anchor, selectionContinuation.head] as const;
+        selectionContinuation = null;
+        return mathSelectionEndpoints(math) ?? [math.position, math.position];
+      };
+      const applyExtendedSelection = (
+        anchor: MathSelectionPoint,
+        head: MathSelectionPoint,
+        geometry?: MathSelectionGeometry,
+      ) => {
+        const selected = resolveMathDragSelection(
+          math,
+          anchor,
+          head,
+          geometry ? undefined : anchor.offset <= head.offset ? "forward" : "backward",
+          geometry,
+        );
+        applyingSelection = true;
+        try {
+          rectangle = selected.kind === "rectangle" ? selected.rectangle : null;
+          if (selected.kind === "rectangle") selectMathRectangle(math, selected.rectangle);
+          else
+            applyMathSelection(math, {
+              ranges: [[...selected.range]],
+              direction: selected.direction,
+            });
+          selectionContinuation = {
+            anchor: anchor.offset,
+            head: head.offset,
+            revision: mathSelectionRevision(math),
+            selection: selectionKey(),
+          };
+        } finally {
+          applyingSelection = false;
+        }
+      };
       const selectionSession = installMathSelectionSession(math, {
         rectangle: () => rectangle,
-        apply: (selection, selectedCells) => {
+        endpoints: continuedEndpoints,
+        apply: (selection, selectedCells, endpoints) => {
           applyingSelection = true;
           rectangle = selectedCells;
           if (selectedCells) selectMathRectangle(math, selectedCells);
-          else math.selection = selection;
+          else applyMathSelection(math, selection);
+          selectionContinuation = endpoints
+            ? {
+                anchor: endpoints[0],
+                head: endpoints[1],
+                revision: mathSelectionRevision(math),
+                selection: selectionKey(),
+              }
+            : null;
           applyingSelection = false;
         },
         exit: (direction) => {
@@ -553,6 +701,7 @@ export const LatexMathField = forwardRef<
       clearSelection.current = () => {
         if (math.selectionIsCollapsed && !rectangle) return;
         rectangle = null;
+        selectionContinuation = null;
         applyingSelection = true;
         math.selection = { ranges: [[math.position, math.position]] };
         applyingSelection = false;
@@ -562,8 +711,9 @@ export const LatexMathField = forwardRef<
         direction: "forward" | "backward" = "forward",
       ) => {
         rectangle = null;
+        selectionContinuation = null;
         applyingSelection = true;
-        math.selection = { ranges: [[...environment]], direction };
+        applyMathSelection(math, { ranges: [[...environment]], direction });
         applyingSelection = false;
       };
       const collapseRectangle = () => {
@@ -577,6 +727,9 @@ export const LatexMathField = forwardRef<
       let pointerSelection: {
         id: number;
         anchor: MathSelectionPoint;
+        originX: number;
+        originY: number;
+        bounds: DOMRect;
         geometry: MathSelectionGeometry;
         active: boolean;
       } | null = null;
@@ -586,6 +739,22 @@ export const LatexMathField = forwardRef<
         revealCaret();
         contextChange.current?.(mathArrayContext(math));
         if (applyingSelection || pointerSelection) return;
+        if (
+          selectionContinuation &&
+          selectionContinuation.revision === mathSelectionRevision(math) &&
+          selectionContinuation.selection === selectionKey()
+        )
+          return;
+        selectionContinuation = null;
+        if (
+          rectangle &&
+          rectangle.ranges.length === math.selection.ranges.length &&
+          rectangle.ranges.every(([from, to], index) => {
+            const range = math.selection.ranges[index];
+            return range?.[0] === from && range[1] === to;
+          })
+        )
+          return;
         const endpoints = mathSelectionEndpoints(math);
         if (!endpoints || math.selectionIsCollapsed) {
           rectangle = null;
@@ -607,22 +776,19 @@ export const LatexMathField = forwardRef<
           rectangle = null;
           const current = math.selection.ranges[0];
           if (current?.[0] !== selection.range[0] || current?.[1] !== selection.range[1])
-            math.selection = { ranges: [[...selection.range]], direction: selection.direction };
+            applyMathSelection(math, {
+              ranges: [[...selection.range]],
+              direction: selection.direction,
+            });
         }
         applyingSelection = false;
       };
-      let extendingVertically = false;
       let verticalIntent: number | null = null;
       const keydown = (event: KeyboardEvent) => {
         if (math.readOnly || event.isComposing || event.defaultPrevented) return;
         if (commandCompletion.handleKeyDown(event)) return;
         const modifier = event.ctrlKey || event.metaKey;
-        if (
-          (event.key !== "ArrowUp" && event.key !== "ArrowDown") ||
-          modifier ||
-          event.altKey ||
-          event.shiftKey
-        )
+        if ((event.key !== "ArrowUp" && event.key !== "ArrowDown") || modifier || event.altKey)
           verticalIntent = null;
         if (modifier && !event.altKey) {
           const key = event.key.toLowerCase();
@@ -671,6 +837,43 @@ export const LatexMathField = forwardRef<
           return;
         }
         if (
+          event.shiftKey &&
+          !modifier &&
+          !event.altKey &&
+          ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+        ) {
+          const [anchorOffset, headOffset] = continuedEndpoints();
+          const direction = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
+          const horizontal = event.key === "ArrowLeft" || event.key === "ArrowRight";
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          if (
+            horizontal &&
+            headOffset === (direction < 0 ? 0 : math.lastOffset) &&
+            extendOutside.current(direction)
+          )
+            return;
+          const vertical = horizontal
+            ? null
+            : mathVerticalTarget(math, direction, verticalIntent, headOffset);
+          if (vertical) verticalIntent = vertical.intent;
+          const target = horizontal
+            ? mathHorizontalSelectionTarget(math, headOffset, direction)
+            : (vertical?.position ?? (direction < 0 ? 0 : math.lastOffset));
+          applyExtendedSelection(
+            mathSelectionAtOffset(math, anchorOffset),
+            mathSelectionAtOffset(math, target),
+          );
+          revealCaret();
+          return;
+        }
+        if (
+          ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "Tab"].includes(
+            event.key,
+          )
+        )
+          selectionContinuation = null;
+        if (
           !modifier &&
           !event.altKey &&
           !event.shiftKey &&
@@ -713,40 +916,6 @@ export const LatexMathField = forwardRef<
           if (publish()) exit.current(1);
           return;
         }
-        if (
-          rectangle &&
-          event.shiftKey &&
-          !modifier &&
-          !event.altKey &&
-          ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
-        ) {
-          const current = rectangle;
-          const row =
-            current.focus.row + (event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0);
-          const column =
-            current.focus.column +
-            (event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0);
-          const nextCell = mathCellAtCoordinates(math, current.anchor, row, column);
-          if (nextCell) {
-            const next = mathCellRectangle(math, current.anchor, nextCell);
-            if (next) {
-              rectangle = next;
-              applyingSelection = true;
-              selectMathRectangle(math, next);
-              applyingSelection = false;
-            }
-          } else if (event.key === "ArrowLeft" && current.focus.column === 0) {
-            selectEnvironment(current.anchor.environment, "backward");
-          } else if (
-            event.key === "ArrowRight" &&
-            current.focus.column === (current.focus.array.colCount ?? 0) - 1
-          ) {
-            selectEnvironment(current.anchor.environment, "forward");
-          }
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
         const horizontalDirection = event.key === "ArrowLeft" ? -1 : 1;
         const cellBoundary =
           !modifier && !event.altKey
@@ -756,27 +925,12 @@ export const LatexMathField = forwardRef<
                 ? mathRightCellBoundary(math, math.position)
                 : null
             : null;
-        const selectionAnchor = cellBoundary ? mathSelectionEndpoints(math)?.[0] : undefined;
-        const anchorInsideBoundary =
-          cellBoundary && selectionAnchor !== undefined
-            ? mathSelectionAtOffset(math, selectionAnchor).path.some(
-                (cell) => cell.array === cellBoundary.array,
-              )
-            : false;
-        if (
-          cellBoundary &&
-          (math.selectionIsCollapsed || (event.shiftKey && anchorInsideBoundary))
-        ) {
+        if (cellBoundary && math.selectionIsCollapsed) {
           event.preventDefault();
           event.stopPropagation();
           rectangle = null;
           applyingSelection = true;
-          if (event.shiftKey)
-            math.selection = {
-              ranges: [[...cellBoundary.environment]],
-              direction: horizontalDirection === -1 ? "backward" : "forward",
-            };
-          else math.position = cellBoundary.environment[horizontalDirection === -1 ? 0 : 1];
+          math.position = cellBoundary.environment[horizontalDirection === -1 ? 0 : 1];
           applyingSelection = false;
           return;
         }
@@ -788,31 +942,6 @@ export const LatexMathField = forwardRef<
           (event.key.length === 1 || event.key === "Backspace" || event.key === "Delete")
         )
           collapseRectangle();
-        if (
-          event.shiftKey &&
-          !event.ctrlKey &&
-          !event.metaKey &&
-          !event.altKey &&
-          (event.key === "ArrowUp" || event.key === "ArrowDown")
-        ) {
-          extendingVertically = true;
-          queueMicrotask(() => {
-            extendingVertically = false;
-          });
-        }
-        if (
-          event.shiftKey &&
-          !event.ctrlKey &&
-          !event.metaKey &&
-          !event.altKey &&
-          ((event.key === "ArrowLeft" && math.position === 0) ||
-            (event.key === "ArrowRight" && math.position === math.lastOffset)) &&
-          extendOutside.current(event.key === "ArrowLeft" ? -1 : 1)
-        ) {
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
         if (
           event.key === "Enter" &&
           event.shiftKey &&
@@ -844,9 +973,7 @@ export const LatexMathField = forwardRef<
           // structure cannot be published as a standalone equation.
           publish();
           if (removeEmpty.current(event.key === "Backspace" ? -1 : 1) !== false) {
-            cancelPublish?.();
-            cancelPublish = undefined;
-            clearTimeout(publishTimer);
+            publication.cancel();
             dirty.current = false;
             reportDraft(draftId, false);
             journal();
@@ -863,7 +990,6 @@ export const LatexMathField = forwardRef<
         if (math.readOnly) return;
         event.preventDefault();
         event.stopPropagation();
-        if (extendingVertically) return;
         if (publish())
           exit.current(
             event.detail.direction === "backward" || event.detail.direction === "upward" ? -1 : 1,
@@ -880,6 +1006,20 @@ export const LatexMathField = forwardRef<
         if (!drag || drag.id !== event.pointerId || !(event.buttons & 1)) return;
         const fieldBounds = math.getBoundingClientRect();
         if (
+          fieldBounds.left !== drag.bounds.left ||
+          fieldBounds.top !== drag.bounds.top ||
+          fieldBounds.width !== drag.bounds.width ||
+          fieldBounds.height !== drag.bounds.height
+        ) {
+          drag.anchor = {
+            ...drag.anchor,
+            x: drag.anchor.x + fieldBounds.left - drag.bounds.left,
+            y: drag.anchor.y + fieldBounds.top - drag.bounds.top,
+          };
+          drag.bounds = fieldBounds;
+          drag.geometry = createMathSelectionGeometry(math);
+        }
+        if (
           event.clientX < fieldBounds.left ||
           event.clientX > fieldBounds.right ||
           event.clientY < fieldBounds.top ||
@@ -888,7 +1028,7 @@ export const LatexMathField = forwardRef<
           return;
         if (
           !drag.active &&
-          Math.hypot(event.clientX - drag.anchor.x, event.clientY - drag.anchor.y) < 2
+          Math.hypot(event.clientX - drag.originX, event.clientY - drag.originY) < 2
         )
           return;
         const head = mathSelectionPoint(
@@ -898,22 +1038,7 @@ export const LatexMathField = forwardRef<
           undefined,
           drag.geometry,
         );
-        const selection = resolveMathDragSelection(
-          math,
-          drag.anchor,
-          head,
-          undefined,
-          drag.geometry,
-        );
-        applyingSelection = true;
-        if (selection.kind === "rectangle") {
-          rectangle = selection.rectangle;
-          selectMathRectangle(math, selection.rectangle);
-        } else {
-          rectangle = null;
-          math.selection = { ranges: [[...selection.range]], direction: selection.direction };
-        }
-        applyingSelection = false;
+        applyExtendedSelection(drag.anchor, head, drag.geometry);
         drag.active = true;
         pointerResult = {
           ranges: math.selection.ranges.map(([from, to]): [number, number] => [from, to]),
@@ -939,15 +1064,21 @@ export const LatexMathField = forwardRef<
             if (!math.isConnected || !math.matches(":focus-within")) return;
             applyingSelection = true;
             if (cells) selectMathRectangle(math, cells);
-            else math.selection = result;
+            else applyMathSelection(math, result);
             applyingSelection = false;
           });
       };
       cancelPointerSelection.current = () => stopPointerSelection();
       const pointerDown = (event: PointerEvent) => {
         verticalIntent = null;
-        if (math.readOnly || event.button !== 0) return;
+        if (math.readOnly || event.button !== 0 || !event.isPrimary) return;
         stopPointerSelection();
+        // This handler owns the entire gesture. Letting MathLive start its
+        // tracker too can overwrite cell ranges and replay its old row rules.
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        prepareMathPointerSelection(math);
+        math.focus();
         const now = performance.now();
         const previousTap = lastTap;
         const repeated =
@@ -955,28 +1086,34 @@ export const LatexMathField = forwardRef<
           now - previousTap.time < 500 &&
           Math.abs(event.clientX - previousTap.x) < 5 &&
           Math.abs(event.clientY - previousTap.y) < 5;
-        const tapCount = Math.max(
-          event.detail,
-          repeated && previousTap ? previousTap.count + 1 : 1,
-        );
-        lastTap = { x: event.clientX, y: event.clientY, time: now, count: tapCount };
+        const tapCount = event.shiftKey
+          ? 1
+          : Math.max(event.detail, repeated && previousTap ? previousTap.count + 1 : 1);
+        lastTap = event.shiftKey
+          ? null
+          : { x: event.clientX, y: event.clientY, time: now, count: tapCount };
         if (!repeated && tapCount < 2) lastEnvironment = null;
         if (tapCount < 2) {
           const geometry = createMathSelectionGeometry(math);
-          const anchor = mathSelectionPoint(
-            math,
-            event.clientX,
-            event.clientY,
-            undefined,
-            geometry,
-          );
-          rectangle = null;
-          applyingSelection = true;
-          math.position = anchor.offset;
-          applyingSelection = false;
+          const hit = mathSelectionPoint(math, event.clientX, event.clientY, undefined, geometry);
+          const anchor = event.shiftKey
+            ? mathSelectionAtOffset(math, continuedEndpoints()[0])
+            : hit;
+          if (event.shiftKey) {
+            applyExtendedSelection(anchor, hit, geometry);
+          } else {
+            selectionContinuation = null;
+            rectangle = null;
+            applyingSelection = true;
+            setMathPointerPosition(math, hit.offset);
+            applyingSelection = false;
+          }
           pointerSelection = {
             id: event.pointerId,
             anchor,
+            originX: event.clientX,
+            originY: event.clientY,
+            bounds: math.getBoundingClientRect(),
             geometry,
             active: false,
           };
@@ -985,6 +1122,7 @@ export const LatexMathField = forwardRef<
           document.addEventListener("pointercancel", stopPointerSelection, true);
           return;
         }
+        selectionContinuation = null;
         const cell = pointCell(event.clientX, event.clientY);
         const environment = repeated ? (lastEnvironment ?? cell?.environment) : cell?.environment;
         if (tapCount >= 3 && environment) {
@@ -996,8 +1134,21 @@ export const LatexMathField = forwardRef<
           event.stopImmediatePropagation();
           lastEnvironment = cell.environment;
           rectangle = null;
-          math.focus();
-          math.selection = { ranges: [[...cell.cell]] };
+          applyingSelection = true;
+          rectangle = mathCellRectangle(math, cell, cell);
+          if (rectangle) selectMathRectangle(math, rectangle);
+          else applyMathSelection(math, { ranges: [[...cell.cell]] });
+          applyingSelection = false;
+        } else {
+          // Outside arrays, double-click chooses the current editing scope;
+          // a third click chooses the complete expression.
+          rectangle = null;
+          setMathPointerPosition(
+            math,
+            mathSelectionPoint(math, event.clientX, event.clientY).offset,
+          );
+          if (tapCount >= 3) applyMathSelection(math, { ranges: [[0, math.lastOffset]] });
+          else runLatexSelectionCommand(math, "selectionScopeExpand");
         }
       };
       const copied = (event: ClipboardEvent) => {
@@ -1046,6 +1197,8 @@ export const LatexMathField = forwardRef<
         );
       };
       math.addEventListener("input", input);
+      math.addEventListener("compositionstart", compositionStart);
+      math.addEventListener("compositionend", compositionEnd);
       math.addEventListener("contextmenu", contextMenu, true);
       math.addEventListener("mode-change", modeChange);
       math.addEventListener("focus", focused);
@@ -1063,8 +1216,41 @@ export const LatexMathField = forwardRef<
       document.addEventListener("pointerdown", resetVerticalIntent, true);
       window.addEventListener("resize", resetVerticalIntent);
       window.addEventListener("pagehide", publish);
+      window.addEventListener("scient-latex-checkpoint-fields", checkpoint);
       field.current = math;
+      lease = retainMathField(() => {
+        if (
+          field.current !== math ||
+          math.hasFocus() ||
+          viewportEditing.current ||
+          dirty.current ||
+          currentConfiguration.current.value !== lastAcknowledged.current ||
+          composing ||
+          pointerSelection ||
+          math.mode === "latex" ||
+          !math.selectionIsCollapsed ||
+          math.hasAttribute("data-scient-selection-held") ||
+          container.closest("[data-scient-selection-held]")
+        )
+          return false;
+        const state = captureMathField(math);
+        if (!state) return false;
+        suspended.current = {
+          source: lastAcknowledged.current,
+          signature: appliedMacroSignature.current,
+          display: currentConfiguration.current.display,
+          state,
+        };
+        const release = dispose;
+        dispose = undefined;
+        release?.();
+        if (preview.current) preview.current.hidden = false;
+        renderPreview.current();
+        container.dispatchEvent(new CustomEvent("scient-latex-math-preview", { bubbles: true }));
+        return true;
+      });
       return () => {
+        lease?.release();
         selectionSession.dispose();
         document.removeEventListener("pointerdown", resetVerticalIntent, true);
         window.removeEventListener("resize", resetVerticalIntent);
@@ -1072,11 +1258,12 @@ export const LatexMathField = forwardRef<
         removeEditingGuides();
         stopPointerSelection();
         cancelPointerSelection.current = () => {};
-        clearTimeout(publishTimer);
-        cancelPublish?.();
+        publication.cancel();
+        cancelJournal?.();
         mathViewport.dispose();
         viewport.current = null;
         journal();
+        window.removeEventListener("scient-latex-checkpoint-fields", checkpoint);
         formattingScopes.dispose();
         macroEditing.dispose();
         reportDraft(draftId, false);
@@ -1086,6 +1273,8 @@ export const LatexMathField = forwardRef<
         detachShortcuts();
         unsubscribe();
         math.removeEventListener("input", input);
+        math.removeEventListener("compositionstart", compositionStart);
+        math.removeEventListener("compositionend", compositionEnd);
         math.removeEventListener("contextmenu", contextMenu, true);
         math.removeEventListener("mode-change", modeChange);
         math.removeEventListener("focus", focused);
@@ -1109,28 +1298,120 @@ export const LatexMathField = forwardRef<
         frame = requestAnimationFrame(connect);
         return;
       }
-      queued = scheduleMathFieldMount(() => {
-        if (!container.isConnected) {
-          frame = requestAnimationFrame(connect);
-          return;
-        }
+      // Only explicit interaction creates an input model. Reading, scrolling,
+      // saving and a hidden Visual view never enqueue hundreds of editors.
+      mountField.current = () => {
+        if (field.current || !container.isConnected) return;
+        queued?.cancel();
         dispose = initialize();
         container.dispatchEvent(new CustomEvent("scient-latex-math-mounted", { bubbles: true }));
-      });
-      mountField.current = queued.flush;
+      };
+      renderPreview.current = () => {
+        if (field.current || !preview.current) return;
+        const configuration = currentConfiguration.current;
+        const next = JSON.stringify([
+          configuration.value,
+          configuration.display,
+          mathReadingPreviewContextId(initialMacros.current, completionContext.current.colors),
+        ]);
+        if (
+          next === previewConfiguration &&
+          (previewPending || preview.current.dataset.mathPreviewReady)
+        )
+          return;
+        previewConfiguration = next;
+        previewPending = true;
+        delete preview.current.dataset.mathPreviewReady;
+        queued?.cancel();
+        cancelPreview?.();
+        queued = scheduleMathFieldMount(() => {
+          if (field.current || !preview.current || !container.isConnected) return;
+          const apply = (markup: string | null) => {
+            queued = scheduleMathFieldMount(() => {
+              if (field.current || !preview.current || !reading || !container.isConnected) return;
+              if (previewConfiguration !== next) return;
+              if (markup === null) reading.textContent = currentConfiguration.current.value;
+              else reading.innerHTML = markup;
+              previewPending = false;
+              preview.current.dataset.mathPreviewReady = "true";
+              container.dispatchEvent(
+                new CustomEvent("scient-latex-math-preview", { bubbles: true }),
+              );
+            }, priority);
+          };
+          try {
+            const configuration = currentConfiguration.current;
+            cancelPreview = mathReadingPreview(
+              configuration.value,
+              configuration.display,
+              initialMacros.current,
+              completionContext.current.colors,
+              apply,
+              priority,
+            );
+          } catch {
+            // A failed preview must retain readable source and remain editable.
+            apply(null);
+          }
+        }, priority);
+      };
+      renderPreview.current();
     };
+    const pointer = (event: PointerEvent) => {
+      if (event.button !== 0 || currentConfiguration.current.disabled) return;
+      if (
+        event
+          .composedPath()
+          .some((target) => target instanceof Element && target.tagName === "MATH-FIELD")
+      ) {
+        if (field.current && !field.current.hasFocus()) field.current.focus();
+        return;
+      }
+      const bounds = (field.current ?? preview.current)?.getBoundingClientRect();
+      if (
+        currentConfiguration.current.display &&
+        bounds &&
+        (event.clientX < bounds.left - 4 || event.clientX > bounds.right + 4)
+      )
+        return;
+      mountField.current();
+      const math = container.querySelector<MathfieldElement>("math-field");
+      if (!math) return;
+      // Route the first mouse, touch or pen press into the field's shadow
+      // content, through the same selection handler; focus the input before
+      // caret placement and suppress the old target's default focus action.
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      math.focus();
+      const content =
+        math.shadowRoot?.elementFromPoint(event.clientX, event.clientY) ??
+        math.shadowRoot?.querySelector(".ML__content") ??
+        math;
+      content.dispatchEvent(new PointerEvent("pointerdown", event));
+    };
+    container.addEventListener("pointerdown", pointer, true);
     connect();
     return () => {
+      stopObserving();
       cancelAnimationFrame(frame);
       queued?.cancel();
+      cancelPreview?.();
       mountField.current = () => {};
+      renderPreview.current = () => {};
+      container.removeEventListener("pointerdown", pointer, true);
       dispose?.();
     };
   }, [draftId, reportDraft]);
   useEffect(() => {
+    if (editing) mountField.current();
+  }, [editing]);
+  useEffect(() => {
+    renderPreview.current();
+  }, [value, display, documentMacros, commandContext.colors]);
+  useEffect(() => {
     const math = field.current;
     if (!math) return;
-    const signature = JSON.stringify(documentMacros);
+    const signature = JSON.stringify({ macros: documentMacros, colors: commandContext.colors });
     const apply = () => {
       if (math.mode === "latex" || signature === appliedMacroSignature.current) return;
       // MathLive reparses silently and preserves the command spelling and selection.
@@ -1156,7 +1437,7 @@ export const LatexMathField = forwardRef<
     apply();
     math.addEventListener("mode-change", apply);
     return () => math.removeEventListener("mode-change", apply);
-  }, [documentMacros, draftId, reportDraft]);
+  }, [documentMacros, commandContext.colors, draftId, reportDraft]);
   useEffect(() => {
     if (!field.current) return;
     field.current.setAttribute("aria-label", display ? "Display equation" : "Inline equation");
@@ -1187,5 +1468,9 @@ export const LatexMathField = forwardRef<
     }
     lastAcknowledged.current = value;
   }, [disabled, value, reportDraft, draftId]);
-  return <span ref={host} className="scient-latex-mathfield" contentEditable={false} />;
+  return (
+    <span ref={host} className="scient-latex-mathfield" contentEditable={false}>
+      <span ref={preview} className="scient-latex-math-preview" aria-label={value} />
+    </span>
+  );
 });
