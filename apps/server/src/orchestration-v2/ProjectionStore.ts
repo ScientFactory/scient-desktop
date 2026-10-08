@@ -2547,6 +2547,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       );
 
     // SCIENT-FORK:START — the messages a fork's shared history items stand for.
+    /** When a fork's shared user messages were last updated, as it shows them (thread `t`). */
+    const inheritedUserMessageAt = (authored: boolean) => sql`
+      SELECT COALESCE(json_extract(frozen.message_json, '$.updatedAt'), message.updated_at) AS at
+      FROM scient_fork_history AS history
+      JOIN orchestration_v2_projection_messages AS message
+        ON message.message_id = history.message_id
+      LEFT JOIN scient_fork_frozen_items AS frozen
+        ON frozen.thread_id = history.thread_id AND frozen.position = history.position
+      WHERE history.thread_id = t.thread_id
+        AND history.item_type = 'user_message'
+        AND history.source_thread_id <> t.thread_id
+        ${
+          authored
+            ? sql`AND json_extract(COALESCE(frozen.message_json, message.payload_json), '$.createdBy') = 'user'`
+            : sql``
+        }
+    `;
     const readInheritedMessages = (
       threadId: ThreadId,
       options?: Parameters<typeof readForkHistoryMessageRows>[2],
@@ -4871,11 +4888,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               candidates.add(id);
           }
         }
+        // File names compare without case: on a case-insensitive disk an alias
+        // names the same file.
+        const named = new Set<string>();
         for (const member of family) {
           if (member.deleted || candidates.size === 0) continue;
-          for (const id of yield* namedFiles(member.threadId)) candidates.delete(id);
+          for (const id of yield* namedFiles(member.threadId)) named.add(id.toLowerCase());
         }
-        return [...candidates];
+        return [...candidates].filter((id) => !named.has(id.toLowerCase()));
       }).pipe(
         Effect.mapError((cause) =>
           isProjectionStoreReadError(cause)
@@ -5335,21 +5355,25 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS pending_secret_request_payload_json,
               (
-                SELECT message.updated_at
-                FROM orchestration_v2_projection_messages message
-                WHERE message.thread_id = t.thread_id
-                  AND message.role = 'user'
-                ORDER BY message.updated_at DESC, message.message_id DESC
-                LIMIT 1
+                SELECT MAX(at) FROM (
+                  SELECT message.updated_at AS at
+                  FROM orchestration_v2_projection_messages message
+                  WHERE message.thread_id = t.thread_id AND message.role = 'user'
+                  UNION ALL
+                  -- SCIENT-FORK: a fork's shared user messages, as it shows them.
+                  ${inheritedUserMessageAt(false)}
+                )
               ) AS latest_user_message_at,
               (
-                SELECT message.updated_at
-                FROM orchestration_v2_projection_messages message
-                WHERE message.thread_id = t.thread_id
-                  AND message.role = 'user'
-                  AND json_extract(message.payload_json, '$.createdBy') = 'user'
-                ORDER BY message.updated_at DESC, message.message_id DESC
-                LIMIT 1
+                SELECT MAX(at) FROM (
+                  SELECT message.updated_at AS at
+                  FROM orchestration_v2_projection_messages message
+                  WHERE message.thread_id = t.thread_id AND message.role = 'user'
+                    AND json_extract(message.payload_json, '$.createdBy') = 'user'
+                  UNION ALL
+                  -- SCIENT-FORK: a fork's shared user messages, as it shows them.
+                  ${inheritedUserMessageAt(true)}
+                )
               ) AS latest_user_authored_message_at,
               EXISTS (
                 SELECT 1
@@ -5561,19 +5585,25 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               json_extract(r.payload_json, '$.startedAt') AS latest_run_started_at,
               r.completed_at AS latest_run_completed_at,
               (
-                SELECT message.updated_at
-                FROM orchestration_v2_projection_messages message
-                WHERE message.thread_id = t.thread_id AND message.role = 'user'
-                ORDER BY message.updated_at DESC, message.message_id DESC
-                LIMIT 1
+                SELECT MAX(at) FROM (
+                  SELECT message.updated_at AS at
+                  FROM orchestration_v2_projection_messages message
+                  WHERE message.thread_id = t.thread_id AND message.role = 'user'
+                  UNION ALL
+                  -- SCIENT-FORK: a fork's shared user messages, as it shows them.
+                  ${inheritedUserMessageAt(false)}
+                )
               ) AS latest_user_message_at,
               (
-                SELECT message.updated_at
-                FROM orchestration_v2_projection_messages message
-                WHERE message.thread_id = t.thread_id AND message.role = 'user'
-                  AND json_extract(message.payload_json, '$.createdBy') = 'user'
-                ORDER BY message.updated_at DESC, message.message_id DESC
-                LIMIT 1
+                SELECT MAX(at) FROM (
+                  SELECT message.updated_at AS at
+                  FROM orchestration_v2_projection_messages message
+                  WHERE message.thread_id = t.thread_id AND message.role = 'user'
+                    AND json_extract(message.payload_json, '$.createdBy') = 'user'
+                  UNION ALL
+                  -- SCIENT-FORK: a fork's shared user messages, as it shows them.
+                  ${inheritedUserMessageAt(true)}
+                )
               ) AS latest_user_authored_message_at
             FROM orchestration_v2_projection_threads t
             LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = (

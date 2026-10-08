@@ -2,6 +2,7 @@
 import * as NodePath from "node:path";
 
 import {
+  ChatAttachmentId,
   CheckpointId,
   CheckpointScopeId,
   CheckpointRef,
@@ -2144,6 +2145,19 @@ it.live(
           frozen.messages.map((message) => message.text),
         );
 
+        // Settlement sees the fork's shared conversation as its activity.
+        const latestShared = frozen.messages.findLast((message) => message.role === "user")!;
+        assert.equal(
+          DateTime.formatIso((yield* store.getThreadShell(forkId))!.latestUserMessageAt!),
+          DateTime.formatIso(latestShared.updatedAt),
+        );
+        assert.equal(
+          DateTime.formatIso(
+            (yield* store.getSettlementCandidates(forkId))[0]!.latestUserMessageAt!,
+          ),
+          DateTime.formatIso(latestShared.updatedAt),
+        );
+
         // The source takes its live turn back; the fork keeps what it showed.
         yield* rollbackToBaseline(sourceId, "frozen-live");
         assert.notInclude(
@@ -2347,6 +2361,105 @@ it.live(
         );
       }),
     ).pipe(Effect.timeout("60 seconds")),
+);
+
+it.live("file release ignores name case and subagent conversations' copied fork metadata", () =>
+  withImporter(
+    Effect.gen(function* () {
+      const { lease } = yield* leaseFor(importFixture({ turns: 2, attachments: true }));
+      const sourceId = (yield* importOnce(lease)).result.threadId;
+      const store = yield* ProjectionStoreV2;
+      const forks = yield* ConversationForkService;
+      const orchestrator = yield* OrchestratorV2;
+      const source = yield* store.getThreadProjection(sourceId);
+      const forkId = ThreadId.make("release-rules-fork");
+      yield* forks.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("release-rules-fork"),
+        originThreadId: sourceId,
+        newThreadId: forkId,
+        sourceAssistantMessageId: source.messages.findLast(
+          (message) => message.role === "assistant",
+        )!.id,
+        workspaceMode: "local",
+      });
+      const fork = yield* store.getThreadProjection(forkId);
+      const file = fork.thread.conversationFork!.attachmentCopies[0]!.source;
+      const now = yield* DateTime.now;
+      const prompt = fork.messages.find((message) => message.role === "user")!;
+      // The fork names the shared file under an uppercase alias.
+      yield* (yield* EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make("release-rules-alias"),
+            threadId: forkId,
+            type: "message.updated",
+            occurredAt: now,
+            payload: {
+              ...prompt,
+              id: MessageId.make("release-rules-alias"),
+              threadId: forkId,
+              attachments: [{ ...file, id: ChatAttachmentId.make(file.id.toUpperCase()) }],
+            },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("release-rules-delete-fork"),
+        threadId: forkId,
+      });
+      // The source still shows the file, in any case.
+      assert.isFalse(
+        (yield* forks.releasableFiles(forkId)).some(
+          (id) => id.toLowerCase() === file.id.toLowerCase(),
+        ),
+      );
+      // A subagent conversation of a fork carries its fork metadata but shows none of it.
+      const otherForkId = ThreadId.make("release-rules-other-fork");
+      yield* forks.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("release-rules-other-fork"),
+        originThreadId: sourceId,
+        newThreadId: otherForkId,
+        sourceAssistantMessageId: source.messages.findLast(
+          (message) => message.role === "assistant",
+        )!.id,
+        workspaceMode: "local",
+      });
+      const otherFork = yield* store.getThreadProjection(otherForkId);
+      yield* (yield* EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make("release-rules-subagent"),
+            threadId: ThreadId.make("release-rules-subagent"),
+            type: "thread.created",
+            occurredAt: now,
+            payload: {
+              ...otherFork.thread,
+              id: ThreadId.make("release-rules-subagent"),
+              lineage: {
+                parentThreadId: otherForkId,
+                rootThreadId: otherFork.thread.lineage.rootThreadId,
+                relationshipToParent: "subagent",
+              },
+              forkedFrom: { type: "node", nodeId: NodeId.make("release-rules-node") },
+              historyOrigin: undefined,
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+        ],
+      });
+      for (const threadId of [sourceId, otherForkId])
+        yield* orchestrator.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make(`release-rules-delete-${threadId}`),
+          threadId,
+        });
+      assert.include(yield* forks.releasableFiles(otherForkId), file.id);
+    }),
+  ),
 );
 
 it.live("opening a recent fork window never reads its older copies", () =>

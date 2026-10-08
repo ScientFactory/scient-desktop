@@ -452,13 +452,18 @@ export const readForkFamily = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
     ),
   );
 
-/** The files a fork shares from its history, recorded when it was accepted. */
+/**
+ * The files a fork shares from its history, recorded when it was accepted.
+ * Only a thread with a history list shares them: a subagent conversation
+ * carries its parent's fork metadata but shows none of that history.
+ */
 export const readForkSharedFileIds = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
   sql<{ readonly id: string | null }>`
     SELECT json_extract(copy.value, '$.source.id') AS id
     FROM orchestration_v2_projection_threads AS thread,
       json_each(thread.payload_json, '$.conversationFork.attachmentCopies') AS copy
     WHERE thread.thread_id = ${threadId}
+      AND EXISTS (SELECT 1 FROM scient_fork_history WHERE thread_id = ${threadId})
   `.pipe(Effect.map((rows) => rows.flatMap((row) => (row.id === null ? [] : [row.id]))));
 
 /** Files attached to the thread's own submitted question answers. */
