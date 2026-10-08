@@ -255,11 +255,17 @@ it.each([1280, 390])(
     await page.viewport(width, 800);
     renderSurface("onboarding", snapshot());
     const description = host!.querySelector("header p")!;
+    const heading = host!.querySelector("header h1")!;
+    const content = heading.closest("header")!.parentElement!.parentElement!;
     const list = host!.querySelector<HTMLElement>('[aria-label="AI providers"]')!;
     expect(description.textContent).toBe(
       "Use a ChatGPT, Claude, or Google subscription you already have.",
     );
     expect(getComputedStyle(list).marginTop).toBe("12px");
+    expect(getComputedStyle(heading).fontSize).toBe(width >= 640 ? "24px" : "22px");
+    expect(getComputedStyle(description).marginTop).toBe("4px");
+    expect(getComputedStyle(content).marginTop).toBe("8px");
+    expect(list.getBoundingClientRect().top - description.getBoundingClientRect().bottom).toBe(12);
     expect(host!.scrollWidth).toBeLessThanOrEqual(document.documentElement.clientWidth);
     await expect.element(page.getByRole("button", { name: "Skip", exact: true })).toBeVisible();
   },
