@@ -18,41 +18,6 @@ layer("059_OrchestrationV2", (it) => {
     }),
   );
 
-  it.effect(
-    "appends snapshot indexes after shipped Scient migration 63 without replaying its ledger",
-    () =>
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations({ toMigrationInclusive: 63 });
-        const before =
-          yield* sql`SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id`;
-        assert.deepStrictEqual(yield* runMigrations(), [[64, "ThreadSnapshotWindowIndexes"]]);
-        assert.deepStrictEqual(
-          yield* sql`SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id <= 63 ORDER BY migration_id`,
-          before,
-        );
-        const indexes = yield* sql<{ readonly name: string; readonly sql: string }>`
-        SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name IN (
-          'orchestration_v2_projection_turn_items_user_message_idx',
-          'orchestration_v2_projection_nodes_live_idx'
-        ) ORDER BY name
-      `;
-        assert.deepStrictEqual(
-          indexes.map(({ name }) => name),
-          [
-            "orchestration_v2_projection_nodes_live_idx",
-            "orchestration_v2_projection_turn_items_user_message_idx",
-          ],
-        );
-        assert.include(
-          indexes[0]!.sql,
-          "WHERE status IN ('pending', 'starting', 'running', 'waiting')",
-        );
-        assert.include(indexes[1]!.sql, "WHERE type = 'user_message'");
-        assert.deepStrictEqual(yield* runMigrations(), []);
-      }),
-  );
-
   it.effect("upgrades released schema 56 through the latest migrations", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -177,3 +142,43 @@ layer("059_OrchestrationV2", (it) => {
     }),
   );
 });
+
+it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
+  "064_ThreadSnapshotWindowIndexes",
+  (it) => {
+    it.effect(
+      "appends snapshot indexes after shipped Scient migration 63 without replaying its ledger",
+      () =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* runMigrations({ toMigrationInclusive: 63 });
+          const before =
+            yield* sql`SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id`;
+          assert.deepStrictEqual(yield* runMigrations(), [[64, "ThreadSnapshotWindowIndexes"]]);
+          assert.deepStrictEqual(
+            yield* sql`SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id <= 63 ORDER BY migration_id`,
+            before,
+          );
+          const indexes = yield* sql<{ readonly name: string; readonly sql: string }>`
+        SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name IN (
+          'orchestration_v2_projection_turn_items_user_message_idx',
+          'orchestration_v2_projection_nodes_live_idx'
+        ) ORDER BY name
+      `;
+          assert.deepStrictEqual(
+            indexes.map(({ name }) => name),
+            [
+              "orchestration_v2_projection_nodes_live_idx",
+              "orchestration_v2_projection_turn_items_user_message_idx",
+            ],
+          );
+          assert.include(
+            indexes[0]!.sql,
+            "WHERE status IN ('pending', 'starting', 'running', 'waiting')",
+          );
+          assert.include(indexes[1]!.sql, "WHERE type = 'user_message'");
+          assert.deepStrictEqual(yield* runMigrations(), []);
+        }),
+    );
+  },
+);
