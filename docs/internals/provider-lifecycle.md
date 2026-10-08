@@ -304,14 +304,21 @@ runtime summary. It does not reload the provider, interrupt sessions, change aut
 runtime, or start an update. This makes the existing **Update** action visible without requiring an app
 restart while preserving any concurrent user-started runtime operation.
 
-The remote catalog can change only immutable release facts: version, artifact name, URL, digest, and
-size. It cannot add a provider or target, widen an allowed host, escape a provider-owned URL path
+The remote catalog can change only immutable release facts: version, artifact name, URL, digest,
+size, and bounded qualified same-date Cursor predecessor identities (`supersedes`). It cannot add a provider or target, widen an allowed host, escape a provider-owned URL path
 family, change the checksum algorithm, alter archive or extraction policy, choose executable paths,
 change smoke commands or environments, or raise a support tier. Missing providers, unsupported
 targets, contract drift, malformed data, provider-channel downgrades, and same-version repacks fail
 closed. A newer app-bundled catalog also outranks an older disk cache. An authoritative catalog commit
 may withdraw a previously cached candidate down to this app's bundled floor; it never downgrades an
 already active runtime.
+
+Catalog decoding isolates provider entries: a malformed or incompatible sibling falls back locally
+without discarding a healthy family's update. Cursor hashes have no numeric order. Its shared
+comparator uses qualified same-date predecessor identities through refresh, cache restore, Update
+eligibility and install receipts. Known older same-date entries cannot replace cached successors.
+Repair keeps a pinned installed receipt when same-date order is unknown, including legacy receipts.
+The app's smoke check requires the native Cursor version to match the selected immutable release.
 
 An installer-policy change advances only the affected provider's contract revision. Older app builds
 reject releases requiring a newer revision while retaining their compatible installed runtime; a

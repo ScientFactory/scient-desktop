@@ -16,6 +16,7 @@ import {
   verifyManagedRuntimeChecksum,
 } from "./runtimeFiles.ts";
 import { managedRuntimeTargetKey } from "./target.ts";
+import { parseManagedCursorVersion } from "./managedRuntimeVersion.ts";
 import { runtimeFilesystem } from "./runtimeFilesystem.ts";
 import {
   ManagedRuntimeMutationLockLostError,
@@ -176,7 +177,11 @@ export async function smokeManagedRuntimeExecutable(
   args: ReadonlyArray<string>,
   displayName: string,
   environment: Readonly<Record<string, string>> = {},
-  options: { readonly cwd?: string | undefined; readonly signal?: AbortSignal | undefined } = {},
+  options: {
+    readonly cwd?: string | undefined;
+    readonly signal?: AbortSignal | undefined;
+    readonly expectedVersion?: string | undefined;
+  } = {},
 ): Promise<void> {
   options.signal?.throwIfAborted();
   await new Promise<void>((resolve, reject) => {
@@ -187,6 +192,7 @@ export async function smokeManagedRuntimeExecutable(
       windowsHide: true,
     });
     let outputBytes = 0;
+    let versionOutput = "";
     let settled = false;
     let failure: Error | undefined;
     let terminationRequested = false;
@@ -217,6 +223,8 @@ export async function smokeManagedRuntimeExecutable(
             `Managed ${displayName} smoke test produced excessive output.`,
           ),
         );
+      } else if (options.expectedVersion !== undefined) {
+        versionOutput += chunk.toString("utf8");
       }
     };
     child.stdout.on("data", count);
@@ -233,8 +241,16 @@ export async function smokeManagedRuntimeExecutable(
     // package while probe-owned handles are still being released.
     child.once("close", (code, signal) => {
       if (failure) finish(failure);
-      else if (code === 0) finish();
-      else {
+      else if (code === 0) {
+        finish(
+          options.expectedVersion !== undefined &&
+            parseManagedCursorVersion(versionOutput) !== options.expectedVersion
+            ? new ManagedProviderRuntimeError(
+                `Managed ${displayName} smoke test did not report the expected release version.`,
+              )
+            : undefined,
+        );
+      } else {
         finish(
           new ManagedProviderRuntimeError(
             `Managed ${displayName} smoke test failed${signal ? ` with ${signal}` : ` with code ${code ?? "unknown"}`}.`,
@@ -260,7 +276,11 @@ export interface ManagedProviderRuntimeDependencies {
     args: ReadonlyArray<string>,
     displayName: string,
     environment?: Readonly<Record<string, string>>,
-    options?: { readonly cwd?: string | undefined; readonly signal?: AbortSignal | undefined },
+    options?: {
+      readonly cwd?: string | undefined;
+      readonly signal?: AbortSignal | undefined;
+      readonly expectedVersion?: string | undefined;
+    },
   ) => Promise<void>;
   readonly commitState: (
     statePath: string,
@@ -648,7 +668,13 @@ export class ManagedProviderRuntime {
         artifact.smokeArgs,
         this.#displayName,
         artifact.smokeEnvironment,
-        { ...(smokeWorkingDirectory ? { cwd: smokeWorkingDirectory } : {}), signal },
+        {
+          ...(smokeWorkingDirectory ? { cwd: smokeWorkingDirectory } : {}),
+          signal,
+          ...(artifact.smokeVersionFormat === "cursor"
+            ? { expectedVersion: artifact.version }
+            : {}),
+        },
       );
       if (signal.aborted) throw new DOMException("Installation cancelled.", "AbortError");
       await beforeActivate?.(signal);

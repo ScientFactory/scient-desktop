@@ -84,6 +84,15 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Summarize provider discovery
+        if: always()
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          RESULT: ${{ job.status }}
+          AVAILABLE: ${{ steps.catalog.outputs.available }}
+          CHANGED: ${{ steps.catalog.outputs.changed }}
+        run: echo "$PROVIDER discovery — $RESULT; available=$AVAILABLE; changed=$CHANGED" >> "$GITHUB_STEP_SUMMARY"
+
   qualify:
     name: Qualify ${{ inputs.provider }} / ${{ matrix.runner }}
     needs: discover
@@ -175,6 +184,14 @@ jobs:
               --catalog "$RUNNER_TEMP/managed-runtime-catalog-candidate/managed-runtime-catalog.json"
           done
 
+      - name: Summarize native qualification
+        if: always()
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          TARGET: ${{ matrix.runner }}
+          RESULT: ${{ job.status }}
+        run: echo "$PROVIDER / $TARGET qualification — $RESULT" >> "$GITHUB_STEP_SUMMARY"
+
   publish:
     name: Publish qualified ${{ inputs.provider }} release
     needs: [discover, qualify]
@@ -184,6 +201,7 @@ jobs:
     concurrency:
       group: managed-provider-runtime-catalog-publication
       cancel-in-progress: false
+      queue: max
     steps:
       - id: app-token
         name: Mint least-privilege release app token
@@ -244,16 +262,8 @@ jobs:
             .github/workflows/managed-provider-runtime-update-provider.yml \
             apps/server/src/scient/providerLifecycle/ManagedRuntimeCatalog.ts \
             apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json \
-            apps/server/src/provider/AntigravityInstallation.ts \
-            apps/server/src/provider/runtimeFilesystem.ts \
-            apps/server/src/provider/antigravityRelease.ts \
-            apps/server/src/provider/antigravityAuthSupport.ts \
-            apps/server/src/provider/acp \
-            apps/server/scripts/qualify-antigravity-acp-catalog.ts \
-            apps/server/src/scient/providerLifecycle/antigravityAcpCatalog.ts \
-            apps/server/package.json \
-            packages/effect-acp \
             packages/scient-provider-runtime \
+            packages/shared \
             pnpm-lock.yaml \
             scripts/package.json \
             scripts/lib/managed-runtime-catalog.ts \
@@ -264,6 +274,35 @@ jobs:
             echo "Managed-runtime policy or qualification changed during this run; retry from current main." >&2
             exit 1
           fi
+          if [[ "$PROVIDER" == antigravityAcp ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            apps/server/src/provider/AntigravityInstallation.ts \
+            apps/server/src/provider/runtimeFilesystem.ts \
+            apps/server/src/provider/antigravityRelease.ts \
+            apps/server/src/provider/antigravityAuthSupport.ts \
+            apps/server/src/provider/acp \
+            apps/server/scripts/qualify-antigravity-acp-catalog.ts \
+            apps/server/src/scient/providerLifecycle/antigravityAcpCatalog.ts \
+            apps/server/package.json \
+            ':(glob)apps/server/src/*.ts' \
+            apps/server/src/auth \
+            apps/server/src/scient/threadSections \
+            apps/server/src/scient/providerLifecycle/codexSubscriptionSharingPolicy.ts \
+            apps/server/src/stream \
+            apps/server/src/provider/Drivers/AntigravitySkills.ts \
+            apps/server/src/process \
+            packages/contracts \
+            packages/scient-analysis \
+            packages/scient-execution \
+            packages/scient-compute \
+            packages/scient-operations \
+            packages/scient-document-artifacts \
+            packages/scient-sources \
+            packages/scient-project-init \
+            packages/effect-acp; then
+            echo "ACP installer or native qualification changed during this run; retry ACP." >&2
+            exit 1
+          fi
+
           # Droid's qualification also runs its protocol suites against the server:
           # everything they load, kept complete by
           # scripts/managed-provider-runtime-workflow.test.ts. A folder covers its
@@ -325,41 +364,53 @@ jobs:
             exit 1
           fi
 
-          if git ls-remote --exit-code --heads origin "refs/heads/$CATALOG_BRANCH" >/dev/null 2>&1; then
-            branch_exists=true
-            git fetch --no-tags origin \
-              "refs/heads/$CATALOG_BRANCH:refs/remotes/origin/$CATALOG_BRANCH"
-            git show "refs/remotes/origin/$CATALOG_BRANCH:$CATALOG_PATH" > "$current"
-          else
-            cp "$BUNDLED_CATALOG_PATH" "$current"
-          fi
-
-          node scripts/promote-managed-runtime-catalog.ts \
-            --provider "$PROVIDER" \
-            --current "$current" \
-            --candidate "$candidate" \
-            --output "$promoted"
-
-          if [[ "$branch_exists" == true ]]; then
-            git switch -C "$CATALOG_BRANCH" "refs/remotes/origin/$CATALOG_BRANCH"
-          else
-            git switch -c "$CATALOG_BRANCH"
-          fi
-          cp "$promoted" "$CATALOG_PATH"
-          if git diff --quiet -- "$CATALOG_PATH"; then
-            echo "$PROVIDER is already present in the published catalog."
-            exit 0
-          fi
-
           user_id="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
           git config user.name "${APP_SLUG}[bot]"
           git config user.email "${user_id}+${APP_SLUG}[bot]@users.noreply.github.com"
-          git add "$CATALOG_PATH"
-          git commit \
-            -m "chore(provider-runtime): publish qualified $PROVIDER release" \
-            -m "Qualified from main@$SOURCE_SHA on all required native runner targets."
-          git push origin "HEAD:refs/heads/$CATALOG_BRANCH"
+          publication="$RUNNER_TEMP/catalog-publication"
+          git worktree add --detach "$publication" "$SOURCE_SHA"
 
-          remote_sha="$(git ls-remote --heads origin "refs/heads/$CATALOG_BRANCH" | awk '{print $1}')"
-          test "$remote_sha" = "$(git rev-parse HEAD)"
-          echo "Published $PROVIDER from $SOURCE_SHA to $CATALOG_BRANCH." >> "$GITHUB_STEP_SUMMARY"
+          # The queue serializes workflow writers. A maintainer may still advance
+          # the data branch; retry only that race, using the immutable source's
+          # policy and a fresh selected-provider merge each time.
+          for attempt in 1 2 3; do
+            branch_exists=false
+            if git ls-remote --exit-code --heads origin "refs/heads/$CATALOG_BRANCH" >/dev/null 2>&1; then
+              branch_exists=true
+              git fetch --no-tags origin \
+                "refs/heads/$CATALOG_BRANCH:refs/remotes/origin/$CATALOG_BRANCH"
+              base="$(git rev-parse "refs/remotes/origin/$CATALOG_BRANCH")"
+              git show "$base:$CATALOG_PATH" > "$current"
+            else
+              base="$SOURCE_SHA"
+              cp "$BUNDLED_CATALOG_PATH" "$current"
+            fi
+            node scripts/promote-managed-runtime-catalog.ts \
+              --provider "$PROVIDER" \
+              --current "$current" \
+              --candidate "$candidate" \
+              --output "$promoted"
+            git -C "$publication" reset --hard "$base"
+            cp "$promoted" "$publication/$CATALOG_PATH"
+            if git -C "$publication" diff --quiet -- "$CATALOG_PATH"; then
+              echo "$PROVIDER is already present in the published catalog."
+              exit 0
+            fi
+            git -C "$publication" add "$CATALOG_PATH"
+            git -C "$publication" commit \
+              -m "chore(provider-runtime): publish qualified $PROVIDER release" \
+              -m "Qualified from main@$SOURCE_SHA on all required native runner targets."
+            published_sha="$(git -C "$publication" rev-parse HEAD)"
+            if git -C "$publication" push origin "HEAD:refs/heads/$CATALOG_BRANCH"; then
+              git fetch --no-tags origin \
+                "refs/heads/$CATALOG_BRANCH:refs/remotes/origin/$CATALOG_BRANCH"
+              git merge-base --is-ancestor "$published_sha" "refs/remotes/origin/$CATALOG_BRANCH"
+              echo "Published $PROVIDER from $SOURCE_SHA to $CATALOG_BRANCH." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            remote_sha="$(git ls-remote --heads origin "refs/heads/$CATALOG_BRANCH" | awk '{print $1}')"
+            if [[ "$attempt" == 3 || "$remote_sha" == "$base" || ( "$branch_exists" == false && -z "$remote_sha" ) ]]; then
+              echo "Publication failed without a recoverable catalog race." >&2
+              exit 1
+            fi
+          done

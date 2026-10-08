@@ -18,6 +18,63 @@ afterEach(async () => {
 });
 
 describe("ManagedCursorRuntime", () => {
+  it("retains active and previous replacement receipts across restart and failed replacement", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-cursor-lineage-"));
+    temporaryRoots.push(root);
+    const policy = resolveReviewedCursorArtifact({ platform: "darwin", arch: "arm64" })!;
+    const a = policy.version;
+    const b = `${a.split("-")[0]}-1111111`;
+    const artifact = {
+      ...policy,
+      version: b,
+      supersedes: [a],
+      url: policy.url.replace(a, b),
+      catalogRevision: "qualified-cursor-replacement",
+    };
+    const dependencies = {
+      download: async ({ destination }: { destination: string }) => {
+        await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+        await NodeFSP.writeFile(destination, "archive");
+      },
+      verify: async () => {},
+      materialize: async ({
+        destination,
+        executablePath,
+      }: {
+        destination: string;
+        executablePath: string;
+      }) => {
+        const executable = NodePath.join(destination, executablePath);
+        await NodeFSP.mkdir(NodePath.dirname(executable), { recursive: true });
+        await NodeFSP.writeFile(executable, "native fixture", { mode: 0o755 });
+        return executable;
+      },
+      smoke: async () => {},
+    };
+    const runtime = new ManagedCursorRuntime(root, dependencies);
+    const signal = new AbortController().signal;
+    await runtime.install({ artifact: policy, signal });
+    await runtime.install({ artifact, signal });
+    const reopened = new ManagedCursorRuntime(root, dependencies);
+    const state = await reopened.status(artifact);
+    expect(state.activeArtifact?.supersedes).toEqual([a]);
+    expect(state.previousArtifact?.version).toBe(a);
+    const broken = new ManagedCursorRuntime(root, {
+      ...dependencies,
+      smoke: async () => {
+        throw new Error("native identity mismatch");
+      },
+    });
+    await expect(
+      broken.install({
+        artifact: { ...artifact, version: `${a.split("-")[0]}-2222222`, supersedes: [a, b] },
+        signal,
+      }),
+    ).rejects.toThrow("native identity mismatch");
+    expect((await reopened.status(artifact)).activeArtifact?.supersedes).toEqual([a]);
+    expect((await reopened.status(artifact)).previousArtifact?.version).toBe(a);
+  });
+
   it("keeps Cursor in its own provider-private runtime root", () => {
     const artifact = resolveReviewedCursorArtifact({ platform: "darwin", arch: "arm64" });
     expect(artifact).toBeDefined();
@@ -59,6 +116,7 @@ describe("ManagedCursorRuntime", () => {
         expect(executable.replaceAll("\\", "/")).toMatch(/\/dist-package\/node\.exe$/u);
         expect(args).toEqual(["index.js", "--disable-auto-update", "--version"]);
         expect(options?.cwd?.replaceAll("\\", "/")).toMatch(/\/dist-package$/u);
+        expect(options?.expectedVersion).toBe(artifact!.version);
         events.push("smoke");
       },
     });
