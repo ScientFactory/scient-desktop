@@ -12,6 +12,12 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { readHistoricalSystemMessage } from "../../orchestration-v2/legacy/HistoricalSystemMessage.ts";
 
+const TOOL_LIFECYCLE_KINDS: ReadonlySet<string> = new Set([
+  "tool.started",
+  "tool.updated",
+  "tool.completed",
+]);
+
 const historicalActivity = Schema.Struct({
   kind: Schema.String,
   summary: Schema.String,
@@ -127,7 +133,20 @@ export function conversationSnapshotProjection(
             updatedAt,
           });
         } else if (isHistoricalActivity(item.input)) {
-          activity(item.input.kind, item.input.summary, item.input.payload, item.input.tone);
+          const { kind, payload } = item.input;
+          // An imported tool call's item status is how it ended; its merged
+          // payload can still carry a progress status from an earlier row.
+          activity(
+            kind,
+            item.input.summary,
+            TOOL_LIFECYCLE_KINDS.has(kind) &&
+              typeof payload === "object" &&
+              payload !== null &&
+              !Array.isArray(payload)
+              ? { ...payload, status: item.status }
+              : payload,
+            item.input.tone,
+          );
         } else {
           activity(
             "tool.completed",

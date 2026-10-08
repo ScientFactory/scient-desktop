@@ -102,8 +102,9 @@ const DROPPED_ACTIVITY_KINDS: ReadonlySet<string> = new Set([
  * item takes the first row's id and place, ends at the last row, and keeps the
  * merged content of all of them. Telemetry rows are dropped.
  *
- * A thread already imported row by row (by an earlier build) keeps that shape:
- * folding it would leave its existing items without positions.
+ * A thread an earlier build imported row by row, even partly, keeps that
+ * shape: folding it would leave existing items without positions, or skip the
+ * rest of a call whose first row was already imported.
  */
 const foldToolCalls = Effect.fnUntraced(function* (
   sql: SqlClient.SqlClient,
@@ -115,11 +116,17 @@ const foldToolCalls = Effect.fnUntraced(function* (
   const groups = groupToolLifecycles(
     kept.map((row) => ({ ...row, turnId: row.turn_id, toolCallId: row.tool_call_id })),
   );
-  const keptIds = new Set(groups.map((group) => group[0]!.item_id));
-  const importedRowByRow = (yield* sql<{ turn_item_id: string }>`
-    SELECT turn_item_id FROM orchestration_v2_projection_turn_items
+  // A folded call keeps its first row's id and its last row's kind; an item an
+  // earlier build imported for that same first row carries the first row's kind.
+  const foldedKindById = new Map(
+    groups.map((group) => [group[0]!.item_id, group.at(-1)!.kind] as const),
+  );
+  const importedRowByRow = (yield* sql<{ turn_item_id: string; kind: string | null }>`
+    SELECT turn_item_id, json_extract(payload_json, '$.input.kind') AS kind
+    FROM orchestration_v2_projection_turn_items
     WHERE thread_id = ${threadId} AND turn_item_id LIKE 'migration:v1:history:activity:%'`).some(
-    (row) => !keptIds.has(row.turn_item_id),
+    (row) =>
+      !foldedKindById.has(row.turn_item_id) || foldedKindById.get(row.turn_item_id) !== row.kind,
   );
   if (importedRowByRow) return rows;
   const folded: HistoryRow[] = [];

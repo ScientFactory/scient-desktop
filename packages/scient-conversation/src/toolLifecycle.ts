@@ -58,9 +58,11 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const isAbsent = (value: unknown) => value === undefined || value === null;
-
-/** `latest` with every field it lacks filled from `earlier`, newest first. */
+/**
+ * `latest` with every field it does not have filled from `earlier`, newest
+ * first. A field that is present wins, even when its value is null. The
+ * `nested` object is merged the same way, one level down.
+ */
 function fillFrom(
   latest: Readonly<Record<string, unknown>>,
   earlier: ReadonlyArray<unknown>,
@@ -71,20 +73,19 @@ function fillFrom(
     const candidate = earlier[index];
     if (!isRecord(candidate)) continue;
     for (const [key, value] of Object.entries(candidate)) {
-      if (key === nested) continue;
-      if (isAbsent(merged[key]) && !isAbsent(value)) merged[key] = value;
+      if (key !== nested && !Object.hasOwn(merged, key)) merged[key] = value;
     }
   }
   if (nested !== undefined) {
-    const nestedEarlier = earlier.map((candidate) =>
-      isRecord(candidate) ? candidate[nested] : undefined,
+    const nestedEarlier = earlier.flatMap((candidate) =>
+      isRecord(candidate) && Object.hasOwn(candidate, nested) ? [candidate[nested]] : [],
     );
-    const own = merged[nested];
-    if (isRecord(own)) {
-      merged[nested] = fillFrom(own, nestedEarlier);
-    } else if (isAbsent(own)) {
-      const fallback = nestedEarlier.findLast((value) => !isAbsent(value));
-      if (fallback !== undefined) merged[nested] = fallback;
+    if (Object.hasOwn(merged, nested)) {
+      const own = merged[nested];
+      if (isRecord(own)) merged[nested] = fillFrom(own, nestedEarlier);
+    } else if (nestedEarlier.length > 0) {
+      const newest = nestedEarlier.at(-1);
+      merged[nested] = isRecord(newest) ? fillFrom(newest, nestedEarlier.slice(0, -1)) : newest;
     }
   }
   return merged;
@@ -102,16 +103,13 @@ export function mergeToolLifecyclePayloads(payloads: ReadonlyArray<unknown>): un
 }
 
 /**
- * How the call ended: a completed call reports its own status; a call with
- * no completion row never finished, unless a progress row already reported
- * it failed.
+ * How the call ended: failed when any of its rows reported failure, otherwise
+ * completed when it has a completion row, and interrupted when it never
+ * completed.
  */
 export function toolLifecycleOutcome(
-  rows: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>,
+  rows: ReadonlyArray<{ readonly kind: string | null; readonly payload: unknown }>,
 ): ToolLifecycleOutcome {
-  const status = (row: { readonly payload: unknown }) =>
-    isRecord(row.payload) ? row.payload.status : undefined;
-  const last = rows.at(-1);
-  if (last?.kind === "tool.completed") return status(last) === "failed" ? "failed" : "completed";
-  return rows.some((row) => status(row) === "failed") ? "failed" : "interrupted";
+  if (rows.some((row) => isRecord(row.payload) && row.payload.status === "failed")) return "failed";
+  return rows.at(-1)?.kind === "tool.completed" ? "completed" : "interrupted";
 }

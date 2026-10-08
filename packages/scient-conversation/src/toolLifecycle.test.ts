@@ -66,19 +66,34 @@ describe("groupToolLifecycles", () => {
 });
 
 describe("mergeToolLifecyclePayloads", () => {
-  it("keeps the last row and fills what it lacks from the newest earlier row", () => {
+  it("keeps the last row and fills fields it does not have from the newest earlier row", () => {
     expect(
       mergeToolLifecyclePayloads([
         { status: "inProgress", title: "Ran command", toolIcon: "terminal", detail: "old" },
         { status: "inProgress", toolIcon: "terminal-2", detail: "newer", agentId: null },
-        { status: "completed", title: "Ran command", detail: null, citationSources: [] },
+        { status: "completed", title: "Ran command", citationSources: [] },
       ]),
     ).toEqual({
       status: "completed",
       title: "Ran command",
-      detail: "newer",
       citationSources: [],
       toolIcon: "terminal-2",
+      detail: "newer",
+      agentId: null,
+    });
+  });
+
+  it("keeps a value the last row reports as null, and a null from the newest earlier row", () => {
+    expect(
+      mergeToolLifecyclePayloads([
+        { detail: "old", agentId: "a", data: { command: "ls", exitCode: 1 } },
+        { agentId: null, data: { exitCode: null } },
+        { detail: null, data: { rawOutput: null } },
+      ]),
+    ).toEqual({
+      detail: null,
+      agentId: null,
+      data: { rawOutput: null, exitCode: null, command: "ls" },
     });
   });
 
@@ -100,10 +115,14 @@ describe("mergeToolLifecyclePayloads", () => {
     });
   });
 
-  it("takes earlier data whole when the last row has none", () => {
+  it("merges every earlier data object when the last row has none", () => {
     expect(
-      mergeToolLifecyclePayloads([{ data: { command: "ls" } }, { status: "completed" }]),
-    ).toEqual({ status: "completed", data: { command: "ls" } });
+      mergeToolLifecyclePayloads([
+        { data: { command: "ls" } },
+        { data: { rawOutput: "result" } },
+        { status: "completed" },
+      ]),
+    ).toEqual({ status: "completed", data: { rawOutput: "result", command: "ls" } });
   });
 
   it("returns a single or non-object payload unchanged", () => {
@@ -127,5 +146,12 @@ describe("toolLifecycleOutcome", () => {
       "interrupted",
     );
     expect(toolLifecycleOutcome([at("tool.updated", "failed"), at("tool.updated")])).toBe("failed");
+    // A failure reported while running is not undone by the completion row.
+    expect(
+      toolLifecycleOutcome([at("tool.updated", "failed"), at("tool.completed", "completed")]),
+    ).toBe("failed");
+    expect(toolLifecycleOutcome([at("tool.updated", "failed"), at("tool.completed")])).toBe(
+      "failed",
+    );
   });
 });

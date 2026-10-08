@@ -13,6 +13,8 @@ import * as EventSink from "../EventSink.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as LegacyV1ThreadImporter from "./LegacyV1ThreadImporter.ts";
+import { projectWorkLog } from "@scientfactory/conversation";
+import { conversationSnapshotProjection } from "../../scient/conversationExport/conversationSnapshotProjection.ts";
 
 const stores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
   Layer.provideMerge(SqlitePersistenceMemory),
@@ -1406,6 +1408,21 @@ const seedToolLifecycles = Effect.gen(function* () {
       '{"taskId":"task-1","summary":"Working"}',
       "2026-01-03T01:00:08.000Z",
     ],
+    // A completion that does not repeat the status its progress rows reported.
+    [
+      "c4-start",
+      "tool.started",
+      "Read file started",
+      JSON.stringify({ itemType: "file_read", toolCallId: "call-4", status: "inProgress" }),
+      "2026-01-03T01:00:09.000Z",
+    ],
+    [
+      "c4-done",
+      "tool.completed",
+      "Read file",
+      JSON.stringify({ itemType: "file_read", toolCallId: "call-4" }),
+      "2026-01-03T01:00:10.000Z",
+    ],
   ];
   for (const [id, kind, summary, payload, createdAt] of rows) {
     yield* sql`INSERT INTO projection_thread_activities (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at)
@@ -1436,6 +1453,7 @@ it.effect("imports one item per tool call with its full content and true outcome
         activityItem("c2-start"),
         activityItem("c3-failing"),
         activityItem("task"),
+        activityItem("c4-start"),
         activityItem("tool-call"),
       ],
     );
@@ -1462,6 +1480,15 @@ it.effect("imports one item per tool call with its full content and true outcome
     assert.equal(status("c2-start"), "interrupted");
     assert.equal(status("c3-failing"), "failed");
     assert.equal(status("task"), "completed");
+    assert.equal(status("c4-start"), "completed");
+    // Export reports the outcome, not a progress status the completion did not repeat.
+    const exported = projectWorkLog(
+      conversationSnapshotProjection(projection, null).activities,
+    ).entries.flatMap((entry) => (entry._tag === "tool" ? [[entry.id, entry.status]] : []));
+    assert.deepEqual(
+      exported.filter(([id]) => id === activityItem("c4-start")),
+      [[activityItem("c4-start"), "completed"]],
+    );
     // Every item has its own position, in order, with no gaps left by folded rows.
     const positions = yield* sql<{ turn_item_id: string; ordinal: number }>`
       SELECT turn_item_id, ordinal FROM orchestration_v2_turn_item_positions
@@ -1528,5 +1555,54 @@ it.effect("keeps a thread an earlier build imported row by row in that shape", (
     assert.isTrue(items.every((item) => positioned.has(item.id)));
     yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
     assert.equal((yield* projections.getThreadProjection(THREAD)).turnItems.length, items.length);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("keeps a call an earlier build imported only partly in its row-by-row shape", () =>
+  Effect.gen(function* () {
+    yield* seedToolLifecycles;
+    const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    yield* migration.reconcileShells;
+    // An earlier build imported the call's started row, then stopped.
+    const startedAt = DateTime.makeUnsafe("2026-01-03T01:00:00.000Z");
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(activityItem("c1-start")),
+          type: "turn-item.updated",
+          threadId: THREAD,
+          occurredAt: startedAt,
+          payload: {
+            id: activityItem("c1-start"),
+            threadId: THREAD,
+            runId: null,
+            historyTurnId: TurnId.make("tool-turn"),
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "completed",
+            startedAt,
+            completedAt: startedAt,
+            updatedAt: startedAt,
+            type: "dynamic_tool",
+            title: "Ran command started",
+            toolName: "tool.started",
+            input: { activityId: "c1-start", kind: "tool.started" },
+          },
+        },
+      ],
+    });
+    yield* migration.ensureTranscript(THREAD);
+    const ids = new Set(
+      (yield* projections.getThreadProjection(THREAD)).turnItems.map((item) => item.id),
+    );
+    // The rest of the call is imported row by row, so nothing is lost.
+    for (const id of ["c1-u1", "c1-u2", "c1-done", "c1-again"])
+      assert.isTrue(ids.has(activityItem(id)), id);
   }).pipe(Effect.provide(TestLayer)),
 );
