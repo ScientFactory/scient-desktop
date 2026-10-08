@@ -10975,7 +10975,6 @@ function ChatViewContent(props: ChatViewProps) {
           closeRightPanelSurface={closeRightPanelSurface}
           openScientSourcePdf={openScientSourcePdf}
           openFileSourceSurface={openFileSourceSurface}
-          addFilesSurface={addFilesSurface}
         />
         {/* SCIENT-FORK:END */}
       </>

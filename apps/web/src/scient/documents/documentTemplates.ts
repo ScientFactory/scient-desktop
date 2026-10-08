@@ -3,6 +3,7 @@ import reportSource from "./templates/report.tex?raw";
 import proposalSource from "./templates/proposal.tex?raw";
 import thesisSource from "./templates/thesis.tex?raw";
 import blankSource from "./templates/blank.tex?raw";
+import { updateLatexLanguageSource } from "../latex/latexLanguage";
 
 export const DOCUMENT_TEMPLATES = [
   {
@@ -136,4 +137,76 @@ export function availableDocumentPath(path: string, existing: readonly string[])
     candidate = `${stem} (${suffix}).tex`;
   }
   return candidate;
+}
+
+export type NewDocumentFormat = "markdown" | "latex";
+export type NewDocumentLanguage = "english" | "hebrew";
+
+/** The starting points offered on a new LaTeX page, in the order shown. */
+export const NEW_DOCUMENT_TEMPLATES: ReadonlyArray<{
+  readonly id: DocumentTemplateId;
+  readonly name: string;
+}> = [
+  { id: "blank", name: "Article" },
+  { id: "report", name: "Report" },
+  { id: "thesis", name: "Thesis" },
+  { id: "proposal", name: "Proposal" },
+  { id: "assignment", name: "Assignment" },
+];
+
+export const NEW_DOCUMENT_LANGUAGES: ReadonlyArray<{
+  readonly id: NewDocumentLanguage;
+  readonly name: string;
+}> = [
+  { id: "english", name: "English" },
+  { id: "hebrew", name: "Hebrew" },
+];
+
+// Present on macOS and Windows, so the PDF and the Visual page use the same face.
+const HEBREW_DOCUMENT_FONT = "Times New Roman";
+
+/** A filename stem from a title: letters and digits in any script, joined by hyphens. */
+export function newDocumentStem(title: string): string {
+  return (
+    title
+      .normalize("NFKC")
+      .toLocaleLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, "-")
+      .replace(/^-+|-+$/gu, "")
+      .slice(0, 80)
+      .replace(/-+$/u, "") || "untitled"
+  );
+}
+
+/** The first free `<stem>.<ext>`, then `<stem>-2.<ext>`, compared case-insensitively. */
+export function newDocumentPath(
+  title: string,
+  format: NewDocumentFormat,
+  existing: readonly string[],
+): string {
+  const extension = format === "latex" ? "tex" : "md";
+  const stem = newDocumentStem(title);
+  const occupied = new Set(existing.map((entry) => entry.toLocaleLowerCase()));
+  let candidate = `${stem}.${extension}`;
+  for (let suffix = 2; occupied.has(candidate.toLocaleLowerCase()); suffix++)
+    candidate = `${stem}-${suffix}.${extension}`;
+  return candidate;
+}
+
+export function createNewDocumentSource(input: {
+  readonly format: NewDocumentFormat;
+  readonly title: string;
+  readonly template: DocumentTemplateId;
+  readonly language: NewDocumentLanguage;
+}): string {
+  const title = input.title.trim().replace(/[\r\n]+/gu, " ");
+  if (input.format === "markdown") return `# ${title || "Untitled"}\n\n`;
+  const source = createDocumentSource({ template: input.template, title, author: "", course: "" });
+  if (input.language === "english") return source;
+  // Hebrew runs on XeLaTeX with fontspec, which replaces the 8-bit font setup.
+  const unicode = source.replace(
+    /^\\usepackage\[(?:T1|utf8)\]\{(?:fontenc|inputenc)\}\r?\n/gmu,
+    "",
+  );
+  return updateLatexLanguageSource(unicode, "hebrew", HEBREW_DOCUMENT_FONT) ?? source;
 }

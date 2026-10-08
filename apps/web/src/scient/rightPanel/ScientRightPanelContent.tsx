@@ -56,7 +56,6 @@ export interface ScientRightPanelContentProps {
   readonly availableEditors: ReadonlyArray<EditorId>;
   readonly keybindings: ResolvedKeybindingsConfig;
   readonly openFileSourceSurface: (path: string, line?: number, options?: OpenFileOptions) => void;
-  readonly addFilesSurface: () => void;
   readonly closeRightPanelSurface: (surface: ScientRightPanelSurface) => void;
   readonly openScientSourcePdf: (input: {
     readonly sourceId: string;
@@ -80,7 +79,6 @@ export function ScientRightPanelContent(input: ScientRightPanelContentProps): Re
     keybindings,
     closeRightPanelSurface,
     openFileSourceSurface,
-    addFilesSurface,
     openScientSourcePdf,
   } = input;
   return renderedRightPanelSurface?.kind === "scient" &&
@@ -158,14 +156,15 @@ export function ScientRightPanelContent(input: ScientRightPanelContentProps): Re
     activeWorkspaceRoot ? (
     <Suspense fallback={null}>
       <ScientDocumentsPanel
-        key={`${activeThreadRef.environmentId}:${activeWorkspaceRoot}`}
+        key={`${activeThreadRef.environmentId}:${activeWorkspaceRoot}:${renderedRightPanelSurface.format}`}
         environmentId={activeThreadRef.environmentId}
         cwd={activeWorkspaceRoot}
-        projectTitle={activeProject?.title ?? "Project"}
-        onOpenDocument={(path) =>
-          openFileSourceSurface(path, undefined, { latexPreviewMode: "visual" })
-        }
-        onOpenFiles={addFilesSurface}
+        format={renderedRightPanelSurface.format}
+        onCreated={(path) => {
+          openFileSourceSurface(path, undefined, { latexPreviewMode: "visual" });
+          closeRightPanelSurface(renderedRightPanelSurface);
+        }}
+        onCancel={() => closeRightPanelSurface(renderedRightPanelSurface)}
       />
     </Suspense>
   ) : renderedRightPanelSurface?.kind === "scient" &&

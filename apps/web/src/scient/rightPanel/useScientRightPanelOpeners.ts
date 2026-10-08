@@ -8,6 +8,7 @@ import {
   useRightPanelStore,
 } from "~/rightPanelStore";
 import { createComputeContextId } from "~/scient/compute/computeContextStore";
+import type { NewDocumentFormat } from "~/scient/documents/documentTemplates";
 import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
 import { useScientFileOpening } from "~/scient/fileOpening/useScientFileOpening";
 import type { useActivePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
@@ -36,13 +37,16 @@ export function useScientRightPanelOpeners(input: {
       useRightPanelStore.getState().open(activeThreadRef, "agents");
     });
   }, [activeThreadRef, runAfterPendingFileSave]);
-  const addDocumentsSurface = useCallback(() => {
-    if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
-    const surface = scientDocumentsSurface();
-    runAfterPendingFileSave(surface.id, () => {
-      useRightPanelStore.getState().openScient(activeThreadRef, surface);
-    });
-  }, [activeThreadRef, activeWorkspaceRoot, runAfterPendingFileSave]);
+  const addDocumentsSurface = useCallback(
+    (format: NewDocumentFormat) => {
+      if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
+      const surface = scientDocumentsSurface(format);
+      runAfterPendingFileSave(surface.id, () => {
+        useRightPanelStore.getState().openScient(activeThreadRef, surface);
+      });
+    },
+    [activeThreadRef, activeWorkspaceRoot, runAfterPendingFileSave],
+  );
   const addSourcesSurface = useCallback(() => {
     if (!activeThreadRef || !activeProject || activeWorkspaceRoot === undefined) return;
     const surface = scientSourcesSurface();

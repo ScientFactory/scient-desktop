@@ -4,6 +4,7 @@ import {
   normalizeScientRightPanelSurface,
   scientArtifactSurface,
   scientComputeSurface,
+  scientDocumentsSurface,
   scientEnvironmentFileSurface,
   scientGeneratedPdfSurface,
   scientRightPanelSurfaceTitle,
@@ -136,6 +137,32 @@ describe("Scient right-panel surfaces", () => {
 
     expect(contextId.length).toBeLessThanOrEqual(MAX_COMPUTE_CONTEXT_ID_LENGTH);
     expect(normalizeScientRightPanelSurface(surface)).toEqual(surface);
+  });
+
+  it("keeps one new-document page that remembers its format", () => {
+    expect(scientDocumentsSurface("markdown")).toEqual({
+      id: "scient:documents",
+      kind: "scient",
+      module: "documents",
+      format: "markdown",
+    });
+    expect(scientRightPanelSurfaceTitle(scientDocumentsSurface("latex"))).toBe("New document");
+    expect(
+      normalizeScientRightPanelSurface({
+        id: "scient:documents",
+        kind: "scient",
+        module: "documents",
+        format: "markdown",
+      }),
+    ).toEqual(scientDocumentsSurface("markdown"));
+    // A tab saved before the format existed reopens as LaTeX, which it was.
+    expect(
+      normalizeScientRightPanelSurface({
+        id: "scient:documents",
+        kind: "scient",
+        module: "documents",
+      }),
+    ).toEqual(scientDocumentsSurface("latex"));
   });
 
   it("normalizes recognized persisted descriptors and rejects unsafe ones", () => {
