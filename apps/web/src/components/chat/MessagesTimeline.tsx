@@ -576,6 +576,10 @@ interface MessagesTimelineProps {
   onToolOutputCollapsedAtEnd?: () => void;
   onManualNavigation: () => void;
   cancelPositionRestoreRef?: React.RefObject<(() => void) | null>;
+  // SCIENT-FORK:START — a landing fork shows once its list is in place (scient/fork/chatViewFork.tsx).
+  /** The thread whose rows the loaded list has finished positioning, else null. */
+  onPositionedThreadKeyChange?: ((threadKey: string | null) => void) | undefined;
+  // SCIENT-FORK:END
   hideEmptyPlaceholder?: boolean;
   positionHistoryLoading?: boolean;
   topFadeEnabled?: boolean;
@@ -661,6 +665,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onToolOutputCollapsedAtEnd,
   onManualNavigation,
   cancelPositionRestoreRef,
+  // SCIENT-FORK:START
+  onPositionedThreadKeyChange,
+  // SCIENT-FORK:END
   hideEmptyPlaceholder = false,
   positionHistoryLoading = false,
   topFadeEnabled = false,
@@ -1228,6 +1235,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     onResumeFollow,
     // SCIENT-FORK:END
   ]);
+  // SCIENT-FORK:START — report the positioned thread to a landing fork.
+  const positionedListThreadKey =
+    readingListLoaded && !restoringThreadPosition ? listIdentityKey : null;
+  useLayoutEffect(() => {
+    onPositionedThreadKeyChange?.(positionedListThreadKey);
+  }, [onPositionedThreadKeyChange, positionedListThreadKey]);
+  // SCIENT-FORK:END
 
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,

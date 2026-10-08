@@ -48,6 +48,7 @@ import {
   subscribeForkOrigins,
   isForkOriginBusy,
 } from "./forkAttempt";
+import { markForkLanding } from "./forkLanding";
 
 const memory = new Map<string, string>();
 const attemptStore = createForkAttemptStore(
@@ -577,6 +578,8 @@ export function useScientThreadFork({
               attempt = { ...attempt, handoffDone: true };
               attemptStore.set(key, attempt);
             }
+            // The fork's messages show once they are in place (forkLanding.ts).
+            markForkLanding(scopedThreadKey(destinationRef));
             await navigate({
               to: "/$environmentId/$threadId",
               params: { environmentId, threadId: attempt.command.newThreadId },
