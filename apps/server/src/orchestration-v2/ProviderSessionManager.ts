@@ -1966,6 +1966,15 @@ export const layerWithOptions = (
               input.providerThread.nativeThreadRef?.nativeId,
             )
               .pipe(
+                // SCIENT-FORK:START — invalidate idle unloading before waiting for its attach lock.
+                Effect.andThen(
+                  holdThreadLoaded({
+                    providerSessionId,
+                    threadId,
+                    providerThread: input.providerThread,
+                  }),
+                ),
+                // SCIENT-FORK:END
                 Effect.andThen(
                   observeActivity(
                     providerSessionId,
@@ -1978,13 +1987,6 @@ export const layerWithOptions = (
                 ),
               )
               .pipe(
-                Effect.andThen(
-                  holdThreadLoaded({
-                    providerSessionId,
-                    threadId,
-                    providerThread: input.providerThread,
-                  }),
-                ),
                 Effect.andThen(
                   isProviderThreadLoaded({ providerSessionId, threadId, providerThreadKey }),
                 ),
@@ -2038,14 +2040,23 @@ export const layerWithOptions = (
               ),
             ),
           startTurn: (input) =>
-            observeActivity(
+            // SCIENT-FORK:START — cancel pending unloads before attach; in-flight unloads own the lock.
+            holdThreadLoaded({
               providerSessionId,
-              ensureThreadAttached({
-                providerSessionId,
-                threadId: input.threadId,
-                providerInstanceId: runtime.instanceId,
-              }),
-            ).pipe(
+              threadId: input.threadId,
+              providerThread: input.providerThread,
+            }).pipe(
+              Effect.andThen(
+                observeActivity(
+                  providerSessionId,
+                  ensureThreadAttached({
+                    providerSessionId,
+                    threadId: input.threadId,
+                    providerInstanceId: runtime.instanceId,
+                  }),
+                ),
+              ),
+              // SCIENT-FORK:END
               Effect.andThen(
                 claimPiFile(
                   sessionScope,
@@ -2058,13 +2069,6 @@ export const layerWithOptions = (
               // the adapter emits the terminal anyway, clearing the same turn
               // again changes nothing, so another thread's turn on a shared
               // session stays busy either way.
-              Effect.andThen(
-                holdThreadLoaded({
-                  providerSessionId,
-                  threadId: input.threadId,
-                  providerThread: input.providerThread,
-                }),
-              ),
               Effect.andThen(
                 Effect.acquireUseRelease(
                   observeActivity(

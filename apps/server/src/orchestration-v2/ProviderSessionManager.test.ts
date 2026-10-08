@@ -20,6 +20,7 @@ import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as EffectScheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -1245,11 +1246,16 @@ function runIdleThreadUnloadScenario(
     readonly reopen: Effect.Effect<void, ProviderSessionManager.ProviderSessionManagerV2Error>;
     /** Starts run `ordinal` on a thread and returns once the provider accepted it. */
     readonly startTurn: (threadId: ThreadId, ordinal: number) => Effect.Effect<void>;
+    readonly startTurnOnly: (threadId: ThreadId, ordinal: number) => Effect.Effect<void>;
     /** Ends run `ordinal` on a thread and waits for the session to process it. */
     readonly endTurn: (threadId: ThreadId, ordinal: number) => Effect.Effect<void>;
     readonly resume: (threadId: ThreadId) => Effect.Effect<void>;
   }) => Effect.Effect<void, ProviderSessionManager.ProviderSessionManagerV2Error>,
-  options: { readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean> } = {},
+  options: {
+    readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
+    readonly beforeUnload?: Effect.Effect<void>;
+    readonly onStartTurn?: Effect.Effect<void>;
+  } = {},
 ) {
   return Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -1309,9 +1315,8 @@ function runIdleThreadUnloadScenario(
             runtimePolicy,
           })
           .pipe(Effect.asVoid, Effect.orDie);
-      const startTurn = (threadId: ThreadId, ordinal: number) =>
+      const startTurnOnly = (threadId: ThreadId, ordinal: number) =>
         Effect.gen(function* () {
-          yield* resume(threadId);
           const runId = idAllocator.derive.run({ threadId, ordinal });
           yield* runtime.startTurn({
             appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
@@ -1333,6 +1338,8 @@ function runIdleThreadUnloadScenario(
             runtimePolicy,
           });
         }).pipe(Effect.orDie);
+      const startTurn = (threadId: ThreadId, ordinal: number) =>
+        resume(threadId).pipe(Effect.andThen(startTurnOnly(threadId, ordinal)));
       const endTurn = (threadId: ThreadId, ordinal: number) =>
         Effect.scoped(
           Effect.gen(function* () {
@@ -1375,6 +1382,7 @@ function runIdleThreadUnloadScenario(
         threadB,
         reopen,
         startTurn,
+        startTurnOnly,
         endTurn,
         resume,
       });
@@ -1383,6 +1391,8 @@ function runIdleThreadUnloadScenario(
         makeTestLayer({
           state,
           idleTimeoutMs: 1000,
+          ...(options.beforeUnload === undefined ? {} : { beforeUnload: options.beforeUnload }),
+          ...(options.onStartTurn === undefined ? {} : { startTurn: () => options.onStartTurn! }),
           ...(options.hasPendingBackgroundWorkForThread === undefined
             ? {}
             : { hasPendingBackgroundWorkForThread: options.hasPendingBackgroundWorkForThread }),
@@ -1474,3 +1484,178 @@ it.effect(
         }),
     ),
 );
+
+for (const operation of ["resume", "start"] as const) {
+  it.effect(
+    `ProviderSessionManagerV2 waits for an in-flight idle unload before native ${operation}`,
+    () =>
+      Effect.gen(function* () {
+        const unloadStarted = yield* Deferred.make<void>();
+        const releaseUnload = yield* Deferred.make<void>();
+        const nativeStarts = yield* Ref.make(0);
+        let startsBeforeUnloadFinished: number | undefined;
+        let resumesBeforeUnloadFinished: number | undefined;
+        yield* runIdleThreadUnloadScenario(
+          `idle-unload-in-flight-${operation}`,
+          ({ state, threadA, startTurn, startTurnOnly, endTurn, resume }) =>
+            Effect.gen(function* () {
+              yield* startTurn(threadA, 1);
+              yield* endTurn(threadA, 1);
+              yield* TestClock.adjust("1 second");
+              // The native unsubscribe is still physically in progress here; its
+              // tracking row has already been removed and its attach lock is held.
+              yield* Deferred.await(unloadStarted);
+              const next = yield* (
+                operation === "resume" ? resume(threadA) : startTurnOnly(threadA, 2)
+              ).pipe(Effect.forkScoped);
+              yield* Effect.yieldNow;
+              yield* Effect.yieldNow;
+              assert.isUndefined(next.pollUnsafe());
+              assert.equal((yield* Ref.get(state)).resumeCount, 2);
+              assert.equal(yield* Ref.get(nativeStarts), 2);
+              assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
+              // Snapshot native calls at the gate, before permitting unsubscribe to
+              // finish; this also detects overlap even if a continuation runs late.
+              resumesBeforeUnloadFinished = (yield* Ref.get(state)).resumeCount;
+              yield* Deferred.succeed(releaseUnload, undefined);
+              yield* Fiber.join(next);
+              assert.equal(resumesBeforeUnloadFinished, 2);
+              assert.equal(startsBeforeUnloadFinished, 2);
+              assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+                `native-${threadA}`,
+              ]);
+              assert.equal((yield* Ref.get(state)).resumeCount, operation === "resume" ? 3 : 2);
+              assert.equal(yield* Ref.get(nativeStarts), operation === "start" ? 3 : 2);
+            }).pipe(Effect.scoped),
+          {
+            onStartTurn: Ref.update(nativeStarts, (count) => count + 1),
+            beforeUnload: Effect.gen(function* () {
+              yield* Deferred.succeed(unloadStarted, undefined);
+              yield* Deferred.await(releaseUnload);
+              startsBeforeUnloadFinished = yield* Ref.get(nativeStarts);
+            }),
+          },
+        );
+      }).pipe(Effect.scoped),
+  );
+}
+
+for (const operation of ["resume", "start"] as const) {
+  it.effect(
+    `ProviderSessionManagerV2 prevents idle-unload overlap at measured native ${operation} scheduling checkpoints`,
+    () =>
+      Effect.gen(function* () {
+        const nativeStarts = yield* Ref.make(0);
+        let unloadGate:
+          | {
+              readonly entered: Deferred.Deferred<void>;
+              readonly release: Deferred.Deferred<void>;
+            }
+          | undefined;
+        yield* runIdleThreadUnloadScenario(
+          `idle-unload-checkpoints-${operation}`,
+          ({ state, threadA, startTurn, startTurnOnly, endTurn, resume }) =>
+            Effect.gen(function* () {
+              yield* startTurn(threadA, 2);
+              const followup = () =>
+                operation === "resume" ? resume(threadA) : startTurnOnly(threadA, 2);
+              // Measure checkpoints from this real effect without a pending idle timer.
+              // Sweep that budget without claiming it enumerates cancellation paths.
+              let checkpointCount = 0;
+              const baselineScheduler: EffectScheduler.Scheduler = {
+                executionMode: "async",
+                makeDispatcher: () => new EffectScheduler.MixedScheduler().makeDispatcher(),
+                shouldYield: () => {
+                  checkpointCount += 1;
+                  return false;
+                },
+              };
+              yield* followup().pipe(
+                Effect.provideService(EffectScheduler.Scheduler, baselineScheduler),
+              );
+              assert.isAbove(checkpointCount, 0);
+              for (let pauseAt = 1; pauseAt <= checkpointCount; pauseAt += 1) {
+                yield* resume(threadA);
+                unloadGate = {
+                  entered: yield* Deferred.make<void>(),
+                  release: yield* Deferred.make<void>(),
+                };
+                yield* endTurn(threadA, 2);
+                const resumedBefore = (yield* Ref.get(state)).resumeCount;
+                const startsBefore = yield* Ref.get(nativeStarts);
+                const pausedOrFinished = yield* Deferred.make<void>();
+                const tasks: Array<() => void> = [];
+                let checkpoints = 0;
+                let paused = false;
+                const dispatcher: EffectScheduler.SchedulerDispatcher = {
+                  scheduleTask: (task) => tasks.push(task),
+                  flush: () => {
+                    let task: (() => void) | undefined;
+                    while (!paused && (task = tasks.shift()) !== undefined) task();
+                  },
+                };
+                const scheduler: EffectScheduler.Scheduler = {
+                  executionMode: "async",
+                  makeDispatcher: () => dispatcher,
+                  shouldYield: () => {
+                    checkpoints += 1;
+                    if (checkpoints === pauseAt) {
+                      paused = true;
+                      Deferred.doneUnsafe(pausedOrFinished, Effect.void);
+                    }
+                    return paused;
+                  },
+                };
+                const next = yield* followup().pipe(
+                  Effect.ensuring(Deferred.succeed(pausedOrFinished, undefined)),
+                  Effect.provideService(EffectScheduler.Scheduler, scheduler),
+                  Effect.forkScoped,
+                );
+                // The child reaches its custom dispatcher after its first turn on
+                // the parent's scheduler. A flush runs it to the selected pause.
+                yield* Effect.yieldNow;
+                if (!paused) dispatcher.flush();
+                yield* Deferred.await(pausedOrFinished);
+                yield* TestClock.adjust("1 second");
+                const physicallyUnloading = yield* Deferred.isDone(unloadGate.entered);
+                paused = false;
+                dispatcher.flush();
+                yield* Effect.yieldNow;
+                dispatcher.flush();
+                const overlapped =
+                  physicallyUnloading &&
+                  ((yield* Ref.get(state)).resumeCount !== resumedBefore ||
+                    (yield* Ref.get(nativeStarts)) !== startsBefore);
+                // Release before asserting, so a failing mutation cannot strand a
+                // real native unload or the manager's scope finalizer in the test.
+                yield* Deferred.succeed(unloadGate.release, undefined);
+                for (let spin = 0; next.pollUnsafe() === undefined && spin < 1000; spin += 1) {
+                  dispatcher.flush();
+                  yield* Effect.yieldNow;
+                }
+                assert.isDefined(
+                  next.pollUnsafe(),
+                  `follow-up did not complete at checkpoint ${pauseAt}`,
+                );
+                yield* Fiber.join(next);
+                assert.isFalse(
+                  overlapped,
+                  `native ${operation} overlapped unsubscribe at checkpoint ${pauseAt}`,
+                );
+              }
+            }).pipe(Effect.scoped),
+          {
+            onStartTurn: Ref.update(nativeStarts, (count) => count + 1),
+            beforeUnload: Effect.suspend(() => {
+              const gate = unloadGate;
+              return gate === undefined
+                ? Effect.die("Unexpected native unload before its fixture gate was installed")
+                : Deferred.succeed(gate.entered, undefined).pipe(
+                    Effect.andThen(Deferred.await(gate.release)),
+                  );
+            }),
+          },
+        );
+      }).pipe(Effect.scoped),
+  );
+}
