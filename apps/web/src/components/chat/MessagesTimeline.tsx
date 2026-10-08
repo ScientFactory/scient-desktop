@@ -100,6 +100,9 @@ import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { getProjectFaviconCacheKey } from "@t3tools/shared/projectFavicon";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
+// SCIENT-FORK:START — live activity.
+import { LiveActivityDot, observeLiveActivitySweep } from "./liveActivity";
+// SCIENT-FORK:END
 import {
   createContext,
   memo,
@@ -2407,6 +2410,9 @@ function WorktreeSetupTimelineRow({
   row: Extract<TimelineRow, { kind: "worktree-setup" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  // SCIENT-FORK:START — live activity (chat/liveActivity.tsx).
+  const { sendMotion } = use(TimelineRowActivityCtx);
+  // SCIENT-FORK:END
   const terminalId = row.snapshot.setupScript?.terminalId ?? null;
   const openTerminal = ctx.onOpenWorktreeSetupTerminal;
   const onOpenTerminal = useMemo(
@@ -2422,6 +2428,9 @@ function WorktreeSetupTimelineRow({
         !row.embedded && row.snapshot.phase === "running" ? ctx.onWorktreeSetupWorkLocally : null
       }
       onOpenTerminal={onOpenTerminal}
+      // SCIENT-FORK:START — only the current activity sweeps (chat/liveActivity.tsx).
+      sweep={sendMotion.currentActivityRowId === row.id}
+      // SCIENT-FORK:END
     />
   );
 }
@@ -2431,6 +2440,10 @@ function ContextCompactionTimelineRow({
 }: {
   row: Extract<TimelineRow, { kind: "context-compaction" }>;
 }) {
+  // SCIENT-FORK:START — live activity (chat/liveActivity.tsx).
+  const { sendMotion } = use(TimelineRowActivityCtx);
+  const sweeping = row.active && sendMotion.currentActivityRowId === row.id;
+  // SCIENT-FORK:END
   return (
     <div
       role="separator"
@@ -2438,15 +2451,16 @@ function ContextCompactionTimelineRow({
       className="mx-auto flex w-full max-w-(--chat-content-max-width) items-center gap-3 py-1 text-muted-foreground text-xs"
     >
       <span className="h-px flex-1 bg-border/70" />
+      {/* SCIENT-FORK:START — only the current activity sweeps; its text rests lighter (chat/liveActivity.tsx). */}
       <span
-        ref={row.active ? observeVisibleAnimation : undefined}
+        ref={sweeping ? observeLiveActivitySweep : undefined}
         className="relative shrink-0 overflow-hidden"
       >
-        <span className="flex items-center gap-1.5">
+        <span className={cn("flex items-center gap-1.5", sweeping && "live-activity-rest")}>
           <Minimize2Icon aria-hidden="true" className="size-3" />
           {row.label}
         </span>
-        {row.active ? (
+        {sweeping ? (
           <ActivityShimmerOverlay>
             <span className="flex items-center gap-1.5">
               <Minimize2Icon aria-hidden="true" className="size-3" />
@@ -2455,6 +2469,7 @@ function ContextCompactionTimelineRow({
           </ActivityShimmerOverlay>
         ) : null}
       </span>
+      {/* SCIENT-FORK:END */}
       <span className="h-px flex-1 bg-border/70" />
     </div>
   );
@@ -4068,12 +4083,11 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
     use(TimelineRowActivityCtx);
   // One span for every label so the setup-to-working handoff swaps text in
   // place instead of remounting the row.
-  // SCIENT-FORK:START — the label carries the thinking traces' live shine while the turn works;
+  // SCIENT-FORK:START — a small breathing dot shows the turn works (chat/liveActivity.tsx);
   // a finished turn's header fades and closes its space (chat/workingRowExit.ts).
   const { sendMotion } = use(TimelineRowActivityCtx);
   const exiting = sendMotion.workingRowExit.exiting;
   const exitRef = useWorkingRowExitAnimation(sendMotion.workingRowExit);
-  const shimmer = !exiting;
   // SCIENT-FORK:END
   const label = isPreparingWorktree ? (
     "Setting up worktree…"
@@ -4094,13 +4108,10 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
     >
       {/* SCIENT-FORK:END */}
       <div className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
-        <span
-          ref={shimmer ? observeVisibleAnimation : undefined}
-          className="relative shrink-0 overflow-hidden whitespace-nowrap"
-        >
-          {label}
-          {shimmer ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
-        </span>
+        {/* SCIENT-FORK:START — the working header's dot; the sweep stays on the current activity. */}
+        {exiting ? null : <LiveActivityDot />}
+        <span className="relative shrink-0 overflow-hidden whitespace-nowrap">{label}</span>
+        {/* SCIENT-FORK:END */}
         {backgroundWorktreeSetup ? (
           <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
         ) : null}
@@ -4163,14 +4174,21 @@ function CompactingLabel() {
 function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
   const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
-  // SCIENT-FORK:START — Thinking steps aside while the answer above it appears (chat/ThinkingRowFade.tsx).
+  // SCIENT-FORK:START — Thinking steps aside while the answer above it appears (chat/ThinkingRowFade.tsx),
+  // and sweeps only as the current activity (chat/liveActivity.tsx).
   const { sendMotion } = use(TimelineRowActivityCtx);
   // Reserve the activity row during setup so the handoff keeps the same height.
   const activity =
     isPreparingWorktree || isCompacting ? (
       <WorkLogRow label="" />
     ) : (
-      <LiveActivityRow label="Thinking" iconName="brain" active shimmer />
+      // Only the current activity sweeps (chat/liveActivity.tsx).
+      <LiveActivityRow
+        label="Thinking"
+        iconName="brain"
+        active
+        shimmer={sendMotion.currentActivityRowId === row.id}
+      />
     );
   const { groupId } = row;
   const content =
@@ -4207,19 +4225,24 @@ function LiveActivityRow({
 }) {
   const animated = active && !failed;
   const showShimmer = animated && shimmer;
+  // SCIENT-FORK:START — one smooth sweep, on the current activity only; its text rests
+  // lighter under the light; other live rows stay still (no stepped shine).
   return (
     <div
-      ref={animated ? observeVisibleAnimation : undefined}
+      ref={showShimmer ? observeLiveActivitySweep : undefined}
       className="relative min-h-6 w-fit max-w-full min-w-0 overflow-hidden rounded-md text-sm leading-relaxed"
     >
-      <LiveActivityContent
-        label={label}
-        iconName={iconName}
-        toolIcon={toolIcon}
-        failed={failed}
-        announceFailure={failed}
-        active={animated && !shimmer}
-      />
+      <div className={showShimmer ? "live-activity-rest" : undefined}>
+        <LiveActivityContent
+          label={label}
+          iconName={iconName}
+          toolIcon={toolIcon}
+          failed={failed}
+          announceFailure={failed}
+          active={false}
+        />
+      </div>
+      {/* SCIENT-FORK:END */}
       {showShimmer ? (
         <ActivityShimmerOverlay>
           <LiveActivityContent label={label} iconName={iconName} toolIcon={toolIcon} highlighted />
@@ -4340,6 +4363,9 @@ function ThreadReadLabel({
 }
 
 function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "work-live" }> }) {
+  // SCIENT-FORK:START — live activity (chat/liveActivity.tsx).
+  const { sendMotion } = use(TimelineRowActivityCtx);
+  // SCIENT-FORK:END
   const ctx = use(TimelineRowCtx);
   const threadTarget = useThreadReadTarget(row.entry, ctx.activeThreadEnvironmentId);
   const questionHeading = row.entry.questionAnswer
@@ -4430,6 +4456,9 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
         toolIcon={row.entry.toolIcon ?? row.entry.toolSource?.icon}
         failed={failed}
         active={row.active}
+        // SCIENT-FORK:START — only the current activity sweeps (chat/liveActivity.tsx).
+        shimmer={sendMotion.currentActivityRowId === row.id}
+        // SCIENT-FORK:END
       />
     </button>
   );

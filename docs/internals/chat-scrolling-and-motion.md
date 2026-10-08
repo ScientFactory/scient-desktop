@@ -135,12 +135,23 @@ Owner: `chat/responseFollow.ts` (the one owner of the follow, called from
 ## While the agent works
 
 Owners: `chat/timelineWorkingState.ts`, `chat/workingRowExit.ts`,
-`chat/ThinkingRowFade.tsx` (seams in `chat/MessagesTimeline.tsx`).
+`chat/ThinkingRowFade.tsx`, `chat/liveActivity.tsx` and
+`scient/presentation/scient-live-activity.css` (seams in `chat/MessagesTimeline.tsx`).
 
-- **"Working for…" header:** a label and a separator line under it.
-  - The label carries the same live shine as the thinking traces (a 4.5rem
-    band, 2.2s, looping) for as long as the turn works.
-  - The line simply appears and stays.
+- **One sweep, on the current activity only.** The current activity is the
+  latest live row: Thinking, the running-tool bar, an active compaction, or a
+  running worktree setup stage. Only it carries the moving light. Other work in
+  progress (earlier groups still running, entries in an expanded group) stays
+  still, so the page never shimmers all over.
+  - **The light:** a band 7rem wide with a full-strength core about a word wide
+    (2.5rem), passing at 160px per second for any label length. Each pass takes
+    80% of the cycle, then the light rests past the label before the next one.
+  - **The resting text:** while a row sweeps, its own text rests at 55%, so the
+    light (full color) is clearly seen.
+  - **Pausing:** it pauses off screen and in hidden tabs.
+- **"Working for…" header:** a small breathing dot (6px, fading between 40% and
+  100% every 1.6s), then the label, then a separator line under it. The line
+  simply appears and stays. The dot goes away with the header's exit.
 - **It appears only once your message is in the list,** so it never shows
   under the previous answer and then jumps below your message. The exception
   is a worktree being set up, which shows at once.
@@ -156,8 +167,8 @@ Owners: `chat/timelineWorkingState.ts`, `chat/workingRowExit.ts`,
   - It shows again when the agent goes back to thinking. With tools, the
     live tool row (e.g. "Running command") takes its place.
   - During the 1s wait before an answer's first line, it stays visible.
-- **Active tool labels** use a stepped shine (2.2s). All shines pause off
-  screen, in hidden tabs, and under reduced motion.
+- **Reduced motion:** no sweep and no dimming; the working header's dot stays,
+  still, so the working state stays visible.
 
 ## How an answer appears
 
@@ -285,27 +296,27 @@ clipped.
 
 ## Numbers in one place
 
-| What                                      | Value                                               | Where                                                           |
-| ----------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------- |
-| Top margin for placed messages            | 24px                                                | `chat/timelineScrollAnchoring.ts`                               |
-| End allowance                             | 3 lines, at least 40px (40px for your own message)  | `chat/readerScrollPolicy.ts`                                    |
-| Gap kept above the composer at the bottom | 16px (12px narrow)                                  | `chat/useBoundedAnswerFollow.ts`, footer                        |
-| Scroll to end show delay                  | 150ms (hide instant)                                | `chat/useTimelineEndControl.ts`                                 |
-| Follow top speed / acceleration           | 1px/ms / 0.004px/ms²                                | `chat/useBoundedAnswerFollow.ts`                                |
-| Follow yields after your scroll           | 250ms                                               | `chat/useBoundedAnswerFollow.ts`                                |
-| First lines shown of a message below      | 48px                                                | `chat/useBoundedAnswerFollow.ts`, `chat/liveFollowOffset.ts`    |
-| Answer reveal wait / pace / catch-up      | 1s / 4 lines a second / above 8 waiting lines       | `chat/useStreamingBlockEntrance.ts`                             |
-| Gap speed-up / newest-line strength       | 5× / 65%                                            | `chat/useStreamingBlockEntrance.ts`, `index.css`                |
-| Composer glide (first send)               | 260ms, cubic-bezier(0.2, 0, 0, 1)                   | `chat/timelineEntranceMotion.ts`, `chat/draftHeroTransition.ts` |
-| First message entrance                    | 300ms after 100ms                                   | `chat/timelineEntranceMotion.ts`                                |
-| Working header exit                       | 320ms, cubic-bezier(0.45, 0, 0.55, 1)               | `chat/workingRowExit.ts`                                        |
-| Thinking fade                             | 300ms                                               | `chat/ThinkingRowFade.tsx`                                      |
-| Shines                                    | 4.5rem band, 2.2s                                   | `index.css`                                                     |
-| Interaction settle / disclosure settle    | 400ms / 2 frames                                    | `chat/MessagesTimeline.tsx`                                     |
-| Position storage                          | 120ms debounce, 100 threads                         | `chat/timelineScrollAnchoring.ts`                               |
-| Restore history                           | up to 2 pages; citations up to 20                   | `chat/MessagesTimeline.tsx`, citations                          |
-| Page keys                                 | screen − 36px in 150ms; hold ramps to 2× over 400ms | `chat/pageScrollController.ts`                                  |
-| Citation offset / pulse                   | min(120px, ⅓ view) / 3s                             | `chat/AssistantCitationSource.tsx`                              |
+| What                                      | Value                                                               | Where                                                                   |
+| ----------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Top margin for placed messages            | 24px                                                                | `chat/timelineScrollAnchoring.ts`                                       |
+| End allowance                             | 3 lines, at least 40px (40px for your own message)                  | `chat/readerScrollPolicy.ts`                                            |
+| Gap kept above the composer at the bottom | 16px (12px narrow)                                                  | `chat/useBoundedAnswerFollow.ts`, footer                                |
+| Scroll to end show delay                  | 150ms (hide instant)                                                | `chat/useTimelineEndControl.ts`                                         |
+| Follow top speed / acceleration           | 1px/ms / 0.004px/ms²                                                | `chat/useBoundedAnswerFollow.ts`                                        |
+| Follow yields after your scroll           | 250ms                                                               | `chat/useBoundedAnswerFollow.ts`                                        |
+| First lines shown of a message below      | 48px                                                                | `chat/useBoundedAnswerFollow.ts`, `chat/liveFollowOffset.ts`            |
+| Answer reveal wait / pace / catch-up      | 1s / 4 lines a second / above 8 waiting lines                       | `chat/useStreamingBlockEntrance.ts`                                     |
+| Gap speed-up / newest-line strength       | 5× / 65%                                                            | `chat/useStreamingBlockEntrance.ts`, `index.css`                        |
+| Composer glide (first send)               | 260ms, cubic-bezier(0.2, 0, 0, 1)                                   | `chat/timelineEntranceMotion.ts`, `chat/draftHeroTransition.ts`         |
+| First message entrance                    | 300ms after 100ms                                                   | `chat/timelineEntranceMotion.ts`                                        |
+| Working header exit                       | 320ms, cubic-bezier(0.45, 0, 0.55, 1)                               | `chat/workingRowExit.ts`                                                |
+| Thinking fade                             | 300ms                                                               | `chat/ThinkingRowFade.tsx`                                              |
+| Live sweep / working dot                  | 7rem band (2.5rem core), 160px/s, 20% rest, text at 55% / 6px, 1.6s | `chat/liveActivity.tsx`, `scient/presentation/scient-live-activity.css` |
+| Interaction settle / disclosure settle    | 400ms / 2 frames                                                    | `chat/MessagesTimeline.tsx`                                             |
+| Position storage                          | 120ms debounce, 100 threads                                         | `chat/timelineScrollAnchoring.ts`                                       |
+| Restore history                           | up to 2 pages; citations up to 20                                   | `chat/MessagesTimeline.tsx`, citations                                  |
+| Page keys                                 | screen − 36px in 150ms; hold ramps to 2× over 400ms                 | `chat/pageScrollController.ts`                                          |
+| Citation offset / pulse                   | min(120px, ⅓ view) / 3s                                             | `chat/AssistantCitationSource.tsx`                                      |
 
 ## Where Scient differs from upstream T3
 
@@ -317,7 +328,7 @@ Recorded in `UPSTREAM.md`:
   setting.
 - **Motion added by Scient:**
   - the first-message entrance;
-  - the working header shine and exit;
+  - the working header's dot and exit, and the single live sweep;
   - the Thinking fade;
   - the line-by-line answer reveal;
   - the working-row timing (waits for your message);

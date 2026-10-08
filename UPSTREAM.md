@@ -21,8 +21,12 @@ Send motion (Scient): the draft hero composer's move to the thread always animat
 (260ms, decelerating curve; `useDraftHeroMotion` in `chat/timelineEntranceMotion.ts`), not only
 with the opt-in panel animation setting; reduced motion skips it. A first prompt being placed is revealed top-down
 and fades in on the same curve (clip and opacity only, never a transform, so the reveal's
-measurements hold), and the "Working for" label carries the thinking traces' live shine (ActivityShimmerOverlay)
-for as long as the turn works; its line just appears
+measurements hold), and the "Working for" header carries a small breathing dot (`chat/liveActivity.tsx`); its line just
+appears. Live activity (Scient): only the current activity row sweeps (`currentLiveActivityRowId`:
+Thinking, the running-tool bar, an active compaction, a running setup stage), with a wider light at
+one pace per label (`--live-activity-duration`) over text resting at 55%
+(`scient/presentation/scient-live-activity.css` refines the upstream live-activity utilities); the
+upstream stepped `live-tool-shine` is no longer applied, and other live rows stay still
 (`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount). While an
 answer streams it is revealed as one flow (`chat/useStreamingBlockEntrance.ts`, `.streamed-reveal`):
 after a 1s buffer, lines appear top-down at ~4 lines/s (faster when >8 lines wait), at 65%, with

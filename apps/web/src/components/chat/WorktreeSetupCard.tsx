@@ -21,6 +21,9 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { Spinner } from "~/components/ui/spinner";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
+// SCIENT-FORK:START — live activity.
+import { observeLiveActivitySweep } from "./liveActivity";
+// SCIENT-FORK:END
 import { cn } from "~/lib/utils";
 import { WorkLogRow } from "./WorkLog";
 
@@ -169,10 +172,16 @@ function StageRow({
   stage,
   nowMs,
   scriptName,
+  // SCIENT-FORK:START — live activity (chat/liveActivity.tsx).
+  sweep,
+  // SCIENT-FORK:END
 }: {
   stage: WorktreeSetupStage;
   nowMs: number;
   scriptName: string | null;
+  // SCIENT-FORK:START — live activity.
+  sweep: boolean;
+  // SCIENT-FORK:END
 }) {
   const elapsed = stageElapsedMs(stage, nowMs);
   const label =
@@ -196,13 +205,15 @@ function StageRow({
         </span>
       }
       label={
+        // SCIENT-FORK:START — a running stage sweeps only as the current activity; its text rests lighter.
         <span
-          ref={running ? observeVisibleAnimation : undefined}
+          ref={running && sweep ? observeLiveActivitySweep : undefined}
           className={cn("relative block truncate", stageRowClassName(stage.status))}
         >
-          {label}
-          {running ? <ShimmerOverlay>{label}</ShimmerOverlay> : null}
+          <span className={running && sweep ? "live-activity-rest" : undefined}>{label}</span>
+          {running && sweep ? <ShimmerOverlay>{label}</ShimmerOverlay> : null}
         </span>
+        // SCIENT-FORK:END
       }
       trailing={
         <>
@@ -337,6 +348,9 @@ export function WorktreeSetupCard({
   onWorkLocally,
   onOpenTerminal,
   embedded = false,
+  // SCIENT-FORK:START — live activity (chat/liveActivity.tsx).
+  sweep = true,
+  // SCIENT-FORK:END
 }: WorktreeSetupCardProps & {
   /**
    * The agent's turn is live and owns the "Working for" header. The stage
@@ -344,6 +358,9 @@ export function WorktreeSetupCard({
    * failed script that outlives the handoff collapses to a single row.
    */
   embedded?: boolean;
+  // SCIENT-FORK:START — whether its running stage sweeps (only as the timeline's current activity).
+  sweep?: boolean;
+  // SCIENT-FORK:END
 }) {
   const running = snapshot.phase === "running";
   const nowMs = useNowWhile(running);
@@ -384,6 +401,9 @@ export function WorktreeSetupCard({
                 stage={stage}
                 nowMs={nowMs}
                 scriptName={snapshot.setupScript?.name ?? null}
+                // SCIENT-FORK:START — live activity.
+                sweep={sweep}
+                // SCIENT-FORK:END
               />
               {stage.id === "setup-script" && showTail ? (
                 <OutputTail lines={stage.tail} failed={stage.status === "failed"} />

@@ -3,6 +3,7 @@ import { DRAFT_HERO_TRANSITION_EASING } from "./draftHeroTransition";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 import type { WorkingRowExit } from "./workingRowExit";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { currentLiveActivityRowId } from "./liveActivity";
 
 /**
  * Entrances already played. The list remounts rows that scroll out of view
@@ -73,6 +74,8 @@ export interface TimelineSendMotion {
   readonly thinkingFollowsAnswerId: string | null;
   /** The working header's exit (chat/workingRowExit.ts). */
   readonly workingRowExit: WorkingRowExit;
+  /** The one live row that sweeps (chat/liveActivity.tsx). */
+  readonly currentActivityRowId: string | null;
 }
 
 export function useTimelineSendMotion(input: {
@@ -91,9 +94,10 @@ export function useTimelineSendMotion(input: {
       ? previous.message.id
       : null;
   }, [rows]);
+  const currentActivityRowId = useMemo(() => currentLiveActivityRowId(rows), [rows]);
   return useMemo(
-    () => ({ enteringPromptId, thinkingFollowsAnswerId, workingRowExit }),
-    [enteringPromptId, thinkingFollowsAnswerId, workingRowExit],
+    () => ({ enteringPromptId, thinkingFollowsAnswerId, workingRowExit, currentActivityRowId }),
+    [enteringPromptId, thinkingFollowsAnswerId, workingRowExit, currentActivityRowId],
   );
 }
 

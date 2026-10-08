@@ -1,0 +1,109 @@
+/*
+ * Live activity (chat/liveActivity.tsx). One readable sweep, on the current
+ * activity only: a light passing over its words, with a full-strength core
+ * about a word wide, at the same pace for any label length (its duration is
+ * set per label as --live-activity-duration), resting briefly between passes.
+ * While it sweeps, the label rests lighter, so the light is clearly seen.
+ * The working header carries a small breathing dot instead.
+ *
+ * Unlayered, so these refine the upstream live-activity utilities.
+ */
+.live-activity-focus {
+  --live-activity-focus-width: 7rem;
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    rgb(0 0 0 / 30%) 1rem,
+    rgb(0 0 0 / 80%) 1.875rem,
+    black 2.25rem,
+    black 4.75rem,
+    rgb(0 0 0 / 80%) 5.125rem,
+    rgb(0 0 0 / 30%) 6rem,
+    transparent var(--live-activity-focus-width),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    rgb(0 0 0 / 30%) 1rem,
+    rgb(0 0 0 / 80%) 1.875rem,
+    black 2.25rem,
+    black 4.75rem,
+    rgb(0 0 0 / 80%) 5.125rem,
+    rgb(0 0 0 / 30%) 6rem,
+    transparent var(--live-activity-focus-width),
+    transparent 100%
+  );
+  animation-name: scient-live-activity-sweep;
+  animation-duration: var(--live-activity-duration, 2.2s);
+  animation-timing-function: linear;
+}
+
+.live-activity-focus-counter {
+  animation-name: scient-live-activity-sweep-counter;
+  animation-duration: var(--live-activity-duration, 2.2s);
+  animation-timing-function: linear;
+}
+
+/* The pass takes the first 80% of the cycle; the light then rests past the
+   label before the next pass. */
+@keyframes scient-live-activity-sweep {
+  0% {
+    transform: translateX(0);
+  }
+  80%,
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes scient-live-activity-sweep-counter {
+  0% {
+    transform: translateX(0);
+  }
+  80%,
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
+/* A sweeping label's own text rests lighter under the light. */
+.live-activity-rest {
+  opacity: 0.55;
+}
+
+/* The working header's steady cue. */
+.live-activity-dot {
+  display: inline-block;
+  flex: none;
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background-color: currentColor;
+  animation: scient-live-activity-breathe 1.6s ease-in-out infinite;
+  animation-play-state: var(--visible-animation-state, paused);
+}
+
+@keyframes scient-live-activity-breathe {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Reduced motion: no sweep and no dimming; the dot stays, still. */
+@media (prefers-reduced-motion: reduce), (forced-colors: active) {
+  .live-activity-focus,
+  .live-activity-focus-counter,
+  .live-activity-dot {
+    animation: none;
+  }
+
+  .live-activity-rest {
+    opacity: 1;
+  }
+}
