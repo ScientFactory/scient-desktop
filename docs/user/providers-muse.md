@@ -50,11 +50,14 @@ before commands and edits, and **Full access** runs them without asking. Muse ha
 no equivalent of **Auto-accept edits** or **Auto**, so they are not offered. Muse
 does not offer a separate Plan mode in Scient.
 
-Muse can use Scient's tools. If Muse cannot reach them, the turn continues
-without them. Switching providers can pass conversation context as a handoff.
+Muse can use Scient's tools and selected Scient skills through its authenticated
+MCP session. That connection requires Muse's native session-MCP capability;
+Scient refuses setup when the required grant is missing. Switching providers
+can pass conversation context as a handoff.
 
-Muse skills do not appear in the composer's `$` menu. Muse still loads them
-itself. Manage them with `muse skills` on the host.
+Muse-native skills do not appear in the composer's `$` menu. Muse still loads
+them itself; manage them with `muse skills` on the host. Scient skills use the
+shared [skill selection](./composer.md) and availability policy.
 
 Forking a Muse conversation starts a new session with a copy of the conversation
 context. Conversation rewind is unavailable.
