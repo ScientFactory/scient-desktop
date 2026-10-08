@@ -13,7 +13,7 @@ layer("059_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 60 }, (_, index) => index + 1).filter((id) => id !== 50),
+        Array.from({ length: 63 }, (_, index) => index + 1).filter((id) => id !== 50),
       );
     }),
   );
@@ -29,6 +29,9 @@ layer("059_OrchestrationV2", (it) => {
         [58, "ProjectionThreadSections"],
         [59, "OrchestrationV2"],
         [60, "RemoveRedundantProjectionIndexes"],
+        [61, "ScheduledTaskWebhooks"],
+        [62, "WebhookRelayDeliveries"],
+        [63, "McpAppModelContext"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -54,6 +57,9 @@ layer("059_OrchestrationV2", (it) => {
         { migration_id: 58, name: "ProjectionThreadSections" },
         { migration_id: 59, name: "OrchestrationV2" },
         { migration_id: 60, name: "RemoveRedundantProjectionIndexes" },
+        { migration_id: 61, name: "ScheduledTaskWebhooks" },
+        { migration_id: 62, name: "WebhookRelayDeliveries" },
+        { migration_id: 63, name: "McpAppModelContext" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`
@@ -69,13 +75,17 @@ layer("059_OrchestrationV2", (it) => {
             'orchestration_v2_projection_provider_session_bindings',
             'orchestration_v2_thread_launch_workflows',
             'orchestration_v2_legacy_imports',
-            'scheduled_tasks'
+            'scheduled_tasks',
+            'scheduled_task_webhook_deliveries',
+            'scheduled_task_webhook_relay_deliveries',
+            'mcp_app_model_context'
           )
         ORDER BY name
       `;
       assert.deepStrictEqual(
         tables.map(({ name }) => name),
         [
+          "mcp_app_model_context",
           "orchestration_v2_effect_outbox",
           "orchestration_v2_legacy_imports",
           "orchestration_v2_projection_metadata",
@@ -84,6 +94,8 @@ layer("059_OrchestrationV2", (it) => {
           "orchestration_v2_projection_threads",
           "orchestration_v2_thread_launch_workflows",
           "orchestration_v2_turn_item_positions",
+          "scheduled_task_webhook_deliveries",
+          "scheduled_task_webhook_relay_deliveries",
           "scheduled_tasks",
         ],
       );

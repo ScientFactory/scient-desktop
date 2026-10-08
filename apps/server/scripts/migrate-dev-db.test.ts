@@ -59,20 +59,23 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
         ["subagent-child", "project-kept", "completed", subagentPayload, "2026-08-05"],
         ["deleted-project-thread", "project-deleted", "completed", "{}", "2026-08-05"],
       ] as const;
-      for (const [threadId, projectId, status, settledAt, monitorJson] of threads) {
-        yield* sql`INSERT INTO projection_threads
-          (thread_id, project_id, title, model_selection_json, created_at, updated_at, settled_at, monitor_json)
-          VALUES (${threadId}, ${projectId}, ${threadId}, '{"provider":"codex","model":"gpt-5.4"}', '2026-08-01', '2026-08-01', ${settledAt}, ${monitorJson})`;
-        yield* sql`INSERT INTO projection_thread_sessions (thread_id, status, updated_at)
-          VALUES (${threadId}, ${status}, '2026-08-01')`;
+      for (const [threadId, projectId, runStatus, payload, updatedAt] of threads) {
+        yield* sql`INSERT INTO orchestration_v2_projection_threads
+          (thread_id, project_id, title, default_provider, provider_instance_id,
+            runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+          VALUES (${threadId}, ${projectId}, ${threadId}, 'codex', 'codex',
+            'full-access', 'default', '2026-08-01', ${updatedAt}, ${payload})`;
+        yield* sql`INSERT INTO orchestration_v2_projection_runs
+          (run_id, thread_id, ordinal, provider, provider_instance_id, status, requested_at, payload_json)
+          VALUES (${`run-${threadId}`}, ${threadId}, 1, 'codex', 'codex', ${runStatus}, '2026-08-01', '{}')`;
         yield* sql`INSERT INTO orchestration_events
           (event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at, actor_kind, payload_json, metadata_json)
           VALUES (${`event-${threadId}`}, 'thread', ${threadId}, 0, 'thread.created', '2026-08-01', 'user', '{}', '{}')`;
       }
       // A provider session shared by two threads names its latest writer.
       yield* sql`INSERT INTO orchestration_v2_projection_provider_sessions
-        (provider_session_id, thread_id, provider, status, updated_at, payload_json)
-        VALUES ('session-shared', 'running-thread', 'codex', 'stopped', '2026-08-01', '{}')`;
+        (provider_session_id, thread_id, provider, driver, provider_instance_id, status, updated_at, payload_json)
+        VALUES ('session-shared', 'running-thread', 'codex', 'codex', 'codex', 'stopped', '2026-08-01', '{}')`;
       yield* sql`INSERT INTO orchestration_v2_projection_provider_session_bindings
         (provider_session_id, thread_id)
         VALUES ('session-shared', 'running-thread'), ('session-shared', 'stopped-thread')`;
@@ -180,6 +183,13 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       // This test process stands in for a live dev server.
       const stateDir = path.join(destDir, "userdata");
       yield* fs.makeDirectory(stateDir, { recursive: true });
+      const destinationPath = path.join(stateDir, "statev2.sqlite");
+      const snapshotPath = `${destinationPath}.migrate-dev-db-tmp`;
+      yield* fs.writeFileString(
+        destinationPath,
+        "existing destination must not be opened or replaced",
+      );
+      yield* fs.writeFileString(snapshotPath, "existing snapshot must not be replaced");
       yield* fs.writeFileString(
         path.join(stateDir, "server-runtime.json"),
         `{"version":1,"pid":${process.pid}}`,
@@ -193,6 +203,14 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       if (error._tag === "MigrateDevDbServerRunningError") {
         assert.equal(error.pid, process.pid);
       }
+      assert.equal(
+        yield* fs.readFileString(destinationPath),
+        "existing destination must not be opened or replaced",
+      );
+      assert.equal(
+        yield* fs.readFileString(snapshotPath),
+        "existing snapshot must not be replaced",
+      );
     }),
   );
 
@@ -222,12 +240,15 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-shared-" });
       const source = yield* createFixtureSource(sourceDir);
+      const originalSource = yield* fs.readFile(source);
 
       const error = yield* runMigrateDevDb(
         { baseDir: sourceDir, source, projects: 5, threadsPerProject: 10 },
         { sharedHome: sourceDir },
       ).pipe(Effect.flip);
       assert.equal(error._tag, "MigrateDevDbSharedHomeError");
+      assert.deepStrictEqual(yield* fs.readFile(source), originalSource);
+      assert.isFalse(yield* fs.exists(`${source}.migrate-dev-db-tmp`));
     }),
   );
 });
