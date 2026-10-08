@@ -9,6 +9,7 @@ import { lazy, Suspense, type ReactNode } from "react";
 import type { OpenFileOptions } from "~/rightPanelStore";
 
 import type { ScientRightPanelSurface } from "./surfaces";
+import { focusNewDocumentWhenOpen } from "../documents/focusNewDocument";
 
 const ScientDocumentsPanel = lazy(() =>
   import("../documents/ScientDocumentsPanel").then((module) => ({
@@ -163,6 +164,7 @@ export function ScientRightPanelContent(input: ScientRightPanelContentProps): Re
         onCreated={(path) => {
           openFileSourceSurface(path, undefined, { latexPreviewMode: "visual" });
           closeRightPanelSurface(renderedRightPanelSurface);
+          focusNewDocumentWhenOpen();
         }}
         onCancel={() => closeRightPanelSurface(renderedRightPanelSurface)}
       />

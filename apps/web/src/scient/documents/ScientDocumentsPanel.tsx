@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { ChevronDown } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -20,6 +20,9 @@ import {
   type NewDocumentLanguage,
 } from "./documentTemplates";
 import "./documents.css";
+
+// A4 at 96 px per inch, the page the Visual view lays out.
+const A4_WIDTH_PX = 793.7;
 
 function isPathExists(result: Parameters<typeof squashAtomCommandFailure>[0]) {
   const error = squashAtomCommandFailure(result);
@@ -51,6 +54,18 @@ export function ScientDocumentsPanel(props: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submitting = useRef(false);
+  const page = useRef<HTMLDivElement>(null);
+  // The LaTeX sheet is drawn at the scale the Visual view will use for this width.
+  useEffect(() => {
+    const element = page.current;
+    if (!element || props.format !== "latex") return;
+    const observer = new ResizeObserver(([entry]) => {
+      const width = entry?.contentBoxSize[0]?.inlineSize ?? element.clientWidth;
+      element.style.setProperty("--new-document-scale", String(width / A4_WIDTH_PX));
+    });
+    observer.observe(element, { box: "border-box" });
+    return () => observer.disconnect();
+  }, [props.format]);
   const latex = props.format === "latex";
   const languageName = NEW_DOCUMENT_LANGUAGES.find((entry) => entry.id === language)!.name;
 
@@ -104,7 +119,11 @@ export function ScientDocumentsPanel(props: {
       data-format={props.format}
       aria-label={latex ? "New LaTeX document" : "New Markdown document"}
     >
-      <div className="scient-new-document-page" dir={language === "hebrew" ? "rtl" : undefined}>
+      <div
+        ref={page}
+        className="scient-new-document-page"
+        dir={language === "hebrew" ? "rtl" : undefined}
+      >
         <input
           className="scient-new-document-title"
           value={title}
