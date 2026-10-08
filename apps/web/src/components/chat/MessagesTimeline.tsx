@@ -261,6 +261,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger, TooltipScrollDismissArea } from "../ui/tooltip";
 import { ScientForkMessageButton } from "./scient-fork/ScientForkMessageButton";
+import { settledListThreadKey } from "../scient-fork/forkLanding";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import {
   ContextChipPopover as UserMessageContextPopover,
@@ -577,7 +578,7 @@ interface MessagesTimelineProps {
   onManualNavigation: () => void;
   cancelPositionRestoreRef?: React.RefObject<(() => void) | null>;
   // SCIENT-FORK:START — a landing fork shows once its list is in place (scient/fork/chatViewFork.tsx).
-  /** The thread whose rows the loaded list has finished positioning, else null. */
+  /** The thread whose rows the loaded list has positioned and held still, else null. */
   onPositionedThreadKeyChange?: ((threadKey: string | null) => void) | undefined;
   // SCIENT-FORK:END
   hideEmptyPlaceholder?: boolean;
@@ -721,6 +722,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     rememberedPosition?.atEnd === false ? null : listIdentityKey,
   );
   const restoringThreadPosition = positionedThreadKey !== listIdentityKey;
+  // SCIENT-FORK: the thread whose positioning ran out of frames before it held still.
+  const [abandonedPositionKey, setAbandonedPositionKey] = useState<string | null>(null);
   const listIdentityRef = useRef(listIdentityKey);
   const previousLatestRunRef = useRef(latestRun);
   let paintedExpandedRunIds = expandedRunIds;
@@ -730,6 +733,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   if (listIdentityRef.current !== listIdentityKey) {
     listIdentityRef.current = listIdentityKey;
     setPositionedThreadKey(null);
+    // SCIENT-FORK
+    setAbandonedPositionKey(null);
     previousLatestRunRef.current = latestRun;
     paintedExpandedRunIds = rememberedPosition?.disclosures?.runs ?? new Set();
     paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
@@ -1155,6 +1160,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           if (cancelled) return;
           const element = list.getScrollableNode();
           if (!element || --remainingEndFrames <= 0) {
+            // SCIENT-FORK
+            setAbandonedPositionKey(listIdentityKey);
             setPositionedThreadKey(listIdentityKey);
             return;
           }
@@ -1178,6 +1185,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       const reconcile = () => {
         if (cancelled) return;
         if (--remainingFrames <= 0) {
+          // SCIENT-FORK
+          setAbandonedPositionKey(listIdentityKey);
           setPositionedThreadKey(listIdentityKey);
           return;
         }
@@ -1236,8 +1245,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     // SCIENT-FORK:END
   ]);
   // SCIENT-FORK:START — report the positioned thread to a landing fork.
-  const positionedListThreadKey =
-    readingListLoaded && !restoringThreadPosition ? listIdentityKey : null;
+  const positionedListThreadKey = settledListThreadKey({
+    listThreadKey: listIdentityKey,
+    listLoaded: readingListLoaded,
+    restoring: restoringThreadPosition,
+    abandonedThreadKey: abandonedPositionKey,
+  });
   useLayoutEffect(() => {
     onPositionedThreadKeyChange?.(positionedListThreadKey);
   }, [onPositionedThreadKeyChange, positionedListThreadKey]);

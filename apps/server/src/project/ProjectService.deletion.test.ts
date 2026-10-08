@@ -481,7 +481,6 @@ it.effect("deletes a project without force once its imported threads were delete
           "subagents",
           "providerSessions",
         ]),
-        attachmentIds: [],
         now,
         idAllocator,
       });

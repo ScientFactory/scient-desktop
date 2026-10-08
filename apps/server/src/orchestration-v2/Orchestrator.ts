@@ -11008,11 +11008,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           planThreadDeletion({
             command,
             projection,
-            // SCIENT-FORK: files can be shown by other conversations (forks share
-            // them, messages can reuse them): release them after the deletion
-            // commits, keeping any a live conversation still names.
-            attachmentIds: [],
-            releaseFilesAfterCommit: true,
             now: yield* DateTime.now,
             idAllocator,
           }),

@@ -6,6 +6,7 @@ import {
   isForkLandingReady,
   markForkLanding,
   settleForkLanding,
+  settledListThreadKey,
   subscribeForkLanding,
 } from "./forkLanding";
 
@@ -95,5 +96,17 @@ describe("isForkLandingReady", () => {
         positionedThreadKey: null,
       }),
     ).toBe(true);
+  });
+
+  it("counts a list as settled only once its rows held still", () => {
+    const list = { listThreadKey: fork, listLoaded: true, restoring: false };
+    expect(settledListThreadKey({ ...list, abandonedThreadKey: null })).toBe(fork);
+    expect(settledListThreadKey({ ...list, restoring: true, abandonedThreadKey: null })).toBe(null);
+    expect(settledListThreadKey({ ...list, listLoaded: false, abandonedThreadKey: null })).toBe(
+      null,
+    );
+    // A restore that ran out of frames leaves the landing to its expiry.
+    expect(settledListThreadKey({ ...list, abandonedThreadKey: fork })).toBe(null);
+    expect(settledListThreadKey({ ...list, abandonedThreadKey: "env:origin" })).toBe(fork);
   });
 });

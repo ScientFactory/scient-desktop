@@ -15,6 +15,7 @@ import {
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
+  questionAnswerMessageId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -418,6 +419,64 @@ it.effect("a running fork freezes partial text and keeps pending approvals inert
     assert.equal(partial.streaming, false);
     assert.equal(partial.status, "interrupted");
     assert.equal(plan.messages.find((message) => message.text === "Working")?.streaming, false);
+  }),
+);
+
+it.effect("a running fork's copied answered question keeps its folded answer message", () =>
+  Effect.gen(function* () {
+    const projection = makeProjection();
+    const steer = projection.turnItems.find((item) => item.id === "steer")!;
+    // Codex answers a message-mode question by steering `async-answer:<request id>`.
+    const question: OrchestrationV2TurnItem = {
+      ...steer,
+      id: TurnItemId.make("running-question"),
+      ordinal: 7,
+      type: "user_input_request",
+      requestId: RuntimeRequestId.make("running-request"),
+      responseMode: "message",
+      questions: [{ id: "dataset", header: "Data", question: "Which dataset?", options: [] }],
+      questionAnswer: {
+        requestId: "running-request",
+        answers: { dataset: "B" },
+        attachmentsByQuestionId: {},
+      },
+    };
+    const answer: OrchestrationV2TurnItem = {
+      ...steer,
+      id: TurnItemId.make("running-answer"),
+      ordinal: 8,
+      messageId: MessageId.make("async-answer:running-request"),
+      text: "B",
+    } as OrchestrationV2TurnItem;
+    const answerMessage = {
+      ...projection.messages.find((message) => message.id === "steer")!,
+      id: MessageId.make("async-answer:running-request"),
+      text: "B",
+    };
+    const turnItems = [...projection.turnItems, question, answer];
+    const plan = yield* planConversationFork({
+      projection: {
+        ...projection,
+        turnItems,
+        messages: [...projection.messages, answerMessage],
+        visibleTurnItems: turnItems.map((item, position) => ({
+          item,
+          position,
+          sourceThreadId: threadId,
+          sourceItemId: item.id,
+          visibility: "local" as const,
+        })),
+      },
+      targetThreadId,
+      source: { kind: "running-turn", runId: running },
+    });
+    const copied = plan.items.find((item) => item.type === "user_input_request");
+    assert.ok(copied?.type === "user_input_request" && copied.questionAnswer !== undefined);
+    assert.notEqual(copied.requestId, "running-request");
+    const copiedAnswer = plan.messages.find((message) => message.text === "B");
+    assert.ok(copiedAnswer);
+    assert.notEqual(copiedAnswer.id, answerMessage.id);
+    assert.equal(questionAnswerMessageId(copied.questionAnswer), copiedAnswer.id);
   }),
 );
 

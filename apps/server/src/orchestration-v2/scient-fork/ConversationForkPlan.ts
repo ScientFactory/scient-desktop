@@ -18,6 +18,8 @@ import {
   type RunId,
   type ChatAttachment,
   type ThreadForkAttachmentCopy,
+  type UserInputAttachmentAnswerPayload,
+  questionAnswerMessageId,
 } from "@t3tools/contracts";
 import { resolveForkInitialization } from "@t3tools/shared/orchestrationV2ForkInitialization";
 import type * as DateTime from "effect/DateTime";
@@ -219,6 +221,10 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
         item.messageId,
         MessageId.make(`scient-fork:${targetThreadId}:message:${messageIds.size}`),
       );
+  const answerMessageId = (answer: UserInputAttachmentAnswerPayload) => {
+    const source = MessageId.make(questionAnswerMessageId(answer));
+    return messageIds.get(source) ?? source;
+  };
   const history: ReadonlyArray<ForkHistoryEntry> = retained.map(
     ({ item, sourceThreadId, sourceItemId }) => {
       const copyId = copyIds.get(item.id);
@@ -359,7 +365,14 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
           status: original.status === "completed" ? "completed" : "cancelled",
           ...(original.questionAnswer === undefined
             ? {}
-            : { questionAnswer: { ...original.questionAnswer, requestId } }),
+            : {
+                questionAnswer: {
+                  ...original.questionAnswer,
+                  requestId,
+                  // The answer's message keeps its link through the new request id.
+                  messageId: answerMessageId(original.questionAnswer),
+                },
+              }),
         };
       }
       case "fork": {

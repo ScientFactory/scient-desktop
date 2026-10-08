@@ -66,3 +66,19 @@ export function isForkLandingReady(input: {
   if (input.displayedThreadKey !== input.threadKey) return false;
   return input.timelineEmpty || input.positionedThreadKey === input.threadKey;
 }
+
+/**
+ * The thread whose rows a loaded list has put in place, else null. A position
+ * restore that ran out of frames before the rows held still has not: the
+ * landing waits for its expiry rather than show rows that may still move.
+ */
+export function settledListThreadKey(input: {
+  readonly listThreadKey: string;
+  readonly listLoaded: boolean;
+  readonly restoring: boolean;
+  readonly abandonedThreadKey: string | null;
+}): string | null {
+  return input.listLoaded && !input.restoring && input.abandonedThreadKey !== input.listThreadKey
+    ? input.listThreadKey
+    : null;
+}
