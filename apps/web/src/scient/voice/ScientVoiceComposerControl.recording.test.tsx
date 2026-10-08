@@ -1,8 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import type { VoicePhase } from "./useScientVoiceController.ts";
 
 const controllerState = vi.hoisted(() => ({
-  phase: "recording" as "idle" | "recording" | "correcting" | "setup-prompt",
+  phase: "recording" as VoicePhase,
+  levels: [] as number[],
   errorMessage: null as string | null,
   microphonePermissionDenied: false,
   modelSnapshot: null as null | {
@@ -28,7 +30,7 @@ vi.mock("./useScientVoiceController.ts", async (importOriginal) => {
     ...actual,
     useScientVoiceController: () => ({
       phase: controllerState.phase,
-      levels: [],
+      levels: controllerState.levels,
       elapsedMs: 0,
       errorMessage: controllerState.errorMessage,
       microphonePermissionDenied: controllerState.microphonePermissionDenied,
@@ -49,6 +51,7 @@ import { ScientVoiceComposerControl } from "./ScientVoiceComposerControl.tsx";
 afterEach(() => {
   vi.unstubAllGlobals();
   controllerState.phase = "recording";
+  controllerState.levels = [];
   controllerState.errorMessage = null;
   controllerState.microphonePermissionDenied = false;
   controllerState.modelSnapshot = null;
@@ -64,13 +67,53 @@ describe("ScientVoiceComposerControl recording actions", () => {
     expect(markup).not.toContain('aria-label="Transcribe and send"');
   });
 
-  it("stacks the recording surface above the footer's z-30 provider icon", () => {
+  it("uses a transparent inline row instead of covering the provider and toolbar", () => {
     const markup = renderToStaticMarkup(
       <ScientVoiceComposerControl onTranscript={() => undefined} />,
     );
 
-    expect(markup).toContain("z-40");
+    expect(markup).toContain('data-scient-voice-surface="true"');
+    expect(markup).not.toContain("bg-background");
+    expect(markup).not.toContain("absolute inset-y-0");
+    expect(markup).not.toContain('aria-label="Dictate a voice message"');
   });
+
+  it.each(["composer", "compact"] as const)(
+    "keeps the latest sample at the visible right edge with fixed bar geometry in %s",
+    (presentation) => {
+      controllerState.levels = [...Array<number>(32).fill(0), 0.2];
+      const markup = renderToStaticMarkup(
+        <ScientVoiceComposerControl presentation={presentation} onTranscript={() => undefined} />,
+      );
+      expect(markup).toContain("justify-end overflow-hidden");
+      expect(markup.match(/w-0\.5 shrink-0 rounded-full bg-primary\/60/g)).toHaveLength(112);
+      expect(markup).toContain("height:22px");
+      expect(markup).toContain('dir="ltr"');
+    },
+  );
+
+  it.each([
+    ["requesting-permission", "Waiting for microphone access…", "Cancel microphone request"],
+    ["transcribing", "Transcribing…", "Cancel transcription"],
+    ["correcting", "Correcting transcript…", "Use original"],
+  ] as const)(
+    "centers %s with a separate action rail on both surfaces",
+    (phase, status, action) => {
+      controllerState.phase = phase;
+      for (const presentation of ["composer", "compact"] as const) {
+        const markup = renderToStaticMarkup(
+          <ScientVoiceComposerControl presentation={presentation} onTranscript={() => undefined} />,
+        );
+        expect(markup).toContain('data-scient-voice-center="true"');
+        expect(markup).toContain("justify-center");
+        expect(markup).toContain('role="status"');
+        expect(markup).toContain(status);
+        expect(markup).toContain(action);
+        expect(markup).toContain('data-scient-voice-actions="true"');
+        expect(markup).not.toContain("bg-background");
+      }
+    },
+  );
 
   it("offers transcript submission when the host supplies a submit callback", () => {
     const markup = renderToStaticMarkup(

@@ -29,11 +29,24 @@ contracts.
   keep correction disabled by default.
 
 The direct inherited-host changes are deliberately narrow: one composer mount,
-one ready-model-only citation-comment mount, one positioned-footer class, one
+one ready-model-only citation-comment mount, footer busy-state layout, one
 IPC method-group loop, one preload-adapter mount, and one call from the desktop
 artifact builder into the Scient-owned runtime staging adapter. Voice behavior
 does not live in `ChatComposer.tsx`, the inherited preload, or the artifact
 orchestrator.
+
+Voice uses the host footer's surface and normal layout. While busy, the composer
+retains the provider icon, hides and inerts ordinary toolbar actions, and stays
+expanded. The citation microphone shares the idle card's right-side actions.
+Both hosts keep the voice control mounted as its presentation changes. Recording
+and processing status share a centered lane beside a reserved action rail.
+
+The waveform retains 112 recent levels in fixed-width bars with fixed gaps.
+Unused slots render as baseline dots; narrow viewports clip the oldest slots
+from the left, so the newest audio remains visible before the full history
+fills. Audio capture retains all frames independently of the display history.
+Waveform updates follow incoming worklet messages rather than a continuous
+animation loop.
 
 ## Reliability invariants
 

@@ -13,6 +13,9 @@ import {
   type VoiceWorkletMessage,
 } from "./voiceWorkletProcessor.ts";
 import { acquireCurrentMicrophone } from "./voiceMedia.ts";
+import { VOICE_WAVEFORM_LEVEL_COUNT } from "./voiceWaveform.ts";
+
+export { VOICE_WAVEFORM_LEVEL_COUNT } from "./voiceWaveform.ts";
 
 export type VoiceRecorderStatus = "idle" | "requesting-permission" | "recording" | "error";
 
@@ -24,7 +27,6 @@ export type VoiceRecorderErrorKind =
   | "unknown";
 
 export const MAX_RECORDING_MS = 180_000;
-export const VOICE_WAVEFORM_LEVEL_COUNT = 96;
 const WORKLET_FLUSH_TIMEOUT_MS = 500;
 
 export interface UseVoiceRecorderOptions {

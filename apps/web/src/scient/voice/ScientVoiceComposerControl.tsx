@@ -33,7 +33,7 @@ import {
 import { cn } from "../../lib/utils.ts";
 import { useClientSettings } from "../../hooks/useSettings.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
-import { VOICE_WAVEFORM_LEVEL_COUNT } from "./useVoiceRecorder.ts";
+import { buildVoiceWaveformLevels, VOICE_WAVEFORM_LEVEL_COUNT } from "./voiceWaveform.ts";
 import { getVoiceBridge } from "./voiceClient.ts";
 import { formatVoiceTimer, useScientVoiceController } from "./useScientVoiceController.ts";
 import {
@@ -79,16 +79,20 @@ const VoiceWaveform = memo(function VoiceWaveform({
 }): ReactNode {
   return (
     <div
-      className="flex h-7 min-w-0 shrink items-center gap-0.5 overflow-hidden"
+      data-scient-voice-waveform="true"
+      dir="ltr"
+      className="flex h-7 w-full min-w-0 max-w-[calc(--spacing(0.5)*223)] items-center justify-end overflow-hidden"
       aria-hidden="true"
     >
-      {levels.map((level, index) => (
-        <span
-          key={WAVEFORM_BAR_KEYS[index]}
-          className="w-0.5 shrink-0 rounded-full bg-primary/60"
-          style={{ height: barHeight(level) }}
-        />
-      ))}
+      <div className="flex shrink-0 items-center gap-0.5">
+        {buildVoiceWaveformLevels(levels).map((level, index) => (
+          <span
+            key={WAVEFORM_BAR_KEYS[index]}
+            className="w-0.5 shrink-0 rounded-full bg-primary/60"
+            style={{ height: barHeight(level) }}
+          />
+        ))}
+      </div>
     </div>
   );
 });
@@ -222,14 +226,15 @@ export function ScientVoiceComposerControl({
     desktopBridge?.getClientPlatform?.() === "darwin" &&
     desktopBridge.openSystemSettings !== undefined;
 
+  const busy =
+    controller.phase === "requesting-permission" ||
+    controller.phase === "recording" ||
+    controller.phase === "transcribing" ||
+    controller.phase === "correcting";
   useEffect(() => {
-    onBusyChange?.(
-      controller.phase === "requesting-permission" ||
-        controller.phase === "recording" ||
-        controller.phase === "transcribing" ||
-        controller.phase === "correcting",
-    );
-  }, [controller.phase, onBusyChange]);
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
   const readyModelBecameUnavailable =
     readyModelOnly &&
@@ -239,99 +244,101 @@ export function ScientVoiceComposerControl({
       (controller.modelSnapshot === null && controller.errorMessage !== null));
   if (!client || readyModelBecameUnavailable) return null;
 
-  const recordingSurface =
-    controller.phase === "requesting-permission" ||
-    controller.phase === "recording" ||
-    controller.phase === "transcribing" ||
-    controller.phase === "correcting" ? (
-      <div
-        className={cn(
-          // The recording surface starts right of the composer footer's
-          // provider icon (ProviderInstanceIcon renders at z-30 upstream and
-          // spans roughly 12–32px from the left edge), so the agent avatar
-          // stays visible and the waveform begins just past it. z-40 is kept
-          // defensively above the avatar's stacking context. Popovers/tooltips
-          // portal outside this stacking context.
-          "absolute inset-y-0 right-0 z-40 flex items-center gap-2 bg-background",
-          presentation === "composer"
-            ? "left-9 pe-3 pb-3 sm:left-10 sm:pe-4 sm:pb-4"
-            : "inset-x-0 px-3 pb-3 sm:px-4 sm:pb-4",
-        )}
-      >
-        {controller.phase === "recording" ? (
-          <>
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-destructive" />
-              <VoiceWaveform levels={controller.levels} />
-              <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
-                {formatVoiceTimer(controller.elapsedMs)}
-              </span>
-              <span className="sr-only" role="status">
-                Recording
-              </span>
+  const actionsClassName = cn(
+    "flex shrink-0 items-center justify-end gap-2",
+    presentation === "composer" ? "w-28 sm:w-25" : "w-24",
+  );
+  const recordingSurface = busy ? (
+    <div
+      data-scient-voice-surface="true"
+      className="flex min-h-8 w-full min-w-0 items-center gap-2"
+    >
+      {controller.phase === "recording" ? (
+        <>
+          <div
+            data-scient-voice-center="true"
+            className="flex min-w-0 flex-1 items-center justify-center gap-2"
+          >
+            <span aria-hidden="true" className="flex w-9 shrink-0 justify-end">
+              <span className="size-2 rounded-full bg-destructive" />
+            </span>
+            <VoiceWaveform levels={controller.levels} />
+            <span dir="ltr" className="w-9 shrink-0 text-muted-foreground text-xs tabular-nums">
+              {formatVoiceTimer(controller.elapsedMs)}
+            </span>
+            <span className="sr-only" role="status">
+              Recording
+            </span>
+          </div>
+          <TooltipProvider delay={40} closeDelay={0} timeout={300}>
+            <div data-scient-voice-actions="true" className={actionsClassName}>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      aria-label="Cancel recording (Esc)"
+                      onClick={() => void controller.cancel()}
+                      size="icon-sm"
+                      variant="ghost"
+                    />
+                  }
+                >
+                  <XIcon />
+                </TooltipTrigger>
+                <TooltipPopup>Cancel recording (Esc)</TooltipPopup>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      aria-label="Transcribe and insert (Enter)"
+                      onClick={() => void controller.stop(false)}
+                      size="icon-sm"
+                      variant="ghost"
+                    />
+                  }
+                >
+                  <CornerDownLeftIcon />
+                </TooltipTrigger>
+                <TooltipPopup>Transcribe and insert (Enter)</TooltipPopup>
+              </Tooltip>
+              {onRequestSubmit ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        aria-label="Transcribe and send"
+                        onClick={() => void controller.stop(true)}
+                        size="icon-sm"
+                        variant="round-primary"
+                      />
+                    }
+                  >
+                    <ArrowUpIcon />
+                  </TooltipTrigger>
+                  <TooltipPopup>Transcribe and send</TooltipPopup>
+                </Tooltip>
+              ) : null}
             </div>
-            <TooltipProvider delay={40} closeDelay={0} timeout={300}>
-              <div className="ml-auto flex shrink-0 items-center gap-2">
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        aria-label="Cancel recording (Esc)"
-                        onClick={() => void controller.cancel()}
-                        size="icon-sm"
-                        variant="ghost"
-                      />
-                    }
-                  >
-                    <XIcon />
-                  </TooltipTrigger>
-                  <TooltipPopup>Cancel recording (Esc)</TooltipPopup>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        aria-label="Transcribe and insert (Enter)"
-                        onClick={() => void controller.stop(false)}
-                        size="icon-sm"
-                        variant="ghost"
-                      />
-                    }
-                  >
-                    <CornerDownLeftIcon />
-                  </TooltipTrigger>
-                  <TooltipPopup>Transcribe and insert (Enter)</TooltipPopup>
-                </Tooltip>
-                {onRequestSubmit ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          aria-label="Transcribe and send"
-                          onClick={() => void controller.stop(true)}
-                          size="icon-sm"
-                          variant="round-primary"
-                        />
-                      }
-                    >
-                      <ArrowUpIcon />
-                    </TooltipTrigger>
-                    <TooltipPopup>Transcribe and send</TooltipPopup>
-                  </Tooltip>
-                ) : null}
-              </div>
-            </TooltipProvider>
-          </>
-        ) : (
-          <>
+          </TooltipProvider>
+        </>
+      ) : (
+        <>
+          <div
+            data-scient-voice-center="true"
+            className="flex min-w-0 flex-1 items-center justify-center gap-2 text-center text-muted-foreground text-xs"
+            role="status"
+          >
             <Loader2Icon aria-hidden="true" className="size-4 shrink-0 animate-spin" />
-            <span className="min-w-0 flex-1 text-muted-foreground text-xs" role="status">
+            <span className="min-w-0">
               {controller.phase === "requesting-permission"
                 ? "Waiting for microphone access…"
                 : controller.phase === "transcribing"
                   ? "Transcribing…"
                   : "Correcting transcript…"}
             </span>
+          </div>
+          <div data-scient-voice-actions="true" className={actionsClassName}>
             {controller.phase === "correcting" ? (
               <Button onClick={controller.useOriginal} size="xs" variant="ghost-muted">
                 Use original
@@ -350,14 +357,20 @@ export function ScientVoiceComposerControl({
                 <XIcon />
               </Button>
             )}
-          </>
-        )}
-      </div>
-    ) : null;
+          </div>
+        </>
+      )}
+    </div>
+  ) : null;
 
   return (
-    <div className={cn("flex items-center gap-2", className)}>
-      {controller.phase === "setup-prompt" ? (
+    <div
+      data-scient-voice-control="true"
+      className={cn("flex min-w-0 items-center gap-2", className)}
+    >
+      {busy ? (
+        recordingSurface
+      ) : controller.phase === "setup-prompt" ? (
         <div className="flex min-w-0 items-center gap-1.5">
           <VoiceModelSetupPicker
             disabled={disabled}
@@ -404,6 +417,7 @@ export function ScientVoiceComposerControl({
           <ComposerControl
             aria-label={ariaLabel}
             disabled={disabled || controller.phase !== "idle"}
+            onPointerDown={(event) => event.preventDefault()}
             onClick={() => void controller.activate()}
           >
             <ComposerControlIcon icon={MicIcon} />
@@ -420,7 +434,6 @@ export function ScientVoiceComposerControl({
           ) : null}
         </>
       )}
-      {recordingSurface}
     </div>
   );
 }
