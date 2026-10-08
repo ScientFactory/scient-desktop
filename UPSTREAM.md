@@ -1027,3 +1027,9 @@ Production identity is a conscious Scient divergence: the package uses the
 canonical Scient bundle ID and protocol while retaining the established
 `scient-next` user-data location for compatibility. Future upstream merges must
 not restore T3 publication authority or a dependency on `t3@<Scient version>`.
+
+The unmounted Overleaf engine owns `apps/server/src/scient/overleaf` and its
+retained mutation implementation in `apps/server/src/scient/workspace`. Its two
+additive `WorkspaceFileSystem` methods reuse the existing file mutation lock map;
+retain that shared ownership with editor saves. No Overleaf routes or UI are
+mounted yet. See [Overleaf engine](docs/internals/scient-overleaf-engine.md).
