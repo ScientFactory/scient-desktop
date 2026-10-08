@@ -20,7 +20,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { makeDroidTextGeneration } from "../../textGeneration/DroidTextGeneration.ts";
 import type { DroidAcpRuntimeFactory } from "../acp/DroidAcpSupport.ts";
 import { droidCustomModelId, makeDroidCustomModelsRuntimeFactory } from "./DroidCustomModels.ts";
-import { qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
+import { factoryFixtureBody, qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
 
 const binary = process.env.SCIENT_DROID_TEST_BINARY;
 beforeAll(() => qualifyDroidTestBinary(binary), 10_000);
@@ -83,7 +83,7 @@ const backgroundGenerationFixture = (
           for await (const part of request) body += String(part);
           if (await handle(request.url ?? "", body, response)) return;
           response.writeHead(200, { "content-type": "application/json" });
-          response.end("{}");
+          response.end(factoryFixtureBody(request.url));
         }),
       ),
       (server) =>
