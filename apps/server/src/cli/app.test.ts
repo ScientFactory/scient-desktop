@@ -222,7 +222,7 @@ describe("t3 server command safety", () => {
     withTempDirectory("t3-cli-help-", (root) =>
       Effect.gen(function* () {
         const baseDir = NodePath.join(root, "home");
-        const help = yield* runCli(["help"], { T3CODE_HOME: baseDir }).pipe(Effect.flip);
+        const help = yield* runCli(["help"], { SCIENT_NEXT_HOME: baseDir }).pipe(Effect.flip);
         expect(help).toMatchObject({ _tag: "ShowHelp", commandPath: ["t3"], errors: [] });
         expect(yield* pathExists(baseDir)).toBe(false);
       }),
@@ -256,14 +256,16 @@ describe("t3 server command safety", () => {
           [newDirectory],
           ["start", newDirectory],
         ]) {
-          const error = yield* runCli(args, { T3CODE_HOME: baseDir }).pipe(
+          const error = yield* runCli(args, { SCIENT_NEXT_HOME: baseDir }).pipe(
             Effect.provideService(
               HostProcessPlatform,
               args[0] === "C:new-project" ? "win32" : platform,
             ),
             Effect.flip,
           );
-          expect(String(error)).toContain("A T3 Code server is already running");
+          expect(String(error)).toContain(
+            `A Scient server is already running for ${baseDir} (pid ${process.pid}, http://127.0.0.1:3773). Connect to that server, stop it before starting another, or use a different --base-dir.`,
+          );
           expect(yield* Effect.promise(() => NodeFSP.readFile(statePath, "utf8"))).toBe(record);
           expect(yield* pathExists(newDirectory)).toBe(false);
           expect(yield* Effect.promise(() => NodeFSP.readdir(stateDir))).toEqual([

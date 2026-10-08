@@ -231,7 +231,8 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
       );
       expect(yield* resolve).toBeNull();
       yield* fs.symlink(entry, globalBin);
-      expect(yield* resolve).toEqual({ kind: "npm-global", prefix });
+      const canonicalPrefix = yield* fs.realPath(prefix);
+      expect(yield* resolve).toEqual({ kind: "npm-global", prefix: canonicalPrefix });
       yield* fs.remove(globalBin);
       yield* fs.writeFileString(globalBin, "an unrelated t3 command");
       expect(yield* resolve).toBeNull();
@@ -258,6 +259,7 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
         '{"name":"t3","version":"0.0.45","bin":{"t3":"./bin/t3.js"},"optionalDependencies":{"@t3code/t3-linux-x64":"0.0.45"}}',
       );
       yield* fs.symlink(launcher, path.join(prefix, "bin/t3"));
+      const canonicalPrefix = yield* fs.realPath(prefix);
       const resolve = resolveServerInstallation.pipe(
         Effect.provideService(HostProcessExecutablePath, entry),
         Effect.provideService(HostProcessIsExecutable, true),
@@ -265,7 +267,7 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
       );
       for (const [version, expected] of [
         ["0.0.44", null],
-        ["0.0.45", { kind: "npm-global", prefix }],
+        ["0.0.45", { kind: "npm-global", prefix: canonicalPrefix }],
       ]) {
         yield* fs.writeFileString(
           path.join(path.dirname(entry), "package.json"),
