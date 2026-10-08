@@ -1019,3 +1019,22 @@ Production identity is a conscious Scient divergence: the package uses the
 canonical Scient bundle ID and protocol while retaining the established
 `scient-next` user-data location for compatibility. Future upstream merges must
 not restore T3 publication authority or a dependency on `t3@<Scient version>`.
+
+## File-tree bidirectional labels
+
+The locked `@pierre/trees` dependency carries a narrow rendering patch at
+`patches/@pierre__trees@1.0.0-beta.6.patch`. Its normal middle truncation splits
+a name into separately laid-out halves, which changes the reading order of
+Hebrew and mixed-direction names even without overflow. Tree labels containing
+Hebrew, Arabic and the supported RTL Unicode ranges instead keep one isolated
+text run with automatic base direction and native ellipsis. The tree's icons,
+indentation, row actions and raw paths retain their existing layout and identity;
+LTR names retain extension-preserving middle truncation. Flattened directory
+segments use the same label policy.
+
+Preserve this correction for Files and the diff tree when updating the library,
+or remove the patch only after its replacement passes the real-browser geometry,
+truncation and selection checks in
+`apps/web/src/scient/files/fileTreeBidi.browser.test.ts`. Reversing filenames or
+setting the whole tree RTL is not a substitute for preserving each name's bidi
+paragraph.
