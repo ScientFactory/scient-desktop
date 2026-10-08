@@ -46,10 +46,11 @@ using softer placeholder-colored, regular-weight text.
 The waveform retains 112 recent levels in fixed-width bars with fixed gaps.
 The lane reserves its full width, but bars appear progressively from left to
 right as audio arrives. Worklet cadence is halfway between the original
-2048-sample chunk rate and the faster approximately 56-measurement-per-second
-rate, rounded to whole samples. At the usual 24 kHz recording rate this is
-about 34 measurements per second, filling the full-width waveform in about
-3.3 seconds. Narrow viewports fill sooner and clip the oldest bars from the left
+2048-sample chunk rate and the preceding midpoint cadence. That preceding
+cadence averaged the original rate and approximately 56 measurements per
+second; both steps round to whole samples. At the usual 24 kHz recording rate
+this is about 23 measurements per second, filling the full-width waveform in
+about 4.9 seconds. Narrow viewports fill sooner and clip the oldest bars from the left
 as soon as their visible width is filled; new speech stays visible at the right.
 Audio capture retains all frames independently of the display history.
 Waveform updates follow incoming worklet messages rather than a continuous
