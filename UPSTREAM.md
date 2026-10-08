@@ -238,7 +238,8 @@ including retained publication holds and measured enforcement debt.
 
 The current qualified alignment is recorded in
 [the b24f0fbba0 receipt](docs/internals/t3-upstream-sync-20261008-b24f0fbba0.md)
-and `upstream-state.json`. It receives all 27 subsequent first-parent official
+and `upstream-state.json` ([Scient PR #473](https://github.com/ScientFactory/scient-desktop/pull/473)).
+It receives all 27 subsequent first-parent official
 commits through `b24f0fbba09d8623c896081b4ff70aa7190c8fda` onto owned base
 `3498143f7221634d9dd6b38e95f84839dc4d2bfe`. Literal merge
 `71015aa7484971d7c84101b2294c88988bee2203` retains both as exact parents.
