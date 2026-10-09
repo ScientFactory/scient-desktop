@@ -38,6 +38,7 @@ import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
   makeReplayServerConfig,
   type OrchestratorV2ProviderReplayHarness,
@@ -575,9 +576,9 @@ export const PiOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
         ChildProcessSpawner.ChildProcessSpawner,
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
-          const config = yield* ServerConfig.ServerConfig;
+          const host = yield* ProviderHost.ProviderHost;
           const declaredRoot = yield* piInstanceStateRoot({
-            stateDir: config.stateDir,
+            stateDir: host.paths.stateDir,
             instanceId: PI_PROVIDER,
           });
           yield* fs.makeDirectory(declaredRoot, { recursive: true, mode: 0o700 });
