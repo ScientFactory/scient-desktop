@@ -254,7 +254,7 @@ The fixed comparison paths are:
 - `packages/provider-pi/src/server/mcpExtensionSource.ts`
 - `packages/provider-pi/src/server/mcpInjection.ts`
 
-## Verification
+## Verification before preservation repairs
 
 Source qualification runs at `a218a45f80d19ce15a9a75a5a796e74a303f0646`, tree
 `80794ecaa4217e259d773abe04d6177e15dbfba8`. The subsequent `3afc49ea82` delta
@@ -363,3 +363,67 @@ separate from these local checks.
 
 The final handoff identifies candidate state/process ownership and readiness.
 Visual acceptance, hosted CI and the structural proposition remain separate.
+
+## Preservation repair qualification
+
+Repair source `89974f96b6d7741c79cb2b23751f986db6143fbc`, tree
+`3a11c96b8781d8e382cd706f248a85b6d5f08e0a`, was qualified anew after the
+production repairs above. Owned main was fetched again at completion and remains
+`b631232d51fa6705a72e3f0021cee139999c6b69`, already in the candidate's ancestry.
+The following documentation-only delivery changes no runtime or test inputs.
+
+| Check                                                                                                                                       | Result                                                                                                                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm exec vp run -r --concurrency-limit 1 test`                                                                                            | All 40 tasks passed; 36,082 tests passed, zero failed, 232 skipped. Server: 923 files passed / 54 skipped; 12,013 tests passed / 180 skipped. Web: 950 files and 11,716 tests passed. |
+| `pnpm exec vp run -r --concurrency-limit 2 typecheck`                                                                                       | All 41 tasks passed; zero TS errors, existing Effect suggestions retained.                                                                                                            |
+| `pnpm exec vp fmt --check`                                                                                                                  | Passed.                                                                                                                                                                               |
+| `pnpm exec vp lint --report-unused-disable-directives`                                                                                      | Passed; existing warnings retained.                                                                                                                                                   |
+| `pnpm run knip:check`                                                                                                                       | Passed; no dependency/export suppression added.                                                                                                                                       |
+| `pnpm run build`                                                                                                                            | All six tasks passed; existing bundle/React Compiler warnings retained.                                                                                                               |
+| `pnpm run test:desktop-smoke` through the scrubbed candidate command wrapper                                                                | Passed in temporary state with `SCIENT_NEXT_SAFETY_ENVELOPE=true`. Survival and graceful exit, not visual proof.                                                                      |
+| `pnpm brand:check`                                                                                                                          | Passed.                                                                                                                                                                               |
+| Provenance with `--base b631232d51fa6705a72e3f0021cee139999c6b69 --head 89974f96b6 --official-ref ec80933ac8cd02fec5c97b342462ccc9567cdb1e` | Passed; literal history retained and qualified cursor held.                                                                                                                           |
+| Seam check with `--base 0cf6e0bd85c3d6be221b70164d2601e0b8e83e15 --upstream-ref ec80933ac8cd02fec5c97b342462ccc9567cdb1e --head 89974f96b6` | All five seams passed. Classification/locator proof only.                                                                                                                             |
+| `git diff --check` and unmerged index                                                                                                       | Passed; no unmerged paths.                                                                                                                                                            |
+
+The targeted causal checks also passed: contract/shared defaults (262 tests), real
+driver schemas and fallback defaults (17), desktop owner/copy paths (126), final
+backend settings/catalog/defaults composition (121), and client scope/order flows
+(48). These overlapping counts are not added to the full-matrix total. ACP package
+catalog and product-copy checks passed separately. The initial six malformed-file
+failures and the real-lock removal timeout were reproduced before their repairs;
+they remain negative evidence, not qualification failures relabeled as passes.
+
+Independent final reviews found no further blocking regression in the inspected
+provider/model, client, desktop, fork, queue and session-owner paths. Approved
+medium reasoning for Codex/Claude and high for Antigravity remain intentional;
+Main's older forced-high mapping is not restored over that prior user decision.
+Explicit selections remain authoritative. No new product decision is claimed.
+
+The fixed 21-path extraction scope is byte-unchanged from measured `3afc49ea82` to
+this repair source, so its measured 267-line increase and the separate maintainer
+approval hold still apply. At source `89974f96b6`, a hosted snapshot showed 36
+successful checks, including server/web shards, with only the known provenance
+job's subsequent seam step failing against the held older cursor. The provenance
+step itself passed. The documentation push receives its own hosted qualification;
+this record neither reports all CI green nor bypasses the hold.
+
+The isolated candidate was deliberately refreshed after backend/desktop repairs.
+Its previous service, recorded PIDs and ports stopped before replacement. The new
+service is `com.scientfactory.scient-dev-app.candidate.539e14a83b8d13c9`, runner
+71679, Electron 73754, backend 74239, web listener 71807 at the readiness snapshot.
+Bundle identity remains
+`com.scientfactory.scient.next.dev.scientt3sync101f8b2f5520261009`, display name
+`Scient (Dev) · scient-t3-sync-101f8b2f55`, state below this worktree's `.scient-next`.
+Backend 14049 and web 6009 are owned by those processes and respond with HTTP 200;
+new-start traces record `backend ready` and `main window created`. A separate
+status recheck remains running, and the existing candidate `statev2.sqlite`
+remains present. No profile was copied or reset; stable and other candidates were
+untouched. The app stays running for the user's visual review.
+
+These are synthetic/local and hosted source checks, not proof of every possible
+regression, real-provider/OAuth/microphone acceptance or native Windows/mobile
+execution. CLI failure preservation does not add a cross-process ownership
+transaction around pre-existing ownership checks. Browser profile ownership's
+existing shared-report limitation remains documented above. No visual interaction,
+merge, queue, auto-merge, release or cursor advance was performed in this pass.
