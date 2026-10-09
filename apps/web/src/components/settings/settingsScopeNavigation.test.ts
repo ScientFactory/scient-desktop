@@ -9,7 +9,11 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveSettingsScope } from "./settingsScope";
-import { retainSettingsScope, validateSettingsRouteSearch } from "./settingsScopeNavigation";
+import {
+  retainSettingsScope,
+  settingsContentResetKey,
+  validateSettingsRouteSearch,
+} from "./settingsScopeNavigation";
 
 import { validateScheduledTasksSearch } from "./scheduledTasksSettings.logic";
 
@@ -293,5 +297,22 @@ describe("scheduled task scope navigation", () => {
     await router.navigate({ to: "/settings/projects", search: checkoutSearch });
     await router.navigate({ to: "/settings/scheduled-tasks" });
     expect(router.state.matches.at(-1)?.search).toEqual(checkoutSearch);
+  });
+});
+
+describe("Settings content lifetime", () => {
+  it("retains page state across same-scope provider/task target changes", () => {
+    const initial = { ...checkoutSearch, instanceId: "codex", taskId: "task-a" };
+    const next = { ...checkoutSearch, instanceId: "claudeCode", taskId: "task-b" };
+    expect(settingsContentResetKey(initial, 0)).toBe(settingsContentResetKey(next, 0));
+  });
+  it("resets for any actual scope axis and explicit restore", () => {
+    const original = settingsContentResetKey(checkoutSearch, 0);
+    for (const axis of ["project", "machine", "checkout"] as const) {
+      expect(settingsContentResetKey({ ...checkoutSearch, [axis]: "different" }, 0)).not.toBe(
+        original,
+      );
+    }
+    expect(settingsContentResetKey(checkoutSearch, 1)).not.toBe(original);
   });
 });
