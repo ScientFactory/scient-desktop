@@ -7655,6 +7655,8 @@ export function makeClaudeAdapterV2(
             attachmentsDir,
             settings: adapterOptions.settings,
             environment: { ...adapterOptions.environment, ...mcpOverrides.mcpEnvironment },
+            // SCIENT-FORK: deliver the same granted guidance that keys this live query.
+            scientAwareness: mcpOverrides.scientAwareness,
             tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
             ...(mcpOverrides.allowedTools === undefined
               ? {}
