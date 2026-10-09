@@ -364,6 +364,8 @@ export interface IssuedCodexReplayScope {
   readonly instanceId: ProviderInstanceId;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+  /** Whether this fixture's real skill planner delivers an empty catalog marker. */
+  readonly includeEmptySkillCatalogMarker?: boolean;
 }
 
 const decodeReplayCodexInput = Schema.decodeUnknownEffect(
@@ -449,7 +451,7 @@ export function withIssuedCodexMcpReplayExpectations(
               return yield* Effect.die("Native MCP replay turn has no recorded native thread id.");
             const recordedInput = yield* decodeReplayCodexInput(params.input).pipe(Effect.orDie);
             const codexInput = recordedInput.map((item) =>
-              item.type === "text" && issued.capabilities.has("skills:read")
+              item.type === "text" && scope.includeEmptySkillCatalogMarker === true
                 ? {
                     ...item,
                     text: emptyMcpReplayPrompt(CodexAdapterV2.CODEX_DRIVER_KIND, item.text),
