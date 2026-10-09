@@ -96,7 +96,7 @@ function OptionSelect<T extends string>(props: {
         if (next) props.onChange(next.id);
       }}
     >
-      <SelectTrigger size="sm" className="w-44" aria-label={props.label}>
+      <SelectTrigger size="sm" width="content" aria-label={props.label}>
         <SelectValue>{options.find((option) => option.id === props.value)?.name}</SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false} matchTriggerWidth={false}>
@@ -349,7 +349,11 @@ function DocumentsSection(props: {
                   <img
                     src={FORMAT_LOGOS[item.id]}
                     alt=""
-                    className="size-7 shrink-0 object-contain"
+                    className={cn(
+                      "size-7 shrink-0 object-contain",
+                      // The LaTeX and Markdown marks are black; Word's carries its own colour.
+                      item.id !== "word" && "dark:invert",
+                    )}
                   />
                 }
                 onToggle={() => {
