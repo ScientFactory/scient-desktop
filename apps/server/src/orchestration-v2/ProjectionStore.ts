@@ -2549,21 +2549,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     // SCIENT-FORK:START — the messages a fork's shared history items stand for.
     /** When a fork's shared user messages were last updated, as it shows them (thread `t`). */
+    // A fork's shown history is frozen: its latest user times were fixed when
+    // it was accepted (`writeForkHistory`), one row per fork.
     const inheritedUserMessageAt = (authored: boolean) => sql`
-      SELECT COALESCE(json_extract(frozen.message_json, '$.updatedAt'), message.updated_at) AS at
-      FROM scient_fork_history AS history INDEXED BY scient_fork_history_type
-      JOIN orchestration_v2_projection_messages AS message
-        ON message.message_id = history.message_id
-      LEFT JOIN scient_fork_frozen_items AS frozen
-        ON frozen.thread_id = history.thread_id AND frozen.position = history.position
-      WHERE history.thread_id = t.thread_id
-        AND history.item_type = 'user_message'
-        AND history.source_thread_id <> t.thread_id
-        ${
-          authored
-            ? sql`AND json_extract(COALESCE(frozen.message_json, message.payload_json), '$.createdBy') = 'user'`
-            : sql``
-        }
+      SELECT ${authored ? sql`authored_user_message_at` : sql`user_message_at`} AS at
+      FROM scient_fork_inherited_activity WHERE thread_id = t.thread_id
     `;
     const readInheritedMessages = (
       threadId: ThreadId,
@@ -3220,7 +3210,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         // A full read shows the whole history; a window reads only what it shows.
         const forkHistory =
           window === undefined ? yield* readForkHistoryIndex(sql, threadId) : undefined;
-        const copies = yield* readForkCopyIds(sql, threadId);
         const anchor = window?.historyAnchor?.itemId ?? window?.anchorItemId;
         // Paging into inherited history reads only the inherited rows.
         const anchorInHistory =
@@ -3269,7 +3258,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       }
                     : window;
         const projection = yield* readCanonicalProjection(threadId, localWindow);
-        // The fork's own copies of in-flight items and plans are listed in its history.
+        // The fork's own copies of in-flight items and plans are listed in its
+        // history, not shown as its own rows (only those read are looked up).
+        const copies = yield* readForkCopyIds(
+          sql,
+          threadId,
+          projection.turnItems.map((item) => item.id),
+        );
         const local = localVisibleTurnItems(projection).filter(
           (row) => !copies.has(row.sourceItemId),
         );
@@ -4086,13 +4081,27 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const forkHistory = yield* readForkHistoryIndex(sql, threadId);
         if (forkHistory.length === 0) return local;
         const inherited = new Set<string>(forkHistory.map((row) => row.sourceItemId));
-        // Only rows of a type turn-start history can hold are read.
+        // Only rows of a type turn-start history can hold are read, and of
+        // questions only the answered ones, as the fork shows them.
+        const answered = new Set(
+          (yield* sql<{ readonly position: number }>`
+            SELECT history.position FROM scient_fork_history AS history
+            LEFT JOIN scient_fork_frozen_items AS frozen
+              ON frozen.thread_id = history.thread_id AND frozen.position = history.position
+            LEFT JOIN orchestration_v2_projection_turn_items AS item
+              ON item.turn_item_id = history.source_item_id
+            WHERE history.thread_id = ${threadId}
+              AND history.item_type = 'user_input_request'
+              AND json_extract(COALESCE(frozen.item_json, item.payload_json), '$.status') = 'completed'
+              AND json_type(COALESCE(frozen.item_json, item.payload_json), '$.questionAnswer') = 'object'
+          `).map((row) => row.position),
+        );
         const candidates = forkHistory.filter(
           (row) =>
             TURN_START_HISTORY_TYPES.has(row.type) ||
             row.type === "reasoning" ||
             row.type === "dynamic_tool" ||
-            row.type === "user_input_request",
+            (row.type === "user_input_request" && answered.has(row.position)),
         );
         const history = (yield* readForkHistoryRows(sql, threadId, candidates))
           .map((row) => row.item)

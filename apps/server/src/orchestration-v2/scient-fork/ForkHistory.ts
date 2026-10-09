@@ -198,6 +198,25 @@ export const writeForkHistory = (
               WHERE thread_id = ${threadId}
             )
         `;
+        // The shown history is frozen from here: its latest user times are fixed.
+        yield* sql`
+          INSERT OR REPLACE INTO scient_fork_inherited_activity
+            (thread_id, user_message_at, authored_user_message_at)
+          SELECT ${threadId}, MAX(at), MAX(CASE WHEN authored THEN at END)
+          FROM (
+            SELECT COALESCE(json_extract(frozen.message_json, '$.updatedAt'), message.updated_at) AS at,
+              json_extract(COALESCE(frozen.message_json, message.payload_json), '$.createdBy') = 'user'
+                AS authored
+            FROM scient_fork_history AS history
+            JOIN orchestration_v2_projection_messages AS message
+              ON message.message_id = history.message_id
+            LEFT JOIN scient_fork_frozen_items AS frozen
+              ON frozen.thread_id = history.thread_id AND frozen.position = history.position
+            WHERE history.thread_id = ${threadId}
+              AND history.item_type = 'user_message'
+              AND history.source_thread_id <> ${threadId}
+          )
+        `;
       });
 
 export interface ForkHistoryIndexRow extends ForkHistoryEntry {
@@ -373,11 +392,19 @@ export const readForkLocalExtent = (
   );
 
 /** The fork's own copies listed in its history (shown in place, not as local rows). */
-export const readForkCopyIds = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
-  sql<{ readonly source_item_id: string }>`
-    SELECT source_item_id FROM scient_fork_history
-    WHERE thread_id = ${threadId} AND source_thread_id = ${threadId}
-  `.pipe(Effect.map((rows) => new Set(rows.map((row) => row.source_item_id))));
+/** Which of `itemIds` are the fork's own copies, listed in its history. */
+export const readForkCopyIds = (
+  sql: SqlClient.SqlClient,
+  threadId: ThreadId,
+  itemIds: ReadonlyArray<string>,
+) =>
+  itemIds.length === 0
+    ? Effect.succeed(new Set<string>())
+    : sql<{ readonly source_item_id: string }>`
+        SELECT source_item_id FROM scient_fork_history
+        WHERE thread_id = ${threadId} AND source_thread_id = ${threadId}
+          AND source_item_id IN (SELECT value FROM json_each(${encodeJson(itemIds)}))
+      `.pipe(Effect.map((rows) => new Set(rows.map((row) => row.source_item_id))));
 
 /**
  * The run of history positions a window shows, by the projection store's
@@ -413,15 +440,19 @@ export const readForkHistoryWindow = Effect.fn("ForkHistory.readWindow")(functio
   const shown = anchor === undefined ? (size?.size ?? 0) : anchor + 1;
   if (shown === 0) return [];
   // Turn starts of the history, then of the fork's own rows that follow it.
+  // Only the last `maxRawTurns + 2` can decide the window: read no more.
   const starts = [
     ...(window.userTurnLimit === undefined
       ? []
       : yield* sql<{ readonly position: number; readonly user_turn: number }>`
           SELECT position, user_turn FROM scient_fork_history
           WHERE thread_id = ${threadId} AND turn_start = 1 AND position < ${shown}
-          ORDER BY position
+          ORDER BY position DESC
+          LIMIT ${window.maxRawTurns + 2}
         `
-    ).map((row) => ({ at: row.position, userTurn: row.user_turn === 1 })),
+    )
+      .toReversed()
+      .map((row) => ({ at: row.position, userTurn: row.user_turn === 1 })),
     ...(anchor !== undefined || window.userTurnLimit === undefined
       ? []
       : following.flatMap((row, at) =>
@@ -444,7 +475,6 @@ export const readForkHistoryWindow = Effect.fn("ForkHistory.readWindow")(functio
   return yield* readForkHistoryIndex(sql, threadId, [first, shown - 1]);
 });
 
-/** Whether the thread is a fork with inherited history. */
 /**
  * The conversations of a thread's lineage (same root), with whether each is
  * deleted and whether it is a fork. Forks share files across a lineage, so file

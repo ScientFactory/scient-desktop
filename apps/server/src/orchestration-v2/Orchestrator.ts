@@ -1605,16 +1605,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 run.ordinal <= latestHandoffRun.ordinal,
             );
       const needsFullContext = deliveryProviderThread.nativeThreadRef === null;
-      const legacyImportItems =
+      // SCIENT-FORK: read only when a handoff uses it (a fork's prefix can be long).
+      const legacyImportItemsRead = yield* Effect.cached(
         projection.thread.historyOrigin === "v1_import" ||
-        projection.thread.historyOrigin === "scient_fork" ||
-        projection.thread.historyOrigin === "conversation_import"
-          ? yield* readHandoffItems(threadId, [null]).pipe(
+          projection.thread.historyOrigin === "scient_fork" ||
+          projection.thread.historyOrigin === "conversation_import"
+          ? readHandoffItems(threadId, [null]).pipe(
               Effect.map((items) =>
                 items.some((item) => historicalMessage(item) !== null) ? items : [],
               ),
             )
-          : [];
+          : Effect.succeed([]),
+      );
       const handoffStrategy = needsFullContext
         ? ("full_thread_summary" as const)
         : ("delta_since_target_last_seen" as const);
@@ -1675,7 +1677,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 strategy: handoffStrategy,
                 items: [
                   ...(needsFullContext && latestCompletedRun !== undefined
-                    ? legacyImportItems
+                    ? yield* legacyImportItemsRead
                     : []),
                   ...(yield* readHandoffItems(
                     threadId,
@@ -1695,14 +1697,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 ),
               );
       const legacyImportRecoveryHandoff =
-        latestCompletedRun === undefined && needsFullContext && legacyImportItems.length > 0
+        latestCompletedRun === undefined &&
+        needsFullContext &&
+        (yield* legacyImportItemsRead).length > 0
           ? yield* contextHandoffService
               .prepareLegacyImport({
                 threadId,
                 targetRunId: queuedRun.id,
                 toProviderThreadId: queuedProviderThread.id,
                 toProviderInstanceId: queuedRun.providerInstanceId,
-                items: legacyImportItems,
+                items: yield* legacyImportItemsRead,
                 createdAt: now,
               })
               .pipe(
@@ -5679,16 +5683,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
       const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");
       const latestHandoffRun = projection.runs.findLast(isHandoffSourceRun);
-      const legacyImportItems =
+      // SCIENT-FORK: read only when a handoff uses it (a fork's prefix can be long).
+      const legacyImportItemsRead = yield* Effect.cached(
         projection.thread.historyOrigin === "v1_import" ||
-        projection.thread.historyOrigin === "scient_fork" ||
-        projection.thread.historyOrigin === "conversation_import"
-          ? yield* readHandoffItems(command.threadId, [null]).pipe(
+          projection.thread.historyOrigin === "scient_fork" ||
+          projection.thread.historyOrigin === "conversation_import"
+          ? readHandoffItems(command.threadId, [null]).pipe(
               Effect.map((items) =>
                 items.some((item) => historicalMessage(item) !== null) ? items : [],
               ),
             )
-          : [];
+          : Effect.succeed([]),
+      );
       const isProviderSwitch =
         activeProviderThread !== undefined &&
         activeProviderThread.providerInstanceId !== modelSelection.instanceId;
@@ -5755,10 +5761,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         // SCIENT-FORK:END
         const legacyImportHandoff =
           !inheritedPrefixAlreadyNative &&
+          latestCompletedRun === undefined &&
           shouldPrepareLegacyImportHandoff({
             historyOrigin: projection.thread.historyOrigin,
-            hasCompletedRun: latestCompletedRun !== undefined,
-            legacyImportItemCount: legacyImportItems.length,
+            hasCompletedRun: false,
+            legacyImportItemCount: (yield* legacyImportItemsRead).length,
           })
             ? yield* contextHandoffService
                 .prepareLegacyImport({
@@ -5766,7 +5773,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   targetRunId: runId,
                   toProviderThreadId: providerThreadId,
                   toProviderInstanceId: modelSelection.instanceId,
-                  items: legacyImportItems,
+                  items: yield* legacyImportItemsRead,
                   createdAt: now,
                 })
                 .pipe(mapDispatchError(command))
@@ -6296,7 +6303,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             };
       const portableForkItems =
         requiresPortableFork && frozenFork
-          ? legacyImportItems
+          ? yield* legacyImportItemsRead
           : !requiresPortableFork || sourceProjection === null || sourceRun === null
             ? []
             : yield* readHandoffItems(sourceProjection.thread.id, [
@@ -6371,7 +6378,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : [
               ...(latestCompletedRun !== undefined &&
               (targetProviderThread === undefined || requiresFullProviderSwitchContext)
-                ? legacyImportItems
+                ? yield* legacyImportItemsRead
                 : []),
               ...(yield* readHandoffItems(
                 command.threadId,
@@ -6449,14 +6456,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         isProviderSwitch &&
         !canResumeAcrossInstances &&
         latestCompletedRun === undefined &&
-        legacyImportItems.length > 0
+        (yield* legacyImportItemsRead).length > 0
           ? yield* contextHandoffService
               .prepareLegacyImport({
                 threadId: command.threadId,
                 targetRunId: runId,
                 toProviderThreadId: ensuredProviderThread.id,
                 toProviderInstanceId: modelSelection.instanceId,
-                items: legacyImportItems,
+                items: yield* legacyImportItemsRead,
                 createdAt: now,
               })
               .pipe(mapDispatchError(command))
