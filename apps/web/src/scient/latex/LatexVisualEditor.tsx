@@ -6229,14 +6229,26 @@ function LatexVisualEditorReady(
         editor.commands.focus(undefined, { scrollIntoView: false });
         return;
       }
-      // A field is enabled again in this same commit; focus it and its selection.
-      locked.element.focus({ preventScroll: true });
-      if (
-        locked.selection &&
-        (locked.element instanceof HTMLTextAreaElement ||
-          locked.element instanceof HTMLInputElement)
-      )
-        locked.element.setSelectionRange(locked.selection[0], locked.selection[1]);
+      // The field's node view re-enables it in its own render: try for a few
+      // frames, and only while focus is still nowhere else.
+      const field = locked.element;
+      let frames = 0;
+      const restore = () => {
+        const active = document.activeElement;
+        if (active !== null && active !== document.body && active !== field) return;
+        const disabled = "disabled" in field && (field as { disabled?: boolean }).disabled === true;
+        if (disabled) {
+          if (++frames < 10) requestAnimationFrame(restore);
+          return;
+        }
+        field.focus({ preventScroll: true });
+        if (
+          locked.selection &&
+          (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement)
+        )
+          field.setSelectionRange(locked.selection[0], locked.selection[1]);
+      };
+      restore();
     }
   }, [editor, readOnly]);
 

@@ -987,10 +987,15 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       }),
     [props.environmentId, props.cwd, props.relativePath, target?.relativePath],
   );
+  // Builds and exports being prepared: their files are named by the old path.
+  const preparing = useRef(0);
   const prepareDocument = useCallback(async () => {
     if (!target || props.truncated) return null;
+    preparing.current += 1;
     const result = await prepareLatexDocument(target, {
       ...(persistence ? { selected: persistence } : {}),
+    }).finally(() => {
+      preparing.current -= 1;
     });
     if (!result.ok) {
       setSyncNotice({ label: "Document not ready", message: result.message });
@@ -1264,16 +1269,21 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       movable: renameMovable,
     });
   }, [onRenameContext, renameIncludedBy, renameBlocked, renameMovable]);
-  // An in-place rename waits while Visual holds unsaved input.
+  // An in-place rename waits while Visual holds unsaved input, or a build,
+  // export or toolchain installation is being prepared or requested.
   const renameReady = useRef(!renameBlocked);
+  const buildBusy = build.requesting || build.installRequesting || build.managedInstall !== null;
   useLayoutEffect(() => {
-    renameReady.current = !renameBlocked;
-  }, [renameBlocked]);
+    renameReady.current = !renameBlocked && !buildBusy;
+  }, [renameBlocked, buildBusy]);
   useEffect(
     () =>
       documentId === null
         ? undefined
-        : registerRenameParticipant(documentId, { readyToMove: () => renameReady.current }),
+        : registerRenameParticipant(documentId, {
+            readyToMove: () =>
+              renameReady.current && preparing.current === 0 && !buildRequestInFlight.current,
+          }),
     [documentId],
   );
   useEffect(() => () => onRenameContext(null), [onRenameContext]);

@@ -161,6 +161,9 @@ export function useNewDocument(input: {
     boundLease.current = input.lease;
   });
   const busySince = useRef<number | null>(null);
+  const busyRetry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [, setRetryTick] = useState(0);
+  useEffect(() => () => clearTimeout(busyRetry.current), []);
   // An in-place move was refused for this document: rename the ordinary way.
   const [moveRefused, setMoveRefused] = useState<string | null>(null);
   // The route is chosen before the rename starts, so the ordinary rename's
@@ -329,7 +332,12 @@ export function useNewDocument(input: {
               // later render, falling back to the ordinary rename after a while.
               if (outcome.reason === "busy") {
                 busySince.current ??= Date.now();
-                if (Date.now() - busySince.current < MOVE_BUSY_LIMIT_MS) return;
+                if (Date.now() - busySince.current < MOVE_BUSY_LIMIT_MS) {
+                  // Nothing else may render this view meanwhile: ask again shortly.
+                  clearTimeout(busyRetry.current);
+                  busyRetry.current = setTimeout(() => setRetryTick((tick) => tick + 1), 300);
+                  return;
+                }
               }
               busySince.current = null;
               setMoveRefused(from);
