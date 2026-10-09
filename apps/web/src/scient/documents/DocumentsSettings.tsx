@@ -186,7 +186,11 @@ function LatexPanel(props: {
       aria-labelledby="documents-latex-trigger"
       hidden={props.hidden}
     >
-      {props.installation ? <LatexInstallationRow installation={props.installation} /> : null}
+      {props.installation ? (
+        <LatexInstallationRow installation={props.installation} />
+      ) : (
+        <OfflineToolRow id="latex-installation" title="Installation" />
+      )}
       <SettingsRow
         id="new-document-template"
         title="Template for new documents"
@@ -261,19 +265,31 @@ function MarkdownPanel(props: { readonly hidden: boolean }) {
   );
 }
 
-function WordPanel(props: { readonly hidden: boolean; readonly pandoc: PandocToolController }) {
+/** A server tool's row while no server is connected: the tool is there, just out of reach. */
+function OfflineToolRow(props: { readonly id: string; readonly title: string }) {
+  return <SettingsRow id={props.id} title={props.title} description="Offline" />;
+}
+
+function WordPanel(props: {
+  readonly hidden: boolean;
+  readonly pandoc: PandocToolController | null;
+}) {
   return (
     <SettingsSourcePanel
       id="documents-word"
       aria-labelledby="documents-word-trigger"
       hidden={props.hidden}
     >
-      <PandocSettingsRow controller={props.pandoc} />
+      {props.pandoc ? (
+        <PandocSettingsRow controller={props.pandoc} />
+      ) : (
+        <OfflineToolRow id="word-export" title="Pandoc" />
+      )}
     </SettingsSourcePanel>
   );
 }
 
-/** Server tools; absent while the chosen environment is not connected. */
+/** Server tools; absent while the chosen environment is not connected, shown as Offline. */
 interface DocumentsServerTools {
   readonly installation: LatexInstallationController;
   readonly pandoc: PandocToolController;
@@ -298,32 +314,21 @@ function DocumentsSection(props: {
     setCollapsed(false);
     setOpenedFor(target);
   }, [setStored, target, targetFormat]);
-  const remembered = DOCUMENT_FORMATS.find((format) => format === stored) ?? "latex";
-  // Word export lives on the server; without one there is no Word tab.
-  const available = (format: DocumentFormat) => format !== "word" || props.server !== null;
   const selected: DocumentFormat =
-    targetFormat !== null && available(targetFormat)
-      ? targetFormat
-      : available(remembered)
-        ? remembered
-        : "latex";
+    targetFormat ?? DOCUMENT_FORMATS.find((format) => format === stored) ?? "latex";
   const isCollapsed = targetFormat === null && collapsed;
   const items: ReadonlyArray<{
     readonly id: DocumentFormat;
     readonly label: string;
-    readonly detail: string | null;
+    readonly detail: string;
   }> = [
-    { id: "latex", label: "LaTeX", detail: props.server?.installation.view.summary ?? null },
+    { id: "latex", label: "LaTeX", detail: props.server?.installation.view.summary ?? "Offline" },
     { id: "markdown", label: "Markdown", detail: "Built in" },
-    ...(props.server
-      ? [
-          {
-            id: "word" as const,
-            label: "Word",
-            detail: pandocToolSummary(props.server.pandoc.view),
-          },
-        ]
-      : []),
+    {
+      id: "word",
+      label: "Word",
+      detail: props.server ? pandocToolSummary(props.server.pandoc.view) : "Offline",
+    },
   ];
   return (
     <SettingsSection
@@ -344,7 +349,7 @@ function DocumentsSection(props: {
                 expanded={!isCollapsed && item.id === selected}
                 separated={index > 0}
                 label={item.label}
-                {...(item.detail === null ? {} : { detail: item.detail })}
+                detail={item.detail}
                 icon={
                   <img
                     src={FORMAT_LOGOS[item.id]}
@@ -366,8 +371,8 @@ function DocumentsSection(props: {
           </SettingsSourceStrip>
           {selected === "latex" ? (
             <LatexPanel hidden={isCollapsed} installation={props.server?.installation ?? null} />
-          ) : selected === "word" && props.server ? (
-            <WordPanel hidden={isCollapsed} pandoc={props.server.pandoc} />
+          ) : selected === "word" ? (
+            <WordPanel hidden={isCollapsed} pandoc={props.server?.pandoc ?? null} />
           ) : (
             <MarkdownPanel hidden={isCollapsed} />
           )}

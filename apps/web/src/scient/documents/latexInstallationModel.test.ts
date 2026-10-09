@@ -45,7 +45,7 @@ describe("the LaTeX installation line", () => {
     ).toMatchObject({
       kind: "ready",
       summary: "Installed",
-      detail: "latexmk 4.85 · This computer",
+      detail: "latexmk 4.85 · System installation",
     });
     expect(
       view({
@@ -60,7 +60,7 @@ describe("the LaTeX installation line", () => {
     expect(
       view({ report: report({ kind: "tectonic", executable: "tectonic", version: "0.15.0" }) })
         .detail,
-    ).toBe("Tectonic 0.15.0 · This computer");
+    ).toBe("Tectonic 0.15.0 · System installation");
   });
 
   it("offers TinyTeX when nothing is installed", () => {

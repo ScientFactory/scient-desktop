@@ -142,7 +142,7 @@ describe("Settings ▸ Documents", () => {
     expect(tab("word").textContent).toBe("WordReady");
     expect(strip.querySelectorAll("img")).toHaveLength(3);
     expect(container.querySelector("#latex-installation")?.textContent).toContain(
-      "latexmk 4.85 · This computer",
+      "latexmk 4.85 · System installation",
     );
     await act(() => tab("word").click());
     expect(container.querySelector("#word-export")?.textContent).toContain("Pandoc");
@@ -253,14 +253,19 @@ describe("Settings ▸ Documents", () => {
     expect(stored("scient.documentsSettingsFormat")).toBe("latex");
   });
 
-  it("shows no server tools when the chosen scope has no connected environment", async () => {
+  it("shows the server tools as Offline, and keeps preferences editable, with no connected server", async () => {
     mocks.scopeEnvironmentId = null;
     await render(null);
     expect(mocks.readToolchain).not.toHaveBeenCalled();
-    expect(container.querySelector("#latex-installation")).toBeNull();
-    expect(container.querySelector("#documents-word-trigger")).toBeNull();
     expect(mocks.pandocEnvironments).toEqual([]);
+    expect(container.querySelector("#documents-latex-trigger")?.textContent).toBe("LaTeXOffline");
+    expect(container.querySelector("#latex-installation")?.textContent).toContain("Offline");
     expect(select("Template for new documents")).not.toBeNull();
+    const word = container.querySelector<HTMLElement>("#documents-word-trigger")!;
+    expect(word.textContent).toBe("WordOffline");
+    await act(() => word.click());
+    expect(container.querySelector("#word-export")?.textContent).toContain("Offline");
+    expect(container.querySelector("#word-export button")).toBeNull();
   });
 
   it("lets the tabs change while a search jump is still waiting for its row", async () => {
