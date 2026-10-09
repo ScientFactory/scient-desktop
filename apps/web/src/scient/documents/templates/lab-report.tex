@@ -1,0 +1,68 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage[numbers]{natbib}
+\usepackage[hidelinks]{hyperref}
+
+\title{<<SCIENT_TITLE>>}
+\author{<<SCIENT_AUTHOR_BLOCK>>}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Summarize the aim, the method, the main result, and the conclusion in a few sentences.
+\end{abstract}
+
+\section{Aim}
+
+State what the experiment set out to measure or test.
+
+\section{Background}
+
+Give the theory and the equations the experiment relies on.
+
+\section{Materials and methods}
+
+\begin{itemize}
+\item List the equipment and materials.
+\item Describe the procedure in the order it was carried out.
+\end{itemize}
+
+\section{Results}
+
+Report the measurements with their units and uncertainties, as in Table~\ref{tab:measurements}.
+
+\begin{table}[ht]
+\centering
+\caption{Measurements.}
+\label{tab:measurements}
+\begin{tabular}{lrr}
+\toprule
+Trial & Value & Uncertainty \\
+\midrule
+1 & 0.00 & 0.00 \\
+2 & 0.00 & 0.00 \\
+3 & 0.00 & 0.00 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Discussion}
+
+Compare the results with what was expected, and discuss the sources of error.
+
+\section{Conclusion}
+
+State what the experiment showed.
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

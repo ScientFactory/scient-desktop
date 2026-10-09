@@ -174,6 +174,7 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
     viewFile: () => Effect.die("viewFile is not used by the analysis service test"),
     writeFile: () => Effect.die("writeFile is not used by the analysis service test"),
     renameFile: () => Effect.die("renameFile is not used by the analysis service test"),
+    deleteFile: () => Effect.die("deleteFile is not used by the analysis service test"),
     watchFile: () => Stream.empty,
   });
   const workspacePaths = WorkspacePaths.WorkspacePaths.of({

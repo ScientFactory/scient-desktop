@@ -56,12 +56,10 @@ import {
   normalizeNewDocumentLanguage,
   normalizeNewDocumentTemplate,
 } from "./documentPreferences";
-import {
-  MORE_DOCUMENT_TEMPLATES,
-  NEW_DOCUMENT_LANGUAGES,
-  NEW_DOCUMENT_TEMPLATES,
-} from "./documentTemplates";
+import { useTemplateLayout } from "./documentTemplateLayout";
+import { NEW_DOCUMENT_LANGUAGES } from "./documentTemplates";
 import { useLatexInstallation, type LatexInstallationController } from "./useLatexInstallation";
+import { useTemplateChoices } from "./useTemplateChoices";
 
 const SELECTED_FORMAT_STORAGE_KEY = "scient.documentsSettingsFormat";
 const FORMAT_LOGOS = { latex: latexLogo, markdown: markdownLogo, word: wordLogo };
@@ -160,6 +158,17 @@ function LatexPanel(props: {
     DEFAULT_NEW_DOCUMENT_TEMPLATE,
     Schema.String,
   );
+  // The templates as a new document offers them: its page, then More. A hidden
+  // template stays listed while it is the default.
+  const templates = useTemplateChoices();
+  const { layout } = useTemplateLayout(templates.map((entry) => entry.id));
+  const current = normalizeNewDocumentTemplate(template);
+  const choices = (ids: readonly string[]) =>
+    templates
+      .filter((entry) => ids.includes(entry.id))
+      .toSorted((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id))
+      .map(({ id, name }) => ({ id, name }));
+  const more = layout.hidden.includes(current) ? [...layout.more, current] : layout.more;
   const [language, setLanguage] = useLocalStorage(
     NEW_DOCUMENT_LANGUAGE_STORAGE_KEY,
     DEFAULT_NEW_DOCUMENT_LANGUAGE,
@@ -184,8 +193,8 @@ function LatexPanel(props: {
         control={
           <OptionSelect
             label="Template for new documents"
-            value={normalizeNewDocumentTemplate(template)}
-            groups={[NEW_DOCUMENT_TEMPLATES, MORE_DOCUMENT_TEMPLATES]}
+            value={current}
+            groups={[choices(layout.page), choices(more)].filter((group) => group.length > 0)}
             onChange={setTemplate}
           />
         }

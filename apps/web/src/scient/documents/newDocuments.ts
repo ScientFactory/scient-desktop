@@ -5,6 +5,7 @@ import type {
   NewDocumentFormat,
   NewDocumentLanguage,
 } from "./documentTemplates";
+import type { CreatedCompanion } from "./newDocumentCompanions";
 
 /**
  * Documents started from the Documents menu in this window, until they have
@@ -22,6 +23,8 @@ export interface NewDocumentState {
   readonly settled: boolean;
   /** In a template without a title, the name typed above the page, once entered. */
   readonly name?: string;
+  /** Files created beside it for its template, such as its bibliography. */
+  readonly companions: readonly CreatedCompanion[];
 }
 
 interface NewDocumentKey {
@@ -62,6 +65,35 @@ export const newDocuments = {
   subscribe(listener: () => void): () => void {
     listeners.add(listener);
     return () => listeners.delete(listener);
+  },
+};
+
+/**
+ * Documents opened to edit one of the person's templates, by document: their
+ * menu offers to update that template. Held in memory; a document keeps its
+ * link through Scient's own renames and moves.
+ */
+const editing = new Map<string, string>();
+
+export const templateEdits = {
+  get(key: NewDocumentKey): string | null {
+    return editing.get(keyOf(key)) ?? null;
+  },
+  set(key: NewDocumentKey, templateId: string) {
+    editing.set(keyOf(key), templateId);
+    notify();
+  },
+  move(from: NewDocumentKey, to: NewDocumentKey) {
+    const templateId = editing.get(keyOf(from));
+    if (templateId === undefined) return;
+    editing.delete(keyOf(from));
+    editing.set(keyOf(to), templateId);
+    notify();
+  },
+  /** A deleted template is no longer edited anywhere. */
+  forgetTemplate(templateId: string) {
+    for (const [key, id] of editing) if (id === templateId) editing.delete(key);
+    notify();
   },
 };
 

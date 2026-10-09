@@ -1,12 +1,22 @@
-% Scient built-in starter. Replace the instructional text with your own work.
 \documentclass[11pt,a4paper]{article}
 \usepackage[T1]{fontenc}
-\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage{graphicx}
-\usepackage{booktabs,tabularx}
+\usepackage{booktabs}
+\usepackage[numbers]{natbib}
 \usepackage[hidelinks]{hyperref}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
 
 \title{<<SCIENT_TITLE>>}
 \author{<<SCIENT_AUTHOR_BLOCK>>}
@@ -16,19 +26,50 @@
 \maketitle
 
 \begin{abstract}
-Summarize the question, the approach, and the main result.
+State the question, what you did, what you found, and why it matters.
+
+\textbf{Keywords:} first keyword, second keyword, third keyword
 \end{abstract}
 
 \section{Introduction}
 
-State the problem and why it matters.
+Explain the problem, what is already known, and what this paper adds.
+
+\section{Methods}
+
+Describe what you did in enough detail for someone else to repeat it.
 
 \section{Results}
 
-Present what you found.
+Present what you found, and refer to each table and figure by its number, as in Table~\ref{tab:results}.
+
+\begin{table}[ht]
+\centering
+\caption{Main results.}
+\label{tab:results}
+\begin{tabular}{lrr}
+\toprule
+Condition & Mean & SD \\
+\midrule
+Control & 0.00 & 0.00 \\
+Treatment & 0.00 & 0.00 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \section{Discussion}
 
-Explain what the results mean and what remains open.
+Interpret the results, compare them with earlier work, and state the limitations.
+
+\section{Conclusion}
+
+Summarize the contribution in a few sentences.
+
+\section*{Acknowledgements}
+
+Thank the people and funders who supported this work.
+
+\bibliographystyle{plainnat}
+\bibliography{references}
 
 \end{document}

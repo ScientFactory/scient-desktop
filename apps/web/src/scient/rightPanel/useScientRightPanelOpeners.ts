@@ -8,22 +8,18 @@ import {
   useRightPanelStore,
 } from "~/rightPanelStore";
 import { createComputeContextId } from "~/scient/compute/computeContextStore";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import {
-  refreshProjectFiles,
-  setProjectFileQueryData,
-} from "~/components/files/projectFilesQueryState";
+import { setProjectFileQueryData } from "~/components/files/projectFilesQueryState";
 import { toastManager } from "~/components/ui/toast";
 import {
   createNewDocumentSource,
-  newDocumentCandidate,
   type NewDocumentFormat,
 } from "~/scient/documents/documentTemplates";
 import { focusNewDocumentWhenOpen } from "~/scient/documents/focusNewDocument";
+import { placeNewDocument, untitledStem } from "~/scient/documents/newDocumentPlacement";
 import { newDocuments, pathHasLeftoverDrafts } from "~/scient/documents/newDocuments";
+import { useNewDocumentFiles } from "~/scient/documents/useNewDocumentFiles";
+import { userTemplates } from "~/scient/documents/userTemplates";
 import { readNewDocumentDefaults } from "~/scient/documents/documentPreferences";
-import { projectEnvironment } from "~/state/projects";
-import { useAtomCommand } from "~/state/use-atom-command";
 import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
 import { useScientFileOpening } from "~/scient/fileOpening/useScientFileOpening";
 import type { useActivePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
@@ -106,51 +102,49 @@ export function useScientRightPanelOpeners(input: {
   );
   // A document started by hand: `untitled` is created and opens in its editor,
   // where it takes its title's name once the title is written.
-  const writeFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
+  const documentFiles = useNewDocumentFiles();
   const addDocumentsSurface = useCallback(
     (format: NewDocumentFormat) => {
       if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
       const environmentId = activeThreadRef.environmentId;
       const cwd = activeWorkspaceRoot;
-      const { template, language } = readNewDocumentDefaults();
-      const contents = createNewDocumentSource({ format, template, language });
       void (async () => {
-        for (let attempt = 1; attempt <= 50; attempt++) {
-          const relativePath = newDocumentCandidate("untitled", format, attempt);
-          if (pathHasLeftoverDrafts({ environmentId, cwd, relativePath })) continue;
-          const result = await writeFile({
-            environmentId,
-            input: { cwd, relativePath, contents, createOnly: true },
-          });
-          if (result._tag === "Success") {
-            setProjectFileQueryData(
-              environmentId,
-              cwd,
-              relativePath,
-              contents,
-              result.value.revision,
-            );
-            refreshProjectFiles(environmentId, cwd);
-            newDocuments.set(
-              { environmentId, cwd, relativePath },
-              { format, template, language, seenUntouched: false, settled: format === "markdown" },
-            );
-            openFileSourceSurface(relativePath, undefined, { latexPreviewMode: "visual" });
-            focusNewDocumentWhenOpen("title");
-            return;
-          }
-          const cause = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
-          const taken =
-            typeof cause === "object" &&
-            cause !== null &&
-            "failure" in cause &&
-            cause.failure === "path_exists";
-          if (!taken) break;
+        // A default the person chose from their own templates needs those read.
+        await userTemplates.ready();
+        const { template, language } = readNewDocumentDefaults();
+        const contents = createNewDocumentSource({ format, template, language });
+        const placed = await placeNewDocument({
+          format,
+          base: "",
+          stem: untitledStem(format, template),
+          template,
+          source: contents,
+          commands: documentFiles.commandsFor({ environmentId, cwd }),
+          // A name still holding an earlier document's unsaved work is passed over.
+          skip: (relativePath) => pathHasLeftoverDrafts({ environmentId, cwd, relativePath }),
+        });
+        if (!placed) {
+          toastManager.add({ type: "error", title: "The document could not be created." });
+          return;
         }
-        toastManager.add({ type: "error", title: "The document could not be created." });
+        const { relativePath } = placed;
+        setProjectFileQueryData(environmentId, cwd, relativePath, contents, placed.revision);
+        newDocuments.set(
+          { environmentId, cwd, relativePath },
+          {
+            format,
+            template,
+            language,
+            seenUntouched: false,
+            settled: format === "markdown",
+            companions: placed.companions,
+          },
+        );
+        openFileSourceSurface(relativePath, undefined, { latexPreviewMode: "visual" });
+        focusNewDocumentWhenOpen("title");
       })();
     },
-    [activeThreadRef, activeWorkspaceRoot, openFileSourceSurface, writeFile],
+    [activeThreadRef, activeWorkspaceRoot, documentFiles, openFileSourceSurface],
   );
   return {
     addAgentsSurface,

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { latexDocumentLanguage } from "../latex/latexLanguage";
+import { assembleVisualProject, type VisualProjectFile } from "../latex/latexProjectVisual";
+import { projectLatexVisualDocument } from "../latex/latexVisualDocument";
 import {
+  DOCUMENT_TEMPLATES,
+  companionFiles,
   createNewDocumentSource,
   isUntouchedNewLatexDocument,
   newDocumentCandidate,
@@ -9,6 +13,7 @@ import {
   newDocumentTitle,
   sameTitleText,
   switchNewLatexDocument,
+  templateCompanions,
   templateHasTitle,
 } from "./documentTemplates";
 
@@ -62,27 +67,21 @@ describe("new documents", () => {
     expect(isUntouchedNewLatexDocument(titled + "%", "article", "english")).toBe(false);
     expect(
       isUntouchedNewLatexDocument(
-        titled.replace("Present what you found.", "We found it."),
+        titled.replace("Summarize the contribution", "We summarize"),
         "article",
         "english",
       ),
     ).toBe(false);
-    const report = switchNewLatexDocument(titled, "report", "english");
+    const report = switchNewLatexDocument(titled, "lab-report", "english");
     expect(report).toContain("\\title{Mixing times}");
-    expect(isUntouchedNewLatexDocument(report, "report", "english")).toBe(true);
+    expect(isUntouchedNewLatexDocument(report, "lab-report", "english")).toBe(true);
     expect(isUntouchedNewLatexDocument(report, "article", "english")).toBe(false);
   });
 
   it("knows which templates print a title", () => {
-    for (const template of [
-      "blank",
-      "article",
-      "report",
-      "thesis",
-      "proposal",
-      "assignment",
-    ] as const)
-      expect(templateHasTitle(template)).toBe(true);
+    for (const template of DOCUMENT_TEMPLATES)
+      if (template.id !== "letter" && template.id !== "cv")
+        expect(templateHasTitle(template.id)).toBe(true);
     expect(templateHasTitle("letter")).toBe(false);
     expect(templateHasTitle("cv")).toBe(false);
   });
@@ -95,10 +94,10 @@ describe("new documents", () => {
     const letter = switchNewLatexDocument(titled, "letter", "english");
     expect(newDocumentTitle(letter, "latex")).toBe("");
     expect(isUntouchedNewLatexDocument(letter, "letter", "english")).toBe(true);
-    const back = switchNewLatexDocument(letter, "report", "english", "Heat flow & sinks");
+    const back = switchNewLatexDocument(letter, "lab-report", "english", "Heat flow & sinks");
     expect(newDocumentTitle(back, "latex")).toBe("Heat flow sinks");
     expect(back).toContain("\\title{Heat flow \\& sinks}");
-    expect(isUntouchedNewLatexDocument(back, "report", "english")).toBe(true);
+    expect(isUntouchedNewLatexDocument(back, "lab-report", "english")).toBe(true);
   });
 
   it("compares title text as words", () => {
@@ -116,11 +115,53 @@ describe("new documents", () => {
     expect(source.startsWith("% !TEX program = xelatex\n")).toBe(true);
     expect(source).not.toContain("{fontenc}");
     expect(source).not.toContain("{inputenc}");
+    expect(source).not.toContain("{lmodern}");
     expect(source).toContain("\\usepackage{polyglossia}");
     expect(source).toContain("\\title{מאמר}");
     expect(isUntouchedNewLatexDocument(source, "blank", "hebrew")).toBe(true);
     const language = latexDocumentLanguage(source);
     expect(language.main).toBe("hebrew");
     expect(language.hebrewFont).toBe("Times New Roman");
+  });
+
+  it("opens every template in Visual without a source-only block, in each language", () => {
+    for (const template of DOCUMENT_TEMPLATES)
+      for (const language of ["english", "hebrew"] as const) {
+        const source = createNewDocumentSource({
+          format: "latex",
+          template: template.id,
+          language,
+        });
+        // Visual reads a document with the files it includes, as the editor assembles them.
+        const files = new Map<string, VisualProjectFile>([
+          ["main.tex", { contents: source, revision: "r", truncated: false }],
+          ...templateCompanions(template.id, source).map(
+            (file) =>
+              [file.name, { contents: file.contents, revision: "r", truncated: false }] as const,
+          ),
+        ]);
+        const assembled = assembleVisualProject("main.tex", files);
+        expect([...assembled.missing, ...assembled.errors]).toEqual([]);
+        const projection = projectLatexVisualDocument(assembled.source);
+        expect(
+          projection.blocks
+            .filter((block) => block.node.type === "latexRawBlock")
+            .map((block) => `${template.id}/${language}: ${String(block.node.attrs?.raw)}`),
+        ).toEqual([]);
+        expect(isUntouchedNewLatexDocument(source, template.id, language)).toBe(true);
+      }
+  });
+
+  it("gives the templates that cite a bibliography beside them", () => {
+    const cites = DOCUMENT_TEMPLATES.filter(
+      (template) => companionFiles(template.source).length > 0,
+    ).map((template) => template.id);
+    expect(cites).toEqual(["article", "thesis", "lab-report", "lecture-notes", "grant-proposal"]);
+    for (const id of cites)
+      expect(
+        companionFiles(
+          createNewDocumentSource({ format: "latex", template: id, language: "english" }),
+        ),
+      ).toEqual(["references.bib"]);
   });
 });

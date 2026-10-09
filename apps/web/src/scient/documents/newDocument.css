@@ -167,3 +167,54 @@
   font-size: 12px;
   transform: translateY(-50%);
 }
+
+/* A template being dragged along the row. */
+.scient-new-document-bar button[data-dragging] {
+  position: relative;
+  z-index: 1;
+  cursor: grabbing;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+
+/* More: each template, with its options at the end on hover. */
+[data-template-item] {
+  gap: 1.5rem;
+}
+
+[data-template-item][data-dragging] {
+  position: relative;
+  z-index: 1;
+  background: var(--accent);
+}
+
+.scient-template-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-inline-end: -0.25rem;
+  border: 0;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: var(--muted-foreground);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+[data-template-item][data-highlighted] .scient-template-actions,
+.scient-template-actions:focus-visible {
+  opacity: 1;
+}
+
+.scient-template-actions:hover {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  color: var(--foreground);
+}
+
+.scient-template-actions svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
