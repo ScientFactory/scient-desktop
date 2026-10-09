@@ -1531,7 +1531,9 @@ const CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS = [
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
 const CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS = [
+  // SCIENT-FORK:START — retain safe scientific images without opting into raw HTML.
   ...CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW,
+  // SCIENT-FORK:END
   rehypeHeadingIds,
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 

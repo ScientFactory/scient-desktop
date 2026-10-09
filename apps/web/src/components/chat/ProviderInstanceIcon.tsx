@@ -63,10 +63,12 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   indicatorBackground?: string;
 }) {
   const Icon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
+  // SCIENT-FORK:START scient-provider-glyph
   // Scient's Pi mark is shared by the picker and Settings; runtime metadata
   // still comes from the provider package.
   const packageIcon =
     props.driverKind === "pi" ? undefined : providerClients.get(props.driverKind)?.icon;
+  // SCIENT-FORK:END scient-provider-glyph
   const indicatorBackground = props.indicatorBackground ?? "var(--card)";
   const accentStyle = props.accentColor
     ? ({ "--provider-accent": props.accentColor } as CSSProperties)
