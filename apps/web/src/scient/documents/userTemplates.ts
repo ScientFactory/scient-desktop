@@ -120,10 +120,30 @@ export const userTemplates = {
     tellOtherWindows();
     return saved;
   },
+  /**
+   * Changes only the name, read and written in one transaction: another
+   * window's newer update to the template is kept, not overwritten by this
+   * window's older copy.
+   */
   async rename(id: string, name: string): Promise<void> {
-    const current = this.get(id);
-    if (!current) return;
-    await this.save({ ...current, name });
+    const open = await db();
+    const renamed = await new Promise<UserTemplate | null>((resolve, reject) => {
+      const transaction = open.transaction(STORE, "readwrite");
+      const store = transaction.objectStore(STORE);
+      let result: UserTemplate | null = null;
+      const read = store.get(id) as IDBRequest<UserTemplate | undefined>;
+      read.addEventListener("success", () => {
+        if (!read.result) return;
+        result = { ...read.result, name, updatedAt: Date.now() };
+        store.put(result);
+      });
+      transaction.addEventListener("complete", () => resolve(result));
+      transaction.addEventListener("error", () => reject(transaction.error));
+      transaction.addEventListener("abort", () => reject(transaction.error));
+    });
+    if (!renamed) return;
+    settle([...templates.filter((entry) => entry.id !== id), renamed]);
+    tellOtherWindows();
   },
   async remove(id: string): Promise<void> {
     await run("readwrite", (store) => store.delete(id));

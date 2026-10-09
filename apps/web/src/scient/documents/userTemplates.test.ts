@@ -63,6 +63,30 @@ describe("the person's own templates", () => {
     expect(normalizeNewDocumentTemplate(saved.id)).toBe("blank");
   });
 
+  it("rename without bringing back an older copy another window replaced", async () => {
+    await userTemplates.ready();
+    const saved = await userTemplates.save({
+      name: "Notes",
+      source: "old",
+      files: {},
+      preview: null,
+    });
+    // Another window updates the template; this window has not heard yet.
+    const open = await new Promise<IDBDatabase>((resolve) => {
+      const request = indexedDB.open("scient-document-templates", 1);
+      request.addEventListener("success", () => resolve(request.result));
+    });
+    await new Promise<void>((resolve) => {
+      const transaction = open.transaction("templates", "readwrite");
+      transaction.objectStore("templates").put({ ...saved, source: "newer" });
+      transaction.addEventListener("complete", () => resolve());
+    });
+    open.close();
+    await userTemplates.rename(saved.id, "Lab notes");
+    expect(userTemplates.get(saved.id)).toMatchObject({ name: "Lab notes", source: "newer" });
+    await userTemplates.remove(saved.id);
+  });
+
   it("copy a built-in template's source and files", () => {
     expect(templateContents("article").files).toEqual({});
     expect(Object.keys(templateContents("thesis").files)).toContain("chapters/introduction.tex");
