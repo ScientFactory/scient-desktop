@@ -91,7 +91,7 @@ describe("committed composer dictation outlives navigation", () => {
   let control: ScientVoiceController;
   let now: number;
   const local = vi.fn();
-  const composers = new Map<string, VoiceDraftEndpoint & { accepts: boolean }>();
+  const composers = new Map<string, VoiceDraftEndpoint & { accepts: boolean; ready: boolean }>();
   const unregister = new Map<string, () => void>();
 
   /** Stands in for a mounted ChatComposer for `target`. */
@@ -99,8 +99,10 @@ describe("committed composer dictation outlives navigation", () => {
     const key = composerTargetKey(target);
     const composer = {
       accepts: true,
+      ready: true,
       acceptsDraftText: () => composer.accepts,
       insert: vi.fn((_text: string) => true),
+      canSubmit: () => composer.ready,
       submit: vi.fn(),
     };
     composers.set(key, composer);
@@ -111,10 +113,17 @@ describe("committed composer dictation outlives navigation", () => {
     unregister.get(composerTargetKey(target))?.();
   }
 
-  function Probe({ origin }: { origin: VoiceDraftOrigin | null }) {
+  function Probe({
+    origin,
+    field = null,
+  }: {
+    origin: VoiceDraftOrigin | null;
+    field?: string | null;
+  }) {
     const value = useScientVoiceController({
       client,
       draftOrigin: origin,
+      localFieldKey: field,
       onTranscript: local,
       environmentId: LOCAL,
       correctionEnabled: !!correctionClient,
@@ -377,6 +386,93 @@ describe("committed composer dictation outlives navigation", () => {
     });
     expect(control.errorMessage).toBe("Engine failed");
     expect(toastManager.add).not.toHaveBeenCalled();
+  });
+
+  it("ownership is committed at the click, before the final audio flush resolves", async () => {
+    const flush = deferred<{ base64: string; sampleRateHz: number; durationMs: number }>();
+    recorder.stop.mockImplementationOnce(() => flush.promise);
+    mountComposer(THREAD_A);
+    await show(THREAD_A);
+    await record();
+    const { done } = await stop(false);
+    unmountComposer(THREAD_A);
+    const b = mountComposer(THREAD_B);
+    await show(THREAD_B);
+    expect(client.transcribe).not.toHaveBeenCalled();
+    await act(async () => {
+      flush.resolve({ base64: "synthetic", sampleRateHz: 24000, durationMs: 1000 });
+    });
+    expect(client.transcribe).toHaveBeenCalledOnce();
+    await transcribe(done);
+    expect(storedPrompt(THREAD_A)).toBe("dictated words");
+    expect(b.insert).not.toHaveBeenCalled();
+  });
+
+  it("A → B during correction with Send saves to A and sends nothing", async () => {
+    const correction = deferred<VoiceTranscriptCorrectionResult>();
+    correctionClient = { correct: vi.fn(() => correction.promise) };
+    const a = mountComposer(THREAD_A);
+    await show(THREAD_A);
+    await record();
+    const { done } = await stop(true);
+    await act(async () => {
+      pending.resolve({ text: "local words", engine: "local" });
+    });
+    expect(control.phase).toBe("correcting");
+    unmountComposer(THREAD_A);
+    const b = mountComposer(THREAD_B);
+    await show(THREAD_B);
+    await act(async () => {
+      correction.resolve({ text: "corrected words", provider: "codex" } as never);
+      await done;
+    });
+    await act(nextFrame);
+    expect(storedPrompt(THREAD_A)).toBe("corrected words");
+    expect(a.submit).not.toHaveBeenCalled();
+    expect(b.insert).not.toHaveBeenCalled();
+    expect(b.submit).not.toHaveBeenCalled();
+    expect(vi.mocked(toastManager.add).mock.calls[0]![0]).toMatchObject({
+      description: "Message not sent.",
+    });
+  });
+
+  it("staying on A whose composer cannot send right now inserts and says not sent", async () => {
+    const a = mountComposer(THREAD_A);
+    await show(THREAD_A);
+    await record();
+    const { done } = await stop(true);
+    a.ready = false;
+    await transcribe(done);
+    await act(nextFrame);
+    expect(a.insert).toHaveBeenCalledOnce();
+    expect(a.submit).not.toHaveBeenCalled();
+    expect(vi.mocked(toastManager.add).mock.calls[0]![0]).toMatchObject({
+      description: "Message not sent.",
+    });
+  });
+
+  it.each([
+    ["another question", "request-1:question-2"],
+    ["no question", null],
+  ])("answer dictation ends when the field changes to %s first", async (_label, next) => {
+    await act(() => root.render(<Probe origin={null} field="request-1:question-1" />));
+    await record();
+    const { done } = await stop(false);
+    const requestId = vi.mocked(client.transcribe).mock.calls[0]![0].requestId;
+    await act(() => root.render(<Probe origin={null} field={next} />));
+    expect(client.cancelTranscriptionRequest).toHaveBeenCalledExactlyOnceWith({ requestId });
+    await transcribe(done);
+    expect(local).not.toHaveBeenCalled();
+    expect(storedPrompt(THREAD_A)).toBe("");
+  });
+
+  it("answer dictation is delivered to its own unchanged field", async () => {
+    await act(() => root.render(<Probe origin={null} field="request-1:question-1" />));
+    await record();
+    const { done } = await stop(false);
+    await transcribe(done);
+    expect(local).toHaveBeenCalledExactlyOnceWith("dictated words");
+    expect(client.cancelTranscriptionRequest).not.toHaveBeenCalled();
   });
 
   it("leaving while still recording cancels and keeps nothing", async () => {

@@ -55,6 +55,12 @@ interface VoiceControllerOptions {
    * stays local, ends with the control and uses the callbacks below.
    */
   readonly draftOrigin?: VoiceDraftOrigin | null;
+  /**
+   * Identity of the field local dictation fills, such as one question's answer.
+   * Local dictation is delivered only to the field it started in; when the field
+   * changes or closes first, the dictation ends with it.
+   */
+  readonly localFieldKey?: string | null;
   readonly onTranscript: (text: string) => void;
   readonly onRequestSubmit?: () => void;
 }
@@ -132,6 +138,7 @@ export function useScientVoiceController({
   languagePreference = "auto",
   environmentId,
   draftOrigin = null,
+  localFieldKey = null,
   onTranscript,
   onRequestSubmit,
 }: VoiceControllerOptions): ScientVoiceController {
@@ -154,6 +161,8 @@ export function useScientVoiceController({
   completionCallbacksRef.current = { onTranscript, onRequestSubmit };
   const draftOriginRef = useRef(draftOrigin);
   draftOriginRef.current = draftOrigin;
+  const localFieldKeyRef = useRef(localFieldKey);
+  localFieldKeyRef.current = localFieldKey;
 
   // Committed dictation is shown by owner key: the draft's key for composer
   // drafts (so returning to a thread shows its job), else this control alone.
@@ -200,6 +209,7 @@ export function useScientVoiceController({
       setPhase("idle");
       setErrorMessage(null);
       const origin = draftOriginRef.current;
+      const fieldKey = localFieldKeyRef.current;
       const ownerKey = origin ? `draft:${origin.key}` : localOwnerKey;
       const correctionRequested =
         correctionEnabled && correctionClient !== null && environmentId !== undefined;
@@ -213,8 +223,10 @@ export function useScientVoiceController({
         recordAnalytics,
         deliver: origin
           ? (text, sendText) => deliverVoiceTranscriptToDraft(origin, text, sendText)
-          : (text, sendText) =>
-              routeCompletedVoiceTranscription(completionCallbacksRef, text, sendText),
+          : (text, sendText) => {
+              if (localFieldKeyRef.current !== fieldKey) return;
+              routeCompletedVoiceTranscription(completionCallbacksRef, text, sendText);
+            },
         fail: origin
           ? (message) =>
               reportVoiceDraftFailure(origin, message, (shown) => setVoiceJobError(ownerKey, shown))
@@ -434,6 +446,13 @@ export function useScientVoiceController({
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [cancel, phase, stop]);
+
+  // Local dictation belongs to the field it started in, such as one question's
+  // answer; a different or closed field ends it rather than receiving its text.
+  useEffect(() => {
+    if (localFieldKey === null) return undefined;
+    return () => cancelVoiceJobsForOwner(localOwnerKey);
+  }, [localFieldKey, localOwnerKey]);
 
   // Unmounting ends what this control still owns: an unfinished recording or
   // permission request, and local (non-draft) dictation. A dictation committed

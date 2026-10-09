@@ -16,6 +16,7 @@ import {
 } from "../../composerDraftStore.ts";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast.tsx";
 import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../../threadRoutes.ts";
+import { useQueueEditSessions } from "../threadQueue/editSession.ts";
 import { buildVoiceDraftReplacement } from "./voiceComposerInsert.ts";
 
 export interface VoiceDraftOrigin {
@@ -32,6 +33,12 @@ export interface VoiceDraftEndpoint {
   readonly acceptsDraftText: () => boolean;
   /** Appends to the ordinary draft through the editor; false when it declined. */
   readonly insert: (text: string) => boolean;
+  /**
+   * True only when `submit` would send now and read this composer before any
+   * await: the send path reads the shared composer after its first await, so a
+   * navigation during that wait could otherwise send another thread's input.
+   */
+  readonly canSubmit: () => boolean;
   readonly submit: () => void;
 }
 
@@ -141,7 +148,11 @@ export function deliverVoiceTranscriptToDraft(
   if (endpoint?.acceptsDraftText() && endpoint.insert(text)) {
     if (!send) return;
     dependencies.scheduleFrame(() => {
-      if (endpoints.get(origin.key) === endpoint && endpoint.acceptsDraftText()) {
+      if (
+        endpoints.get(origin.key) === endpoint &&
+        endpoint.acceptsDraftText() &&
+        endpoint.canSubmit()
+      ) {
         endpoint.submit();
       } else {
         dependencies.notify({ kind: "not-sent", origin });
@@ -154,6 +165,18 @@ export function deliverVoiceTranscriptToDraft(
     return;
   }
   dependencies.notify({ kind: send ? "not-sent" : "added", origin });
+}
+
+/**
+ * Extracted queue drafts and open queue edits prepare the send asynchronously
+ * (journal intake, edit flush) before the send path reads the composer.
+ */
+export function hasAsyncSendPreparation(target: ComposerThreadTarget): boolean {
+  const draft = useComposerDraftStore.getState().getComposerDraft(target);
+  return (
+    Boolean(draft?.extractedIntent) ||
+    useQueueEditSessions.getState().sessions[composerTargetKey(target)] !== undefined
+  );
 }
 
 /** A failure the origin's composer cannot show becomes a notice. */
@@ -177,6 +200,8 @@ export function useScientVoiceDraftOrigin(input: {
   readonly title: string | null;
   readonly acceptsDraftText: boolean;
   readonly insert: (text: string) => boolean;
+  /** The composer's own send guards: provider, send-disabled, busy, scope. */
+  readonly sendReady: () => boolean;
   readonly submit: () => void;
 }): VoiceDraftOrigin {
   const navigate = useNavigate();
@@ -192,6 +217,8 @@ export function useScientVoiceDraftOrigin(input: {
       registerVoiceDraftEndpoint(key, {
         acceptsDraftText: () => latestRef.current.acceptsDraftText,
         insert: (text) => latestRef.current.insert(text),
+        canSubmit: () =>
+          latestRef.current.sendReady() && !hasAsyncSendPreparation(latestRef.current.target),
         submit: () => latestRef.current.submit(),
       }),
     [key],

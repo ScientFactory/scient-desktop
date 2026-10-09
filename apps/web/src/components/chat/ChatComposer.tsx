@@ -4467,10 +4467,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       voiceBusyRef.current = false;
       return applyVoiceTranscript(promptRef.current, text, applyPromptReplacement);
     },
+    sendReady: () =>
+      composerMountedRef.current &&
+      !noProviderAvailable &&
+      !isSendDisabled &&
+      !isSendBusy &&
+      !isConnecting &&
+      readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),
     submit: () => {
       if (composerMountedRef.current) submitComposer();
     },
   });
+  const voiceAnswerFieldKey =
+    pendingUserInputs[0] && activePendingProgress?.activeQuestion
+      ? `${pendingUserInputs[0].requestId}:${activePendingProgress.activeQuestion.id}`
+      : null;
   // SCIENT-FORK:END
   const handleSubmitMessage = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -7858,6 +7869,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onBusyChange={onVoiceBusyChange}
                     // SCIENT-FORK:START ordinary-draft dictation is committed to its origin.
                     draftOrigin={voiceDraftAccepted ? voiceDraftOrigin : null}
+                    localFieldKey={voiceAnswerFieldKey}
                     // SCIENT-FORK:END
                     onTranscript={(text) => {
                       voiceBusyRef.current = false;

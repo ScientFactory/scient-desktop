@@ -51,6 +51,8 @@ export interface ScientVoiceComposerControlProps {
   readonly environmentId?: EnvironmentId;
   /** Composer draft that committed dictation lands in, even after leaving. */
   readonly draftOrigin?: VoiceDraftOrigin | null;
+  /** Field that local (non-draft) dictation belongs to; see the controller. */
+  readonly localFieldKey?: string | null;
   readonly onBusyChange?: (busy: boolean) => void;
   readonly onTranscript: (text: string) => void;
   readonly onRequestSubmit?: () => void;
@@ -203,6 +205,7 @@ export function ScientVoiceComposerControl({
   disabled = false,
   environmentId,
   draftOrigin = null,
+  localFieldKey = null,
   onTranscript,
   onBusyChange,
   onRequestSubmit,
@@ -230,6 +233,7 @@ export function ScientVoiceComposerControl({
     languagePreference,
     ...(environmentId === undefined ? {} : { environmentId }),
     draftOrigin,
+    localFieldKey,
     onTranscript,
     ...(onRequestSubmit ? { onRequestSubmit } : {}),
   });

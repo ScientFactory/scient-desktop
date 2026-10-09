@@ -8,8 +8,10 @@ import {
   useComposerDraftStore,
   type ComposerThreadTarget,
 } from "../../composerDraftStore.ts";
+import { useQueueEditSessions } from "../threadQueue/editSession.ts";
 import {
   appendVoiceTranscriptToStoredDraft,
+  hasAsyncSendPreparation,
   deliverVoiceTranscriptToDraft,
   registerVoiceDraftEndpoint,
   reportVoiceDraftFailure,
@@ -54,10 +56,11 @@ function harness() {
 }
 
 function endpoint(overrides: Partial<{ accepts: boolean; inserts: boolean }> = {}) {
-  const state = { accepts: overrides.accepts ?? true };
+  const state = { accepts: overrides.accepts ?? true, ready: true };
   const value = {
     acceptsDraftText: vi.fn(() => state.accepts),
     insert: vi.fn(() => overrides.inserts ?? true),
+    canSubmit: vi.fn(() => state.ready),
     submit: vi.fn(),
   } satisfies VoiceDraftEndpoint;
   return { value, state };
@@ -115,6 +118,21 @@ describe("deliverVoiceTranscriptToDraft", () => {
       expect(run.notices).toEqual([{ kind: "not-sent", origin: from }]);
     },
   );
+
+  it("does not submit, and says so, when the composer cannot send right now", () => {
+    const target = scopeThreadRef(LOCAL, THREAD);
+    const composer = endpoint();
+    register(composerTargetKey(target), composer.value);
+    const run = harness();
+    const from = origin(target);
+
+    deliverVoiceTranscriptToDraft(from, "hello", true, run.dependencies);
+    composer.state.ready = false;
+    run.runFrames();
+    expect(composer.value.insert).toHaveBeenCalledOnce();
+    expect(composer.value.submit).not.toHaveBeenCalled();
+    expect(run.notices).toEqual([{ kind: "not-sent", origin: from }]);
+  });
 
   it("a remounted composer for the same draft does not inherit the scheduled submit", () => {
     const target = scopeThreadRef(LOCAL, THREAD);
@@ -245,5 +263,39 @@ describe("appendVoiceTranscriptToStoredDraft", () => {
     const closed = DraftId.make("draft-closed");
     expect(appendVoiceTranscriptToStoredDraft(closed, "lost words")).toBe(false);
     expect(useComposerDraftStore.getState().getComposerDraft(closed)).toBeNull();
+  });
+});
+
+describe("hasAsyncSendPreparation", () => {
+  beforeEach(() => {
+    useComposerDraftStore.setState({ draftsByThreadKey: {}, draftThreadsByThreadKey: {} });
+    useQueueEditSessions.setState({ sessions: {} });
+  });
+  afterEach(() => useQueueEditSessions.setState({ sessions: {} }));
+
+  it("is false for an ordinary draft", () => {
+    const target = scopeThreadRef(LOCAL, THREAD);
+    useComposerDraftStore.getState().setPrompt(target, "ordinary");
+    expect(hasAsyncSendPreparation(target)).toBe(false);
+  });
+
+  it("is true for an extracted queue draft or an open queue edit", () => {
+    const target = scopeThreadRef(LOCAL, THREAD);
+    const key = composerTargetKey(target);
+    useComposerDraftStore.setState({
+      draftsByThreadKey: {
+        [key]: {
+          ...useComposerDraftStore.getState().getComposerDraft(target),
+          prompt: "extracted",
+          extractedIntent: { intentId: "intent-1", journalKey: "journal-1" },
+        } as never,
+      },
+    });
+    expect(hasAsyncSendPreparation(target)).toBe(true);
+
+    useComposerDraftStore.setState({ draftsByThreadKey: {} });
+    expect(hasAsyncSendPreparation(target)).toBe(false);
+    useQueueEditSessions.setState({ sessions: { [key]: {} as never } });
+    expect(hasAsyncSendPreparation(target)).toBe(true);
   });
 });
