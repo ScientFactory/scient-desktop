@@ -6,7 +6,9 @@ import {
   clearProjectFileQueryData,
   refreshProjectEntriesQuery,
 } from "~/components/files/projectFilesQueryState";
-import { useRightPanelStore } from "~/rightPanelStore";
+import type { ScopedThreadRef } from "@t3tools/contracts";
+
+import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -24,18 +26,15 @@ function folderOf(path: string): string {
 }
 
 /**
- * No tab shows the destination, and this document is open in one tab only:
- * another tab would take over, or keep showing the old name.
+ * No tab of this thread already shows the destination: it would take over.
+ * Other threads' tabs hold no lease on this document (the registry checks
+ * leases) and follow the file as they do after any rename.
  */
-function tabsAllowMove(from: string, to: string): boolean {
-  let sourceTabs = 0;
-  for (const thread of Object.values(useRightPanelStore.getState().byThreadKey)) {
-    for (const surface of thread.surfaces) {
-      if (surface.id === `file:${to}`) return false;
-      if (surface.id === `file:${from}`) sourceTabs += 1;
-    }
-  }
-  return sourceTabs <= 1;
+function destinationTabFree(threadRef: ScopedThreadRef, to: string): boolean {
+  return !selectThreadRightPanelState(
+    useRightPanelStore.getState().byThreadKey,
+    threadRef,
+  ).surfaces.some((surface) => surface.id === `file:${to}`);
 }
 
 /**
@@ -44,6 +43,7 @@ function tabsAllowMove(from: string, to: string): boolean {
  * rendered the document at its new path.
  */
 export function useInPlaceRename(input: {
+  readonly threadRef: ScopedThreadRef;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly relativePath: string | null;
@@ -123,7 +123,7 @@ export function useInPlaceRename(input: {
           cause: result._tag === "Failure" ? squashAtomCommandFailure(result) : null,
         };
       },
-      destinationFree: () => tabsAllowMove(from, destination),
+      destinationFree: () => destinationTabFree(input.threadRef, destination),
       reopen: (to, revision) => input.reopen(from, to, revision),
       follow: (to) => {
         input.moveViewState(from, to);

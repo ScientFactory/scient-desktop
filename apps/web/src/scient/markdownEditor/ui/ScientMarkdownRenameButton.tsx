@@ -9,7 +9,10 @@ import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/component
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import type { RenameOpenDocumentResult } from "~/scient/markdownEditor/persistence/renameOpenDocument";
+import {
+  RECOVERY_COPY_UNSETTLED,
+  type RenameOpenDocumentResult,
+} from "~/scient/markdownEditor/persistence/renameOpenDocument";
 
 import { normalizeMarkdownCreatePath } from "./ScientMarkdownCreateButton";
 
@@ -37,6 +40,11 @@ interface ScientMarkdownRenameButtonProps {
   readonly disabled: boolean;
   /** Acquires the file's short clean-state barrier before dispatching the rename. */
   readonly beforeRename?: () => (() => void) | null;
+  /**
+   * Before the ordinary rename: clears the file's recovery copy so it cannot
+   * outlive the old name. A false result refuses the rename.
+   */
+  readonly prepareRename?: () => Promise<boolean>;
   readonly label: string;
   readonly onRenamed: (destinationRelativePath: string, revision: string) => void;
   /**
@@ -103,6 +111,10 @@ export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProp
         setOpen(false);
         return;
       }
+    }
+    if (props.prepareRename && !(await props.prepareRename())) {
+      setError(RECOVERY_COPY_UNSETTLED);
+      return;
     }
     const release = props.beforeRename?.();
     if (props.beforeRename && !release) {

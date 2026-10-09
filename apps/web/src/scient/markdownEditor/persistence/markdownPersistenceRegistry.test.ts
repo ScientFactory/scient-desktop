@@ -1343,6 +1343,10 @@ describe("moving an open document in place", () => {
     expect(records.size).toBe(1);
     expect(await lease.flushNow()).toBe(true);
     refuseRemoval = true;
+    // Neither route may rename while the copy stays: the ordinary rename asks too.
+    const logged0 = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await lease.settleRecoveryCopy!()).toBe(false);
+    logged0.mockRestore();
     const move = lease.beginMove(renamed)!;
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await move.preflight()).toBe("unknown");
@@ -1350,6 +1354,7 @@ describe("moving an open document in place", () => {
     move.finish();
     // Removal works again: the copy goes first, then the move may proceed.
     refuseRemoval = false;
+    expect(await lease.settleRecoveryCopy!()).toBe(true);
     const again = lease.beginMove(renamed)!;
     expect(await again.preflight()).toBe("empty");
     expect(records.size).toBe(0);

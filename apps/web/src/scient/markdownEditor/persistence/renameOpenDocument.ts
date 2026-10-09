@@ -42,6 +42,10 @@ function participantsReady(documentId: string): boolean {
   return true;
 }
 
+/** Why a rename is refused while the old name's recovery copy cannot be cleared. */
+export const RECOVERY_COPY_UNSETTLED =
+  "This file's recovery copy could not be cleared yet. Try renaming again in a moment.";
+
 export type ServerRenameResult =
   | { readonly ok: true; readonly destinationRelativePath: string; readonly revision: string }
   | { readonly ok: false; readonly cause: unknown };
@@ -112,6 +116,10 @@ export async function renameOpenDocument(input: {
   const documentId = documentIdentity(lease);
   if (!(input.destinationFree?.() ?? true))
     return { kind: "legacy-required", reason: "destination" };
+  if (!participantsReady(documentId)) return { kind: "legacy-required" };
+  // The old name's recovery copy goes first, whichever way the file is renamed.
+  if (!((await lease.settleRecoveryCopy?.()) ?? true))
+    return { kind: "failed", cause: new Error(RECOVERY_COPY_UNSETTLED) };
   if (!participantsReady(documentId)) return { kind: "legacy-required" };
   const move = lease.beginMove(destination);
   if (move === null) return { kind: "legacy-required" };
