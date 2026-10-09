@@ -60,7 +60,8 @@ export function templatePicture(
 }
 
 /** Elements a page picture never keeps: nothing that runs, loads or embeds. */
-const DROPPED = "script, style, link, meta, iframe, frame, object, embed, base, form, audio, video";
+const DROPPED =
+  "script, style, link, meta, iframe, frame, object, embed, base, form, audio, video, source, animate, animateMotion, animateTransform, set";
 
 /**
  * A page picture made safe to show: no element that runs or loads anything, no
@@ -81,6 +82,16 @@ export function sanitizePage(root: Element): void {
         name === "tabindex" ||
         name === "autofocus" ||
         name === "srcdoc" ||
+        name === "srcset" ||
+        name === "poster" ||
+        name === "background" ||
+        (name === "style" && /url\s*\(|@import/iu.test(attribute.value)) ||
+        (name === "src" &&
+          !(
+            element.tagName.toLowerCase() === "img" &&
+            /^data:image\/(?:png|jpeg|webp);base64,/iu.test(attribute.value)
+          )) ||
+        ((name === "href" || name === "xlink:href") && !value.startsWith("#")) ||
         ((name === "href" || name === "src" || name === "xlink:href" || name === "action") &&
           (value.startsWith("javascript:") || value.startsWith("data:text/html")))
       )
@@ -92,10 +103,10 @@ export function sanitizePage(root: Element): void {
 function parsePage(stored: string): { html: string; width: number; height: number } | null {
   const document = new DOMParser().parseFromString(stored, "text/html");
   const root = document.body.firstElementChild;
-  if (!root) return null;
+  if (!root || root.tagName.toLowerCase() !== "div") return null;
   const width = Number(root.getAttribute("data-page-width"));
   const height = Number(root.getAttribute("data-page-height"));
-  if (!(width > 0 && height > 0)) return null;
+  if (!(Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0)) return null;
   sanitizePage(root);
   return { html: root.outerHTML, width, height };
 }
@@ -118,6 +129,26 @@ export function captureVisualPage(): string | null {
   if (!(width > 0)) return null;
   const clone = stage.cloneNode(true) as HTMLElement;
   clone.style.transform = "none";
+  // Persist figure pixels, never signed URLs that expire after the current session.
+  const images = [...stage.querySelectorAll<HTMLImageElement>("img")];
+  [...clone.querySelectorAll<HTMLImageElement>("img")].forEach((copy, index) => {
+    const image = images[index];
+    copy.removeAttribute("src");
+    copy.removeAttribute("srcset");
+    if (!image?.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
+    const canvas = document.createElement("canvas");
+    const scale = Math.min(1, 600 / image.naturalWidth, 600 / image.naturalHeight);
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    try {
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      copy.src = canvas.toDataURL("image/png");
+    } catch {
+      // An unreadable cross-origin figure leaves its caption, not an expiring URL.
+    }
+  });
   // A field is drawn as its text: what was typed, or its placeholder, faint.
   const fields = [
     ...stage.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("textarea, input"),

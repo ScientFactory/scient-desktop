@@ -38,6 +38,20 @@ describe("template pictures", () => {
       expect(html).not.toContain(unsafe);
   });
 
+  it("keeps durable raster figures and drops transient URLs and loading styles", () => {
+    const picture = templatePicture(
+      null,
+      '<div data-page-width="816" data-page-height="1056">' +
+        '<img src="https://assets.test/figure?token=expires" srcset="https://assets.test/large 2x">' +
+        '<img src="data:image/png;base64,AAAA"><div style="background-image: url(https://assets.test/image)"></div>' +
+        '<svg><use href="https://assets.test/external.svg#image"/></svg></div>',
+    );
+    const html = picture?.kind === "page" ? picture.html : "";
+    expect(html).toContain("data:image/png;base64,AAAA");
+    expect(html).not.toContain("https:");
+    expect(html).not.toContain("srcset");
+  });
+
   it("refuses a stored page without its size", () => {
     expect(templatePicture(null, "<div><p>Text</p></div>")).toBeNull();
     const element = document.createElement("div");
