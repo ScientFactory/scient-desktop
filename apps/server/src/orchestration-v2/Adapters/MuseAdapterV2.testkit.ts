@@ -39,6 +39,7 @@ import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
 import { makeMuseAdapterV2 } from "@t3tools/provider-muse/server";
+import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 
 export const MUSE_PROVIDER_KIND = "muse";
 export const MUSE_MSP_REPLAY_PROTOCOL = "muse.msp-jsonl";
@@ -452,6 +453,7 @@ export function layer(input: {
           settings: DEFAULT_MUSE_SETTINGS,
           environment: input.environment ?? {},
           createHost: input.createHost,
+          runtimeInstructions: buildScientRuntimeInstructions,
           // Same queue the continuation worker drains when the fixture runs it.
           continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
         }),

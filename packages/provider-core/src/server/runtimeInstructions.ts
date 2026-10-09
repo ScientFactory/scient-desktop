@@ -2,19 +2,19 @@ const PULL_REQUEST_LINKING_INSTRUCTIONS = `<pull_request_linking>
 When the t3-code MCP server exposes link_pull_request, you must use it to register every pull request you create or work on for this thread. Call link_pull_request with the full PR URL immediately after creating a PR or starting work on an existing PR. For a stack, call it for every layer, not just the current branch or the top PR. This applies when creating or updating PRs through gh, gh stack, another CLI, or the host API: those operations do not register the PRs with this thread. Linking an already-linked PR is safe. Before finishing PR work, call list_thread_pull_requests and link any PR from your work that is missing. Do not link unrelated PRs mentioned only as background. If a linking call fails, report that failure instead of claiming the PR is linked. When asked to monitor, watch, or babysit a PR and watch_pull_request is available, call it and end your turn: T3 Code wakes you when checks finish, someone else comments, or the branch conflicts, so do not poll or run your own watcher. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.
 </pull_request_linking>`;
 
+// SCIENT-FORK:START — expose the host-neutral runtime input type for app-owned prompt copy.
 /** Shared runtime context; omit model and effort when the harness manages them dynamically. */
 export interface RuntimeInstructionsInput {
   readonly harness: string;
   readonly model?: string | undefined;
   readonly modelName?: string | undefined;
   readonly reasoningEffort?: string | undefined;
-  // SCIENT-FORK:START — the host supplies product identity and its policy copy.
   /** Product identity is supplied by the host; the generic provider package defaults to T3 Code. */
   readonly productName?: string | undefined;
   /** Host-owned product policy may replace the generic PR-linking instructions. */
   readonly pullRequestLinkingInstructions?: string | undefined;
-  // SCIENT-FORK:END
 }
+// SCIENT-FORK:END
 
 /**
  * Shared runtime context; omit model and effort when the harness manages them dynamically.

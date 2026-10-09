@@ -13,6 +13,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
+import { scientAcpProviderBridge } from "./ScientAcpApplicationBridge.ts";
 import {
   type AcpReplayTranscript,
   AcpReplayTranscriptDecodeError,
@@ -56,6 +57,7 @@ function layerAcpRegistryProviderAdapterRegistryReplay(
         instanceId: ACP_REGISTRY_DEFAULT_INSTANCE_ID,
         settings: REPLAY_SETTINGS,
         environment: {},
+        application: scientAcpProviderBridge,
         childProcessSpawner,
         resolver: {
           resolve: () => Effect.die("ACP registry resolver must not run during replay"),

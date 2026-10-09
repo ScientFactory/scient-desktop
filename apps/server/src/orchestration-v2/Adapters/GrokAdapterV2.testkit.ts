@@ -17,6 +17,7 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/con
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
+import { scientAcpApplicationBridge } from "./ScientAcpApplicationBridge.ts";
 import {
   type AcpReplayTranscript,
   AcpReplayTranscriptDecodeError,
@@ -60,6 +61,7 @@ function layerGrokProviderAdapterRegistryReplay(
         instanceId: GROK_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_GROK_SETTINGS,
         environment: {},
+        application: scientAcpApplicationBridge,
         hostPlatform,
         selfInvocation: yield* resolveSelfInvocation(),
         // Same wrapping as makeGrokAcpRuntime: client type and Ctrl+C cancel

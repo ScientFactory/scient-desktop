@@ -76,7 +76,9 @@ import * as OpenCode2Server from "./OpenCode2Server.ts";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import {
   buildRuntimeInstructions,
+  // SCIENT-FORK:START — type the optional host prompt-composition callback.
   type RuntimeInstructionsInput,
+  // SCIENT-FORK:END
 } from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";

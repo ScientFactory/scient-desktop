@@ -64,7 +64,9 @@ import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import {
   buildRuntimeInstructions,
+  // SCIENT-FORK:START — type the optional host prompt-composition callback.
   type RuntimeInstructionsInput,
+  // SCIENT-FORK:END
 } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";

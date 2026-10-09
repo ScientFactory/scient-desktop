@@ -36,7 +36,9 @@ import {
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
+// SCIENT-FORK:START — type the optional host prompt-composition callback.
 import type { RuntimeInstructionsInput } from "@t3tools/provider-core/server/runtimeInstructions";
+// SCIENT-FORK:END
 
 const DRIVER_KIND = ProviderDriverKind.make("muse");
 const decodeMuseSettings = Schema.decodeSync(MuseSettings);
@@ -50,12 +52,12 @@ export type MuseDriverEnv =
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers;
 
+// SCIENT-FORK:START — give the host an optional runtime-copy seam without changing the driver SPI.
 export interface MuseDriverOptions {
-  // SCIENT-FORK:START — production may inject Scient copy; default Muse remains upstream.
   /** Host-owned runtime text; absent means the package's generic T3 default. */
   readonly runtimeInstructions?: (input: RuntimeInstructionsInput) => string;
-  // SCIENT-FORK:END
 }
+// SCIENT-FORK:END
 
 // SCIENT-FORK:START — expose an optional app-copy factory while retaining one generic driver.
 export const makeMuseDriver = (

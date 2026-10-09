@@ -37,8 +37,12 @@ import * as Stream from "effect/Stream";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
-import type { RuntimeInstructionsInput } from "@t3tools/provider-core/server/runtimeInstructions";
+import {
+  buildRuntimeInstructions,
+  // SCIENT-FORK:START — type the optional host prompt-composition callback.
+  type RuntimeInstructionsInput,
+  // SCIENT-FORK:END
+} from "@t3tools/provider-core/server/runtimeInstructions";
 import { museModelCapabilities, resolveMuseReasoningEffort } from "./modelCatalog.ts";
 import {
   MuseApproval,

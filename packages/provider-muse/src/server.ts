@@ -5,9 +5,11 @@
  * @module provider-muse/server
  */
 export {
+  // SCIENT-FORK:START — expose the optional host-copy driver factory to the app composition.
   makeMuseDriver,
+  type MuseDriverOptions,
+  // SCIENT-FORK:END
   MuseDriver,
   type MuseDriverEnv,
-  type MuseDriverOptions,
 } from "./server/driver.ts";
 export { makeMuseAdapterV2, type MuseAdapterV2Options } from "./server/adapter.ts";

@@ -25,8 +25,11 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
-import { CursorAdapterV2Driver } from "@t3tools/provider-cursor/server";
+import { makeCursorAdapterV2Driver } from "@t3tools/provider-cursor/server";
 import * as CursorAgentSdk from "@t3tools/provider-cursor/server/CursorAgentSdk";
+import { buildScientOrchestrationPromptForFirstRun } from "../../provider/ScientProviderInstructions.ts";
+import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
+import { turnStartErrorKeepingReceipt } from "../scient-provider/NativeTurnReceipts.ts";
 import {
   CURSOR_DEFAULT_INSTANCE_ID,
   CURSOR_DRIVER_KIND,
@@ -610,6 +613,12 @@ export function layer(
     readonly assertCompleteOnFinalize?: boolean;
   },
 ) {
+  const replayDriver = makeCursorAdapterV2Driver({
+    orchestrationPromptForFirstRun: buildScientOrchestrationPromptForFirstRun,
+    runtimeInstructions: buildScientRuntimeInstructions,
+    turnStartError: (turnIdentity, cause) =>
+      turnStartErrorKeepingReceipt(CursorAgentSdk.CURSOR_PROVIDER, turnIdentity)(cause),
+  });
   // Skill discovery also scans user roots under HOME; an empty HOME keeps
   // replays from picking up the host's own skills.
   const layerHostEnvironment = Layer.effect(
@@ -621,7 +630,7 @@ export function layer(
     }).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
   return ProviderAdapterRegistry.layerFromDrivers({
-    drivers: [CursorAdapterV2Driver],
+    drivers: [replayDriver],
     configMap: {
       [CURSOR_DEFAULT_INSTANCE_ID]: {
         driver: CURSOR_DRIVER_KIND,

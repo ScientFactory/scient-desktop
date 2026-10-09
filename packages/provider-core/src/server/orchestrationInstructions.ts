@@ -65,6 +65,7 @@ export interface T3AcpInstructionState {
   readonly hasT3Mcp: boolean;
 }
 
+// SCIENT-FORK:START — expose host-injected prompt content at the shared ACP composition seam.
 /** Optional host-owned copy for the shared ACP prompt composer. */
 export interface T3AcpInstructionContent {
   readonly wrapperElement?: string;
@@ -78,16 +79,17 @@ export interface T3AcpPromptWithInstructionsInput {
   readonly prompt: string;
   readonly state: T3AcpInstructionState;
   readonly previousState?: T3AcpInstructionState;
-  // SCIENT-FORK:START — a host may inject product copy without replacing ACP gating.
   readonly content?: T3AcpInstructionContent;
-  // SCIENT-FORK:END
 }
+// SCIENT-FORK:END
 
 /**
  * ACP has no system/developer prompt field, so send T3-owned context in the
  * first user prompt and whenever the available tools or interaction mode change.
  */
+// SCIENT-FORK:START — use the extensible input while retaining the shared composer behavior.
 export function t3AcpPromptWithInstructions(input: T3AcpPromptWithInstructionsInput): string {
+  // SCIENT-FORK:END
   // Native slash commands must remain at the start of the prompt.
   if (input.prompt.trimStart().startsWith("/")) return input.prompt;
   if (
