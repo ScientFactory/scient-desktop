@@ -238,6 +238,7 @@
 }
 .scient-latex-references-header {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -246,6 +247,7 @@
 }
 .scient-latex-references-content {
   display: grid;
+  flex: 1;
   align-content: start;
   gap: 12px;
   overflow: auto;
@@ -296,8 +298,6 @@
 .scient-latex-references-list {
   display: grid;
   gap: 4px;
-  max-height: 240px;
-  overflow: auto;
 }
 .scient-latex-references-list > button {
   display: grid;
