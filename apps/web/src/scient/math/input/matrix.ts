@@ -12,6 +12,18 @@ export const MATRIX_ENVIRONMENTS = [
   "aligned",
 ] as const;
 export type MatrixEnvironment = (typeof MATRIX_ENVIRONMENTS)[number];
+export const DISPLAY_MATRIX_ROW_GAP_EM = 0.12;
+const displayMatrixEnvironments = new Set<MatrixEnvironment>([
+  "matrix",
+  "pmatrix",
+  "bmatrix",
+  "Bmatrix",
+  "vmatrix",
+  "Vmatrix",
+]);
+export function isDisplayMatrix(environment: string): boolean {
+  return displayMatrixEnvironments.has(environment as MatrixEnvironment);
+}
 export type MatrixAction =
   | "next"
   | "previous"
@@ -32,6 +44,7 @@ interface Matrix {
   readonly from: number;
   readonly to: number;
   readonly rows: readonly (readonly Cell[])[];
+  readonly spaced: boolean;
 }
 
 /** Parse delimiters only at the matrix's own grouping/environment depth.
@@ -57,15 +70,21 @@ export function matrixAt(source: string, position: number): Matrix | null {
         position > token.index!
       )
         continue;
-      const rows = parseCells(source, opening.start, token.index!);
-      if (rows) candidates.push({ environment: name, from: opening.start, to: token.index!, rows });
+      const parsed = parseCells(source, opening.start, token.index!);
+      if (parsed)
+        candidates.push({ environment: name, from: opening.start, to: token.index!, ...parsed });
     }
   }
   return candidates.sort((a, b) => a.to - a.from - (b.to - b.from))[0] ?? null;
 }
 
-function parseCells(source: string, from: number, to: number): readonly (readonly Cell[])[] | null {
+function parseCells(
+  source: string,
+  from: number,
+  to: number,
+): Pick<Matrix, "rows" | "spaced"> | null {
   const rows: Cell[][] = [[]];
+  let spacedRows = 0;
   let start = from;
   let braces = 0;
   let environments = 0;
@@ -80,9 +99,13 @@ function parseCells(source: string, from: number, to: number): readonly (readonl
         continue;
       }
       if (source[i + 1] === "\\" && braces === 0 && environments === 0) {
-        if (/^\s*\[/u.test(source.slice(i + 2, to))) return null;
+        const rest = source.slice(i + 2, to);
+        const gap = /^\s*\[(?:0)?\.12\s*em\]/u.exec(rest);
+        if (/^\s*\[/u.test(rest) && !gap) return null;
+        if (gap) spacedRows++;
         rows.at(-1)!.push({ from: start, to: i });
         rows.push([]);
+        if (gap) i += gap[0].length;
         start = i + 2;
       } else if (/^\\(?:hline|cline|multicolumn|omit|cr|noalign)\b/u.test(source.slice(i)))
         return null;
@@ -99,7 +122,10 @@ function parseCells(source: string, from: number, to: number): readonly (readonl
   rows.at(-1)!.push({ from: start, to });
   const columns = rows[0]!.length;
   if (rows.length > 20 || columns > 20 || rows.some((row) => row.length !== columns)) return null;
-  return rows;
+  // Only our uniform gap is editable here. Other author-defined options remain
+  // protected, including mixtures of compact and expanded rows.
+  if (spacedRows && spacedRows !== rows.length - 1) return null;
+  return { rows, spaced: spacedRows > 0 };
 }
 
 export function insertMatrix(
@@ -107,6 +133,7 @@ export function insertMatrix(
   environment: MatrixEnvironment,
   rows: number,
   columns: number,
+  display = false,
 ): MathEdit | null {
   if (
     !MATRIX_ENVIRONMENTS.includes(environment) ||
@@ -122,7 +149,9 @@ export function insertMatrix(
   const prefix = `\\begin{${environment}}\n`;
   const body = Array.from({ length: rows }, () =>
     Array.from({ length: columns }, () => "{}").join(" & "),
-  ).join(" \\\\\n");
+  ).join(
+    display && isDisplayMatrix(environment) ? ` \\\\[${DISPLAY_MATRIX_ROW_GAP_EM}em]\n` : " \\\\\n",
+  );
   const insert = `${prefix}${body}\n\\end{${environment}}`;
   const caret = selection.from + prefix.length + 1;
   return { ...selection, insert, selection: { from: caret, to: caret } };
@@ -139,6 +168,7 @@ export function matrixEdit(
   source: string,
   selection: MathSelection,
   action: MatrixAction,
+  display = false,
 ): MathEdit | null {
   const matrix = matrixAt(source, selection.from);
   if (!matrix || selection.to > matrix.to) return null;
@@ -203,7 +233,14 @@ export function matrixEdit(
     default:
       return null;
   }
-  const insert = `\n${rows.map((row) => row.join(" & ")).join(" \\\\\n")}\n`;
+  const spaced =
+    matrix.spaced ||
+    (display &&
+      isDisplayMatrix(matrix.environment) &&
+      matrix.rows.length === 1 &&
+      (action === "addRow" || action === "copyRow"));
+  const separator = spaced ? ` \\\\[${DISPLAY_MATRIX_ROW_GAP_EM}em]\n` : " \\\\\n";
+  const insert = `\n${rows.map((row) => row.join(" & ")).join(separator)}\n`;
   const updated = source.slice(0, matrix.from) + insert + source.slice(matrix.to);
   const target = matrixAt(updated, matrix.from)?.rows[rowIndex]?.[columnIndex];
   if (!target) return null;

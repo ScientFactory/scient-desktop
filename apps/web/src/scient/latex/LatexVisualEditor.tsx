@@ -1113,7 +1113,7 @@ function LatexMathView({
       : command
         ? commandEdit(command, source, selection)
         : id.startsWith("math.matrix.")
-          ? matrixEdit(source, selection, id.slice("math.matrix.".length) as MatrixAction)
+          ? matrixEdit(source, selection, id.slice("math.matrix.".length) as MatrixAction, display)
           : null;
     if (!edit) return false;
     const next = source.slice(0, edit.from) + edit.insert + source.slice(edit.to);
@@ -8470,6 +8470,9 @@ function LatexVisualEditorReady(
                         </div>
                         {readerHost ? searchBar : null}
                         <LatexMatrixDialog
+                          display={
+                            mathMenu?.placement !== "inline-math" && editingTarget === editor
+                          }
                           open={mathPicker === "matrix"}
                           environment={matrixEnvironment}
                           onEnvironmentChange={setMatrixEnvironment}

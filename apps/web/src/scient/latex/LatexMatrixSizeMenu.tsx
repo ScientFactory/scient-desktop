@@ -37,11 +37,13 @@ export function LatexMatrixSizeMenu({
   onEnvironmentChange,
   onInsert,
   disabled,
+  display,
 }: {
   environment: MatrixEnvironment;
   onEnvironmentChange: (value: MatrixEnvironment) => void;
   onInsert: (tex: string) => void;
   disabled: boolean;
+  display: boolean;
 }) {
   return (
     <DocumentGridSizeMenu
@@ -61,7 +63,7 @@ export function LatexMatrixSizeMenu({
         </div>
       }
       onInsert={({ rows, columns }) => {
-        const matrix = insertMatrix({ from: 0, to: 0 }, environment, rows, columns);
+        const matrix = insertMatrix({ from: 0, to: 0 }, environment, rows, columns, display);
         if (matrix) onInsert(matrix.insert);
       }}
     />
