@@ -558,7 +558,7 @@ describe("ProviderRuntimeManager", () => {
     }),
   );
 
-  it.effect("starts a switch to an older managed release only once it was accepted", () =>
+  it.effect("starts a switch to an older managed release without special acceptance", () =>
     Effect.gen(function* () {
       const runCount = yield* Ref.make(0);
       const olderPlan = {
@@ -577,27 +577,10 @@ describe("ProviderRuntimeManager", () => {
       assert.strictEqual(planned.olderThanSystem, true);
       assert.strictEqual(planned.systemVersion, "0.200.0");
 
-      // A client that starts what it planned without showing the decision.
-      const unaccepted = yield* manager
-        .start({
-          instanceId: INSTANCE,
-          action: "install",
-          catalogRevision: planned.catalogRevision,
-        })
-        .pipe(Effect.result);
-      assert.strictEqual(unaccepted._tag, "Failure");
-      if (unaccepted._tag === "Failure") {
-        assert.strictEqual(unaccepted.failure.reason, "runtime_plan_stale");
-        assert.include(unaccepted.failure.message, "0.147.0");
-        assert.include(unaccepted.failure.message, "0.200.0");
-      }
-      assert.strictEqual(yield* Ref.get(runCount), 0);
-
       yield* manager.start({
         instanceId: INSTANCE,
         action: "install",
         catalogRevision: planned.catalogRevision,
-        acceptOlderThanSystem: true,
       });
       yield* yieldUntil(Ref.get(runCount), (count) => count === 1);
     }),
@@ -607,7 +590,7 @@ describe("ProviderRuntimeManager", () => {
   // selected put it in use the same way.
   it.effect.each(
     (["install", "repair", "update"] as const).map((action) => ({
-      caseTitle: `starts ${action} over a system runtime of unknown version only once it was accepted`,
+      caseTitle: `starts ${action} over a system runtime of unknown version directly`,
       action,
     })),
   )("$caseTitle", ({ action }) =>
@@ -629,23 +612,11 @@ describe("ProviderRuntimeManager", () => {
       const { manager } = yield* makeHarness(actions, [
         { ...systemProvider, connection: { ...systemProvider.connection!, runtime: summary } },
       ]);
-      const start = (acceptOlderThanSystem: boolean) =>
-        manager.start({
-          instanceId: INSTANCE,
-          action,
-          catalogRevision: "reviewed:1:system-version-unknown",
-          ...(acceptOlderThanSystem ? { acceptOlderThanSystem } : {}),
-        });
-
-      const unaccepted = yield* start(false).pipe(Effect.result);
-      assert.strictEqual(unaccepted._tag, "Failure");
-      if (unaccepted._tag === "Failure") {
-        assert.strictEqual(unaccepted.failure.reason, "runtime_plan_stale");
-        assert.include(unaccepted.failure.message, "system version unknown");
-      }
-      assert.strictEqual(yield* Ref.get(runCount), 0);
-
-      yield* start(true);
+      yield* manager.start({
+        instanceId: INSTANCE,
+        action,
+        catalogRevision: "reviewed:1:system-version-unknown",
+      });
       yield* yieldUntil(Ref.get(runCount), (count) => count === 1);
     }),
   );

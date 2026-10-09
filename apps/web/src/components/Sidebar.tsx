@@ -1,3 +1,5 @@
+import type { ComponentProps } from "react";
+import { SidebarRowWindow } from "./sidebar/SidebarRowWindow";
 import { type EnvironmentId } from "@t3tools/contracts";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
@@ -1114,7 +1116,8 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
   ),
 };
 
-const SidebarThreadRow = memo(function SidebarThreadRow(props: {
+const SidebarThreadRowBody = memo(function SidebarThreadRowBody(props: {
+  onRetainChange: (open: boolean) => void;
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
   // Settled rows un-settle, snoozed rows wake, and cards settle.
@@ -1189,6 +1192,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
 }) {
   const {
     isRenaming,
+    onRetainChange,
     changeRequestSnapshot,
     onChangeRequestSnapshot,
     onCancelRename,
@@ -1565,6 +1569,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // hover actions, and the effect clears the raw state so the popover
   // doesn't resurrect if the button later remounts.
   const snoozeMenuOpen = snoozeMenuOpenRaw && showSnoozeButton;
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  useEffect(() => {
+    onRetainChange(snoozeMenuOpen || tooltipOpen);
+  }, [onRetainChange, snoozeMenuOpen, tooltipOpen]);
   useEffect(() => {
     if (!showSnoozeButton) setSnoozeMenuOpen(false);
   }, [showSnoozeButton]);
@@ -1622,22 +1630,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // dnd-kit props for the row root. Same bag on both variants: every row in
   // the list translates around the gap as the drag passes it.
   const sortable = props.sortable;
-  const sortableRootProps = sortable
-    ? {
-        ref: sortable.setNodeRef,
-        style: {
-          transform: CSS.Translate.toString(sortable.transform),
-          transition: sortable.transition,
-          // A zero-height boundary also makes dnd-kit scale the source to
-          // zero. Only projected peers use scaleY as a visibility sentinel.
-          visibility:
-            !sortable.isDragging && sortable.transform?.scaleY === 0
-              ? ("hidden" as const)
-              : undefined,
-        },
-        ...sortable.listeners,
-      }
-    : {};
   // Sweeps reuse the corresponding row-drop action badge.
   const destinationVerb = sortable?.isDragging
     ? props.dropVerb
@@ -1804,9 +1796,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
 
   if (variant === "slim") {
     return (
-      <li
-        data-thread-item={threadKey}
-        {...sortableRootProps}
+      <div
         {...(fileDropHandlers ?? {})}
         className={cn(
           // Matches the h-9 row so unrendered rows never shift the list when they paint.
@@ -1814,11 +1804,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           sortable?.isDragging && "relative z-20",
         )}
       >
-        <Tooltip disabled={sortable?.isDragging}>
+        <Tooltip disabled={sortable?.isDragging} onOpenChange={setTooltipOpen}>
           <TooltipTrigger
             render={
               <div
                 ref={rowRef}
+                data-sidebar-row-trigger
                 role="button"
                 tabIndex={0}
                 aria-label={accessibility.label}
@@ -1962,16 +1953,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
-      </li>
+      </div>
     );
   }
 
   const diff = latestRunDiff(thread);
 
   return (
-    <li
-      data-thread-item={threadKey}
-      {...sortableRootProps}
+    <div
       {...(fileDropHandlers ?? {})}
       className={cn(
         // Matches the h-[4.875rem] content box; the py-0.5 padding is added on top.
@@ -1979,11 +1968,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         sortable?.isDragging && "relative z-20",
       )}
     >
-      <Tooltip disabled={snoozeMenuOpen || sortable?.isDragging}>
+      <Tooltip disabled={snoozeMenuOpen || sortable?.isDragging} onOpenChange={setTooltipOpen}>
         <TooltipTrigger
           render={
             <div
               ref={rowRef}
+              data-sidebar-row-trigger
               role="button"
               tabIndex={0}
               aria-label={accessibility.label}
@@ -2227,7 +2217,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         </TooltipTrigger>
         {detailsTooltip}
       </Tooltip>
-    </li>
+    </div>
   );
 });
 
@@ -2240,7 +2230,69 @@ function latestRunDiff(
   return null;
 }
 
-const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
+const SidebarThreadRow = memo(function SidebarThreadRow(
+  props: Omit<ComponentProps<typeof SidebarThreadRowBody>, "onRetainChange">,
+) {
+  const threadRef = scopeThreadRef(props.thread.environmentId, props.thread.id);
+  const sortable = props.sortable;
+  const accessibility = resolveSidebarRowAccessibility({
+    title: props.thread.title,
+    statusLabel: null,
+    projectDisplayName: props.projectDisplayName,
+    isActive: props.isActive,
+  });
+  return (
+    <SidebarRowWindow
+      data-thread-item={scopedThreadKey(threadRef)}
+      sortableRef={sortable?.setNodeRef}
+      {...sortable?.listeners}
+      style={{
+        transform: CSS.Translate.toString(sortable?.transform ?? null),
+        transition: sortable?.transition,
+        visibility:
+          !sortable?.isDragging && sortable?.transform?.scaleY === 0 ? "hidden" : undefined,
+      }}
+      className={cn(
+        "list-none",
+        props.variant === "card" ? "min-h-[5.125rem]" : "min-h-9",
+        sortable?.isDragging && "relative z-20",
+      )}
+      alwaysRender={
+        props.isActive || props.isRenaming || !!sortable?.isDragging || props.sweepAction !== null
+      }
+      placeholder={
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label={accessibility.label}
+          aria-current={accessibility.current}
+          className={cn(
+            "flex items-center px-2.5 text-sm",
+            props.variant === "card" ? "h-[5.125rem]" : "h-9",
+          )}
+          onClick={(event) => props.onThreadClick(event, threadRef)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              props.onThreadActivate(threadRef);
+            }
+          }}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            props.onContextMenu(threadRef, { x: event.clientX, y: event.clientY });
+          }}
+        >
+          <span className="truncate">{props.thread.title}</span>
+        </div>
+      }
+    >
+      {(retain) => <SidebarThreadRowBody {...props} onRetainChange={retain} />}
+    </SidebarRowWindow>
+  );
+});
+
+const SidebarSearchResultRowBody = memo(function SidebarSearchResultRowBody(props: {
+  onRetainChange: (open: boolean) => void;
   thread: SidebarThreadSummary;
   project: EnvironmentProject | null;
   projectDisplayName: string | null;
@@ -2326,12 +2378,13 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
     return () => window.removeEventListener("dragend", clearFileDrag);
   }, [isFileDragOver]);
   return (
-    <li role="presentation" className="list-none" {...fileDropHandlers}>
-      <Tooltip>
+    <div {...fileDropHandlers}>
+      <Tooltip onOpenChange={props.onRetainChange}>
         <TooltipTrigger
           render={
             <button
               ref={rowRef}
+              data-sidebar-row-trigger
               id={props.resultId}
               type="button"
               role="option"
@@ -2391,7 +2444,60 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           terminalProcessCount={runningTerminalIds.length}
         />
       </Tooltip>
-    </li>
+    </div>
+  );
+});
+
+const SidebarSearchResultRow = memo(function SidebarSearchResultRow(
+  props: Omit<ComponentProps<typeof SidebarSearchResultRowBody>, "onRetainChange">,
+) {
+  const accessibility = resolveSidebarRowAccessibility({
+    title: props.thread.title,
+    statusLabel: null,
+    projectDisplayName: props.projectDisplayName,
+    isActive: props.isRouteActive,
+  });
+  return (
+    <SidebarRowWindow
+      role="presentation"
+      className="list-none"
+      alwaysRender={props.isHighlighted || props.isRouteActive}
+      placeholder={
+        <button
+          id={props.resultId}
+          type="button"
+          role="option"
+          tabIndex={-1}
+          aria-selected={props.isHighlighted}
+          aria-current={accessibility.current}
+          aria-label={accessibility.label}
+          onMouseMove={props.onHighlight}
+          onClick={props.onSelect}
+          className="flex min-h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1 text-left text-sm text-sidebar-muted-foreground/75 outline-none"
+        >
+          {props.project ? <span className="size-4 shrink-0" aria-hidden /> : null}
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="flex min-w-0 items-center gap-2.5">
+              <span className="min-w-0 flex-1 truncate">{props.thread.title}</span>
+              <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
+                {threadTimeLabel(props.thread)}
+              </span>
+            </span>
+            {props.searchMatch ? (
+              <ThreadSearchMatchExcerpt
+                match={{
+                  source: props.searchMatch.source,
+                  snippet: props.searchMatch.snippet,
+                  query: props.searchQuery,
+                }}
+              />
+            ) : null}
+          </span>
+        </button>
+      }
+    >
+      {(retain) => <SidebarSearchResultRowBody {...props} onRetainChange={retain} />}
+    </SidebarRowWindow>
   );
 });
 

@@ -1,3 +1,4 @@
+import { useSettingsIntentPreload } from "../../components/settings/useSettingsIntentPreload";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { ChevronRightIcon } from "lucide-react";
@@ -73,6 +74,7 @@ export function useScientSettingsNavigation(
   items: ReadonlyArray<{ to: SettingsPath; label: string }>,
 ) {
   const navigate = useNavigate();
+  const preloadSettings = useSettingsIntentPreload();
   const { isMobile, setOpenMobile } = useSidebar();
   const resolvedPathname = useRouterState({ select: (state) => state.resolvedLocation?.pathname });
   const [expandedSettingsPath, setExpandedSettingsPath] = useState<SettingsPath | null>(null);
@@ -168,6 +170,8 @@ export function useScientSettingsNavigation(
                       visiblePageSectionIds.has(section.targetId) &&
                         "font-medium text-sidebar-foreground",
                     )}
+                    onMouseEnter={() => preloadSettings(item.to, section.targetId)}
+                    onFocus={() => preloadSettings(item.to, section.targetId)}
                     onClick={() => handlePageSectionClick(item.to, section.targetId)}
                   >
                     <span className="ms-0.5">{section.label}</span>

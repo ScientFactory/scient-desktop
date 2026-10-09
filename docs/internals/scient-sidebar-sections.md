@@ -28,6 +28,22 @@ Everything in upstream-owned files is a mount, listed under [Seams](#seams).
 
 ## Decisions and invariants
 
+### Row lifetime and layout
+
+The Status and Sections lists retain each thread's lightweight row slot and
+sortable target. Expensive row controls and subscriptions mount only near the
+scroll viewport. The open, renaming, dragged, focused or interacting row stays
+mounted; a menu keeps its trigger alive until it closes. All rows retain their
+titles for find-in-page and accessibility.
+
+Card and slim slots use the same rem-based dimensions as their full bodies.
+Search results preserve their title and optional excerpt layout rather than
+assuming a fixed height. One observer per scroll viewport serves both body
+visibility and live-data leases, and releases its targets when rows leave the
+list. Section markers and direct row children remain available to sorting and
+FLIP motion measurements. This bounds the full bodies; the sortable slots and
+list-level geometry work still grow with the list size.
+
 ### Data
 
 **Membership is thread state; the catalog is a setting.**

@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeReadline from "node:readline";
+import { writeAcpReplayStatus } from "./acpReplayStatus.ts";
 
 interface ReplayEntry {
   readonly type: "emit_inbound" | "expect_outbound" | "runtime_exit";
@@ -57,7 +58,7 @@ const pendingClientRequestIds = new Map<string, string | number>();
 const pendingAgentRequestMethods = new Map<string, string>();
 
 function writeStatus(failure?: unknown): void {
-  NodeFS.writeFileSync(
+  writeAcpReplayStatus(
     replayStatusPath,
     JSON.stringify({
       scenario: transcript.scenario,
@@ -65,7 +66,6 @@ function writeStatus(failure?: unknown): void {
       total: transcript.entries.length,
       ...(failure === undefined ? {} : { failure }),
     }),
-    "utf8",
   );
 }
 

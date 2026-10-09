@@ -21,6 +21,13 @@ import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import {
+  mutateRetainedFile,
+  assertRootBinding,
+  type RetainedMutationInput,
+  type RetainedMutationResult,
+  type RetainedMutationHooks,
+} from "./RetainedFileMutation.ts";
 import type * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import {
   WorkspaceFilePathEscapeError,
@@ -48,8 +55,24 @@ export interface WorkspaceCreateBinaryFileInput {
   readonly bytes: Uint8Array;
 }
 
+export interface WorkspaceRetainedFileMethods {
+  /** Durably retain the displaced file, never overwrite or delete it in place. Reuse id to recover. */
+  readonly replaceFileRetained: (
+    input: RetainedMutationInput,
+  ) => Effect.Effect<
+    RetainedMutationResult,
+    WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+  >;
+  readonly removeFileRetained: (
+    input: Omit<RetainedMutationInput, "bytes">,
+  ) => Effect.Effect<
+    RetainedMutationResult,
+    WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+  >;
+}
+
 /** The Scient mutation methods WorkspaceFileSystem serves beside its reads. */
-export interface WorkspaceFileMutationMethods {
+export interface WorkspaceFileMutationMethods extends WorkspaceRetainedFileMethods {
   /** Resolve the canonical destination used by a workspace write. */
   readonly inspectWriteTarget: (
     input: Pick<ProjectWriteFileInput, "cwd" | "relativePath">,
@@ -85,6 +108,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   readonly workspacePaths: WorkspacePaths.WorkspacePaths["Service"];
   readonly workspaceEntries: WorkspaceEntries.WorkspaceEntries["Service"];
   readonly readFile: WorkspaceFileSystem["Service"]["readFile"];
+  readonly retainedHooks?: RetainedMutationHooks;
 }) {
   const { fileSystem, path, workspacePaths, workspaceEntries, readFile } = deps;
   const writeSemaphoresRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
@@ -654,5 +678,65 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     );
   });
 
-  return { createBinaryFile, inspectWriteTarget, renameFile, writeFile };
+  const replaceFileRetained: WorkspaceRetainedFileMethods["replaceFileRetained"] = Effect.fn(
+    "WorkspaceFileSystem.replaceFileRetained",
+  )(function* (input) {
+    const checkRoot = () =>
+      Effect.tryPromise({
+        try: () => assertRootBinding(input.cwd, input.expectedRootIdentity),
+        catch: (cause) =>
+          new WorkspaceFileSystemOperationError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: input.cwd,
+            operationPath: input.cwd,
+            operation: "realpath-workspace-root",
+            cause,
+          }),
+      });
+    yield* checkRoot();
+    const initial = yield* resolveRealWriteTarget(input);
+    const semaphore = yield* writeSemaphoreFor(initial.realTargetPath);
+    return yield* semaphore
+      .withPermits(1)(
+        Effect.gen(function* () {
+          yield* checkRoot();
+          const current = yield* revalidateWriteTarget(input, initial.realTargetPath);
+          if (current.traversesSymlink)
+            return yield* new WorkspaceFileSystemOperationError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: current.realTargetPath,
+              operationPath: current.realTargetPath,
+              operation: "realpath-target",
+              cause: new Error("Retained mutations refuse symlink paths."),
+            });
+          const result = yield* Effect.tryPromise({
+            try: () => mutateRetainedFile(input, current.realTargetPath, deps.retainedHooks),
+            catch: (cause) =>
+              new WorkspaceFileSystemOperationError({
+                workspaceRoot: input.cwd,
+                relativePath: input.relativePath,
+                resolvedPath: current.realTargetPath,
+                operationPath: current.realTargetPath,
+                operation: "write-file",
+                cause,
+              }),
+          });
+          yield* workspaceEntries.refresh(input.cwd);
+          return result;
+        }),
+      )
+      .pipe(Effect.uninterruptible);
+  });
+  const removeFileRetained: WorkspaceRetainedFileMethods["removeFileRetained"] = (input) =>
+    replaceFileRetained({ ...input, bytes: null });
+  return {
+    createBinaryFile,
+    inspectWriteTarget,
+    renameFile,
+    writeFile,
+    replaceFileRetained,
+    removeFileRetained,
+  };
 });

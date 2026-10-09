@@ -2,6 +2,10 @@ import { EnvironmentId, type ProjectReadFileResult } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import type { MarkdownPersistenceTransport } from "./markdownPersistenceTransport";
+import type {
+  MarkdownDraftCheckpoint,
+  MarkdownDraftCheckpointStore,
+} from "./markdownDraftCheckpoint";
 
 vi.mock("./markdownPersistenceTransport", () => ({ createMarkdownPersistenceTransport: vi.fn() }));
 
@@ -948,4 +952,468 @@ it("keeps file admission available when optional recovery storage is unavailable
     vi.clearAllTimers();
     vi.useRealTimers();
   }
+});
+
+describe("recovery copies across a rename", () => {
+  function memoryStore(initial?: MarkdownDraftCheckpoint) {
+    let value = initial;
+    const store: MarkdownDraftCheckpointStore = {
+      read: vi.fn(async () => value),
+      replace: vi.fn(async (_key, expected, next) => {
+        if (value?.token !== expected) return false;
+        value = next;
+        return true;
+      }),
+    };
+    return { store, value: () => value, set: (next?: MarkdownDraftCheckpoint) => (value = next) };
+  }
+  function diskTransport(source: string) {
+    return () => ({
+      read: async () => ({ source, revision: `r${source}` }),
+      write: async () => ({ revision: "written" }),
+      classifyFailure: () => "terminal" as const,
+      subscribe: () => () => {},
+      project: () => {},
+    });
+  }
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("discards and removes a copy that proves it holds nothing", async () => {
+    const { store, value } = memoryStore({
+      token: "stale",
+      baselineSource: "old text",
+      baselineRevision: "rold",
+      draftSource: "old text",
+      publicationSource: null,
+      conflict: false,
+    });
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: store,
+      createTransport: diskTransport("new file"),
+    });
+    const lease = await registry.open(target);
+    expect(lease.getSnapshot()).toMatchObject({
+      draftSource: "new file",
+      conflict: null,
+      pending: false,
+    });
+    expect(value()).toBeUndefined();
+    lease.release();
+  });
+
+  it("keeps a conflict copy taken after an undo back to the baseline", async () => {
+    // A → B, the file became C, the user undid to A while the conflict was open.
+    const { store } = memoryStore({
+      token: "conflicted",
+      baselineSource: "A",
+      baselineRevision: "rA",
+      draftSource: "A",
+      publicationSource: null,
+      conflict: true,
+    });
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: store,
+      createTransport: diskTransport("C"),
+    });
+    const lease = await registry.open(target);
+    expect(lease.getSnapshot()).toMatchObject({
+      baselineSource: "A",
+      draftSource: "A",
+      conflict: { externalSource: "C" },
+    });
+    lease.release();
+  });
+
+  it("does not let a clean copy that could not be removed raise a conflict", async () => {
+    const stale: MarkdownDraftCheckpoint = {
+      token: "stale",
+      baselineSource: "old text",
+      baselineRevision: "rold",
+      draftSource: "old text",
+      conflict: false,
+    };
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: { read: async () => stale, replace: async () => false },
+      createTransport: diskTransport("new file"),
+    });
+    const lease = await registry.open(target);
+    expect(lease.getSnapshot()).toMatchObject({ draftSource: "new file", conflict: null });
+    lease.release();
+  });
+
+  it("writes no copy while a rename holds a clean document, and removes its copy once renamed", async () => {
+    const { store, value } = memoryStore();
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: store,
+      createTransport: diskTransport("A"),
+    });
+    const lease = registry.acquire(target, initial)!;
+    const release = lease.holdForRename()!;
+    expect(lease.getSnapshot().pending).toBe(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(store.replace).not.toHaveBeenCalled();
+    lease.release();
+    expect(registry.forgetClean(target)).toBe(true);
+    release();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(value()).toBeUndefined();
+  });
+
+  it("makes a new file under the old name wait until the old copy is gone", async () => {
+    let finish!: () => void;
+    let stored: MarkdownDraftCheckpoint | undefined;
+    const store: MarkdownDraftCheckpointStore = {
+      read: vi.fn(async () => stored),
+      replace: vi.fn(async (_key, expected, next) => {
+        if (next !== undefined) await new Promise<void>((done) => (finish = done));
+        if (stored?.token !== expected) return false;
+        stored = next;
+        return true;
+      }),
+    };
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: store,
+      createTransport: diskTransport("A"),
+    });
+    const lease = registry.acquire(target, initial)!;
+    // An edit is saved, but its recovery copy is still being written.
+    expect(lease.change("B", 0)).toBe(true);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(await lease.flushNow()).toBe(true);
+    lease.release();
+    expect(registry.forgetClean(target)).toBe(true);
+    // Another file now takes the old name while the old copy is still in flight.
+    let admitted = false;
+    const reopening = registry.open(target).then((next) => {
+      admitted = true;
+      return next;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(admitted).toBe(false);
+    finish();
+    const next = await reopening;
+    expect(stored).toBeUndefined();
+    expect(next.getSnapshot()).toMatchObject({ conflict: null, pending: false });
+    next.release();
+  });
+
+  it("carries removals still running across a hot reload", async () => {
+    let finish!: () => void;
+    const old = new MarkdownPersistenceRegistry();
+    Object.defineProperty(old, "generation", { value: undefined });
+    (old as unknown as { retiring: Map<string, Promise<void>> }).retiring.set(
+      "key",
+      new Promise<void>((done) => (finish = done)),
+    );
+    const next = adoptRendererRegistry(old, () => new MarkdownPersistenceRegistry());
+    expect(next.current).toBe(true);
+    const carried = (next.registry as unknown as { retiring: Map<string, Promise<void>> }).retiring;
+    expect(carried.has("key")).toBe(true);
+    finish();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(carried.has("key")).toBe(false);
+  });
+});
+
+describe("moving an open document in place", () => {
+  const renamed: MarkdownPersistenceTarget = { ...target, relativePath: "renamed.md" };
+  function files() {
+    const disk = new Map<string, { source: string; revision: string }>([
+      [target.relativePath, { source: "A", revision: "rA" }],
+    ]);
+    const stops = new Map<string, ReturnType<typeof vi.fn>>();
+    const transports = new Map<string, MarkdownPersistenceTransport>();
+    const createTransport = vi.fn((at: MarkdownPersistenceTarget) => {
+      const path = at.relativePath;
+      const stop = vi.fn();
+      stops.set(path, stop);
+      const transport: MarkdownPersistenceTransport = {
+        write: vi.fn(async (intent: MarkdownSaveIntent) => {
+          const current = disk.get(path);
+          if (current?.revision !== intent.expectedRevision) throw "conflict";
+          const next = { source: intent.source, revision: `r${intent.source}` };
+          disk.set(path, next);
+          return { revision: next.revision };
+        }),
+        read: vi.fn(async () => {
+          const current = disk.get(path);
+          if (current === undefined) throw "missing";
+          return current;
+        }),
+        classifyFailure: (error) => (error === "conflict" ? "conflict" : "terminal"),
+        subscribe: vi.fn(() => stop),
+        project: vi.fn(),
+      };
+      transports.set(path, transport);
+      return transport;
+    });
+    return {
+      disk,
+      stops,
+      transports,
+      createTransport,
+      renameOnDisk() {
+        disk.set(renamed.relativePath, disk.get(target.relativePath)!);
+        disk.delete(target.relativePath);
+      },
+    };
+  }
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("moves the same session to the new path; saves go there and the lease stays live", async () => {
+    const fs = files();
+    const registry = new MarkdownPersistenceRegistry({
+      createTransport: fs.createTransport,
+      debounceMs: 250,
+    });
+    const owner = {};
+    const lease = await registry.open(target, owner);
+    const moved = vi.fn();
+    registry.onMoved(moved);
+    const move = lease.beginMove(renamed)!;
+    expect(move).not.toBeNull();
+    expect(lease.getSnapshot().editingBlocked).toBe(true);
+    expect(await move.preflight()).toBe("empty");
+    fs.renameOnDisk();
+    expect(move.commit()).toBe(true);
+    move.finish();
+    expect(moved).toHaveBeenCalledWith({ documentId: lease.documentId, from: target, to: renamed });
+    expect(lease.target).toEqual(renamed);
+    expect(registry.has(target)).toBe(false);
+    expect(registry.has(renamed)).toBe(true);
+    // The old path's watcher was stopped; the new one is watching.
+    expect(fs.stops.get(target.relativePath)).toHaveBeenCalled();
+    expect(fs.transports.get(renamed.relativePath)!.subscribe).toHaveBeenCalled();
+    expect(lease.getSnapshot().editingBlocked).toBe(false);
+    expect(lease.change("B", lease.getSnapshot().editVersion)).toBe(true);
+    expect(await lease.flushNow()).toBe(true);
+    expect(fs.disk.get(renamed.relativePath)?.source).toBe("B");
+    expect(fs.transports.get(target.relativePath)!.write).not.toHaveBeenCalled();
+    // The same document: reopening the new path gives a lease on it.
+    const again = await registry.open(renamed, owner);
+    expect(again.documentId).toBe(lease.documentId);
+    again.release();
+    lease.release();
+  });
+
+  it("refuses to move when another view holds the document, or anything is unsettled", async () => {
+    const fs = files();
+    const registry = new MarkdownPersistenceRegistry({ createTransport: fs.createTransport });
+    const owner = {};
+    const lease = await registry.open(target, owner);
+    // No owner: cannot prove that no other view holds it.
+    const anonymous = await registry.open(target);
+    expect(lease.beginMove(renamed)).toBeNull();
+    anonymous.release();
+    const other = await registry.open(target, {});
+    expect(lease.beginMove(renamed)).toBeNull();
+    other.release();
+    // Unsaved edits: the rename hold refuses.
+    expect(lease.change("B", 0)).toBe(true);
+    expect(lease.beginMove(renamed)).toBeNull();
+    expect(await lease.flushNow()).toBe(true);
+    // Pending editor input.
+    expect(lease.retainPendingInput({ message: "typing", payload: null })).toBe(true);
+    expect(lease.beginMove(renamed)).toBeNull();
+    expect(lease.retainPendingInput(null)).toBe(true);
+    // Another kind of document at the destination.
+    expect(lease.beginMove({ ...renamed, relativePath: "renamed.tex" })).toBeNull();
+    // The destination is already open.
+    fs.disk.set("taken.md", { source: "T", revision: "rT" });
+    const taken = await registry.open({ ...target, relativePath: "taken.md" }, owner);
+    expect(lease.beginMove({ ...target, relativePath: "taken.md" })).toBeNull();
+    taken.release();
+    // Settled again: it may move.
+    const move = lease.beginMove(renamed);
+    expect(move).not.toBeNull();
+    move!.finish();
+    expect(lease.getSnapshot().editingBlocked).toBe(false);
+    lease.release();
+  });
+
+  it("changes nothing when the move cannot be installed, and releases the hold once", async () => {
+    const fs = files();
+    let failCreation = false;
+    const registry = new MarkdownPersistenceRegistry({
+      createTransport: (at) => {
+        if (failCreation) throw new Error("no transport");
+        return fs.createTransport(at);
+      },
+    });
+    const lease = await registry.open(target, {});
+    const move = lease.beginMove(renamed)!;
+    failCreation = true;
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(move.commit()).toBe(false);
+    logged.mockRestore();
+    expect(lease.target).toEqual(target);
+    expect(registry.has(target)).toBe(true);
+    expect(registry.has(renamed)).toBe(false);
+    move.finish();
+    move.finish();
+    expect(lease.getSnapshot().editingBlocked).toBe(false);
+    lease.release();
+  });
+
+  it("reports a destination recovery copy, or unreadable storage, as not empty", async () => {
+    const fs = files();
+    const copy: MarkdownDraftCheckpoint = {
+      token: "t",
+      baselineSource: "X",
+      baselineRevision: "rX",
+      draftSource: "Y",
+    };
+    for (const [read, expected] of [
+      [async () => copy, "occupied"],
+      [
+        async () => {
+          throw new Error("unreadable");
+        },
+        "unknown",
+      ],
+    ] as const) {
+      const registry = new MarkdownPersistenceRegistry({
+        createTransport: fs.createTransport,
+        checkpointStore: {
+          read: vi.fn(async (key: string) => (key.includes("renamed.md") ? read() : undefined)),
+          replace: vi.fn(async () => true),
+        },
+      });
+      const lease = await registry.open(target, {});
+      const move = lease.beginMove(renamed)!;
+      expect(await move.preflight()).toBe(expected);
+      move.finish();
+      lease.release();
+    }
+  });
+
+  it("makes admission at either path wait until the move has ended", async () => {
+    const fs = files();
+    const registry = new MarkdownPersistenceRegistry({ createTransport: fs.createTransport });
+    const owner = {};
+    const lease = await registry.open(target, owner);
+    const move = lease.beginMove(renamed)!;
+    let admitted = false;
+    const waiting = registry.open(renamed, owner).then((next) => {
+      admitted = true;
+      return next;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(admitted).toBe(false);
+    fs.renameOnDisk();
+    expect(move.commit()).toBe(true);
+    move.finish();
+    const next = await waiting;
+    expect(next.documentId).toBe(lease.documentId);
+    next.release();
+    lease.release();
+  });
+
+  it("does not move while the old name's recovery copy cannot be removed", async () => {
+    const fs = files();
+    const records = new Map<string, MarkdownDraftCheckpoint>();
+    let refuseRemoval = false;
+    const store: MarkdownDraftCheckpointStore = {
+      read: vi.fn(async (key) => records.get(key)),
+      replace: vi.fn(async (key, expected, next) => {
+        if (next === undefined && refuseRemoval) throw new Error("storage busy");
+        if (records.get(key)?.token !== expected) return false;
+        if (next) records.set(key, next);
+        else records.delete(key);
+        return true;
+      }),
+    };
+    const registry = new MarkdownPersistenceRegistry({
+      createTransport: fs.createTransport,
+      checkpointStore: store,
+      debounceMs: 60_000,
+    });
+    const lease = await registry.open(target, {});
+    // Unsaved work is copied, then saved; the copy's removal is still due.
+    expect(lease.change("B", 0)).toBe(true);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(records.size).toBe(1);
+    expect(await lease.flushNow()).toBe(true);
+    refuseRemoval = true;
+    // Neither route may rename while the copy stays: the ordinary rename asks too.
+    const logged0 = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await lease.settleRecoveryCopy!()).toBe(false);
+    logged0.mockRestore();
+    const move = lease.beginMove(renamed)!;
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await move.preflight()).toBe("unknown");
+    logged.mockRestore();
+    move.finish();
+    // Removal works again: the copy goes first, then the move may proceed.
+    refuseRemoval = false;
+    expect(await lease.settleRecoveryCopy!()).toBe(true);
+    const again = lease.beginMove(renamed)!;
+    expect(await again.preflight()).toBe("empty");
+    expect(records.size).toBe(0);
+    again.finish();
+    lease.release();
+  });
+
+  it("keeps a file's document id when it is reopened, and gives the old name a new one after a move", async () => {
+    const fs = files();
+    const registry = new MarkdownPersistenceRegistry({
+      createTransport: fs.createTransport,
+      cleanTtlMs: 10,
+    });
+    const first = await registry.open(target, {});
+    const id = first.documentId;
+    first.release();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(registry.has(target)).toBe(false);
+    const reopened = await registry.open(target, {});
+    expect(reopened.documentId).toBe(id);
+    const move = reopened.beginMove(renamed)!;
+    fs.renameOnDisk();
+    expect(move.commit()).toBe(true);
+    move.finish();
+    expect(reopened.documentId).toBe(id);
+    fs.disk.set(target.relativePath, { source: "new file", revision: "rnew" });
+    const other = await registry.open(target, {});
+    expect(other.documentId).not.toBe(id);
+    other.release();
+    reopened.release();
+  });
+
+  it("moves the recovery copy's home: the old writer retires, the new one writes at the new path", async () => {
+    const fs = files();
+    const records = new Map<string, MarkdownDraftCheckpoint>();
+    const store: MarkdownDraftCheckpointStore = {
+      read: vi.fn(async (key) => records.get(key)),
+      replace: vi.fn(async (key, expected, next) => {
+        if (records.get(key)?.token !== expected) return false;
+        if (next) records.set(key, next);
+        else records.delete(key);
+        return true;
+      }),
+    };
+    const registry = new MarkdownPersistenceRegistry({
+      createTransport: fs.createTransport,
+      checkpointStore: store,
+      debounceMs: 60_000,
+    });
+    const lease = await registry.open(target, {});
+    const move = lease.beginMove(renamed)!;
+    fs.renameOnDisk();
+    expect(move.commit()).toBe(true);
+    move.finish();
+    expect(lease.change("B", lease.getSnapshot().editVersion)).toBe(true);
+    await vi.advanceTimersByTimeAsync(200);
+    const keys = [...records.keys()];
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toContain("renamed.md");
+    lease.release();
+  });
 });

@@ -131,7 +131,10 @@ import { useMarkdownPersistenceLease } from "~/scient/markdownEditor/persistence
 import { useMarkdownPersistenceGuards } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceGuards";
 import { useMarkdownSourcePersistence } from "~/scient/markdownEditor/persistence/useMarkdownSourcePersistence";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
-import { documentSessionIsCurrent } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
+import {
+  documentIdentity,
+  documentSessionIsCurrent,
+} from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
 import {
   ScientFileFreshnessNotices,
@@ -183,6 +186,7 @@ import {
   workspaceAssetResource,
 } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
+import { useInPlaceRename } from "~/scient/fileSurfaces/useInPlaceRename";
 import {
   getOptimisticProjectFileQueryData,
   setProjectFileQueryData,
@@ -206,6 +210,8 @@ interface FilePreviewPanelProps {
   latexPresentationRequest: LatexFilePresentationRequest | null;
   latexRootRelativePath: string | null;
   onOpenFile: (relativePath: string) => void;
+  /** The open file was moved in place: its tab follows it, keeping its state. */
+  onFileMoved?: (fromPath: string, toPath: string) => void;
   onOpenFileSource: (relativePath: string, line?: number, options?: OpenFileOptions) => void;
   onHtmlPresentationRequestHandled: (
     relativePath: string,
@@ -546,10 +552,20 @@ function useFileLineReveal(
   relativePath: string | null,
   revealLine: number | null,
   revealRequestId: number,
-): FilePostRender {
+): { readonly onPostRender: FilePostRender; readonly move: (from: string, to: string) => void } {
   const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
-
-  return useCallback<FilePostRender>(
+  // SCIENT-FORK:START — an in-place rename carries a handled reveal along, never replays it
+  const move = useCallback(
+    (from: string, to: string) => {
+      const state = revealStatesByPath.get(from);
+      if (state === undefined) return;
+      revealStatesByPath.delete(from);
+      revealStatesByPath.set(to, state);
+    },
+    [revealStatesByPath],
+  );
+  // SCIENT-FORK:END
+  const onPostRender = useCallback<FilePostRender>(
     (fileContainer, instance, phase) => {
       if (relativePath === null) return;
 
@@ -707,6 +723,7 @@ function useFileLineReveal(
     },
     [revealStatesByPath, relativePath, revealLine, revealRequestId],
   );
+  return { onPostRender, move };
 }
 
 const createFileEditor: EditorFactory<FileCommentAnnotationGroup, undefined> = (
@@ -901,6 +918,13 @@ function EditableFileEditor({
   const [externalFile, setExternalFile] = useState(() =>
     editableFileContents(environmentId, cwd, relativePath, contents),
   );
+  // SCIENT-FORK:START — a document session's source undo belongs to the document,
+  // which keeps its id across an in-place rename and across reopening the file.
+  const [fileEditStateKey] = useState(() => `scient-file:${environmentId}:${cwd}:${relativePath}`);
+  const editStateKey = externalPersistence
+    ? `scient-document:${documentIdentity(externalPersistence)}`
+    : fileEditStateKey;
+  // SCIENT-FORK:END
   const [editedContents, setEditedContents] = useState<string | null>(null);
   if (contents !== (editedContents ?? externalFile.contents)) {
     setExternalFile(editableFileContents(environmentId, cwd, relativePath, contents));
@@ -1250,7 +1274,7 @@ function EditableFileEditor({
           <File<FileCommentAnnotationGroup>
             file={externalFile}
             edit={editable && !editingBlocked && !restorationBlocked}
-            editStateKey={`scient-file:${environmentId}:${cwd}:${relativePath}`}
+            editStateKey={editStateKey}
             editorOptions={editorOptions}
             onEditChange={handleEditChange}
             options={{
@@ -1408,6 +1432,7 @@ export default function FilePreviewPanel({
   latexPresentationRequest,
   latexRootRelativePath,
   onOpenFile,
+  onFileMoved,
   onOpenFileSource,
   onHtmlPresentationRequestHandled,
   onLatexPresentationRequestHandled,
@@ -1725,7 +1750,40 @@ export default function FilePreviewPanel({
       }),
     [absolutePath, cwd, environmentId, relativePath, threadRef.threadId],
   );
-  const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
+  const { onPostRender: onFilePostRender, move: moveFileLineReveal } = useFileLineReveal(
+    relativePath,
+    revealLine,
+    revealRequestId,
+  );
+  // SCIENT-FORK:START — an open Markdown document renames in place, keeping its editor
+  const { moveInPlace, surfaceGeneration } = useInPlaceRename({
+    threadRef,
+    environmentId,
+    cwd,
+    relativePath,
+    lease: markdownLease,
+    // Markdown only for now; other document kinds keep the ordinary rename.
+    canMove: (from, to) => isScientMarkdownDocumentPath(from) && isScientMarkdownDocumentPath(to),
+    reopen: (from, to, revision) =>
+      applyScientMarkdownRename({
+        environmentId,
+        cwd,
+        relativePath: from,
+        fileData: file.data,
+        destinationRelativePath: to,
+        revision,
+        onOpenFile,
+      }),
+    moveTab: (from, to) => (onFileMoved ? onFileMoved(from, to) : onOpenFile(to)),
+    moveViewState: (from, to) => {
+      setHandledReveal((current) => (current?.path === from ? { ...current, path: to } : current));
+      moveFileLineReveal(from, to);
+    },
+  });
+  const documentSurfaceKey = markdownLease
+    ? `${documentIdentity(markdownLease)}:${surfaceGeneration}`
+    : relativePath;
+  // SCIENT-FORK:END
   const handlePendingChange = useCallback(
     (path: string, pending: boolean) => {
       setPendingPaths((current) => {
@@ -1862,6 +1920,13 @@ export default function FilePreviewPanel({
                       {...(markdownLease
                         ? { beforeRename: () => markdownLease.holdForRename() }
                         : {})}
+                      {...(moveInPlace ? { moveInPlace } : {})}
+                      {...(markdownLease
+                        ? {
+                            prepareRename: () =>
+                              markdownLease.settleRecoveryCopy?.() ?? Promise.resolve(true),
+                          }
+                        : {})}
                       environmentId={environmentId}
                       cwd={cwd}
                       relativePath={relativePath}
@@ -1961,7 +2026,7 @@ export default function FilePreviewPanel({
       ) : null}
       {markdownLease ? (
         <ScientMarkdownPersistenceNotice
-          key={relativePath}
+          key={documentSurfaceKey}
           persistence={markdownLease}
           {...(!renderMarkdown ? { onReturnToRich: () => applyMarkdownViewChange(true) } : {})}
           {...(markdownRefreshCopy ? { refreshCopy: markdownRefreshCopy } : {})}
@@ -2200,7 +2265,7 @@ export default function FilePreviewPanel({
             ) : usesScientMarkdownEditor && markdownLease ? (
               <ScientSurfaceSuspense>
                 <ScientMarkdownFileSurface
-                  key={relativePath}
+                  key={documentSurfaceKey}
                   environmentId={environmentId}
                   cwd={cwd}
                   relativePath={relativePath}
@@ -2218,7 +2283,7 @@ export default function FilePreviewPanel({
               </ScientSurfaceSuspense>
             ) : markdownLease ? (
               <MarkdownSourceSurface
-                key={relativePath}
+                key={documentSurfaceKey}
                 persistence={markdownLease}
                 environmentId={environmentId}
                 cwd={cwd}

@@ -1,9 +1,11 @@
-/**
- * True when the desktop app runs without its local server. The renderer then
- * has no primary environment: it skips primary auth and discovery and only
- * connects to saved remote environments. Always false in browsers and on
- * desktop builds predating the setting.
- */
+/** The local backend mode is fixed for a window lifetime; changes relaunch the app. */
+const disabledByWindow = new WeakMap<Window, boolean>();
+
+/** Browsers and desktop bridges predating the flag retain a local environment. */
 export function isLocalEnvironmentDisabled(): boolean {
-  return window.desktopBridge?.getLocalEnvironmentEnabled?.() === false;
+  const cached = disabledByWindow.get(window);
+  if (cached !== undefined) return cached;
+  const disabled = window.desktopBridge?.getLocalEnvironmentEnabled?.() === false;
+  disabledByWindow.set(window, disabled);
+  return disabled;
 }

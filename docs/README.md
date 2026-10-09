@@ -185,3 +185,7 @@ Follow their linked successors for current behavior.
 - [Relay observability](./operations/relay-observability.md)
 - [Mobile app store screenshots](./operations/mobile-app-store-screenshots.md)
 - [Inherited mobile source](../apps/mobile/README.md)
+
+## Manuscript integration foundation
+
+- [Overleaf manuscript engine](./internals/scient-overleaf-engine.md) — unmounted foundation and local application invariants.

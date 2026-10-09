@@ -38,15 +38,37 @@ not a mobile recovery guarantee.
 An unheld native queue advances automatically, one message at a time, after
 the current turn finishes successfully and its finalization settles. Ordinary
 completion never requires Resume. Native Stop, interruption and failed starts
-hold delivery. Becoming idle, starting another message, or successfully finishing
-that later message does not implicitly resume a held queue. The head row's Send
-uses `queue.resume(runId)`; Resume explicitly releases the queue. Idle reorder
-remains available, including before a provider session exists. Send releases
-only the held head; the tail stays held until Resume. Provider-start failure
-retains the queued message for Retry.
+hold delivery. Becoming idle does not resume a held queue.
+
+Three things release a held queue, and each releases every queued run:
+
+- **Send on a row.** While the queue is held and the thread is idle, every user
+  row offers Send (on mobile too). It dispatches `queue.resume(runId)`: the
+  server moves automatic delegated completions first, then the chosen message,
+  then the other messages in their current order, and releases them all. The
+  shared rule is `canSendQueuedRun` (`@t3tools/shared/scientQueuedRunSend`);
+  the server refuses a run that is not queued, an automatic delivery, a busy
+  thread, or a usage-limited thread. There is no held header or Resume queue.
+- **A direct send.** A user message sent with `start_immediately` and no
+  delivery intent (or `auto`) that starts its own run releases every queued run
+  in the same command (`scient-fork/QueuedRunSend.ts`). A Queue submission or a
+  Steer that starts at once on an idle thread, Restart, a manual or scheduled
+  continuation, automatic deliveries, notifications and scheduled tasks leave a
+  held queue held.
+- **Resume.** `queue.resume` without a run, from the composer's empty-draft
+  Resume, still releases the whole queue.
+
+A usage limit refuses Send and Resume. The composer's **Resume thread** continues
+the limited thread first and then resumes the queue. Clients hide Send for the
+limit only when the server-built thread shell confirms it, so a windowed
+snapshot never hides a Send the server would accept. Idle reorder remains
+available, including before a provider session exists. Provider-start failure
+retains the queued message for Retry, which is Send on that message.
 Holds follow the exact attempt's original failure or interruption boundary.
-Delayed checkpoint or cleanup echoes from an older attempt cannot override a
-newer explicit Send/Resume or hold work admitted after that terminal boundary.
+The terminal hold reaction treats a release written by `queue.resume` or by a
+direct send's `message.dispatch` as newer than an earlier terminal, so a late
+reaction or a delayed checkpoint echo cannot hold the queue again; a failure or
+Stop after the release still holds it.
 Queue limits remain 20 items and 64 MiB, including actual owned attachment bytes.
 
 Pending admission previews belong only above the composer. A durable queued
@@ -209,9 +231,11 @@ Manual acceptance should exercise these cases in an isolated candidate:
    steer rows using the existing controls.
 5. Stop with multiple messages queued. Visit another task, return, and restart
    the candidate: nothing should send. Send a new ordinary message; the existing
-   queue remains held after that answer. Reorder while idle, then Send the head;
-   only that row is released. Resume the tail and verify automatic FIFO delivery
-   after each successful finalized answer. Check failed delivery/Retry separately. Exercise reload
+   queue is released and follows that message automatically. Stop again with
+   several queued messages, reorder while idle, then Send a later held row;
+   that row starts first and the remaining queue is released in its retained
+   order (automatic completions first). Verify delivery after each successful
+   finalized answer and check failed delivery/Retry separately. Exercise reload
    during editing, another window, and lost responses; inspect for missing or
    duplicated user messages and retained drafts.
 6. Stash and restore an edit through the usual menu. Reload immediately after

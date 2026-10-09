@@ -63,6 +63,7 @@ it.layer(testLayer)("CursorDriver app composition", (it) => {
       const instance = yield* registry.getInstance(instanceId);
       expect(instance).toBeDefined();
       expect(instance?.managedRuntimeActions).toBeDefined();
+      expect(instance?.connectionActions?.methods).toEqual(["cursor_browser"]);
 
       const snapshot = yield* instance!.snapshot.getSnapshot;
       expect(snapshot.connection?.runtime).toBeDefined();
@@ -96,23 +97,34 @@ it.layer(testLayer)("CursorDriver app composition", (it) => {
         configMap,
       });
 
-      const snapshotFor = (id: ProviderInstanceId) =>
+      const instanceFor = (id: ProviderInstanceId) =>
         Effect.gen(function* () {
           const instance = yield* registry.getInstance(id);
           expect(instance).toBeDefined();
-          return yield* instance!.snapshot.getSnapshot;
+          return instance!;
+        });
+      const snapshotFor = (id: ProviderInstanceId) =>
+        Effect.gen(function* () {
+          const instance = yield* instanceFor(id);
+          return yield* instance.snapshot.getSnapshot;
         });
 
       const withoutApiKey = yield* snapshotFor(noApiKeyId);
       const withLegacyToken = yield* snapshotFor(legacyTokenId);
       const withApiKey = yield* snapshotFor(apiKeyId);
+      const withoutApiKeyInstance = yield* instanceFor(noApiKeyId);
+      const withLegacyTokenInstance = yield* instanceFor(legacyTokenId);
+      const withApiKeyInstance = yield* instanceFor(apiKeyId);
 
       expect(withoutApiKey.connection?.methods).toEqual(["cursor_browser"]);
       expect(withoutApiKey.setup?.canAuthenticate).toBe(true);
+      expect(withoutApiKeyInstance.connectionActions?.methods).toEqual(["cursor_browser"]);
       expect(withLegacyToken.connection?.methods).toEqual(["cursor_browser"]);
       expect(withLegacyToken.setup?.canAuthenticate).toBe(true);
+      expect(withLegacyTokenInstance.connectionActions?.methods).toEqual(["cursor_browser"]);
       expect(withApiKey.connection?.methods).toEqual([]);
       expect(withApiKey.setup?.canAuthenticate).toBe(false);
+      expect(withApiKeyInstance.connectionActions).toBeUndefined();
     }).pipe(Effect.scoped),
   );
 });

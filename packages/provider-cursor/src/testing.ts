@@ -11,3 +11,5 @@ export {
   cursorSdkModelSelection,
   makeCursorAgentOptions,
 } from "./server/adapter.ts";
+export { makeCursorAuth, type CursorAuth, type CursorAuthOptions } from "./server/auth.ts";
+export { InMemoryCredentialStore } from "./server/sdk.ts";

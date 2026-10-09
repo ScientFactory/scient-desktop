@@ -4,18 +4,36 @@ import * as NodeHttp from "node:http";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, expect } from "@effect/vitest";
 import { ProviderInstanceId, type CustomModelProtocol } from "@t3tools/contracts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { makePiDriver } from "@t3tools/provider-pi/server";
+import { PiSettings } from "@t3tools/provider-pi/settings";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import { HttpClient } from "effect/http";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Fiber from "effect/Fiber";
 import { makePiCustomModelsClientFactory } from "./PiCustomModels.ts";
+import { PiRpcProtocolError } from "./PiRpcClient.ts";
 import { rejectNonPostRequest } from "./PiLiveTestHelpers.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 
 const binary = process.env.SCIENT_PI_TEST_BINARY;
 const json = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodePiSettings = Schema.decodeSync(PiSettings);
+const piDriverTestLayer = Layer.mergeAll(
+  layerTestProviderHost({ runBackgroundWork: false }),
+  IdAllocator.layer,
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make(() => Effect.die("Unexpected HTTP")),
+  ),
+).pipe(Layer.provideMerge(NodeServices.layer));
 const decodeBody = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
@@ -427,13 +445,42 @@ for (const protocol of ["openai-completions", "openai-responses", "anthropic-mes
             instanceId,
             root,
           );
-          // SCIENT-FORK:START — the `generateThreadTitle` hop through this factory is
-          // GONE, not migrated. `makePiTextGeneration` no longer accepts an RPC client
-          // factory: upstream rewrote it to spawn Pi directly for JSON output and
-          // dropped the injected-client path (that module is outside this task's
-          // scope). The custom-models client itself is unchanged and is still
-          // asserted directly below via `factory(spawn)`.
-          // SCIENT-FORK:END
+          // Exercise the package's public text-generation surface through a
+          // Pi instance, with the same custom-model RPC factory used by sessions.
+          const driver = makePiDriver({
+            resolveRuntime: () =>
+              Effect.succeed({
+                effectiveConfig: decodePiSettings({ binaryPath: binary!, enabled: true }),
+                effectiveEnvironment: environment,
+                makeRpcClient: (options) =>
+                  factory(options).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new PiRpcProtocolError({ detail: "Pi custom-model RPC failed.", cause }),
+                    ),
+                  ),
+                composeInstance: (instance) => Effect.succeed(instance),
+              }),
+          });
+          const instance = yield* driver.create({
+            instanceId,
+            displayName: "Pi custom model live test",
+            accentColor: undefined,
+            environment: [],
+            enabled: true,
+            config: decodePiSettings({ binaryPath: binary!, enabled: true }),
+          });
+          for (const next of keys) {
+            key = next;
+            expect(
+              yield* instance.textGeneration.generateThreadTitle({
+                cwd: root,
+                message: "Connection test",
+                modelSelection: createModelSelection(instanceId, "scient_fixture/synthetic"),
+              }),
+            ).toEqual({ title: "Connection ready" });
+          }
+          expect(requests).toHaveLength(keys.length);
           const spawn = {
             command: binary!,
             args: [
@@ -468,9 +515,9 @@ for (const protocol of ["openai-completions", "openai-responses", "anthropic-mes
             expect(json(completed)).not.toContain("literal-test-key");
             yield* client.close();
           }
-          expect(requests).toHaveLength(keys.length);
+          expect(requests).toHaveLength(keys.length * 2);
           expect(requests.map((r) => r.key)).toEqual(
-            keys.map((key) => {
+            [...keys, ...keys].map((key) => {
               const value = key ?? "scient-keyless";
               return protocol === "anthropic-messages" ? value : "Bearer " + value;
             }),
@@ -484,9 +531,9 @@ for (const protocol of ["openai-completions", "openai-responses", "anthropic-mes
           expect(auth).not.toContain("literal");
           expect(yield* fs.exists(root + "/profile/models.json")).toBe(false);
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(piDriverTestLayer), Effect.provideService(HostProcessEnvironment, {})),
     // The Intel macOS runner needs more than 45 seconds to exercise every
-    // credential form through the real Pi executable.
+    // credential form twice through the real Pi executable.
     { timeout: 90_000 },
   );
 }

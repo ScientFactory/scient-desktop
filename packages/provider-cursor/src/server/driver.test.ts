@@ -270,7 +270,6 @@ it.layer(testLayer)("CursorDriver", (it) => {
       });
     }).pipe(Effect.scoped),
   );
-
   it.effect("keeps managed install, update, and sign-in actions in host composition", () =>
     Effect.gen(function* () {
       const hostLifecycle = {

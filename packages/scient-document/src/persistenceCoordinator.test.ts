@@ -580,3 +580,41 @@ describe("DocumentPersistenceCoordinator.applyEdit", () => {
     );
   });
 });
+
+describe("DocumentPersistenceCoordinator.pendingOnlyForRename", () => {
+  it("is true only while a rename alone holds a clean document", () => {
+    const h = fixture();
+    expect(h.coordinator.pendingOnlyForRename()).toBe(false);
+    const release = h.coordinator.holdForRename()!;
+    expect(h.coordinator.getSnapshot().pending).toBe(true);
+    expect(h.coordinator.pendingOnlyForRename()).toBe(true);
+    // Another reason to be pending alongside the rename: no longer rename-only.
+    const resume = h.coordinator.suspendExternalUpdates();
+    expect(h.coordinator.pendingOnlyForRename()).toBe(false);
+    resume();
+    expect(h.coordinator.pendingOnlyForRename()).toBe(true);
+    release();
+    expect(h.coordinator.pendingOnlyForRename()).toBe(false);
+  });
+});
+
+describe("DocumentPersistenceCoordinator.replaceIo", () => {
+  it("lets only the current rename's holder redirect saves and reads", async () => {
+    const h = fixture();
+    const io = {
+      write: vi.fn(async () => ({ revision: "moved-1" })),
+      read: vi.fn(async () => ({ source: "a=1\nb=1\n", revision: "r0" })),
+      classifyFailure,
+    };
+    expect(h.coordinator.replaceIo(() => {}, io)).toBe(false);
+    const release = h.coordinator.holdForRename()!;
+    expect(h.coordinator.replaceIo(() => {}, io)).toBe(false);
+    expect(h.coordinator.replaceIo(release, io)).toBe(true);
+    release();
+    expect(h.coordinator.replaceIo(release, io)).toBe(false);
+    h.coordinator.change("a=2\nb=1\n");
+    expect(await h.coordinator.flushNow()).toBe(true);
+    expect(io.write).toHaveBeenCalledOnce();
+    expect(h.write).not.toHaveBeenCalled();
+  });
+});

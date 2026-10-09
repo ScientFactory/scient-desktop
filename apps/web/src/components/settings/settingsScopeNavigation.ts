@@ -30,3 +30,13 @@ export const retainSettingsScope: SearchMiddleware<SettingsScopeSearch> = ({ sea
   );
   return { ...previousScope, ...result };
 };
+
+/** Only scope changes and an explicit restore reset the mounted Settings page. */
+export function settingsContentResetKey(search: SettingsScopeSearch, restoreSignal: number) {
+  return JSON.stringify([
+    search.project ?? null,
+    search.machine ?? null,
+    search.checkout ?? null,
+    restoreSignal,
+  ]);
+}

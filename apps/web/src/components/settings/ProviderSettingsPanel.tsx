@@ -588,9 +588,21 @@ export function EnvironmentProviderSettings({
   });
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
-  const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | null>(
-    targetInstanceId ?? null,
-  );
+  const [selection, setSelection] = useState({
+    targetInstanceId,
+    selectedInstanceId: targetInstanceId ?? null,
+  });
+  // A new deep link is new selection intent; status refreshes retain manual picks.
+  const selectedInstanceId =
+    selection.targetInstanceId === targetInstanceId
+      ? selection.selectedInstanceId
+      : (targetInstanceId ?? null);
+  if (selection.targetInstanceId !== targetInstanceId) {
+    setSelection({ targetInstanceId, selectedInstanceId });
+  }
+  const setSelectedInstanceId = (instanceId: ProviderInstanceId) => {
+    setSelection({ targetInstanceId, selectedInstanceId: instanceId });
+  };
   const [connectionRequest, setConnectionRequest] = useState<{
     readonly instanceId: ProviderInstanceId;
     readonly initialRuntimeAction?: ProviderManagedRuntimeAction;

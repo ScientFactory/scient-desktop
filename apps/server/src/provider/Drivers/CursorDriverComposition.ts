@@ -12,11 +12,13 @@ import {
   type CursorRuntimeResolverInput,
   type CursorRuntimeResolution,
 } from "@t3tools/provider-cursor/server";
+import * as Crypto from "effect/Crypto";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Effect from "effect/Effect";
 
 import * as ServerConfig from "../../config.ts";
 import { makeCursorInstanceRuntime } from "../../scient/providerLifecycle/CursorManagedRuntimeActions.ts";
+import { makeCursorSdkConnectionActions } from "../../scient/providerLifecycle/CursorSdkConnectionActions.ts";
 import { turnStartErrorKeepingReceipt } from "../../orchestration-v2/scient-provider/NativeTurnReceipts.ts";
 import * as CursorAgentSdk from "@t3tools/provider-cursor/server/CursorAgentSdk";
 import type { ScientProviderInstance } from "../ScientProviderInstance.ts";
@@ -24,9 +26,13 @@ import type { ScientProviderInstance } from "../ScientProviderInstance.ts";
 /** App-specific services needed to resolve and compose the managed runtime. */
 export type CursorDriverCompositionEnv =
   | ServerConfig.ServerConfig
-  | ChildProcessSpawner.ChildProcessSpawner;
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto;
 
-type CursorDriverCompositionExtension = Pick<ScientProviderInstance, "managedRuntimeActions">;
+type CursorDriverCompositionExtension = Pick<
+  ScientProviderInstance,
+  "connectionActions" | "managedRuntimeActions"
+>;
 
 const decorateCursorSnapshot = (
   snapshot: ServerProvider,
@@ -75,9 +81,16 @@ const resolveRuntime = (
           cursorRuntime.connectionMethods,
         ),
       composeInstance: (instance) =>
-        Effect.succeed({
-          ...instance,
-          managedRuntimeActions: cursorRuntime.managedRuntime.actions,
+        Effect.gen(function* () {
+          const connectionActions =
+            cursorRuntime.connectionMethods.includes("cursor_browser") && instance.auth
+              ? yield* makeCursorSdkConnectionActions(instance.auth)
+              : undefined;
+          return {
+            ...instance,
+            ...(connectionActions ? { connectionActions } : {}),
+            managedRuntimeActions: cursorRuntime.managedRuntime.actions,
+          };
         }),
       turnStartError: (turnIdentity, cause) =>
         turnStartErrorKeepingReceipt(CursorAgentSdk.CURSOR_PROVIDER, turnIdentity)(cause),

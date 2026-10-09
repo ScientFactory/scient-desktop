@@ -919,8 +919,11 @@ export const ServerLifecycleWelcomePayload = Schema.Struct({
 export type ServerLifecycleWelcomePayload = typeof ServerLifecycleWelcomePayload.Type;
 
 export const ServerLifecycleLegacyThreadMigrationPayload = Schema.Struct({
-  status: Schema.Union([Schema.Literal("running"), Schema.Literal("complete")]),
+  status: Schema.Literals(["running", "complete"]),
   totalThreadCount: NonNegativeInt,
+  pendingThreadCount: Schema.optional(NonNegativeInt),
+  // Keep failure readable by clients whose status decoder predates this field.
+  failed: Schema.optional(Schema.Boolean),
 });
 export type ServerLifecycleLegacyThreadMigrationPayload =
   typeof ServerLifecycleLegacyThreadMigrationPayload.Type;

@@ -640,7 +640,8 @@ describe("Markdown source persistence integration", () => {
     const snapshot = lease.getSnapshot();
     const document = EditStateManager.get(
       "file",
-      `scient-file:${target.environmentId}:${target.cwd}:${target.relativePath}`,
+      // A document session's source state belongs to the document.
+      `scient-document:${lease.documentId}`,
     )!.document;
     const history = structuredClone(document.history);
     expect(history.undoStack).toHaveLength(2);
@@ -716,7 +717,8 @@ describe("Markdown source persistence integration", () => {
     expect(snapshot.draftSource).toBe("ABCX");
     const retained = EditStateManager.get(
       "file",
-      `scient-file:${target.environmentId}:${target.cwd}:${target.relativePath}`,
+      // A document session's source state belongs to the document.
+      `scient-document:${lease.documentId}`,
     );
     expect(retained?.document.getText()).toBe("AB");
     expect(retained?.document.canUndo).toBe(true);
@@ -813,7 +815,8 @@ describe("Markdown source persistence integration", () => {
     expect(lease.getSnapshot().draftSource).toBe("ABC");
     const retained = EditStateManager.get(
       "file",
-      `scient-file:${target.environmentId}:${target.cwd}:${target.relativePath}`,
+      // A document session's source state belongs to the document.
+      `scient-document:${lease.documentId}`,
     );
     expect(retained?.document.getText()).toBe("AB");
     receipt = new Promise<void>((resolve) => {
@@ -929,7 +932,8 @@ describe("Markdown source persistence integration", () => {
       await act(async () => receipt);
       const retained = EditStateManager.get(
         "file",
-        `scient-file:${target.environmentId}:${target.cwd}:${target.relativePath}`,
+        // A document session's source state belongs to the document.
+        `scient-document:${lease.documentId}`,
       );
       expect(retained?.document.getText()).toBe("AB");
       expect(retained?.document.canUndo).toBe(true);

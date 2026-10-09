@@ -147,14 +147,9 @@ export function managedRuntimeDowngradeMessage(input: {
 }
 
 /**
- * What a plan says about switching from the system runtime to the managed
- * release: the user's own choice of the managed copy, offered whatever the two
- * releases are and decided with both in view. When Scient does not know the
- * system runtime's release (it reported none, or the instance is disabled and
- * its tool is not run), the plan says so instead of implying an order. What
- * the user has to decide (an older release, an unknown one) is part of the
- * plan's revision, so a plan made before that changed (the system tool was
- * upgraded meanwhile) is not carried out: the next plan is a new decision.
+ * Diagnostics for choosing the qualified managed release instead of a system
+ * runtime. Unknown versions stay explicit; comparison metadata is bound to the
+ * catalog revision so a changed plan must be refreshed before execution.
  */
 export function managedRuntimeSwitchPlan(input: {
   readonly providerName: string;
