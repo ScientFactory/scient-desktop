@@ -65,7 +65,7 @@ describe("renameOpenDocument", () => {
   it("renames the ordinary way when another tab shows the destination", async () => {
     const h = fixture();
     h.setFree(false);
-    expect(await h.run()).toEqual({ kind: "legacy-required" });
+    expect(await h.run()).toEqual({ kind: "legacy-required", reason: "destination" });
     expect(h.rename).not.toHaveBeenCalled();
   });
 
@@ -116,7 +116,11 @@ describe("renameOpenDocument", () => {
   it("asks nothing of the server when the destination holds a recovery copy", async () => {
     for (const state of ["occupied", "unknown"] as const) {
       const h = fixture({ move: { preflight: vi.fn(async () => state) } });
-      expect(await h.run()).toEqual({ kind: "legacy-required" });
+      expect(await h.run()).toEqual(
+        state === "occupied"
+          ? { kind: "legacy-required", reason: "destination" }
+          : { kind: "legacy-required" },
+      );
       expect(h.rename).not.toHaveBeenCalled();
       expect(h.move.finish).toHaveBeenCalledOnce();
     }

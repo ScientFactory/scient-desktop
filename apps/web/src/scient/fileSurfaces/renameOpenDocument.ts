@@ -67,7 +67,11 @@ export type RenameOpenDocumentResult =
    * An in-place move is not possible right now; nothing was changed and the
    * server was not asked. The caller decides whether to rename the ordinary way.
    */
-  | { readonly kind: "legacy-required" }
+  | {
+      readonly kind: "legacy-required";
+      /** `destination`: another view or recovery copy holds the new name; try another. */
+      readonly reason?: "destination";
+    }
   /** The server refused or failed; nothing was changed. */
   | { readonly kind: "failed"; readonly cause: unknown };
 
@@ -106,14 +110,17 @@ export async function renameOpenDocument(input: {
   const { lease, destination } = input;
   if (!canMoveInPlace(lease)) return { kind: "legacy-required" };
   const documentId = documentIdentity(lease);
-  if (!participantsReady(documentId) || !(input.destinationFree?.() ?? true))
-    return { kind: "legacy-required" };
+  if (!(input.destinationFree?.() ?? true))
+    return { kind: "legacy-required", reason: "destination" };
+  if (!participantsReady(documentId)) return { kind: "legacy-required" };
   const move = lease.beginMove(destination);
   if (move === null) return { kind: "legacy-required" };
   try {
     // An editor may have started composing between the check and the hold.
     if (!participantsReady(documentId)) return { kind: "legacy-required" };
-    if ((await move.preflight()) !== "empty") return { kind: "legacy-required" };
+    const destinationCopy = await move.preflight();
+    if (destinationCopy === "occupied") return { kind: "legacy-required", reason: "destination" };
+    if (destinationCopy !== "empty") return { kind: "legacy-required" };
     const result = await input.rename(lease.getSnapshot().baselineRevision);
     if (!result.ok) return { kind: "failed", cause: result.cause };
     const renamed = {

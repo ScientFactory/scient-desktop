@@ -1239,8 +1239,10 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const renameMovable =
     !renameBlocked &&
     manualRootSelection === null &&
-    !resolution.pending &&
+    // A save refreshes the resolution; until it answers, the last one for this
+    // same file stands (includes are checked in the source below).
     resolution.result?._tag === "resolved" &&
+    resolution.result.sourceRelativePath === props.relativePath &&
     resolution.result.complete &&
     resolution.result.reason === "self-document" &&
     resolution.result.rootRelativePath === props.relativePath &&

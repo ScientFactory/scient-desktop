@@ -312,6 +312,8 @@ export function useNewDocument(input: {
               newDocumentCandidate(stem, entry.format, attempt, folder),
             );
             if (outcome.kind === "legacy-required") {
+              // Another view holds this name: the next name may be free.
+              if (outcome.reason === "destination") continue;
               setMoveRefused(from);
               return;
             }
