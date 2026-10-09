@@ -254,9 +254,9 @@ Approvability guard and privacy-link withholding remain. The receipt records
 two independent source reviews, complete local qualification, actual-app visual
 evidence and the remaining hosted/platform boundaries.
 
-The current locally qualified alignment is recorded in
+The preceding locally qualified alignment is recorded in
 [the 2a93885bac receipt](docs/internals/t3-upstream-sync-20261008-2a93885bac.md)
-and `upstream-state.json` ([Scient PR #487](https://github.com/ScientFactory/scient-desktop/pull/487)).
+([Scient PR #487](https://github.com/ScientFactory/scient-desktop/pull/487)).
 It receives all 63 subsequent first-parent official commits through
 `2a93885bac5798a79d55069a0b5dc3e53c6176bc` onto owned base
 `565b3bd15cbb7660250e53b2421915d2f6bdebc5`. Literal merge
@@ -273,7 +273,7 @@ frozen history, managed runtime, privacy and publication boundaries remain.
 The receipt separates complete local qualification with exact affected-scope reuse,
 independent review and bounded stress from hosted CI and the user's visual acceptance.
 
-A candidate alignment through `ec80933ac8cd02fec5c97b342462ccc9567cdb1e`
+The current locally qualified alignment through `ec80933ac8cd02fec5c97b342462ccc9567cdb1e`
 is recorded in [the 2026-10-09 receipt](docs/internals/t3-upstream-sync-20261009-ec80933ac8.md)
 ([Scient PR #498](https://github.com/ScientFactory/scient-desktop/pull/498)).
 It receives the next 43 official first-parent commits, adopts shared provider packages,
@@ -283,8 +283,12 @@ unconfigured; showing a row does not enable, install or persist an instance.
 The receipt records complete local matrix execution, targeted requalification of
 conflicting test contracts, native smoke and platform/live-provider limits.
 Its specific callback-composition tradeoff reduces scoped unmarked inventory debt
-but increases added source lines in the fixed upstream host scope. That Codex
-proposition requires maintainer acceptance; the qualified cursor remains at `2a93885bac...`.
+but increases added source lines in the fixed upstream host scope. The maintainer
+accepted this bounded exception on 2026-10-10 and requested paired Scient comments
+at the application seams. Literal extension merge `eaa42295c2271f7b92acd7857615391dd54e783c`
+retains the exact official target; owned-main catch-up `873892c106e83f2a58ef502fa83aaaa2068fa1b1`
+retains main `c414ac935b49fccb026b5a6e01f4714246375d73` and its remote-server packaging contract.
+No publication authority or general extraction-line waiver is added.
 
 ## Receiving T3 updates
 

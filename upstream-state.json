@@ -6,24 +6,24 @@
   "officialDefaultBranch": "main",
   "updateMode": "thin-fork-merge",
   "candidateStatus": "active-public-desktop",
-  "integrationBase": "2a93885bac5798a79d55069a0b5dc3e53c6176bc",
-  "reviewedThrough": "2a93885bac5798a79d55069a0b5dc3e53c6176bc",
-  "reviewedAt": "2026-10-09",
-  "reviewRecord": "docs/internals/t3-upstream-sync-20261008-2a93885bac.md",
+  "integrationBase": "ec80933ac8cd02fec5c97b342462ccc9567cdb1e",
+  "reviewedThrough": "ec80933ac8cd02fec5c97b342462ccc9567cdb1e",
+  "reviewedAt": "2026-10-10",
+  "reviewRecord": "docs/internals/t3-upstream-sync-20261009-ec80933ac8.md",
   "verifiedBaseline": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTipAtBootstrap": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTagAtBootstrap": "v0.0.32-nightly.20260806.1012",
   "bootstrapBranch": "agent/d4-bootstrap-20260806",
   "bootstrapMerge": "3e8f7bc0e18be4a42c23b021e68bf30e3690bc4d",
   "bootstrapRecord": "docs/internals/scient-next-d4-bootstrap.md",
-  "lastRefreshBase": "565b3bd15cbb7660250e53b2421915d2f6bdebc5",
-  "lastRefreshPreviousOfficialTip": "b24f0fbba09d8623c896081b4ff70aa7190c8fda",
-  "lastRefreshOfficialTip": "2a93885bac5798a79d55069a0b5dc3e53c6176bc",
+  "lastRefreshBase": "0cf6e0bd85c3d6be221b70164d2601e0b8e83e15",
+  "lastRefreshPreviousOfficialTip": "2a93885bac5798a79d55069a0b5dc3e53c6176bc",
+  "lastRefreshOfficialTip": "ec80933ac8cd02fec5c97b342462ccc9567cdb1e",
   "lastRefreshOfficialTag": null,
-  "lastRefreshRangeCount": 63,
-  "lastRefreshMerge": "e0a46f2d5ace0b33fa4a8f714917f029f577db23",
-  "lastRefreshBranch": "codex/t3-sync-2a93885bac-20261008",
-  "lastRefreshVerifiedAt": "2026-10-09T06:47:20.070528Z",
+  "lastRefreshRangeCount": 43,
+  "lastRefreshMerge": "eaa42295c2271f7b92acd7857615391dd54e783c",
+  "lastRefreshBranch": "codex/t3-sync-101f8b2f55-20261009",
+  "lastRefreshVerifiedAt": "2026-10-09T23:36:05.760777Z",
   "historicalExceptions": [
     {
       "id": "t3-pr-5822-projectless-threads",
@@ -44,6 +44,6 @@
       "replacementMerge": null
     }
   ],
-  "lastRefreshOwnedMain": "91b9b7cb3f2ca0e777436fdca5a913addcb21ab0",
-  "lastRefreshOwnedMainMerge": "b75327a4359cfdb999ab6e0430bdf7af2c984363"
+  "lastRefreshOwnedMain": "c414ac935b49fccb026b5a6e01f4714246375d73",
+  "lastRefreshOwnedMainMerge": "873892c106e83f2a58ef502fa83aaaa2068fa1b1"
 }

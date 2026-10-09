@@ -499,3 +499,45 @@ profile was copied or reset and no other candidate or stable launcher changed.
 Startup/smoke and source review do not establish visual or real-provider
 acceptance. The candidate stays available for the user, and this PR remains held
 without merge, queue or auto-merge.
+
+## Accepted composition and delivery qualification — 2026-10-10
+
+The maintainer accepted the fixed-scope callback tradeoff and authorized a
+history-preserving merge after identifying the Scient host lines with comments.
+This supersedes the earlier structural hold; it does not grant release,
+publication, provider activation or a general host-line exception.
+
+Comment commit `29162e8fb9` adds narrow paired regions around Scient imports,
+typed callback seams and application instruction mounts in 12 TypeScript files.
+AST printing with comments removed is byte-identical to the preceding source for
+all 12 files, including Pi's generated extension source and literal prompt bytes.
+The final fixed-scope host metric at `873892c106e83f2a58ef502fa83aaaa2068fa1b1`
+is **4,339** lines: the reviewed 4,296 plus **43 net annotation-only lines**
+requested by the maintainer. The original composition exception remains +267;
+annotation-only accounting is recorded separately rather than represented as
+additional runtime plumbing. Generic upstream defaults remain unmarked.
+The independent exact-snapshot inventory for the same 21 paths reports **589
+unmarked findings, 64 marked findings and zero unresolved findings**, compared
+with extraction base 612/14/0 and pre-annotation candidate 604/46/0. This remains
+structural evidence, not a behavior test or globally activated debt ratchet.
+
+Owned main advanced with the remote-server packaging contract. Catch-up merge
+`873892c106e83f2a58ef502fa83aaaa2068fa1b1` has exact second parent
+`c414ac935b49fccb026b5a6e01f4714246375d73`; it merged without textual conflicts.
+The package builder, native qualification script, dependency owner and new
+qualification workflow match that main revision exactly. They add no publication
+permission, credential copying or automatic installation to the product.
+Focused release/package tests passed **43/43**, Windows/remote CI gate tests
+passed **5/5**, and scripts typecheck passed. Native Linux/Windows tarball
+execution remains hosted qualification, not a local macOS claim.
+
+Whole-repository formatting and lint passed with existing warnings. Literal
+provenance and all five default seam checks passed with the qualified cursor at
+`ec80933ac8cd02fec5c97b342462ccc9567cdb1e`. Runtime qualification remains the
+complete 36,082-test matrix plus the documented affected requalification at
+`511bc318c4`; comment-only source equivalence justifies reusing those unaffected
+results. This is not a new full-matrix run or a visual/live-provider acceptance
+claim. The current pointer and state advance to the exact official extension
+merge `eaa42295c2271f7b92acd7857615391dd54e783c`, retaining all historical
+bootstrap and exception records. Protected hosted checks still qualify the final
+pushed revision before GitHub's ordinary history-preserving merge queue delivers it.
