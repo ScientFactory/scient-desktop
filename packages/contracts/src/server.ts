@@ -904,8 +904,9 @@ export const ServerLifecycleWelcomePayload = Schema.Struct({
 export type ServerLifecycleWelcomePayload = typeof ServerLifecycleWelcomePayload.Type;
 
 export const ServerLifecycleLegacyThreadMigrationPayload = Schema.Struct({
-  status: Schema.Union([Schema.Literal("running"), Schema.Literal("complete")]),
+  status: Schema.Literals(["running", "complete", "failed"]),
   totalThreadCount: NonNegativeInt,
+  pendingThreadCount: Schema.optional(NonNegativeInt),
 });
 export type ServerLifecycleLegacyThreadMigrationPayload =
   typeof ServerLifecycleLegacyThreadMigrationPayload.Type;

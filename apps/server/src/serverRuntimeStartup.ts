@@ -85,6 +85,44 @@ interface QueuedCommand {
   readonly run: Effect.Effect<void, never>;
 }
 
+export const importLegacyTranscriptsWithStatus = Effect.fn("importLegacyTranscriptsWithStatus")(
+  function* (totalThreadCount: number) {
+    const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
+    yield* importer.importPendingTranscripts.pipe(
+      Effect.tap((summary) =>
+        summary.importedThreadCount === 0
+          ? Effect.void
+          : Effect.logInfo("Hydrated legacy v1 thread transcripts", summary),
+      ),
+    );
+    yield* importer.pendingThreadCount.pipe(
+      Effect.flatMap((pendingThreadCount) =>
+        lifecycleEvents.publish({
+          version: 1,
+          type: "legacyThreadMigration",
+          payload: {
+            status: pendingThreadCount === 0 ? "complete" : "failed",
+            totalThreadCount,
+            pendingThreadCount,
+          },
+        }),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not verify legacy thread restoration", { cause }).pipe(
+          Effect.andThen(
+            lifecycleEvents.publish({
+              version: 1,
+              type: "legacyThreadMigration",
+              payload: { status: "failed", totalThreadCount },
+            }),
+          ),
+        ),
+      ),
+    );
+  },
+);
+
 type CommandReadinessState = "pending" | "ready" | ServerRuntimeStartupError;
 
 interface CommandGate {
@@ -572,18 +610,7 @@ const make = (options?: StartupOptions) =>
       );
       yield* (
         legacyMigrationThreadCount > 0
-          ? importPendingTranscripts.pipe(
-              Effect.tap(() =>
-                lifecycleEvents.publish({
-                  version: 1,
-                  type: "legacyThreadMigration",
-                  payload: {
-                    status: "complete",
-                    totalThreadCount: legacyMigrationThreadCount,
-                  },
-                }),
-              ),
-            )
+          ? importLegacyTranscriptsWithStatus(legacyMigrationThreadCount)
           : importPendingTranscripts
       ).pipe(forkParked);
 
