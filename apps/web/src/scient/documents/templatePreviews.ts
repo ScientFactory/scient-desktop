@@ -63,14 +63,33 @@ export function templatePicture(
 const DROPPED =
   "script, style, link, meta, iframe, frame, object, embed, base, form, audio, video, source, animate, animateMotion, animateTransform, set";
 
+/** CSS that can fetch something: a URL, an image function, or an import. */
+const LOADS = /url\s*\(|image-set\s*\(|image\s*\(|cross-fade\s*\(|element\s*\(|@import/iu;
+
+/**
+ * Inline styles that cannot fetch anything. Each declaration is read the way
+ * the browser parses it (escapes such as `u\72l(` decoded), so one that loads
+ * a resource is removed; if anything suspicious is still left in the attribute,
+ * the whole style goes.
+ */
+function keepStyleThatLoadsNothing(element: Element): void {
+  const style = (element as Partial<ElementCSSInlineStyle>).style;
+  if (style)
+    for (const property of Array.from(style))
+      if (LOADS.test(style.getPropertyValue(property))) style.removeProperty(property);
+  const left = element.getAttribute("style") ?? "";
+  if (!style || LOADS.test(left) || left.includes("\\")) element.removeAttribute("style");
+}
+
 /**
  * A page picture made safe to show: no element that runs or loads anything, no
- * event handler, no script URL, nothing editable or focusable, and no ids to
- * collide with the page around it.
+ * style or attribute that fetches a resource, no event handler, no script URL,
+ * nothing editable or focusable, and no ids to collide with the page around it.
  */
 export function sanitizePage(root: Element): void {
   for (const element of root.querySelectorAll(DROPPED)) element.remove();
   for (const element of [root, ...root.querySelectorAll("*")]) {
+    if (element.hasAttribute("style")) keepStyleThatLoadsNothing(element);
     // A copy: removing an attribute changes the live list.
     for (const attribute of Array.from(element.attributes)) {
       const name = attribute.name.toLowerCase();
@@ -85,7 +104,8 @@ export function sanitizePage(root: Element): void {
         name === "srcset" ||
         name === "poster" ||
         name === "background" ||
-        (name === "style" && /url\s*\(|@import/iu.test(attribute.value)) ||
+        // An SVG paint or filter may point only inside the picture (`url(#…)`).
+        (name !== "style" && /url\s*\(/iu.test(value) && !/url\s*\(\s*['"]?#/iu.test(value)) ||
         (name === "src" &&
           !(
             element.tagName.toLowerCase() === "img" &&
