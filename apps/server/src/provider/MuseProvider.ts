@@ -44,9 +44,11 @@ export const makePendingMuseProvider = Effect.fn("makePendingMuseProvider")(func
       version: null,
       status: "warning",
       auth: { status: "unknown" },
+      // SCIENT-FORK:START — preserve Scient-facing provider diagnostics.
       message: settings.enabled
         ? "Checking Muse Code CLI availability..."
         : "Muse Code is disabled in Scient settings.",
+      // SCIENT-FORK:END
     },
   });
 });
@@ -91,9 +93,11 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       version: null,
       status: "error",
       auth: { status: "unknown" },
+      // SCIENT-FORK:START — preserve Scient-facing provider diagnostics.
       message: missing
         ? "Muse Code CLI (`muse`) was not found. Install Muse Code and run `muse login` on this Scient server host."
         : "Failed to execute Muse Code CLI. Check its binary path on this Scient server host.",
+      // SCIENT-FORK:END
     });
   }
   if (Option.isNone(versionResult.success)) {
@@ -128,8 +132,10 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       version,
       status: "error",
       auth: { status: "unknown" },
+      // SCIENT-FORK:START — preserve Scient-facing provider diagnostics.
       message:
         "Muse Code SDK could not read the model catalog. Check your Muse installation and run `muse login` on this Scient server host.",
+      // SCIENT-FORK:END
     });
   }
   const models = catalog.success.value;
@@ -144,8 +150,10 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
         ? { status: "ready" }
         : {
             status: "warning",
+            // SCIENT-FORK:START — preserve Scient-facing provider diagnostics.
             message:
               "Muse Code returned no models. Run `muse login` on this Scient server host and refresh its status.",
+            // SCIENT-FORK:END
           }),
     },
     models,

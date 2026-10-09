@@ -91,6 +91,7 @@ export function fileBasename(path: string): string {
   return separatorIndex >= 0 ? trimmed.slice(separatorIndex + 1) : trimmed;
 }
 
+// SCIENT-FORK:START — canonical host paths preserve POSIX filename characters.
 const UNC_ROOT_PATTERN = /^\\\\[^\\/]+[\\/][^\\/]+/;
 const WINDOWS_DRIVE_ROOT_PATTERN = /^[A-Za-z]:(?=[\\/])/;
 
@@ -149,6 +150,7 @@ function portableSeparators(path: string): string {
     ? path.replaceAll("\\", "/")
     : path;
 }
+// SCIENT-FORK:END
 
 /**
  * The path relative to the workspace root, or null when the path is not inside
@@ -160,11 +162,13 @@ export function workspaceRelativeFilePath(
   workspaceRoot: string | null | undefined,
 ): string | null {
   if (!workspaceRoot) return null;
+  // SCIENT-FORK:START — resolve dot segments before workspace containment.
   const normalizedPath = portableSeparators(collapseAbsoluteFilePath(path));
   const normalizedRoot = portableSeparators(collapseAbsoluteFilePath(workspaceRoot)).replace(
     /\/+$/,
     "",
   );
+  // SCIENT-FORK:END
   const caseInsensitive = isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(workspaceRoot));
   const pathForCompare = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath;
   const rootForCompare = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;

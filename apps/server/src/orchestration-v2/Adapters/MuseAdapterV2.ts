@@ -1450,12 +1450,14 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
                 mcpServers: {
                   // Muse defaults to "required", which fails the whole run when T3's
                   // tools cannot be reached. The agent should still work without them.
+                  // SCIENT-FORK:START — preserve Scient public MCP identity.
                   scient: {
                     transport: "streamableHttp",
                     mode: "optional",
                     url: mcpSession.endpoint,
                     headers: { Authorization: mcpSession.authorizationHeader },
                   },
+                  // SCIENT-FORK:END
                 },
               }
             : undefined;
@@ -1986,7 +1988,9 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
               driver: MUSE_PROVIDER,
               providerThreadId: args.providerThread.id,
               checkpointId: args.target.checkpointId,
+              // SCIENT-FORK:START — preserve Scient-facing unsupported-operation copy.
               cause: "Muse Code does not support conversation rollback in Scient.",
+              // SCIENT-FORK:END
             }),
           ),
         forkThread: (args) =>
@@ -1994,7 +1998,9 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
             new ProviderAdapterForkThreadError({
               driver: MUSE_PROVIDER,
               providerThreadId: args.sourceProviderThread.id,
+              // SCIENT-FORK:START — preserve Scient-facing unsupported-operation copy.
               cause: "Muse Code does not support native forks in Scient.",
+              // SCIENT-FORK:END
             }),
           ),
       };

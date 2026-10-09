@@ -294,7 +294,11 @@ it.layer(NodeServices.layer)("Muse text generation", (it) => {
         .pipe(Effect.flip, Effect.forkChild);
       yield* Effect.promise(() => test.started);
       test.closeConnection();
-      expect(yield* Fiber.join(pending)).toMatchObject({ _tag: "TextGenerationError" });
+      expect(yield* Fiber.join(pending)).toMatchObject({
+        _tag: "TextGenerationError",
+        detail:
+          "Muse Code text generation failed. Check Muse login and availability on this Scient server host.",
+      });
       expect(test.host.close).toHaveBeenCalledOnce();
     }),
   );

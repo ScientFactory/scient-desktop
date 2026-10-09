@@ -1153,6 +1153,19 @@ describe("UsageService", () => {
             return text;
           });
 
+          // SCIENT-FORK:START — verify the service drains before its state directory closes.
+          // Registered before the migrated service: its LIFO shutdown finalizer
+          // must finish the pending v5 write before this check, while v4 still exists.
+          yield* Effect.addFinalizer(() =>
+            Effect.promise(async () => {
+              const persisted = decodeUnknownJsonString(
+                await NodeFSP.readFile(cachePath, "utf8"),
+              ) as { version: number };
+              assert.strictEqual(persisted.version, 5);
+              assert.strictEqual(await NodeFSP.readFile(legacyPath, "utf8"), legacy);
+            }),
+          );
+          // SCIENT-FORK:END
           const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
           // The live rollout re-parses at the ultrafast rate (10 x 6); the
           // deleted one keeps its saved v4 usage at the standard rate (20 x 1).
@@ -1167,6 +1180,9 @@ describe("UsageService", () => {
             legacy,
           );
         }).pipe(
+          // SCIENT-FORK:START — drain service writers inside the provided state-directory lifetime.
+          Effect.scoped,
+          // SCIENT-FORK:END
           Effect.provide(
             layerService({
               prefix: "usage-service-v4-upgrade-test",

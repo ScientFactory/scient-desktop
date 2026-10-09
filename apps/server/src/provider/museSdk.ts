@@ -76,7 +76,9 @@ export function museServeArgs(
 /** Scient MSP initialization; only full hosts ask for session MCP servers. */
 export function museInitializeParams(readOnly = false) {
   return {
+    // SCIENT-FORK:START — Scient public title retains the native MSP protocol identity.
     clientInfo: { name: "t3_code", title: "Scient", version: "1" },
+    // SCIENT-FORK:END
     capabilities: { requestedCapabilities: readOnly ? [] : ["sessionMcp"] },
   };
 }

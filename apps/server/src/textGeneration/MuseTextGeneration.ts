@@ -115,7 +115,9 @@ async function generateMuseText(
       await host.connection.command("userInput/cancel", {
         sessionId,
         userInputId: request.userInputId,
+        // SCIENT-FORK:START — preserve Scient-facing noninteractive cancellation copy.
         reason: "Scient text generation cannot request user input.",
+        // SCIENT-FORK:END
       });
     }
   };
@@ -159,7 +161,9 @@ async function generateMuseText(
   });
   host.connection.onProtocolError(rejectCompletion);
   host.connection.onServerRequest(async () => {
+    // SCIENT-FORK:START — preserve Scient-facing noninteractive approval copy.
     const error = new Error("Scient text generation cannot approve interactive requests.");
+    // SCIENT-FORK:END
     rejectCompletion(error);
     throw error;
   });
@@ -271,8 +275,10 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
         (cause) =>
           new TextGenerationError({
             operation,
+            // SCIENT-FORK:START — identify the Scient host in text-generation failure copy.
             detail:
-              "Muse Code text generation failed. Check Muse login and availability on this T3 server host.",
+              "Muse Code text generation failed. Check Muse login and availability on this Scient server host.",
+            // SCIENT-FORK:END
             cause,
           }),
       ),
