@@ -316,7 +316,6 @@ function NameLine(props: {
         aria-label="Document name"
         placeholder="Document name"
         value={value}
-        size={Math.max(value.length, 13)}
         spellCheck={false}
         onChange={(event) => setValue(event.target.value)}
         onFocus={() => setFocused(true)}
