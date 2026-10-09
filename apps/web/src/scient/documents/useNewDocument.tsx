@@ -5,6 +5,7 @@ import {
   type ReactNode,
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -44,6 +45,7 @@ import {
 import { NewDocumentOnPage, STRIP_ATTRIBUTE } from "./NewDocumentOnPage";
 import { syncCompanionFiles } from "./newDocumentCompanions";
 import {
+  companionsUnchanged,
   filesUnder,
   folderOf,
   freeFolderName,
@@ -124,7 +126,8 @@ export function useNewDocument(input: {
   readonly lease: MarkdownPersistenceLease | null;
   readonly snapshot: ReturnType<MarkdownPersistenceLease["getSnapshot"]> | null;
   readonly renameDisabled: boolean;
-  readonly onRenamed: (destinationRelativePath: string) => void;
+  /** A document Scient renamed or moved, by its old path (which may no longer be on screen). */
+  readonly onRenamed: (relativePath: string, destinationRelativePath: string) => void;
   /**
    * Renames the open document in place, keeping its editor, when this document
    * can move (`canMoveInPlace`). Otherwise the ordinary rename runs.
@@ -150,6 +153,12 @@ export function useNewDocument(input: {
   const inTitle = useCaretInTitle(entry !== null);
   const renaming = useRef(false);
   const switching = useRef(false);
+  // The document on screen now: work that finishes later puts the caret back
+  // only if its document is still the one showing.
+  const shown = useRef<string | null>(relativePath);
+  useLayoutEffect(() => {
+    shown.current = relativePath;
+  }, [relativePath]);
   const onRenamed = useEffectEvent(input.onRenamed);
   const moveInPlace = useEffectEvent((destination: string) => input.moveInPlace!(destination));
   // An in-place move was refused for this document: rename the ordinary way.
@@ -234,10 +243,11 @@ export function useNewDocument(input: {
   };
 
   /**
-   * A new document that is a folder takes its title's name: the files Scient
-   * made move first, the open document last. If anything fails, what moved
-   * moves back and the folder keeps its name. A folder holding anything else
-   * keeps its name too.
+   * A new document that is a folder takes its title's name. The open document
+   * is held first, so nothing on its page can change meanwhile; then the files
+   * Scient made move, each only as made, and the open document last. If an
+   * edit lands or a move fails, what moved moves back and the folder keeps its
+   * name. A folder holding anything else keeps its name too.
    */
   const moveFolderToTitle = useEffectEvent(async (stem: string) => {
     if (!key || !entry || !lease || !snapshot) return;
@@ -252,37 +262,43 @@ export function useNewDocument(input: {
     const name = await freeFolderName(commands, base, stem);
     if (name === null) return keepName();
     const newFolder = `${base}${name}/`;
-    const moved: { from: string; to: string; revision: string }[] = [];
-    const moveBack = async () => {
-      for (const file of moved.toReversed()) await move(file.to, file.from, file.revision);
-    };
-    for (const file of entry.companions) {
-      const to = newFolder + file.relativePath.slice(oldFolder.length);
-      const revision = await move(file.relativePath, to, file.revision);
-      if (revision === null || revision === "taken") {
-        await moveBack();
-        return keepName();
-      }
-      moved.push({ from: file.relativePath, to, revision });
-    }
     const caretBefore = caretOffsetInEditor();
     const release = lease.holdForRename();
-    if (!release) {
-      await moveBack();
-      return keepName();
+    if (!release) return keepName();
+    const written = () => newDocuments.get(key)?.settled !== false;
+    const moved: { from: string; to: string; revision: string }[] = [];
+    const giveUp = async () => {
+      let whole = true;
+      for (const file of moved.toReversed()) {
+        const back = await move(file.to, file.from, file.revision);
+        if (back === null || back === "taken") whole = false;
+      }
+      release();
+      keepName();
+      if (!whole)
+        toastManager.add({
+          type: "error",
+          title: "The thesis could not be moved back whole.",
+          description: `Its files are now split between ${oldFolder} and ${newFolder}.`,
+        });
+    };
+    for (const file of entry.companions) {
+      if (written()) return giveUp();
+      const to = newFolder + file.relativePath.slice(oldFolder.length);
+      const revision = await move(file.relativePath, to, file.revision);
+      if (revision === null || revision === "taken") return giveUp();
+      moved.push({ from: file.relativePath, to, revision });
     }
+    if (written()) return giveUp();
     const destination = `${newFolder}${FOLDER_DOCUMENT_MAIN}`;
     const revision = await move(key.relativePath, destination, snapshot.baselineRevision);
-    if (revision === null || revision === "taken") {
-      release();
-      await moveBack();
-      return keepName();
-    }
+    if (revision === null || revision === "taken") return giveUp();
     newDocuments.forget(key);
     templateEdits.move(key, { ...key, relativePath: destination });
     release();
-    onRenamed(destination);
-    if (caretBefore !== null) focusNewDocumentWhenOpen({ offset: caretBefore });
+    onRenamed(key.relativePath, destination);
+    if (caretBefore !== null && shown.current === destination)
+      focusNewDocumentWhenOpen({ offset: caretBefore });
   });
 
   useEffect(() => {
@@ -367,7 +383,7 @@ export function useNewDocument(input: {
               ...key,
               relativePath: result.value.destinationRelativePath,
             });
-            onRenamed(result.value.destinationRelativePath);
+            onRenamed(key.relativePath, result.value.destinationRelativePath);
             release();
             if (caret !== null) focusNewDocumentWhenOpen({ offset: caret });
             return;
@@ -385,132 +401,165 @@ export function useNewDocument(input: {
 
   /**
    * Into or out of a template that is a folder: the document is made again in
-   * its new place, the tab follows it there, and its old place, with every file
-   * it made, is removed while still exactly as made.
+   * its new place, the tab follows it there, and its old place is removed while
+   * still exactly as made; the files it made go only once the document itself
+   * is gone. Bound to the document it started on, whatever shows meanwhile.
+   * Returns the document's new place, or null.
    */
-  const relocate = useEffectEvent(
-    async (change: {
+  const relocate = async (
+    document: {
+      readonly key: NonNullable<typeof key>;
+      readonly entry: NonNullable<typeof entry>;
+      readonly lease: NonNullable<typeof lease>;
+    },
+    change: {
       readonly template: DocumentTemplateId;
       readonly language: NewDocumentLanguage;
       readonly name: string;
       readonly next: string;
       readonly revision: string;
-    }) => {
-      if (!key || !entry || !lease) return;
-      const commands = documentFiles.commandsFor(key);
-      const title = newDocumentTitle(change.next, "latex") || change.name.trim();
-      const placed = await placeNewDocument({
-        format: "latex",
-        base: newDocumentBase(key.relativePath, entry.template),
-        stem: title ? newDocumentStem(title) : untitledStem("latex", change.template),
-        template: change.template,
-        source: change.next,
-        commands,
-        skip: (relativePath) =>
-          pathHasLeftoverDrafts({ environmentId: key.environmentId, cwd: key.cwd, relativePath }),
-      });
-      if (!placed) {
-        toastManager.add({ type: "error", title: "The template could not be changed." });
-        return;
-      }
-      const undo = async () => {
-        for (const file of placed.companions)
-          await commands.remove(file, { removeEmptyFolders: true });
-        await commands.remove(placed, { removeEmptyFolders: true });
-      };
-      const release = lease.holdForRename();
-      if (!release) return undo();
-      setProjectFileQueryData(
-        key.environmentId,
-        key.cwd,
-        placed.relativePath,
-        change.next,
-        placed.revision,
-      );
-      newDocuments.set(
-        { ...key, relativePath: placed.relativePath },
-        {
-          ...entry,
-          template: change.template,
-          language: change.language,
-          name: change.name,
-          companions: placed.companions,
-          seenUntouched: false,
-        },
-      );
-      newDocuments.forget(key);
-      templateEdits.move(key, { ...key, relativePath: placed.relativePath });
-      release();
-      onRenamed(placed.relativePath);
-      focusNewDocumentWhenOpen("title");
-      await commands.remove(
-        { relativePath: key.relativePath, revision: change.revision },
-        { removeEmptyFolders: true },
-      );
-      for (const file of entry.companions)
-        if (!/\.bib$/iu.test(file.relativePath))
-          await commands.remove(file, { removeEmptyFolders: true });
     },
-  );
+  ): Promise<NonNullable<typeof key> | null> => {
+    const { key: from, entry: was, lease: held } = document;
+    const commands = documentFiles.commandsFor(from);
+    const title = newDocumentTitle(change.next, "latex") || change.name.trim();
+    const placed = await placeNewDocument({
+      format: "latex",
+      base: newDocumentBase(from.relativePath, was.template),
+      stem: title ? newDocumentStem(title) : untitledStem("latex", change.template),
+      template: change.template,
+      source: change.next,
+      commands,
+      skip: (relativePath) =>
+        pathHasLeftoverDrafts({ environmentId: from.environmentId, cwd: from.cwd, relativePath }),
+    });
+    if (!placed) {
+      toastManager.add({ type: "error", title: "The template could not be changed." });
+      return null;
+    }
+    const release = newDocuments.get(from) ? held.holdForRename() : null;
+    if (!release) {
+      for (const file of placed.companions)
+        await commands.remove(file, { removeEmptyFolders: true });
+      await commands.remove(placed, { removeEmptyFolders: true });
+      return null;
+    }
+    const to = { ...from, relativePath: placed.relativePath };
+    setProjectFileQueryData(
+      from.environmentId,
+      from.cwd,
+      placed.relativePath,
+      change.next,
+      placed.revision,
+    );
+    newDocuments.set(to, {
+      ...was,
+      template: change.template,
+      language: change.language,
+      name: change.name,
+      companions: placed.companions,
+      seenUntouched: false,
+    });
+    newDocuments.forget(from);
+    templateEdits.move(from, to);
+    release();
+    onRenamed(from.relativePath, placed.relativePath);
+    if (shown.current === placed.relativePath) focusNewDocumentWhenOpen("title");
+    const removed = await commands.remove(
+      { relativePath: from.relativePath, revision: change.revision },
+      { removeEmptyFolders: true },
+    );
+    if (!removed) {
+      // Changed meanwhile: it stays whole, with every file it reads.
+      toastManager.add({
+        type: "info",
+        title: `${from.relativePath} was kept: it changed meanwhile.`,
+      });
+      return to;
+    }
+    for (const file of was.companions)
+      if (!/\.bib$/iu.test(file.relativePath))
+        await commands.remove(file, { removeEmptyFolders: true });
+    return to;
+  };
 
   if (!key || !entry || !lease || !snapshot)
     return { startBar: saving.dialog, templateActions: saving.menuItems };
-  const choose = (template: DocumentTemplateId, language: NewDocumentLanguage) => {
-    if (switching.current) return;
+  /**
+   * Changes the template or language of the document on screen, while it is
+   * untouched. Returns where the document is afterwards, or null if nothing
+   * changed.
+   */
+  const choose = async (
+    template: DocumentTemplateId,
+    language: NewDocumentLanguage,
+  ): Promise<NonNullable<typeof key> | null> => {
+    if (switching.current) return null;
     switching.current = true;
-    void (async () => {
-      try {
-        // The title field publishes after a pause, and the editor takes outside
-        // changes only with nothing unpublished; switch once the title is in.
-        const field = document.querySelector<HTMLTextAreaElement>(
-          'textarea[aria-label="Document title"]',
-        );
-        const typed = field?.value ?? "";
-        const fromFolder = isFolderTemplate(entry.template);
-        const toFolder = isFolderTemplate(template);
-        const relocates = fromFolder !== toFolder;
-        const settledAt = await waitUntil(() => {
-          const current = lease.getSnapshot();
-          return (
-            lease.getPendingInput() === null &&
-            sameTitleText(newDocumentTitle(current.draftSource, "latex"), typed) &&
-            // A document that moves is copied as saved, so it must be saved.
-            (!relocates ||
-              (!current.pending &&
-                !current.inFlight &&
-                current.draftSource === current.baselineSource))
-          );
-        }, 2_000);
-        if (!settledAt) return;
+    try {
+      // The title field publishes after a pause, and the editor takes outside
+      // changes only with nothing unpublished; switch once the title is in.
+      const field = document.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="Document title"]',
+      );
+      const typed = field?.value ?? "";
+      const fromFolder = isFolderTemplate(entry.template);
+      const toFolder = isFolderTemplate(template);
+      const relocates = fromFolder !== toFolder;
+      const settledAt = await waitUntil(() => {
         const current = lease.getSnapshot();
-        if (!isUntouchedNewLatexDocument(current.draftSource, entry.template, entry.language))
-          return;
-        // A title and a name stand for each other across templates with and without one.
-        const name = templateHasTitle(entry.template) ? typed.trim() : (entry.name ?? "");
-        const next = switchNewLatexDocument(current.draftSource, template, language, name);
-        const commands = documentFiles.commandsFor(key);
-        if (relocates) {
-          await relocate({ template, language, name, next, revision: current.baselineRevision });
-          return;
-        }
-        if (next !== current.draftSource && !lease.change(next, current.editVersion)) return;
-        newDocuments.update(key, { template, language, name });
-        // The files the new template keeps beside it, such as its bibliography.
-        const companions = await syncCompanionFiles({
-          folder: folderOf(key.relativePath),
-          files: templateCompanions(template, next),
-          created: newDocuments.get(key)?.companions ?? [],
-          create: commands.create,
-          ...(commands.replace ? { replace: commands.replace } : {}),
-          remove: commands.remove,
-        });
-        newDocuments.update(key, { companions });
-        // The page is drawn again; writing continues in the title or the name.
-        focusNewDocumentWhenOpen("title");
-      } finally {
-        switching.current = false;
+        return (
+          lease.getPendingInput() === null &&
+          sameTitleText(newDocumentTitle(current.draftSource, "latex"), typed) &&
+          // A document that moves is copied as saved, so it must be saved.
+          (!relocates ||
+            (!current.pending &&
+              !current.inFlight &&
+              current.draftSource === current.baselineSource))
+        );
+      }, 2_000);
+      if (!settledAt) return null;
+      const current = lease.getSnapshot();
+      if (!isUntouchedNewLatexDocument(current.draftSource, entry.template, entry.language))
+        return null;
+      const commands = documentFiles.commandsFor(key);
+      // A file it made that was changed anywhere (a chapter, in Source or another
+      // program) ends the choice: nothing it made is moved or removed.
+      if (!(await companionsUnchanged(commands, entry.companions))) {
+        newDocuments.update(key, { settled: true });
+        return null;
       }
-    })();
+      // A title and a name stand for each other across templates with and without one.
+      const name = templateHasTitle(entry.template) ? typed.trim() : (entry.name ?? "");
+      const next = switchNewLatexDocument(current.draftSource, template, language, name);
+      if (relocates)
+        return await relocate(
+          { key, entry, lease },
+          { template, language, name, next, revision: current.baselineRevision },
+        );
+      if (next !== current.draftSource && !lease.change(next, current.editVersion)) return null;
+      newDocuments.update(key, { template, language, name });
+      // The files the new template keeps beside it, such as its bibliography.
+      const synced = await syncCompanionFiles({
+        folder: folderOf(key.relativePath),
+        files: templateCompanions(template, next),
+        created: newDocuments.get(key)?.companions ?? [],
+        create: commands.create,
+        ...(commands.replace ? { replace: commands.replace } : {}),
+        remove: commands.remove,
+      });
+      newDocuments.update(key, { companions: synced.companions });
+      if (!synced.complete)
+        toastManager.add({
+          type: "error",
+          title: "Some of the template's files could not be written.",
+        });
+      // The page is drawn again; writing continues in the title or the name.
+      if (shown.current === key.relativePath) focusNewDocumentWhenOpen("title");
+      return key;
+    } finally {
+      switching.current = false;
+    }
   };
   // A folder document is named by its folder: `thesis/main.tex`.
   const base = newDocumentBase(key.relativePath, entry.template);
@@ -520,9 +569,12 @@ export function useNewDocument(input: {
   // document stops offering to move.
   const naming = !(entry.settled && (savedTitle.length === 0 || folderDocument));
   /** One of the person's templates, opened to edit: this document can update it. */
-  const editTemplate = (template: string) => {
-    templateEdits.set(key, template);
-    if (template !== entry.template) choose(template, entry.language);
+  const editTemplate = async (template: string) => {
+    // Linked only once the document shows that template, so Update can only
+    // ever replace it with the template's own content.
+    if (template === entry.template) return templateEdits.set(key, template);
+    const opened = await choose(template, entry.language);
+    if (opened) templateEdits.set(opened, template);
   };
   /** A new template of the person's own, copied from the one chosen, opened to edit. */
   const newTemplate = async (name: string) => {
@@ -535,7 +587,7 @@ export function useNewDocument(input: {
         userTemplates.get(entry.template)?.preview ??
         null,
     });
-    editTemplate(saved.id);
+    await editTemplate(saved.id);
   };
   return {
     templateActions: saving.menuItems,
@@ -549,17 +601,17 @@ export function useNewDocument(input: {
                 selected={entry.template}
                 defaultTemplate={defaultTemplate}
                 onSelect={(template) => {
-                  if (isDocumentTemplateId(template)) choose(template, entry.language);
+                  if (isDocumentTemplateId(template)) void choose(template, entry.language);
                 }}
                 onSetDefault={setStoredDefault}
-                onEdit={editTemplate}
+                onEdit={(template) => void editTemplate(template)}
                 onNewTemplate={newTemplate}
                 strip={strip}
                 trailing={
                   <LanguageMenu
                     language={entry.language}
                     strip={strip}
-                    onLanguage={(language) => choose(entry.template, language)}
+                    onLanguage={(language) => void choose(entry.template, language)}
                   />
                 }
               />

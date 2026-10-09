@@ -1794,12 +1794,12 @@ export default function FilePreviewPanel({
     canMoveInPlace:
       relativePath !== null &&
       (isRichMarkdown || (isLatexPreviewFile(relativePath) && latexRename?.movable === true)),
-    onRenamed: (destinationRelativePath) => {
-      if (relativePath === null) return;
+    onRenamed: (from, destinationRelativePath) => {
       applyScientFileRename({
         environmentId,
         cwd,
-        relativePath,
+        // The document Scient moved, even if another now shows in this panel.
+        relativePath: from,
         usesDocumentSession,
         destinationRelativePath,
         onFileRenamed,
