@@ -309,7 +309,7 @@ Linked relay minimum-version qualification intentionally rejects incompatible PA
 ## 7. Publication boundary and review handoff
 
 - **Integration cursor:** `upstream-state.json` and current `UPSTREAM.md` point to the exact locally qualified target and original upstream merge above. This records integration, not main delivery or visual acceptance.
-- **Scient PR:** PR reference is added to `UPSTREAM.md` during publication; its current head and CI remain directly checkable on GitHub.
+- **Scient PR:** [Scient PR #487](https://github.com/ScientFactory/scient-desktop/pull/487). Its current head and CI remain directly checkable on GitHub.
 - **Publication branch:** `codex/t3-sync-2a93885bac-20261008`, owned `origin` only. Publish only a documentation descendant of the recorded runtime head after its final checks. No upstream push.
 - **CI:** allowed to run while user reviews the clean dev app; no claim that hosted checks or visual acceptance are complete until their actual evidence exists.
 - **Merge/release:** this user request authorizes alignment, review/stress qualification, clean candidate and PR. A final main merge/release remains a separate acceptance/publication boundary; subsequent user approval is required; green checks alone do not authorize publication.

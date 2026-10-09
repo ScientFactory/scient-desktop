@@ -252,7 +252,7 @@ evidence and the remaining hosted/platform boundaries.
 
 The current locally qualified alignment is recorded in
 [the 2a93885bac receipt](docs/internals/t3-upstream-sync-20261008-2a93885bac.md)
-and `upstream-state.json`.
+and `upstream-state.json` ([Scient PR #487](https://github.com/ScientFactory/scient-desktop/pull/487)).
 It receives all 63 subsequent first-parent official commits through
 `2a93885bac5798a79d55069a0b5dc3e53c6176bc` onto owned base
 `565b3bd15cbb7660250e53b2421915d2f6bdebc5`. Literal merge
