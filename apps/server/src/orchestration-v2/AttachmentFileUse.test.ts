@@ -1,10 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { ChatAttachmentId, ThreadId, type ChatAttachment } from "@t3tools/contracts";
-import * as Deferred from "effect/Deferred";
+import { ChatAttachmentId, type ChatAttachment } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
 import {
@@ -19,10 +17,6 @@ import {
   reserveAttachment,
 } from "./AttachmentFileUse.ts";
 import { claimPendingAttachments } from "./AttachmentClaims.ts";
-import {
-  ScientForkAttachmentCopier,
-  ScientForkAttachmentCopierLive,
-} from "./scient-fork/ForkAttachmentCopier.ts";
 
 const layer = ServerConfig.layerTest(process.cwd(), { prefix: "attachment-file-use-" }).pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -89,49 +83,6 @@ it.effect("keeps an ambiguous durable pin across a fresh process-local arbitrati
     yield* pin.release;
     expect(yield* attachmentHasReservations(attachment.id)).toBe(false);
   }).pipe(Effect.provide(layer)),
-);
-
-it.effect(
-  "pins a real fork copy until physical publication and preserves independent child bytes",
-  () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const config = yield* ServerConfig;
-      const { attachment: source, path: sourcePath } = yield* stored("origin");
-      const target = { ...source, id: ChatAttachmentId.make(createAttachmentId("child", "txt")!) };
-      const entered = yield* Deferred.make<void>();
-      const resume = yield* Deferred.make<void>();
-      const copierLayer = ScientForkAttachmentCopierLive.pipe(
-        Layer.provide(
-          Layer.succeed(FileSystem.FileSystem, {
-            ...fs,
-            copyFile: (from, to) =>
-              Deferred.succeed(entered, undefined).pipe(
-                Effect.andThen(Deferred.await(resume)),
-                Effect.andThen(fs.copyFile(from, to)),
-              ),
-          }),
-        ),
-      );
-      const copying = yield* Effect.gen(function* () {
-        const copier = yield* ScientForkAttachmentCopier;
-        yield* copier.copyAll({ threadId: ThreadId.make("child"), copies: [{ source, target }] });
-      }).pipe(Effect.provide(copierLayer), Effect.forkChild);
-      yield* Deferred.await(entered);
-      expect(yield* attachmentHasReservations(source.id)).toBe(true);
-      expect(yield* attachmentHasReservations(target.id)).toBe(true);
-      expect(yield* fs.readFileString(sourcePath)).toBe("evidence");
-      yield* Deferred.succeed(resume, undefined);
-      yield* Fiber.join(copying);
-      expect(yield* attachmentHasReservations(source.id)).toBe(false);
-      expect(yield* attachmentHasReservations(target.id)).toBe(false);
-      yield* fs.remove(sourcePath);
-      expect(
-        yield* fs.readFileString(
-          resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment: target })!,
-        ),
-      ).toBe("evidence");
-    }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
 it.effect("shares arbitration reservations for case aliases of a managed file ID", () =>

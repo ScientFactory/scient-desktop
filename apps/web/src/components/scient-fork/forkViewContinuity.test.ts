@@ -136,9 +136,10 @@ it("remaps only retained attachments, including the active preview", () => {
   expect(fork.surfaces[0]).toMatchObject({ attachment: { id: "fork-owned" } });
   expect(source.surfaces[0]).toMatchObject({ attachment: { id: "origin-retained" } });
   expect(forkRightPanelState(source).surfaces).toEqual([]);
-  expect(forkRightPanelState(source, { "origin-retained": "origin-retained" }).surfaces).toEqual(
-    [],
-  );
+  // A fork shares its history's files: the same preview stays open as it is.
+  const shared = forkRightPanelState(source, { "origin-retained": "origin-retained" });
+  expect(shared.activeSurfaceId).toBe("attachment:origin-retained");
+  expect(shared.surfaces).toEqual([source.surfaces[0]]);
 });
 
 it.each(["/origin", "/new-worktree"])(

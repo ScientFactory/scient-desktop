@@ -12,6 +12,11 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { readHistoricalSystemMessage } from "../../orchestration-v2/legacy/HistoricalSystemMessage.ts";
 
+/** The V1 importer marks the one item it folded a tool call's rows into. */
+const isFoldedToolCall = Schema.is(Schema.Struct({ foldedRowCount: Schema.Number }));
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 const historicalActivity = Schema.Struct({
   kind: Schema.String,
   summary: Schema.String,
@@ -127,7 +132,17 @@ export function conversationSnapshotProjection(
             updatedAt,
           });
         } else if (isHistoricalActivity(item.input)) {
-          activity(item.input.kind, item.input.summary, item.input.payload, item.input.tone);
+          const { kind, payload } = item.input;
+          if (isFoldedToolCall(item.input) && isRecord(payload)) {
+            // One folded call is one finished row: its item status is how it
+            // ended, which its merged payload may not repeat.
+            activity(
+              item.status === "interrupted" ? "tool.updated" : "tool.completed",
+              item.input.summary,
+              { ...payload, status: item.status },
+              item.input.tone,
+            );
+          } else activity(kind, item.input.summary, payload, item.input.tone);
         } else {
           activity(
             "tool.completed",

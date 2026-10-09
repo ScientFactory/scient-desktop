@@ -129,8 +129,11 @@ it.effect(
         targetThreadId: ThreadId.make("import-prefix-fork"),
         source: { kind: "user-message", messageId: secondPrompt.messageId },
       });
-      assert.equal(plan.messages.filter((message) => message.role === "user").length, 1);
-      assert.equal(plan.messages.filter((message) => message.role === "assistant").length, 1);
+      // Settled imported history is shared by reference, not copied.
+      assert.deepEqual(plan.messages, []);
+      assert.equal(plan.retained.filter((item) => item.type === "user_message").length, 1);
+      assert.equal(plan.retained.filter((item) => item.type === "assistant_message").length, 1);
+      assert.lengthOf(plan.history, plan.retained.length);
       yield* commit.dispatch(command);
       assert.deepEqual(yield* projections.getThreadProjection(command.threadId), projection);
       yield* (yield* Maintenance.ProjectionMaintenanceV2).rebuild;

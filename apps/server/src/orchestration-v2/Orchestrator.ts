@@ -92,6 +92,7 @@ import {
   conversationForkHistoryEvents,
   conversationForkProvisionEffect,
 } from "./scient-fork/ConversationForkPlan.ts";
+import type { ForkHistoryEntry } from "./scient-fork/ForkHistory.ts";
 import {
   classifyProviderWorkAdmission,
   commitProviderWorkAdmission,
@@ -1028,6 +1029,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       )
       .pipe(
         Effect.map((records) => records.turnItems),
+        // SCIENT-FORK:START — a fork's inherited history is history too, ahead of its own items.
+        Effect.flatMap((local) =>
+          runIds !== undefined && !runIds.includes(null)
+            ? Effect.succeed(local)
+            : projectionStore.getForkHistoryItems(threadId).pipe(
+                Effect.map((history) => {
+                  const inherited = new Set<string>(history.map((item) => item.id));
+                  return [...history, ...local.filter((item) => !inherited.has(item.id))];
+                }),
+              ),
+        ),
+        // SCIENT-FORK:END
         Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
       );
 
@@ -1592,16 +1605,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 run.ordinal <= latestHandoffRun.ordinal,
             );
       const needsFullContext = deliveryProviderThread.nativeThreadRef === null;
-      const legacyImportItems =
+      // SCIENT-FORK: read only when a handoff uses it (a fork's prefix can be long).
+      const legacyImportItemsRead = yield* Effect.cached(
         projection.thread.historyOrigin === "v1_import" ||
-        projection.thread.historyOrigin === "scient_fork" ||
-        projection.thread.historyOrigin === "conversation_import"
-          ? yield* readHandoffItems(threadId, [null]).pipe(
+          projection.thread.historyOrigin === "scient_fork" ||
+          projection.thread.historyOrigin === "conversation_import"
+          ? readHandoffItems(threadId, [null]).pipe(
               Effect.map((items) =>
                 items.some((item) => historicalMessage(item) !== null) ? items : [],
               ),
             )
-          : [];
+          : Effect.succeed([]),
+      );
       const handoffStrategy = needsFullContext
         ? ("full_thread_summary" as const)
         : ("delta_since_target_last_seen" as const);
@@ -1662,7 +1677,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 strategy: handoffStrategy,
                 items: [
                   ...(needsFullContext && latestCompletedRun !== undefined
-                    ? legacyImportItems
+                    ? yield* legacyImportItemsRead
                     : []),
                   ...(yield* readHandoffItems(
                     threadId,
@@ -1682,14 +1697,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 ),
               );
       const legacyImportRecoveryHandoff =
-        latestCompletedRun === undefined && needsFullContext && legacyImportItems.length > 0
+        latestCompletedRun === undefined &&
+        needsFullContext &&
+        (yield* legacyImportItemsRead).length > 0
           ? yield* contextHandoffService
               .prepareLegacyImport({
                 threadId,
                 targetRunId: queuedRun.id,
                 toProviderThreadId: queuedProviderThread.id,
                 toProviderInstanceId: queuedRun.providerInstanceId,
-                items: legacyImportItems,
+                items: yield* legacyImportItemsRead,
                 createdAt: now,
               })
               .pipe(
@@ -3897,6 +3914,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* emitEvent(event);
     const provision = conversationForkProvisionEffect(command.commandId, targetThread);
     if (provision !== undefined) yield* Ref.update(effects, (existing) => [...existing, provision]);
+    return history.history;
     // SCIENT-FORK:END
   });
 
@@ -5665,16 +5683,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
       const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");
       const latestHandoffRun = projection.runs.findLast(isHandoffSourceRun);
-      const legacyImportItems =
+      // SCIENT-FORK: read only when a handoff uses it (a fork's prefix can be long).
+      const legacyImportItemsRead = yield* Effect.cached(
         projection.thread.historyOrigin === "v1_import" ||
-        projection.thread.historyOrigin === "scient_fork" ||
-        projection.thread.historyOrigin === "conversation_import"
-          ? yield* readHandoffItems(command.threadId, [null]).pipe(
+          projection.thread.historyOrigin === "scient_fork" ||
+          projection.thread.historyOrigin === "conversation_import"
+          ? readHandoffItems(command.threadId, [null]).pipe(
               Effect.map((items) =>
                 items.some((item) => historicalMessage(item) !== null) ? items : [],
               ),
             )
-          : [];
+          : Effect.succeed([]),
+      );
       const isProviderSwitch =
         activeProviderThread !== undefined &&
         activeProviderThread.providerInstanceId !== modelSelection.instanceId;
@@ -5741,10 +5761,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         // SCIENT-FORK:END
         const legacyImportHandoff =
           !inheritedPrefixAlreadyNative &&
+          latestCompletedRun === undefined &&
           shouldPrepareLegacyImportHandoff({
             historyOrigin: projection.thread.historyOrigin,
-            hasCompletedRun: latestCompletedRun !== undefined,
-            legacyImportItemCount: legacyImportItems.length,
+            hasCompletedRun: false,
+            legacyImportItemCount: (yield* legacyImportItemsRead).length,
           })
             ? yield* contextHandoffService
                 .prepareLegacyImport({
@@ -5752,7 +5773,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   targetRunId: runId,
                   toProviderThreadId: providerThreadId,
                   toProviderInstanceId: modelSelection.instanceId,
-                  items: legacyImportItems,
+                  items: yield* legacyImportItemsRead,
                   createdAt: now,
                 })
                 .pipe(mapDispatchError(command))
@@ -6282,7 +6303,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             };
       const portableForkItems =
         requiresPortableFork && frozenFork
-          ? legacyImportItems
+          ? yield* legacyImportItemsRead
           : !requiresPortableFork || sourceProjection === null || sourceRun === null
             ? []
             : yield* readHandoffItems(sourceProjection.thread.id, [
@@ -6357,7 +6378,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : [
               ...(latestCompletedRun !== undefined &&
               (targetProviderThread === undefined || requiresFullProviderSwitchContext)
-                ? legacyImportItems
+                ? yield* legacyImportItemsRead
                 : []),
               ...(yield* readHandoffItems(
                 command.threadId,
@@ -6435,14 +6456,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         isProviderSwitch &&
         !canResumeAcrossInstances &&
         latestCompletedRun === undefined &&
-        legacyImportItems.length > 0
+        (yield* legacyImportItemsRead).length > 0
           ? yield* contextHandoffService
               .prepareLegacyImport({
                 threadId: command.threadId,
                 targetRunId: runId,
                 toProviderThreadId: ensuredProviderThread.id,
                 toProviderInstanceId: modelSelection.instanceId,
-                items: legacyImportItems,
+                items: yield* legacyImportItemsRead,
                 createdAt: now,
               })
               .pipe(mapDispatchError(command))
@@ -10910,6 +10931,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
         readonly reason: string;
       };
+      // SCIENT-FORK: a new fork's inherited history, committed with it.
+      readonly forkHistory?: ReadonlyArray<ForkHistoryEntry>;
     },
     OrchestratorV2Error
   > {
@@ -10922,6 +10945,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
     const effects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
     let providerWorkOwner: ProviderAdapterV2SessionRuntime | undefined;
+    let forkHistory: ReadonlyArray<ForkHistoryEntry> | undefined;
     let cancelUnsettledEffects:
       | {
           readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
@@ -10991,9 +11015,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           planThreadDeletion({
             command,
             projection,
-            attachmentIds: yield* projectionStore
-              .getThreadAttachmentIds(command.threadId)
-              .pipe(mapDispatchError(command)),
             now: yield* DateTime.now,
             idAllocator,
           }),
@@ -11286,7 +11307,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchBackgroundWorkSettle(command, events, effects);
         break;
       case "thread.fork":
-        yield* dispatchThreadFork(command, events, effects);
+        forkHistory = yield* dispatchThreadFork(command, events, effects);
         break;
       case "thread.merge_back":
         yield* dispatchThreadMergeBack(command, events);
@@ -11315,6 +11336,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       effects: yield* Ref.get(effects),
       ...(providerWorkOwner === undefined ? {} : { providerWorkOwner }),
       ...(cancelUnsettledEffects === undefined ? {} : { cancelUnsettledEffects }),
+      ...(forkHistory === undefined ? {} : { forkHistory }),
     };
   });
 
@@ -11496,6 +11518,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(plan.cancelUnsettledEffects === undefined
           ? {}
           : { cancelUnsettledEffects: plan.cancelUnsettledEffects }),
+        ...(plan.forkHistory === undefined ? {} : { forkHistory: plan.forkHistory }),
       })
       .pipe(
         Effect.mapError(

@@ -1492,6 +1492,33 @@ describe("HTML renders in the timeline", () => {
     expect(rowsFor(entries, false)).toEqual(["message", "turn-fold", "mcp-app", "message"]);
   });
 
+  it("reads a fork's shared MCP app through the fork that shows it", () => {
+    const mcpApp = {
+      attachmentId: "render-thread-app-html",
+      server: "weather",
+      tool: "get_weather",
+      resourceUri: "ui://weather/dashboard",
+    };
+    const call = renderCall("completed", { t3McpApp: mcpApp, result: { content: [] } });
+    const forkId = ThreadId.make("fork-showing-app");
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [
+        {
+          position: 0,
+          visibility: "inherited",
+          sourceThreadId: call.threadId,
+          sourceItemId: call.id,
+          item: { ...call, threadId: forkId, toolName: "weather.get_weather" } as typeof call,
+        },
+      ],
+      optimisticMessages: [],
+    });
+    expect(entries.find((entry) => entry.kind === "mcp-app")).toMatchObject({
+      sourceThreadId: forkId,
+      itemId: call.id,
+    });
+  });
+
   it("keeps a render visible when its superseded attempt folds", () => {
     const attempt: OrchestrationV2RunAttempt = {
       id: RunAttemptId.make("attempt-superseded"),

@@ -17,6 +17,12 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import type { EventSinkV2Shape } from "../EventSink.ts";
 import { readInheritedTurnIds } from "./LegacyConversationOriginReader.ts";
 import { decodeTurnItemRow } from "../scient-fork/projectionRowJson.ts";
+import {
+  groupToolLifecycles,
+  mergeToolLifecyclePayloads,
+  toolLifecycleOutcome,
+  type ToolLifecycleOutcome,
+} from "@scientfactory/conversation";
 
 interface HistoryRow {
   readonly item_id: string;
@@ -26,6 +32,14 @@ interface HistoryRow {
   readonly updated_at: string;
   readonly ordinal: number;
   readonly record_json: string;
+  /** Activity rows: the V1 kind and `payload.toolCallId`, to fold one tool call into one item. */
+  readonly kind: string | null;
+  readonly tool_call_id: string | null;
+  /** A folded tool call: its merged record and how it ended. */
+  readonly folded?: {
+    readonly record: FoldedActivity;
+    readonly status: ToolLifecycleOutcome;
+  };
 }
 
 const Activity = Schema.Struct({
@@ -69,12 +83,85 @@ class LegacyHistoryPositionError extends Schema.TaggedError<LegacyHistoryPositio
   }
 }
 const decodeActivity = Schema.decodeUnknownEffect(Schema.fromJsonString(Activity));
+/** A tool call's V1 rows folded into one record; the count marks the item as folded. */
+type FoldedActivity = typeof Activity.Type & { readonly foldedRowCount: number };
+/** A group of rows `groupToolLifecycles` formed for one tool call. */
+const isToolCall = (group: ReadonlyArray<HistoryRow>) =>
+  group[0]!.tool_call_id !== null &&
+  (group[0]!.kind === "tool.started" ||
+    group[0]!.kind === "tool.updated" ||
+    group[0]!.kind === "tool.completed");
 const decodeAnswer = Schema.decodeUnknownEffect(UserInputAttachmentAnswerPayload);
 const decodeApproval = Schema.decodeUnknownEffect(Schema.fromJsonString(Approval));
 const decodePlan = Schema.decodeUnknownEffect(Schema.fromJsonString(Plan));
 const decodeSystem = Schema.decodeUnknownEffect(Schema.fromJsonString(SystemMessage));
 const decodeReasoning = Schema.decodeUnknownEffect(Schema.fromJsonString(Reasoning));
 const toolIdentity = Schema.decodeUnknownOption(Schema.Struct({ toolName: Schema.String }));
+
+/** V1 telemetry with no meaning in a V2 conversation: the context meter reads live usage. */
+const DROPPED_ACTIVITY_KINDS: ReadonlySet<string> = new Set([
+  "context-window.updated",
+  "checkpoint.captured",
+]);
+
+/**
+ * One item per tool call: V1 stored a call as a started row, a row per
+ * progress report and a completed row; V2 keeps one item per call. The folded
+ * item takes the first row's id and place, ends at the last row, and keeps the
+ * merged content of all of them. Telemetry rows are dropped.
+ *
+ * A thread an earlier build imported row by row, even partly, keeps that
+ * shape: folding it would leave existing items without positions, or skip the
+ * rest of a call whose first row was already imported. Folded items carry
+ * `foldedRowCount`, so the two shapes are never confused.
+ */
+const foldToolCalls = Effect.fnUntraced(function* (
+  sql: SqlClient.SqlClient,
+  threadId: ThreadId,
+  rows: ReadonlyArray<HistoryRow>,
+  includeDetails: boolean,
+) {
+  const kept = rows.filter((row) => row.kind === null || !DROPPED_ACTIVITY_KINDS.has(row.kind));
+  const groups = groupToolLifecycles(
+    kept.map((row) => ({ ...row, turnId: row.turn_id, toolCallId: row.tool_call_id })),
+  );
+  // Every folded call carries `foldedRowCount`; an item for a call without it,
+  // or an item that folding would not produce, was imported by an earlier build.
+  const keptIds = new Set(groups.map((group) => group[0]!.item_id));
+  const callIds = new Set(groups.filter(isToolCall).map((group) => group[0]!.item_id));
+  const importedRowByRow = (yield* sql<{ turn_item_id: string; marked: number }>`
+    SELECT turn_item_id, json_type(payload_json, '$.input.foldedRowCount') IS NOT NULL AS marked
+    FROM orchestration_v2_projection_turn_items
+    WHERE thread_id = ${threadId} AND turn_item_id LIKE 'migration:v1:history:activity:%'`).some(
+    (row) => !keptIds.has(row.turn_item_id) || (callIds.has(row.turn_item_id) && row.marked !== 1),
+  );
+  if (importedRowByRow) return rows;
+  const folded: HistoryRow[] = [];
+  for (const group of groups) {
+    const first = group[0]!;
+    const last = group.at(-1)!;
+    if (!isToolCall(group) || !includeDetails) {
+      folded.push({ ...first, updated_at: group.length > 1 ? last.created_at : first.updated_at });
+      continue;
+    }
+    const records = yield* Effect.forEach(group, (row) => decodeActivity(row.record_json));
+    folded.push({
+      ...first,
+      updated_at: last.created_at,
+      folded: {
+        record: {
+          ...records.at(-1)!,
+          activityId: records[0]!.activityId,
+          sequence: records[0]!.sequence,
+          payload: mergeToolLifecyclePayloads(records.map((record) => record.payload)),
+          foldedRowCount: records.length,
+        },
+        status: toolLifecycleOutcome(records),
+      },
+    });
+  }
+  return folded;
+});
 
 /** Reserve one chronological prefix for all legacy facts before any new run is admitted. */
 export const prepareLegacyHistory = Effect.fn("LegacyScientHistory.prepare")(function* (
@@ -86,57 +173,68 @@ export const prepareLegacyHistory = Effect.fn("LegacyScientHistory.prepare")(fun
   const chronologicalRows = yield* sql<HistoryRow>`
     WITH history AS (
       SELECT 'migration:v1:turn-item:' || message_id AS item_id, turn_id, 'message' AS source,
-        created_at, updated_at, 0 AS source_order, 0 AS ordering, '{}' AS record_json
+        created_at, updated_at, 0 AS source_order, 0 AS ordering, '{}' AS record_json,
+        NULL AS kind, NULL AS tool_call_id
       FROM projection_thread_messages WHERE thread_id = ${threadId} AND role IN ('user', 'assistant')
       UNION ALL
       SELECT 'migration:v1:history:reasoning:' || message_id, turn_id, 'reasoning', created_at, updated_at, 0, 0,
         CASE WHEN ${includeDetails} = 1 THEN json_object('text', text, 'isStreaming', is_streaming)
-        ELSE '{}' END
+        ELSE '{}' END, NULL, NULL
       FROM projection_thread_messages WHERE thread_id = ${threadId} AND role = 'reasoning'
       UNION ALL
       SELECT 'migration:v1:history:system:' || message_id, turn_id, 'system', created_at, updated_at, 1, 0,
         CASE WHEN ${includeDetails} = 1 THEN
           json_object('messageId', message_id, 'text', text, 'attachments', attachments_json, 'context', context_json)
-        ELSE '{}' END
+        ELSE '{}' END, NULL, NULL
       FROM projection_thread_messages WHERE thread_id = ${threadId} AND role = 'system'
       UNION ALL
       SELECT 'migration:v1:history:activity:' || activity_id, turn_id, 'activity', created_at, created_at, 2, COALESCE(sequence, 0),
         CASE WHEN ${includeDetails} = 1 THEN
           json_object('activityId', activity_id, 'turnId', turn_id, 'tone', tone, 'kind', kind,
             'summary', summary, 'sequence', sequence, 'payload', payload_json)
-        ELSE '{}' END
+        ELSE '{}' END, kind,
+        CASE WHEN json_valid(payload_json) THEN
+          CASE WHEN json_type(payload_json, '$.toolCallId') = 'text'
+            THEN json_extract(payload_json, '$.toolCallId') END
+        END
       FROM projection_thread_activities WHERE thread_id = ${threadId}
       UNION ALL
       SELECT 'migration:v1:history:answer:' || activity_id, turn_id, 'answer', created_at, created_at, 2, COALESCE(sequence, 0),
         CASE WHEN ${includeDetails} = 1 THEN
           json_object('activityId', activity_id, 'turnId', turn_id, 'tone', tone, 'kind', kind,
             'summary', summary, 'sequence', sequence, 'payload', payload_json)
-        ELSE '{}' END
+        ELSE '{}' END, NULL, NULL
       FROM projection_thread_activities WHERE thread_id = ${threadId} AND kind = 'user-input.answer-submitted'
       UNION ALL
       SELECT 'migration:v1:history:approval:' || request_id, turn_id, 'approval', created_at, COALESCE(resolved_at, created_at), 3, 0,
         CASE WHEN ${includeDetails} = 1 THEN
           json_object('requestId', request_id, 'turnId', turn_id, 'status', status, 'decision', decision, 'resolvedAt', resolved_at)
-        ELSE '{}' END
+        ELSE '{}' END, NULL, NULL
       FROM projection_pending_approvals WHERE thread_id = ${threadId}
       UNION ALL
       SELECT 'migration:v1:history:plan:' || plan_id, turn_id, 'plan', created_at, updated_at, 4, 0,
         CASE WHEN ${includeDetails} = 1 THEN
           json_object('planId', plan_id, 'turnId', turn_id, 'markdown', plan_markdown, 'implementedAt', implemented_at)
-        ELSE '{}' END
+        ELSE '{}' END, NULL, NULL
       FROM projection_thread_proposed_plans WHERE thread_id = ${threadId}
     )
-    SELECT item_id, turn_id, source, created_at, updated_at, record_json,
+    SELECT item_id, turn_id, source, created_at, updated_at, record_json, kind, tool_call_id,
       ROW_NUMBER() OVER (ORDER BY created_at, source_order, ordering, item_id) AS ordinal
     FROM history ORDER BY ordinal
   `;
+  const historyRows = yield* foldToolCalls(
+    sql,
+    threadId,
+    chronologicalRows,
+    includeArtifactDetails,
+  );
   // Copied turns have a durable order even when copied message timestamps tie.
   // Keep the entire inherited prefix ahead of later local history; a refork must
   // never borrow an unanswered request from after its selected answer.
   const inheritedOrder = new Map(
     [...(yield* readInheritedTurnIds(sql, threadId))].map((turnId, index) => [turnId, index]),
   );
-  const rows = chronologicalRows
+  const rows = historyRows
     .toSorted((left, right) => {
       const leftTurn = inheritedOrder.get(left.turn_id ?? "");
       const rightTurn = inheritedOrder.get(right.turn_id ?? "");
@@ -273,10 +371,11 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
         break;
       }
       case "activity": {
-        const record = yield* decodeActivity(row.record_json);
+        const record = row.folded?.record ?? (yield* decodeActivity(row.record_json));
         const identity = toolIdentity(record.payload);
         item = {
           ...base,
+          ...(row.folded === undefined ? {} : { status: row.folded.status }),
           type: "dynamic_tool",
           title: record.summary,
           toolName:

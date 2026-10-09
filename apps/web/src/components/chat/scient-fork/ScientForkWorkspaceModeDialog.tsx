@@ -397,16 +397,12 @@ export function ScientForkWorkspaceModeDialog({
               <p role="alert" className="text-destructive text-xs leading-relaxed">
                 {error}
               </p>
-            ) : disabled ? (
-              <p className="text-muted-foreground text-xs leading-relaxed">
-                You can close this. The fork will appear in the sidebar when it is ready.
-              </p>
             ) : null}
           </form>
         </DialogPanel>
         <DialogFooter variant="bare" padding="compact">
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-            {skippedImages ? "Cancel" : disabled ? "Close" : "Cancel"}
+            Cancel
           </Button>
           <Button
             form={formId}

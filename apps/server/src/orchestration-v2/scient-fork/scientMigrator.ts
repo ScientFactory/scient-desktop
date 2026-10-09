@@ -62,6 +62,8 @@ import Migration018 from "./migrations/018_ImportContextTransfers.ts";
 import Migration019 from "./migrations/019_WorkspaceAuthorityCutover.ts";
 import Migration020 from "./migrations/020_LegacyHistoryRepairGeneration.ts";
 import Migration021 from "./migrations/021_ForkCheckpointOwnership.ts";
+import Migration022 from "./migrations/022_ForkHistory.ts";
+import Migration023 from "./migrations/023_ForkHistoryLookups.ts";
 // ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
@@ -123,6 +125,8 @@ export const SCIENT_MIGRATIONS: ReadonlyArray<ScientMigration> = [
   { id: 19, name: "workspace-authority-cutover", effect: Migration019 },
   { id: 20, name: "legacy-history-repair-generation", effect: Migration020 },
   { id: 21, name: "fork-checkpoint-ownership", effect: Migration021 },
+  { id: 22, name: "fork-history", effect: Migration022 },
+  { id: 23, name: "fork-history-lookups", effect: Migration023 },
 ] as const;
 
 const loader = Migrator.fromRecord(

@@ -69,6 +69,7 @@ import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2Pend
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -76,7 +77,16 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
-import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
+import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
+import {
+  HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME,
+  readHistoricalSystemMessage,
+} from "./legacy/HistoricalSystemMessage.ts";
+import {
+  parseThreadSegmentFromAttachmentId,
+  threadHtmlRenderAttachmentIds,
+  toSafeThreadAttachmentSegment,
+} from "../attachmentStore.ts";
 import {
   isThreadHistoryUserTurn,
   isThreadHistoryTurnStart,
@@ -87,6 +97,41 @@ import {
   readRollbackAttachmentOwners,
   retainedRollbackAttachmentIds,
 } from "./scient-fork/RollbackAttachmentRetention.ts";
+// SCIENT-FORK:START
+import {
+  forkHistoryEntry,
+  readForkFamily,
+  readForkSharedFileIds,
+  readForkShownToolPayloads,
+  readQuestionAnswerFileIds,
+  readLiveMessageFileReferences,
+  readLiveForkSharedFileReferences,
+  readLiveToolPageReferences,
+  presentInheritedItem,
+  presentInheritedMessage,
+  readForkHistoryMessageRows,
+  countForkHistoryMessages,
+  readForkHistoryIndex,
+  readForkHistoryRows,
+  readForkHistoryWindow,
+  readForkLocalExtent,
+  readForkCopyIds,
+  hasForkHistory,
+} from "./scient-fork/ForkHistory.ts";
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START
+/** Item types turn-start history always carries (matching `getTurnStartHistory`'s query). */
+const TURN_START_HISTORY_TYPES: ReadonlySet<string> = new Set([
+  "user_message",
+  "assistant_message",
+  "command_execution",
+  "error",
+  "run_interrupt_result",
+  "file_change",
+  "proposed_plan",
+]);
+// SCIENT-FORK:END
 
 export class ProjectionStoreApplyEventError extends Schema.TaggedError<ProjectionStoreApplyEventError>()(
   "ProjectionStoreApplyEventError",
@@ -407,6 +452,27 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     runIds?: ReadonlyArray<RunId>,
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2TurnItem>, ProjectionStoreV2Error>;
+  /** SCIENT-FORK: a fork's inherited history, in order, as the fork shows it; empty otherwise. */
+  readonly getForkHistoryItems: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2TurnItem>, ProjectionStoreV2Error>;
+  /**
+   * SCIENT-FORK: files the deleted conversations of the thread's lineage name
+   * that no live conversation names. Read after a deletion commits.
+   */
+  readonly getReleasableFiles: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
+  /**
+   * SCIENT-FORK: the id and title of every thread not deleted in a thread's
+   * project, the thread included: what naming a fork compares against.
+   */
+  readonly getProjectThreadTitles: (
+    threadId: ThreadId,
+  ) => Effect.Effect<
+    ReadonlyArray<{ readonly id: ThreadId; readonly title: string }>,
+    ProjectionStoreV2Error
+  >;
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error>;
@@ -2481,6 +2547,34 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
       );
 
+    // SCIENT-FORK:START — the messages a fork's shared history items stand for.
+    /** When a fork's shared user messages were last updated, as it shows them (thread `t`). */
+    // A fork's shown history is frozen: its latest user times were fixed when
+    // it was accepted (`writeForkHistory`), one row per fork.
+    const inheritedUserMessageAt = (authored: boolean) => sql`
+      SELECT ${authored ? sql`authored_user_message_at` : sql`user_message_at`} AS at
+      FROM scient_fork_inherited_activity WHERE thread_id = t.thread_id
+    `;
+    const readInheritedMessages = (
+      threadId: ThreadId,
+      options?: Parameters<typeof readForkHistoryMessageRows>[2],
+    ) =>
+      readForkHistoryMessageRows(sql, threadId, options).pipe(
+        Effect.flatMap((rows) =>
+          decodeRows(
+            decodeMessagePayload,
+            threadId,
+          )(rows.map((row) => ({ payload_json: row.payload_json }))),
+        ),
+        // The fork's own copies are its messages; shared ones are presented.
+        Effect.map((messages) =>
+          messages.map((message) =>
+            message.threadId === threadId ? message : presentInheritedMessage(message),
+          ),
+        ),
+      );
+    // SCIENT-FORK:END
+
     const readCanonicalProjection = (
       threadId: ThreadId,
       window?: {
@@ -3035,7 +3129,39 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           `;
           for (const row of rows) messageOrdinals.set(row.message_id, row.ordinal);
         }
-        const orderedMessages = sortMessagesByTurnItemOrder(messages, turnItems, messageOrdinals);
+        const localMessages = sortMessagesByTurnItemOrder(messages, turnItems, messageOrdinals);
+        // SCIENT-FORK:START — a fork's inherited messages come first, as its own copies once did.
+        // Windowed reads add the messages of the inherited rows they show (readForkProjection).
+        // Filters apply in SQL first, so excluded payloads are never read; a run
+        // filter excludes them all (shared messages have no run here).
+        const inheritedMessages =
+          window !== undefined ||
+          (fields !== undefined && !fields.includes("messages")) ||
+          filter?.messageRunIds !== undefined ||
+          filter?.messageIds?.length === 0
+            ? []
+            : (yield* readInheritedMessages(threadId, {
+                ...(filter?.messageIds === undefined ? {} : { messageIds: filter.messageIds }),
+                ...(filter?.messageRoles === undefined
+                  ? {}
+                  : {
+                      itemTypes: filter.messageRoles.flatMap((role) =>
+                        role === "user"
+                          ? ["user_message"]
+                          : role === "assistant"
+                            ? ["assistant_message"]
+                            : [],
+                      ),
+                    }),
+              })).filter(
+                (message) =>
+                  (filter?.messageIds === undefined || filter.messageIds.includes(message.id)) &&
+                  (filter?.messageRoles === undefined ||
+                    filter.messageRoles.includes(message.role)) &&
+                  filter?.messageRunIds === undefined,
+              );
+        const orderedMessages = [...inheritedMessages, ...localMessages];
+        // SCIENT-FORK:END
         const projection = {
           thread,
           runs,
@@ -3068,6 +3194,208 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
       );
 
+    // SCIENT-FORK:START — the fork's inherited rows, then its own, in one window.
+    const readForkProjection = (
+      threadId: ThreadId,
+      window?: {
+        readonly rowLimit: number;
+        readonly userTurnLimit?: number | undefined;
+        readonly anchorItemId?: TurnItemId | undefined;
+        readonly historyAnchor?:
+          | { readonly threadId: ThreadId; readonly itemId: TurnItemId }
+          | undefined;
+      },
+    ) =>
+      Effect.gen(function* () {
+        // A full read shows the whole history; a window reads only what it shows.
+        const forkHistory =
+          window === undefined ? yield* readForkHistoryIndex(sql, threadId) : undefined;
+        const anchor = window?.historyAnchor?.itemId ?? window?.anchorItemId;
+        // Paging into inherited history reads only the inherited rows.
+        const anchorInHistory =
+          anchor !== undefined &&
+          (yield* sql<{ readonly present: number }>`
+            SELECT 1 AS present FROM scient_fork_history
+            WHERE thread_id = ${threadId} AND source_item_id = ${anchor} LIMIT 1
+          `).length > 0;
+        // A page anchored in shared history ends there: none of the fork's own
+        // rows. Anchoring the local read at the fork's boundary with no rows
+        // keeps it from reading any of them.
+        const redirected =
+          window !== undefined &&
+          (anchorInHistory ||
+            (window.historyAnchor !== undefined && window.historyAnchor.threadId !== threadId));
+        // The fork's own rows (up to a local anchor) start at its boundary, after
+        // its copies. While they cannot fill the window, the window reaches into
+        // its history and holds every one of them: reading exactly those keeps
+        // the local read off its older copies.
+        const extent =
+          window !== undefined && !redirected
+            ? yield* readForkLocalExtent(sql, threadId, anchor)
+            : undefined;
+        const localWindow =
+          window === undefined
+            ? undefined
+            : redirected
+              ? {
+                  ...window,
+                  rowLimit: 0,
+                  anchorItemId: TurnItemId.make(`turn-item:fork:${threadId}`),
+                }
+              : extent === undefined
+                ? window
+                : window.userTurnLimit === undefined
+                  ? { ...window, rowLimit: Math.min(extent.rows, window.rowLimit) }
+                  : extent.userTurns < window.userTurnLimit + 2 &&
+                      extent.turnStarts < THREAD_HISTORY_MAX_RAW_TURNS + 2
+                    ? {
+                        ...window,
+                        userTurnLimit: undefined,
+                        rowLimit:
+                          extent.userTurns === 0
+                            ? Math.min(extent.rows, window.rowLimit)
+                            : extent.rows,
+                      }
+                    : window;
+        const projection = yield* readCanonicalProjection(threadId, localWindow);
+        // The fork's own copies of in-flight items and plans are listed in its
+        // history, not shown as its own rows (only those read are looked up).
+        const copies = yield* readForkCopyIds(
+          sql,
+          threadId,
+          projection.turnItems.map((item) => item.id),
+        );
+        const local = localVisibleTurnItems(projection).filter(
+          (row) => !copies.has(row.sourceItemId),
+        );
+        const localTurns = projection.turnItems.filter((item) => !copies.has(item.id));
+        const shown =
+          window === undefined
+            ? (forkHistory ?? [])
+            : // A row-limited local page without turn anchors finishes paging locally first.
+              localWindow !== undefined &&
+                localWindow.rowLimit > 0 &&
+                window.userTurnLimit !== undefined &&
+                localTurns.length >= window.rowLimit &&
+                !localTurns.some(isThreadHistoryUserTurn)
+              ? []
+              : yield* readForkHistoryWindow(
+                  sql,
+                  threadId,
+                  {
+                    rowLimit: window.rowLimit,
+                    userTurnLimit: window.userTurnLimit,
+                    anchorItemId: anchorInHistory ? anchor : undefined,
+                    maxRawTurns: THREAD_HISTORY_MAX_RAW_TURNS,
+                  },
+                  // The fork's own turns come after its history and share the window.
+                  redirected
+                    ? []
+                    : local.map(({ item }) => forkHistoryEntry(threadId, item.id, item)),
+                );
+        const inheritedRows = yield* readForkHistoryRows(sql, threadId, shown);
+        // A window lists the copies it shows, and the plans, nodes and handoffs
+        // they name, as a full read does.
+        const listedItems = new Set(projection.turnItems.map((item) => item.id));
+        const shownCopies =
+          window === undefined
+            ? []
+            : inheritedRows.flatMap((row) =>
+                row.sourceThreadId === threadId && !listedItems.has(row.item.id) ? [row.item] : [],
+              );
+        const copyRecords = yield* readForkCopyRecords(threadId, shownCopies, projection);
+        // A full read already lists the inherited messages; a window adds those it shows.
+        // A full read already lists them; a window reads those of the rows it
+        // shows, the fork's own copies included.
+        const listed = new Set(projection.messages.map((message) => message.id));
+        const shownMessages =
+          window === undefined || shown.length === 0
+            ? []
+            : (yield* readInheritedMessages(threadId, {
+                positions: [shown[0]!.position, shown.at(-1)!.position],
+                includeCopies: true,
+              })).filter((message) => !listed.has(message.id));
+        const visibleTurnItems = renumberVisibleTurnItems([...inheritedRows, ...local]);
+        // Shared and frozen messages read in the order the fork shows them.
+        const shownAt = new Map<string, number>();
+        for (const [at, { item }] of visibleTurnItems.entries()) {
+          const messageId = messageIdForTurnItem(item);
+          if (messageId !== null && !shownAt.has(messageId)) shownAt.set(messageId, at);
+        }
+        const messages = [...shownMessages, ...projection.messages]
+          .map((message, at) => ({ message, at }))
+          .toSorted(
+            (left, right) =>
+              (shownAt.get(left.message.id) ?? Number.MAX_SAFE_INTEGER) -
+                (shownAt.get(right.message.id) ?? Number.MAX_SAFE_INTEGER) || left.at - right.at,
+          )
+          .map(({ message }) => message);
+        return {
+          ...projection,
+          ...copyRecords,
+          messages,
+          visibleTurnItems,
+        };
+      });
+
+    // As SQLite orders text: by code unit.
+    const compareIds = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
+    /** The fork's own copies a window shows, merged with what they name. */
+    const readForkCopyRecords = (
+      threadId: ThreadId,
+      copies: ReadonlyArray<OrchestrationV2TurnItem>,
+      projection: OrchestrationV2ThreadProjection,
+    ) =>
+      Effect.gen(function* () {
+        if (copies.length === 0) return {};
+        const named = (field: string, listed: ReadonlyArray<{ readonly id: string }>) => {
+          const known = new Set(listed.map((record) => String(record.id)));
+          return encodeIdList([
+            ...new Set(
+              copies.flatMap((item) => {
+                const value = nullableStringField(item, field);
+                return value === null || known.has(value) ? [] : [value];
+              }),
+            ),
+          ]);
+        };
+        const [planRows, nodeRows, handoffRows] = yield* Effect.all([
+          sql<PayloadRow>`
+            SELECT payload_json FROM orchestration_v2_projection_plans
+            WHERE thread_id = ${threadId}
+              AND plan_id IN (SELECT value FROM json_each(${named("planId", projection.plans)}))
+          `,
+          sql<PayloadRow>`
+            SELECT payload_json FROM orchestration_v2_projection_nodes
+            WHERE thread_id = ${threadId}
+              AND node_id IN (SELECT value FROM json_each(${named("nodeId", projection.nodes)}))
+          `,
+          sql<PayloadRow>`
+            SELECT payload_json FROM orchestration_v2_projection_context_handoffs
+            WHERE thread_id = ${threadId}
+              AND context_handoff_id IN (
+                SELECT value FROM json_each(${named("contextHandoffId", projection.contextHandoffs)})
+              )
+          `,
+        ]);
+        const [plans, nodes, contextHandoffs] = yield* Effect.all([
+          decodeRows(decodePlanPayload, threadId)(planRows),
+          decodeRows(decodeNodePayload, threadId)(nodeRows),
+          decodeRows(decodeContextHandoffPayload, threadId)(handoffRows),
+        ]);
+        return {
+          turnItems: [...copies, ...projection.turnItems].toSorted(
+            (left, right) => left.ordinal - right.ordinal || compareIds(left.id, right.id),
+          ),
+          plans: [...projection.plans, ...plans].toSorted((left, right) =>
+            compareIds(left.id, right.id),
+          ),
+          nodes: [...projection.nodes, ...nodes],
+          contextHandoffs: [...projection.contextHandoffs, ...contextHandoffs],
+        };
+      });
+    // SCIENT-FORK:END
+
     const readProjection = (
       threadId: ThreadId,
       seenThreadIds: ReadonlySet<ThreadId>,
@@ -3083,6 +3411,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       },
     ): Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error> =>
       Effect.gen(function* () {
+        // SCIENT-FORK:START — a fork's inherited history is its frozen membership.
+        if (yield* hasForkHistory(sql, threadId))
+          return yield* readForkProjection(threadId, window);
+        // SCIENT-FORK:END
         const localWindow =
           window?.suppressLocal === true ||
           (window?.historyAnchor !== undefined && window.historyAnchor.threadId !== threadId)
@@ -3677,8 +4009,31 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       OR json_array_length(payload_json, '$.attachments') > 0)
               ) AS present
             `;
+            // SCIENT-FORK: a fork's inherited request is part of its conversation,
+            // as the fork shows it (a kept version first).
+            const inheritedConversation =
+              conversation[0]?.present !== 1 &&
+              (yield* sql<{ present: number }>`
+                SELECT EXISTS(
+                  SELECT 1 FROM (
+                    SELECT COALESCE(frozen.message_json, message.payload_json) AS payload_json
+                    FROM scient_fork_history AS history
+                    LEFT JOIN scient_fork_frozen_items AS frozen
+                      ON frozen.thread_id = history.thread_id
+                        AND frozen.position = history.position
+                    LEFT JOIN orchestration_v2_projection_messages AS message
+                      ON message.message_id = history.message_id
+                    WHERE history.thread_id = ${threadId}
+                      AND history.source_thread_id <> ${threadId}
+                      AND history.item_type = 'user_message'
+                  ) AS shown
+                  WHERE json_extract(shown.payload_json, '$.role') = 'user'
+                    AND (lower(trim(json_extract(shown.payload_json, '$.text'), ${javascriptTrimWhitespace})) <> '/compact'
+                      OR json_array_length(shown.payload_json, '$.attachments') > 0)
+                ) AS present
+              `)[0]?.present === 1;
             return {
-              hasConversation: conversation[0]?.present === 1,
+              hasConversation: conversation[0]?.present === 1 || inheritedConversation,
               thread,
               runs,
               attempts,
@@ -3716,11 +4071,62 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND ${runIds === undefined ? sql`1` : sql`item.run_id IN ${sql.in(runIds)}`}
           ORDER BY item.ordinal ASC, item.turn_item_id ASC
         `;
-        return (yield* decodeRows(decodeTurnItemPayload, threadId)(rows)).filter(
+        const local = (yield* decodeRows(decodeTurnItemPayload, threadId)(rows)).filter(
           (item) =>
             (item.type !== "reasoning" && item.type !== "dynamic_tool") ||
             historicalMessage(item) !== null,
         );
+        // SCIENT-FORK:START — a fork's inherited history comes first, as frozen history.
+        if (runIds !== undefined) return local;
+        if (!(yield* hasForkHistory(sql, threadId))) return local;
+        // Only rows of a type turn-start history can hold are read, and of
+        // questions only the answered ones, as the fork shows them (the stored
+        // status first; a kept version's own status otherwise).
+        const index = yield* readForkHistoryIndex(sql, threadId, undefined, [
+          ...TURN_START_HISTORY_TYPES,
+          "reasoning",
+          "dynamic_tool",
+          "user_input_request",
+        ]);
+        const answered = new Set(
+          (yield* sql<{ readonly position: number }>`
+            SELECT history.position FROM scient_fork_history AS history
+            LEFT JOIN scient_fork_frozen_items AS frozen
+              ON frozen.thread_id = history.thread_id AND frozen.position = history.position
+            LEFT JOIN orchestration_v2_projection_turn_items AS item
+              ON item.turn_item_id = history.source_item_id
+            WHERE history.thread_id = ${threadId}
+              AND history.item_type = 'user_input_request'
+              AND CASE
+                WHEN frozen.item_json IS NULL THEN item.status = 'completed'
+                  AND json_type(item.payload_json, '$.questionAnswer') = 'object'
+                ELSE json_extract(frozen.item_json, '$.status') = 'completed'
+                  AND json_type(frozen.item_json, '$.questionAnswer') = 'object'
+              END
+          `).map((row) => row.position),
+        );
+        const candidates = index.filter(
+          (row) => row.type !== "user_input_request" || answered.has(row.position),
+        );
+        // The fork's own copies are listed in its history: shown there, not twice.
+        const inherited = yield* readForkCopyIds(
+          sql,
+          threadId,
+          local.map((item) => item.id),
+        );
+        const history = (yield* readForkHistoryRows(sql, threadId, candidates))
+          .map((row) => row.item)
+          .filter(
+            (item) =>
+              TURN_START_HISTORY_TYPES.has(item.type) ||
+              ((item.type === "reasoning" || item.type === "dynamic_tool") &&
+                historicalMessage(item) !== null) ||
+              (item.type === "user_input_request" &&
+                item.status === "completed" &&
+                item.questionAnswer !== undefined),
+          );
+        return [...history, ...local.filter((item) => !inherited.has(item.id))];
+        // SCIENT-FORK:END
       }).pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
 
     const getThreadProjection: ProjectionStoreV2Shape["getThreadProjection"] = (threadId) =>
@@ -4434,7 +4840,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql<{
         count: number;
       }>`SELECT COUNT(*) AS count FROM orchestration_v2_projection_messages WHERE thread_id = ${threadId}`.pipe(
-        Effect.map((rows) => rows[0]?.count ?? 0),
+        // SCIENT-FORK: a fork's inherited messages count as its own.
+        Effect.flatMap((rows) =>
+          countForkHistoryMessages(sql, threadId).pipe(
+            Effect.map((inherited) => (rows[0]?.count ?? 0) + inherited),
+          ),
+        ),
         Effect.mapError(controlReadError(threadId)),
       );
     const getNextTurnItemOrdinal: ProjectionStoreV2Shape["getNextTurnItemOrdinal"] = (threadId) =>
@@ -4466,14 +4877,33 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         FROM orchestration_v2_projection_turn_items
         WHERE turn_item_id = ${itemId} AND thread_id = ${threadId}`.pipe(
         Effect.flatMap((rows) =>
-          rows[0] === undefined
-            ? Effect.succeed(null)
-            : decodeTurnItemPayload(rows[0].payload_json),
+          rows[0] !== undefined
+            ? decodeTurnItemPayload(rows[0].payload_json)
+            : // SCIENT-FORK: an item a fork shows from its history, as it shows it.
+              sql<{ readonly position: number; readonly payload_json: string | null }>`
+                SELECT history.position, COALESCE(frozen.item_json, item.payload_json) AS payload_json
+                FROM scient_fork_history AS history
+                LEFT JOIN scient_fork_frozen_items AS frozen
+                  ON frozen.thread_id = history.thread_id AND frozen.position = history.position
+                LEFT JOIN orchestration_v2_projection_turn_items AS item
+                  ON item.turn_item_id = history.source_item_id
+                WHERE history.thread_id = ${threadId} AND history.source_item_id = ${itemId}
+                  AND history.source_thread_id <> ${threadId}
+                LIMIT 1
+              `.pipe(
+                Effect.flatMap(([shown]) =>
+                  shown?.payload_json == null
+                    ? Effect.succeed(null)
+                    : decodeTurnItemPayload(shown.payload_json).pipe(
+                        Effect.map((item) => presentInheritedItem(item, shown.position, threadId)),
+                      ),
+                ),
+              ),
         ),
         Effect.mapError(controlReadError(threadId)),
       );
 
-    const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = (threadId) =>
+    const readThreadAttachmentIds = (threadId: ThreadId) =>
       Effect.all([
         sql<{ id: string }>`
       SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
@@ -4508,6 +4938,118 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ]),
         Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
       );
+
+    const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] =
+      readThreadAttachmentIds;
+
+    // SCIENT-FORK:START — files are shared (forks show their history's files,
+    // messages can reuse a file), so a deletion releases files after it
+    // commits, by `getReleasableFiles`, keeping any a live conversation names.
+    const renderAttachmentIds = (payloads: ReadonlyArray<string>) =>
+      payloads.flatMap((payload) => {
+        const item = parseEncodedPayload(payload);
+        const tool = {
+          toolName: typeof item.toolName === "string" ? item.toolName : null,
+          output: item.output,
+        };
+        const id =
+          htmlRenderFromToolItem(tool)?.attachmentId ?? mcpAppFromToolItem(tool)?.attachmentId;
+        return id === undefined ? [] : [id];
+      });
+    /**
+     * Every file a conversation names: its own records, and what it shows from
+     * its history. With `releasable`, tool pages and system-message files
+     * count only when it accepts their minting conversation's attachment
+     * segment: a tool's output can name any file, so it cannot make a live
+     * conversation's file releasable.
+     */
+    const namedFiles = (threadId: ThreadId, releasable?: (segment: string | null) => boolean) =>
+      Effect.gen(function* () {
+        const owned = (ids: ReadonlyArray<string>) =>
+          releasable === undefined
+            ? ids
+            : ids.filter((id) => releasable(parseThreadSegmentFromAttachmentId(id)));
+        const tools = yield* sql<PayloadRow>`
+          SELECT payload_json FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId} AND type = 'dynamic_tool'
+            AND (
+              payload_json LIKE '%htmlRender%'
+              OR payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
+              OR payload_json LIKE ${`%${HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME}%`}
+            )
+        `;
+        const systemFiles: string[] = [];
+        for (const row of tools) {
+          const system = readHistoricalSystemMessage(
+            yield* decodeTurnItemPayload(row.payload_json),
+          );
+          if (Option.isSome(system))
+            systemFiles.push(
+              ...(system.value.attachments ?? []).map((attachment) => attachment.id),
+            );
+        }
+        return [
+          ...(yield* readThreadAttachmentIds(threadId)),
+          ...(yield* readQuestionAnswerFileIds(sql, threadId)),
+          ...(yield* readForkSharedFileIds(sql, threadId)),
+          ...owned(renderAttachmentIds(tools.map((row) => row.payload_json))),
+          ...owned(
+            renderAttachmentIds(
+              yield* readForkShownToolPayloads(sql, threadId, MCP_APP_OUTPUT_KEY),
+            ),
+          ),
+          ...owned(systemFiles),
+        ];
+      });
+    /**
+     * Files the deleted conversations of a thread's lineage name (tool pages and
+     * system-message files only when minted in the lineage or by a conversation
+     * that is gone) that no live conversation names: none in the lineage
+     * (messages, question answers, tool pages, system messages, shown history),
+     * and no message, question answer, tool page or fork's shared files
+     * anywhere else. Names compare without case: on a case-insensitive disk an
+     * alias names the same file.
+     */
+    const getReleasableFiles = (threadId: ThreadId) =>
+      Effect.gen(function* () {
+        const family = yield* readForkFamily(sql, threadId);
+        // A page or system file is the lineage's to release when minted in it,
+        // or when the conversation that minted it is gone.
+        const lineage = new Set(
+          family.flatMap((member) => toSafeThreadAttachmentSegment(member.threadId) ?? []),
+        );
+        const live = new Set(
+          (yield* sql<{ readonly thread_id: string }>`
+            SELECT thread_id FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL
+          `).flatMap((row) => toSafeThreadAttachmentSegment(row.thread_id) ?? []),
+        );
+        const releasable = (segment: string | null) =>
+          segment !== null && (lineage.has(segment) || !live.has(segment));
+        const candidates = new Set<string>();
+        for (const member of family) {
+          if (!member.deleted) continue;
+          for (const id of yield* namedFiles(member.threadId, releasable)) candidates.add(id);
+        }
+        const named = new Set<string>();
+        for (const member of family) {
+          if (member.deleted || candidates.size === 0) continue;
+          for (const id of yield* namedFiles(member.threadId)) named.add(id.toLowerCase());
+        }
+        const remaining = [...candidates].filter((id) => !named.has(id.toLowerCase()));
+        const elsewhere = new Set([
+          ...(yield* readLiveMessageFileReferences(sql, remaining)),
+          ...(yield* readLiveForkSharedFileReferences(sql, remaining)),
+          ...(yield* readLiveToolPageReferences(sql, remaining)),
+        ]);
+        return remaining.filter((id) => !elsewhere.has(id.toLowerCase()));
+      }).pipe(
+        Effect.mapError((cause) =>
+          isProjectionStoreReadError(cause)
+            ? cause
+            : new ProjectionStoreReadError({ threadId, cause }),
+        ),
+      );
+    // SCIENT-FORK:END
 
     const getThreadRecords: ProjectionStoreV2Shape["getThreadRecords"] = (
       threadId,
@@ -4567,6 +5109,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       readonly visibility: OrchestrationV2ProjectedTurnItem["visibility"];
       readonly item: TimelineIndexItem;
       readonly synthetic?: OrchestrationV2TurnItem;
+      // SCIENT-FORK: an inherited row of a fork's frozen history, at this position.
+      readonly forkHistoryPosition?: number;
     };
     const readTimelineIndex = (
       threadId: ThreadId,
@@ -4614,6 +5158,33 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           items,
         });
         const visible = local.filter((row) => isVisible(row.item));
+        // SCIENT-FORK:START — a fork's inherited rows come from its frozen history.
+        const forkHistory = yield* readForkHistoryIndex(sql, threadId);
+        if (forkHistory.length > 0) {
+          const inherited = new Set<string>(forkHistory.map((row) => row.sourceItemId));
+          return {
+            records,
+            local,
+            visible: [
+              ...forkHistory.map((row): TimelineIndexRow => ({
+                sourceThreadId: row.sourceThreadId,
+                sourceItemId: row.sourceItemId,
+                visibility: "inherited",
+                item: {
+                  id: row.sourceItemId,
+                  threadId: row.sourceThreadId,
+                  runId: null,
+                  nodeId: null,
+                  type: row.type,
+                  frozenHistory: true,
+                },
+                forkHistoryPosition: row.position,
+              })),
+              ...visible.filter((row) => !inherited.has(row.sourceItemId)),
+            ],
+          };
+        }
+        // SCIENT-FORK:END
         const fork = records.thread.forkedFrom;
         if (fork?.type !== "run" || seen.has(fork.threadId)) return { records, local, visible };
         const source = yield* readTimelineIndex(fork.threadId, new Set([...seen, threadId]));
@@ -4697,8 +5268,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     visibility: row.visibility,
                     item: row.synthetic,
                   };
+                // SCIENT-FORK: a shared row reads the version kept for the fork first.
+                const shared =
+                  row.forkHistoryPosition !== undefined && row.sourceThreadId !== threadId;
+                const kept = shared
+                  ? yield* sql<PayloadRow>`SELECT item_json AS payload_json
+          FROM scient_fork_frozen_items
+          WHERE thread_id = ${threadId} AND position = ${row.forkHistoryPosition}`
+                  : [];
                 const payloads =
-                  yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_turn_items
+                  kept.length > 0
+                    ? kept
+                    : yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_turn_items
           WHERE thread_id = ${row.sourceThreadId} AND turn_item_id = ${row.sourceItemId}`;
                 const decoded = yield* decodeRows(
                   decodeTurnItemPayload,
@@ -4715,7 +5296,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   sourceThreadId: row.sourceThreadId,
                   sourceItemId: row.sourceItemId,
                   visibility: row.visibility,
-                  item,
+                  // SCIENT-FORK: shared history reads as the fork shows it.
+                  item: shared
+                    ? presentInheritedItem(item, row.forkHistoryPosition!, threadId)
+                    : item,
                 };
               }),
             );
@@ -4917,21 +5501,33 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS pending_secret_request_payload_json,
               (
-                SELECT message.updated_at
-                FROM orchestration_v2_projection_messages message
-                WHERE message.thread_id = t.thread_id
-                  AND message.role = 'user'
-                ORDER BY message.updated_at DESC, message.message_id DESC
-                LIMIT 1
+                -- SCIENT-FORK: the later of the thread's own latest and its fork's shared one.
+                SELECT MAX(at) FROM (
+                  SELECT (
+                    SELECT message.updated_at
+                    FROM orchestration_v2_projection_messages message
+                    WHERE message.thread_id = t.thread_id AND message.role = 'user'
+                    ORDER BY message.updated_at DESC, message.message_id DESC
+                    LIMIT 1
+                  ) AS at
+                  UNION ALL
+                  SELECT MAX(at) FROM (${inheritedUserMessageAt(false)})
+                )
               ) AS latest_user_message_at,
               (
-                SELECT message.updated_at
-                FROM orchestration_v2_projection_messages message
-                WHERE message.thread_id = t.thread_id
-                  AND message.role = 'user'
-                  AND json_extract(message.payload_json, '$.createdBy') = 'user'
-                ORDER BY message.updated_at DESC, message.message_id DESC
-                LIMIT 1
+                -- SCIENT-FORK: the later of the thread's own latest and its fork's shared one.
+                SELECT MAX(at) FROM (
+                  SELECT (
+                    SELECT message.updated_at
+                    FROM orchestration_v2_projection_messages message
+                    WHERE message.thread_id = t.thread_id AND message.role = 'user'
+                      AND json_extract(message.payload_json, '$.createdBy') = 'user'
+                    ORDER BY message.updated_at DESC, message.message_id DESC
+                    LIMIT 1
+                  ) AS at
+                  UNION ALL
+                  SELECT MAX(at) FROM (${inheritedUserMessageAt(true)})
+                )
               ) AS latest_user_authored_message_at,
               EXISTS (
                 SELECT 1
@@ -4953,6 +5549,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LEFT JOIN orchestration_v2_projection_runs r
                   ON r.run_id = per_run.run_id
                 WHERE per_run.run_id IS NULL OR r.status <> 'rolled_back'
+              )
+              -- SCIENT-FORK: a fork's inherited history, apart from its own copies.
+              + (
+                SELECT COUNT(*) FROM scient_fork_history AS history
+                WHERE history.thread_id = t.thread_id AND history.source_thread_id <> t.thread_id
               ) AS item_count,
               (
                 SELECT COUNT(*)
@@ -5138,19 +5739,33 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               json_extract(r.payload_json, '$.startedAt') AS latest_run_started_at,
               r.completed_at AS latest_run_completed_at,
               (
-                SELECT message.updated_at
-                FROM orchestration_v2_projection_messages message
-                WHERE message.thread_id = t.thread_id AND message.role = 'user'
-                ORDER BY message.updated_at DESC, message.message_id DESC
-                LIMIT 1
+                -- SCIENT-FORK: the later of the thread's own latest and its fork's shared one.
+                SELECT MAX(at) FROM (
+                  SELECT (
+                    SELECT message.updated_at
+                    FROM orchestration_v2_projection_messages message
+                    WHERE message.thread_id = t.thread_id AND message.role = 'user'
+                    ORDER BY message.updated_at DESC, message.message_id DESC
+                    LIMIT 1
+                  ) AS at
+                  UNION ALL
+                  SELECT MAX(at) FROM (${inheritedUserMessageAt(false)})
+                )
               ) AS latest_user_message_at,
               (
-                SELECT message.updated_at
-                FROM orchestration_v2_projection_messages message
-                WHERE message.thread_id = t.thread_id AND message.role = 'user'
-                  AND json_extract(message.payload_json, '$.createdBy') = 'user'
-                ORDER BY message.updated_at DESC, message.message_id DESC
-                LIMIT 1
+                -- SCIENT-FORK: the later of the thread's own latest and its fork's shared one.
+                SELECT MAX(at) FROM (
+                  SELECT (
+                    SELECT message.updated_at
+                    FROM orchestration_v2_projection_messages message
+                    WHERE message.thread_id = t.thread_id AND message.role = 'user'
+                      AND json_extract(message.payload_json, '$.createdBy') = 'user'
+                    ORDER BY message.updated_at DESC, message.message_id DESC
+                    LIMIT 1
+                  ) AS at
+                  UNION ALL
+                  SELECT MAX(at) FROM (${inheritedUserMessageAt(true)})
+                )
               ) AS latest_user_authored_message_at
             FROM orchestration_v2_projection_threads t
             LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = (
@@ -5588,6 +6203,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadProjection,
       getTurnStartContext,
       getTurnStartHistory,
+      // SCIENT-FORK:START
+      getForkHistoryItems: (threadId) =>
+        readForkHistoryIndex(sql, threadId).pipe(
+          Effect.flatMap((index) => readForkHistoryRows(sql, threadId, index)),
+          Effect.map((rows) => rows.map((row) => row.item)),
+          Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+        ),
+      getReleasableFiles,
+      getProjectThreadTitles: (threadId) =>
+        sql<{ readonly thread_id: string; readonly title: string }>`
+          SELECT sibling.thread_id, json_extract(sibling.payload_json, '$.title') AS title
+          FROM orchestration_v2_projection_threads AS origin
+          JOIN orchestration_v2_projection_threads AS sibling
+            ON sibling.project_id = origin.project_id
+          WHERE origin.thread_id = ${threadId} AND sibling.deleted_at IS NULL
+        `.pipe(
+          Effect.map((rows) =>
+            rows.map((row) => ({ id: ThreadId.make(row.thread_id), title: row.title })),
+          ),
+          Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+        ),
+      // SCIENT-FORK:END
       getRuntimeRecoveryProjection,
       getRunningTurnContext,
       getThreadProviderContext,
@@ -6158,6 +6795,18 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             turnItems: projection.turnItems.filter((item) => item.runId === runId),
           })),
         ),
+      // SCIENT-FORK: forks need the SQL store.
+      getForkHistoryItems: () => Effect.succeed([]),
+      getReleasableFiles: () => Effect.succeed([]),
+      getProjectThreadTitles: (threadId) =>
+        Effect.gen(function* () {
+          const origin = yield* service.getThread(threadId);
+          const active = yield* service.getShellSnapshot();
+          const archived = yield* service.getShellSnapshot({ location: "archive" });
+          return [...active.threads, ...archived.archivedThreads]
+            .filter((thread) => thread.projectId === origin.projectId)
+            .map((thread) => ({ id: thread.id, title: thread.title }));
+        }),
       getTurnStartHistory: (threadId, runIds) =>
         service
           .getThreadProjection(threadId)

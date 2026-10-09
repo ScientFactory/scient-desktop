@@ -5,10 +5,10 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ConversationForkService from "./scient-fork/ConversationForkService.ts";
 import { ScientForkCheckpointBaselineLive } from "./scient-fork/ForkCheckpointBaseline.ts";
-import { ScientForkAttachmentCopierLive } from "./scient-fork/ForkAttachmentCopier.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AttachmentReservationReconciliation from "./AttachmentReservationReconciliation.ts";
 import * as AttachmentRollbackPruneService from "./AttachmentRollbackPruneService.ts";
+import * as ThreadFileRelease from "./scient-fork/ThreadFileRelease.ts";
 // SCIENT-FORK:END
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -329,7 +329,6 @@ const layerConversationForkProvided = ConversationForkService.layer.pipe(
       ThreadCommandExecutor.layer,
       layerLegacyV1ThreadImporterProvided,
       ScientForkCheckpointBaselineLive.pipe(Layer.provide(VcsProcess.layer)),
-      ScientForkAttachmentCopierLive,
       Layer.effect(SqlClient.SqlClient, SqlClient.SqlClient),
     ),
   ),
@@ -345,12 +344,16 @@ const layerAttachmentRollbackPruneProvided = AttachmentRollbackPruneService.laye
     ),
   ),
 );
+const layerThreadFileReleaseProvided = ThreadFileRelease.layer.pipe(
+  Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerAttachmentReconciliationProvided)),
+);
 // SCIENT-FORK:END
 
 const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
   Layer.provide(
     Layer.mergeAll(
       layerAttachmentRollbackPruneProvided,
+      layerThreadFileReleaseProvided,
       layerConversationForkProvided,
       layerRunFinalizationServiceProvided,
       layerCheckpointRollbackServiceProvided,

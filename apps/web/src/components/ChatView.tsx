@@ -235,12 +235,14 @@ import { useQueuedDeliveryFollow, useResponseFollow } from "./chat/responseFollo
 import { useDraftHeroMotion } from "./chat/timelineEntranceMotion";
 import { useTimelineWorking } from "./chat/timelineWorkingState";
 // SCIENT-FORK:END
-// SCIENT-FORK:START — fork command, baseline and dialog wiring.
+// SCIENT-FORK:START — fork command, baseline, dialog wiring and landing.
 import {
   ScientChatForkDialog,
   useChatViewForkCommand,
   useClearForkCommandOnThreadChange,
   useForkConversationCommand,
+  useForkLanding,
+  useForkLandingReveal,
   useForkMessageCommands,
   useForkPdfContinuityPending,
   useForkTimelineBaseline,
@@ -4276,11 +4278,16 @@ function ChatViewContent(props: ChatViewProps) {
     () => timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
     [timelineEntries],
   );
+  // SCIENT-FORK:START — a fork opened from the fork dialog shows once, in place.
+  const forkLanding = useForkLanding(routeThreadKey);
+  // SCIENT-FORK:END
   const displayedTimeline = resolveThreadSwitchTimeline({
     loading: timelineEntries.length === 0 && threadSyncPhase !== null,
     activeThreadKey,
     nextEntries: timelineEntries,
     rememberedForActive: peekRememberedThreadTimeline<typeof timelineEntries>(activeThreadKey),
+    // SCIENT-FORK: a landing fork never holds the origin's rows under its own header.
+    ...(forkLanding.heldTimeline ? { lastReady: forkLanding.heldTimeline } : {}),
   });
   const displayedTimelineKey = displayedTimeline.displayThreadKey ?? routeThreadKey;
   const paintOnlyDisplayedTimeline = isPaintOnlyThreadTimeline(
@@ -4288,6 +4295,17 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadKey,
   );
   const displayedThreadRef = parseScopedThreadKey(displayedTimelineKey);
+  // SCIENT-FORK:START — the landing fork's messages wait for their own positioned rows.
+  const forkLandingReveal = useForkLandingReveal({
+    landing: forkLanding,
+    threadKey: routeThreadKey,
+    threadExists: isServerThread,
+    threadDeleted: threadStatus === "deleted",
+    detailLoaded: serverProjection !== null,
+    displayedThreadKey: displayedTimeline.displayThreadKey,
+    timelineEmpty: timelineEntries.length === 0,
+  });
+  // SCIENT-FORK:END
   const worktreeSetup = resolveVisibleWorktreeSetup({
     live: liveWorktreeSetup,
     recorded: null,
@@ -11545,7 +11563,8 @@ function ChatViewContent(props: ChatViewProps) {
 
   // Empty state: no active thread
   if (!activeThread) {
-    return <NoActiveThreadState />;
+    // SCIENT-FORK: a landing fork's shell is on its way; the pane stays plain meanwhile.
+    return forkLanding.pending ? null : <NoActiveThreadState />;
   }
 
   const rightPanelContent = activeThreadRef ? (
@@ -12014,7 +12033,13 @@ function ChatViewContent(props: ChatViewProps) {
               />
             </div>
             {/* Messages Wrapper */}
-            <div className="relative flex min-h-0 flex-1 flex-col bg-background">
+            <div
+              className={cn(
+                "relative flex min-h-0 flex-1 flex-col bg-background",
+                // SCIENT-FORK: hidden while a landing fork settles, then shown once.
+                forkLandingReveal.messagesClassName,
+              )}
+            >
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
                 agentPanelModel={agentPanelModel}
@@ -12138,6 +12163,9 @@ function ChatViewContent(props: ChatViewProps) {
                 onToolOutputCollapsedAtEnd={onToolOutputCollapsedAtEnd}
                 onManualNavigation={cancelTimelinePositioning}
                 cancelPositionRestoreRef={cancelPositionRestoreRef}
+                // SCIENT-FORK:START
+                onPositionedThreadKeyChange={forkLandingReveal.onPositionedThreadKeyChange}
+                // SCIENT-FORK:END
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
                 positionHistoryLoading={paintOnlyDisplayedTimeline || threadDetailLoading}
                 topFadeEnabled={!hasTimelineTopBanner}
@@ -12423,6 +12451,9 @@ function ChatViewContent(props: ChatViewProps) {
                               threadSyncPhase={
                                 activeEnvironmentUnavailable ? null : threadSyncPhase
                               }
+                              // SCIENT-FORK:START
+                              syncStatusHidden={forkLandingReveal.syncStatusHidden}
+                              // SCIENT-FORK:END
                               runtimeMode={runtimeMode}
                               interactionMode={interactionMode}
                               lockedProvider={modelPickerLockedProvider}
