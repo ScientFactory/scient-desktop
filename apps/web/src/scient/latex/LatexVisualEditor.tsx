@@ -149,6 +149,7 @@ import {
   latexImageUploads,
   removeLatexImageUpload,
 } from "./latexImageUploads";
+import { latexGuidancePlaceholders } from "./latexGuidance";
 import { LatexMathField, type LatexMathFieldHandle } from "./LatexMathField";
 import { LatexMathPalette } from "./LatexMathPalette";
 import { LatexMatrixDialog } from "./LatexMatrixDialog";
@@ -5679,6 +5680,10 @@ function LatexVisualEditorReady(
       Extension.create({
         name: "latexImageUploads",
         addProseMirrorPlugins: () => [latexImageUploads()],
+      }),
+      Extension.create({
+        name: "latexGuidance",
+        addProseMirrorPlugins: () => [latexGuidancePlaceholders(() => projection.current)],
       }),
       Extension.create({
         name: "latexSourceGuard",
