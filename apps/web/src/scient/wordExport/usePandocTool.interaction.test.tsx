@@ -84,7 +84,7 @@ describe("usePandocTool status polling", () => {
       "Status temporarily unavailable.",
     );
     const retry = [...document.querySelectorAll("button")].find(
-      (button) => button.textContent === "Try again",
+      (button) => button.textContent === "Check again",
     );
     expect(retry).toBeDefined();
     await act(async () => retry?.click());

@@ -131,7 +131,8 @@ describe("pandocToolView", () => {
     expect(pandocToolView({ status: null, requesting: false, error: "Offline." })).toMatchObject({
       kind: "failed",
       detail: "Offline.",
-      actionLabel: "Try again",
+      actionLabel: "Check again",
+      unchecked: true,
     });
     expect(pandocToolView({ status: null, requesting: false, error: null }).kind).toBe("loading");
   });
