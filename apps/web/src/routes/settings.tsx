@@ -149,6 +149,12 @@ function SettingsContentLayout() {
   );
 }
 
+// Pages whose tools are installed per server choose one environment, not an aggregate.
+const SINGLE_ENVIRONMENT_SETTINGS_PATHS: ReadonlySet<string> = new Set([
+  "/settings/providers",
+  "/settings/documents",
+]);
+
 function SettingsRouteLayout() {
   const rawSearch = Route.useSearch();
   const navigate = Route.useNavigate();
@@ -156,7 +162,7 @@ function SettingsRouteLayout() {
   return (
     <SettingsScopeProvider
       search={rawSearch}
-      singleEnvironment={pathname === "/settings/providers"}
+      singleEnvironment={SINGLE_ENVIRONMENT_SETTINGS_PATHS.has(pathname)}
       onChange={(next) => {
         // Send every axis so the retain middleware sees an explicit target
         // even when the choice is "all", which is the absence of a key.

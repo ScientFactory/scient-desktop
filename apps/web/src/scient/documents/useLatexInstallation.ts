@@ -21,7 +21,10 @@ export interface LatexInstallationController {
   readonly refreshing: boolean;
 }
 
-/** The LaTeX engine on one environment, polled while an install runs. */
+/**
+ * The LaTeX engine on one environment, polled while an install runs. Mount it
+ * once per environment (key the caller by environment id).
+ */
 export function useLatexInstallation(environmentId: EnvironmentId): LatexInstallationController {
   const [report, setReport] = useState<ScientLatexToolchainReport | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +53,9 @@ export function useLatexInstallation(environmentId: EnvironmentId): LatexInstall
   useEffect(() => {
     void read(false);
     return () => {
+      // Answers for the previous environment, an install request included, are void.
       generationRef.current++;
+      setRequesting(false);
     };
   }, [read]);
 

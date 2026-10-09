@@ -7,7 +7,8 @@ import { EnvironmentId, type ScientLatexToolchainReport } from "@t3tools/contrac
 const mocks = vi.hoisted(() => ({
   report: null as ScientLatexToolchainReport | null,
   target: null as string | null,
-  scopeEnvironmentId: null as string | null,
+  /** `undefined`: no settings scope; `null`: a scope with no connected environment. */
+  scopeEnvironmentId: undefined as string | null | undefined,
   readToolchain: vi.fn(),
   install: vi.fn(),
 }));
@@ -23,11 +24,13 @@ vi.mock("~/components/settings/settingsLayout", async (importOriginal) => ({
 vi.mock("~/components/settings/SettingsScopeContext", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/components/settings/SettingsScopeContext")>()),
   useOptionalSettingsScope: () =>
-    mocks.scopeEnvironmentId === null
+    mocks.scopeEnvironmentId === undefined
       ? null
       : {
-          environment: { environmentId: mocks.scopeEnvironmentId },
-          connectedEnvironments: [{ environmentId: mocks.scopeEnvironmentId }],
+          environment:
+            mocks.scopeEnvironmentId === null ? null : { environmentId: mocks.scopeEnvironmentId },
+          connectedEnvironments:
+            mocks.scopeEnvironmentId === null ? [] : [{ environmentId: mocks.scopeEnvironmentId }],
           scope: { kind: "environment" },
           targets: [],
         },
@@ -62,7 +65,7 @@ describe("Settings ▸ Documents", () => {
     localStorage.clear();
     mocks.report = report();
     mocks.target = null;
-    mocks.scopeEnvironmentId = null;
+    mocks.scopeEnvironmentId = undefined;
     mocks.readToolchain.mockReset().mockImplementation(async () => mocks.report);
     mocks.install.mockReset().mockResolvedValue({
       state: "downloading",
@@ -221,5 +224,25 @@ describe("Settings ▸ Documents", () => {
     await render();
     expect(container.querySelector("#new-document-template")).not.toBeNull();
     expect(stored("scient.documentsSettingsFormat")).toBe("latex");
+  });
+
+  it("shows no server tools when the chosen scope has no connected environment", async () => {
+    mocks.scopeEnvironmentId = null;
+    await render(null);
+    expect(mocks.readToolchain).not.toHaveBeenCalled();
+    expect(container.querySelector("#latex-installation")).toBeNull();
+    expect(container.textContent).not.toContain("Word export (Pandoc)");
+    expect(select("Template for new documents")).not.toBeNull();
+  });
+
+  it("lets the tabs change while a search jump is still waiting for its row", async () => {
+    mocks.scopeEnvironmentId = null;
+    mocks.target = "latex-installation";
+    localStorage.setItem("scient.documentsSettingsFormat", JSON.stringify("markdown"));
+    await render(null);
+    expect(container.querySelector("#documents-latex")).not.toBeNull();
+    await act(() => container.querySelector<HTMLElement>("#documents-markdown-trigger")!.click());
+    expect(container.querySelector("#documents-markdown")).not.toBeNull();
+    expect(stored("scient.documentsSettingsFormat")).toBe("markdown");
   });
 });

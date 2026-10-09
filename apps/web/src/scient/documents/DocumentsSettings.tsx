@@ -295,14 +295,19 @@ function DocumentsSection(props: {
 }) {
   const [stored, setStored] = useLocalStorage(SELECTED_FORMAT_STORAGE_KEY, "latex", Schema.String);
   const [collapsed, setCollapsed] = useState(false);
-  // A settings-search jump to a row opens that row's tab, and keeps it open after.
+  // A settings-search jump to a row opens that row's tab once; the tabs stay
+  // the person's to change even while the jump is still pending.
   const target = useSettingsSearchTargetId();
-  const targetFormat = target === null ? null : (SEARCH_TARGET_FORMATS[target] ?? null);
+  const [openedFor, setOpenedFor] = useState<string | null>(null);
+  const targetFormat =
+    target === null || target === openedFor ? null : (SEARCH_TARGET_FORMATS[target] ?? null);
   useEffect(() => {
-    if (targetFormat === null) return;
+    if (target === null) setOpenedFor(null);
+    if (targetFormat === null || target === null) return;
     setStored(targetFormat);
     setCollapsed(false);
-  }, [setStored, targetFormat]);
+    setOpenedFor(target);
+  }, [setStored, target, targetFormat]);
   const selected: DocumentFormat = targetFormat ?? (stored === "markdown" ? "markdown" : "latex");
   const isCollapsed = targetFormat === null && collapsed;
   const items: ReadonlyArray<{
@@ -411,9 +416,12 @@ function EnvironmentDocumentsSettings(props: {
  */
 export function DocumentsSettings(props: { readonly environmentId?: EnvironmentId | undefined }) {
   const primaryId = usePrimaryEnvironmentId();
-  // The environment chosen in the settings scope, unless an older link names one.
-  const scopeEnvironmentId = useOptionalSettingsScope()?.environment?.environmentId ?? null;
-  const environmentId = props.environmentId ?? scopeEnvironmentId ?? primaryId;
+  // The environment chosen in the settings scope, unless an older link names
+  // one. A scope that resolves to no connected environment shows no server tools.
+  const scope = useOptionalSettingsScope();
+  const environmentId =
+    props.environmentId ??
+    (scope === null ? primaryId : (scope.environment?.environmentId ?? null));
   const environment = useEnvironment(environmentId);
   if (environmentId === null || environment === null) {
     return (
