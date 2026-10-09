@@ -18,6 +18,8 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
+import * as Logger from "effect/Logger";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import { vi } from "vite-plus/test";
@@ -41,7 +43,11 @@ import * as ServerConfig from "./config.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
-import { SettingsDirectoryWatch } from "./settingsDirectoryWatch.ts";
+import {
+  SettingsDirectoryWatch,
+  SettingsFileMetadata,
+  acquireSettingsMetadataChanges,
+} from "./settingsDirectoryWatch.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
@@ -1000,6 +1006,263 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     ),
   );
 
+  it.effect.each(["atomic replacement", "dangling creation", "same-target link repoint"] as const)(
+    "detects %s with no native events and stops metadata sampling on disposal",
+    (scenario) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const metadata = yield* SettingsFileMetadata;
+          const clock = yield* Clock.Clock;
+          const sampleSleeps = yield* Queue.make<Deferred.Deferred<void>>();
+          const debounceSleeps = yield* Queue.make<Deferred.Deferred<void>>();
+          let cancelledSamples = 0;
+          const controlledClock: Clock.Clock = {
+            ...clock,
+            sleep: (duration) => {
+              const millis = Duration.toMillis(duration);
+              if (millis !== 250 && millis !== 100) return clock.sleep(duration);
+              return Effect.gen(function* () {
+                const release = yield* Deferred.make<void>();
+                yield* Queue.offer(millis === 250 ? sampleSleeps : debounceSleeps, release);
+                yield* Deferred.await(release);
+                yield* TestClock.adjust(duration);
+              }).pipe(
+                Effect.onInterrupt(() =>
+                  Effect.sync(() => {
+                    if (millis === 250) cancelledSamples += 1;
+                  }),
+                ),
+              );
+            },
+          };
+          const config = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const baselineCaptured = yield* Deferred.make<void>();
+          const releaseBaseline = yield* Deferred.make<void>();
+          const reads = yield* Queue.make<string>();
+          const observed = yield* Queue.make<string>();
+          yield* Effect.addFinalizer(() => Queue.shutdown(reads));
+          yield* Effect.addFinalizer(() => Queue.shutdown(observed));
+          let metadataReads = 0;
+          const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-metadata-" });
+          const destination =
+            scenario === "atomic replacement"
+              ? config.settingsPath
+              : path.join(dotfiles, "settings.json");
+          if (scenario !== "dangling creation") {
+            yield* writeFileStringAtomically({
+              filePath: destination,
+              contents: `{ "responseStreamingMode": "turn", "projectSettingsFolded": true }`,
+            });
+          }
+          if (scenario !== "atomic replacement") {
+            yield* fs.remove(config.settingsPath, { force: true });
+            yield* fs.symlink(destination, config.settingsPath);
+          }
+          const metadataReader = {
+            readFingerprint: Effect.fnUntraced(function* (filePath: string) {
+              const fingerprint = yield* metadata.readFingerprint(filePath);
+              metadataReads += 1;
+              if (metadataReads === 1) {
+                yield* Deferred.succeed(baselineCaptured, undefined);
+                yield* Deferred.await(releaseBaseline);
+              }
+              yield* Queue.offer(reads, fingerprint);
+              return fingerprint;
+            }),
+          };
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const service = yield* ServerSettingsModule.ServerSettingsService;
+              const startup = yield* service.start.pipe(Effect.forkChild);
+              yield* Deferred.await(baselineCaptured);
+              if (scenario === "atomic replacement") {
+                // This update is after the captured baseline but before startup revalidation.
+                yield* writeFileStringAtomically({
+                  filePath: destination,
+                  contents: `{ "responseStreamingMode": "paragraph", "projectSettingsFolded": true }`,
+                });
+              }
+              yield* Deferred.succeed(releaseBaseline, undefined);
+              yield* Fiber.join(startup);
+              yield* Queue.take(reads);
+              assert.equal(metadataReads, 1);
+              const expectedInitial =
+                scenario === "same-target link repoint" ? "turn" : "paragraph";
+              assert.equal((yield* service.getSettings).responseStreamingMode, expectedInitial);
+              const changes = yield* service.subscribeChanges;
+              yield* changes.pipe(
+                Stream.runForEach((settings) =>
+                  Queue.offer(observed, settings.responseStreamingMode),
+                ),
+                Effect.forkChild,
+              );
+              if (scenario === "same-target link repoint") {
+                const targetBefore = yield* fs.stat(destination);
+                yield* fs.remove(config.settingsPath);
+                yield* fs.symlink(
+                  path.relative(path.dirname(config.settingsPath), destination),
+                  config.settingsPath,
+                );
+                assert.deepEqual(yield* fs.stat(destination), targetBefore);
+              } else {
+                yield* writeFileStringAtomically({
+                  filePath: destination,
+                  contents: `{ "responseStreamingMode": "turn", "projectSettingsFolded": true }`,
+                });
+              }
+              yield* Deferred.succeed(yield* Queue.take(sampleSleeps), undefined);
+              yield* Queue.take(reads);
+              // Release the actual debounce sleep only after the changed hint has reached it.
+              yield* Deferred.succeed(yield* Queue.take(debounceSleeps), undefined);
+              assert.equal(yield* Queue.take(observed), "turn");
+              yield* Deferred.succeed(yield* Queue.take(sampleSleeps), undefined);
+              yield* Queue.take(reads);
+              // The next sampler sleep is a processing receipt for the unchanged fingerprint.
+              yield* Queue.take(sampleSleeps);
+              assert.isTrue(Option.isNone(yield* Queue.poll(debounceSleeps)));
+              assert.isTrue(Option.isNone(yield* Queue.poll(observed)));
+            }).pipe(
+              Effect.provide(
+                makeServerSettingsLayer(
+                  ServerSecretStore.layer,
+                  Layer.succeed(ServerConfig.ServerConfig, config),
+                ),
+              ),
+              Effect.provideService(SettingsDirectoryWatch, {
+                acquire: () =>
+                  Effect.succeed<Stream.Stream<string, PlatformError.PlatformError>>(Stream.empty),
+              }),
+              Effect.provideService(SettingsFileMetadata, metadataReader),
+              Effect.provideService(Clock.Clock, controlledClock),
+            ),
+          );
+          const readsAfterDisposal = metadataReads;
+          assert.equal(cancelledSamples, 1);
+          assert.equal(metadataReads, readsAfterDisposal);
+          assert.equal(metadataReads, 3);
+        }),
+      ).pipe(
+        Effect.provide(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3code-server-settings-metadata-test-",
+          }),
+        ),
+      ),
+  );
+
+  it.effect(
+    "retains the last metadata baseline across denial and logs only denial transitions",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const clock = yield* Clock.Clock;
+          const sleeps = yield* Queue.make<Deferred.Deferred<void>>();
+          const events = yield* Queue.make<string>();
+          let fingerprint = "initial";
+          let denied = false;
+          let readCount = 0;
+          let cancelledSamples = 0;
+          const messages: unknown[] = [];
+          const logger = Logger.make(({ message }) => messages.push(message));
+          const controlledClock: Clock.Clock = {
+            ...clock,
+            sleep: (duration) => {
+              assert.equal(Duration.toMillis(duration), 250);
+              return Effect.gen(function* () {
+                const release = yield* Deferred.make<void>();
+                yield* Queue.offer(sleeps, release);
+                yield* Deferred.await(release);
+                yield* TestClock.adjust(duration);
+              }).pipe(Effect.onInterrupt(() => Effect.sync(() => (cancelledSamples += 1))));
+            },
+          };
+          const read = () =>
+            Effect.suspend(() => {
+              readCount += 1;
+              return denied
+                ? Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "PermissionDenied",
+                      module: "FileSystem",
+                      method: "stat",
+                      description: "controlled metadata denial",
+                    }),
+                  )
+                : Effect.succeed(fingerprint);
+            });
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const changes = yield* acquireSettingsMetadataChanges("settings.json", read);
+              assert.equal(readCount, 1);
+              yield* changes.pipe(
+                Stream.runForEach((event) => Queue.offer(events, event)),
+                Effect.forkScoped,
+              );
+              let nextSample = yield* Queue.take(sleeps);
+              const sample = Effect.fnUntraced(function* () {
+                yield* Deferred.succeed(nextSample, undefined);
+                // A new sleep proves the preceding sample has passed through the stream mapper.
+                nextSample = yield* Queue.take(sleeps);
+              });
+              denied = true;
+              yield* sample();
+              assert.equal(messages.length, 1);
+              yield* sample();
+              assert.equal(messages.length, 1);
+              denied = false;
+              yield* sample();
+              assert.isTrue(Option.isNone(yield* Queue.poll(events)));
+              assert.equal(messages.length, 1);
+              denied = true;
+              yield* sample();
+              assert.equal(messages.length, 2);
+              denied = false;
+              fingerprint = "changed";
+              yield* sample();
+              assert.equal(yield* Queue.take(events), "settings.json");
+              assert.isTrue(Option.isNone(yield* Queue.poll(events)));
+              assert.equal(readCount, 6);
+            }).pipe(
+              Effect.provideService(Clock.Clock, controlledClock),
+              Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+            ),
+          );
+          assert.equal(cancelledSamples, 1);
+          assert.equal(readCount, 6);
+        }),
+      ),
+  );
+
+  it.effect("keeps metadata read failures nonfatal without withholding startup readiness", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        yield* service.start.pipe(Effect.timeout("2 seconds"));
+        yield* service.ready;
+        assert.equal(
+          (yield* service.updateSettings({ responseStreamingMode: "turn" })).responseStreamingMode,
+          "turn",
+        );
+      }),
+    ).pipe(
+      TestClock.withLive,
+      Effect.provide(makeServerSettingsLayer()),
+      Effect.provideService(SettingsFileMetadata, {
+        readFingerprint: () =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method: "stat",
+              description: "controlled metadata denial",
+            }),
+          ),
+      }),
+    ),
+  );
+
   it.effect("keeps failed watch registration nonfatal and settles ready", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1028,107 +1291,108 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     ),
   );
 
-  for (const failureDuringAcquisition of [true, false]) {
-    it.effect(
-      `closes parent handles and keeps settings available when a watch stream fails ${failureDuringAcquisition ? "during destination acquisition" : "after ready"}`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const native = yield* SettingsDirectoryWatch;
-            const entered = yield* Deferred.make<void>();
-            const neverRegister = yield* Deferred.make<void>();
-            const allClosed = yield* Deferred.make<void>();
-            const streamErrors = yield* Queue.make<string, PlatformError.PlatformError>();
-            yield* Effect.addFinalizer(() => Queue.shutdown(streamErrors));
-            const closed = vi.fn();
-            const config = yield* ServerConfig.ServerConfig;
-            const fs = yield* FileSystem.FileSystem;
-            const path = yield* Path.Path;
-            const dotfiles = yield* fs.makeTempDirectoryScoped({
-              prefix: "t3-settings-stream-failure-",
-            });
-            const destination = path.join(dotfiles, "target", "settings.json");
-            yield* writeFileStringAtomically({
-              filePath: destination,
-              contents: `{ "responseStreamingMode": "turn" }`,
-            });
-            yield* fs.remove(config.settingsPath, { force: true });
-            yield* fs.symlink(destination, config.settingsPath);
-            let parentCount = 0;
-            const watch = {
-              acquire: Effect.fnUntraced(function* (directory: string) {
-                if (directory === path.dirname(destination) && failureDuringAcquisition) {
-                  yield* Deferred.succeed(entered, undefined);
-                  yield* Deferred.await(neverRegister);
-                }
-                const events = yield* native.acquire(directory);
-                yield* Effect.addFinalizer(() =>
-                  Effect.gen(function* () {
-                    closed(directory);
-                    if (closed.mock.calls.length === (failureDuringAcquisition ? 2 : 3)) {
-                      yield* Deferred.succeed(allClosed, undefined);
-                    }
-                  }),
-                );
-                if (directory === path.dirname(config.settingsPath) && ++parentCount === 1) {
-                  return Stream.merge(events, Stream.fromQueue(streamErrors));
-                }
-                return events;
-              }),
-            };
-            yield* Effect.gen(function* () {
-              const service = yield* ServerSettingsModule.ServerSettingsService;
-              const startup = yield* service.start.pipe(Effect.forkChild);
-              if (failureDuringAcquisition) yield* Deferred.await(entered);
-              else yield* Fiber.join(startup);
-              yield* Queue.fail(
-                streamErrors,
-                PlatformError.systemError({
-                  _tag: "Unknown",
-                  module: "FileSystem",
-                  method: "watch",
-                  description: "controlled parent stream failure",
+  it.effect.each([
+    { failureDuringAcquisition: true, phase: "during destination acquisition" },
+    { failureDuringAcquisition: false, phase: "after ready" },
+  ])(
+    "closes parent handles and keeps settings available when a watch stream fails $phase",
+    ({ failureDuringAcquisition }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const native = yield* SettingsDirectoryWatch;
+          const entered = yield* Deferred.make<void>();
+          const neverRegister = yield* Deferred.make<void>();
+          const allClosed = yield* Deferred.make<void>();
+          const streamErrors = yield* Queue.make<string, PlatformError.PlatformError>();
+          yield* Effect.addFinalizer(() => Queue.shutdown(streamErrors));
+          const closed = vi.fn();
+          const config = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dotfiles = yield* fs.makeTempDirectoryScoped({
+            prefix: "t3-settings-stream-failure-",
+          });
+          const destination = path.join(dotfiles, "target", "settings.json");
+          yield* writeFileStringAtomically({
+            filePath: destination,
+            contents: `{ "responseStreamingMode": "turn" }`,
+          });
+          yield* fs.remove(config.settingsPath, { force: true });
+          yield* fs.symlink(destination, config.settingsPath);
+          let parentCount = 0;
+          const watch = {
+            acquire: Effect.fnUntraced(function* (directory: string) {
+              if (directory === path.dirname(destination) && failureDuringAcquisition) {
+                yield* Deferred.succeed(entered, undefined);
+                yield* Deferred.await(neverRegister);
+              }
+              const events = yield* native.acquire(directory);
+              yield* Effect.addFinalizer(() =>
+                Effect.gen(function* () {
+                  closed(directory);
+                  if (closed.mock.calls.length === (failureDuringAcquisition ? 2 : 3)) {
+                    yield* Deferred.succeed(allClosed, undefined);
+                  }
                 }),
               );
-              yield* Fiber.join(startup).pipe(Effect.timeout("2 seconds"));
-              yield* service.ready.pipe(Effect.timeout("2 seconds"));
-              yield* Deferred.await(allClosed).pipe(Effect.timeout("2 seconds"));
-              assert.equal(
-                closed.mock.calls.filter(
-                  ([directory]) => directory === path.dirname(config.settingsPath),
-                ).length,
-                2,
-              );
-              assert.equal(
-                closed.mock.calls.filter(([directory]) => directory === path.dirname(destination))
-                  .length,
-                failureDuringAcquisition ? 0 : 1,
-              );
-              assert.equal((yield* service.getSettings).responseStreamingMode, "turn");
-              assert.equal(
-                (yield* service.updateSettings({ responseStreamingMode: "paragraph" }))
-                  .responseStreamingMode,
-                "paragraph",
-              );
-            }).pipe(
-              Effect.provide(
-                makeServerSettingsLayer(
-                  ServerSecretStore.layer,
-                  Layer.succeed(ServerConfig.ServerConfig, config),
-                ),
-              ),
-              Effect.provideService(SettingsDirectoryWatch, watch),
+              if (directory === path.dirname(config.settingsPath) && ++parentCount === 1) {
+                return Stream.merge(events, Stream.fromQueue(streamErrors));
+              }
+              return events;
+            }),
+          };
+          yield* Effect.gen(function* () {
+            const service = yield* ServerSettingsModule.ServerSettingsService;
+            const startup = yield* service.start.pipe(Effect.forkChild);
+            if (failureDuringAcquisition) yield* Deferred.await(entered);
+            else yield* Fiber.join(startup);
+            yield* Queue.fail(
+              streamErrors,
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "watch",
+                description: "controlled parent stream failure",
+              }),
             );
-            assert.equal(closed.mock.calls.length, failureDuringAcquisition ? 2 : 3);
-          }),
-        ).pipe(
-          TestClock.withLive,
-          Effect.provide(
-            ServerConfig.layerTest(process.cwd(), { prefix: "t3code-server-settings-ready-test-" }),
-          ),
+            yield* Fiber.join(startup).pipe(Effect.timeout("2 seconds"));
+            yield* service.ready.pipe(Effect.timeout("2 seconds"));
+            yield* Deferred.await(allClosed).pipe(Effect.timeout("2 seconds"));
+            assert.equal(
+              closed.mock.calls.filter(
+                ([directory]) => directory === path.dirname(config.settingsPath),
+              ).length,
+              2,
+            );
+            assert.equal(
+              closed.mock.calls.filter(([directory]) => directory === path.dirname(destination))
+                .length,
+              failureDuringAcquisition ? 0 : 1,
+            );
+            assert.equal((yield* service.getSettings).responseStreamingMode, "turn");
+            assert.equal(
+              (yield* service.updateSettings({ responseStreamingMode: "paragraph" }))
+                .responseStreamingMode,
+              "paragraph",
+            );
+          }).pipe(
+            Effect.provide(
+              makeServerSettingsLayer(
+                ServerSecretStore.layer,
+                Layer.succeed(ServerConfig.ServerConfig, config),
+              ),
+            ),
+            Effect.provideService(SettingsDirectoryWatch, watch),
+          );
+          assert.equal(closed.mock.calls.length, failureDuringAcquisition ? 2 : 3);
+        }),
+      ).pipe(
+        TestClock.withLive,
+        Effect.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3code-server-settings-ready-test-" }),
         ),
-    );
-  }
+      ),
+  );
 
   it.effect(
     "closes acquired link watches when startup is interrupted during destination registration",

@@ -50,8 +50,12 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
-// SCIENT-FORK:START — settings watch readiness is native acquisition, not stream startup.
-import { SettingsDirectoryWatch } from "./settingsDirectoryWatch.ts";
+// SCIENT-FORK:START — scoped native hints and authoritative settings metadata fallback.
+import {
+  SettingsDirectoryWatch,
+  SettingsFileMetadata,
+  acquireSettingsMetadataChanges,
+} from "./settingsDirectoryWatch.ts";
 // SCIENT-FORK:END
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as ServerConfig from "./config.ts";
@@ -667,6 +671,7 @@ const make = Effect.gen(function* () {
   const pathService = yield* Path.Path;
   // SCIENT-FORK:START — readiness-aware Node settings watcher.
   const directoryWatch = yield* SettingsDirectoryWatch;
+  const settingsMetadata = yield* SettingsFileMetadata;
   // SCIENT-FORK:END
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const modelReasoning = makeCustomModelReasoning();
@@ -1372,7 +1377,7 @@ const make = Effect.gen(function* () {
     }),
   );
 
-  // SCIENT-FORK:START — register before publishing readiness; queues buffer early events.
+  // SCIENT-FORK:START — buffer native hints; metadata covers asynchronous OS establishment gaps.
   const acquireFileChanges = Effect.fnUntraced(
     function* (filePath: string) {
       const directory = pathService.dirname(filePath);
@@ -1421,6 +1426,12 @@ const make = Effect.gen(function* () {
     );
 
     const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
+    // SCIENT-FORK:START — metadata baseline precedes every startup re-read.
+    const metadataChanges = yield* acquireSettingsMetadataChanges(
+      settingsPath,
+      settingsMetadata.readFingerprint,
+    );
+    // SCIENT-FORK:END
 
     // A symlinked settings file is rewritten in its destination's directory,
     // which a watch on the link's directory never sees. The link is resolved
@@ -1467,12 +1478,15 @@ const make = Effect.gen(function* () {
     // Debounce watch events so the file is fully written before we read it.
     // Editors emit multiple events per save (truncate, write, rename) and
     // `fs.watch` can fire before the content has been flushed to disk.
-    const debouncedSettingsEvents = Stream.merge(settingsFileEvents, linkTargetEvents).pipe(
-      Stream.debounce(Duration.millis(100)),
-    );
+    // SCIENT-FORK:START — all hints and metadata changes share the existing debounce/read owner.
+    const debouncedSettingsEvents = Stream.merge(
+      Stream.merge(settingsFileEvents, linkTargetEvents),
+      metadataChanges,
+    ).pipe(Stream.debounce(Duration.millis(100)));
+    // SCIENT-FORK:END
 
     yield* Stream.runForEach(debouncedSettingsEvents, () => revalidateAndEmitSafely).pipe(
-      // SCIENT-FORK:START — a failed consumer cannot orphan parent handles or startup readiness.
+      // SCIENT-FORK:START — consumer failure stops native hints and metadata; no implicit retry owner.
       Effect.ensuring(
         Scope.close(parentWatchScope, Exit.void).pipe(
           Effect.andThen(Deferred.succeed(targetWatchReady, undefined)),
@@ -1483,7 +1497,7 @@ const make = Effect.gen(function* () {
       Effect.forkIn(watcherScope),
       Effect.asVoid,
     );
-    // SCIENT-FORK:START — startup cache refresh runs after actual watch acquisition.
+    // SCIENT-FORK:START — startup refresh follows adapter acquisition; metadata handles OS lag.
     yield* Deferred.await(targetWatchReady);
     // SCIENT-FORK:END
   });
