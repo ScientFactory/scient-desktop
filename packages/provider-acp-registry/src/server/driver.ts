@@ -917,4 +917,5 @@ export function makeAcpRegistryDriver(
   };
 }
 
+/** @public Upstream-compatible default for hosts without an app-owned lifecycle composition. */
 export const AcpRegistryDriver = makeAcpRegistryDriver();

@@ -192,4 +192,5 @@ export const makeMuseDriver = (
     }),
 });
 
+/** @public Upstream-compatible default for hosts without an app-owned prompt composition. */
 export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = makeMuseDriver();

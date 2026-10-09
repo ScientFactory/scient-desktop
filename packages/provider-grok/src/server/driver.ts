@@ -325,4 +325,5 @@ export function makeGrokDriver<Requirements = never, Extension extends object = 
   };
 }
 
+/** @public Upstream-compatible default for hosts without an app-owned lifecycle composition. */
 export const GrokDriver = makeGrokDriver();

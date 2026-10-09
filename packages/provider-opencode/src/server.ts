@@ -4,8 +4,9 @@
  *
  * @module provider-opencode/server
  */
+/** @public Upstream-compatible package default; Scient registers its app-composed wrapper. */
+export { OpenCodeDriver } from "./server/driver.ts";
 export {
-  OpenCodeDriver,
   makeOpenCodeDriver,
   type OpenCodeDriverEnv,
   type OpenCodeDriverOptions,

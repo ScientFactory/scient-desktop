@@ -3,8 +3,9 @@
  *
  * @module provider-grok/server
  */
+/** @public Upstream-compatible package default; Scient registers its app-composed wrapper. */
+export { GrokDriver } from "./server/driver.ts";
 export {
-  GrokDriver,
   makeGrokDriver,
   type GrokDriverEnv,
   type GrokDriverFactory,

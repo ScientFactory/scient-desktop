@@ -9,7 +9,8 @@ export {
   makeMuseDriver,
   type MuseDriverOptions,
   // SCIENT-FORK:END
-  MuseDriver,
   type MuseDriverEnv,
 } from "./server/driver.ts";
+/** @public Upstream-compatible package default; Scient registers its app-composed wrapper. */
+export { MuseDriver } from "./server/driver.ts";
 export { makeMuseAdapterV2, type MuseAdapterV2Options } from "./server/adapter.ts";

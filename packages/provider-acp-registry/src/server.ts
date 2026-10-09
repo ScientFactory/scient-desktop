@@ -8,16 +8,15 @@
  *
  * @module provider-acp-registry/server
  */
+/** @public Upstream-compatible package default; Scient registers its app-composed wrapper. */
+export { AcpRegistryDriver } from "./server/driver.ts";
 export {
-  AcpRegistryDriver,
   makeAcpRegistryDriver,
   type AcpRegistryDriverEnv,
   type AcpRegistryDriverOptions,
 } from "./server/driver.ts";
 export {
   AcpRegistryAdapterV2Driver,
-  makeAcpRegistryAdapterV2Driver,
   type AcpRegistryAdapterV2DriverEnv,
-  type AcpRegistryAdapterV2DriverOptions,
 } from "./server/adapter.ts";
 export { acpRegistryManagedBinaryDirectories } from "./server/AcpRegistrySupport.ts";

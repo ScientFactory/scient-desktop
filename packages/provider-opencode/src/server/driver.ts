@@ -567,6 +567,6 @@ export const makeOpenCodeDriver = (
     }),
 });
 
-/** Package default for callers without host-supplied app policy. */
+/** @public Upstream-compatible default for callers without host-supplied app policy. */
 export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv> =
   makeOpenCodeDriver();

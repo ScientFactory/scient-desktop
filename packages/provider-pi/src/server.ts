@@ -12,14 +12,7 @@ export {
   type PiRuntimeResolution,
   type PiRuntimeResolverInput,
 } from "./server/driver.ts";
-export {
-  PI_PROVIDER,
-  PiAdapterV2Driver,
-  makePiAdapterV2,
-  piContinuationRequestsIfProvided,
-  type PiAdapterV2DriverEnv,
-  type PiAdapterV2Options,
-} from "./server/adapter.ts";
+export { PI_PROVIDER, PiAdapterV2Driver, type PiAdapterV2DriverEnv } from "./server/adapter.ts";
 export {
   buildPiRpcLaunch,
   resolvePiLaunchArgs,
@@ -27,8 +20,6 @@ export {
 } from "./server/mcpInjection.ts";
 export {
   makePiRpcConnection,
-  parsePiModelSlug,
-  piRecordNumber,
   piRecordString,
   PiRpcError,
   PiRpcTimeoutError,

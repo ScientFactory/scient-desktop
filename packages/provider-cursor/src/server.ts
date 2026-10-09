@@ -22,16 +22,7 @@ export {
   type CursorTurnStartErrorMapper,
   type CursorTurnStartIdentity,
 } from "./server/adapter.ts";
-export { makeCursorCommandCatalog } from "./server/commandCatalog.ts";
-export {
-  getCursorParameterizedModelPickerUnsupportedMessage,
-  isCursorAboutJsonFormatUnsupported,
-  parseCursorAboutOutput,
-  parseCursorCliConfigChannel,
-  parseCursorVersionDate,
-  toTitleCaseWords,
-  type CursorAboutResult,
-} from "./server/about.ts";
+export { parseCursorAboutOutput, type CursorAboutResult } from "./server/about.ts";
 export { runCursorAboutCommand, type CursorCliArgumentResolver } from "./server/status.ts";
 export { readCursorUsageLimits } from "./server/usageLimits.ts";
 export { CursorKeychainTimeoutError, readMacCursorAccessToken } from "./server/keychainToken.ts";

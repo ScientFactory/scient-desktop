@@ -33,23 +33,11 @@ export type CursorCliArgumentResolver = (
   environment?: NodeJS.ProcessEnv,
 ) => ReadonlyArray<string>;
 import {
-  getCursorParameterizedModelPickerUnsupportedMessage,
   isCursorAboutJsonFormatUnsupported,
   parseCursorAboutOutput,
-  parseCursorCliConfigChannel,
-  parseCursorVersionDate,
   toTitleCaseWords,
   type CursorAboutResult,
 } from "./about.ts";
-export {
-  getCursorParameterizedModelPickerUnsupportedMessage,
-  parseCursorAboutOutput,
-  parseCursorCliConfigChannel,
-  parseCursorVersionDate,
-};
-
-import { makeCursorCommandCatalog } from "./commandCatalog.ts";
-export { makeCursorCommandCatalog };
 
 const CURSOR_PRESENTATION = {
   displayName: "Cursor",

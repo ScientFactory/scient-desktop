@@ -26,7 +26,7 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -120,13 +120,15 @@ function makePiCompositionDiscoverySpawner(input: {
         return yield* Effect.die("Pi custom-model extension bootstrap was not configured");
 
       // Model the one catalog request the owned Pi extension makes at startup.
-      const catalogResponse = yield* Effect.promise(async () => {
-        const response = await fetch(catalogUrl, {
-          headers: { authorization: `Bearer ${catalogToken}` },
-          redirect: "error",
-        });
-        return { status: response.status, body: await response.json() };
-      });
+      const catalogResponse = yield* Effect.gen(function* () {
+        const client = yield* HttpClient.HttpClient;
+        const response = yield* client.execute(
+          HttpClientRequest.get(catalogUrl).pipe(
+            HttpClientRequest.setHeader("authorization", `Bearer ${catalogToken}`),
+          ),
+        );
+        return { status: response.status, body: yield* response.json };
+      }).pipe(Effect.provide(FetchHttpClient.layer), Effect.orDie);
       input.catalogs.push(catalogResponse.body);
       if (catalogResponse.status !== 200)
         return yield* Effect.die(`Pi custom-model catalog returned ${catalogResponse.status}`);

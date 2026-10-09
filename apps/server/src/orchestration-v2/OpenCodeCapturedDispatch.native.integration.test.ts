@@ -34,6 +34,7 @@ import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import { buildScientAwareness } from "../provider/ScientAwareness.ts";
 import { buildScientRuntimeInstructions } from "../provider/ScientRuntimeInstructions.ts";
+import { buildScientOrchestrationSystemPrompt } from "../provider/ScientProviderInstructions.ts";
 import { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
 import {
@@ -330,6 +331,8 @@ it.live(
         const settings = yield* decodeSettings({});
         const adapterDriver = makeOpenCodeAdapterV2Driver({
           runtimeGuidance: buildOpenCodeRuntimeGuidance,
+          orchestrationSystemPrompt: buildScientOrchestrationSystemPrompt,
+          runtimeInstructions: buildScientRuntimeInstructions,
           mapTurnStartError: mapOpenCodeTurnStartError,
         });
         const createAdapter = (
