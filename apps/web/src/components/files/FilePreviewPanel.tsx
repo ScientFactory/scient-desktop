@@ -220,6 +220,8 @@ interface FilePreviewPanelProps {
   onOpenFile: (relativePath: string) => void;
   /** The open file was renamed: its tab follows it to the new path, keeping its state. */
   onFileMoved: (fromPath: string, toPath: string) => void;
+  /** Ordinary renames reopen the file at its new path. */
+  onFileRenamed: (fromPath: string, toPath: string) => void;
   onOpenFileSource: (relativePath: string, line?: number, options?: OpenFileOptions) => void;
   onHtmlPresentationRequestHandled: (
     relativePath: string,
@@ -1394,6 +1396,7 @@ export default function FilePreviewPanel({
   latexRootRelativePath,
   onOpenFile,
   onFileMoved,
+  onFileRenamed,
   onOpenFileSource,
   onHtmlPresentationRequestHandled,
   onLatexPresentationRequestHandled,
@@ -1768,7 +1771,7 @@ export default function FilePreviewPanel({
     },
   });
   const documentSurfaceKey = markdownLease
-    ? `${markdownLease.documentId}:${surfaceGeneration}`
+    ? `${documentIdentity(markdownLease)}:${surfaceGeneration}`
     : relativePath;
   // SCIENT-FORK:END
   // A document started from the Documents menu: its template row, then its one rename.

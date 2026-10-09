@@ -227,11 +227,6 @@ interface RightPanelStoreState {
     line?: number,
     options?: OpenFileOptions,
   ) => void;
-  /**
-   * A file renamed while open: its tab now shows the new path, in the same
-   * place. A tab already open on the new path takes over instead.
-   */
-  renameFileSurface: (ref: ScopedThreadRef, fromPath: string, toPath: string) => void;
   consumeLatexPresentationRequest: (
     ref: ScopedThreadRef,
     relativePath: string,
@@ -1002,26 +997,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               ? { ...current, isOpen: true, activeSurfaceId: surfaceId }
               : current,
           ),
-        ),
-      renameFileSurface: (ref, fromPath, toPath) =>
-        set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
-            const fromId = `file:${fromPath}`;
-            const toId = `file:${toPath}`;
-            const index = current.surfaces.findIndex((surface) => surface.id === fromId);
-            if (index < 0) return current;
-            const taken = current.surfaces.some((surface) => surface.id === toId);
-            const surfaces = taken
-              ? current.surfaces.filter((surface) => surface.id !== fromId)
-              : current.surfaces.map((surface, at) =>
-                  at === index ? fileSurface(toPath, null, 0) : surface,
-                );
-            return {
-              ...current,
-              surfaces,
-              activeSurfaceId: current.activeSurfaceId === fromId ? toId : current.activeSurfaceId,
-            };
-          }),
         ),
       closeSurface: (ref, surfaceId) =>
         set((state) =>

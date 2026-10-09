@@ -327,6 +327,7 @@ export function useNewDocument(input: {
               if (taken) continue;
               break;
             }
+            templateEdits.move(key, { ...key, relativePath: outcome.destinationRelativePath });
             newDocuments.forget(key);
             // Moved: the editor and caret stayed. Reopened or remounted: put the caret back.
             if (outcome.kind !== "moved" && caretBefore !== null)
