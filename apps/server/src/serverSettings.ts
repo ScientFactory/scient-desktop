@@ -461,6 +461,7 @@ const LegacyProviderSettingsJson = fromLenientJson(
   }),
 );
 const decodeLegacyProviderSettingsJsonExit = Schema.decodeUnknownExit(LegacyProviderSettingsJson);
+const isLegacyProviderConfig = Schema.is(Schema.Record(Schema.String, Schema.Unknown));
 
 // Drivers that start disabled, so a session in the history means the user
 // turned them on before the instance kept an explicit flag.
@@ -513,8 +514,7 @@ function migrateLegacyProviderSettings(
     if (!legacyEntries.has(driver)) legacyEntries.set(driver, {});
   }
   for (const [kind, blob] of legacyEntries) {
-    if (!isProviderDriverKind(kind) || blob === null || typeof blob !== "object") continue;
-    if (Array.isArray(blob)) continue;
+    if (!isProviderDriverKind(kind) || !isLegacyProviderConfig(blob)) continue;
     const driver = kind;
     const instanceId = defaultInstanceIdForDriver(driver);
     if (Object.hasOwn(providerInstances, instanceId)) continue;
@@ -905,6 +905,19 @@ const make = Effect.gen(function* () {
         }
       } else {
         settings = decoded.value;
+      }
+      // A valid outer document can still carry an unreadable legacy provider
+      // blob. Keep the original file for repair while using its readable settings.
+      if (
+        legacyProviders !== undefined &&
+        Object.entries(legacyProviders).some(
+          ([kind, blob]) => isProviderDriverKind(kind) && !isLegacyProviderConfig(blob),
+        )
+      ) {
+        settingsFileTrusted = false;
+        yield* Effect.logWarning("malformed legacy provider settings retained for repair", {
+          path: settingsPath,
+        });
       }
     }
 

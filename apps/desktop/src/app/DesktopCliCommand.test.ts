@@ -174,6 +174,56 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("preserves a previous-home launcher when a foreign command rejects replacement", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const before = yield* commandIn({ home, baseDir: path.join(home, "old-t3") });
+      const link = (yield* before.install).installedPath!;
+      const previousTarget = yield* fs.readLink(link);
+      const previousContents = yield* fs.readFileString(link);
+      const shadow = path.join(home, "shadow");
+      yield* fs.makeDirectory(shadow);
+      yield* fs.writeFileString(path.join(shadow, "t3"), "foreign command\n");
+      process.env.PATH = [shadow, path.dirname(link)].join(":");
+
+      const after = yield* commandIn({ home, baseDir: path.join(home, "new-t3") });
+      const error = yield* Effect.flip(after.install);
+      expect(error.message).toContain(path.join(shadow, "t3"));
+      expect(yield* fs.readLink(link)).toBe(previousTarget);
+      expect(yield* fs.readFileString(link)).toBe(previousContents);
+      expect(yield* fs.readFileString(path.join(shadow, "t3"))).toBe("foreign command\n");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("preserves a previous-home launcher when publishing its replacement fails", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const before = yield* commandIn({ home, baseDir: path.join(home, "old-t3") });
+      const link = (yield* before.install).installedPath!;
+      const previousTarget = yield* fs.readLink(link);
+      const previousContents = yield* fs.readFileString(link);
+      const after = yield* commandIn({ home, baseDir: path.join(home, "new-t3") }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          rename: (from, to) =>
+            to === link
+              ? fs.rename(path.join(home, "missing"), path.join(home, "unused"))
+              : fs.rename(from, to),
+        }),
+      );
+
+      const error = yield* Effect.flip(after.install);
+      expect(error.message).toContain(`Could not replace ${link}`);
+      expect(yield* fs.readLink(link)).toBe(previousTarget);
+      expect(yield* fs.readFileString(link)).toBe(previousContents);
+      expect(yield* fs.readDirectory(path.dirname(link))).toEqual(["t3"]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("refuses to install behind another t3 that runs first", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

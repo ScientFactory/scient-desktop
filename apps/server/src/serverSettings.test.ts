@@ -2628,6 +2628,41 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect.each(
+    [null, "invalid-config", 42, false, [], [{ binaryPath: "/x" }]].map((blob) => ({
+      blob,
+      label: JSON.stringify(blob),
+    })),
+  )("preserves malformed legacy provider config $label for repair", ({ blob }) =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const raw = JSON.stringify({
+        addProjectBaseDirectory: "~/Projects",
+        providers: { codex: blob, claudeAgent: { binaryPath: "/legacy/claude" } },
+        providerInstances: {
+          codex_work: { driver: "codex", enabled: false, config: { homePath: "~/work" } },
+        },
+      });
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, raw);
+
+      const settings = yield* serverSettings.getSettings;
+      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), raw);
+      assert.isUndefined(settings.providerInstances[ProviderInstanceId.make("codex")]);
+      assert.deepEqual(settings.providerInstances[ProviderInstanceId.make("claudeAgent")], {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        config: { binaryPath: "/legacy/claude" },
+      });
+      assert.deepEqual(settings.providerInstances[ProviderInstanceId.make("codex_work")], {
+        driver: ProviderDriverKind.make("codex"),
+        enabled: false,
+        config: { homePath: "~/work" },
+      });
+      assert.equal(settings.addProjectBaseDirectory, "~/Projects");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("migrates legacy providers from an invalid file without rewriting it", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;

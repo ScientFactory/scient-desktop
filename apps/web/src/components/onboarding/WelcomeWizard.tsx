@@ -16,6 +16,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthTerminalOperateScope,
+  AuthProvidersManageScope,
   CommandId,
   AuthOrchestrationOperateScope,
   ProviderDriverKind,
@@ -885,6 +886,7 @@ function OnboardingCodexSetup({
   readonly onAutoStartConsumed: () => void;
 }) {
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const update = useAtomCommand(serverEnvironment.updateSettings, "Codex setup settings");
   const instanceId =
     createdAccount?.instanceId ??
@@ -903,6 +905,7 @@ function OnboardingCodexSetup({
     "setupMode" in instance.config &&
     instance.config.setupMode === "existing";
   const changeMode = (setupMode: "managed" | "existing") => {
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     void update({
       environmentId,
       input: {
@@ -943,6 +946,7 @@ function OnboardingCodexSetup({
       provider={provider}
       mode={mode}
       enabled={provider?.enabled ?? true}
+      readOnly={!canManageProviders}
       onModeChange={changeMode}
     />
   );

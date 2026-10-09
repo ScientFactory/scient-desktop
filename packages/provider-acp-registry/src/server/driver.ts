@@ -183,6 +183,10 @@ interface SnapshotIdentity {
   readonly displayName: string | undefined;
   readonly accentColor: string | undefined;
   readonly continuationKey: string;
+  // SCIENT-FORK:START — neutral presentation input supplied by the app owner
+  /** Host product name used only in user-facing settings guidance. */
+  readonly productName?: string;
+  // SCIENT-FORK:END
 }
 
 function baseSnapshot(
@@ -299,7 +303,9 @@ const buildInitialAcpRegistrySnapshot = Effect.fn("AcpRegistryDriver.buildInitia
       auth: { status: "unknown" },
       message: input.settings.enabled
         ? "Checking ACP Registry agent readiness..."
-        : "ACP Registry is disabled in T3 Code settings.",
+        : // SCIENT-FORK:START — preserve standalone defaults and app-owned product copy
+          `ACP Registry is disabled in ${input.productName ?? "T3 Code"} settings.`,
+      // SCIENT-FORK:END
     });
   },
 );
@@ -328,8 +334,10 @@ export function buildCheckedAcpRegistrySnapshot(
       ? `Sign in in provider settings using "${advertisedAuthMethod.name}". The login terminal runs on this environment.`
       : advertisedAuthMethod.type === "env_var" &&
           (advertisedAuthMethod.envVarNames?.length ?? 0) > 0
-        ? `Set ${advertisedAuthMethod.envVarNames!.join(", ")} under this instance's environment variables in provider settings. T3 Code will detect it on the next provider refresh.`
-        : `Sign in in provider settings using "${advertisedAuthMethod.name}".`
+        ? // SCIENT-FORK:START — host-owned product copy without changing auth behavior
+          `Set ${advertisedAuthMethod.envVarNames!.join(", ")} under this instance's environment variables in provider settings. ${input.productName ?? "T3 Code"} will detect it on the next provider refresh.`
+        : // SCIENT-FORK:END
+          `Sign in in provider settings using "${advertisedAuthMethod.name}".`
     : undefined;
   return baseSnapshot({
     ...input,
@@ -461,6 +469,10 @@ export type AcpRegistryDriverEnv = AcpRegistryAdapterV2DriverEnv | ProviderHost;
 export interface AcpRegistryDriverOptions {
   /** App-owned ACP receipt, awareness, and pre-acceptance policy callbacks. */
   readonly application?: AcpAdapterV2ApplicationBridge;
+  // SCIENT-FORK:START — optional presentation seam, not a provider setting
+  /** Host product name for snapshot guidance; standalone packages retain T3 Code copy. */
+  readonly productName?: string;
+  // SCIENT-FORK:END
 }
 
 /** Canonical provider-instance wrapper for ACP Registry orchestration adapters. */
@@ -507,6 +519,9 @@ export function makeAcpRegistryDriver(
           displayName,
           accentColor,
           continuationKey: continuationIdentity.continuationKey,
+          // SCIENT-FORK:START — carry app-owned copy to snapshot consumers
+          ...(options.productName === undefined ? {} : { productName: options.productName }),
+          // SCIENT-FORK:END
         };
         const effectiveConfig = { ...config, enabled } satisfies AcpRegistrySettings;
         const processEnvironment = mergeProviderInstanceEnvironment(environment, hostEnvironment);

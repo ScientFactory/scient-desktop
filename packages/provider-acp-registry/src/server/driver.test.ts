@@ -44,6 +44,58 @@ function catalogWithInspection(
 }
 
 describe("acpRegistrySnapshotReadiness", () => {
+  it.effect.each([
+    { productName: undefined, expectedName: "T3 Code" },
+    { productName: "Scient", expectedName: "Scient" },
+  ])(
+    "uses $expectedName in disabled and environment sign-in guidance",
+    ({ productName, expectedName }) =>
+      Effect.gen(function* () {
+        const snapshotIdentity = {
+          ...identity,
+          ...(productName === undefined ? {} : { productName }),
+        };
+        const disabled = yield* checkAcpRegistryProviderReadiness({
+          ...snapshotIdentity,
+          settings: decodeSettings({ enabled: false }),
+          environment: {},
+        });
+        expect(disabled.message).toBe(`ACP Registry is disabled in ${expectedName} settings.`);
+        const needsKey = buildCheckedAcpRegistrySnapshot({
+          ...snapshotIdentity,
+          settings: decodeSettings({ agentId: "test-agent" }),
+          checkedAt: "2026-08-13T10:00:00.000Z",
+          inspection: {
+            status: "ready",
+            agentId: "test-agent",
+            version: "1.0.0",
+            distribution: "binary",
+          },
+          probeError: new AcpRegistryOperationError({
+            reason: "authentication_failed",
+            message: "Login required.",
+            authMethods: [
+              {
+                id: "api-key",
+                name: "API key",
+                description: null,
+                type: "env_var",
+                envVarNames: ["TEST_API_KEY"],
+              },
+            ],
+          }),
+        });
+        expect(needsKey.message).toBe(
+          `Set TEST_API_KEY under this instance's environment variables in provider settings. ${expectedName} will detect it on the next provider refresh.`,
+        );
+      }).pipe(
+        Effect.provideService(
+          AcpRegistrySupport.AcpRegistryCatalog,
+          catalogWithInspection({ status: "unconfigured" }),
+        ),
+      ),
+  );
+
   it("treats a live empty command advertisement as an authoritative replacement", () => {
     const provider = buildCheckedAcpRegistrySnapshot({
       ...identity,

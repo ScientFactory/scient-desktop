@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import { isValidElement, type ReactElement } from "react";
 import {
   DEFAULT_UNIFIED_SETTINGS,
   EnvironmentId,
@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { visitElements } from "../../test/reactElementTree";
 import { reactHookHarness as hooks } from "../../test/reactHookHarness";
+import { DRIVER_OPTIONS } from "./providerDriverMeta";
 
 const atoms = vi.hoisted(() => ({
   providers: null as ReadonlyArray<ServerProvider> | null,
@@ -239,6 +240,25 @@ function isAddProviderButton(element: ReactElement<Record<string, unknown>>): bo
   return element.props["aria-label"] === "Add provider";
 }
 
+function collectElements(
+  node: unknown,
+  visitor: (element: ReactElement<Record<string, unknown>>) => boolean,
+): ReactElement<Record<string, unknown>>[] {
+  if (Array.isArray(node)) return node.flatMap((child) => collectElements(child, visitor));
+  if (!isValidElement<Record<string, unknown>>(node)) return [];
+  return [
+    ...(visitor(node) ? [node] : []),
+    ...Object.values(node.props).flatMap((value) => collectElements(value, visitor)),
+  ];
+}
+
+function renderedProviderRowIds(panel: unknown): string[] {
+  return collectElements(
+    panel,
+    (element) => element.props.mode === "list" && typeof element.props.instanceId === "string",
+  ).map((element) => String(element.props.instanceId));
+}
+
 async function flushPromises(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
@@ -297,10 +317,15 @@ describe("EnvironmentProviderSettings routing", () => {
         );
         expect(row, driver).not.toBeNull();
         expect(row?.props.instance).toEqual(instance);
-        if (["cursor", "grok", "pi", "opencode", "antigravity", "muse"].includes(driver)) {
+        if (["cursor", "grok", "pi", "opencode", "muse"].includes(driver)) {
           expect(resolveProviderInstanceEnabled(instance), driver).toBe(false);
         }
       }
+      expect(renderedProviderRowIds(panel)).toEqual(
+        DRIVER_OPTIONS.filter((definition) => definition.hasDefaultInstance !== false).map(
+          (definition) => String(definition.value),
+        ),
+      );
       expect(
         visitElements(
           panel,
@@ -314,6 +339,81 @@ describe("EnvironmentProviderSettings routing", () => {
       expect(commands.updateProvider).not.toHaveBeenCalled();
     },
   );
+
+  it("renders default provider rows in canonical order with custom instances grouped after their driver", () => {
+    const scientWorkId = ProviderInstanceId.make("scient_research");
+    const codexWorkId = ProviderInstanceId.make("codex_work");
+    const acpAgentId = ProviderInstanceId.make("acpRegistry_devin");
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [scientWorkId]: {
+          driver: ProviderDriverKind.make("scient"),
+          enabled: true,
+          displayName: "Research",
+        },
+        [codexWorkId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          displayName: "Work",
+        },
+        [acpAgentId]: {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          enabled: true,
+          config: { agentId: "devin" },
+        },
+      },
+    };
+    atoms.providers = [];
+
+    const panel = renderPanel();
+
+    expect(renderedProviderRowIds(panel)).toEqual([
+      "scient",
+      "scient_research",
+      "codex",
+      "codex_work",
+      "claudeAgent",
+      "antigravity",
+      "opencode",
+      "droid",
+      "pi",
+      "omp",
+      "cursor",
+      "grok",
+      "acpRegistry_devin",
+      "muse",
+    ]);
+    expect(settingsState.mutateProviderInstance).not.toHaveBeenCalled();
+    expect(settingsState.updateSettings).not.toHaveBeenCalled();
+    expect(commands.updateProvider).not.toHaveBeenCalled();
+  });
+
+  it("renders Add provider choices in canonical order without changing provider settings", () => {
+    hooks.beginRender();
+    const dialog = AddProviderInstanceDialog({
+      open: true,
+      environmentId,
+      environmentLabel: "Remote device",
+      onOpenChange: vi.fn(),
+    });
+    const expectedDrivers = DRIVER_OPTIONS.filter(
+      (definition) => definition.value !== ProviderDriverKind.make("acpRegistry"),
+    ).map((definition) => String(definition.value));
+    const renderedDrivers = collectElements(
+      dialog,
+      (element) =>
+        typeof element.props.value === "string" &&
+        expectedDrivers.includes(element.props.value) &&
+        typeof element.props.className === "string" &&
+        element.props.className.includes("relative flex cursor-pointer"),
+    ).map((element) => String(element.props.value));
+
+    expect(renderedDrivers).toEqual(expectedDrivers);
+    expect(settingsState.mutateProviderInstance).not.toHaveBeenCalled();
+    expect(settingsState.updateSettings).not.toHaveBeenCalled();
+    expect(commands.updateProvider).not.toHaveBeenCalled();
+  });
 
   it("keeps explicitly configured provider slots visible when disabled", () => {
     const drivers = [

@@ -1,5 +1,9 @@
 // SCIENT-FORK:START
-import { makeScientProviderSettings } from "./scient/providerSettings.ts";
+import {
+  makeScientProviderSettings,
+  scientProviderDefaultEnabled,
+  SCIENT_PROVIDER_ENABLED_DEFAULTS,
+} from "./scient/providerSettings.ts";
 import {
   ScientificComputingSettings,
   ScientificComputingSettingsPatch,
@@ -788,7 +792,9 @@ export type AntigravityAuthMethod = typeof AntigravityAuthMethod.Type;
 export const AntigravitySettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
+      // SCIENT-FORK:START — preserve the Scient driver's enabled default.
+      Schema.withDecodingDefault(Effect.succeed(SCIENT_PROVIDER_ENABLED_DEFAULTS.antigravity)),
+      // SCIENT-FORK:END
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     authMethod: AntigravityAuthMethod.pipe(
@@ -1387,8 +1393,8 @@ export const providerInstanceConfigEnabledFlag = (config: unknown): boolean | un
 };
 
 /**
- * Built-in drivers that stay off until the user turns them on. Matches the
- * `enabled` decoding default of each driver's settings schema.
+ * Upstream built-in defaults. Scient-owned schema defaults override this list
+ * through `scientProviderDefaultEnabled`.
  */
 const DEFAULT_DISABLED_PROVIDER_DRIVERS: ReadonlySet<ProviderDriverKind> = new Set(
   ["cursor", "grok", "muse", "pi", "opencode", "antigravity"].map((driver) =>
@@ -1403,18 +1409,23 @@ const DEFAULT_ENABLED_DEFAULT_INSTANCES: ReadonlySet<ProviderInstanceId> = new S
 
 /**
  * Whether the built-in default instance at `instanceId` is enabled while
- * settings have no `providerInstances` entry for it. Only Codex and Claude
- * start on; any other id without an entry has no running instance.
+ * settings have no `providerInstances` entry for it. Scient-owned defaults
+ * extend the upstream built-ins; named instances require a settings entry.
  */
 export const isUnconfiguredDefaultInstanceEnabled = (instanceId: ProviderInstanceId): boolean =>
-  DEFAULT_ENABLED_DEFAULT_INSTANCES.has(instanceId);
+  // SCIENT-FORK:START — include Scient-owned implicit default instances.
+  DEFAULT_ENABLED_DEFAULT_INSTANCES.has(instanceId) ||
+  scientProviderDefaultEnabled(instanceId) === true;
+// SCIENT-FORK:END
 
 /**
  * Default enabled state for a driver when neither the envelope nor the config
  * blob carries a flag. Unknown (fork) drivers default to enabled.
  */
 const defaultEnabledForDriver = (driver: ProviderDriverKind): boolean =>
-  !DEFAULT_DISABLED_PROVIDER_DRIVERS.has(driver);
+  // SCIENT-FORK:START — reuse the Scient schemas' default authority.
+  scientProviderDefaultEnabled(driver) ?? !DEFAULT_DISABLED_PROVIDER_DRIVERS.has(driver);
+// SCIENT-FORK:END
 
 /**
  * Resolve whether a configured provider instance is enabled. An explicit

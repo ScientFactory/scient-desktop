@@ -216,10 +216,6 @@ export const make = Effect.gen(function* () {
     if (Option.isSome(existing)) {
       const target = yield* fs.readLink(existing.value).pipe(Effect.option);
       if (Option.getOrUndefined(target) === launcher) return yield* state;
-      // A link to a previous T3 home's launcher: point it at this one instead.
-      yield* fs
-        .remove(existing.value)
-        .pipe(Effect.mapError(() => fail(`Could not replace ${existing.value}.`)));
     }
     // A link behind another `t3` never runs, so installing one would only hide the problem.
     const shadowedBy = yield* foreignFirstOnPath;
@@ -227,6 +223,23 @@ export const make = Effect.gen(function* () {
       return yield* fail(
         `Another t3 at ${shadowedBy.value} runs first in a new terminal. Remove it, or run the launcher directly at ${launcher}.`,
       );
+    }
+    if (Option.isSome(existing)) {
+      const link = existing.value;
+      // Prepare the replacement alongside the old link, then publish it atomically.
+      // A rejected install or failed preparation must leave the previous launcher usable.
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const directory = yield* fs.makeTempDirectoryScoped({
+            directory: path.dirname(link),
+            prefix: ".t3-cli-",
+          });
+          const replacement = path.join(directory, "t3");
+          yield* fs.symlink(launcher, replacement);
+          yield* fs.rename(replacement, link);
+        }),
+      ).pipe(Effect.mapError(() => fail(`Could not replace ${link}.`)));
+      return yield* state;
     }
     const onPath = pathEntries(process.env.PATH, ":");
     const candidates = unixCandidates(environment.homeDirectory, environment.platform);

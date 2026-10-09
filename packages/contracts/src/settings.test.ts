@@ -9,16 +9,20 @@ import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   ClaudeSettings,
+  CodexSettings,
+  AntigravitySettings,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   DEFAULT_UNIFIED_SETTINGS,
   resolveScientificComputingLanguageSettings,
   resolveProviderInstanceEnabled,
+  isUnconfiguredDefaultInstanceEnabled,
   requiredScopesForServerSettingsPatch,
   ServerSettings,
   ServerSettingsPatch,
   OmpSettings,
   DroidSettings,
+  ScientAgentSettings,
 } from "./settings.ts";
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
@@ -969,15 +973,51 @@ describe("provider enabled defaults", () => {
     ).toBe(false);
   });
 
-  it("enables only the stable bindings by default", () => {
+  it("preserves stable and Scient-specific enabled defaults", () => {
     const enabledByDefault = (driver: string) =>
       resolveProviderInstanceEnabled({ driver: ProviderDriverKind.make(driver), config: {} });
     expect(enabledByDefault("codex")).toBe(true);
     expect(enabledByDefault("claudeAgent")).toBe(true);
-    for (const driver of ["cursor", "grok", "muse", "pi", "opencode", "antigravity"]) {
+    expect(enabledByDefault("scient")).toBe(true);
+    expect(enabledByDefault("antigravity")).toBe(true);
+    for (const driver of ["cursor", "droid", "omp", "grok", "muse", "pi", "opencode"]) {
       expect(enabledByDefault(driver)).toBe(false);
     }
   });
+
+  it.each([
+    ["codex", CodexSettings],
+    ["claudeAgent", ClaudeSettings],
+    ["antigravity", AntigravitySettings],
+    ["droid", DroidSettings],
+    ["omp", OmpSettings],
+    ["scient", ScientAgentSettings],
+  ] as const)("keeps %s eligibility consistent with its config schema", (driver, schema) => {
+    const enabled = Schema.decodeSync(schema)({}).enabled;
+    expect(resolveProviderInstanceEnabled({ driver: ProviderDriverKind.make(driver) })).toBe(
+      enabled,
+    );
+    expect(isUnconfiguredDefaultInstanceEnabled(ProviderInstanceId.make(driver))).toBe(enabled);
+  });
+
+  it.each(["droid", "omp", "scient", "antigravity"])(
+    "preserves explicit %s enablement and disables",
+    (kind) => {
+      const driver = ProviderDriverKind.make(kind);
+      expect(resolveProviderInstanceEnabled({ driver, enabled: true })).toBe(true);
+      expect(resolveProviderInstanceEnabled({ driver, enabled: false })).toBe(false);
+      expect(resolveProviderInstanceEnabled({ driver, config: { enabled: true } })).toBe(true);
+      expect(
+        resolveProviderInstanceEnabled({ driver, enabled: true, config: { enabled: false } }),
+      ).toBe(false);
+      expect(
+        resolveProviderInstanceEnabled({ driver, enabled: false, config: { enabled: true } }),
+      ).toBe(false);
+      expect(isUnconfiguredDefaultInstanceEnabled(ProviderInstanceId.make(`${kind}_work`))).toBe(
+        false,
+      );
+    },
+  );
 
   it("resolves instance enabled state with explicit false winning", () => {
     const grok = ProviderDriverKind.make("grok");
@@ -989,6 +1029,7 @@ describe("provider enabled defaults", () => {
     expect(
       resolveProviderInstanceEnabled({ driver: ProviderDriverKind.make("ollama"), config: {} }),
     ).toBe(true);
+    expect(isUnconfiguredDefaultInstanceEnabled(ProviderInstanceId.make("ollama"))).toBe(false);
     // Envelope flag wins over the driver default.
     expect(resolveProviderInstanceEnabled({ driver: grok, enabled: true, config: {} })).toBe(true);
     expect(resolveProviderInstanceEnabled({ driver: codex, enabled: false, config: {} })).toBe(

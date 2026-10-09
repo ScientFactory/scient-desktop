@@ -2016,6 +2016,10 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     // Managed actions may pass the exact reviewed installation and their
     // settings-reference decision. Bare catalog callers still get an atomic
     // settings snapshot so a concurrent instance cannot lose a shared install.
+    // SCIENT-FORK:START — reviewed actions already own the settings snapshot
+    if (isReferenced !== undefined || input.expectedInstallation !== undefined)
+      return removeManagedInstallation(input, isReferenced);
+    // SCIENT-FORK:END
     return hostSettings
       .withSnapshot((settings) =>
         removeManagedInstallation(

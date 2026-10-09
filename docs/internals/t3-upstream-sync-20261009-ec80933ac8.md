@@ -134,6 +134,40 @@ untouched consumers of changed shared APIs received source review as well.
 
 ## Protected boundaries and limits
 
+### Preservation repairs after independent review
+
+Comparison with owned main `b631232d51fa6705a72e3f0021cee139999c6b69` found
+regressions beyond the initial provider-row visibility repair. The candidate preserves
+the following existing decisions through their live consumers:
+
+- Scient's canonical provider presentation order applies to Settings and Add Provider,
+  independently of package registration order. Scient stays first; custom accounts remain
+  grouped beneath their driver. Rendering unconfigured built-ins creates no settings entries.
+- Shared enablement and actual driver schemas agree for every registered built-in. Scient
+  and Antigravity retain their existing on defaults; Droid and OMP retain their off defaults.
+  Explicit disables win, and ACP Registry still has no implicit default instance. Scient's
+  defaults have one owner reused by schemas and eligibility rather than a second drifting list.
+- Reviewed ACP removal keeps the existing settings-lock owner. Bare catalog removals retain
+  atomic reference checks; reviewed removal still rejects shared installations and changed
+  receipts. A real settings/catalog integration test also proves subsequent writes complete.
+- Scalar, null and array legacy provider blobs keep their original settings file for repair.
+  Readable siblings and named instances remain readable; migration does not discard the
+  unreadable bytes during its automatic rewrite.
+- A rejected or failed CLI replacement preserves the prior app-owned launcher. Human browser
+  download copies claim names exclusively, so simultaneous copies and external writers cannot
+  overwrite an existing destination. Agent download attribution remains unchanged.
+- Codex onboarding setup respects `providers:manage`, including disabled controls, auto-start
+  and callbacks after scope revocation. Terminal access does not imply provider-management
+  permission, and backend authorization remains the final authority.
+- ACP status and authentication guidance retain Scient's product name through the existing
+  application composition. Standalone package defaults and transport identity remain upstream's.
+
+These are preservation repairs, not new model, reasoning, enablement, provisioning or design
+decisions. Synthetic fixtures exercise the failure conditions; they do not establish real-provider
+or visual acceptance.
+
+### Remaining platform and product limits
+
 Scient labels, canonical provider tools, state roots, partition identity, migration order,
 MCP/RPC authorization, attachment ownership, frozen inherited history, queue semantics,
 passive provider probes and lifecycle provisioning remain protected. Provider-specific
@@ -145,6 +179,12 @@ SDK/keyring execution reachable through those imports. Package manifests do reta
 SDK/native dependencies in installation closure; this is dependency weight, not proof of
 mobile binary inclusion or network activity. Cursor SDK/keyring desktop packaging was
 reviewed against the native payload contract.
+
+Browser profile reporting is authorized by `preview:operate` and contains profile IDs,
+names and kinds, not credentials. The server retains one latest in-memory report, so
+another authorized client can replace the reported list/default. Per-client ownership
+and the selection policy for agent `preview.open` remain a follow-up; this candidate
+does not claim per-client profile isolation.
 
 Native Windows execution, mobile device execution, real-provider sessions, microphone,
 OAuth/deep-link ownership and the user's visual acceptance are not established by mocked,

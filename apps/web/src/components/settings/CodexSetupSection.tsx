@@ -1,5 +1,5 @@
 import { AuthProvidersManageScope } from "@t3tools/contracts";
-import { useEnvironmentScope } from "../../state/session";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -58,6 +58,12 @@ interface CodexSetupSectionProps {
 
 /** Welcome and provider settings run the same environment-owned setup flow. */
 export function CodexSetupSection(props: CodexSetupSectionProps) {
+  const changeMode = (mode: "managed" | "existing") => {
+    if (props.readOnly || !readEnvironmentScope(props.environmentId, AuthProvidersManageScope))
+      return false;
+    props.onModeChange(mode);
+    return true;
+  };
   const [requested, setRequested] = useState(false);
   const existingState = getOnboardingProviderState(props.provider);
   const existingReady = props.enabled && existingState === "ready";
@@ -108,8 +114,8 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
               size="sm"
               disabled={props.readOnly}
               onClick={() => {
+                if (!changeMode("managed")) return;
                 setRequested(true);
-                props.onModeChange("managed");
               }}
             >
               Continue with ChatGPT
@@ -118,7 +124,12 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
         }
         secondaryControl={
           !existingAuthenticated && !existingReady && !existingChecking ? (
-            <Button size="sm" variant="ghost-muted" onClick={() => props.onModeChange("existing")}>
+            <Button
+              size="sm"
+              variant="ghost-muted"
+              disabled={props.readOnly}
+              onClick={() => changeMode("existing")}
+            >
               Use existing CLI
             </Button>
           ) : null
@@ -147,6 +158,7 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
       <ManagedCodexSetup
         key={`${props.environmentId}:${props.instanceId}`}
         {...props}
+        onModeChange={changeMode}
         autoStart={requested || props.autoStart === true}
         onAutoStartConsumed={() => {
           setRequested(false);
@@ -324,6 +336,7 @@ function ManagedCodexSetup({
       request: () => Promise<AtomCommandResult<A, E>>,
       onSuccess?: (value: A) => void,
     ) => {
+      if (readOnly || !readEnvironmentScope(environmentId, AuthProvidersManageScope)) return false;
       if (pendingRef.current) return false;
       pendingRef.current = true;
       setPending(true);
@@ -347,7 +360,7 @@ function ManagedCodexSetup({
       setPending(false);
       return succeeded;
     },
-    [],
+    [environmentId, readOnly],
   );
 
   const handoffId = useId();
@@ -400,7 +413,12 @@ function ManagedCodexSetup({
 
   const signIn = useCallback(
     async (methodId = "chatgpt") => {
-      if (pendingRef.current) return;
+      if (
+        pendingRef.current ||
+        readOnly ||
+        !readEnvironmentScope(environmentId, AuthProvidersManageScope)
+      )
+        return;
       openRequested.current = true;
       setTransferFailed(false);
       setRequestedMethodId(methodId);
@@ -448,6 +466,7 @@ function ManagedCodexSetup({
     [
       environmentId,
       instanceId,
+      readOnly,
       run,
       startAuth,
       clientCallback,
@@ -459,7 +478,8 @@ function ManagedCodexSetup({
 
   const setup = useCallback(
     async (methodId = "chatgpt") => {
-      if (unavailable || busy) return;
+      if (unavailable || busy || !readEnvironmentScope(environmentId, AuthProvidersManageScope))
+        return;
       if (installed && !updateAvailable) {
         await signIn(methodId);
       } else {
@@ -487,6 +507,7 @@ function ManagedCodexSetup({
       !autoStart ||
       autoStartHandled ||
       unavailable ||
+      !readEnvironmentScope(environmentId, AuthProvidersManageScope) ||
       busy ||
       installation === null ||
       !provider?.setup?.canInstall

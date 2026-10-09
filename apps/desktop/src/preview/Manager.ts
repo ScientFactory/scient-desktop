@@ -67,6 +67,7 @@ import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts"
 import { MENU_ACTION_CHANNEL, PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as BrowserSession from "./BrowserSession.ts";
+import { copyDownloadToDirectory } from "./DownloadCopy.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
   ANNOTATION_SEND_ENABLED_CHANNEL,
@@ -3764,7 +3765,6 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   const browserSession = yield* BrowserSession.BrowserSession;
   const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
   const downloadSessions = new WeakSet<Electron.Session>();
-  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runForkDownload = Effect.runForkWith(yield* Effect.context<never>());
   /** Puts a copy in Downloads under a name that never replaces a file already there. */
@@ -3772,19 +3772,10 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     source: string,
     fileName: string,
   ) {
-    const directory = app.getPath("downloads");
-    const extension = path.extname(fileName);
-    const stem = path.basename(fileName, extension) || "download";
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      const target = path.join(
-        directory,
-        attempt === 0 ? `${stem}${extension}` : `${stem} (${attempt})${extension}`,
-      );
-      if (yield* fileSystem.exists(target)) continue;
-      yield* fileSystem.copyFile(source, target);
-      shell.showItemInFolder(target);
-      return;
-    }
+    const target = yield* copyDownloadToDirectory(source, fileName, app.getPath("downloads")).pipe(
+      Effect.provideService(Path.Path, path),
+    );
+    shell.showItemInFolder(target);
   });
   // Server tabs save downloads where the server's engine reads them. Downloads
   // the person starts in a tab the server is not driving keep Electron's dialog.

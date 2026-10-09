@@ -41,7 +41,7 @@ import type {
   ProviderManagedRuntimeActions,
   ProviderSkillActions,
 } from "./ScientProviderInstanceSeams.ts";
-import type { ScientProviderDriver, ScientProviderInstance } from "./ScientProviderInstance.ts";
+import type { ScientProviderDriver } from "./ScientProviderInstance.ts";
 
 export type GrokCompositionRequirements = GrokDriverEnv | ServerConfig | Scope.Scope;
 
@@ -152,6 +152,7 @@ export type AcpRegistryCompositionEnv = AcpRegistryDriverEnv | ServerSettingsSer
 
 const acpRegistryPackageDriver = makeAcpRegistryDriver({
   application: scientAcpProviderBridge,
+  productName: "Scient",
 });
 
 /** Keep installation ownership in Scient while the package owns ACP Registry protocol behavior. */
