@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- this Node adapter owns actual watch registration; FileSystem.watch exposes no acquisition-ready signal.
 /** Scoped Node settings watches return only after native registration, before consuming events. */
 import { watch } from "node:fs";
 import * as Cause from "effect/Cause";

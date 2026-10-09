@@ -40,6 +40,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -1387,7 +1388,11 @@ const make = Effect.gen(function* () {
         ),
       );
     },
-    Effect.catch((error) => Effect.logError(error).pipe(Effect.as(Stream.empty))),
+    Effect.catch((error) =>
+      Effect.logError(error).pipe(
+        Effect.as<Stream.Stream<string, PlatformError.PlatformError>>(Stream.empty),
+      ),
+    ),
   );
 
   const watchFileChanges = (filePath: string, ready: Deferred.Deferred<void>) =>
