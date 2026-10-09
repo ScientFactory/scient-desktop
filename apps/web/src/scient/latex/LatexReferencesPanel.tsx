@@ -324,7 +324,8 @@ export function LatexReferencesPanel(props: {
     if (!props.open || requestSeen.current === props.request.sequence) return;
     if (dirty) {
       requestSeen.current = props.request.sequence;
-      setNotice("Save or cancel the current entry before opening another reference.");
+      if (props.request.key && props.request.key !== draft?.key)
+        setNotice("Save or cancel the current entry before opening another reference.");
       return;
     }
     const selected = props.request.key
@@ -355,7 +356,17 @@ export function LatexReferencesPanel(props: {
       }
     }
     requestAnimationFrame(() => input.current?.focus({ preventScroll: true }));
-  }, [props.open, props.request, props.environmentId, props.cwd, candidates, files, paths, dirty]);
+  }, [
+    props.open,
+    props.request,
+    props.environmentId,
+    props.cwd,
+    candidates,
+    files,
+    paths,
+    dirty,
+    draft,
+  ]);
   // Once read, keep the leases through closing the panel so pending/error
   // reports continue to describe the same bibliography sessions.
   const resourcePaths = [
@@ -377,7 +388,6 @@ export function LatexReferencesPanel(props: {
           />
         ))
       : null;
-  if (!props.open) return resources;
   const choose = (document: BibliographyDocument, entry: BibliographyEntry) => {
     if (dirty) {
       setNotice("Save or cancel this entry before selecting another.");
@@ -506,25 +516,15 @@ export function LatexReferencesPanel(props: {
         (name) => !mainFields.includes(name),
       )
     : [];
-  return (
+  const panel = props.open ? (
     <aside
       className="scient-latex-references-panel"
       aria-label="References"
       data-dock-command-scope="latex"
     >
-      {resources}
       <div className="scient-latex-references-header">
         <strong>References</strong>
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={saving}
-          onClick={() =>
-            dirty
-              ? setNotice("Save or cancel your entry draft before closing References.")
-              : props.onClose()
-          }
-        >
+        <Button variant="ghost" size="sm" onClick={props.onClose}>
           Close
         </Button>
       </div>
@@ -835,5 +835,11 @@ export function LatexReferencesPanel(props: {
         ) : null}
       </div>
     </aside>
+  ) : null;
+  return (
+    <>
+      {resources}
+      {panel}
+    </>
   );
 }

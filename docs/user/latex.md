@@ -821,8 +821,10 @@ BibTeX entries offer title, author, year and additional fields, plus Entry sourc
 for expressions and custom fields. Manual entries offer their formatted LaTeX
 text and optional custom label. Existing keys stay fixed to preserve citations;
 new entries let you choose a unique key. Save applies the entry, while Cancel
-discards its form draft. Closing or switching entries asks you to finish a dirty
-draft first. Removal asks for confirmation because existing citations keep
+discards its form draft. Close hides the panel and retains the draft during the
+app session; reopen References to resume it. A save already in progress continues
+while the panel is closed. Switching entries asks you to finish a dirty draft
+first. Removal asks for confirmation because existing citations keep
 their keys and become unresolved. The last manual entry can be removed without
 changing the document's bibliography approach.
 
