@@ -330,6 +330,9 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): VoiceRecord
     return () => {
       mountedRef.current = false;
       generationRef.current += 1;
+      // A stop in flight already owns the teardown. Cutting it short here would
+      // resolve its flush early and drop the final samples of committed audio.
+      if (finalizeInFlightRef.current) return;
       void teardownAudio(false);
     };
   }, [teardownAudio]);
