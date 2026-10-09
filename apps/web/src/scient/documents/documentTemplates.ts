@@ -4,6 +4,8 @@ import proposalSource from "./templates/proposal.tex?raw";
 import thesisSource from "./templates/thesis.tex?raw";
 import blankSource from "./templates/blank.tex?raw";
 import articleSource from "./templates/article.tex?raw";
+import letterSource from "./templates/letter.tex?raw";
+import cvSource from "./templates/cv.tex?raw";
 import { updateLatexLanguageSource } from "../latex/latexLanguage";
 
 export const DOCUMENT_TEMPLATES = [
@@ -42,6 +44,18 @@ export const DOCUMENT_TEMPLATES = [
     name: "Blank",
     description: "A clean page with the essentials ready.",
     detail: "Standard article formatting with math, figures, and tables available.",
+  },
+  {
+    id: "letter",
+    name: "Letter",
+    description: "A letter, without a title.",
+    detail: "A greeting, your text, and a signature.",
+  },
+  {
+    id: "cv",
+    name: "CV",
+    description: "An academic CV, without a title.",
+    detail: "Your name, education, research, and publications.",
   },
 ] as const;
 export type DocumentTemplateId = (typeof DOCUMENT_TEMPLATES)[number]["id"];
@@ -116,6 +130,8 @@ export function createDocumentSource(input: {
     thesis: thesisSource,
     blank: blankSource,
     article: articleSource,
+    letter: letterSource,
+    cv: cvSource,
   };
   const values: Record<string, string> = {
     TITLE: title,
@@ -168,6 +184,8 @@ export const MORE_DOCUMENT_TEMPLATES: ReadonlyArray<{
 }> = [
   { id: "proposal", name: "Research proposal" },
   { id: "assignment", name: "Assignment" },
+  { id: "letter", name: "Letter" },
+  { id: "cv", name: "CV" },
 ];
 
 export const NEW_DOCUMENT_LANGUAGES: ReadonlyArray<{
@@ -207,6 +225,17 @@ export function newDocumentCandidate(
 ): string {
   const name = attempt <= 1 ? stem : `${stem}-${attempt}`;
   return `${folder}${name}.${newDocumentExtension(format)}`;
+}
+
+/**
+ * Whether a template prints a title. A new document is named from its title, or,
+ * in a template without one, from the name typed above the page.
+ */
+export function templateHasTitle(template: DocumentTemplateId): boolean {
+  return (
+    latexTitleRange(createNewDocumentSource({ format: "latex", template, language: "english" })) !==
+    null
+  );
 }
 
 /** The balanced `\title{…}` argument of a LaTeX source, raw. */
@@ -287,13 +316,17 @@ export function isUntouchedNewLatexDocument(
   return withRawLatexTitle(source, "") === pristine;
 }
 
-/** The same document in another template or language, keeping the title as typed. */
+/**
+ * The same document in another template or language, keeping the title as typed.
+ * Coming from a template without a title, `name` becomes the title.
+ */
 export function switchNewLatexDocument(
   source: string,
   template: DocumentTemplateId,
   language: NewDocumentLanguage,
+  name = "",
 ): string {
   const range = latexTitleRange(source);
-  const title = range ? source.slice(range.from, range.to) : "";
+  const title = range ? source.slice(range.from, range.to) : escapeDocumentText(name.trim());
   return withRawLatexTitle(createNewDocumentSource({ format: "latex", template, language }), title);
 }

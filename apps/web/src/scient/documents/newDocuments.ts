@@ -20,6 +20,8 @@ export interface NewDocumentState {
   readonly seenUntouched: boolean;
   /** Set at the first edit beyond the title after that; the template row does not return. */
   readonly settled: boolean;
+  /** In a template without a title, the name typed above the page, once entered. */
+  readonly name?: string;
 }
 
 interface NewDocumentKey {

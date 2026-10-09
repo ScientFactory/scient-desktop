@@ -89,6 +89,12 @@ export function focusNewDocumentWhenOpen(
         latexTitle.setSelectionRange(latexTitle.value.length, latexTitle.value.length);
         return;
       }
+      // A template without a title is named above its page instead.
+      const name = page.querySelector<HTMLInputElement>('input[aria-label="Document name"]');
+      if (visible(name)) {
+        name.focus({ preventScroll: true });
+        return;
+      }
       const heading = editor.querySelector("h1");
       if (visible(heading)) {
         editor.focus({ preventScroll: true });

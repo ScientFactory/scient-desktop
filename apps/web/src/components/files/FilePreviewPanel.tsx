@@ -2036,6 +2036,8 @@ export default function FilePreviewPanel({
               </ScientSurfaceSuspense>
             ) : usesScientMarkdownEditor && markdownLease ? (
               <ScientSurfaceSuspense>
+                {/* A new document's file name, drawn on its page. */}
+                {newDocument.startBar}
                 <ScientMarkdownFileSurface
                   key={relativePath}
                   environmentId={environmentId}

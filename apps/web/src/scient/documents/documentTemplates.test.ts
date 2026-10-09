@@ -9,6 +9,7 @@ import {
   newDocumentTitle,
   sameTitleText,
   switchNewLatexDocument,
+  templateHasTitle,
 } from "./documentTemplates";
 
 const article = createNewDocumentSource({
@@ -70,6 +71,34 @@ describe("new documents", () => {
     expect(report).toContain("\\title{Mixing times}");
     expect(isUntouchedNewLatexDocument(report, "report", "english")).toBe(true);
     expect(isUntouchedNewLatexDocument(report, "article", "english")).toBe(false);
+  });
+
+  it("knows which templates print a title", () => {
+    for (const template of [
+      "blank",
+      "article",
+      "report",
+      "thesis",
+      "proposal",
+      "assignment",
+    ] as const)
+      expect(templateHasTitle(template)).toBe(true);
+    expect(templateHasTitle("letter")).toBe(false);
+    expect(templateHasTitle("cv")).toBe(false);
+  });
+
+  it("carries a title into a name and a name into a title across templates", () => {
+    const titled = switchNewLatexDocument(article, "article", "english").replace(
+      "\\title{}",
+      "\\title{Heat flow}",
+    );
+    const letter = switchNewLatexDocument(titled, "letter", "english");
+    expect(newDocumentTitle(letter, "latex")).toBe("");
+    expect(isUntouchedNewLatexDocument(letter, "letter", "english")).toBe(true);
+    const back = switchNewLatexDocument(letter, "report", "english", "Heat flow & sinks");
+    expect(newDocumentTitle(back, "latex")).toBe("Heat flow sinks");
+    expect(back).toContain("\\title{Heat flow \\& sinks}");
+    expect(isUntouchedNewLatexDocument(back, "report", "english")).toBe(true);
   });
 
   it("compares title text as words", () => {

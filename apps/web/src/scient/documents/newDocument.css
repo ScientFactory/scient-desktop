@@ -1,26 +1,35 @@
 /*
- * The template and language row of a new LaTeX document, until its first edit. It sits
- * in the first page's top margin and takes its colour from the paper's ink, so it reads
- * as faint print rather than as part of the app.
+ * A new document's own parts, drawn on its page until it is named. On a LaTeX page
+ * they take their colour from the paper's ink, so they read as faint print rather
+ * than as part of the app.
  */
-.scient-new-document-bar {
+
+/* The first page's top margin: the template row, and the name line of a template without a title. */
+.scient-new-document-margin {
   position: absolute;
   top: 0;
   right: var(--scient-latex-margin-right, 1in);
   left: var(--scient-latex-margin-left, 1in);
   z-index: 2;
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0 0.9em;
+  gap: 0.35em;
   height: var(--scient-latex-margin-top, 1in);
   font-family: var(--font-sans);
   font-weight: 400;
   line-height: 1;
   letter-spacing: 0;
-  text-align: center;
   user-select: none;
+}
+
+.scient-new-document-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0 0.9em;
 }
 
 .scient-new-document-bar [role="radiogroup"] {
@@ -29,7 +38,8 @@
   justify-content: center;
 }
 
-.scient-new-document-bar button {
+.scient-new-document-margin button,
+.scient-new-document-hint button {
   display: inline-flex;
   align-items: center;
   gap: 0.25em;
@@ -46,8 +56,9 @@
     background-color 120ms ease;
 }
 
-.scient-new-document-bar button:hover {
-  background: color-mix(in srgb, currentColor 5%, transparent);
+.scient-new-document-margin button:hover,
+.scient-new-document-hint button:hover {
+  background: color-mix(in srgb, currentColor 6%, transparent);
   color: color-mix(in srgb, currentColor 80%, transparent);
 }
 
@@ -56,12 +67,100 @@
   font-weight: 500;
 }
 
-.scient-new-document-bar button svg {
+.scient-new-document-margin button svg,
+.scient-new-document-hint button svg {
   width: 1em;
   height: 1em;
 }
 
-.scient-new-document-bar button:focus-visible {
+.scient-new-document-margin button:focus-visible,
+.scient-new-document-hint button:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
+}
+
+/* A template without a title: its name, typed above the page. */
+.scient-new-document-name {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.scient-new-document-name input {
+  max-width: 100%;
+  padding: 0.1em 0.3em;
+  border: 0;
+  background: transparent;
+  color: color-mix(in srgb, currentColor 85%, transparent);
+  font: inherit;
+  font-size: 1.25em;
+  text-align: center;
+  outline: none;
+}
+
+.scient-new-document-name input::placeholder {
+  color: color-mix(in srgb, currentColor 30%, transparent);
+}
+
+.scient-new-document-name-file {
+  display: flex;
+  align-items: center;
+  height: 1.5em;
+}
+
+/* The file name the document will take, under its title. */
+.scient-new-document-hint {
+  position: absolute;
+  right: var(--scient-latex-margin-right, 1in);
+  left: var(--scient-latex-margin-left, 1in);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.5em;
+  margin-top: 0.15em;
+  font-family: var(--font-sans);
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: 0;
+  user-select: none;
+  pointer-events: none;
+}
+
+.scient-new-document-hint button {
+  pointer-events: auto;
+}
+
+.scient-new-document-file {
+  color: color-mix(in srgb, currentColor 38%, transparent);
+  white-space: nowrap;
+}
+
+.scient-new-document-margin .scient-new-document-file {
+  font-size: 0.92em;
+}
+
+.scient-new-document-enter {
+  margin-inline-start: 0.2em;
+}
+
+.scient-new-document-hint .scient-new-document-enter,
+.scient-new-document-name-file .scient-new-document-enter {
+  height: 1.5em;
+  padding: 0 0.35em;
+}
+
+/* In Markdown, on the heading's own line, after its text. */
+.scient-markdown-document-host:has(> .scient-new-document-hint) {
+  position: relative;
+}
+
+.scient-new-document-hint-inline {
+  right: auto;
+  justify-content: flex-start;
+  margin: 0;
+  padding-inline-start: 0.75rem;
+  color: var(--foreground);
+  font-size: 12px;
+  transform: translateY(-50%);
 }

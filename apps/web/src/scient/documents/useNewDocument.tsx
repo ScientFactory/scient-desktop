@@ -2,15 +2,12 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { ChevronDown } from "lucide-react";
 import {
   type ReactNode,
-  type RefObject,
   useEffect,
   useEffectEvent,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
-
-import { createPortal } from "react-dom";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
@@ -30,12 +27,12 @@ import {
   newDocumentTitle,
   sameTitleText,
   switchNewLatexDocument,
+  templateHasTitle,
 } from "./documentTemplates";
 import { caretOffsetInEditor, focusNewDocumentWhenOpen } from "./focusNewDocument";
+import { NewDocumentOnPage, STRIP_ATTRIBUTE } from "./NewDocumentOnPage";
 import { newDocuments } from "./newDocuments";
 import "./newDocument.css";
-
-const STRIP_ATTRIBUTE = "data-new-document-strip";
 
 function waitUntil(condition: () => boolean, timeoutMs: number): Promise<boolean> {
   const deadline = performance.now() + timeoutMs;
@@ -130,9 +127,13 @@ export function useNewDocument(input: {
     else if (!untouched && entry.seenUntouched) newDocuments.update(key, { settled: true });
   });
 
+  const titled = entry?.format !== "latex" || templateHasTitle(entry.template);
+  // The name comes from the title, or, in a template without one, from the name line.
   const savedTitle =
     entry && snapshot && snapshot.draftSource === snapshot.baselineSource
-      ? newDocumentTitle(snapshot.baselineSource, entry.format)
+      ? titled
+        ? newDocumentTitle(snapshot.baselineSource, entry.format)
+        : (entry.name ?? "")
       : "";
   // A Markdown line just started under the heading is not in the file yet; renaming
   // remounts the editor, so wait for its first words or for the caret to leave.
@@ -206,7 +207,7 @@ export function useNewDocument(input: {
     })();
   });
 
-  if (!key || !entry || !untouched || !lease || !snapshot) return { startBar: null };
+  if (!key || !entry || !lease || !snapshot) return { startBar: null };
   const choose = (template: DocumentTemplateId, language: NewDocumentLanguage) => {
     if (switching.current) return;
     switching.current = true;
@@ -229,23 +230,47 @@ export function useNewDocument(input: {
         const current = lease.getSnapshot();
         if (!isUntouchedNewLatexDocument(current.draftSource, entry.template, entry.language))
           return;
-        const next = switchNewLatexDocument(current.draftSource, template, language);
+        // A title and a name stand for each other across templates with and without one.
+        const name = templateHasTitle(entry.template) ? typed.trim() : (entry.name ?? "");
+        const next = switchNewLatexDocument(current.draftSource, template, language, name);
         if (next !== current.draftSource && !lease.change(next, current.editVersion)) return;
-        newDocuments.update(key, { template, language });
-        // The page is drawn again; writing continues in the title.
+        newDocuments.update(key, { template, language, name });
+        // The page is drawn again; writing continues in the title or the name.
         focusNewDocumentWhenOpen("title");
       } finally {
         switching.current = false;
       }
     })();
   };
+  const fileName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+  // Once written in, an unnamed document stops offering its name.
+  const naming = !(entry.settled && savedTitle.length === 0);
   return {
     startBar: (
-      <NewDocumentStartBar
-        template={entry.template}
-        language={entry.language}
-        onTemplate={(template) => choose(template, entry.language)}
-        onLanguage={(language) => choose(entry.template, language)}
+      <NewDocumentOnPage
+        row={
+          untouched ? (
+            <NewDocumentStartBar
+              template={entry.template}
+              language={entry.language}
+              onTemplate={(template) => choose(template, entry.language)}
+              onLanguage={(language) => choose(entry.template, language)}
+            />
+          ) : null
+        }
+        name={
+          titled || !naming
+            ? null
+            : {
+                value: entry.name ?? "",
+                onCommit: (name) => newDocuments.update(key, { name }),
+              }
+        }
+        hint={titled && naming}
+        currentFileName={fileName(key.relativePath)}
+        fileNameFor={(title) =>
+          fileName(newDocumentCandidate(newDocumentStem(title), entry.format, 1))
+        }
       />
     ),
   };
@@ -259,15 +284,8 @@ function NewDocumentStartBar(props: {
 }) {
   const more = MORE_DOCUMENT_TEMPLATES.find((entry) => entry.id === props.template);
   const strip = { [STRIP_ATTRIBUTE]: "" };
-  const anchor = useRef<HTMLSpanElement>(null);
-  const page = useFirstPage(anchor);
-  const bar = (
-    <div
-      className="scient-new-document-bar"
-      dir="ltr"
-      style={page ? { fontSize: `${page.fontSize}px` } : undefined}
-      {...strip}
-    >
+  return (
+    <div className="scient-new-document-bar">
       <div role="radiogroup" aria-label="Template">
         {NEW_DOCUMENT_TEMPLATES.map((entry) => (
           <button
@@ -327,59 +345,4 @@ function NewDocumentStartBar(props: {
       </Menu>
     </div>
   );
-  return (
-    <>
-      <span ref={anchor} hidden />
-      {page ? createPortal(bar, page.paper) : null}
-    </>
-  );
-}
-
-/** Type size of the row in page pixels; it never reads smaller than this on screen. */
-const BAR_FONT_PX = 12;
-const BAR_MIN_SCREEN_FONT_PX = 11;
-
-/**
- * The first page of the Visual editor next to `anchor`, so the template row can sit in
- * its top margin. Visual draws the page later than this row and may draw it again, and
- * Source or PDF has none; the row shows only while there is a page.
- */
-function useFirstPage(
-  anchor: RefObject<HTMLElement | null>,
-): { readonly paper: HTMLElement; readonly fontSize: number } | null {
-  const [page, setPage] = useState<{ paper: HTMLElement; fontSize: number } | null>(null);
-  useEffect(() => {
-    const scope = anchor.current?.parentElement;
-    if (!scope) return;
-    let paper: HTMLElement | null = null;
-    let zoomFrame: HTMLElement | null = null;
-    const resize = new ResizeObserver(() => measure());
-    const measure = () => {
-      if (!paper) return setPage(null);
-      // Visual scales the page with a transform; its frame carries the scaled width.
-      const zoom = zoomFrame && paper.offsetWidth ? zoomFrame.offsetWidth / paper.offsetWidth : 1;
-      const fontSize = Math.max(BAR_FONT_PX, BAR_MIN_SCREEN_FONT_PX / Math.max(zoom, 0.1));
-      setPage((current) =>
-        current?.paper === paper && current.fontSize === fontSize
-          ? current
-          : { paper: paper!, fontSize },
-      );
-    };
-    const find = () => {
-      if (paper?.isConnected) return;
-      resize.disconnect();
-      paper = scope.querySelector<HTMLElement>(".scient-latex-visual-paper");
-      zoomFrame = paper?.closest<HTMLElement>(".scient-latex-page-zoom-frame") ?? null;
-      if (zoomFrame) resize.observe(zoomFrame);
-      measure();
-    };
-    const mutations = new MutationObserver(find);
-    mutations.observe(scope, { childList: true, subtree: true });
-    find();
-    return () => {
-      mutations.disconnect();
-      resize.disconnect();
-    };
-  }, [anchor]);
-  return page;
 }
