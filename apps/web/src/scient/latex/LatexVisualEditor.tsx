@@ -4327,9 +4327,14 @@ const LatexRichPreview = Node.create<LatexVisualWorkspace>({
     return ReactNodeViewRenderer(
       (props) => <LatexRichPreviewView {...props} workspace={workspace} />,
       {
+        // Typing in a field here (title, abstract, captions) belongs to that
+        // field. Without this the document editor also takes the key and acts
+        // on its own last selection: Backspace in the title could delete a
+        // formula, join paragraphs, or remove the title block itself.
         stopEvent: ({ event }) =>
           event.target instanceof Element &&
-          Boolean(event.target.closest(".scient-latex-inline-field")),
+          (Boolean(event.target.closest(".scient-latex-inline-field")) ||
+            event.target.matches("input, textarea, select")),
         trackNodeViewPosition: true,
         update({ oldNode, newNode, oldDecorations, newDecorations, updateProps }) {
           if (oldNode !== newNode || oldDecorations !== newDecorations) updateProps();

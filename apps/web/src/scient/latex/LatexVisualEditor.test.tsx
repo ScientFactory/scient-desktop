@@ -612,6 +612,31 @@ describe("writing editor source transactions", () => {
     expect(editor().isFocused).toBe(true);
   });
 
+  it("keeps Backspace typed in the title inside the title, whatever the document selects", async () => {
+    await mount("\\maketitle\nFirst.\n\nSecond.", "\\title{Title}\n");
+    const title = container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='Document title']",
+    )!;
+    // The document's own selection is the whole title block, as after a click on it.
+    const titlePosition = editor().view.posAtDOM(title.closest(".scient-latex-title-preview")!, 0);
+    await act(() => editor().commands.setNodeSelection(Math.max(0, titlePosition - 1)));
+    await act(async () => title.focus());
+    const backspace = new KeyboardEvent("keydown", {
+      key: "Backspace",
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => {
+      title.dispatchEvent(backspace);
+    });
+    // The field keeps the key; the document editor neither deletes nor blocks it.
+    expect(backspace.defaultPrevented).toBe(false);
+    expect(current).toContain("\\maketitle");
+    expect(current).toContain("\\title{Title}");
+    expect(current).toContain("First.");
+    expect(current).toContain("Second.");
+  });
+
   it("starts a titled document with formatting ready on body text", async () => {
     await mount("\\maketitle\nHello world.", "\\title{Title}\n");
     expect(editor().state.selection.$from.parent.type.name).toBe("paragraph");
