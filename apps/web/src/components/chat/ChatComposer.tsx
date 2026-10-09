@@ -77,6 +77,9 @@ import { ScientVoiceComposerControl } from "../../scient/voice/ScientVoiceCompos
 import { mergeEffectiveProviderSkills } from "../../scient/skills/effectiveSkills.ts";
 import { openComposerSkill, useScientComposerSkills } from "../../scient/skills/composerSkills.ts";
 import { applyVoiceTranscript } from "../../scient/voice/voiceComposerInsert.ts";
+// SCIENT-FORK:START committed voice dictation outlives the composer.
+import { useScientVoiceDraftOrigin } from "../../scient/voice/voiceDraftDelivery.ts";
+// SCIENT-FORK:END
 import { ProviderOnboardingPicker } from "../../scient/providerConnection/ProviderOnboardingPicker.tsx";
 import {
   useComposerProviderRuntimeUpdate,
@@ -4453,6 +4456,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       shouldBlurMobileComposerOnSubmit,
     ],
   );
+
+  // SCIENT-FORK:START committed voice dictation outlives the composer.
+  const voiceDraftAccepted = !isComposerApprovalState && pendingUserInputs.length === 0;
+  const voiceDraftOrigin = useScientVoiceDraftOrigin({
+    target: composerDraftTarget,
+    title: activeThread?.title ?? null,
+    acceptsDraftText: voiceDraftAccepted,
+    insert: (text) => {
+      voiceBusyRef.current = false;
+      return applyVoiceTranscript(promptRef.current, text, applyPromptReplacement);
+    },
+    submit: () => {
+      if (composerMountedRef.current) submitComposer();
+    },
+  });
+  // SCIENT-FORK:END
   const handleSubmitMessage = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
@@ -7837,21 +7856,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     className={voiceBusy ? "flex-1" : ""}
                     environmentId={environmentId}
                     onBusyChange={onVoiceBusyChange}
+                    // SCIENT-FORK:START ordinary-draft dictation is committed to its origin.
+                    draftOrigin={voiceDraftAccepted ? voiceDraftOrigin : null}
+                    // SCIENT-FORK:END
                     onTranscript={(text) => {
                       voiceBusyRef.current = false;
-                      if (!composerMountedRef.current) {
-                        const originalPrompt =
-                          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
-                            ?.prompt ?? "";
-                        applyVoiceTranscript(originalPrompt, text, (start, end, replacement) => {
-                          setComposerDraftPrompt(
-                            composerDraftTarget,
-                            replaceTextRange(originalPrompt, start, end, replacement).text,
-                          );
-                          return true;
-                        });
-                        return;
-                      }
                       applyVoiceTranscript(promptRef.current, text, applyPromptReplacement);
                     }}
                     {...(pendingUserInputs.length === 0
