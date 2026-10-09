@@ -11,43 +11,40 @@ import {
 } from "./wslNodePty.ts";
 
 it.layer(NodeServices.layer)("WSL node-pty staging", (it) => {
-  for (const arch of ["x64", "arm64"] as const) {
-    it.effect(`stages ${arch} bytes and marker through the stage-local package symlink`, () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const stageAppDir = yield* fs.makeTempDirectoryScoped({ prefix: "scient-wsl-pty-" });
-          const nodeModules = path.join(stageAppDir, "node_modules");
-          const packageDir = path.join(
-            nodeModules,
-            ".pnpm",
-            "node-pty",
-            "node_modules",
-            "node-pty",
-          );
-          const prebuildPath = path.join(stageAppDir, "input.node");
-          yield* fs.makeDirectory(packageDir, { recursive: true });
-          yield* fs.symlink(packageDir, path.join(nodeModules, "node-pty"));
-          yield* fs.writeFileString(path.join(packageDir, "package.json"), '{"version":"1.1.0"}');
-          yield* fs.writeFileString(prebuildPath, "synthetic-prebuild-bytes");
+  it.effect.each(
+    (["x64", "arm64"] as const).map((arch) => ({
+      caseTitle: `stages ${arch} bytes and marker through the stage-local package symlink`,
+      arch,
+    })),
+  )("$caseTitle", ({ arch }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const stageAppDir = yield* fs.makeTempDirectoryScoped({ prefix: "scient-wsl-pty-" });
+        const nodeModules = path.join(stageAppDir, "node_modules");
+        const packageDir = path.join(nodeModules, ".pnpm", "node-pty", "node_modules", "node-pty");
+        const prebuildPath = path.join(stageAppDir, "input.node");
+        yield* fs.makeDirectory(packageDir, { recursive: true });
+        yield* fs.symlink(packageDir, path.join(nodeModules, "node-pty"));
+        yield* fs.writeFileString(path.join(packageDir, "package.json"), '{"version":"1.1.0"}');
+        yield* fs.writeFileString(prebuildPath, "synthetic-prebuild-bytes");
 
-          yield* stageWslNodePtyPrebuild({ stageAppDir, arch, prebuildPath });
+        yield* stageWslNodePtyPrebuild({ stageAppDir, arch, prebuildPath });
 
-          const prebuildDir = path.join(packageDir, "prebuilds", `linux-${arch}`);
-          assert.equal(
-            yield* fs.readFileString(path.join(prebuildDir, "pty.node")),
-            "synthetic-prebuild-bytes",
-          );
-          assert.equal(
-            yield* fs.readFileString(path.join(prebuildDir, "t3code-wsl-node-pty.json")),
-            `{"arch":"${arch}","nodePtyVersion":"1.1.0"}\n`,
-          );
-          assert.equal(yield* fs.readFileString(prebuildPath), "synthetic-prebuild-bytes");
-        }),
-      ),
-    );
-  }
+        const prebuildDir = path.join(packageDir, "prebuilds", `linux-${arch}`);
+        assert.equal(
+          yield* fs.readFileString(path.join(prebuildDir, "pty.node")),
+          "synthetic-prebuild-bytes",
+        );
+        assert.equal(
+          yield* fs.readFileString(path.join(prebuildDir, "t3code-wsl-node-pty.json")),
+          `{"arch":"${arch}","nodePtyVersion":"1.1.0"}\n`,
+        );
+        assert.equal(yield* fs.readFileString(prebuildPath), "synthetic-prebuild-bytes");
+      }),
+    ),
+  );
 
   it.effect("skips absent prebuilds and unsupported architectures without creating a package", () =>
     Effect.scoped(

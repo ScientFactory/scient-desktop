@@ -1,3 +1,4 @@
+import * as Base64Url from "effect/encoding/Base64Url";
 import {
   ArtifactProducerId,
   BindingGeneration,
@@ -8,7 +9,6 @@ import { PDF_VALIDATION_MAX_BYTES } from "@scientfactory/pdf-validation";
 import { BROWSER_PDF_EXPORT_MAX_BYTES, BrowserPdfExportInput } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
 import { vi } from "vite-plus/test";
 
 import {
@@ -36,7 +36,7 @@ const input = BrowserPdfExportInput.make({
     scrollWidth: 800,
     scrollHeight: 1_200,
   },
-  bytesBase64: Encoding.encodeBase64Url(new Uint8Array([0x25, 0x50, 0x44, 0x46])),
+  bytesBase64: Base64Url.encode(new Uint8Array([0x25, 0x50, 0x44, 0x46])),
 });
 
 function makeStore(publishError?: GeneratedDocumentStoreError) {

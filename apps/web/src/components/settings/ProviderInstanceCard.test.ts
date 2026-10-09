@@ -37,7 +37,12 @@ describe("Pi status copy", () => {
     message: "Pi reported 1 available model. Authentication is model-specific.",
   };
 
-  function render(mode: "list" | "editor", value = liveProvider, enabled = true) {
+  function render(
+    mode: "list" | "editor",
+    value = liveProvider,
+    enabled = true,
+    isUpdating = false,
+  ) {
     return renderToStaticMarkup(
       createElement(ProviderInstanceCard, {
         environmentId,
@@ -46,6 +51,7 @@ describe("Pi status copy", () => {
         driverOption: getDriverOption(driver),
         liveProvider: value,
         mode,
+        isUpdating,
         onUpdate: () => undefined,
         hiddenModels: [],
         favoriteModels: [],
@@ -106,6 +112,45 @@ describe("Pi status copy", () => {
     expect(markup).not.toContain("Authentication is model-specific");
   });
 
+  it.each(["list", "editor"] as const)(
+    "reports native update progress in the quiet Pi %s without changing its runtime authority",
+    (mode) => {
+      const markup = render(
+        mode,
+        {
+          ...liveProvider,
+          updateState: {
+            status: "running",
+            startedAt: "2026-10-08T00:00:00.000Z",
+            finishedAt: null,
+            message: "Installing package",
+            output: null,
+          },
+        },
+        true,
+        true,
+      );
+      expect(markup).toContain("Updating · Installing package");
+      expect(markup).toContain('aria-live="polite"');
+      expect(markup).not.toContain("Authentication is model-specific");
+    },
+  );
+
+  it("keeps a failed native update actionable in the provider list", () => {
+    const markup = render("list", {
+      ...liveProvider,
+      updateState: {
+        status: "failed",
+        startedAt: "2026-10-08T00:00:00.000Z",
+        finishedAt: "2026-10-08T00:00:01.000Z",
+        message: "Package installation failed",
+        output: null,
+      },
+    });
+    expect(markup).toContain("Package installation failed");
+    expect(markup).not.toContain("Updating ·");
+  });
+
   it("shows managed-runtime compatibility guidance without exposing an external installer", () => {
     const managedProvider: ServerProvider = {
       ...liveProvider,
@@ -162,7 +207,7 @@ describe("Pi status copy", () => {
       }),
     );
 
-    expect(markup).toContain("Known broken version");
+    expect(markup).toContain("Update available");
     expect(markup).toContain("Incompatible");
     expect(markup).not.toContain("npm install -g pi-coding-agent@latest");
     expect(markup).not.toContain("Install v0.83.0");

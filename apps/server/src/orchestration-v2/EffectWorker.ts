@@ -19,6 +19,7 @@ import {
 } from "../observability/Metrics.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import { AttachmentRollbackPruneService } from "./AttachmentRollbackPruneService.ts";
+import { ThreadFileRelease } from "./scient-fork/ThreadFileRelease.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
@@ -31,6 +32,12 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
+// SCIENT-FORK:START checkpoint-capture-final-attempt
+import {
+  CheckpointCaptureFinalAttempt,
+  isCheckpointSettlementPending,
+} from "./scient-fork/CheckpointCaptureFinalAttempt.ts";
+// SCIENT-FORK:END checkpoint-capture-final-attempt
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
@@ -83,7 +90,7 @@ export class OrchestrationEffectExecutorV2 extends Context.Service<
   OrchestrationEffectExecutorV2Shape
 >()("t3/orchestration-v2/EffectWorker/OrchestrationEffectExecutorV2") {}
 
-export const executorLayer: Layer.Layer<
+export const layerExecutor: Layer.Layer<
   OrchestrationEffectExecutorV2,
   never,
   | ProviderSessionManager.ProviderSessionManagerV2
@@ -102,6 +109,7 @@ export const executorLayer: Layer.Layer<
     const runFinalization = yield* RunFinalizationService.RunFinalizationService;
     const resourceCleanup = yield* ResourceCleanupService.ResourceCleanupService;
     const rollbackPrune = yield* AttachmentRollbackPruneService;
+    const threadFileRelease = yield* ThreadFileRelease;
     const checkpointRollback = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const providerTurnControl = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
@@ -127,14 +135,8 @@ export const executorLayer: Layer.Layer<
                   }),
               ),
             );
-          case "provider-runtime.continue":
-            return continueRestartedRun({
-              threadId: effect.threadId,
-              sourceRunId: effect.request.sourceRunId,
-              ...(effect.request.updateRequested === true ? { updateRequested: true } : {}),
-            }).pipe(
-              Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
-              Effect.provideService(ServerSettings.ServerSettingsService, settings),
+          case "scient.release-thread-files":
+            return threadFileRelease.release(effect.threadId).pipe(
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({
@@ -144,6 +146,31 @@ export const executorLayer: Layer.Layer<
                   }),
               ),
             );
+          case "provider-runtime.continue": {
+            const sourceRunId = effect.request.sourceRunId;
+            return continueRestartedRun({
+              threadId: effect.threadId,
+              sourceRunId,
+              ...(effect.request.updateRequested === true ? { updateRequested: true } : {}),
+            }).pipe(
+              Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+              Effect.provideService(ServerSettings.ServerSettingsService, settings),
+              // A continuation that will never run still owes a delegated parent a result.
+              Effect.tapError(() =>
+                willRetry
+                  ? Effect.void
+                  : threads.recoverDelegatedTask(effect.threadId, sourceRunId),
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
+          }
           case "provider-session.detach":
             return providerSessions
               .detach({
@@ -227,13 +254,23 @@ export const executorLayer: Layer.Layer<
                 providerTurnId: effect.request.providerTurnId,
               })
               .pipe(
+                Effect.catch((cause) =>
+                  isNonRetryableProviderTurnControlFailure(
+                    effect.request.type,
+                    Cause.pretty(Cause.fail(cause)),
+                  )
+                    ? Effect.void
+                    : Effect.fail(cause),
+                ),
                 // The provider has stopped what it still ran and reported it.
                 // Whatever the thread still shows on that provider thread is
                 // work no process will report on, so the Stop ends it too.
+                // One Stop can interrupt several provider threads, so the
+                // settle is keyed by effect, not by the Stop command.
                 Effect.andThen(
                   threads.dispatch({
                     type: "thread.background-work.settle",
-                    commandId: CommandId.make(`${effect.commandId}:background-work-settled`),
+                    commandId: CommandId.make(`${effect.id}:background-work-settled`),
                     threadId: effect.threadId,
                     providerThreadId: effect.request.providerThreadId,
                     providerTurnId: effect.request.providerTurnId,
@@ -598,6 +635,9 @@ export const executorLayer: Layer.Layer<
                 scopeId: effect.request.scopeId,
               })
               .pipe(
+                // SCIENT-FORK:START checkpoint-capture-final-attempt
+                Effect.provideService(CheckpointCaptureFinalAttempt, !willRetry),
+                // SCIENT-FORK:END checkpoint-capture-final-attempt
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
@@ -646,6 +686,23 @@ export const executorLayer: Layer.Layer<
                 threadId: effect.threadId,
                 requestId: effect.commandId,
                 kind: effect.request.kind,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
+          case "delegated-tasks.stop":
+            return threads
+              .stopDelegatedTasks({
+                threadId: effect.threadId,
+                commandId: effect.commandId,
+                reason: effect.request.reason,
               })
               .pipe(
                 Effect.mapError(
@@ -885,6 +942,10 @@ export const layerWithOptions = (
             Option.isSome(failure) &&
             isProviderRunInterruptError(failure.value.cause) &&
             failure.value.cause.reason === "receipt_pending";
+          // SCIENT-FORK:START checkpoint-capture-final-attempt
+          const checkpointSettlementPending =
+            Option.isSome(failure) && isCheckpointSettlementPending(failure.value);
+          // SCIENT-FORK:END checkpoint-capture-final-attempt
           const error = Cause.pretty(exit.cause);
           const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
           yield* deferredDroidSteer
@@ -905,8 +966,13 @@ export const layerWithOptions = (
             : uncertainDroidSteer ||
                 (effect.attemptCount >= maxAttempts &&
                   !awaitingNativeReceipt &&
+                  // SCIENT-FORK:START checkpoint-capture-final-attempt
+                  !checkpointSettlementPending &&
+                  // SCIENT-FORK:END checkpoint-capture-final-attempt
                   !deferredDroidSteer &&
-                  effect.request.type !== "attachment.rollback-prune")
+                  effect.request.type !== "attachment.rollback-prune" &&
+                  // SCIENT-FORK: a release waits out admissions holding its files.
+                  effect.request.type !== "scient.release-thread-files")
               ? yield* outbox
                   .fail({ effectId: effect.id, workerId, error })
                   .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
@@ -1044,3 +1110,7 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
   );
 
 export const runDaemon = runDaemonWithOptions();
+
+const layerDaemon: Layer.Layer<never, never, OrchestrationEffectWorkerV2> = Layer.effectDiscard(
+  runDaemon.pipe(Effect.forkScoped),
+);

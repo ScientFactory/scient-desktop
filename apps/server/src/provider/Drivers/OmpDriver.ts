@@ -13,8 +13,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 
 import { BackgroundPolicy } from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
@@ -30,8 +30,8 @@ import { ompTarget } from "../omp/OmpTarget.ts";
 import { customModelDiscoverySnapshot } from "../../customModelCapabilities.ts";
 import { makeOmpTextGeneration } from "../../textGeneration/OmpTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
-import { checkOmpProviderStatus, makePendingOmpProvider } from "../Layers/OmpProvider.ts";
+import { ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import { checkOmpProviderStatus, makePendingOmpProvider } from "../OmpProvider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,

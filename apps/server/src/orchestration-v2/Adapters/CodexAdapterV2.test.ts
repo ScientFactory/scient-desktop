@@ -2,9 +2,47 @@ import {
   makeProviderTextDeltaCoalescer,
   type ProviderTextDeltaUpdate,
 } from "./ProviderTextDeltaCoalescer.ts";
-import { type ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
-import { describe, it, assert } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import {
+  CommandId,
+  CheckpointId,
+  CodexSettings,
+  EnvironmentId,
+  MessageId,
+  type ModelSelection,
+  NodeId,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurn,
+  type OrchestrationV2TurnItem,
+  ProjectId,
+  ProviderInstanceId,
+  ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
+  RunAttemptId,
+  RunId,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
+import { assert, describe, it } from "@effect/vitest";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import * as CodexClient from "effect-codex-app-server/client";
+import * as CodexError from "effect-codex-app-server/errors";
+import * as CodexReplay from "effect-codex-app-server/replay";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
+import * as FileSystem from "effect/FileSystem";
+import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
+import { resolveAttachmentPathById } from "../../attachmentStore.ts";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";

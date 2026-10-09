@@ -29,7 +29,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as LegacyImporter from "../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
@@ -37,6 +37,7 @@ import { conversationSnapshotProjection } from "./conversationSnapshotProjection
 import { readScicPackage } from "../conversationFile/ScicReader.ts";
 import * as yauzl from "yauzl";
 
+import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import { issueAssetUrl, resolveAsset } from "../../assets/AssetAccess.ts";
 import * as NativeAppIconResolver from "../../assets/NativeAppIconResolver.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -45,7 +46,7 @@ import * as ProjectFaviconResolver from "../../project/ProjectFaviconResolver.ts
 import * as T3ProjectFileLoader from "../../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as ServerConfig from "../../config.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as ConversationExportFiles from "./ConversationExportFiles.ts";
 import * as ConversationExportService from "./ConversationExportService.ts";
 import {
@@ -71,6 +72,11 @@ import {
 const pandocBinary = pandocBinaryForTests();
 
 const THREAD = ThreadId.make("thread-1");
+// These tests resolve captured export files, not provider tool-output capabilities.
+const capturedFileLookup = Layer.mock(Orchestrator.OrchestratorV2)({
+  getTurnItem: () => Effect.die("Captured export attempted provider-item lookup"),
+});
+
 const encodeHistoricalAttachments = Schema.encodeEffect(
   Schema.fromJsonString(Schema.Array(ChatAttachment)),
 );
@@ -164,6 +170,7 @@ const exportLayer = (prefix: string, word: WordMode = { _tag: "unavailable" }) =
                 scratchRoot: word.scratchRoot,
               }),
             ),
+            Layer.provideMerge(capturedFileLookup),
             Layer.provideMerge(NodeServices.layer),
           )
         : wordLayer(word),
@@ -173,6 +180,7 @@ const exportLayer = (prefix: string, word: WordMode = { _tag: "unavailable" }) =
     Layer.provideMerge(nativeExportStorage),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
+    Layer.provideMerge(capturedFileLookup),
     Layer.provideMerge(NodeServices.layer),
   );
 const TestLayer = exportLayer("scient-convexport-");
@@ -440,6 +448,108 @@ describe("ConversationExportService", () => {
       assert.include(text, "The current turn was still running and is not included.");
       assert.notInclude(text, "Question 3");
     }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect(
+    "warns and records standalone visual omissions without restoring interactive authority",
+    () =>
+      Effect.gen(function* () {
+        yield* seedThread({ pairs: 1, activitiesPerTurn: 3 });
+        const projection = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadProjection(
+          THREAD,
+        );
+        const tools = projection.turnItems.filter((item) => item.type === "dynamic_tool");
+        assert.equal(tools.length, 3);
+        const htmlAttachment = {
+          type: "file" as const,
+          id: "thread-1-00000000-0000-4000-8000-000000000042",
+          name: "render.html",
+          mimeType: "text/html",
+          sizeBytes: 30,
+        };
+        yield* storeAttachment(
+          htmlAttachment,
+          new TextEncoder().encode("<h1>Visual artifact bytes</h1>"),
+        );
+        const html = {
+          htmlRender: { attachmentId: htmlAttachment.id, title: "Report", height: 320 },
+        };
+        const outputs = [
+          { toolName: "mcp__scient__html_render", output: html, status: "completed" as const },
+          {
+            toolName: "charts.chart",
+            output: {
+              t3McpApp: {
+                attachmentId: "native-app-page",
+                server: "charts",
+                tool: "chart",
+                resourceUri: "ui://chart",
+              },
+            },
+            status: "completed" as const,
+          },
+          { toolName: "mcp__scient__html_render", output: html, status: "failed" as const },
+        ];
+        yield* (yield* EventSink.EventSinkV2).write({
+          events: tools.map((item, index) => ({
+            id: EventId.make(`visual-export:${index}`),
+            type: "turn-item.updated" as const,
+            threadId: THREAD,
+            occurredAt: item.updatedAt,
+            payload: { ...item, input: {}, ...outputs[index]! },
+          })),
+        });
+        const snapshots = yield* ConversationSnapshotService.ConversationSnapshotService;
+        const selection = { workLog: false, reasoning: false, throughMessageId: null };
+        const capture = yield* snapshots.capture({ threadId: THREAD, selection });
+        assert.deepEqual(capture.snapshot.warnings, [
+          { _tag: "records-skipped", kind: "rendered-output", count: 2 },
+        ]);
+        assert.deepEqual(capture.snapshot.workLog, []);
+        assert.equal(capture.attachmentFiles.size, 0);
+        const withWork = yield* snapshots.capture({
+          threadId: THREAD,
+          selection: { ...selection, workLog: true },
+        });
+        assert.deepEqual(withWork.snapshot.warnings, capture.snapshot.warnings);
+        const prompt = projection.messages.find((message) => message.role === "user");
+        assert.isDefined(prompt);
+        const ranged = yield* snapshots.capture({
+          threadId: THREAD,
+          selection: { ...selection, throughMessageId: prompt!.id },
+        });
+        assert.deepEqual(ranged.snapshot.warnings, []);
+        const service = yield* ConversationExportService.ConversationExportService;
+        const archive = yield* service.produce(request({ format: "scic" }));
+        assert.equal(archive.output._tag, "file");
+        if (archive.output._tag !== "file") return assert.fail("Expected SCIC file");
+        assert.isTrue(
+          archive.warnings.some(
+            (warning) =>
+              warning.code === "attachment-unsupported" &&
+              warning.message.includes("HTML bytes") &&
+              warning.message.includes("not included"),
+          ),
+        );
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const stage = yield* fs.makeTempDirectoryScoped({ prefix: "scient-visual-omission-" });
+        const attachmentStage = path.join(stage, "attachments");
+        yield* fs.makeDirectory(attachmentStage);
+        const bytes = yield* fs.readFile(archive.output.path);
+        const imported = yield* readScicPackage({
+          importId: yield* decodeImportId("cimp_0f8e7d6c-5b4a-4938-8271-605f4e3d2c1b"),
+          packagePath: archive.output.path,
+          packageBytes: bytes.byteLength,
+          packageSha256: yield* decodePackageDigest(
+            `sha256:${NodeCrypto.createHash("sha256").update(bytes).digest("hex")}`,
+          ),
+          attachmentsDirectory: attachmentStage,
+        });
+        assert.deepEqual(imported.snapshot.warnings, capture.snapshot.warnings);
+        assert.equal(imported.attachments.length, 0);
+        assert.equal(imported.snapshot.messages.length, 2);
+      }).pipe(Effect.provide(TestLayer)),
   );
 
   it.effect("is content-identical for the same snapshot except export value and time", () =>
@@ -861,7 +971,7 @@ describe("conversation export delivery", () => {
         yield* fileSystem.realPath(resolved.path),
         yield* fileSystem.realPath(written.path),
       );
-    }).pipe(Effect.provide(AssetTestLayer)),
+    }).pipe(Effect.provide(Layer.merge(AssetTestLayer, capturedFileLookup))),
   );
 
   const wordConversions: Array<DocumentBundle> = [];
@@ -958,29 +1068,31 @@ describe("conversation export delivery", () => {
     }).pipe(Effect.provide(exportLayer("scient-convexport-word-", { _tag: "converts", seen: [] }))),
   );
 
-  for (const [failure, expected] of [
-    ["too-large", "too-large"],
-    ["timeout", "too-large"],
-    ["failed", "conversion-failed"],
-    ["unavailable", "format-unavailable"],
-  ] as const) {
-    it.effect(
-      `reports a Word conversion that ${failure === "failed" ? "fails" : `is ${failure}`}`,
-      () =>
-        Effect.gen(function* () {
-          yield* seedThread({ pairs: 1 });
-          const service = yield* ConversationExportService.ConversationExportService;
-          const error = yield* service.produce(request({ format: "docx" })).pipe(Effect.flip);
-          assert(error._tag === "ScientConversationExportError");
-          assert.strictEqual(error.reason, expected);
-          assert.strictEqual(error.message, `Word conversion ${failure}.`);
-        }).pipe(
-          Effect.provide(
-            exportLayer("scient-convexport-word-", { _tag: "fails", reason: failure }),
-          ),
-        ),
-    );
-  }
+  it.effect.each(
+    (
+      [
+        ["too-large", "too-large"],
+        ["timeout", "too-large"],
+        ["failed", "conversion-failed"],
+        ["unavailable", "format-unavailable"],
+      ] as const
+    ).map(([failure, expected]) => ({
+      caseTitle: `reports a Word conversion that ${failure === "failed" ? "fails" : `is ${failure}`}`,
+      failure,
+      expected,
+    })),
+  )("$caseTitle", ({ failure, expected }) =>
+    Effect.gen(function* () {
+      yield* seedThread({ pairs: 1 });
+      const service = yield* ConversationExportService.ConversationExportService;
+      const error = yield* service.produce(request({ format: "docx" })).pipe(Effect.flip);
+      assert(error._tag === "ScientConversationExportError");
+      assert.strictEqual(error.reason, expected);
+      assert.strictEqual(error.message, `Word conversion ${failure}.`);
+    }).pipe(
+      Effect.provide(exportLayer("scient-convexport-word-", { _tag: "fails", reason: failure })),
+    ),
+  );
 });
 
 const pdfTestLayer = (exports: ReturnType<typeof exportLayer>) =>
@@ -999,7 +1111,9 @@ const decodePageInput = Schema.decodeUnknownEffect(Schema.fromJsonString(ScientD
 
 const readCapturedPageInput = (inputRelativeUrl: string) =>
   Effect.gen(function* () {
-    const asset = yield* resolveAsset(inputRelativeUrl.split("/")[3]!, "document.json");
+    const asset = yield* resolveAsset(inputRelativeUrl.split("/")[3]!, "document.json").pipe(
+      Effect.provide(capturedFileLookup),
+    );
     assert(asset !== null && asset.kind === "file");
     const fileSystem = yield* FileSystem.FileSystem;
     return yield* decodePageInput(yield* fileSystem.readFileString(asset.path));

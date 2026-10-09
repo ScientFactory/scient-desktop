@@ -51,6 +51,7 @@ require a cosmetic folder migration.
 - [Environment themes](./user/environment-theme.md)
 - [Appearance and themes](./user/appearance.md)
 - [SnapShots](./user/snap-shot.md)
+- [Visual replies](./user/html-renders.md)
 - [Import browser sessions](./user/browser-import.md)
 - [Devices](./user/devices.md)
 - [Usage and limits](./user/usage.md)
@@ -70,6 +71,7 @@ require a cosmetic folder migration.
 - [Run a MATLAB file](./user/matlab-run-file.md)
 - [Sources and Zotero import](./user/sources.md)
 - [Background service (Linux and macOS)](./user/background-service.md)
+- [Outside agents (MCP)](./user/outside-agents.md)
 
 ---
 
@@ -84,6 +86,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Composer context references](./internals/composer-context-references.md)
 - [Assistant citations](./internals/assistant-citations.md)
 - [Unread answers and Dock badge](./internals/answer-attention.md)
+- [Chat scrolling and motion](./internals/chat-scrolling-and-motion.md)
 - [Workspace layout](../AGENTS.md#where-code-lives)
 - [Glossary](./internals/glossary.md)
 - [Scripts](./internals/scripts.md)

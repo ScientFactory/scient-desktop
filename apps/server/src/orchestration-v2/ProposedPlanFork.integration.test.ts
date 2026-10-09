@@ -21,7 +21,7 @@ import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { makeProviderReplayGate } from "./testkit/ProviderReplayGate.testkit.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 import {
@@ -174,34 +174,24 @@ it.live(
           assert.ok(proposal?.kind === "proposed_plan");
           assert.equal(proposal.markdown, item.markdown);
           const forkCommandId = CommandId.make("partial-plan-fork");
-          const provisionEvents = yield* Stream.toPull(
-            orchestrator.streamStoredEventsFrom({ threadId: forkId, afterSequence: 0 }),
+          yield* forks.dispatch({
+            type: "thread.fork",
+            commandId: forkCommandId,
+            originThreadId: threadId,
+            newThreadId: forkId,
+            sourceRunningTurnId: TurnId.make(partial.runs[0]!.id),
+            workspaceMode: "local",
+          });
+          // A local fork copies only the running plan and is ready at once.
+          assert.equal(
+            (yield* orchestrator.getThreadProjection(forkId)).thread.conversationFork?.status,
+            "ready",
           );
-          const forking = yield* forks
-            .dispatch({
-              type: "thread.fork",
-              commandId: forkCommandId,
-              originThreadId: threadId,
-              newThreadId: forkId,
-              sourceRunningTurnId: TurnId.make(partial.runs[0]!.id),
-              workspaceMode: "local",
-            })
-            .pipe(Effect.forkScoped);
-          const pending = yield* Stream.fromPull(Effect.succeed(provisionEvents)).pipe(
-            Stream.mapEffect(() => orchestrator.getThreadProjection(forkId)),
-            Stream.filter((p) => p.thread.conversationFork?.status === "pending"),
-            Stream.runHead,
-            Effect.timeout("15 seconds"),
-          );
-          assert.ok(Option.isSome(pending));
-          assert.isTrue(
+          assert.isFalse(
             (yield* outbox.listByCommandId(forkCommandId)).some(
-              (effect) =>
-                effect.request.type === "scient-fork.provision" && effect.status === "pending",
+              (effect) => effect.request.type === "scient-fork.provision",
             ),
           );
-          yield* worker.drain(12);
-          yield* Fiber.join(forking);
           assert.isTrue(gate.hasReached("remaining-plan-deltas"));
           const frozen = yield* orchestrator.getThreadProjection(forkId);
           const copied = frozen.turnItems.find((entry) => entry.type === "proposed_plan");

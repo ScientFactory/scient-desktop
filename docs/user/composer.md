@@ -33,6 +33,23 @@ becomes an attachment when inserting it would exceed the message limit. On a
 hardware keyboard, use `Cmd+Shift+V` on Apple devices or `Ctrl+Shift+V` elsewhere
 to keep a large paste editable in the composer instead.
 
+## Formatting
+
+The composer writes Markdown and shows it styled as you type. Markers such as
+`**` stay in the text and show beside the styled words when your cursor is on
+them. Lines starting with `- `, `1. `, `- [ ] `, `> `, `# ` or `---` become lists,
+task lists, quotes, headings and rules; ` ``` ` followed by Enter opens a code
+block. What you typed is what the agent receives, markers and numbering
+included, and `#1234` without a space still looks up a pull request.
+
+Enter sends. In a list or quote, **Shift+Enter** continues it, and Shift+Enter
+on an empty line leaves it; **Tab** nests a list item. In a code block, Enter
+starts a new line at the current indentation, **Tab** and **Shift+Tab** indent
+the selected lines, and a closing ` ``` ` followed by Enter, or two blank lines
+at the end, leave the block. **Backspace** at the start of a code block turns it
+back into plain lines. Choose the language in a code block's corner to change
+it. Very large code blocks are shown without syntax highlighting.
+
 ## Attach files
 
 On web and desktop, attach files with the file picker, drag and drop, or paste.
@@ -304,6 +321,19 @@ Provider commands must start the message to run. Scient commands such as
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
 
+## Goals
+
+With Codex and Claude, send `/goal` followed by what "done" means, for example
+`/goal all tests in packages/api pass`. The agent keeps working across turns
+until it judges the goal met. The thread shows **Goal** while it works, and a
+row above the composer shows the goal and its progress.
+
+- `/goal` alone shows the current goal. `/goal clear` removes it.
+- Codex also supports `/goal pause` and `/goal resume`. Stopping a Codex goal
+  pauses it.
+- Stopping Claude ends the current turn, but the goal stays set. Claude checks it
+  again at the end of your next message.
+
 ## Context in your message
 
 Context you attach lands where your cursor is, as a chip inside your text: a terminal excerpt,
@@ -419,6 +449,9 @@ source toggle in the viewer's header to switch an HTML file between the page and
 choice persists like the rendered-Markdown toggle. A link to a line always opens the source. HTML
 runs in an isolated frame with no access to your Scient session. On desktop, the integrated
 browser remains available from the same header for a full browser view.
+
+The file viewer recognizes images, HTML, and PDF files by their filename extension,
+including filenames or folders containing `#` or `?`.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
@@ -546,6 +579,15 @@ completed fork point; choose an earlier completed response or a sent user
 message instead. `/fork` and the provider picker's Fork action resolve the
 latest completed response on the server.
 
+A fork of a running response with **New worktree** off shares the current files;
+it does not capture another workspace snapshot. Its first send records its own
+starting file history, including changes made between forking and sending.
+Rewind uses that saved starting point, never the repository's latest commit.
+Restoring files into a folder shared with another live conversation remains guarded.
+With **New worktree** on, Scient captures the current files before admitting the fork.
+If that capture exceeds the snapshot limits, fork locally or reduce the files included
+in Git's workspace snapshot. Scient does not change your ignore rules automatically.
+
 Errors appear inside the fork dialog. **Retry** resumes the same attempt,
 including its original title and workspace choice. Losing the connection does
 not discard the staged draft or create another conversation. This recovery
@@ -641,12 +683,15 @@ when it finishes without writing an answer.
 
 Sending at the bottom (by that same rule) gently reveals your message and its
 answer. The first message retains its existing placement
-near the top. Movement stops when your sent message's first line reaches the top
+near the top. After a later message, the view follows everything the agent
+produces (thinking, tool steps and text) at a calm pace, staying at the bottom.
+Movement stops when your sent message's first line reaches the top
 of the reading area; only the bubble's padding may pass above it. It then stays there
 while the rest grows below the screen. When progress notes, reasoning or tool
 activity push the message the agent is writing below the screen, the reveal
 continues just far enough to show that message's first lines, never its end. A
 queued message that is sent while you are at the bottom is revealed the same way.
+Messages sent from another window are not followed.
 If you were reading earlier content, sending leaves that position alone.
 Scrolling back up cancels both pending placement and limited answer following,
 including during an upload; clicking, selecting text, or scrolling down does not.
@@ -664,7 +709,9 @@ The count tracks reading within the current app window session; opening older
 history does not mark it newly unread.
 
 Returning to a thread, or reloading the same window, restores the message you
-were reading and its position in the view. If a temporary working indicator has
+were reading and its position in the view. If you left while the view was still
+following your message's response, you come back to where it would be now, and
+it keeps following while the agent works. If a temporary working indicator has
 become an answer, restoration uses that turn's content. Older history loads when
 needed to find the saved message; if a few pages do not contain it, the nearest
 message or the end is used instead. A thread with no saved reading position

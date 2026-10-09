@@ -2,14 +2,14 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { ProviderSessionManagerV2 } from "../orchestration-v2/ProviderSessionManager.ts";
-import type { McpInvocationScope } from "./McpInvocationContext.ts";
+import type { McpThreadInvocationScope } from "./McpInvocationContext.ts";
 
 /** Thread defaults govern future admissions; only the live native owner grants invocation authority. */
 export const requireInvocationPolicy = Effect.fn("mcp.requireInvocationPolicy")(function* (
-  scope: McpInvocationScope,
+  scope: McpThreadInvocationScope,
 ) {
   const manager = yield* ProviderSessionManagerV2;
-  const policy = yield* manager.resolveMcpInvocationPolicy(scope).pipe(
+  const policy = yield* manager.resolveMcpInvocationPolicy({ ...scope.thread }).pipe(
     Effect.mapError(
       () =>
         new OrchestratorMcpFailure({

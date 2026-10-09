@@ -190,7 +190,7 @@ function ScientReleaseDialogHeader({
 }) {
   return (
     <div
-      className="relative h-20 overflow-hidden bg-[linear-gradient(105deg,color-mix(in_srgb,var(--scient-warm-white)_88%,white)_0%,color-mix(in_srgb,var(--scient-warm-white)_42%,white)_58%,white_100%)] dark:bg-[#151315]"
+      className="relative h-20 overflow-hidden bg-[linear-gradient(105deg,color-mix(in_srgb,var(--scient-warm-white)_88%,white)_0%,color-mix(in_srgb,var(--scient-warm-white)_42%,white)_58%,white_100%)] dark:bg-[#151315] dark:bg-none"
       data-slot="dialog-header"
     >
       <ScientSymbol className="pointer-events-none absolute -right-3 -top-4 size-32 opacity-[0.065] dark:opacity-[0.09]" />
@@ -275,9 +275,14 @@ function ScientReleaseParagraphs({
           <li className="min-w-0 pl-0.5" key={highlight.id}>
             <div className="min-w-0">
               <p className="text-sm font-semibold leading-5 text-foreground">{highlight.title}</p>
-              <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
-                {highlight.description}
-              </p>
+              {highlight.description.split(/\n\n+/u).map((paragraph, index) => (
+                <p
+                  key={`${highlight.id}-${index}`}
+                  className="mt-1 text-[13px] leading-relaxed text-muted-foreground"
+                >
+                  {paragraph}
+                </p>
+              ))}
             </div>
           </li>
         ))}

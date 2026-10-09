@@ -1,4 +1,4 @@
-import type { SqlClient } from "effect/unstable/sql/SqlClient";
+import type { SqlClient } from "effect/sql/SqlClient";
 
 /** Reuses durable turn projections, including after reconnect or a queued start.
  * The correlated thread lookup uses the existing projection_turns thread index.

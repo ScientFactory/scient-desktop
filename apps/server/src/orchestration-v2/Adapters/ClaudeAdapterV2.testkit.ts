@@ -1,4 +1,15 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import {
+  ProviderReplayEntry,
+  type ModelSelection,
+  type ProviderApprovalDecision,
+  type ProviderReplayTranscript,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -56,7 +67,7 @@ function replayQueryRunnerService(
   });
 }
 
-function makeClaudeAgentSdkReplayQueryRunnerLayer(
+function layerClaudeAgentSdkReplayQueryRunner(
   transcript: ClaudeAgentSdkReplayTranscript,
   options: { readonly replayGate?: ProviderReplayGate } = {},
 ): Layer.Layer<ClaudeAdapterV2.ClaudeAgentSdkQueryRunner> {
@@ -66,7 +77,7 @@ function makeClaudeAgentSdkReplayQueryRunnerLayer(
   );
 }
 
-function makeClaudeAgentSdkReplayLayer(
+function layerClaudeAgentSdkReplay(
   transcript: ClaudeAgentSdkReplayTranscript,
   options: {
     readonly replayGate?: ProviderReplayGate;
@@ -94,18 +105,18 @@ function makeClaudeAgentSdkReplayLayer(
   );
 }
 
-function makeClaudeProviderAdapterRegistryReplayLayer(
+function layerClaudeProviderAdapterRegistryReplay(
   transcript: ClaudeAgentSdkReplayTranscript,
   options: {
     readonly replayGate?: ProviderReplayGate;
     readonly queryRunner?: ClaudeQueryRunner;
   } = {},
 ) {
-  const serverConfigLayer = Layer.effect(
+  const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  return ProviderAdapterRegistry.makeDriverLayer({
+  return ProviderAdapterRegistry.layerFromDrivers({
     drivers: [ClaudeAdapterV2.ClaudeAdapterV2Driver],
     configMap: {
       [ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID]: {
@@ -115,10 +126,10 @@ function makeClaudeProviderAdapterRegistryReplayLayer(
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
-        makeClaudeAgentSdkReplayLayer(transcript, options),
+        layerClaudeAgentSdkReplay(transcript, options),
         IdAllocator.layer,
         NodeServices.layer,
-        serverConfigLayer,
+        layerServerConfig,
       ),
     ),
   );
@@ -144,7 +155,7 @@ export const ClaudeOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarnes
       ),
     ),
   makeProviderAdapterRegistryLayer: (transcript, options) =>
-    makeClaudeProviderAdapterRegistryReplayLayer(transcript, options),
+    layerClaudeProviderAdapterRegistryReplay(transcript, options),
 };
 
 /**
@@ -157,7 +168,7 @@ export function makeClaudeRestartReplayHarness(transcript: ClaudeAgentSdkReplayT
     harness: {
       ...ClaudeOrchestratorReplayHarness,
       makeProviderAdapterRegistryLayer: (replayed) =>
-        makeClaudeProviderAdapterRegistryReplayLayer(replayed, { queryRunner }),
+        layerClaudeProviderAdapterRegistryReplay(replayed, { queryRunner }),
     } satisfies typeof ClaudeOrchestratorReplayHarness,
     assertComplete: replayQueryRunnerService(transcript, queryRunner).assertComplete,
   };

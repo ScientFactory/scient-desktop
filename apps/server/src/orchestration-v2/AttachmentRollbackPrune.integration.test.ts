@@ -33,7 +33,7 @@ import * as Path from "effect/Path";
 import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { ProjectCloneTracker } from "../project/ProjectCloneTracker.ts";
-import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlite.ts";
 import { dispatchCommand } from "./ThreadMessageIntake.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
 import { reserveAttachment } from "./AttachmentFileUse.ts";
@@ -301,7 +301,6 @@ it.live(
                 event("thread.created", foreignId, {
                   ...thread(foreignId),
                   archivedAt: now,
-                  deletedAt: now,
                   conversationFork: {
                     commandId: CommandId.make("pending-fork"),
                     sourceThreadId: threadId,
@@ -482,6 +481,7 @@ it.live("rechecks a later retained reference and refuses managed reuse after cle
         const delayed = pruneLayer.pipe(
           Layer.provide(
             Layer.succeed(ThreadCommandExecutor, {
+              activeKeys: commands.activeKeys,
               withLock: (key, effect) =>
                 Deferred.succeed(entered, undefined).pipe(
                   Effect.andThen(Deferred.await(resume)),

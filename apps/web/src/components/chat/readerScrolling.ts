@@ -118,6 +118,7 @@ export function useSaveReadingPosition({
   timelinePositioningPending,
   runningRunId,
   turnUnfinished,
+  followingPromptId,
   rows,
   listIdentityKey,
   anchorMessageId,
@@ -135,6 +136,11 @@ export function useSaveReadingPosition({
   timelinePositioningPending: boolean;
   runningRunId: RunId | null | undefined;
   turnUnfinished: boolean;
+  /**
+   * The prompt whose response the send follow is following right now (not
+   * cancelled, not finished), read as the position is saved.
+   */
+  followingPromptId: () => string | null;
   rows: readonly MessagesTimelineRow[];
   listIdentityKey: string;
   anchorMessageId: MessageId | null;
@@ -165,13 +171,17 @@ export function useSaveReadingPosition({
     const identity = readingIdentity(rows, index, runningRunId);
     const row = state.elementAtIndex(index);
     if (!identity || !row || !element) return;
+    const atEnd = readerAtReadingEnd(state, contentInsetEndAdjustment, turnUnfinished) ?? false;
+    const following = followingPromptId();
     rememberTimelinePosition(listIdentityKey, {
       ...position,
       ...identity,
       offsetWithinRow: identity.rowId
         ? element.getBoundingClientRect().top - row.getBoundingClientRect().top
         : 0,
-      atEnd: readerAtReadingEnd(state, contentInsetEndAdjustment, turnUnfinished) ?? false,
+      atEnd,
+      // Only a follow that is still going, never a reader merely at the end.
+      ...(following ? { followingPromptId: following } : {}),
       ...(anchorMessageId ? { anchorMessageId } : {}),
       disclosures: {
         runs: paintedExpandedRunIds,
@@ -189,6 +199,7 @@ export function useSaveReadingPosition({
     timelinePositioningPending,
     runningRunId,
     turnUnfinished,
+    followingPromptId,
     rows,
     listIdentityKey,
     anchorMessageId,

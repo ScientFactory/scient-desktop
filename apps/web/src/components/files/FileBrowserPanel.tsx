@@ -6,11 +6,13 @@ import type {
 import type { EnvironmentId } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
+import { ChevronsDownUp, ChevronsUpDown } from "lucide";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { cn } from "~/lib/utils";
 
 import { Button } from "~/components/ui/button";
+
+import { MorphIcon } from "~/components/MorphIcon";
+import { cn } from "~/lib/utils";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
@@ -470,22 +472,19 @@ export default function FileBrowserPanel({
                     size="icon-xs"
                     variant="ghost"
                     aria-label={
-                      allLoadedDirectoriesExpanded
-                        ? "Collapse loaded folders"
-                        : "Expand loaded folders"
+                      allLoadedDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
                     }
                     onClick={toggleLoadedDirectories}
                   />
                 }
               >
-                {allLoadedDirectoriesExpanded ? (
-                  <ChevronsDownUpIcon className="size-3.5" />
-                ) : (
-                  <ChevronsUpDownIcon className="size-3.5" />
-                )}
+                <MorphIcon
+                  className="size-3.5"
+                  icon={allLoadedDirectoriesExpanded ? ChevronsDownUp : ChevronsUpDown}
+                />
               </TooltipTrigger>
               <TooltipPopup>
-                {allLoadedDirectoriesExpanded ? "Collapse loaded folders" : "Expand loaded folders"}
+                {allLoadedDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
               </TooltipPopup>
             </Tooltip>
           ) : null}

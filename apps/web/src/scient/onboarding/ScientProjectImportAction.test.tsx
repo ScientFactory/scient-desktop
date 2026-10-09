@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -15,7 +15,14 @@ const environmentId = EnvironmentId.make("local");
 const projectId = ProjectId.make("imported");
 vi.mock("../../providerOperateAccess", () => ({ resolvePrimaryOperateAccess: () => mocks.access }));
 vi.mock("../../environments/primary", () => ({
-  usePrimarySessionState: () => ({ data: null, isPending: false, error: null }),
+  usePrimarySessionState: () => ({
+    data: {
+      authenticated: true,
+      permissions: mocks.access === "granted" ? [AuthOrchestrationOperateScope] : [],
+    },
+    isPending: false,
+    error: null,
+  }),
 }));
 vi.mock("../../state/environments", () => ({
   usePrimaryEnvironment: () => ({ environmentId, label: "Test machine" }),

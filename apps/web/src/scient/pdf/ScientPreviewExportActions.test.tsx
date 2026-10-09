@@ -15,6 +15,14 @@ const mocks = vi.hoisted(() => ({
   updateScientGeneratedPdf: vi.fn(),
 }));
 
+vi.mock("../documentExport/browserPdfExportOwner", () => ({
+  readBrowserPdfExportLease: (_threadRef: unknown, _tabId: string, _runtimeTabId: string) => ({
+    owner: "desktop",
+    serverEpoch: null,
+    pageUrl: "http://example.com/report",
+  }),
+}));
+
 vi.mock("~/components/preview/previewBridge", () => ({
   previewBridge: { exportPdf: mocks.exportPdf },
 }));

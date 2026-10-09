@@ -20,16 +20,16 @@ import * as DateTime from "effect/DateTime";
 import * as FileSystem from "effect/FileSystem";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
-import { makeLayer } from "../ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { ServerConfig } from "../../config.ts";
 import { conversationSnapshotProjection } from "../../scient/conversationExport/conversationSnapshotProjection.ts";
 import { createDeterministicAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -303,20 +303,10 @@ it.effect(
       assert.isTrue(available.available);
       assert.equal(available.sourceAssistantMessageId, command.sourceAssistantMessageId);
       yield* assertNoDestination;
+      // Files are shared, not copied, so their storage does not gate a fork.
       const evidenceBytes = yield* fs.readFile(sourcePath!);
       yield* fs.remove(sourcePath!);
-      const unavailable = yield* forks.getOptions(command);
-      assert.isFalse(unavailable.available);
-      assert.include(unavailable.reason!, attachment.name);
-      yield* assertNoDestination;
-      yield* fs.writeFile(sourcePath!, evidenceBytes);
-      assert.deepEqual(yield* fs.readFile(sourcePath!), evidenceBytes);
       assert.deepEqual(yield* forks.getOptions(command), available);
-      yield* assertNoDestination;
-      // Options are advice: dispatch still probes the actual source again.
-      yield* fs.remove(sourcePath!);
-      const missing = yield* forks.dispatch(command).pipe(Effect.flip);
-      assert.include(missing.message, attachment.name);
       yield* assertNoDestination;
       yield* fs.writeFile(sourcePath!, evidenceBytes);
       const receipt = yield* forks.dispatch(command);
@@ -336,19 +326,30 @@ it.effect(
       assert.equal(target.runs.length, 0);
       assert.equal(target.providerThreads.length, 0);
       assert.equal(target.runtimeRequests.length, 0);
-      const ownedAttachmentId = receipt.forkAttachmentIdMap[attachment.id];
-      assert.isDefined(ownedAttachmentId);
-      const ownedPath = resolveAttachmentPath({
-        attachmentsDir,
-        attachment: { ...attachment, id: ownedAttachmentId! },
-      });
-      assert.isNotNull(ownedPath);
-      assert.equal(yield* fs.readFileString(ownedPath!), "evidence");
+      assert.equal(receipt.forkAttachmentIdMap[attachment.id], attachment.id);
       assert.deepEqual(
-        target.turnItems.map((item) => item.type),
+        target.visibleTurnItems.map((row) => row.item.type),
         ["user_message", "assistant_message", "command_execution", "fork"],
       );
       assert.ok(target.visibleTurnItems.slice(0, 3).every((row) => row.visibility === "inherited"));
+      // The fork shows the source's settled items by reference, frozen.
+      assert.deepEqual(
+        target.visibleTurnItems.slice(0, 3).map((row) => [row.sourceThreadId, row.sourceItemId]),
+        items.slice(0, 3).map((item) => [threadId, item.id]),
+      );
+      assert.ok(
+        target.visibleTurnItems
+          .slice(0, 3)
+          .every(
+            (row) =>
+              row.item.id === row.sourceItemId &&
+              row.item.runId === null &&
+              row.item.inheritedFrom?.threadId === threadId,
+          ),
+      );
+      const sharedUser = target.visibleTurnItems[0]?.item;
+      assert.ok(sharedUser?.type === "user_message");
+      assert.equal(sharedUser.attachments[0]?.id, attachment.id);
       const boundary = target.visibleTurnItems[3];
       assert.ok(boundary?.item.type === "fork");
       assert.equal(boundary.visibility, "local");
@@ -361,7 +362,9 @@ it.effect(
         limit: 100,
       });
       assert.deepEqual(page.items, target.visibleTurnItems);
-      const oldActivity = target.turnItems.find((item) => item.type === "command_execution");
+      const oldActivity = target.visibleTurnItems.find(
+        (row) => row.item.type === "command_execution",
+      )?.item;
       assert.ok(oldActivity);
       const anchored = yield* store.getTimelinePage(command.newThreadId, {
         itemId: oldActivity.id,
@@ -518,8 +521,11 @@ it.effect(
         sourceUserMessageId: MessageId.make("fork-question-1"),
       });
       const userFork = yield* orchestrator.getThreadProjection(userTarget);
-      assert.equal(userFork.turnItems.length, 4);
-      const userBoundary = userFork.turnItems.at(-1);
+      assert.deepEqual(
+        userFork.visibleTurnItems.map((row) => row.item.type),
+        ["user_message", "assistant_message", "command_execution", "fork"],
+      );
+      const userBoundary = userFork.visibleTurnItems.at(-1)?.item;
       assert.ok(userBoundary?.type === "fork");
       assert.deepEqual(userBoundary.source, {
         type: "message",
@@ -527,7 +533,9 @@ it.effect(
         messageId: MessageId.make("fork-question-1"),
         position: "before",
       });
-      const inheritedAssistant = target.turnItems.find((item) => item.type === "assistant_message");
+      const inheritedAssistant = target.visibleTurnItems.find(
+        (row) => row.item.type === "assistant_message",
+      )?.item;
       assert.ok(inheritedAssistant?.type === "assistant_message");
       const descendant = ThreadId.make("thread:fork-of-fork");
       yield* forks.dispatch({
@@ -537,7 +545,15 @@ it.effect(
         commandId: CommandId.make("fork-of-fork-command"),
         sourceAssistantMessageId: inheritedAssistant.messageId,
       });
-      assert.equal((yield* orchestrator.getThreadProjection(descendant)).turnItems.length, 4);
+      const descendantFork = yield* orchestrator.getThreadProjection(descendant);
+      assert.lengthOf(descendantFork.visibleTurnItems, 4);
+      // A fork of a fork lists the original owner's items directly.
+      assert.deepEqual(
+        descendantFork.visibleTurnItems
+          .slice(0, 3)
+          .map((row) => [row.sourceThreadId, row.sourceItemId]),
+        items.slice(0, 3).map((item) => [threadId, item.id]),
+      );
       yield* orchestrator.dispatch({
         type: "thread.section.set",
         commandId: CommandId.make("unsectioned-fork-source"),
@@ -545,9 +561,9 @@ it.effect(
         sectionId: null,
       });
       const unsectionedSource = yield* orchestrator.getThreadProjection(userTarget);
-      const unsectionedAnswer = unsectionedSource.turnItems.find(
-        (item) => item.type === "assistant_message",
-      );
+      const unsectionedAnswer = unsectionedSource.visibleTurnItems.find(
+        (row) => row.item.type === "assistant_message",
+      )?.item;
       assert.ok(unsectionedAnswer?.type === "assistant_message");
       const unsectionedTarget = ThreadId.make("thread:unsectioned-fork");
       yield* forks.dispatch({
@@ -567,9 +583,21 @@ it.effect(
         commandId: CommandId.make("delete-fork-source"),
         threadId,
       });
-      // Source storage can disappear independently of its historical projection.
-      yield* fs.remove(sourcePath!, { force: true });
-      assert.equal(yield* fs.readFileString(ownedPath!), "evidence");
+      // Deleting the source keeps the files its live forks still show.
+      const deleteEffects = yield* sql<{
+        readonly effect_type: string;
+        readonly payload_json: string;
+      }>`
+        SELECT effect_type, payload_json FROM orchestration_v2_effect_outbox
+        WHERE command_id = ${CommandId.make("delete-fork-source")}`;
+      assert.ok(deleteEffects.some((row) => row.effect_type === "terminal.cleanup"));
+      assert.ok(
+        deleteEffects.every(
+          (row) =>
+            row.effect_type !== "attachment.cleanup" || !row.payload_json.includes(attachment.id),
+        ),
+      );
+      assert.equal(yield* fs.readFileString(sourcePath!), "evidence");
       assert.equal(
         (yield* orchestrator.getThreadProjection(command.newThreadId)).messages[1]?.text,
         "Answer",

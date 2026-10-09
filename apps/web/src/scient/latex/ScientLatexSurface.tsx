@@ -1,4 +1,5 @@
-import { File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
+import type { FilePostRender } from "~/scient/fileSurfaces/StaticTextFileSurface";
+import { File, Virtualizer } from "@pierre/diffs/react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   ArtifactAuthority,
@@ -16,7 +17,7 @@ import {
 import { ChevronRight, CircleAlert, LoaderCircle, RotateCw, TriangleAlert, X } from "lucide-react";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import {
   lazy,
   memo,
@@ -87,7 +88,6 @@ import {
 
 import "./scient-latex.css";
 
-type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
 type LatexPdfDescriptor = ScientLatexBuildSnapshot["descriptor"];
 
 interface ScientLatexSurfaceProps {

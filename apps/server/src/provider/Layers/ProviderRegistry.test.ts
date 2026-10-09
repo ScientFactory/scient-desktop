@@ -32,31 +32,31 @@ import {
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
 import * as PlatformError from "effect/PlatformError";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
-import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
-import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "../CodexProvider.ts";
+import { checkClaudeProviderStatus } from "../ClaudeProvider.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
 import { applyProviderCompatibility } from "../providerCompatibility.ts";
-import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
+import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import * as OpenCodeServerLedger from "../OpenCodeServerLedger.ts";
-import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
-import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistryHydration.ts";
+import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
+import { layer as ProviderInstanceRegistryHydrationLive } from "../ProviderInstanceRegistryHydration.ts";
 import {
   mergeProviderSnapshot,
   mergeProviderSnapshots,
   selectProvidersByKind,
   upsertProviderWorkspaceSnapshot,
-  ProviderRegistryLive,
-} from "./ProviderRegistry.ts";
+  layer as ProviderRegistryLive,
+} from "../ProviderRegistry.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
@@ -67,8 +67,8 @@ import {
 } from "../providerStatusCache.ts";
 import { COMPACT_SLASH_COMMAND } from "../providerSnapshot.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
-import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
-import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
+import * as ProviderInstanceRegistry from "../ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "../ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 const decodeServerSettings = Schema.decodeSync(ServerSettings);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
@@ -347,8 +347,9 @@ function makeMutableServerSettingsService(
     const changes = yield* PubSub.unbounded<ContractServerSettings>();
 
     return {
-      start: Effect.void,
       ...ServerSettingsModule.customModelsTestMethods,
+      committedCustomModels: () => Ref.getUnsafe(settingsRef).customModels,
+      start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(settingsRef),
       updateSettings: (patch) =>
@@ -473,6 +474,11 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             },
           ]);
           assert.deepStrictEqual(status.slashCommands.slice(1), [
+            {
+              name: "goal",
+              description: "Set a goal Codex keeps working toward until it is done",
+              input: { hint: "Objective, or pause, resume, clear" },
+            },
             {
               name: "feedback",
               description: "Send this thread and Codex logs to OpenAI",
@@ -3092,9 +3098,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             Layer.provideMerge(OmpExecutableGate.layer),
             Layer.provideMerge(ResetCreditCoordinator.layerTest),
             Layer.provideMerge(
-              OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
-                Layer.provide(OpenCodeServerLedger.layerTest),
-              ),
+              OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
             ),
             Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
             // NO spawner mock — `ChildProcessSpawner` is supplied by the
@@ -3189,9 +3193,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             Layer.provideMerge(OmpExecutableGate.layer),
             Layer.provideMerge(ResetCreditCoordinator.layerTest),
             Layer.provideMerge(
-              OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
-                Layer.provide(OpenCodeServerLedger.layerTest),
-              ),
+              OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
             ),
             Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
               ChildProcessSpawner.make((command) => {
@@ -3302,9 +3304,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             Layer.provideMerge(OmpExecutableGate.layer),
             Layer.provideMerge(ResetCreditCoordinator.layerTest),
             Layer.provideMerge(
-              OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
-                Layer.provide(OpenCodeServerLedger.layerTest),
-              ),
+              OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
             ),
             Layer.provideMerge(NodeServices.layer),
             Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
@@ -3370,9 +3370,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
               Layer.provideMerge(OmpExecutableGate.layer),
               Layer.provideMerge(ResetCreditCoordinator.layerTest),
               Layer.provideMerge(
-                OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
-                  Layer.provide(OpenCodeServerLedger.layerTest),
-                ),
+                OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
               ),
               Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
               Layer.provideMerge(

@@ -20,8 +20,8 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpClient from "effect-acp/client";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -94,6 +94,7 @@ export interface AcpSpawnInput {
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly extendEnv?: boolean;
+  readonly shell?: false;
 }
 
 export interface AcpSessionRuntimeOptions {
@@ -1445,6 +1446,7 @@ export const make = (
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    // A child of the caller's scope, so termination can close the runtime without closing the caller's.
     const callerScope = yield* Scope.Scope;
     const runtimeScope = yield* Scope.fork(callerScope);
     const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
@@ -1593,10 +1595,13 @@ export const make = (
         ),
       );
 
-    const spawnCommand = yield* resolveSpawnCommand(options.spawn.command, options.spawn.args, {
-      ...(options.spawn.env ? { env: options.spawn.env } : {}),
-      extendEnv: options.spawn.extendEnv ?? true,
-    });
+    const spawnCommand =
+      options.spawn.shell === false
+        ? { command: options.spawn.command, args: options.spawn.args, shell: false }
+        : yield* resolveSpawnCommand(options.spawn.command, options.spawn.args, {
+            ...(options.spawn.env ? { env: options.spawn.env } : {}),
+            extendEnv: options.spawn.extendEnv ?? true,
+          });
     const linuxCgroupLease =
       options.ownDescendantProcessGroups === true && options.processGroupPlatform === "linux"
         ? yield* Effect.sync(() => {
@@ -1803,8 +1808,15 @@ export const make = (
       }
       yield* signalOwnedProcessGroup("SIGKILL");
     }).pipe(withWallClock);
+    let ownedProcessGroupClosed = false;
     const terminateProcessGroup = yield* Effect.cached(
-      Effect.uninterruptible(terminateOwnedProcessGroupImpl),
+      Effect.uninterruptible(terminateOwnedProcessGroupImpl).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            ownedProcessGroupClosed = true;
+          }),
+        ),
+      ),
     );
     if (options.ownDetachedProcessGroup === true) {
       const hostPlatform = yield* HostProcessPlatform;
@@ -1818,9 +1830,9 @@ export const make = (
               : signalOwnedProcessGroup("SIGKILL").pipe(Effect.asVoid);
       yield* Scope.addFinalizer(
         runtimeScope,
-        Effect.uninterruptible(forceTerminateOwnedProcessGroup).pipe(
-          Effect.ignoreCause({ log: true }),
-        ),
+        Effect.suspend(() =>
+          ownedProcessGroupClosed ? Effect.void : forceTerminateOwnedProcessGroup,
+        ).pipe(Effect.uninterruptible, Effect.ignoreCause({ log: true })),
       );
     }
     yield* child.stderr.pipe(

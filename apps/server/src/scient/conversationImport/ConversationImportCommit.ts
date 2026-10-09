@@ -358,7 +358,9 @@ export const layer = Layer.effect(
         const project = yield* projects.get(command.projectId);
         const existingThread = yield* projections
           .getThread(command.threadId)
-          .pipe(Effect.catchTag("ProjectionStoreThreadNotFoundError", () => Effect.succeed(null)));
+          .pipe(
+            Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+          );
         if (Option.isNone(project) || existingThread !== null) {
           const message = Option.isNone(project)
             ? "The destination project no longer exists."

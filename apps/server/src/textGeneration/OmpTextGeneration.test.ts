@@ -315,18 +315,24 @@ describe("Oh My Pi text generation over the wire", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  for (const [name, detail] of [
-    ["auth-401", "401 Incorrect API key provided"],
-    ["retry-exhausted", "429 Rate limit reached"],
-    ["stream-error-after-partial", "The socket connection was closed unexpectedly"],
-  ] as const) {
-    it.effect(`recorded ${name} fails with the provider's error`, () =>
-      Effect.gen(function* () {
-        const result = yield* generateTitle(
-          wireProcess(makeOmpCaptureReplay(name).pipe(Effect.map(({ io }) => ({ io })))),
-        ).pipe(Effect.flip);
-        expect(result.message).toContain(detail);
-      }).pipe(Effect.provide(NodeServices.layer)),
-    );
-  }
+  it.effect.each(
+    (
+      [
+        ["auth-401", "401 Incorrect API key provided"],
+        ["retry-exhausted", "429 Rate limit reached"],
+        ["stream-error-after-partial", "The socket connection was closed unexpectedly"],
+      ] as const
+    ).map(([name, detail]) => ({
+      caseTitle: `recorded ${name} fails with the provider's error`,
+      name,
+      detail,
+    })),
+  )("$caseTitle", ({ name, detail }) =>
+    Effect.gen(function* () {
+      const result = yield* generateTitle(
+        wireProcess(makeOmpCaptureReplay(name).pipe(Effect.map(({ io }) => ({ io })))),
+      ).pipe(Effect.flip);
+      expect(result.message).toContain(detail);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

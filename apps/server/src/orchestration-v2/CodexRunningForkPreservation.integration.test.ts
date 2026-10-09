@@ -26,7 +26,7 @@ import * as Stream from "effect/Stream";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
-import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlite.ts";
 import { buildRuntimeInstructions } from "../provider/RuntimeInstructions.ts";
 import { buildScientAwareness } from "../provider/ScientAwareness.ts";
 import * as CodexAdapterV2 from "./Adapters/CodexAdapterV2.ts";
@@ -37,13 +37,13 @@ import { EventSinkV2 } from "./EventSink.ts";
 import { EventStoreV2 } from "./EventStore.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { layer as allocatorLayer } from "./IdAllocator.ts";
-import { makeDriverLayer } from "./ProviderAdapterRegistry.ts";
+import { layerFromDrivers as makeDriverLayer } from "./ProviderAdapterRegistry.ts";
 import { ProviderAdapterOpenSessionError } from "./ProviderAdapter.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProjectionStoreV2, layerMemory } from "./ProjectionStore.ts";
 import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import {
-  makeOrchestratorV2ReplayLayerWithRegistry,
+  layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./testkit/ProviderReplayHarness.ts";
 import { makeProviderReplayGate } from "./testkit/ProviderReplayGate.testkit.ts";
@@ -96,6 +96,9 @@ function codexReplayPreamble(input: {
           },
           capabilities: {
             experimentalApi: true,
+            extensions: {
+              "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] },
+            },
             optOutNotificationMethods: ["turn/diff/updated"],
           },
         },
@@ -422,8 +425,8 @@ it.live(
             {
               configureMcp: false,
               runEffectWorker: false,
-              serverConfigLayer: Layer.succeed(ServerConfig.ServerConfig, config),
-              databaseLayer: makeSqlitePersistenceLive(database).pipe(
+              layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
+              layerDatabase: makeSqlitePersistenceLive(database).pipe(
                 Layer.provide(NodeServices.layer),
               ),
             },
@@ -551,32 +554,20 @@ it.live(
 
             yield* capture("receivedRunning", source);
             const forkCommandId = CommandId.make(`${mode}-running-fork`);
-            const forkEvents = yield* Stream.toPull(
-              orchestrator.streamStoredEventsFrom({ threadId: forkId, afterSequence: 0 }),
-            );
-            const forking = yield* (yield* ConversationForkService)
-              .dispatch({
-                type: "thread.fork",
-                commandId: forkCommandId,
-                originThreadId: threadId,
-                newThreadId: forkId,
-                sourceRunningTurnId: TurnId.make(source.runs[0]!.id),
-                workspaceMode: "local",
-              })
-              .pipe(Effect.forkScoped);
-            yield* Stream.fromPull(Effect.succeed(forkEvents)).pipe(
-              Stream.filter((event) => event.event.type === "thread.created"),
-              Stream.runHead,
-              Effect.timeout("15 seconds"),
-            );
-            assert.isTrue(
+            yield* (yield* ConversationForkService).dispatch({
+              type: "thread.fork",
+              commandId: forkCommandId,
+              originThreadId: threadId,
+              newThreadId: forkId,
+              sourceRunningTurnId: TurnId.make(source.runs[0]!.id),
+              workspaceMode: "local",
+            });
+            // A local fork needs no provisioning and is ready at once.
+            assert.isFalse(
               (yield* (yield* EffectOutboxV2).listByCommandId(forkCommandId)).some(
-                (entry) =>
-                  entry.request.type === "scient-fork.provision" && entry.status === "pending",
+                (entry) => entry.request.type === "scient-fork.provision",
               ),
             );
-            yield* worker.drain(12);
-            yield* Fiber.join(forking);
             const frozen = yield* orchestrator.getThreadProjection(forkId);
             assert.equal(frozen.thread.conversationFork?.status, "ready");
             assert.isEmpty(frozen.runs);
@@ -593,11 +584,19 @@ it.live(
             yield* capture("frozenChild", frozen);
             yield* capture("sourceAfterFork", stillRunning);
 
+            // The answer finished inside a run that is still going, which the source
+            // may still touch, so the fork owns a frozen copy. Its file is shared.
             const copied = frozen.turnItems.find(
-              (item) =>
-                item.type === "assistant_message" && item.inheritedFrom?.itemId === sourceItem!.id,
+              (item) => item.inheritedFrom?.itemId === sourceItem!.id,
             );
             assert.ok(copied?.type === "assistant_message");
+            assert.notEqual(copied.id, sourceItem.id);
+            assert.equal(copied.threadId, forkId);
+            assert.isTrue(
+              frozen.visibleTurnItems.some(
+                (row) => row.sourceThreadId === forkId && row.sourceItemId === copied.id,
+              ),
+            );
             assert.equal(copied.inheritedFrom?.runId, source.runs[0]!.id);
             assert.isNull(copied.runId);
             assert.isNull(copied.nativeItemRef);
@@ -606,24 +605,34 @@ it.live(
             assert.equal(copied.status, "completed");
             assert.equal(copied.text, "");
             assert.notEqual(copied.messageId, sourceItem.messageId);
+            // The fork's baseline answer is the message it shows: its copy.
+            assert.equal(frozen.thread.forkLineage?.baselineAssistantMessageId, copied.messageId);
+            // A page anchored in the fork's history carries its copies' messages.
+            const anchored = yield* (yield* ProjectionStoreV2).getThreadSnapshotWindow(forkId, {
+              rowLimit: 2,
+              userTurnLimit: 1,
+              anchorItemId: copied.id,
+            });
+            assert.equal(anchored.projection.visibleTurnItems.at(-1)?.sourceItemId, copied.id);
+            assert.include(
+              anchored.projection.messages.map((message) => message.id),
+              copied.messageId,
+            );
             assert.equal(copied.inheritedFrom?.threadId, threadId);
             assert.isFalse(copied.streaming);
-            assert.ok(copied.attachments);
-            assert.lengthOf(copied.attachments, 1);
-            assert.notEqual(copied.attachments[0]!.id, sourceItem.attachments[0]!.id);
-            assert.deepEqual(copied.attachments[0], {
-              ...attachment,
-              id: copied.attachments[0]!.id,
-            });
-            assert.deepEqual(
-              frozen.messages.find((message) => message.id === copied.messageId)?.attachments,
-              copied.attachments,
+            assert.deepEqual(copied.attachments, sourceItem.attachments);
+            const inheritedMessage = frozen.messages.find(
+              (message) => message.id === copied.messageId,
             );
+            assert.deepEqual(inheritedMessage?.attachments, copied.attachments);
+            assert.isNull(inheritedMessage?.runId);
+            assert.isFalse(inheritedMessage?.streaming);
             const childOwned = resolveAttachmentPath({
               attachmentsDir: config.attachmentsDir,
-              attachment: copied.attachments[0]!,
+              attachment: copied.attachments![0]!,
             });
             assert.ok(childOwned);
+            assert.equal(childOwned, sourceOwned);
             assert.deepEqual(yield* fs.readFile(childOwned), bytes);
             if (evidenceDirectory !== undefined) {
               yield* fs.copy(sourcePath, path.join(evidenceDirectory, "native-original.png"));
@@ -703,7 +712,12 @@ it.live(
             }).pipe(Effect.provide(layerMemory));
             assert.deepEqual(rebuilt.source.messages, completed.messages);
             assert.deepEqual(rebuilt.source.turnItems, completed.turnItems);
-            assert.deepEqual(rebuilt.child.messages, frozen.messages);
+            // Inherited history lives in the SQL fork-history table, not the event log;
+            // the event replay rebuilds the fork's own records.
+            assert.deepEqual(
+              rebuilt.child.messages,
+              frozen.messages.filter((message) => message.threadId === forkId),
+            );
             assert.deepEqual(rebuilt.child.turnItems, frozen.turnItems);
             yield* capture("rebuilt", rebuilt);
             yield* (yield* ProviderSessionManagerV2).closeInstance(modelSelection.instanceId);

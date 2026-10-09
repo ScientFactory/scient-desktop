@@ -17,7 +17,7 @@ import * as Stream from "effect/Stream";
 import { AcpRegistryOrchestratorReplayHarness } from "../Adapters/AcpRegistryAdapterV2.testkit.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
-import { makeOrchestratorV2ProviderReplayLayer } from "../testkit/ProviderReplayHarness.ts";
+import { layerProviderReplay as makeOrchestratorV2ProviderReplayLayer } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
 import {
   materializeReplayTranscriptRuntimeInstructions,
@@ -165,19 +165,24 @@ it.live("forks an ordinary native ACP answer through its persisted direct-child 
         const target = yield* orchestrator.getThreadProjection(command.newThreadId);
         assert.equal(target.thread.conversationFork?.status, "ready");
         assert.equal(target.thread.sectionId, sectionId);
+        // The fork shows the source's items by reference, frozen.
+        const inherited = target.visibleTurnItems.filter((row) => row.visibility === "inherited");
         assert.deepEqual(
-          target.turnItems
-            .filter((item) => item.inheritedFrom?.threadId === threadId)
-            .map((item) => item.type),
+          inherited.map((row) => [row.sourceThreadId, row.sourceItemId]),
+          source.turnItems.map((item) => [threadId, item.id]),
+        );
+        assert.deepEqual(
+          inherited.map((row) => row.item.type),
           source.turnItems.map((item) => item.type),
         );
+        assert.ok(inherited.every((row) => row.item.inheritedFrom?.threadId === threadId));
         assert.deepEqual(
           target.messages.map((message) => message.text),
           source.messages.map((message) => message.text),
         );
         assert.ok(
-          target.turnItems.every(
-            (item) =>
+          target.visibleTurnItems.every(
+            ({ item }) =>
               item.runId === null &&
               item.nodeId === null &&
               (item.type === "fork"
@@ -192,11 +197,12 @@ it.live("forks an ordinary native ACP answer through its persisted direct-child 
         if (boundaries[0]?.type !== "fork")
           return assert.fail("Expected exact native answer boundary");
         assert.equal(boundaries[0].id, TurnItemId.make(`turn-item:fork:${command.newThreadId}`));
-        assert.equal(
-          boundaries[0].ordinal,
-          target.turnItems.findLast((item) => item.inheritedFrom?.threadId === threadId)!.ordinal +
-            1,
+        // The boundary directly follows the inherited prefix.
+        assert.deepEqual(
+          target.visibleTurnItems.map((row) => row.position),
+          [...inherited.map((_, index) => index), inherited.length],
         );
+        assert.equal(target.visibleTurnItems.at(-1)?.item.id, boundaries[0].id);
         assert.equal(boundaries[0].targetThreadId, command.newThreadId);
         assert.deepEqual(boundaries[0].source, { type: "run", threadId, runId: run.id });
         assert.equal(target.runs.length, 0);

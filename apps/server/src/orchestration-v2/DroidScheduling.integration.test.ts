@@ -335,88 +335,87 @@ it.live(
     ),
 );
 
-for (const terminal of ["completed", "interrupted"] as const) {
-  it.live(
-    `explicit native Steer retains the old answer when its late ${terminal} receipt arrives after adoption`,
-    () =>
-      withDroid(
-        `const pending = [];
+it.live.each(
+  (["completed", "interrupted"] as const).map((terminal) => ({
+    caseTitle: `explicit native Steer retains the old answer when its late ${terminal} receipt arrives after adoption`,
+    terminal,
+  })),
+)("$caseTitle", ({ terminal }) =>
+  withDroid(
+    `const pending = [];
 function onPrompt(message) { pending.push(message); update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: pending.length === 1 && state.prompts === 1 ? "old received answer\\n\\n" : "new owned answer\\n\\n" } }); }
 onCancel = () => { for (const message of pending.splice(0)) reply(message, { stopReason: "cancelled" }); };`,
-        (h) =>
-          Effect.gen(function* () {
-            yield* h.send("first");
-            const before = yield* h.waitFor((p) =>
-              p.messages.some(
-                (message) =>
-                  message.role === "assistant" && message.text === "old received answer\n\n",
-              ),
-            );
-            const oldTurn = before.providerTurns.find((turn) => turn.status === "running")!;
-            const oldMessage = before.messages.find(
-              (message) => message.text === "old received answer\n\n",
-            )!;
-            assert.isTrue(oldMessage.streaming);
-            yield* h.send("follow-up", "steer_active");
-            const adopted = yield* h.waitFor(
-              (p) =>
-                p.attempts.length === 2 &&
-                p.providerTurns.some(
-                  (turn) =>
-                    turn.runAttemptId === p.runs[0]?.activeAttemptId && turn.status === "running",
-                ) &&
-                p.messages.some((message) => message.text === "new owned answer\n\n"),
-            );
-            assert.notEqual(adopted.runs[0]?.activeAttemptId, oldTurn.runAttemptId);
-            assert.deepEqual(promptTexts(yield* h.log), ["first", "follow-up"]);
-            // Feed exact normalized old receipt identity at the engine seam. The
-            // real ACP replacement above owns the new prompt; producer compatibility
-            // and safe-Steer deferral remain the provider lane's complementary proof.
-            yield* h.injectEvent({
-              type: "turn.terminal",
-              driver: ProviderDriverKind.make("droid"),
-              providerThreadId: oldTurn.providerThreadId,
-              providerTurnId: oldTurn.id,
-              runOrdinal: adopted.runs[0]!.ordinal,
-              status: terminal,
-              failure: null,
-              threadDisposition: "reusable",
-            });
-            yield* h.injectEvent({
-              type: "provider_turn.updated",
-              driver: ProviderDriverKind.make("droid"),
-              providerTurn: { ...oldTurn, status: terminal, completedAt: yield* DateTime.now },
-            });
-            const owner = adopted.providerThreads.find(
-              (thread) => thread.id === adopted.thread.activeProviderThreadId,
-            )!;
-            const marker = `old-${terminal}-observed`;
-            yield* h.injectEvent({
-              type: "provider_thread.updated",
-              driver: ProviderDriverKind.make("droid"),
-              providerThread: {
-                ...owner,
-                nativeMetadata: { ...owner.nativeMetadata, title: marker },
-              },
-            });
-            const after = yield* h.waitFor((p) =>
-              p.providerThreads.some((thread) => thread.nativeMetadata?.title === marker),
-            );
-            assert.equal(after.runs[0]?.status, "running");
-            assert.equal(after.runs[0]?.activeAttemptId, adopted.runs[0]?.activeAttemptId);
-            assert.equal(
-              after.providerTurns.find(
-                (turn) => turn.runAttemptId === adopted.runs[0]?.activeAttemptId,
-              )?.status,
-              "running",
-            );
-            const retained = after.messages.find((message) => message.id === oldMessage.id)!;
-            assert.equal(retained.text, oldMessage.text);
-            assert.isFalse(retained.streaming);
-            yield* h.stop();
-            yield* h.waitFor((p) => p.runs[0]?.status === "interrupted");
-          }),
-        { injectEvents: true },
-      ),
-  );
-}
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.send("first");
+        const before = yield* h.waitFor((p) =>
+          p.messages.some(
+            (message) => message.role === "assistant" && message.text === "old received answer\n\n",
+          ),
+        );
+        const oldTurn = before.providerTurns.find((turn) => turn.status === "running")!;
+        const oldMessage = before.messages.find(
+          (message) => message.text === "old received answer\n\n",
+        )!;
+        assert.isTrue(oldMessage.streaming);
+        yield* h.send("follow-up", "steer_active");
+        const adopted = yield* h.waitFor(
+          (p) =>
+            p.attempts.length === 2 &&
+            p.providerTurns.some(
+              (turn) =>
+                turn.runAttemptId === p.runs[0]?.activeAttemptId && turn.status === "running",
+            ) &&
+            p.messages.some((message) => message.text === "new owned answer\n\n"),
+        );
+        assert.notEqual(adopted.runs[0]?.activeAttemptId, oldTurn.runAttemptId);
+        assert.deepEqual(promptTexts(yield* h.log), ["first", "follow-up"]);
+        // Feed exact normalized old receipt identity at the engine seam. The
+        // real ACP replacement above owns the new prompt; producer compatibility
+        // and safe-Steer deferral remain the provider lane's complementary proof.
+        yield* h.injectEvent({
+          type: "turn.terminal",
+          driver: ProviderDriverKind.make("droid"),
+          providerThreadId: oldTurn.providerThreadId,
+          providerTurnId: oldTurn.id,
+          runOrdinal: adopted.runs[0]!.ordinal,
+          status: terminal,
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* h.injectEvent({
+          type: "provider_turn.updated",
+          driver: ProviderDriverKind.make("droid"),
+          providerTurn: { ...oldTurn, status: terminal, completedAt: yield* DateTime.now },
+        });
+        const owner = adopted.providerThreads.find(
+          (thread) => thread.id === adopted.thread.activeProviderThreadId,
+        )!;
+        const marker = `old-${terminal}-observed`;
+        yield* h.injectEvent({
+          type: "provider_thread.updated",
+          driver: ProviderDriverKind.make("droid"),
+          providerThread: {
+            ...owner,
+            nativeMetadata: { ...owner.nativeMetadata, title: marker },
+          },
+        });
+        const after = yield* h.waitFor((p) =>
+          p.providerThreads.some((thread) => thread.nativeMetadata?.title === marker),
+        );
+        assert.equal(after.runs[0]?.status, "running");
+        assert.equal(after.runs[0]?.activeAttemptId, adopted.runs[0]?.activeAttemptId);
+        assert.equal(
+          after.providerTurns.find((turn) => turn.runAttemptId === adopted.runs[0]?.activeAttemptId)
+            ?.status,
+          "running",
+        );
+        const retained = after.messages.find((message) => message.id === oldMessage.id)!;
+        assert.equal(retained.text, oldMessage.text);
+        assert.isFalse(retained.streaming);
+        yield* h.stop();
+        yield* h.waitFor((p) => p.runs[0]?.status === "interrupted");
+      }),
+    { injectEvents: true },
+  ),
+);

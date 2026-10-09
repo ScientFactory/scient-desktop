@@ -34,12 +34,12 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as SqlClient from "effect/sql/SqlClient";
 import type { AcpProtocolLogEvent } from "effect-acp/protocol";
 import * as Config from "../config.ts";
 import { createDeterministicAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import { makeDroidAcpRuntime } from "../provider/acp/DroidAcpSupport.ts";
 import { scriptedDroid } from "../provider/testUtils/scriptedDroid.ts";
 import { AcpTransportError } from "effect-acp/errors";
@@ -61,8 +61,8 @@ import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
-import { makeLayer } from "./ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 
 const decodeDroidSettings = Schema.decodeEffect(DroidSettings);
@@ -238,6 +238,7 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
   const decodedQueue = yield* Queue.unbounded<AcpProtocolLogEvent>();
   const instanceId = ProviderInstanceId.make(`droid-steer-${name}`);
   const threadId = ThreadId.make(`droid-steer:${name}`);
+  const stoppedDelegatedTaskParents: Array<ThreadId> = [];
   const selection = { instanceId, model: "droid-native" };
   const otherSelection = {
     instanceId: ProviderInstanceId.make(`droid-steer-other-${name}`),
@@ -372,9 +373,25 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
       {
         configureMcp: false,
         runEffectWorker: false,
-        databaseLayer,
+        layerDatabase: databaseLayer,
         runtimePolicyLayer: policyLayer,
-        serverConfigLayer: Layer.succeed(Config.ServerConfig, config),
+        layerServerConfig: Layer.succeed(Config.ServerConfig, config),
+        ...(name === "policy"
+          ? {
+              threads: {
+                // The captured-policy case has no children; preserve native Stop's outbox seam.
+                stopDelegatedTasks: (input: {
+                  readonly threadId: ThreadId;
+                  readonly commandId: CommandId;
+                }) =>
+                  Effect.sync(() => {
+                    assert.equal(input.threadId, threadId);
+                    assert.equal(input.commandId, CommandId.make(`${name}:stop`));
+                    stoppedDelegatedTaskParents.push(input.threadId);
+                  }),
+              },
+            }
+          : {}),
       },
     ).pipe(Layer.provideMerge(Layer.merge(databaseLayer, threadCommandExecutorLayer))),
   );
@@ -410,26 +427,31 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
   Object.assign(locks, { withLock: observeWithLock });
   const orchestrator = Context.get(services, OrchestratorV2);
   const rawWorker = Context.get(services, OrchestrationEffectWorkerV2);
+  // Outbox deadlines are wall-clock (Date.now) instants, but timers run on the event
+  // loop's monotonic clock and can wake before the deadline (libuv/libuv#4773), so a
+  // drain after one sleep may claim nothing. Re-read the deadline until it has passed.
+  // Returns false when no pending effect remains to wait for.
+  const awaitClaimable = Effect.gen(function* () {
+    while (true) {
+      const deadline = yield* rawWorker.nextClaimableAt;
+      if (Option.isNone(deadline)) return false;
+      const wait =
+        DateTime.toEpochMillis(deadline.value) - DateTime.toEpochMillis(yield* DateTime.now);
+      if (wait <= 0) return true;
+      yield* Effect.sleep(wait);
+    }
+  });
   const worker = {
     ...rawWorker,
     drain: (maxEffects = 12) =>
       Effect.gen(function* () {
-        const deadline = yield* rawWorker.nextClaimableAt;
-        if (Option.isSome(deadline)) {
-          const wait =
-            DateTime.toEpochMillis(deadline.value) - DateTime.toEpochMillis(yield* DateTime.now);
-          if (wait > 0) yield* Effect.sleep(wait);
-        }
+        yield* awaitClaimable;
         let drained = yield* rawWorker.drain(maxEffects);
         // An admitted cancel may settle natively before its canonical turn update is ingested.
         for (let remaining = maxEffects; remaining > 0; remaining--) {
           const p = yield* Context.get(services, OrchestratorV2).getThreadProjection(threadId);
           if (!p.runs.some((run) => run.heldDroidSteer?.phase === "pre_admission")) break;
-          const next = yield* rawWorker.nextClaimableAt;
-          if (Option.isNone(next)) break;
-          const wait =
-            DateTime.toEpochMillis(next.value) - DateTime.toEpochMillis(yield* DateTime.now);
-          if (wait > 0) yield* Effect.sleep(wait);
+          if (!(yield* awaitClaimable)) break;
           drained += yield* rawWorker.drain(maxEffects);
         }
         return drained;
@@ -706,6 +728,7 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
     pids,
     terminalProbes,
     lockTrace,
+    stoppedDelegatedTaskParents,
     send,
     waitFor,
     waitDecoded,
@@ -1047,205 +1070,210 @@ it.live(
     ),
 );
 
-for (const window of ["probe", "pre-admission"] as const)
-  it.live(
-    `retains the original native owner when new work invalidates Droid readiness at ${window}`,
-    () =>
-      nativeCase(`race-${window}`, "normal", (h) =>
-        Effect.gen(function* () {
-          const initial = yield* h.start();
-          const command = yield* h.send("follow-up", initial.runs[0]!.id);
-          yield* h.release("finish-run");
-          yield* h.waitFor((p) =>
-            p.turnItems.some(
-              (item) => item.nativeItemRef?.nativeId === "run" && item.status === "completed",
-            ),
-          );
-          const gate = yield* barrier();
-          if (window === "probe") h.hooks.afterReserve = gate.park;
-          else h.hooks.beforeConsume = gate.park;
-          const execution = yield* h.worker.runOnce.pipe(Effect.forkScoped);
-          yield* gate.entered;
-          const claimed = yield* h.observe(`parked-${window}`, command);
-          heldOwner(claimed.projection, initial);
-          assert.equal(
-            claimed.projection.runs[0]!.heldDroidSteer!.phase,
-            window === "probe" ? "held" : "pre_admission",
-          );
-          yield* h.release("handoff");
-          yield* h.waitFor((p) =>
-            p.turnItems.some(
-              (item) => item.nativeItemRef?.nativeId === "next" && item.status === "running",
-            ),
-          );
-          h.hooks.afterReserve = undefined;
-          h.hooks.beforeConsume = undefined;
-          yield* gate.release;
-          yield* Fiber.join(execution);
-          const deferred = yield* h.observe(`invalidated-${window}`, command);
-          heldOwner(deferred.projection, initial);
-          assert.equal(deferred.projection.runs[0]!.heldDroidSteer!.phase, "held");
-          assert.deepEqual(deferred.trace, ["first"]);
-          assert.isTrue(deferred.commandEffects.some((effect) => effect.status === "pending"));
-          // A legitimate long hold cannot exhaust the worker's ordinary five failure attempts.
-          for (let attempts = 0; attempts < 6; attempts++) yield* h.worker.drain(12);
-          assert.isTrue(
-            (yield* h.outbox.listByCommandId(command)).some(
-              (effect) => effect.status === "pending" && effect.attemptCount > 5,
-            ),
-          );
-          yield* h.release("finish-next");
-          yield* h.waitFor((p) =>
-            p.turnItems.some(
-              (item) => item.nativeItemRef?.nativeId === "next" && item.status === "completed",
-            ),
-          );
-          yield* advance(h, initial, command);
-          assert.deepEqual(yield* h.wire, ["first", "cancel", "follow-up"]);
-        }),
-      ),
-  );
+it.live.each(
+  (["probe", "pre-admission"] as const).map((window) => ({
+    caseTitle: `retains the original native owner when new work invalidates Droid readiness at ${window}`,
+    window,
+  })),
+)("$caseTitle", ({ window }) =>
+  nativeCase(`race-${window}`, "normal", (h) =>
+    Effect.gen(function* () {
+      const initial = yield* h.start();
+      const command = yield* h.send("follow-up", initial.runs[0]!.id);
+      yield* h.release("finish-run");
+      yield* h.waitFor((p) =>
+        p.turnItems.some(
+          (item) => item.nativeItemRef?.nativeId === "run" && item.status === "completed",
+        ),
+      );
+      const gate = yield* barrier();
+      if (window === "probe") h.hooks.afterReserve = gate.park;
+      else h.hooks.beforeConsume = gate.park;
+      const execution = yield* h.worker.runOnce.pipe(Effect.forkScoped);
+      yield* gate.entered;
+      const claimed = yield* h.observe(`parked-${window}`, command);
+      heldOwner(claimed.projection, initial);
+      assert.equal(
+        claimed.projection.runs[0]!.heldDroidSteer!.phase,
+        window === "probe" ? "held" : "pre_admission",
+      );
+      yield* h.release("handoff");
+      yield* h.waitFor((p) =>
+        p.turnItems.some(
+          (item) => item.nativeItemRef?.nativeId === "next" && item.status === "running",
+        ),
+      );
+      h.hooks.afterReserve = undefined;
+      h.hooks.beforeConsume = undefined;
+      yield* gate.release;
+      yield* Fiber.join(execution);
+      const deferred = yield* h.observe(`invalidated-${window}`, command);
+      heldOwner(deferred.projection, initial);
+      assert.equal(deferred.projection.runs[0]!.heldDroidSteer!.phase, "held");
+      assert.deepEqual(deferred.trace, ["first"]);
+      assert.isTrue(deferred.commandEffects.some((effect) => effect.status === "pending"));
+      // A legitimate long hold cannot exhaust the worker's ordinary five failure attempts.
+      for (let attempts = 0; attempts < 6; attempts++) yield* h.worker.drain(12);
+      assert.isTrue(
+        (yield* h.outbox.listByCommandId(command)).some(
+          (effect) => effect.status === "pending" && effect.attemptCount > 5,
+        ),
+      );
+      yield* h.release("finish-next");
+      yield* h.waitFor((p) =>
+        p.turnItems.some(
+          (item) => item.nativeItemRef?.nativeId === "next" && item.status === "completed",
+        ),
+      );
+      yield* advance(h, initial, command);
+      assert.deepEqual(yield* h.wire, ["first", "cancel", "follow-up"]);
+    }),
+  ),
+);
 
-for (const outcome of ["completed", "failed", "stopped"] as const)
-  it.live(
-    `releases held Droid input on actual prompt return without cancel; the replacement is ${outcome}`,
-    () =>
-      nativeCase(`returned-${outcome}`, "normal", (h) =>
-        Effect.gen(function* () {
-          const initial = yield* h.start();
-          const command = yield* h.send("follow-up", initial.runs[0]!.id);
-          const gate = yield* barrier();
-          h.hooks.promptReturn = gate.park;
-          yield* h.release("finish-first");
-          yield* gate.entered;
-          const adopted = yield* advance(h, initial, command);
-          assert.deepEqual(yield* h.wire, ["first", "follow-up"]);
-          assert.equal(
-            adopted.providerTurns.find((turn) => turn.runAttemptId === initial.attempts[0]!.id)!
-              .status,
-            "completed",
-          );
-          assert.isTrue(
-            adopted.turnItems.some(
-              (item) => item.nativeItemRef?.nativeId === "run" && item.status === "completed",
-            ),
-          );
-          h.hooks.promptReturn = undefined;
-          yield* gate.release;
-          assert.equal(
-            (yield* h.orchestrator.getThreadProjection(h.threadId)).runs[0]!.activeAttemptId,
-            adopted.runs[0]!.activeAttemptId,
-          );
-          if (outcome === "stopped") {
-            yield* h.stop(initial.runs[0]!.id);
-            yield* h.worker.drain(12);
-          } else {
-            yield* h.release(outcome === "completed" ? "finish-prompt" : "fail-prompt");
-          }
-          if (outcome === "completed") {
-            yield* h.waitFor((p) => p.runs[0]?.status === "waiting");
-            yield* h.worker.drain(12);
-          }
-          const final = yield* h.waitFor(
-            (p) => p.runs[0]?.status === (outcome === "stopped" ? "interrupted" : outcome),
-          );
-          assert.deepEqual(
-            final.attempts.map((attempt) => attempt.status),
-            ["superseded", outcome === "stopped" ? "interrupted" : outcome],
-          );
-          assert.lengthOf(final.runs, 1);
-          assert.isUndefined(final.runs[0]!.heldDroidSteer);
-          assert.isFalse(
-            final.turnItems.some(
-              (item) =>
-                item.providerTurnId === final.providerTurns.at(-1)?.id &&
-                ["pending", "running", "waiting"].includes(item.status),
-            ),
-          );
-          yield* h.observe(`replacement-${outcome}-terminal`, command);
-        }),
-      ),
-  );
+it.live.each(
+  (["completed", "failed", "stopped"] as const).map((outcome) => ({
+    caseTitle: `releases held Droid input on actual prompt return without cancel; the replacement is ${outcome}`,
+    outcome,
+  })),
+)("$caseTitle", ({ outcome }) =>
+  nativeCase(`returned-${outcome}`, "normal", (h) =>
+    Effect.gen(function* () {
+      const initial = yield* h.start();
+      const command = yield* h.send("follow-up", initial.runs[0]!.id);
+      const gate = yield* barrier();
+      h.hooks.promptReturn = gate.park;
+      yield* h.release("finish-first");
+      yield* gate.entered;
+      const adopted = yield* advance(h, initial, command);
+      assert.deepEqual(yield* h.wire, ["first", "follow-up"]);
+      assert.equal(
+        adopted.providerTurns.find((turn) => turn.runAttemptId === initial.attempts[0]!.id)!.status,
+        "completed",
+      );
+      assert.isTrue(
+        adopted.turnItems.some(
+          (item) => item.nativeItemRef?.nativeId === "run" && item.status === "completed",
+        ),
+      );
+      h.hooks.promptReturn = undefined;
+      yield* gate.release;
+      assert.equal(
+        (yield* h.orchestrator.getThreadProjection(h.threadId)).runs[0]!.activeAttemptId,
+        adopted.runs[0]!.activeAttemptId,
+      );
+      if (outcome === "stopped") {
+        yield* h.stop(initial.runs[0]!.id);
+        yield* h.worker.drain(12);
+      } else {
+        yield* h.release(outcome === "completed" ? "finish-prompt" : "fail-prompt");
+      }
+      if (outcome === "completed") {
+        yield* h.waitFor((p) => p.runs[0]?.status === "waiting");
+        yield* h.worker.drain(12);
+      }
+      const final = yield* h.waitFor(
+        (p) => p.runs[0]?.status === (outcome === "stopped" ? "interrupted" : outcome),
+      );
+      assert.deepEqual(
+        final.attempts.map((attempt) => attempt.status),
+        ["superseded", outcome === "stopped" ? "interrupted" : outcome],
+      );
+      assert.lengthOf(final.runs, 1);
+      assert.isUndefined(final.runs[0]!.heldDroidSteer);
+      assert.isFalse(
+        final.turnItems.some(
+          (item) =>
+            item.providerTurnId === final.providerTurns.at(-1)?.id &&
+            ["pending", "running", "waiting"].includes(item.status),
+        ),
+      );
+      yield* h.observe(`replacement-${outcome}-terminal`, command);
+    }),
+  ),
+);
 
-for (const variant of ["old-live", "late", "reannounce", "foreground-task"] as const)
-  it.live(
-    `resets native Droid prompt safety after ${variant} and does not resurrect that prompt's tool in its replacement`,
-    () =>
-      nativeCase(`reset-${variant}`, variant, (h) =>
-        Effect.gen(function* () {
-          const initial = yield* h.start();
-          yield* h.send("follow-up", initial.runs[0]!.id);
-          // The actual native response is observed separately from canonical replacement ownership.
-          const owner = yield* h.native(initial);
-          const returned = yield* barrier();
-          h.hooks.promptReturn = returned.park;
-          yield* h.release("finish-first");
-          yield* returned.entered;
-          yield* h.worker.drain(12);
-          const second = yield* h.waitFor(
-            (p) =>
-              p.runs[0]?.activeAttemptId !== initial.runs[0]!.activeAttemptId &&
-              p.runs[0]?.status === "running",
-          );
-          yield* h.waitDecoded(
-            (event) =>
-              event.direction === "incoming" &&
-              event.stage === "decoded" &&
-              JSON.stringify(event.payload).includes("native prompt: follow-up"),
-          );
-          yield* h.waitFor((p) =>
-            p.providerTurns.some(
-              (turn) =>
-                turn.runAttemptId === second.runs[0]!.activeAttemptId && turn.status === "running",
-            ),
-          );
-          h.hooks.promptReturn = undefined;
-          yield* returned.release;
-          yield* returned.exited;
-          const third = yield* h.send("third", initial.runs[0]!.id);
-          yield* h.worker.drain(12);
-          const thirdRunning = yield* h.waitFor(
-            (p) =>
-              p.attempts.filter((attempt) => attempt.runId === initial.runs[0]!.id).length === 3 &&
-              p.runs[0]?.status === "running",
-          );
-          assert.notEqual(thirdRunning.runs[0]!.activeAttemptId, second.runs[0]!.activeAttemptId);
-          yield* h.waitDecoded(
-            (event) =>
-              event.direction === "incoming" &&
-              event.stage === "decoded" &&
-              JSON.stringify(event.payload).includes("native prompt: third"),
-          );
-          assert.deepEqual(yield* h.wire, ["first", "follow-up", "cancel", "third"]);
-          assert.isFalse(
-            thirdRunning.turnItems.some(
-              (item) =>
-                item.providerTurnId === second.providerTurns.at(-1)?.id &&
-                item.nativeItemRef?.nativeId === "run" &&
-                item.status === "running",
-            ),
-          );
-          assert.isFalse(owner.droidSteerConsumed?.("unrelated") ?? false);
-          yield* h.release("finish-prompt");
-          yield* h.waitFor((p) => p.runs[0]?.status === "waiting");
-          yield* h.worker.drain(12);
-          const final = yield* h.waitFor((p) => p.runs[0]?.status === "completed");
-          assert.deepEqual(
-            final.attempts.map((attempt) => attempt.status),
-            ["superseded", "superseded", "completed"],
-          );
-          assert.lengthOf(
-            final.turnItems.filter(
-              (item) =>
-                item.type === "system_notice" &&
-                item.message === "Follow-up held until Droid reaches a safe boundary.",
-            ),
-            1,
-          );
-          yield* h.observe(`reset-${variant}-final`, third);
-        }),
-      ),
-  );
+it.live.each(
+  (["old-live", "late", "reannounce", "foreground-task"] as const).map((variant) => ({
+    caseTitle: `resets native Droid prompt safety after ${variant} and does not resurrect that prompt's tool in its replacement`,
+    variant,
+  })),
+)("$caseTitle", ({ variant }) =>
+  nativeCase(`reset-${variant}`, variant, (h) =>
+    Effect.gen(function* () {
+      const initial = yield* h.start();
+      yield* h.send("follow-up", initial.runs[0]!.id);
+      // The actual native response is observed separately from canonical replacement ownership.
+      const owner = yield* h.native(initial);
+      const returned = yield* barrier();
+      h.hooks.promptReturn = returned.park;
+      yield* h.release("finish-first");
+      yield* returned.entered;
+      yield* h.worker.drain(12);
+      const second = yield* h.waitFor(
+        (p) =>
+          p.runs[0]?.activeAttemptId !== initial.runs[0]!.activeAttemptId &&
+          p.runs[0]?.status === "running",
+      );
+      yield* h.waitDecoded(
+        (event) =>
+          event.direction === "incoming" &&
+          event.stage === "decoded" &&
+          JSON.stringify(event.payload).includes("native prompt: follow-up"),
+      );
+      yield* h.waitFor((p) =>
+        p.providerTurns.some(
+          (turn) =>
+            turn.runAttemptId === second.runs[0]!.activeAttemptId && turn.status === "running",
+        ),
+      );
+      h.hooks.promptReturn = undefined;
+      yield* returned.release;
+      yield* returned.exited;
+      const third = yield* h.send("third", initial.runs[0]!.id);
+      yield* h.worker.drain(12);
+      const thirdRunning = yield* h.waitFor(
+        (p) =>
+          p.attempts.filter((attempt) => attempt.runId === initial.runs[0]!.id).length === 3 &&
+          p.runs[0]?.status === "running",
+      );
+      assert.notEqual(thirdRunning.runs[0]!.activeAttemptId, second.runs[0]!.activeAttemptId);
+      yield* h.waitDecoded(
+        (event) =>
+          event.direction === "incoming" &&
+          event.stage === "decoded" &&
+          JSON.stringify(event.payload).includes("native prompt: third"),
+      );
+      assert.deepEqual(yield* h.wire, ["first", "follow-up", "cancel", "third"]);
+      assert.isFalse(
+        thirdRunning.turnItems.some(
+          (item) =>
+            item.providerTurnId === second.providerTurns.at(-1)?.id &&
+            item.nativeItemRef?.nativeId === "run" &&
+            item.status === "running",
+        ),
+      );
+      assert.isFalse(owner.droidSteerConsumed?.("unrelated") ?? false);
+      yield* h.release("finish-prompt");
+      yield* h.waitFor((p) => p.runs[0]?.status === "waiting");
+      yield* h.worker.drain(12);
+      const final = yield* h.waitFor((p) => p.runs[0]?.status === "completed");
+      assert.deepEqual(
+        final.attempts.map((attempt) => attempt.status),
+        ["superseded", "superseded", "completed"],
+      );
+      assert.lengthOf(
+        final.turnItems.filter(
+          (item) =>
+            item.type === "system_notice" &&
+            item.message === "Follow-up held until Droid reaches a safe boundary.",
+        ),
+        1,
+      );
+      yield* h.observe(`reset-${variant}-final`, third);
+    }),
+  ),
+);
 
 it.live(
   "keeps native Task launch, running checks, unknown tasks and another session from releasing the held Droid intent",
@@ -1304,59 +1332,60 @@ it.live(
     ),
 );
 
-for (const window of ["held", "probe", "pre-admission"] as const)
-  it.live(
-    `lets canonical Stop win at ${window} without delivering the held native Droid prompt`,
-    () =>
-      nativeCase(`stop-${window}`, "normal", (h) =>
-        Effect.gen(function* () {
-          const initial = yield* h.start();
-          const command = yield* h.send("follow-up", initial.runs[0]!.id);
-          const gate = yield* barrier();
-          if (window !== "held") {
-            yield* h.release("finish-run");
-            yield* h.waitFor((p) =>
-              p.turnItems.some(
-                (item) => item.nativeItemRef?.nativeId === "run" && item.status === "completed",
-              ),
-            );
-            if (window === "probe") h.hooks.afterReserve = gate.park;
-            else h.hooks.beforeConsume = gate.park;
-            yield* h.worker.runOnce.pipe(Effect.forkScoped);
-            yield* gate.entered;
-          } else yield* h.worker.drain(12);
-          yield* h.stop(initial.runs[0]!.id);
-          const stopped = yield* h.orchestrator.getThreadProjection(h.threadId);
-          assert.isUndefined(stopped.runs[0]!.heldDroidSteer);
-          assert.isTrue(
-            (yield* h.outbox.listByCommandId(command)).every(
-              (effect) => effect.status === "cancelled" || effect.status === "succeeded",
-            ),
-          );
-          h.hooks.afterReserve = undefined;
-          h.hooks.beforeConsume = undefined;
-          yield* gate.release;
-          yield* h.worker.drain(12);
-          const final = yield* h.waitFor((p) => p.runs[0]?.status === "interrupted");
-          assert.lengthOf(final.attempts, 1);
-          assert.equal(final.attempts[0]!.status, "interrupted");
-          assert.lengthOf(
-            final.turnItems.filter(
-              (item) =>
-                item.type === "system_notice" &&
-                item.message ===
-                  "Your waiting message was not delivered. Send it again to continue.",
-            ),
-            1,
-          );
-          assert.isFalse((yield* h.wire).includes("follow-up"));
-          yield* h.release("finish-run");
-          yield* h.worker.drain(12);
-          assert.isFalse((yield* h.wire).includes("follow-up"));
-          yield* h.observe(`stop-${window}-settled`, command);
-        }),
-      ),
-  );
+it.live.each(
+  (["held", "probe", "pre-admission"] as const).map((window) => ({
+    caseTitle: `lets canonical Stop win at ${window} without delivering the held native Droid prompt`,
+    window,
+  })),
+)("$caseTitle", ({ window }) =>
+  nativeCase(`stop-${window}`, "normal", (h) =>
+    Effect.gen(function* () {
+      const initial = yield* h.start();
+      const command = yield* h.send("follow-up", initial.runs[0]!.id);
+      const gate = yield* barrier();
+      if (window !== "held") {
+        yield* h.release("finish-run");
+        yield* h.waitFor((p) =>
+          p.turnItems.some(
+            (item) => item.nativeItemRef?.nativeId === "run" && item.status === "completed",
+          ),
+        );
+        if (window === "probe") h.hooks.afterReserve = gate.park;
+        else h.hooks.beforeConsume = gate.park;
+        yield* h.worker.runOnce.pipe(Effect.forkScoped);
+        yield* gate.entered;
+      } else yield* h.worker.drain(12);
+      yield* h.stop(initial.runs[0]!.id);
+      const stopped = yield* h.orchestrator.getThreadProjection(h.threadId);
+      assert.isUndefined(stopped.runs[0]!.heldDroidSteer);
+      assert.isTrue(
+        (yield* h.outbox.listByCommandId(command)).every(
+          (effect) => effect.status === "cancelled" || effect.status === "succeeded",
+        ),
+      );
+      h.hooks.afterReserve = undefined;
+      h.hooks.beforeConsume = undefined;
+      yield* gate.release;
+      yield* h.worker.drain(12);
+      const final = yield* h.waitFor((p) => p.runs[0]?.status === "interrupted");
+      assert.lengthOf(final.attempts, 1);
+      assert.equal(final.attempts[0]!.status, "interrupted");
+      assert.lengthOf(
+        final.turnItems.filter(
+          (item) =>
+            item.type === "system_notice" &&
+            item.message === "Your waiting message was not delivered. Send it again to continue.",
+        ),
+        1,
+      );
+      assert.isFalse((yield* h.wire).includes("follow-up"));
+      yield* h.release("finish-run");
+      yield* h.worker.drain(12);
+      assert.isFalse((yield* h.wire).includes("follow-up"));
+      yield* h.observe(`stop-${window}-settled`, command);
+    }),
+  ),
+);
 
 it.live(
   "finalizes typed native startup failure when held Steer commits after its outside no-hold probe",
@@ -1546,48 +1575,50 @@ it.live("drops held Droid input on actual native failure before old finalization
   ),
 );
 
-for (const phase of ["registration", "claim"] as const)
-  it.live(
-    `keeps canonical native ownership and offers no Droid input when SQL rejects ${phase}`,
-    () =>
-      nativeCase(`sql-${phase}`, "normal", (h) =>
-        Effect.gen(function* () {
-          const initial = yield* h.start();
-          yield* h.sql
-            .unsafe(`CREATE TRIGGER reject_droid BEFORE UPDATE ON orchestration_v2_projection_runs
+it.live.each(
+  (["registration", "claim"] as const).map((phase) => ({
+    caseTitle: `keeps canonical native ownership and offers no Droid input when SQL rejects ${phase}`,
+    phase,
+  })),
+)("$caseTitle", ({ phase }) =>
+  nativeCase(`sql-${phase}`, "normal", (h) =>
+    Effect.gen(function* () {
+      const initial = yield* h.start();
+      yield* h.sql
+        .unsafe(`CREATE TRIGGER reject_droid BEFORE UPDATE ON orchestration_v2_projection_runs
       WHEN json_extract(NEW.payload_json, '$.heldDroidSteer.phase') = '${phase === "registration" ? "held" : "pre_admission"}'
       BEGIN SELECT RAISE(ABORT, 'synthetic Droid admission rejection'); END`);
-          if (phase === "registration") {
-            const rejected = yield* h.send("follow-up", initial.runs[0]!.id).pipe(Effect.exit);
-            assert.isTrue(Exit.isFailure(rejected));
-            const after = yield* h.orchestrator.getThreadProjection(h.threadId);
-            assert.isUndefined(after.runs[0]!.heldDroidSteer);
-            assert.lengthOf(after.attempts, 1);
-            assert.isFalse(
-              after.messages.some(
-                (message) => message.id === MessageId.make(`${h.name}:message:follow-up`),
-              ),
-            );
-          } else {
-            const command = yield* h.send("follow-up", initial.runs[0]!.id);
-            yield* h.release("finish-run");
-            yield* h.waitFor((p) =>
-              p.turnItems.some(
-                (item) => item.nativeItemRef?.nativeId === "run" && item.status === "completed",
-              ),
-            );
-            yield* h.worker.drain(12);
-            const after = yield* h.observe("sql-claim-rejected-before-native-consume", command);
-            heldOwner(after.projection, initial);
-            assert.equal(after.projection.runs[0]!.heldDroidSteer!.phase, "held");
-            assert.isTrue(after.commandEffects.some((effect) => effect.status === "pending"));
-            yield* h.sql.unsafe("DROP TRIGGER reject_droid");
-            yield* advance(h, initial, command);
-          }
-          assert.deepEqual((yield* h.wire).slice(0, phase === "registration" ? 3 : 1), ["first"]);
-        }),
-      ),
-  );
+      if (phase === "registration") {
+        const rejected = yield* h.send("follow-up", initial.runs[0]!.id).pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(rejected));
+        const after = yield* h.orchestrator.getThreadProjection(h.threadId);
+        assert.isUndefined(after.runs[0]!.heldDroidSteer);
+        assert.lengthOf(after.attempts, 1);
+        assert.isFalse(
+          after.messages.some(
+            (message) => message.id === MessageId.make(`${h.name}:message:follow-up`),
+          ),
+        );
+      } else {
+        const command = yield* h.send("follow-up", initial.runs[0]!.id);
+        yield* h.release("finish-run");
+        yield* h.waitFor((p) =>
+          p.turnItems.some(
+            (item) => item.nativeItemRef?.nativeId === "run" && item.status === "completed",
+          ),
+        );
+        yield* h.worker.drain(12);
+        const after = yield* h.observe("sql-claim-rejected-before-native-consume", command);
+        heldOwner(after.projection, initial);
+        assert.equal(after.projection.runs[0]!.heldDroidSteer!.phase, "held");
+        assert.isTrue(after.commandEffects.some((effect) => effect.status === "pending"));
+        yield* h.sql.unsafe("DROP TRIGGER reject_droid");
+        yield* advance(h, initial, command);
+      }
+      assert.deepEqual((yield* h.wire).slice(0, phase === "registration" ? 3 : 1), ["first"]);
+    }),
+  ),
+);
 
 it.live(
   "does not replay a persisted Droid held intent after process-bound reconciliation or into a fresh native session",
@@ -1637,86 +1668,88 @@ it.live(
 );
 
 for (const oldReturn of ["completed", "aborted"] as const)
-  for (const releaseOldAfter of ["adoption", "replacement-result"] as const)
-    it.live(
-      `preserves actual subparagraph old-answer identity when its ${oldReturn} native return callback resumes after ${releaseOldAfter}`,
-      () =>
-        nativeCase(`tail-${oldReturn}-${releaseOldAfter}`, "tail", (h) =>
-          Effect.gen(function* () {
-            const initial = yield* h.start();
-            yield* h.waitDecoded(
-              (event) =>
-                event.direction === "incoming" &&
-                event.stage === "decoded" &&
-                JSON.stringify(event.payload).includes("Keep the old answer."),
-            );
-            const command = yield* h.send("follow-up", initial.runs[0]!.id);
-            const gate = yield* barrier();
-            h.hooks.promptReturn = gate.park;
-            yield* h.release(oldReturn === "completed" ? "finish-first" : "abort-first");
-            yield* gate.entered;
-            const adopted = yield* advance(h, initial, command);
-            const old = adopted.messages.find(
-              (message) => message.role === "assistant" && message.text === "Keep the old answer.",
-            );
-            assert.equal(
-              adopted.providerTurns.find((turn) => turn.runAttemptId === initial.attempts[0]!.id)!
-                .status,
-              oldReturn === "completed" ? "completed" : "cancelled",
-            );
-            assert.ok(old);
-            assert.isFalse(old.streaming);
-            assert.equal(
-              adopted.nodes.find((node) => node.id === old.nodeId)!.providerTurnId,
-              initial.providerTurns[0]!.id,
-            );
-            assert.equal(
-              adopted.nodes.find((node) => node.id === old.nodeId)!.rootNodeId,
-              initial.runs[0]!.rootNodeId,
-            );
-            assert.isFalse(old.text.includes("\n\n"));
-            assert.deepEqual(yield* h.wire, ["first", "follow-up"]);
-            h.hooks.promptReturn = undefined;
-            if (releaseOldAfter === "replacement-result") {
-              yield* h.release("finish-prompt");
-              yield* h.waitFor((p) => p.runs[0]?.status === "waiting");
-              yield* h.worker.drain(12);
-              yield* h.waitFor((p) => p.runs[0]?.status === "completed");
-            }
-            yield* gate.release;
-            yield* gate.exited;
-            const after = yield* h.orchestrator.getThreadProjection(h.threadId);
-            assert.deepEqual(
-              after.messages.find((message) => message.id === old.id),
-              old,
-            );
-            assert.equal(after.runs[0]!.activeAttemptId, adopted.runs[0]!.activeAttemptId);
-            assert.equal(
-              after.runs[0]!.status,
-              releaseOldAfter === "adoption" ? "running" : "completed",
-            );
-            assert.isFalse(after.turnItems.some((item) => item.type === "error"));
-            if (releaseOldAfter === "adoption") {
-              yield* h.release("finish-prompt");
-              yield* h.waitFor((p) => p.runs[0]?.status === "waiting");
-              yield* h.worker.drain(12);
-              yield* h.waitFor((p) => p.runs[0]?.status === "completed");
-            }
-            const final = yield* h.observe(
-              "late-success-callback-kept-old-bytes-and-new-owner",
-              command,
-            );
-            assert.lengthOf(
-              final.projection.messages.filter((message) => message.id === old.id),
-              1,
-            );
-            assert.deepEqual(
-              final.projection.attempts.map((attempt) => attempt.status),
-              ["superseded", "completed"],
-            );
-          }),
-        ),
-    );
+  it.live.each(
+    (["adoption", "replacement-result"] as const).map((releaseOldAfter) => ({
+      caseTitle: `preserves actual subparagraph old-answer identity when its ${oldReturn} native return callback resumes after ${releaseOldAfter}`,
+      releaseOldAfter,
+    })),
+  )("$caseTitle", ({ releaseOldAfter }) =>
+    nativeCase(`tail-${oldReturn}-${releaseOldAfter}`, "tail", (h) =>
+      Effect.gen(function* () {
+        const initial = yield* h.start();
+        yield* h.waitDecoded(
+          (event) =>
+            event.direction === "incoming" &&
+            event.stage === "decoded" &&
+            JSON.stringify(event.payload).includes("Keep the old answer."),
+        );
+        const command = yield* h.send("follow-up", initial.runs[0]!.id);
+        const gate = yield* barrier();
+        h.hooks.promptReturn = gate.park;
+        yield* h.release(oldReturn === "completed" ? "finish-first" : "abort-first");
+        yield* gate.entered;
+        const adopted = yield* advance(h, initial, command);
+        const old = adopted.messages.find(
+          (message) => message.role === "assistant" && message.text === "Keep the old answer.",
+        );
+        assert.equal(
+          adopted.providerTurns.find((turn) => turn.runAttemptId === initial.attempts[0]!.id)!
+            .status,
+          oldReturn === "completed" ? "completed" : "cancelled",
+        );
+        assert.ok(old);
+        assert.isFalse(old.streaming);
+        assert.equal(
+          adopted.nodes.find((node) => node.id === old.nodeId)!.providerTurnId,
+          initial.providerTurns[0]!.id,
+        );
+        assert.equal(
+          adopted.nodes.find((node) => node.id === old.nodeId)!.rootNodeId,
+          initial.runs[0]!.rootNodeId,
+        );
+        assert.isFalse(old.text.includes("\n\n"));
+        assert.deepEqual(yield* h.wire, ["first", "follow-up"]);
+        h.hooks.promptReturn = undefined;
+        if (releaseOldAfter === "replacement-result") {
+          yield* h.release("finish-prompt");
+          yield* h.waitFor((p) => p.runs[0]?.status === "waiting");
+          yield* h.worker.drain(12);
+          yield* h.waitFor((p) => p.runs[0]?.status === "completed");
+        }
+        yield* gate.release;
+        yield* gate.exited;
+        const after = yield* h.orchestrator.getThreadProjection(h.threadId);
+        assert.deepEqual(
+          after.messages.find((message) => message.id === old.id),
+          old,
+        );
+        assert.equal(after.runs[0]!.activeAttemptId, adopted.runs[0]!.activeAttemptId);
+        assert.equal(
+          after.runs[0]!.status,
+          releaseOldAfter === "adoption" ? "running" : "completed",
+        );
+        assert.isFalse(after.turnItems.some((item) => item.type === "error"));
+        if (releaseOldAfter === "adoption") {
+          yield* h.release("finish-prompt");
+          yield* h.waitFor((p) => p.runs[0]?.status === "waiting");
+          yield* h.worker.drain(12);
+          yield* h.waitFor((p) => p.runs[0]?.status === "completed");
+        }
+        const final = yield* h.observe(
+          "late-success-callback-kept-old-bytes-and-new-owner",
+          command,
+        );
+        assert.lengthOf(
+          final.projection.messages.filter((message) => message.id === old.id),
+          1,
+        );
+        assert.deepEqual(
+          final.projection.attempts.map((attempt) => attempt.status),
+          ["superseded", "completed"],
+        );
+      }),
+    ),
+  );
 
 it.live(
   "admits the captured Droid instance, model, modes, workspace and exact submitted input despite later defaults",
@@ -1933,8 +1966,10 @@ it.live(
           "cancel",
           ordinaryPhase.text,
         ]);
+        assert.isEmpty(restarted.subagents);
         yield* h.stop(target.id);
         yield* h.worker.drain(12);
+        assert.deepEqual(h.stoppedDelegatedTaskParents, [h.threadId]);
         yield* h.waitFor((p) => p.runs[0]?.status === "interrupted");
         yield* h.worker.drain(12);
         const stopped = yield* h.waitFor((p) =>
@@ -1982,169 +2017,169 @@ it.live(
     ),
 );
 
-for (const window of ["probe", "pre-admission"] as const)
-  it.live(
-    `invalidates an older native reservation at ${window} while retaining and then executing both FIFO payloads`,
-    () =>
-      nativeCase(`newest-${window}`, "normal", (h) => {
-        const trace = nativeSettlementTrace(h.threadId, h);
-        return Effect.gen(function* () {
-          const initial = yield* trace.at("initial-native-owner", h.start());
-          trace.admissionCommands.push(yield* h.send("fifo-1", undefined, true));
-          trace.admissionCommands.push(yield* h.send("fifo-2", undefined, true));
-          const before = yield* h.orchestrator.getThreadProjection(h.threadId);
-          const fifo = before.runs.filter((run) => run.status === "queued");
-          const fifoMessages = before.messages.filter((message) =>
-            fifo.some((run) => run.userMessageId === message.id),
-          );
-          const older = yield* h.send("older", initial.runs[0]!.id);
-          trace.admissionCommands.push(older);
-          yield* h.release("finish-run");
-          yield* trace.at(
-            "original-run-item-completed",
-            h.waitFor((p) =>
-              p.turnItems.some(
-                (item) => item.nativeItemRef?.nativeId === "run" && item.status === "completed",
-              ),
+it.live.each(
+  (["probe", "pre-admission"] as const).map((window) => ({
+    caseTitle: `invalidates an older native reservation at ${window} while retaining and then executing both FIFO payloads`,
+    window,
+  })),
+)("$caseTitle", ({ window }) =>
+  nativeCase(`newest-${window}`, "normal", (h) => {
+    const trace = nativeSettlementTrace(h.threadId, h);
+    return Effect.gen(function* () {
+      const initial = yield* trace.at("initial-native-owner", h.start());
+      trace.admissionCommands.push(yield* h.send("fifo-1", undefined, true));
+      trace.admissionCommands.push(yield* h.send("fifo-2", undefined, true));
+      const before = yield* h.orchestrator.getThreadProjection(h.threadId);
+      const fifo = before.runs.filter((run) => run.status === "queued");
+      const fifoMessages = before.messages.filter((message) =>
+        fifo.some((run) => run.userMessageId === message.id),
+      );
+      const older = yield* h.send("older", initial.runs[0]!.id);
+      trace.admissionCommands.push(older);
+      yield* h.release("finish-run");
+      yield* trace.at(
+        "original-run-item-completed",
+        h.waitFor((p) =>
+          p.turnItems.some(
+            (item) => item.nativeItemRef?.nativeId === "run" && item.status === "completed",
+          ),
+        ),
+      );
+      const gate = yield* barrier();
+      if (window === "probe") h.hooks.afterReserve = gate.park;
+      else h.hooks.beforeConsume = gate.park;
+      const execution = yield* h.worker.runOnce.pipe(Effect.forkScoped);
+      yield* trace.at("older-reservation-entered", gate.entered);
+      const newer = yield* h.send("newer", initial.runs[0]!.id);
+      trace.admissionCommands.push(newer);
+      const registered = yield* h.observe("newest-revision-invalidated-old-reservation", newer);
+      heldOwner(registered.projection, initial);
+      assert.equal(registered.projection.runs[0]!.heldDroidSteer!.revision, newer);
+      assert.deepEqual(
+        registered.projection.runs.filter((run) => run.status === "queued"),
+        fifo,
+      );
+      assert.deepEqual(
+        registered.projection.messages.filter((message) =>
+          fifoMessages.some((old) => old.id === message.id),
+        ),
+        fifoMessages,
+      );
+      h.hooks.afterReserve = undefined;
+      h.hooks.beforeConsume = undefined;
+      yield* gate.release;
+      yield* trace.at("older-reservation-returned", Fiber.join(execution));
+      yield* trace.at("newer-native-adoption", advance(h, initial, newer));
+      assert.deepEqual(yield* h.wire, ["first", "cancel", "newer"]);
+      assert.isFalse((yield* h.wire).includes("older"));
+      yield* trace.drain("obsolete-effects-drain", 24, h.worker.drain(24));
+      assert.isTrue(
+        (yield* h.outbox.listByCommandId(older)).every((effect) => effect.status === "succeeded"),
+      );
+      for (const [index, run] of fifo.entries()) {
+        yield* h.release("finish-prompt");
+        yield* trace.at(
+          `fifo-${index + 1}-predecessor-waiting`,
+          h.waitFor(
+            (p) =>
+              p.runs.find(
+                (candidate) =>
+                  candidate.id === (index === 0 ? initial.runs[0]!.id : fifo[index - 1]!.id),
+              )?.status === "waiting",
+          ),
+        );
+        yield* trace.capture(`fifo-${index + 1}-before-drain`, { protocol: h.protocol });
+        yield* trace.drain(`fifo-${index + 1}-drain`, 24, h.worker.drain(24));
+        yield* trace.capture(`fifo-${index + 1}-after-drain`, { protocol: h.protocol });
+        yield* trace.at(
+          `fifo-${index + 1}-start-committed`,
+          h.waitFor((p) =>
+            p.runs.some(
+              (candidate) =>
+                candidate.id === run.id &&
+                (candidate.status === "starting" || candidate.status === "running"),
             ),
-          );
-          const gate = yield* barrier();
-          if (window === "probe") h.hooks.afterReserve = gate.park;
-          else h.hooks.beforeConsume = gate.park;
-          const execution = yield* h.worker.runOnce.pipe(Effect.forkScoped);
-          yield* trace.at("older-reservation-entered", gate.entered);
-          const newer = yield* h.send("newer", initial.runs[0]!.id);
-          trace.admissionCommands.push(newer);
-          const registered = yield* h.observe("newest-revision-invalidated-old-reservation", newer);
-          heldOwner(registered.projection, initial);
-          assert.equal(registered.projection.runs[0]!.heldDroidSteer!.revision, newer);
-          assert.deepEqual(
-            registered.projection.runs.filter((run) => run.status === "queued"),
-            fifo,
-          );
-          assert.deepEqual(
-            registered.projection.messages.filter((message) =>
-              fifoMessages.some((old) => old.id === message.id),
-            ),
-            fifoMessages,
-          );
-          h.hooks.afterReserve = undefined;
-          h.hooks.beforeConsume = undefined;
-          yield* gate.release;
-          yield* trace.at("older-reservation-returned", Fiber.join(execution));
-          yield* trace.at("newer-native-adoption", advance(h, initial, newer));
-          assert.deepEqual(yield* h.wire, ["first", "cancel", "newer"]);
-          assert.isFalse((yield* h.wire).includes("older"));
-          yield* trace.drain("obsolete-effects-drain", 24, h.worker.drain(24));
-          assert.isTrue(
-            (yield* h.outbox.listByCommandId(older)).every(
-              (effect) => effect.status === "succeeded",
-            ),
-          );
-          for (const [index, run] of fifo.entries()) {
-            yield* h.release("finish-prompt");
-            yield* trace.at(
-              `fifo-${index + 1}-predecessor-waiting`,
-              h.waitFor(
-                (p) =>
-                  p.runs.find(
-                    (candidate) =>
-                      candidate.id === (index === 0 ? initial.runs[0]!.id : fifo[index - 1]!.id),
-                  )?.status === "waiting",
-              ),
-            );
-            yield* trace.capture(`fifo-${index + 1}-before-drain`, { protocol: h.protocol });
-            yield* trace.drain(`fifo-${index + 1}-drain`, 24, h.worker.drain(24));
-            yield* trace.capture(`fifo-${index + 1}-after-drain`, { protocol: h.protocol });
-            yield* trace.at(
-              `fifo-${index + 1}-start-committed`,
-              h.waitFor((p) =>
-                p.runs.some(
-                  (candidate) =>
-                    candidate.id === run.id &&
-                    (candidate.status === "starting" || candidate.status === "running"),
-                ),
-              ),
-            );
-            yield* trace.drain(`fifo-${index + 1}-start-drain`, 24, h.worker.drain(24));
-            yield* trace.at(
-              `fifo-${index + 1}-native-decode`,
-              h.waitDecoded(
-                (event) =>
-                  event.direction === "incoming" &&
-                  event.stage === "decoded" &&
-                  JSON.stringify(event.payload).includes(`native prompt: fifo-${index + 1}`),
-              ),
-            );
-            const current = yield* h.orchestrator.getThreadProjection(h.threadId);
-            const promoted = current.runs.find((candidate) => candidate.id === run.id)!;
-            assert.equal(promoted.userMessageId, run.userMessageId);
-            assert.deepEqual(promoted.modelSelection, run.modelSelection);
-            assert.deepEqual(
-              current.messages.find((message) => message.id === run.userMessageId),
-              fifoMessages[index],
-            );
-          }
-          assert.deepEqual(yield* h.wire, ["first", "cancel", "newer", "fifo-1", "fifo-2"]);
-          yield* h.release("finish-prompt");
-          yield* trace.at(
-            "last-fifo-waiting",
-            h.waitFor((p) => p.runs.find((run) => run.id === fifo[1]!.id)?.status === "waiting"),
-          );
-          yield* trace.drain("last-fifo-drain", 24, h.worker.drain(24));
-          yield* trace.at(
-            "all-fifo-runs-completed",
-            h.waitFor((p) => p.runs.every((run) => run.status === "completed")),
-          );
-          yield* h.observe("newest-only-and-actual-FIFO-order", newer);
-        }).pipe(Effect.onError((cause) => trace.failure(cause, { protocol: h.protocol })));
-      }),
-  );
+          ),
+        );
+        yield* trace.drain(`fifo-${index + 1}-start-drain`, 24, h.worker.drain(24));
+        yield* trace.at(
+          `fifo-${index + 1}-native-decode`,
+          h.waitDecoded(
+            (event) =>
+              event.direction === "incoming" &&
+              event.stage === "decoded" &&
+              JSON.stringify(event.payload).includes(`native prompt: fifo-${index + 1}`),
+          ),
+        );
+        const current = yield* h.orchestrator.getThreadProjection(h.threadId);
+        const promoted = current.runs.find((candidate) => candidate.id === run.id)!;
+        assert.equal(promoted.userMessageId, run.userMessageId);
+        assert.deepEqual(promoted.modelSelection, run.modelSelection);
+        assert.deepEqual(
+          current.messages.find((message) => message.id === run.userMessageId),
+          fifoMessages[index],
+        );
+      }
+      assert.deepEqual(yield* h.wire, ["first", "cancel", "newer", "fifo-1", "fifo-2"]);
+      yield* h.release("finish-prompt");
+      yield* trace.at(
+        "last-fifo-waiting",
+        h.waitFor((p) => p.runs.find((run) => run.id === fifo[1]!.id)?.status === "waiting"),
+      );
+      yield* trace.drain("last-fifo-drain", 24, h.worker.drain(24));
+      yield* trace.at(
+        "all-fifo-runs-completed",
+        h.waitFor((p) => p.runs.every((run) => run.status === "completed")),
+      );
+      yield* h.observe("newest-only-and-actual-FIFO-order", newer);
+    }).pipe(Effect.onError((cause) => trace.failure(cause, { protocol: h.protocol })));
+  }),
+);
 
-for (const window of ["cancel-write", "cancel-settled"] as const)
-  it.live(
-    `lets Stop invalidate a consumed Droid admission at ${window} without writing the replacement`,
-    () =>
-      nativeCase(`stop-${window}`, "normal", (h) =>
-        Effect.gen(function* () {
-          const initial = yield* h.start();
-          const command = yield* h.send("follow-up", initial.runs[0]!.id);
-          yield* h.release("finish-run");
-          yield* h.waitFor((p) =>
-            p.turnItems.some(
-              (item) => item.nativeItemRef?.nativeId === "run" && item.status === "completed",
-            ),
-          );
-          const gate = yield* barrier();
-          if (window === "cancel-write") h.hooks.cancel = gate.park;
-          else h.hooks.afterCancel = gate.park;
-          const execution = yield* h.worker.runOnce.pipe(Effect.forkScoped);
-          yield* gate.entered;
-          if (window === "cancel-settled")
-            yield* h.waitFor((p) => p.providerTurns[0]?.status !== "running");
-          const before = yield* h.observe("consumed-before-Stop", command);
-          heldOwner(before.projection, initial);
-          assert.equal(before.projection.runs[0]!.heldDroidSteer!.phase, "pre_admission");
-          assert.isTrue((yield* h.native(initial)).droidSteerConsumed?.() ?? false);
-          yield* h.stop(initial.runs[0]!.id);
-          h.hooks.cancel = undefined;
-          h.hooks.afterCancel = undefined;
-          yield* gate.release;
-          yield* Fiber.join(execution);
-          yield* h.worker.drain(24);
-          const final = yield* h.waitFor((p) => p.runs[0]?.status === "interrupted");
-          assert.lengthOf(final.attempts, 1);
-          assert.isUndefined(final.runs[0]!.heldDroidSteer);
-          assert.isFalse((yield* h.wire).includes("follow-up"));
-          assert.isTrue(
-            (yield* h.outbox.listByCommandId(command)).every(
-              (effect) => effect.status === "cancelled",
-            ),
-          );
-          yield* h.observe("consumed-Stop-is-single-terminal-owner", command);
-        }),
-      ),
-  );
+it.live.each(
+  (["cancel-write", "cancel-settled"] as const).map((window) => ({
+    caseTitle: `lets Stop invalidate a consumed Droid admission at ${window} without writing the replacement`,
+    window,
+  })),
+)("$caseTitle", ({ window }) =>
+  nativeCase(`stop-${window}`, "normal", (h) =>
+    Effect.gen(function* () {
+      const initial = yield* h.start();
+      const command = yield* h.send("follow-up", initial.runs[0]!.id);
+      yield* h.release("finish-run");
+      yield* h.waitFor((p) =>
+        p.turnItems.some(
+          (item) => item.nativeItemRef?.nativeId === "run" && item.status === "completed",
+        ),
+      );
+      const gate = yield* barrier();
+      if (window === "cancel-write") h.hooks.cancel = gate.park;
+      else h.hooks.afterCancel = gate.park;
+      const execution = yield* h.worker.runOnce.pipe(Effect.forkScoped);
+      yield* gate.entered;
+      if (window === "cancel-settled")
+        yield* h.waitFor((p) => p.providerTurns[0]?.status !== "running");
+      const before = yield* h.observe("consumed-before-Stop", command);
+      heldOwner(before.projection, initial);
+      assert.equal(before.projection.runs[0]!.heldDroidSteer!.phase, "pre_admission");
+      assert.isTrue((yield* h.native(initial)).droidSteerConsumed?.() ?? false);
+      yield* h.stop(initial.runs[0]!.id);
+      h.hooks.cancel = undefined;
+      h.hooks.afterCancel = undefined;
+      yield* gate.release;
+      yield* Fiber.join(execution);
+      yield* h.worker.drain(24);
+      const final = yield* h.waitFor((p) => p.runs[0]?.status === "interrupted");
+      assert.lengthOf(final.attempts, 1);
+      assert.isUndefined(final.runs[0]!.heldDroidSteer);
+      assert.isFalse((yield* h.wire).includes("follow-up"));
+      assert.isTrue(
+        (yield* h.outbox.listByCommandId(command)).every((effect) => effect.status === "cancelled"),
+      );
+      yield* h.observe("consumed-Stop-is-single-terminal-owner", command);
+    }),
+  ),
+);
 
 it.live(
   "does not retry an actual native cancel after uncertain admission and lets Stop resolve the retained owner",

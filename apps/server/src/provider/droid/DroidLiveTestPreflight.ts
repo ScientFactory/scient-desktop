@@ -22,3 +22,14 @@ export async function qualifyDroidTestBinary(binary: string | undefined): Promis
   }
   process.stdout.write(`${diagnostic}\n`);
 }
+
+/**
+ * The Factory API stub's reply. Since Droid 0.236.0 a session starts only when
+ * the API key's identity names a user and an organization, as Factory's real
+ * `/api/cli/whoami` does; every other Factory endpoint accepts an empty object.
+ */
+export function factoryFixtureBody(url: string | undefined): string {
+  return url?.startsWith("/api/cli/whoami")
+    ? '{"userId":"scient-fixture-user","orgId":"scient-fixture-org"}'
+    : "{}";
+}

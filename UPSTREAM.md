@@ -17,15 +17,47 @@ answer keeps its latest content as the end. One rule,
 `readerAtReadingEnd`, decides being at the end for the end control, sending,
 navigation, saved positions and idle end keeping: at most the answer's last three
 lines hidden, in its own line height, never less than the inherited 40-pixel band.
-Preserve the existing first-message framing. Eligible sends, and queued prompts the server delivers (`queue:` ids) while
-the reader is at the end, reveal the prompt and the start of its response's latest
-message through `chat/useBoundedAnswerFollow.ts`: capped at the prompt's first line
+Send motion (Scient): the draft hero composer's move to the thread always animates
+(260ms, decelerating curve; `useDraftHeroMotion` in `chat/timelineEntranceMotion.ts`), not only
+with the opt-in panel animation setting; reduced motion skips it. A first prompt being placed is revealed top-down
+and fades in on the same curve (clip and opacity only, never a transform, so the reveal's
+measurements hold), and the "Working for" label carries the thinking traces' live shine (ActivityShimmerOverlay)
+for as long as the turn works; its line just appears
+(`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount). While an
+answer streams it is revealed as one flow (`chat/useStreamingBlockEntrance.ts`, `.streamed-reveal`):
+after a 1s buffer, lines appear top-down at ~4 lines/s (faster when >8 lines wait), at 65%, with
+the full tone one line behind, crossing blank space between blocks 5x faster; the answer is
+clipped to its revealed lines, so the follow scroll simply goes to the real end. The live
+"Thinking" row fades out (keeping its place) while the answer right above it is appearing
+(`useStreamingTextAppearing`). Revealed height is kept per message (bounded), so remounted
+rows continue rather than replay; a caught-up reveal rests until the answer's content or width
+changes. The timeline's working state (`chat/timelineWorkingState.ts`) is held back until a
+send's prompt is listed (the optimistic row, or a newer server user message than the dispatch
+started from), and stays on while that prompt's own V2 run prepares or starts (the dispatch is
+reset at admission; V2 reports that phase as connecting).
+Preserve the existing first-message framing. One controller in ChatView owns the send follow
+(`chat/responseFollow.ts`): eligible sends, and queued prompts the server delivers while the
+reader is at the end (V2's `queued_turn`/`promoted_queued_to_steer` input intent on the
+delivered prompt, which keeps its message id), start it; it settles from the V2 run answering
+that prompt (the run its message belongs to, so a promoted steer follows the run it went into,
+not its cancelled queue run), never from the thread looking busy. A prompt's response ends at the
+next prompt. It reveals the prompt and the start of its response's latest
+message through `chat/useBoundedAnswerFollow.ts` (for a later prompt, `followResponse`
+follows the whole response's end, traces and tools included, at a calmer pace): capped at the prompt's first line
 reaching the top margin, past it only to show a message pushed below the fold, never
 past that message's top. Scrolling up by any means (wheel, keys, touch, scrollbar)
-cancels pending placement and bounded following; scrolling down, clicks and selection do not. `onIsAtEndChange` reacts to
+cancels pending placement and bounded following; scrolling down, clicks and selection do not.
+While the reader scrolls toward the end (wheel, keys, touch, scrollbar drag), the follow never
+writes the scroll position (a write cancels the browser's smooth scroll in motion); it resumes
+from rest 250ms after their input stops. `onIsAtEndChange` reacts to
 transitions only. The existing Scroll to end button is a one-shot action with an
-unread badge counting responses, not a follow toggle. Do not add a second navigation button.
-Reading positions resolve by message/turn identity, load up to two pages of missing
+unread badge counting responses, not a follow toggle, and it ends the follow. Do not add a
+second navigation button. A reader who leaves while the follow is still going (saved as
+`followingPromptId`; never inferred from resting at the end) comes back to where the follow
+would be now for that saved prompt (`chat/liveFollowOffset.ts`): its response's end if it all
+fits, else the prompt at the top margin, or its latest message's start there if it would be below
+the screen; a later prompt (from another window) never moves it further. The follow then carries
+on while that prompt's run works. Reading positions resolve by message/turn identity, load up to two pages of missing
 history before falling back to a neighbor or the end, and
 survive same-window reloads; never restore an unrelated absolute pixel offset.
 Capture native scroll positions synchronously before Legend's deferred callbacks;
@@ -113,7 +145,7 @@ backend and client review, complete passing qualification, and the isolated nati
 visual review. No protected release, cloud, telemetry, or publication boundary is
 activated.
 
-The current alignment is [Scient PR #428](https://github.com/ScientFactory/scient-desktop/pull/428),
+The preceding alignment is [Scient PR #428](https://github.com/ScientFactory/scient-desktop/pull/428),
 recorded in [the 2026-10-01 receipt](docs/internals/2026-10-01-upstream-sync-5cc99e1c23.md)
 and `upstream-state.json`. It integrates the next 20 first-parent official commits
 through `5cc99e1c23980d7995a13c47f969b47cb68ed1be` onto owned base
@@ -143,9 +175,7 @@ ThreadSanitizer regression harnesses, which compile the permissions registry and
 notification centre straight out of the installed package, catch the resulting
 races on `-[__NSDictionaryM setObject:forKey:]`. Hosted CI stays green because both
 tests are `skipIf(platform !== "darwin")`, so this is a macOS-checkout failure
-rather than a pipeline failure. The upgrade must not be treated as qualified until
-the owner chooses between restoring the locks in a patch, holding the Expo 58
-bump, or recording an explicit exception for the two checks.
+rather than a pipeline failure. This was the qualification gap at that historical boundary; the later V2 alignment below records the restored locks and passing native harnesses.
 
 The alignment after that one is recorded in
 [the 2026-10-02 receipt](docs/internals/2026-10-02-upstream-sync-54084ae1e6.md) and
@@ -161,7 +191,7 @@ parent. Its overlap with the previous alignment is zero files.
 The Android subscription widget and the iOS Live Activity that 0.6.21 listed as
 adopted were not working on 58.0.0. Mobile publication stayed held, so no public
 build carried that breakage. The `expo-modules-core` thread-safety regression
-above is untouched by this range and its two harnesses still fail locally.
+above was untouched by that range. The later V2 alignment records its qualified repair.
 
 The Orchestration V2 alignment is recorded in
 [its receipt](docs/internals/t3-upstream-sync-20261003-ca7df394ed.md) and
@@ -193,6 +223,32 @@ decodes to `false`, so the beta is opt-in. Separately, upstream's mobile update
 documentation was removed from user Help: `docs/internals/scient-mobile-release-hold.md`
 records that there is no supported Scient mobile app and prohibits presenting that
 channel as Scient distribution.
+
+The preceding qualified alignment is recorded in
+[the 2026-10-08 receipt](docs/internals/t3-upstream-sync-20261008-468ade3049.md) ([Scient PR #472](https://github.com/ScientFactory/scient-desktop/pull/472)).
+It receives 366 first-parent official commits through
+`468ade30495c450ae4e731483187f77bc3c5e42b` onto owned base
+`c8ec17b2a03ed567c5cbda21e01df158a55af55c`. Literal merge
+`e434651620b6ad9e5a9b9c610199e0820fd3268f` retains that exact official target;
+`6c51d1e2f74bac676cb033b344d8caaa75814f47` preserves the later owned-main catch-up.
+Native Effect/RPC, scopes, MCP Apps and provider metadata compose with Scient's
+policy, workspace and scientific owners. The receipt distinguishes complete local
+qualification, independent reviews, actual-app approval and hosted delivery,
+including retained publication holds and measured enforcement debt.
+
+The current qualified alignment is recorded in
+[the b24f0fbba0 receipt](docs/internals/t3-upstream-sync-20261008-b24f0fbba0.md)
+and `upstream-state.json` ([Scient PR #473](https://github.com/ScientFactory/scient-desktop/pull/473)).
+It receives all 27 subsequent first-parent official
+commits through `b24f0fbba09d8623c896081b4ff70aa7190c8fda` onto owned base
+`3498143f7221634d9dd6b38e95f84839dc4d2bfe`. Literal merge
+`71015aa7484971d7c84101b2294c88988bee2203` retains both as exact parents.
+Server responsiveness, rich composition, diff search, current-title references,
+Browser continuation and provider maintenance compose with Scient ownership.
+Snapshot indexes append as migration 064; existing migration identities, the
+Approvability guard and privacy-link withholding remain. The receipt records
+two independent source reviews, complete local qualification, actual-app visual
+evidence and the remaining hosted/platform boundaries.
 
 ## Receiving T3 updates
 
@@ -619,7 +675,7 @@ Oh My Pi's external provider and Scient Agent share a Scient-owned RPC seam.
 `apps/server/src/provider/scient` owns Scient Agent's separate product target.
 `apps/server/src/provider/Drivers/OmpDriver.ts` and `ScientAgentDriver.ts` create
 `apps/server/src/orchestration-v2/Adapters/OmpAdapterV2.ts`, which adapts native
-sessions and turns to V2. `apps/server/src/provider/Layers/OmpProvider.ts` owns
+sessions and turns to V2. `apps/server/src/provider/OmpProvider.ts` owns
 provider discovery and status; `apps/server/src/textGeneration/OmpTextGeneration.ts`
 handles separate text-generation requests. `OmpManagedRuntimeActions.ts`,
 `managedOmpRuntime.ts` and `ompManifest.ts` retain Oh My Pi's managed-runtime and
@@ -652,6 +708,9 @@ selection of submitted question-answer activities and independent file ownership
 T3's question submission path remains unchanged. Preserve the read-authorized
 `orchestration.getForkOptions` RPC and its `threadForkRecovery` capability,
 typed fork dispositions on dispatch errors, and the pre-send readiness gate.
+Running local forks skip file capture; new-worktree captures retain exact attempt/ref/OID
+ownership through rejection and restart. Checkpoint enumeration remains bounded and streamed,
+and publication transfers only new staged objects while preserving connectivity and fsync.
 Client retries retain one operation identity and draft across navigation and
 transport failures. Thread routes must wait for authoritative detail rather
 than infer deletion from an absent sidebar entry. See the
@@ -776,7 +835,8 @@ mounts through upstream reconciliation;
 Local voice dictation is isolated under `packages/scient-voice`,
 `apps/web/src/scient/voice`, and `apps/desktop/src/app/DesktopVoice.ts`. The
 inherited-host seams are limited to typed IPC/preload registration, one
-composer mount plus a positioned footer, one ready-model-only citation-comment
+composer mount plus busy-state footer layout and an icon-only provider trigger,
+one ready-model-only citation-comment
 mount, and one desktop-packaging call into `scripts/lib/scient-voice-build.ts`.
 Future T3 merges should preserve those narrow mounts rather than moving voice
 orchestration into inherited T3 components. See
@@ -829,6 +889,13 @@ mark in both web `Icons.tsx` (`PiIcon`) and mobile `ProviderIcon.tsx`, replacing
 T3's monochrome glyph. When T3 changes these spots, keep its surrounding layout and
 reapply only the marked lines.
 
+Scient's model picker gives assisted provider setup an intrinsic, scrollable body independent
+of T3's model-row content sizing. Preserve that branch when integrating picker sizing changes:
+providers with no models still need install and sign-in actions. Setup eligibility is shared by
+mouse and keyboard navigation, and returning to models reattaches list measurement. Provider
+views keep their own lifecycle policy; Scient Agent reuses its existing account view in the
+composer connection dialog. See [provider lifecycle architecture](docs/internals/provider-lifecycle.md).
+
 Scient keeps ordinary browser interaction visually quiet: `PreviewView` shows
 the control badge only during agent control. Preserve the underlying human-input
 interruption and cursor behavior. The desktop preview editing-shortcut gate also
@@ -844,15 +911,24 @@ the contract and client export points. Future T3 merges should preserve those
 narrow mounts rather than moving build coordination or toolchain discovery into
 inherited T3 components. See [Scient LaTeX build](docs/internals/scient-latex.md).
 
-Browser HTML-to-PDF export keeps rendering under
-`apps/desktop/src/scient/documentExport`, publication under
-`apps/server/src/scient/documentArtifacts`, and the browser action plus reader
-adapters under `apps/web/src/scient`. Agent-authored HTML builds add one
-Scient-owned MCP toolkit and reuse the authenticated preview-host rail only to
-reach a hidden controlled renderer and the existing generated-PDF surface.
-Inherited-host seams are limited to the verified preview-tab lease in
-`PreviewManager`, one browser-chrome action slot, typed IPC/preload and
-RPC/authorization registration, the two internal document-host operations,
+Browser HTML-to-PDF export prints the selected live tab through its physical owner:
+`apps/desktop/src/scient/documentExport` for native desktop tabs, or the environment's
+`ServerBrowser` for streamed server tabs. Publication remains under
+`apps/server/src/scient/documentArtifacts`, and browser actions and reader adapters
+remain under `apps/web/src/scient`. Preserve the exact tab, navigation and environment
+identity rather than reconstructing a URL in a different browser.
+
+Agent-authored HTML builds use a separate authenticated document rail to reach the
+hidden desktop renderer and generated-PDF surface. Its server owner is
+`apps/server/src/scient/documents/DocumentHostBroker.ts`; its mounted client consumer is
+`apps/web/src/scient/documentExport/documentHost.tsx`. The four typed document operations
+use `documents.hostConnect` and `documents.hostRespond`, with independent host assignment,
+pending requests and connection generations. Browser stickiness does not select a
+document host. Requests are consumed directly from the subscription, so React batching
+cannot drop requests before rendering.
+
+Inherited-host seams remain limited to live-tab capture/navigation delegation,
+browser-chrome actions, typed IPC/preload and RPC/authorization registration,
 source binding after an inherited file-open succeeds, one global lifecycle-host
 mount, one generated-PDF right-panel mount, and contract export points.
 Printing, readiness, controlled-request policy, exact-file observation, update
@@ -866,8 +942,8 @@ the printable document page under `apps/web/src/scient/documentPage` with its ow
 `scient-document.html` entry, and the hidden renderer under
 `apps/desktop/src/scient/documentExport`. Inherited-host seams are limited to the
 second Vite build input, two RPC and authorization registrations and their
-`ws.ts` delegations, one internal document-host operation and its host branch, one
-optional desktop-bridge method with its IPC channel, handler, and preload entry,
+`ws.ts` delegations, the separate document-host rail, one optional desktop-bridge
+method with its IPC channel, handler, and preload entry,
 and contract export points. Rendering, readiness, request policy, capture,
 validation, and publication must stay outside inherited T3 files. See
 [Scient document PDF export](docs/internals/scient-document-pdf-export.md).

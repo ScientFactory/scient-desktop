@@ -12,7 +12,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { describe, expect, vi } from "vite-plus/test";
 
-import type { ProviderRegistryShape } from "../../provider/Services/ProviderRegistry.ts";
+import type { ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
 import type { ServerSettingsService } from "../../serverSettings.ts";
 import { customModelsTestMethods } from "../../serverSettings.ts";

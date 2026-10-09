@@ -1,6 +1,7 @@
 import { memo, type MouseEventHandler, type PointerEventHandler } from "react";
 import { ChevronDownIcon, ChevronLeftIcon, PlayIcon } from "lucide-react";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
+import { formatContextWindowTokens } from "~/lib/contextWindow";
 import { cn } from "~/lib/utils";
 import { useShortcutModifierState } from "../../shortcutModifierState";
 import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
@@ -24,6 +25,7 @@ interface PendingActionState {
 
 interface ComposerPrimaryActionsProps {
   compact: boolean;
+  canOperateThread: boolean;
   pendingAction: PendingActionState | null;
   /** The turn is running: sending steers or queues instead of starting a turn. */
   isRunning: boolean;
@@ -53,6 +55,9 @@ interface ComposerPrimaryActionsProps {
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
+  /** Tokens a stale session would re-read. When set, Enter compacts first and the button says so. */
+  compactBeforeSendTokens?: number | null;
+  onSendWithFullHistory?: () => void;
 }
 
 const formatPendingPrimaryActionLabel = (input: {
@@ -84,6 +89,7 @@ const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
 
 export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   compact,
+  canOperateThread,
   pendingAction,
   isRunning,
   canInterrupt,
@@ -106,6 +112,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onPreviousPendingQuestion,
   onInterrupt,
   onImplementPlanInNewThread,
+  compactBeforeSendTokens = null,
+  onSendWithFullHistory,
 }: ComposerPrimaryActionsProps) {
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
@@ -119,7 +127,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       alternateModifier: shortcutModifiers.metaKey || shortcutModifiers.ctrlKey,
     }) === "queue";
   const alternateAction = alternateComposerDispatchAction(followUpBehavior);
-  const isSendDisabled = sendDisabledReason !== null;
+  const isSendDisabled = !canOperateThread || sendDisabledReason !== null;
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
   );
@@ -138,7 +146,10 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               "size-8 sm:size-7",
             )}
             {...pointerFocusProps}
-            onClick={onInterrupt}
+            disabled={!canOperateThread}
+            onClick={() => {
+              if (canOperateThread) onInterrupt();
+            }}
             aria-label="Stop generation"
           />
         }
@@ -184,6 +195,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           className={cn(messageActionPillClassName, "h-8 sm:h-7", compact ? "px-3" : "px-4")}
           {...pointerFocusProps}
           disabled={
+            !canOperateThread ||
             isEnvironmentUnavailable ||
             pendingAction.isResponding ||
             (pendingAction.isLastQuestion ? !pendingAction.isComplete : !pendingAction.canAdvance)
@@ -244,7 +256,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <MenuPopup align="end" side="top" {...composerFloatingLayerProps}>
             <MenuItem
               disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
-              onClick={() => void onImplementPlanInNewThread()}
+              onClick={() => {
+                if (canOperateThread) onImplementPlanInNewThread();
+              }}
             >
               Implement in a new thread
             </MenuItem>
@@ -259,8 +273,59 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   }
 
   const showResume = canResume && !hasSendableContent;
-  // Follow the captured dispatch choice while retaining MAIN's shared arrow.
-  // Extracted queue edits use ordinary submission; held queues expose Resume.
+  const sendBlocked = isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable;
+
+  if (compactBeforeSendTokens !== null && !showResume) {
+    const tokens = formatContextWindowTokens(compactBeforeSendTokens);
+    return (
+      <div data-chat-composer-compact-send="true" className="flex items-center justify-end">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="submit"
+                className={cn(
+                  messageActionPillClassName,
+                  "h-9 rounded-r-none sm:h-8",
+                  compact ? "px-3" : "px-4",
+                )}
+                {...pointerFocusProps}
+                onClick={onSubmitMessage}
+                disabled={sendBlocked || !hasSendableContent}
+              />
+            }
+          >
+            {isConnecting || isSendBusy ? "Sending..." : "Compact and send"}
+          </TooltipTrigger>
+          <TooltipPopup>Summarize {tokens} tokens of history, then send</TooltipPopup>
+        </Tooltip>
+        <Menu>
+          <MenuTrigger
+            render={
+              <button
+                type="button"
+                className={cn(
+                  messageActionPillClassName,
+                  "h-9 rounded-l-none border-l border-message-action-foreground/20 px-2 sm:h-8",
+                )}
+                aria-label="Send options"
+                {...pointerFocusProps}
+                disabled={sendBlocked || !hasSendableContent}
+              />
+            }
+          >
+            <ChevronDownIcon className="size-3.5" />
+          </MenuTrigger>
+          <MenuPopup align="end" side="top" {...composerFloatingLayerProps}>
+            <MenuItem disabled={sendBlocked} onClick={onSendWithFullHistory}>
+              Send with full history ({tokens} tokens)
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
+      </div>
+    );
+  }
+
   const submitLabel = showResume
     ? "Resume thread"
     : isRunning

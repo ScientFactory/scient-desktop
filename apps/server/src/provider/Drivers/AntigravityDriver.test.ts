@@ -32,8 +32,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
@@ -43,7 +43,7 @@ import {
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
   resolveAntigravityInstanceDirectories,
 } from "../antigravityAuthSupport.ts";
-import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
 import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
@@ -68,7 +68,7 @@ const blockedCredentialKeys = new Set([
   "GOOGLE_GENAI_USE_VERTEXAI",
 ]);
 
-it("selects legacy agy only when explicitly configured or no official ACP asset exists", () => {
+it("selects legacy agy when explicitly configured or the host has no approved ACP target", () => {
   expect(
     usesLegacyAntigravityBackend({
       binaryPath: "/opt/legacy/agy",
@@ -96,6 +96,26 @@ it("selects legacy agy only when explicitly configured or no official ACP asset 
   expect(usesLegacyAntigravityBackend({ binaryPath: "", platform: "linux", arch: "x64" })).toBe(
     false,
   );
+  expect(usesLegacyAntigravityBackend({ binaryPath: "", platform: "win32", arch: "arm64" })).toBe(
+    false,
+  );
+  expect(usesLegacyAntigravityBackend({ binaryPath: "", platform: "freebsd", arch: "x64" })).toBe(
+    true,
+  );
+  expect(
+    usesLegacyAntigravityBackend({
+      binaryPath: "C:\\legacy\\agy.exe",
+      platform: "win32",
+      arch: "arm64",
+    }),
+  ).toBe(true);
+  expect(
+    usesLegacyAntigravityBackend({
+      binaryPath: "/opt/antigravity/agy_acp_server.par",
+      platform: "freebsd",
+      arch: "x64",
+    }),
+  ).toBe(false);
 });
 
 function shellQuote(value: string): string {

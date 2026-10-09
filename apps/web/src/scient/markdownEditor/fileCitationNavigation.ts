@@ -1,6 +1,6 @@
 import type { FileCitation, ScopedThreadRef } from "@t3tools/contracts";
 import { formatFileCitationHref, parseFileCitationHref } from "@t3tools/shared/composerCitations";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 import { useEffect, useMemo, useRef } from "react";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -16,7 +16,7 @@ declare module "@tanstack/react-router" {
 
 const PREFIX = "file-citation=";
 export function fileCitationHash(citation: FileCitation): string {
-  return PREFIX + Encoding.encodeBase64Url(formatFileCitationHref(citation));
+  return PREFIX + Base64Url.encode(formatFileCitationHref(citation));
 }
 
 export function fileCitationFromLocation(href: string): FileCitation | null {
@@ -25,7 +25,7 @@ export function fileCitationFromLocation(href: string): FileCitation | null {
   if (!hash.startsWith(PREFIX) || hash.length > 330_000) return null;
   try {
     return parseFileCitationHref(
-      Result.getOrThrow(Encoding.decodeBase64UrlString(hash.slice(PREFIX.length))),
+      Result.getOrThrow(Base64Url.decodeString(hash.slice(PREFIX.length))),
     );
   } catch {
     return null;

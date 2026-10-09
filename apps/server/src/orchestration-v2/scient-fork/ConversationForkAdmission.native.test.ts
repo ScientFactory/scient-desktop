@@ -3,9 +3,11 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
+  EventId,
   MessageId,
   ProviderDriverKind,
   ThreadId,
+  TurnItemId,
   type ThreadForkCommand,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -29,7 +31,7 @@ import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
-import { makeLayer } from "../ProviderAdapterRegistry.ts";
+import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
 
@@ -217,15 +219,12 @@ it.live(
           earlier.messages.map((message) => message.text),
           ["Question 1", "Answer 1"],
         );
+        const shown = earlier.visibleTurnItems.map((row) => row.item);
         assert.ok(
-          earlier.turnItems.some(
-            (item) => item.type === "reasoning" && item.text === "Thinking about 1",
-          ),
+          shown.some((item) => item.type === "reasoning" && item.text === "Thinking about 1"),
         );
         assert.isFalse(
-          earlier.turnItems.some(
-            (item) => item.type === "reasoning" && item.text === "Thinking about 2",
-          ),
+          shown.some((item) => item.type === "reasoning" && item.text === "Thinking about 2"),
         );
         assert.equal(earlier.runs.length, 0);
         assert.equal(earlier.runtimeRequests.length, 0);
@@ -263,10 +262,13 @@ it.live(
         assert.isFalse(
           empty.contextTransfers.some((transfer) => transfer.frozenSource !== undefined),
         );
-        assert.isFalse(
-          earlier.messages.some((message) =>
-            source.messages.some((original) => original.id === message.id),
-          ),
+        // The fork shows the source's messages by reference, frozen.
+        assert.deepEqual(
+          earlier.messages.map((message) => message.id),
+          [question.id, answer.id],
+        );
+        assert.ok(
+          earlier.messages.every((message) => message.runId === null && !message.streaming),
         );
         const sourceAfter = yield* store.getThreadProjection(command.originThreadId);
         assert.deepEqual(sourceAfter.thread, source.thread);
@@ -294,9 +296,55 @@ it.live(
           commandId: CommandId.make("foreign-assistant-fixture"),
           newThreadId: ThreadId.make("foreign-assistant-source"),
         });
-        const foreign = yield* store.getThreadProjection(ThreadId.make("foreign-assistant-source"));
-        const foreignAnswer = foreign.messages.find((message) => message.role === "assistant");
+        // A fork shows the origin's answers under their own ids, so give it an
+        // answer of its own.
+        const foreignThreadId = ThreadId.make("foreign-assistant-source");
+        const templateMessage = source.messages.find((message) => message.role === "assistant");
+        const templateItem = source.turnItems.find(
+          (item) => item.type === "assistant_message" && item.messageId === templateMessage?.id,
+        );
+        assert.ok(templateMessage && templateItem?.type === "assistant_message");
+        const foreignMessageId = MessageId.make("foreign-assistant-answer");
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("foreign-assistant-item"),
+              type: "turn-item.updated",
+              threadId: foreignThreadId,
+              occurredAt: templateItem.updatedAt,
+              payload: {
+                ...templateItem,
+                id: TurnItemId.make("foreign-assistant-answer"),
+                threadId: foreignThreadId,
+                runId: null,
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1000,
+                messageId: foreignMessageId,
+              },
+            },
+            {
+              id: EventId.make("foreign-assistant-message"),
+              type: "message.updated",
+              threadId: foreignThreadId,
+              occurredAt: templateItem.updatedAt,
+              payload: {
+                ...templateMessage,
+                id: foreignMessageId,
+                threadId: foreignThreadId,
+                runId: null,
+                nodeId: null,
+              },
+            },
+          ],
+        });
+        const foreign = yield* store.getThreadProjection(foreignThreadId);
+        const foreignAnswer = foreign.messages.find((message) => message.id === foreignMessageId);
         assert.ok(foreignAnswer);
+        assert.isFalse(source.messages.some((message) => message.id === foreignAnswer.id));
         const variants = [
           { sourceAssistantMessageId: MessageId.make("missing-message") },
           { sourceAssistantMessageId: firstQuestion.id },

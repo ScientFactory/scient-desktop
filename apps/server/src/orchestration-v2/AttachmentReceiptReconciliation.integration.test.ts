@@ -1,3 +1,6 @@
+import * as RuntimeLayer from "./runtimeLayer.ts";
+import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import { ProviderDriverKind, ProviderSessionId } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -31,7 +34,7 @@ import {
   resolveAttachmentPath,
 } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
-import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlite.ts";
 import { ProjectCloneTracker } from "../project/ProjectCloneTracker.ts";
 import { claimPendingAttachments } from "./AttachmentClaims.ts";
 import {
@@ -584,4 +587,63 @@ it.live(
         );
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
+);
+
+it.live(
+  "production ingestion reconciles a generated publication reservation after its durable event",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { fs, stored, services } = yield* fixture;
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const published = yield* stored();
+            const reservation = yield* reserveAttachment(published.attachment, {
+              publication: true,
+            });
+            yield* reservation.ready({ kind: "generated-publication", threadId });
+            expect(yield* attachmentHasReservations(published.attachment.id)).toBe(true);
+            const sink = yield* EventSink.EventSinkV2;
+            yield* sink.write({ events: [event("thread.created", thread)] });
+            const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+            yield* ingestor.ingestNormalized({
+              providerSessionId: ProviderSessionId.make("generated-publication-session"),
+              providerInstanceId: instanceId,
+              threadId,
+              event: {
+                type: "turn_item.updated",
+                driver: ProviderDriverKind.make("codex"),
+                turnItem: {
+                  type: "assistant_message",
+                  id: TurnItemId.make("item:generated-publication"),
+                  threadId,
+                  runId: null,
+                  nodeId: null,
+                  providerThreadId: null,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 1,
+                  status: "completed",
+                  title: null,
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                  messageId: MessageId.make("generated-publication-message"),
+                  streaming: false,
+                  text: "Generated attachment",
+                  attachments: [published.attachment],
+                },
+              },
+            });
+            expect(yield* attachmentHasReservations(published.attachment.id)).toBe(false);
+            expect(yield* fs.readFileString(published.filename)).toBe("evidence");
+          }).pipe(
+            Effect.provide(
+              RuntimeLayer.layerProviderEventIngestorProvided.pipe(Layer.provideMerge(services)),
+            ),
+          ),
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
 );

@@ -2,6 +2,9 @@ import { ThreadId, type WorktreeSetupSnapshot } from "@t3tools/contracts";
 import {
   CheckpointRef,
   NodeId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ProviderTurnId,
   RunAttemptId,
   TurnItemId,
   RuntimeRequestId,
@@ -20,7 +23,8 @@ import {
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import type { TurnDiffSummary } from "../../types";
 import { describe, expect, it } from "vite-plus/test";
-import { MessageId, RunId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
@@ -28,12 +32,16 @@ import {
   findLatestCompletedAssistantMessageId,
   findPrecedingCompletedAssistantMessageId,
   deriveMessagesTimelineRowsWithState,
+  shouldCollapseUserMessage,
   liveWorkEntryLabel,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   resolveWorkGroupScrollIndex,
   shouldFollowWorkGroupAppend,
   shouldPreserveAssistantLineBreaks,
+  threadReadLabelPrefix,
+  threadReadTargetId,
+  threadReadTargetTitle,
   type MessagesTimelineRow,
   resolveTimelineToolPresentation,
   workEntryDisplayLabel,
@@ -359,6 +367,18 @@ describe("work entry labels", () => {
     expect(rows.some((row) => row.kind === "thinking")).toBe(false);
   });
 
+  it("uses live titles only for active thread shells", () => {
+    const shell = { title: " Review auth flow ", archivedAt: null, deletedAt: null };
+    expect(threadReadTargetTitle(shell)).toBe("Review auth flow");
+    expect(threadReadTargetTitle({ ...shell, title: "Harden session refresh" })).toBe(
+      "Harden session refresh",
+    );
+    expect(threadReadTargetTitle({ ...shell, archivedAt: "2026-10-07T12:00:00Z" })).toBeNull();
+    expect(threadReadTargetTitle({ ...shell, deletedAt: "2026-10-07T12:00:00Z" })).toBeNull();
+    expect(threadReadTargetTitle({ ...shell, title: "  " })).toBeNull();
+    expect(threadReadTargetTitle(null)).toBeNull();
+  });
+
   const entry = {
     id: "tool-1",
     createdAt: "2026-09-01T12:00:00Z",
@@ -416,6 +436,37 @@ describe("work entry labels", () => {
       label,
     );
     expect(workEntryDisplayLabel(browserEntry, undefined)).toBe(label);
+  });
+
+  it.each([
+    ["inProgress", true, "Reading thread"],
+    ["completed", false, "Read thread"],
+    ["failed", false, "Failed to read thread"],
+    ["declined", false, "Declined to read thread"],
+    ["stopped", false, "Stopped reading thread"],
+  ] as const)("names the read thread in the %s label", (toolLifecycleStatus, active, prefix) => {
+    const threadRead = {
+      ...entry,
+      itemType: "dynamic_tool" as const,
+      toolLifecycleStatus,
+      structuredPayload: {
+        type: "dynamic_tool",
+        toolName: "t3-code.t3_thread_read",
+        input: { threadId: " thread-child ", view: "activity" },
+      } as never,
+    };
+    expect(threadReadTargetId(threadRead)).toBe("thread-child");
+    expect(threadReadLabelPrefix(liveWorkEntryLabel(threadRead, undefined, active))).toBe(prefix);
+    expect(threadReadLabelPrefix(workEntryDisplayLabel(threadRead, undefined))).toBe(prefix);
+  });
+
+  it("finds no target for other tools or thread reads without one", () => {
+    const payload = (toolName: string, input: unknown) => ({
+      structuredPayload: { type: "dynamic_tool", toolName, input } as never,
+    });
+    expect(threadReadTargetId(payload("t3-code.t3_thread_wait", { threadId: "t" }))).toBeNull();
+    expect(threadReadTargetId(payload("t3-code.t3_thread_read", { threadId: "  " }))).toBeNull();
+    expect(threadReadTargetId(payload("t3-code.t3_thread_read", null))).toBeNull();
   });
 
   it("uses the active summary state for legacy tools without a lifecycle status", () => {
@@ -1085,7 +1136,7 @@ describe("deriveMessagesTimelineRows", () => {
   });
 
   it.each(["run", "message"] as const)(
-    "renders one Scient %s incoming fork boundary while retaining outgoing and inherited fork history",
+    "renders one Scient %s incoming fork boundary, inherited fork points as markers, outgoing as history",
     (sourceType) => {
       const threadId = ThreadId.make("fork-child");
       const sourceThreadId = ThreadId.make("fork-parent");
@@ -1149,11 +1200,12 @@ describe("deriveMessagesTimelineRows", () => {
         hasForkBaseline: true,
         forkBaselineAssistantMessageId: null,
       });
-      expect(rows.filter((row) => row.kind === "fork-marker")).toHaveLength(1);
-      expect(rows.filter((row) => row.kind === "event").map((row) => row.id)).toEqual([
-        "outgoing",
-        "ancestor",
+      // The inherited fork point reads like this fork's own marker, linking to its source.
+      expect(rows.filter((row) => row.kind === "fork-marker")).toEqual([
+        { kind: "fork-marker", id: "conversation-fork-marker" },
+        { kind: "fork-marker", id: "fork-marker:ancestor", originThreadId: sourceThreadId },
       ]);
+      expect(rows.filter((row) => row.kind === "event").map((row) => row.id)).toEqual(["outgoing"]);
       const unloadedBoundary = deriveMessagesTimelineRows({
         ...common,
         hasForkBaseline: true,
@@ -1162,7 +1214,6 @@ describe("deriveMessagesTimelineRows", () => {
       expect(unloadedBoundary.filter((row) => row.kind === "event").map((row) => row.id)).toEqual([
         "incoming",
         "outgoing",
-        "ancestor",
       ]);
     },
   );
@@ -1371,6 +1422,54 @@ describe("deriveMessagesTimelineRows", () => {
       summary: "Listed projects 1 time and cloned 1 repository",
       hasFailure: true,
     });
+  });
+
+  it("labels Scient Agent tool rows by the call, never by the tool's output", () => {
+    const fixture = makeStreamingTimelineFixture();
+    const source = fixture.visibleTurnItems.find((row) => row.item.type === "dynamic_tool")!;
+    const sourceItem = source.item;
+    if (sourceItem.type !== "dynamic_tool") throw new Error("Expected tool fixture");
+    const skillsOutput = '{"skills":[{"name":"html-pdf-authoring","description":"Author PDFs"}]}';
+    // Native session adapters title a tool row with its name and retain its output.
+    const tool = (
+      id: string,
+      toolName: string,
+      input: Record<string, unknown>,
+      output: string,
+    ): OrchestrationV2ProjectedTurnItem["item"] => ({
+      ...sourceItem,
+      type: "dynamic_tool",
+      id: TurnItemId.make(id),
+      status: "completed",
+      title: toolName,
+      toolName,
+      input,
+      output,
+    });
+    const items = [
+      tool("skills", "scient_skills_list", {}, skillsOutput),
+      tool("load", "scient_skill_load", { name: "html-pdf-authoring" }, "# HTML PDF authoring"),
+      tool("search", "grep", { pattern: "TODO", path: "src" }, "src/app.ts:1: TODO"),
+    ];
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: items.map((item, position) => ({
+        ...source,
+        item,
+        position,
+        sourceItemId: item.id,
+      })),
+      optimisticMessages: [],
+    });
+    const labels = entries.flatMap((entry) =>
+      entry.kind === "work" ? [workEntryDisplayLabel(entry.entry, undefined)] : [],
+    );
+    expect(labels).toEqual([
+      "Checked available skills",
+      "Used Html Pdf Authoring",
+      expect.stringContaining("TODO"),
+    ]);
+    expect(labels.join("\n")).not.toContain("src/app.ts:1");
+    expect(labels.join("\n")).not.toContain('{"skills"');
   });
 
   it.each(["waiting", "completed"] as const)(
@@ -2667,6 +2766,60 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("carries the latest thought on the live row while a later tool runs", () => {
+    type WorkEntry = Extract<
+      Parameters<typeof deriveMessagesTimelineRows>[0]["timelineEntries"][number],
+      { kind: "work" }
+    >;
+    const work = (
+      id: string,
+      at: string,
+      fields: Omit<WorkEntry["entry"], "id" | "createdAt" | "runId" | "label">,
+    ): WorkEntry => ({
+      id: `${id}-entry`,
+      kind: "work",
+      createdAt: at,
+      entry: { id, createdAt: at, runId: "turn-1" as never, label: id, ...fields },
+    });
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        work("old-thought", "2026-01-01T00:00:01Z", {
+          itemType: "reasoning",
+          detail: "First idea.",
+          tone: "thinking" as const,
+          toolLifecycleStatus: "completed" as const,
+        }),
+        work("new-thought", "2026-01-01T00:00:02Z", {
+          itemType: "reasoning",
+          detail: "Found the cause.",
+          tone: "thinking" as const,
+          toolLifecycleStatus: "completed" as const,
+        }),
+        work("running-command", "2026-01-01T00:00:03Z", {
+          command: "rg cause",
+          requestKind: "command",
+          tone: "tool" as const,
+          toolLifecycleStatus: "inProgress" as const,
+        }),
+      ],
+      latestRun: {
+        runId: "turn-1" as never,
+        status: "running",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    expect(rows.find((row) => row.kind === "work-live")).toMatchObject({
+      entry: { id: "running-command" },
+      thought: { id: "new-thought" },
+    });
+  });
+
   it("keeps an actually running tool in the shared activity row", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
@@ -2901,6 +3054,76 @@ describe("deriveMessagesTimelineRows", () => {
       "work",
       "assistant:resume-answer",
     ]);
+  });
+
+  it("keeps imported V1 turns folded once the thread's first V2 run starts", () => {
+    const at = (second: number) => `2026-01-01T00:00:${String(second).padStart(2, "0")}Z`;
+    const message = (
+      id: string,
+      role: "user" | "assistant",
+      second: number,
+      runId: string | null = null,
+    ) => ({
+      id,
+      kind: "message" as const,
+      createdAt: at(second),
+      message: {
+        id: id as never,
+        role,
+        text: id,
+        runId: runId as never,
+        createdAt: at(second),
+        updatedAt: at(second),
+        streaming: false,
+      },
+    });
+    const rows = (tail: ReadonlyArray<ReturnType<typeof message>>) =>
+      deriveMessagesTimelineRows({
+        timelineEntries: [
+          message("imported-prompt", "user", 0),
+          message("imported-update", "assistant", 4),
+          {
+            id: "imported-command",
+            kind: "work",
+            createdAt: at(5),
+            entry: {
+              id: "imported-command",
+              createdAt: at(5),
+              runId: null,
+              label: "Ran git",
+              command: "git status",
+              requestKind: "command",
+              tone: "tool" as const,
+              toolLifecycleStatus: "completed" as const,
+            },
+          },
+          message("imported-answer", "assistant", 8),
+          ...tail,
+        ],
+        latestRun: {
+          runId: "run-1" as never,
+          status: "running",
+          startedAt: at(20),
+          completedAt: null,
+        },
+        isWorking: true,
+        activeTurnStartedAt: at(20),
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      }).map((row) =>
+        row.kind === "message" ? `${row.message.role}:${row.message.id}` : row.kind,
+      );
+
+    // V2 work starts from a sent prompt, or with no new prompt (a wake or a resume).
+    expect(rows([message("new-prompt", "user", 20, "run-1")]).slice(0, 4)).toEqual([
+      "user:imported-prompt",
+      "turn-fold",
+      "assistant:imported-answer",
+      "user:new-prompt",
+    ]);
+    const withoutPrompt = rows([]);
+    expect(withoutPrompt).toContain("turn-fold");
+    expect(withoutPrompt).not.toContain("assistant:imported-update");
   });
 
   it("shows a provider-native subagent's runless tools as live work while it works", () => {
@@ -3287,8 +3510,10 @@ describe("deriveMessagesTimelineRows", () => {
   it("reuses one activity row for initial thinking and the latest tool", () => {
     const deriveRows = (
       toolLifecycleStatus: "inProgress" | "completed" | "failed" | "declined" | null,
+      expandedWorkGroupIds?: ReadonlySet<string>,
     ) =>
       deriveMessagesTimelineRows({
+        ...(expandedWorkGroupIds ? { expandedWorkGroupIds } : {}),
         timelineEntries:
           toolLifecycleStatus === null
             ? []
@@ -3336,6 +3561,19 @@ describe("deriveMessagesTimelineRows", () => {
     expect(completedActivityRow).toMatchObject({ kind: "work-live", active: true });
     expect(failedRows.some((row) => row.kind === "work-live")).toBe(false);
     expect(failedRows.at(-1)).toMatchObject({ kind: "thinking", id: "live-activity-row" });
+    const failedThinkingRow = failedRows.at(-1);
+    const failedGroupId =
+      failedThinkingRow?.kind === "thinking" ? failedThinkingRow.groupId : undefined;
+    expect(failedGroupId).toBeDefined();
+    const expandedFailedRows = deriveRows("failed", new Set([failedGroupId!]));
+    expect(expandedFailedRows.slice(-2)).toMatchObject([
+      { kind: "thinking", id: "live-activity-row", expanded: true },
+      {
+        kind: "work",
+        isExpandedToolGroup: true,
+        groupedEntries: [{ id: "latest-command" }],
+      },
+    ]);
     expect(declinedRows.find((row) => row.kind === "work-live")).toMatchObject({ active: false });
     expect(declinedRows.at(-1)).toMatchObject({ kind: "thinking", id: "live-activity-row" });
     expect(initialRows.filter((row) => row.id === "live-activity-row")).toHaveLength(1);
@@ -5805,6 +6043,22 @@ it("keeps the working header in place across worktree setup handoff", () => {
   expect(handoffRows.map((row) => row.kind)).toEqual(["message", "working", "worktree-setup"]);
   expect(handoffRows[2]).toMatchObject({ kind: "worktree-setup", embedded: false });
 
+  // A clean finish before the turn is live keeps that same layout, so the card
+  // does not jump above the header in the gap before the run starts.
+  const settledRows = deriveMessagesTimelineRows({
+    timelineEntries: [userEntry],
+    isWorking: true,
+    activeTurnStartedAt: "2026-01-01T00:00:00Z",
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+    worktreeSetup: {
+      ...snapshot,
+      phase: "done",
+      stages: [stage("setup-script", "done"), stage("agent", "done")],
+    },
+  });
+  expect(settledRows.map((row) => row.kind)).toEqual(["message", "working", "worktree-setup"]);
+
   // A script that already finished has nothing left to show once the turn is live.
   const finishedRows = deriveMessagesTimelineRows({
     timelineEntries: [userEntry],
@@ -5967,4 +6221,206 @@ describe("failed turn transcript", () => {
       });
     },
   );
+});
+
+describe("live subagents after their parent turn settles", () => {
+  const runId = RunId.make("parent-run");
+  const threadId = ThreadId.make("parent-thread");
+  const providerTurnId = ProviderTurnId.make("parent-provider-turn");
+  const at = (second: number) =>
+    DateTime.makeUnsafe(`2026-10-06T10:00:${String(second).padStart(2, "0")}Z`);
+  const base = (id: string, second: number) => ({
+    id: TurnItemId.make(id),
+    threadId,
+    runId,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: second,
+    title: null,
+    startedAt: at(second),
+    completedAt: at(second),
+    updatedAt: at(second),
+  });
+  const projected = (item: OrchestrationV2TurnItem): OrchestrationV2ProjectedTurnItem => ({
+    position: item.ordinal,
+    visibility: "local",
+    sourceThreadId: threadId,
+    sourceItemId: item.id,
+    item,
+  });
+  const child = (
+    id: string,
+    second: number,
+    status: OrchestrationV2TurnItem["status"],
+    origin: "app_owned" | "provider_native" = "app_owned",
+  ): OrchestrationV2TurnItem => ({
+    ...base(id, second),
+    status,
+    completedAt: status === "running" ? null : at(second),
+    type: "subagent",
+    subagentId: NodeId.make(id),
+    origin,
+    driver: ProviderDriverKind.make("codex"),
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    childThreadId: origin === "app_owned" ? ThreadId.make(`${id}-thread`) : null,
+    prompt: `Inspect ${id}`,
+    result: null,
+  });
+  const rowsFor = (children: ReadonlyArray<OrchestrationV2TurnItem>) =>
+    deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: (
+          [
+            {
+              ...base("user", 0),
+              status: "completed",
+              type: "user_message",
+              messageId: MessageId.make("user"),
+              createdBy: "user",
+              creationSource: "web",
+              inputIntent: "turn_start",
+              text: "Delegate the review",
+              attachments: [],
+            },
+            {
+              ...base("reasoning", 1),
+              status: "completed",
+              type: "reasoning",
+              text: "Two children can split this.",
+              streaming: false,
+            },
+            {
+              ...base("command", 2),
+              status: "completed",
+              type: "command_execution",
+              input: "pwd",
+              output: "/repo",
+              exitCode: 0,
+            },
+            ...children,
+            {
+              ...base("assistant", 8),
+              status: "completed",
+              type: "assistant_message",
+              messageId: MessageId.make("assistant"),
+              text: "Both children are running.",
+              streaming: false,
+            },
+          ] satisfies OrchestrationV2TurnItem[]
+        ).map(projected),
+        optimisticMessages: [],
+      }),
+      latestRun: {
+        runId,
+        status: "completed",
+        startedAt: DateTime.formatIso(at(0)),
+        completedAt: DateTime.formatIso(at(8)),
+      },
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+  it.each(["app_owned", "provider_native"] as const)(
+    "keeps a running %s child visible while the rest of the settled turn folds",
+    (origin) => {
+      const rows = rowsFor([child("child", 3, "running", origin)]);
+      // The reasoning and command still fold; only the live card stays out.
+      expect(rows.map((row) => row.id)).toEqual([
+        "user",
+        `turn-fold:${runId}`,
+        "child",
+        "assistant",
+      ]);
+    },
+  );
+
+  it.each(["completed", "failed"] as const)("folds a %s child with its settled turn", (status) => {
+    const rows = rowsFor([child("child", 3, status)]);
+    expect(rows.some((row) => row.id === "child")).toBe(false);
+    expect(rows.some((row) => row.kind === "turn-fold")).toBe(true);
+  });
+
+  it("keeps a launch batch visible while any member is still running", () => {
+    const rows = rowsFor([child("done", 3, "completed"), child("live", 4, "running")]);
+    expect(rows.map((row) => row.id)).toEqual(["user", `turn-fold:${runId}`, "done", "assistant"]);
+    expect(rows.find((row) => row.id === "done")).toMatchObject({
+      subagents: [{ item: { id: "done" } }, { item: { id: "live" } }],
+    });
+  });
+
+  it("keeps a running child visible when a steer supersedes its attempt", () => {
+    const attempt = {
+      id: RunAttemptId.make("superseded-attempt"),
+      runId,
+      attemptOrdinal: 1,
+      rootNodeId: NodeId.make("superseded-root"),
+      status: "superseded" as const,
+    };
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: (
+        [
+          {
+            ...base("command", 2),
+            status: "completed",
+            type: "command_execution",
+            input: "pwd",
+            output: "/repo",
+            exitCode: 0,
+          },
+          child("child", 3, "running"),
+        ] satisfies OrchestrationV2TurnItem[]
+      ).map(projected),
+      optimisticMessages: [],
+    }).map((entry) => ({ ...entry, attempt }));
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: entries,
+      latestRun: {
+        runId,
+        status: "running",
+        startedAt: DateTime.formatIso(at(0)),
+        completedAt: null,
+      },
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(rows.map((row) => row.id)).toEqual([`attempt-fold:${attempt.id}`, "child"]);
+  });
+});
+
+describe("shouldCollapseUserMessage", () => {
+  it("measures a quote chip by its label, not its encoded link", () => {
+    const quote = "A long assistant paragraph that the user quoted. ".repeat(40);
+    const citation = serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("environment"),
+      threadId: ThreadId.make("thread"),
+      messageId: MessageId.make("source"),
+      text: quote,
+      comment: "Why does this matter?",
+      start: 0,
+      end: quote.length,
+      prefix: "",
+      suffix: "",
+    });
+
+    expect(shouldCollapseUserMessage(`${citation} Can you expand on this?`)).toBe(false);
+    expect(shouldCollapseUserMessage(`${citation} ${"More text. ".repeat(60)}`)).toBe(true);
+  });
+
+  it("measures file links and context chips by their label", () => {
+    const links = Array.from(
+      { length: 8 },
+      (_, index) =>
+        `[file${index}.ts](/workspace/projects/example/packages/some/deeply/nested/directory/file${index}.ts)`,
+    );
+    const text = `Compare ${links.join(", ")} with [terminal 1](t3-context://v1/terminal/${"a".repeat(36)}).`;
+
+    expect(text.length).toBeGreaterThan(600);
+    expect(shouldCollapseUserMessage(text)).toBe(false);
+  });
 });

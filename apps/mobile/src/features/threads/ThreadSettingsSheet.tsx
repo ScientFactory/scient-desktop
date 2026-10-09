@@ -1,5 +1,6 @@
 import { ANTIGRAVITY_REASONING_CONTROL } from "@t3tools/client-runtime/antigravity-model-presentation";
 import { groupModelOptionsForDisplay, modelOptionReasoningControl } from "../../lib/modelOptions";
+import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
 import type {
   EnvironmentId,
   ModelSelection,
@@ -17,12 +18,9 @@ import {
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
-import {
-  createNativeStackNavigator,
-  type NativeStackNavigationProp,
-} from "@react-navigation/native-stack";
+import { type NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as Haptics from "expo-haptics";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import {
   createContext,
   use,
@@ -247,6 +245,7 @@ type ThreadSettingsSessionProps = {
   readonly providerInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly selectedModel: ModelSelection | null;
+  readonly reportedModelSelection?: ModelSelection | null;
   readonly onSelectModel: (option: ModelOption) => void;
   readonly optionDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   readonly onUpdateOptionSelections: (selections: ReadonlyArray<ProviderOptionSelection>) => void;
@@ -307,6 +306,8 @@ type ThreadSettingsSessionValue = {
   readonly runtimeModeChoices: ReturnType<typeof runtimeModeChoicesForSupportedModes>;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
+  readonly displayedModelSelection: ModelSelection | null;
+  readonly reportedModelSelection: ModelSelection | null;
   readonly providerExpansionOverrides: ReadonlySet<string>;
   readonly hasLegacyModels: boolean;
   readonly pendingModel: ModelOption | null;
@@ -502,6 +503,8 @@ function ThreadSettingsSessionProvider(
       runtimeModeChoices,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
       displayedDescriptors,
+      displayedModelSelection: pendingModel?.selection ?? props.selectedModel,
+      reportedModelSelection: pendingModel ? null : (props.reportedModelSelection ?? null),
       favoriteKeys,
       favoritesLoaded,
       providerExpansionOverrides,
@@ -533,6 +536,8 @@ function ThreadSettingsSessionProvider(
       isApplied,
       isDisplayed,
       props.environmentId,
+      props.selectedModel,
+      props.reportedModelSelection,
       props.providerInstanceId,
       pendingModel,
       pressModel,
@@ -774,7 +779,11 @@ function ThreadSettingsOptionsItem(props: {
               >
                 <DisclosureRow
                   label={descriptor.label}
-                  value={getProviderOptionCurrentLabel(descriptor)}
+                  value={getProviderOptionCurrentLabel(
+                    descriptor,
+                    session.displayedModelSelection,
+                    session.reportedModelSelection,
+                  )}
                   onPress={() => props.onOpenSubmenu({ kind: "descriptor", id: descriptor.id })}
                 />
               </Animated.View>
@@ -1030,7 +1039,13 @@ function ThreadSettingsChoiceContent(props: {
               id: choice.id,
               label: choice.label,
               description: undefined,
-              selected: choice.id === getProviderOptionCurrentValue(activeDescriptor),
+              selected:
+                choice.id ===
+                getProviderOptionCurrentValue(
+                  activeDescriptor,
+                  session.displayedModelSelection,
+                  session.reportedModelSelection,
+                ),
               onPress: () => {
                 void Haptics.selectionAsync();
                 session.applyOptionChange(activeDescriptor.id, choice.id);

@@ -18,8 +18,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import { ChildProcessSpawner } from "effect/process";
+import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import { makePiAdapterV2 } from "./Adapters/PiAdapterV2.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -29,9 +29,9 @@ import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
-import { makeLayerEffect } from "./ProviderAdapterRegistry.ts";
+import { layerFromAdaptersEffect as makeLayerEffect } from "./ProviderAdapterRegistry.ts";
 import {
-  makeOrchestratorV2ReplayLayerWithRegistry,
+  layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
@@ -84,14 +84,17 @@ const nativeScenario = (
           : "fixture/model",
       ...(selectionOptions === undefined ? {} : { options: selectionOptions }),
     };
-    yield* fs.writeFileString(
-      control,
-      json({
-        metadata,
-        thinkingLevel: initialLevel,
-        ...(name === "unavailable" ? { overrideLevel: "invalid-native-level" } : {}),
-      }),
-    );
+    // The peer re-reads control every 20 ms; an in-place rewrite exposes a truncated
+    // file whose JSON.parse crashes it. Publish each state with an atomic rename.
+    const writeControl = (state: unknown) =>
+      fs
+        .writeFileString(`${control}.next`, json(state))
+        .pipe(Effect.andThen(fs.rename(`${control}.next`, control)));
+    yield* writeControl({
+      metadata,
+      thinkingLevel: initialLevel,
+      ...(name === "unavailable" ? { overrideLevel: "invalid-native-level" } : {}),
+    });
     yield* fs.writeFileString(wire, "");
     yield* fs.writeFileString(
       script,
@@ -154,9 +157,11 @@ if(r.id)emit({type:'response',id:r.id,command:r.type,success:true,data});
       }).pipe(Effect.provide(outer)),
     );
     const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
-      { name: `pi-observed-${name}` },
+      // The replay policy ignores project roots; without this cwd the run (and its
+      // checkpoint capture) falls back to process.cwd(), the host repository.
+      { name: `pi-observed-${name}`, runtimePolicyOverride: { cwd } },
       registry,
-      { databaseLayer: database, serverConfigLayer: configLayer, runContinuationWorker: true },
+      { layerDatabase: database, layerServerConfig: configLayer, runContinuationWorker: true },
     );
     const result = yield* Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;
@@ -233,31 +238,25 @@ if(r.id)emit({type:'response',id:r.id,command:r.type,success:true,data});
       const firstCompleted = yield* waitFor((p) => p.runs[0]?.status === "completed");
       let completed = firstCompleted;
       if (name === "unknown-next") {
-        yield* fs.writeFileString(control, json({ metadata: unknown, overrideLevel: "high" }));
+        yield* writeControl({ metadata: unknown, overrideLevel: "high" });
         yield* send(2);
         completed = yield* waitFor(
           (p) => p.runs.length === 2 && p.runs.every((r) => r.status === "completed"),
         );
       }
       if (name.startsWith("foreign")) {
-        yield* fs.writeFileString(
-          control,
-          json({
-            metadata: known,
-            foreign: true,
-            overrideLevel: name === "foreign-invalid" ? "invalid-native-level" : "high",
-          }),
-        );
+        yield* writeControl({
+          metadata: known,
+          foreign: true,
+          overrideLevel: name === "foreign-invalid" ? "invalid-native-level" : "high",
+        });
         yield* send(2);
         completed = yield* waitFor(
           (p) => p.runs.length === 2 && p.runs.some((r) => r.status === "failed"),
         );
       }
       if (name === "adopted") {
-        yield* fs.writeFileString(
-          control,
-          json({ metadata: known, overrideLevel: "high", nativeWork: true }),
-        );
+        yield* writeControl({ metadata: known, overrideLevel: "high", nativeWork: true });
         completed = yield* waitFor(
           (p) => p.runs.length === 2 && p.runs.every((r) => r.status === "completed"),
         );
@@ -320,40 +319,48 @@ it.live(
   30000,
 );
 
-for (const [name, initial, options, expected] of [
-  ["fresh-high", "high", undefined, "high"],
-  ["inherited-off", "off", undefined, "off"],
-  ["explicit-default", "off", [{ id: "thinkingLevel", value: "default" }], "high"],
-  ["explicit-off", "high", [{ id: "thinkingLevel", value: "off" }], "off"],
-  ["explicit-high", "off", [{ id: "thinkingLevel", value: "high" }], "high"],
-] as const) {
-  it.live(
-    `records correlated ${name} native effort without inventing policy or acceptance`,
-    () =>
-      nativeScenario(name, initial, known, options).pipe(
-        Effect.map(({ completed, reopened, requests }) => {
-          assert.equal(completed.providerTurns[0]?.observedEffort, expected);
-          assert.equal(reopened.providerTurns[0]?.observedEffort, expected);
-          assert.equal(completed.providerTurns[0]?.nativeAcceptance, "accepted");
-          assert.equal(
-            completed.runs[0]?.modelSelection?.model,
-            name === "fresh-high" ? "default" : "fixture/model",
+it.live.each(
+  (
+    [
+      ["fresh-high", "high", undefined, "high"],
+      ["inherited-off", "off", undefined, "off"],
+      ["explicit-default", "off", [{ id: "thinkingLevel", value: "default" }], "high"],
+      ["explicit-off", "high", [{ id: "thinkingLevel", value: "off" }], "off"],
+      ["explicit-high", "off", [{ id: "thinkingLevel", value: "high" }], "high"],
+    ] as const
+  ).map(([name, initial, options, expected]) => ({
+    caseTitle: `records correlated ${name} native effort without inventing policy or acceptance`,
+    name,
+    initial,
+    options,
+    expected,
+  })),
+)(
+  "$caseTitle",
+  ({ name, initial, options, expected }) =>
+    nativeScenario(name, initial, known, options).pipe(
+      Effect.map(({ completed, reopened, requests }) => {
+        assert.equal(completed.providerTurns[0]?.observedEffort, expected);
+        assert.equal(reopened.providerTurns[0]?.observedEffort, expected);
+        assert.equal(completed.providerTurns[0]?.nativeAcceptance, "accepted");
+        assert.equal(
+          completed.runs[0]?.modelSelection?.model,
+          name === "fresh-high" ? "default" : "fixture/model",
+        );
+        assert.lengthOf(
+          requests.filter((r) => r.type === "prompt"),
+          1,
+        );
+        if (name === "fresh-high")
+          assert.isFalse(
+            requests.some((r) => r.type === "set_model" || r.type === "set_thinking_level"),
           );
-          assert.lengthOf(
-            requests.filter((r) => r.type === "prompt"),
-            1,
-          );
-          if (name === "fresh-high")
-            assert.isFalse(
-              requests.some((r) => r.type === "set_model" || r.type === "set_thinking_level"),
-            );
-        }),
-        Effect.scoped,
-        Effect.provide(outer),
-      ),
-    30000,
-  );
-}
+      }),
+      Effect.scoped,
+      Effect.provide(outer),
+    ),
+  30000,
+);
 it.live(
   "unknown native reasoning metadata does not expose a requested high value",
   () =>
@@ -387,27 +394,30 @@ it.live(
     ),
   30000,
 );
-for (const name of ["foreign", "foreign-invalid"]) {
-  it.live(
-    `${name} native state refuses the new root before prompt and cannot replace prior observation`,
-    () =>
-      nativeScenario(name, "off", known).pipe(
-        Effect.map(({ completed, reopened, requests }) => {
-          assert.lengthOf(completed.runs, 2);
-          assert.isTrue(completed.runs.some((r) => r.status === "failed"));
-          assert.lengthOf(
-            requests.filter((r) => r.type === "prompt"),
-            1,
-          );
-          assert.lengthOf(completed.providerTurns, 1);
-          assert.equal(reopened.providerTurns[0]?.observedEffort, "off");
-        }),
-        Effect.scoped,
-        Effect.provide(outer),
-      ),
-    30000,
-  );
-}
+it.live.each(
+  ["foreign", "foreign-invalid"].map((name) => ({
+    caseTitle: `${name} native state refuses the new root before prompt and cannot replace prior observation`,
+    name,
+  })),
+)(
+  "$caseTitle",
+  ({ name }) =>
+    nativeScenario(name, "off", known).pipe(
+      Effect.map(({ completed, reopened, requests }) => {
+        assert.lengthOf(completed.runs, 2);
+        assert.isTrue(completed.runs.some((r) => r.status === "failed"));
+        assert.lengthOf(
+          requests.filter((r) => r.type === "prompt"),
+          1,
+        );
+        assert.lengthOf(completed.providerTurns, 1);
+        assert.equal(reopened.providerTurns[0]?.observedEffort, "off");
+      }),
+      Effect.scoped,
+      Effect.provide(outer),
+    ),
+  30000,
+);
 it.live(
   "adopted native work omits later state rather than misattributing the original generation",
   () =>

@@ -129,40 +129,43 @@ describe("ProviderRuntimeSummary", () => {
     ).toBe("0.156.1");
   });
 
-  for (const distribution of ["binary", "npx", "uvx"] as const) {
-    it(`round-trips ${distribution} registry ownership without credentials or invented historical installers`, () => {
-      const installation = {
-        agentId: "example-agent",
-        distribution,
-        version: "1.2.3",
-        installRoot: `/owned/example/${distribution}`,
-        executablePath: `/owned/example/${distribution}/agent`,
-        ...(distribution === "binary"
-          ? {}
-          : {
-              installer: "/tools/package-manager",
-              packageSpec: "example@1.2.3",
-              packageVersion: "1.2.3",
-            }),
-      };
-      const decoded = decodeRuntimeSummary({
+  it.each(
+    (["binary", "npx", "uvx"] as const).map((distribution) => ({
+      caseTitle: `round-trips ${distribution} registry ownership without credentials or invented historical installers`,
+      distribution,
+    })),
+  )("$caseTitle", ({ distribution }) => {
+    const installation = {
+      agentId: "example-agent",
+      distribution,
+      version: "1.2.3",
+      installRoot: `/owned/example/${distribution}`,
+      executablePath: `/owned/example/${distribution}/agent`,
+      ...(distribution === "binary"
+        ? {}
+        : {
+            installer: "/tools/package-manager",
+            packageSpec: "example@1.2.3",
+            packageVersion: "1.2.3",
+          }),
+    };
+    const decoded = decodeRuntimeSummary({
+      ...summary,
+      source: "registry",
+      actions: ["remove"],
+      installation: { ...installation, credential: "must-not-cross-the-wire" },
+    });
+    expect(decoded.installation).toEqual(installation);
+    expect(decodeTypedRuntimeSummary(encodeRuntimeSummary(decoded))).toEqual(decoded);
+    if (distribution === "binary") expect(decoded.installation).not.toHaveProperty("installer");
+    expect(() =>
+      decodeRuntimeSummary({
         ...summary,
         source: "registry",
-        actions: ["remove"],
-        installation: { ...installation, credential: "must-not-cross-the-wire" },
-      });
-      expect(decoded.installation).toEqual(installation);
-      expect(decodeTypedRuntimeSummary(encodeRuntimeSummary(decoded))).toEqual(decoded);
-      if (distribution === "binary") expect(decoded.installation).not.toHaveProperty("installer");
-      expect(() =>
-        decodeRuntimeSummary({
-          ...summary,
-          source: "registry",
-          installation: { ...installation, installer: "" },
-        }),
-      ).toThrow();
-    });
-  }
+        installation: { ...installation, installer: "" },
+      }),
+    ).toThrow();
+  });
 
   it("decodes display-only runtime diagnostics without credential fields", () => {
     expect(

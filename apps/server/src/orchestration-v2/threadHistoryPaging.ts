@@ -185,7 +185,7 @@ function selectOlderTimelinePage(input: {
   let encodedBytes = 0;
   let userTurns = 0;
   let rawTurns = 0;
-  const turnLimit = input.items.slice(0, end).some((row) => isThreadHistoryTurnStart(row.item))
+  const turnLimit = input.items.slice(0, end).some((row) => isThreadHistoryUserTurn(row.item))
     ? policy.maxUserTurns
     : undefined;
   for (let index = end - 1; index >= 0; index -= 1) {
@@ -516,7 +516,11 @@ export function buildBoundedThreadProjection(input: {
     ...controlProjection,
     plans,
     contextHandoffs,
-    messages: messagesForBoundedProjection(controlProjection, turnItems),
+    // SCIENT-FORK: a fork's shared history shows messages its own items do not.
+    messages: messagesForBoundedProjection(controlProjection, [
+      ...turnItems,
+      ...visibleTurnItems.map((row) => row.item),
+    ]),
     turnItems,
     visibleTurnItems,
   };

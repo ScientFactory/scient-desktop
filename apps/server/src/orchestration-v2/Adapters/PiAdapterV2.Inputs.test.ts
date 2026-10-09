@@ -85,73 +85,79 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  for (const text of [
-    "/scient-status",
-    "/scient-status exact  arguments\nsecond line",
-    "/native-template",
-    "/skill:native-skill",
-    "/unknown",
-    "/scient-status\nnot-a-command",
-    "ordinary text",
-  ]) {
-    it.effect(`preserves exact native Pi prompt syntax: ${JSON.stringify(text)}`, () =>
-      Effect.gen(function* () {
-        const fake = yield* makeFakePi;
-        const { runtime, takeEvent } = yield* openRuntime(fake);
-        const providerThread = yield* runtime.ensureThread({
-          threadId: THREAD_ID,
-          modelSelection: modelSelection("default"),
-          runtimePolicy,
-        });
-        yield* startTurn(runtime, providerThread, "default", [], text);
-        assert.equal((yield* fake.takeRequest("prompt")).message, text);
-        yield* fake.emit({ type: "agent_start" });
-        yield* fake.emit({ type: "agent_settled" });
-        yield* takeEvent((event) => event.type === "turn.terminal");
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-    );
-  }
+  it.effect.each(
+    [
+      "/scient-status",
+      "/scient-status exact  arguments\nsecond line",
+      "/native-template",
+      "/skill:native-skill",
+      "/unknown",
+      "/scient-status\nnot-a-command",
+      "ordinary text",
+    ].map((text) => ({
+      caseTitle: `preserves exact native Pi prompt syntax: ${JSON.stringify(text)}`,
+      text,
+    })),
+  )("$caseTitle", ({ text }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread, "default", [], text);
+      assert.equal((yield* fake.takeRequest("prompt")).message, text);
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
 
-  for (const text of ["/compact", "/native-template"]) {
-    it.effect(`rejects native ${text} attachments before delivery and permits recovery`, () =>
-      Effect.gen(function* () {
-        const fake = yield* makeFakePi;
-        fake.queueCommands({ commands: [{ name: "native-template", source: "prompt" }] });
-        const { runtime, takeEvent } = yield* openRuntime(fake);
-        const providerThread = yield* runtime.ensureThread({
-          threadId: THREAD_ID,
-          modelSelection: modelSelection("default"),
-          runtimePolicy,
-        });
-        const result = yield* startTurn(
-          runtime,
-          providerThread,
-          "default",
-          [
-            {
-              type: "file",
-              id: "unused",
-              name: "fixture.txt",
-              mimeType: "text/plain",
-              sizeBytes: 1,
-            },
-          ],
-          text,
-        ).pipe(Effect.exit);
-        assert.equal(result._tag, "Failure");
-        assert.isFalse(
-          fake
-            .allRequests()
-            .some((request) => request.type === "prompt" || request.type === "compact"),
-        );
-        yield* startTurn(runtime, providerThread);
-        yield* fake.emit({ type: "agent_start" });
-        yield* fake.emit({ type: "agent_settled" });
-        const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
-        assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-    );
-  }
+  it.effect.each(
+    ["/compact", "/native-template"].map((text) => ({
+      caseTitle: `rejects native ${text} attachments before delivery and permits recovery`,
+      text,
+    })),
+  )("$caseTitle", ({ text }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      fake.queueCommands({ commands: [{ name: "native-template", source: "prompt" }] });
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const result = yield* startTurn(
+        runtime,
+        providerThread,
+        "default",
+        [
+          {
+            type: "file",
+            id: "unused",
+            name: "fixture.txt",
+            mimeType: "text/plain",
+            sizeBytes: 1,
+          },
+        ],
+        text,
+      ).pipe(Effect.exit);
+      assert.equal(result._tag, "Failure");
+      assert.isFalse(
+        fake
+          .allRequests()
+          .some((request) => request.type === "prompt" || request.type === "compact"),
+      );
+      yield* startTurn(runtime, providerThread);
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_settled" });
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
 
   it.effect("rejects a missing generic Pi attachment before delivery and permits recovery", () =>
     Effect.gen(function* () {

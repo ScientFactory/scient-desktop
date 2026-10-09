@@ -2,8 +2,6 @@ import type { AgentCaller, OperationCapability } from "@scientfactory/operations
 import type { SkillRelease } from "@scientfactory/scient-skills";
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
-import { PreviewAutomationUnavailableError } from "@t3tools/contracts";
 
 export type { OperationCapability } from "@scientfactory/operations";
 
@@ -48,17 +46,3 @@ export class AgentInvocationContext extends Context.Service<
   AgentInvocationContext,
   AgentInvocationScope
 >()("t3/scient/operations/AgentInvocationContext") {}
-
-export const requirePreviewCapability = Effect.fn("Scient.requirePreviewCapability")(function* () {
-  const invocation = yield* AgentInvocationContext;
-  if (!invocation.capabilities.has("preview")) {
-    return yield* new PreviewAutomationUnavailableError({
-      capability: "preview",
-      environmentId: invocation.environmentId,
-      threadId: invocation.threadId,
-      providerSessionId: invocation.providerSessionId,
-      providerInstanceId: invocation.providerInstanceId,
-    });
-  }
-  return invocation;
-});

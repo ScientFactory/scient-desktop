@@ -14,22 +14,22 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
 import * as Registry from "../ProviderAdapterRegistry.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as LegacyImporter from "../legacy/LegacyV1ThreadImporter.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "fixture" };
 const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
   { name: "historical-turn-fork" },
-  Registry.makeLayer([
+  Registry.layerFromAdapters([
     {
       instanceId,
       driver: ProviderDriverKind.make("codex"),
@@ -110,7 +110,13 @@ it.live(
         };
         const receipt = yield* forks.dispatch(command);
         const child = yield* store.getThreadProjection(command.newThreadId);
-        assert.equal(child.turnItems.length, 12);
+        const shown = child.visibleTurnItems.map((row) => row.item);
+        assert.equal(shown.length, 12);
+        assert.isTrue(
+          child.visibleTurnItems
+            .slice(0, -1)
+            .every((row) => row.visibility === "inherited" && row.item.runId === null),
+        );
         const boundary = child.visibleTurnItems.at(-1);
         assert.ok(boundary?.item.type === "fork");
         assert.equal(boundary.visibility, "local");
@@ -129,23 +135,19 @@ it.live(
           limit: 1,
         });
         assert.deepEqual(storedBoundary.items, [boundary]);
-        const roster = historicalSubagentsToRuntime(child.turnItems);
+        const roster = historicalSubagentsToRuntime(shown);
         assert.equal(roster.length, 2);
         assert.isTrue(roster.every((agent) => agent.historical === true));
         assert.isTrue(roster.every((agent) => agent.id.startsWith(`historical:${source}:`)));
         assert.equal(deriveAgentPanelModel({ agents: roster }).liveCount, 0);
         assert.isFalse(
-          child.turnItems.some(
-            (item) => item.type === "user_message" && item.text === "Excluded next turn",
-          ),
+          shown.some((item) => item.type === "user_message" && item.text === "Excluded next turn"),
         );
         assert.isTrue(
-          child.turnItems.some(
-            (item) => item.type === "reasoning" && item.text === "Trailing thought",
-          ),
+          shown.some((item) => item.type === "reasoning" && item.text === "Trailing thought"),
         );
         assert.isTrue(
-          child.turnItems.some(
+          shown.some(
             (item) =>
               item.type === "dynamic_tool" &&
               item.toolName === "read_file" &&
@@ -153,12 +155,12 @@ it.live(
           ),
         );
         assert.isTrue(
-          child.turnItems.some(
+          shown.some(
             (item) => item.type === "proposed_plan" && item.markdown === "# Trailing plan",
           ),
         );
         assert.isTrue(
-          child.turnItems.some(
+          shown.some(
             (item) =>
               item.type === "dynamic_tool" &&
               item.toolName === "historical_approval" &&
@@ -169,8 +171,7 @@ it.live(
         assert.deepEqual(child.runtimeRequests, []);
         assert.deepEqual(child.providerSessions, []);
         assert.isTrue(
-          child.turnItems.filter((item) => item.historyTurnId === TurnId.make("same-turn"))
-            .length === 10,
+          shown.filter((item) => item.historyTurnId === TurnId.make("same-turn")).length === 10,
         );
         assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
         for (const sourceUserMessageId of ["turn-start", "turn-steer"]) {
@@ -182,12 +183,14 @@ it.live(
             sourceAssistantMessageId: undefined,
             sourceUserMessageId: MessageId.make(sourceUserMessageId),
           });
-          const beforeTurn = yield* store.getThreadProjection(newThreadId);
-          assert.equal(beforeTurn.turnItems.length, 2);
-          assert.equal(beforeTurn.turnItems[0]?.type, "assistant_message");
-          if (beforeTurn.turnItems[0]?.type === "assistant_message")
-            assert.equal(beforeTurn.turnItems[0].text, "Prior answer");
-          const userBoundary = beforeTurn.turnItems[1];
+          const beforeTurn = (yield* store.getThreadProjection(newThreadId)).visibleTurnItems.map(
+            (row) => row.item,
+          );
+          assert.equal(beforeTurn.length, 2);
+          assert.equal(beforeTurn[0]?.type, "assistant_message");
+          if (beforeTurn[0]?.type === "assistant_message")
+            assert.equal(beforeTurn[0].text, "Prior answer");
+          const userBoundary = beforeTurn[1];
           assert.ok(userBoundary?.type === "fork");
           assert.deepEqual(userBoundary.source, {
             type: "message",

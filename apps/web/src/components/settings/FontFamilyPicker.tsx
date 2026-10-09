@@ -19,6 +19,7 @@ import {
   getFontPickerItems,
   getFontPickerPreviewFontFamily,
 } from "./FontFamilyPicker.logic";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 
 function supportsFontEnumeration(): boolean {
   return (
@@ -154,8 +155,8 @@ export function FontFamilyPicker({
 
   const families = useMemo(() => {
     if (enumeration.status !== "granted") return [];
-    return requireMonospace ? enumeration.families.filter(isMonospaceFamily) : enumeration.families;
-  }, [enumeration, requireMonospace]);
+    return enumeration.families;
+  }, [enumeration]);
 
   const items = useMemo(() => {
     return getFontPickerItems({ families, query, defaultFamily, defaultOptionLabel });
@@ -165,6 +166,16 @@ export function FontFamilyPicker({
 
   const handlePick = (value: string) => {
     setOpen(false);
+    if (value !== DEFAULT_FONT_VALUE && requireMonospace && !isMonospaceFamily(value)) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `"${value}" isn't monospace`,
+          description: "Code and terminal need a fixed-width font, so the current font was kept.",
+        }),
+      );
+      return;
+    }
     onSelect(getFontFamilyPreference(value));
   };
 

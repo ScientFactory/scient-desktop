@@ -66,41 +66,44 @@ async function loadBridge(result: unknown, mode = "full-access") {
 }
 
 describe("native Pi MCP result fidelity", () => {
-  for (const block of [
-    {
-      type: "resource_link",
-      uri: "file:///fixture/report.pdf",
-      name: "report.pdf",
-      description: "Synthetic report",
-    },
-    {
-      type: "resource",
-      resource: {
-        uri: "fixture://report",
-        mimeType: "text/plain",
-        text: "Synthetic resource text",
+  it.each(
+    [
+      {
+        type: "resource_link",
+        uri: "file:///fixture/report.pdf",
+        name: "report.pdf",
+        description: "Synthetic report",
       },
-    },
-    {
-      type: "resource",
-      resource: { uri: "fixture://binary", mimeType: "application/pdf", blob: "cGRm" },
-    },
-  ]) {
-    it(`exposes ${block.type} model content while retaining the complete native result`, async () => {
-      const result = { content: [block] };
-      const bridge = await loadBridge(result);
-      const actual = await bridge.execute();
-      expect(actual.details).toEqual({ server: "t3-code", tool: "scient_fixture", result });
-      expect(actual.content).toHaveLength(1);
-      const text = actual.content[0];
-      expect(text?.type).toBe("text");
-      if (text?.type !== "text") throw new Error("Resource information must reach the model");
-      expect(text.text).toContain(block.uri ?? block.resource?.uri);
-      if (block.name) expect(text.text).toContain(block.name);
-      if (block.resource?.text) expect(text.text).toContain(block.resource.text);
-      if (block.resource?.blob) expect(text.text).not.toContain(block.resource.blob);
-    });
-  }
+      {
+        type: "resource",
+        resource: {
+          uri: "fixture://report",
+          mimeType: "text/plain",
+          text: "Synthetic resource text",
+        },
+      },
+      {
+        type: "resource",
+        resource: { uri: "fixture://binary", mimeType: "application/pdf", blob: "cGRm" },
+      },
+    ].map((block) => ({
+      caseTitle: `exposes ${block.type} model content while retaining the complete native result`,
+      block,
+    })),
+  )("$caseTitle", async ({ block }) => {
+    const result = { content: [block] };
+    const bridge = await loadBridge(result);
+    const actual = await bridge.execute();
+    expect(actual.details).toEqual({ server: "t3-code", tool: "scient_fixture", result });
+    expect(actual.content).toHaveLength(1);
+    const text = actual.content[0];
+    expect(text?.type).toBe("text");
+    if (text?.type !== "text") throw new Error("Resource information must reach the model");
+    expect(text.text).toContain(block.uri ?? block.resource?.uri);
+    if (block.name) expect(text.text).toContain(block.name);
+    if (block.resource?.text) expect(text.text).toContain(block.resource.text);
+    if (block.resource?.blob) expect(text.text).not.toContain(block.resource.blob);
+  });
 
   it("keeps mixed text, images and bounded resource text without duplicating structured snapshots", async () => {
     const text = { type: "text", text: "Useful summary" };
@@ -175,31 +178,40 @@ describe("native Pi MCP result fidelity", () => {
     ]);
   });
 
-  for (const [mode, toolName, hasUI, accepted, blocked] of [
-    ["approval-required", "edit", true, false, true],
-    ["auto-accept-edits", "edit", true, false, false],
-    ["auto-accept-edits", "bash", true, false, true],
-    ["auto-accept-edits", "scient_fixture", true, true, false],
-    ["approval-required", "bash", false, true, true],
-    ["full-access", "bash", false, false, false],
-  ] as const) {
-    it(`${mode} enforces native ${toolName} permission with UI=${hasUI} and accepted=${accepted}`, async () => {
-      const bridge = await loadBridge({}, mode);
-      let confirmations = 0;
-      const decision = await bridge.hook(
-        { toolName, input: { command: "fixture" } },
-        {
-          hasUI,
-          ui: {
-            confirm: async () => {
-              confirmations++;
-              return accepted;
-            },
+  it.each(
+    (
+      [
+        ["approval-required", "edit", true, false, true],
+        ["auto-accept-edits", "edit", true, false, false],
+        ["auto-accept-edits", "bash", true, false, true],
+        ["auto-accept-edits", "scient_fixture", true, true, false],
+        ["approval-required", "bash", false, true, true],
+        ["full-access", "bash", false, false, false],
+      ] as const
+    ).map(([mode, toolName, hasUI, accepted, blocked]) => ({
+      caseTitle: `${mode} enforces native ${toolName} permission with UI=${hasUI} and accepted=${accepted}`,
+      mode,
+      toolName,
+      hasUI,
+      accepted,
+      blocked,
+    })),
+  )("$caseTitle", async ({ mode, toolName, hasUI, accepted, blocked }) => {
+    const bridge = await loadBridge({}, mode);
+    let confirmations = 0;
+    const decision = await bridge.hook(
+      { toolName, input: { command: "fixture" } },
+      {
+        hasUI,
+        ui: {
+          confirm: async () => {
+            confirmations++;
+            return accepted;
           },
         },
-      );
-      expect(decision !== undefined).toBe(blocked);
-      if (!hasUI) expect(confirmations).toBe(0);
-    });
-  }
+      },
+    );
+    expect(decision !== undefined).toBe(blocked);
+    if (!hasUI) expect(confirmations).toBe(0);
+  });
 });

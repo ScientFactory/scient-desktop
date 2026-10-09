@@ -3,7 +3,7 @@
  * opts into this guard; explicit canonical edits do not. */
 import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 import { decodeTurnItemRow } from "./projectionRowJson.ts";
 
 /** Restore a committed answer onto a completed question that arrives without it. */

@@ -2,7 +2,7 @@ import { initializeScientProject, inspectScientProject } from "@scientfactory/pr
 import { AuthOrchestrationOperateScope, EnvironmentHttpApi } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as Option from "effect/Option";
 
 import {

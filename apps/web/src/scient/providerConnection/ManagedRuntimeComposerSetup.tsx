@@ -66,6 +66,7 @@ export function ManagedRuntimeComposerSetup(props: {
   readonly icon: Icon;
   /** Next step when the runtime starts but reports no usable model. */
   readonly modelSetupHint: string;
+  readonly renderModelSetupAction?: (appearance: "setup-action" | "setup-secondary") => ReactNode;
   readonly provider: ServerProvider;
 }) {
   const [pending, setPending] = useState<Pending | null>(null);
@@ -109,11 +110,15 @@ export function ManagedRuntimeComposerSetup(props: {
   const connectModels = (appearance: "setup-action" | "setup-secondary") =>
     props.provider.probePending ? null : (
       <AssistedSetupActions>
-        <ConnectModelsButton
-          appearance={appearance}
-          environmentId={props.environmentId}
-          instanceId={props.provider.instanceId}
-        />
+        {props.renderModelSetupAction ? (
+          props.renderModelSetupAction(appearance)
+        ) : (
+          <ConnectModelsButton
+            appearance={appearance}
+            environmentId={props.environmentId}
+            instanceId={props.provider.instanceId}
+          />
+        )}
       </AssistedSetupActions>
     );
   const primaryAction = (

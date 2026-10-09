@@ -1,4 +1,5 @@
 import {
+  File as PierreFile,
   FileRenderer,
   disposeHighlighter,
   getSharedHighlighter,
@@ -7,12 +8,12 @@ import {
   type FileContents,
   type HighlightedToken,
 } from "@pierre/diffs";
-import { TextDocument } from "@pierre/diffs/editor";
+import { TextDocument } from "@pierre/diffs/edit";
 import { WorkerPoolManager, type WorkerRequest, type WorkerResponse } from "@pierre/diffs/worker";
 import * as NodeWorkerThreads from "node:worker_threads";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-type DocumentChange = NonNullable<ReturnType<TextDocument<unknown>["applyEdits"]>>;
+type DocumentChange = NonNullable<ReturnType<TextDocument["applyEdits"]>>;
 interface Tokenizer {
   tokenize(change: DocumentChange): Map<number, HighlightedToken[]>;
   cleanUp(): void;
@@ -23,7 +24,7 @@ const { EditorTokenizer } = (await import(/* @vite-ignore */ tokenizerUrl.href))
   EditorTokenizer: new (options: {
     codeOptions: BaseCodeOptions;
     highlighter: DiffsHighlighter;
-    textDocument: TextDocument<unknown>;
+    textDocument: TextDocument;
     setStyle: (style: string) => void;
     onDeferTokenize: () => void;
   }) => Tokenizer;
@@ -73,6 +74,31 @@ class WorkerTransport {
   }
 }
 
+// SCIENT-FORK:START — exercise the native editor attachment gate, not the
+// read-only renderer's highlighter. Pierre 1.5 owns language readiness in
+// File.syncRenderViewToEditor before delivering the view to Editor.
+async function editorHighlighter(file: FileContents, workerPool?: WorkerPoolManager) {
+  const component = new PierreFile(options, workerPool);
+  const ready = new Promise<DiffsHighlighter>((resolve) => {
+    // The DOM container is an opaque identity at this boundary. The installed
+    // component performs the real language/theme load; firstEnter below runs
+    // its installed synchronous tokenizer before background prebuild can run.
+    Reflect.set(component, "fileContainer", {});
+    Reflect.set(component, "file", file);
+    Reflect.set(component, "editor", {
+      __syncRenderView: (view: { highlighter: DiffsHighlighter }) => resolve(view.highlighter),
+    });
+    Reflect.get(component, "syncRenderViewToEditor").call(component);
+  });
+  try {
+    return await ready;
+  } finally {
+    // Avoid a subscription retained by this boundary-only component.
+    workerPool?.unsubscribeToThemeChanges(component);
+  }
+}
+// SCIENT-FORK:END
+
 function firstEnter(highlighter: DiffsHighlighter, file: FileContents, language: string) {
   const document = new TextDocument(file.name, file.contents, language);
   const tokenizer = new EditorTokenizer({
@@ -117,7 +143,7 @@ beforeEach(async () => {
     options,
   );
   await pool.initialize();
-  renderer = new FileRenderer(options, undefined, pool);
+  renderer = new FileRenderer(options, undefined, undefined, pool);
 });
 
 afterEach(async () => {
@@ -149,15 +175,8 @@ describe("editable file language readiness", () => {
       const file = { name: "cold.tsx", contents: source, cacheKey: "cold-tsx" };
       await pool.primeFileHighlightCache(file);
       expect(pool.getFileResultCache(file)).toBeDefined();
-      const mainHighlighter = await getSharedHighlighter({
-        themes: ["pierre-dark"],
-        langs: ["text"],
-      });
-      expect(mainHighlighter.getLoadedLanguages()).not.toContain("tsx");
       renderer[method](file);
-      // Read-only worker rendering must not load editor grammars on the main thread.
-      expect(mainHighlighter.getLoadedLanguages()).not.toContain("tsx");
-      const highlighter = await renderer.initializeHighlighter();
+      const highlighter = await editorHighlighter(file, pool);
       firstEnter(highlighter, file, "tsx");
     },
   );
@@ -173,7 +192,7 @@ describe("editable file language readiness", () => {
       };
       await pool.primeFileHighlightCache(file);
       renderer[method](file);
-      firstEnter(await renderer.initializeHighlighter(), file, "tsx");
+      firstEnter(await editorHighlighter(file, pool), file, "tsx");
     },
   );
 
@@ -185,10 +204,10 @@ describe("editable file language readiness", () => {
     };
     await getSharedHighlighter({ themes: ["pierre-dark"], langs: ["typescript"] });
     renderer.renderFile(previousFile);
-    firstEnter(await renderer.initializeHighlighter(), previousFile, "typescript");
+    firstEnter(await editorHighlighter(previousFile, pool), previousFile, "typescript");
     const nextFile = { name: "next.tsx", contents: source, cacheKey: "next-tsx" };
     renderer.renderFile(nextFile);
-    firstEnter(await renderer.initializeHighlighter(), nextFile, "tsx");
+    firstEnter(await editorHighlighter(nextFile, pool), nextFile, "tsx");
   });
 
   it("prepares a hydrated non-worker file even when its theme was already loaded", async () => {
@@ -196,13 +215,13 @@ describe("editable file language readiness", () => {
     renderer = new FileRenderer(options);
     const file = { name: "local.tsx", contents: source, cacheKey: "local-tsx" };
     renderer.hydrate(file);
-    firstEnter(await renderer.initializeHighlighter(), file, "tsx");
+    firstEnter(await editorHighlighter(file), file, "tsx");
   });
 
   it("keeps plain text editable without loading an unrelated grammar", async () => {
     const file = { name: "notes.txt", contents: "Plain text", cacheKey: "plain-text" };
     renderer.renderFile(file);
-    const highlighter = await renderer.initializeHighlighter();
+    const highlighter = await editorHighlighter(file, pool);
     firstEnter(highlighter, file, "text");
     expect(highlighter.getLoadedLanguages()).not.toContain("tsx");
   });

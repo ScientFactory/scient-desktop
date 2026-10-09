@@ -94,9 +94,12 @@ export function AssistantCitationCommentEditor({
           characters.
         </p>
       ) : null}
-      <div className="mt-2 flex items-center gap-2">
+      <div
+        data-citation-comment-footer="true"
+        className="mt-2 flex min-w-0 items-center justify-end gap-2"
+      >
         <ScientVoiceCommentControl
-          className="relative min-w-0 flex-1"
+          className={voiceBusy ? "min-w-0 flex-1" : ""}
           disabled={commentTooLong}
           environmentId={citation.environmentId}
           onBusyChange={setVoiceBusy}
@@ -107,26 +110,28 @@ export function AssistantCitationCommentEditor({
             queueMicrotask(() => textareaRef.current?.focus({ preventScroll: true }));
           }}
         />
-        {voiceBusy ? null : (
-          <div className="ml-auto flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="xs"
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={onCancel}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="xs"
-              disabled={commentTooLong}
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={submit}
-            >
-              {commentTooLong ? "Shorten comment" : submitLabel}
-            </Button>
-          </div>
-        )}
+        <div
+          className={voiceBusy ? "hidden" : "flex items-center gap-2"}
+          inert={voiceBusy || undefined}
+          aria-hidden={voiceBusy || undefined}
+        >
+          <Button
+            variant="outline"
+            size="xs"
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onCancel}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="xs"
+            disabled={commentTooLong}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={submit}
+          >
+            {commentTooLong ? "Shorten comment" : submitLabel}
+          </Button>
+        </div>
       </div>
     </div>
   );

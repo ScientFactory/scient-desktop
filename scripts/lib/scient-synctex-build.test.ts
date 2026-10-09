@@ -1,5 +1,4 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeCrypto from "node:crypto";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -20,6 +19,11 @@ describe("scient SyncTeX build adapter", () => {
       const resources = path.join(root, "resources");
       yield* fileSystem.makeDirectory(source, { recursive: true });
       const payloadFiles = ["synctex", "LICENSE.synctex", "LICENSE.zlib"];
+      const expectedHashes: Record<string, string> = {
+        synctex: "7af644f4974ee9e0de8b906a55d4d93216310131e87ca3f6067df3565fc8c5a2",
+        "LICENSE.synctex": "b8eaac6560c7cbe6f51eeddd77fca6c08feb97d06ab9c6fd58e23f993e70cd46",
+        "LICENSE.zlib": "6fcf80a11553048846b03522780d218a026a366d7f424e841786990ab2616fe0",
+      };
       for (const file of payloadFiles) {
         yield* fileSystem.writeFileString(path.join(source, file), file);
       }
@@ -32,7 +36,7 @@ describe("scient SyncTeX build adapter", () => {
           files: payloadFiles.map((file) => ({
             file,
             size: Buffer.byteLength(file),
-            sha256: NodeCrypto.createHash("sha256").update(file).digest("hex"),
+            sha256: expectedHashes[file],
           })),
         }),
       );

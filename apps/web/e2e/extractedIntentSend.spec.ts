@@ -1088,7 +1088,7 @@ test("diagnoses the public controlled-provider composer readiness before intake"
   }
 }, 180000);
 
-test("drains successful FIFO work and preserves a Stop hold through foreground completion and idle reorder", async () => {
+test("drains successful FIFO work and sends any held row after idle reorder", async () => {
   const f = await fixture();
   const sql = new NodeSqlite.DatabaseSync(NodePath.join(f.base, "userdata/statev2.sqlite"), {
     readOnly: true,

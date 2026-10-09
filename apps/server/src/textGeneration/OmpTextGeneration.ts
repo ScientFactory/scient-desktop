@@ -14,7 +14,7 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import type { OmpRpcNotification } from "effect-omp-rpc/client";
 import { OmpRpcProtocolError, type OmpRpcError } from "effect-omp-rpc/errors";
@@ -26,7 +26,7 @@ import {
   type OmpRpcProcess,
   type OmpRpcProcessOptions,
 } from "../provider/omp/OmpRpcProcess.ts";
-import type { OmpLaunchSettings } from "../provider/Layers/OmpProvider.ts";
+import type { OmpLaunchSettings } from "../provider/OmpProvider.ts";
 import type { OmpTarget } from "../provider/omp/OmpTarget.ts";
 import type * as Scope from "effect/Scope";
 import {
@@ -354,14 +354,13 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
       ),
     ).pipe(
       Effect.timeout(Duration.millis(timeoutMs)),
-      Effect.catchTag(
-        "TimeoutError",
-        () =>
+      Effect.catchTags({
+        TimeoutError: () =>
           new TextGenerationError({
             operation: input.operation,
             detail: `${target.name} text generation timed out.`,
           }),
-      ),
+      }),
     );
 
   return {

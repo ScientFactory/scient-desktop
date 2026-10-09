@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 
 const testLayer = EffectOutbox.layer.pipe(Layer.provide(SqlitePersistenceMemory));

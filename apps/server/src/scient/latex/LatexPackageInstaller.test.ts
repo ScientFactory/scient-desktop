@@ -15,7 +15,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as ProcessRunner from "../../processRunner.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";

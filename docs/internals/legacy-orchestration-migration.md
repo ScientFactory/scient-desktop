@@ -22,6 +22,15 @@ still streaming becomes an interrupted turn item.
 Scient's `LegacyScientHistory` also preserves reasoning and system messages, activities and tool
 facts, submitted user-input answers, historical approvals, and proposed plans as inert V2 history.
 `LegacyV1ThreadImporter` hydrates this history, including repair of already-imported threads.
+
+V1 stored one tool call as many work-log rows (started, one per progress report, completed); V2
+keeps one item per call. The import folds a call's rows into one item at the place of its first
+row, without losing content: the last row wins and any field it lacks, at the top level or inside
+`data`, comes from the newest earlier row (`toolLifecycle.ts` in `@scientfactory/conversation`).
+The item shows how the call ended: completed, failed, or interrupted when it never completed.
+Context-meter and "Checkpoint captured" rows are dropped; V2 reads neither. On real conversations
+this imports 18 to 36 times fewer items. A thread an earlier build already imported row by row
+keeps that shape, so a later repair never leaves its items without positions.
 Historical approvals and callbacks do not acquire active requests or execution authority; plans
 remain inspectable historical facts. The importer does not restore live provider session identity,
 native provider runs, or checkpoint/diff execution state.

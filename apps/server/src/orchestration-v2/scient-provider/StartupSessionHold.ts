@@ -10,7 +10,7 @@ import type { ProviderAdapterV2SessionRuntime } from "../ProviderAdapter.ts";
 type IdleEntry = {
   readonly runtime: ProviderAdapterV2SessionRuntime;
   readonly idleGeneration: number;
-  readonly busyCount: number;
+  readonly busyTurns: ReadonlySet<string>;
   readonly idleFiber: Fiber.Fiber<void, never> | null;
   readonly lastActivityAtMs: number;
 };
@@ -93,7 +93,7 @@ export const makeStartupSessionReservations = <Entry extends IdleEntry>(deps: {
         if (
           entry?.runtime !== suppressed.runtime ||
           entry.idleGeneration !== suppressed.generation ||
-          entry.busyCount > 0 ||
+          entry.busyTurns.size > 0 ||
           deps.isReleasing(entry.runtime)
         )
           return [undefined, current] as const;
@@ -119,7 +119,7 @@ export const makeStartupSessionReservations = <Entry extends IdleEntry>(deps: {
           entry?.runtime !== suppressed.runtime ||
           entry.idleGeneration !== generation ||
           entry.idleFiber !== null ||
-          entry.busyCount > 0
+          entry.busyTurns.size > 0
         )
           return [false, current] as const;
         const updated = new Map(current);

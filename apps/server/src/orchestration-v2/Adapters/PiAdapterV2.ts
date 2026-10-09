@@ -65,7 +65,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   allocateFreshPiSessionFile,
@@ -76,6 +76,7 @@ import { randomUuidV4 } from "../RandomUuid.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
 import * as ServerConfig from "../../config.ts";
+import { mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   expandPiSkillReference,
@@ -1155,7 +1156,10 @@ export function makePiAdapterV2(
         if (toolName === "edit" || toolName === "write") {
           const fileName = recordString(args, "path") ?? recordString(args, "file_path");
           if (fileName !== undefined) {
-            const diffStr = recordString(recordField(resultRecord, "details"), "diff");
+            const diffStr =
+              recordString(recordField(resultRecord, "details"), "patch") ??
+              recordString(recordField(resultRecord, "details"), "diff") ??
+              (isError && outputText.trim().length > 0 ? outputText : undefined);
             const oldStr = recordString(args, "oldText");
             const newStr = recordString(args, "newText") ?? recordString(args, "content");
             yield* emit({
@@ -1182,6 +1186,7 @@ export function makePiAdapterV2(
             ...shared,
             title: toolName,
             type: "dynamic_tool",
+            ...mcpToolPresentation({ toolName }),
             toolName,
             input: args ?? {},
             ...(outputText.length > 0 ? { output: outputText } : {}),
@@ -3328,8 +3333,9 @@ export function makePiAdapterV2(
             }
             // Pi fork replaces the session file, including for rollback. Persist
             // its new identity before any later request can fail or restart.
+            // An interrupted read leaves the identity just as unknown as a failed one.
             const forkState = yield* request({ type: "get_state" }).pipe(
-              Effect.tapError(() =>
+              Effect.onError(() =>
                 Effect.sync(() => {
                   threadState = null;
                 }),

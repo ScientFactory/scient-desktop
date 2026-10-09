@@ -6,13 +6,15 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Tracer from "effect/Tracer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as EventStore from "../EventStore.ts";
 import * as EventSink from "../EventSink.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as LegacyV1ThreadImporter from "./LegacyV1ThreadImporter.ts";
+import { projectWorkLog } from "@scientfactory/conversation";
+import { conversationSnapshotProjection } from "../../scient/conversationExport/conversationSnapshotProjection.ts";
 
 const stores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
   Layer.provideMerge(SqlitePersistenceMemory),
@@ -119,69 +121,67 @@ const seedCodexCitation = Effect.gen(function* () {
       '{"itemType":"web_search","citationSources":[{"id":"turn3view1","url":"https://wrong.example.com/","title":"Other turn"}]}', 9, '2026-01-07T07:00:00.000Z')`;
 });
 
-for (const completed of [false, true]) {
-  it.effect(
-    `renders retained Codex citations for ${completed ? "old completed" : "new"} imports and preserves V2 replay`,
-    () =>
-      Effect.gen(function* () {
-        yield* seed;
-        yield* seedCodexCitation;
-        const sql = yield* SqlClient.SqlClient;
-        const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-        const projections = yield* ProjectionStore.ProjectionStoreV2;
-        yield* migration.reconcileShells;
-        const sink = yield* EventSink.EventSinkV2;
-        const preview = (yield* projections.getThreadProjection(THREAD)).turnItems.find(
-          (row) => row.type === "assistant_message",
-        );
-        if (preview?.type !== "assistant_message") return assert.fail("Expected shell assistant");
-        yield* sink.write({
-          events: [
-            {
-              id: EventId.make("citation-existing-title-edit"),
-              type: "turn-item.updated",
-              threadId: THREAD,
-              occurredAt: preview.updatedAt,
-              payload: { ...preview, title: "Existing V2 presentation" },
-            },
-          ],
-        });
-        if (completed)
-          yield* sql`UPDATE orchestration_v2_legacy_imports
+it.effect.each(
+  [false, true].map((completed) => ({
+    caseTitle: `renders retained Codex citations for ${completed ? "old completed" : "new"} imports and preserves V2 replay`,
+    completed,
+  })),
+)("$caseTitle", ({ completed }) =>
+  Effect.gen(function* () {
+    yield* seed;
+    yield* seedCodexCitation;
+    const sql = yield* SqlClient.SqlClient;
+    const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    yield* migration.reconcileShells;
+    const sink = yield* EventSink.EventSinkV2;
+    const preview = (yield* projections.getThreadProjection(THREAD)).turnItems.find(
+      (row) => row.type === "assistant_message",
+    );
+    if (preview?.type !== "assistant_message") return assert.fail("Expected shell assistant");
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("citation-existing-title-edit"),
+          type: "turn-item.updated",
+          threadId: THREAD,
+          occurredAt: preview.updatedAt,
+          payload: { ...preview, title: "Existing V2 presentation" },
+        },
+      ],
+    });
+    if (completed)
+      yield* sql`UPDATE orchestration_v2_legacy_imports
         SET transcript_imported_at = '2026-02-01T00:00:00.000Z' WHERE thread_id = ${THREAD}`;
-        const original =
-          yield* sql`SELECT * FROM projection_thread_messages WHERE thread_id = ${THREAD} ORDER BY message_id`;
-        yield* migration.ensureTranscript(THREAD);
-        const projection = yield* projections.getThreadProjection(THREAD);
-        const message = projection.messages.find((row) => row.id === "answer");
-        const item = projection.turnItems.find((row) => row.type === "assistant_message");
-        assert.equal(
-          message?.text,
-          'Recommendation [1](<https://example.com/guideline> "Guideline")',
-        );
-        if (item?.type !== "assistant_message") return assert.fail("Expected historical assistant");
-        assert.equal(item.text, message?.text);
-        assert.equal(item.title, "Existing V2 presentation");
-        assert.equal(item.runId, null);
-        assert.equal(item.nativeItemRef, null);
-        assert.deepEqual(projection.runtimeRequests, []);
-        assert.deepEqual(projection.providerSessions, []);
-        assert.deepEqual(
-          yield* sql`SELECT * FROM projection_thread_messages WHERE thread_id = ${THREAD} ORDER BY message_id`,
-          original,
-        );
-        const sequence = yield* (yield* EventStore.EventStoreV2).latestSequence();
-        yield* Effect.gen(function* () {
-          yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
-        }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)));
-        assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
-        yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
-        const replayed = yield* projections.getThreadProjection(THREAD);
-        assert.deepEqual(replayed.messages, projection.messages);
-        assert.deepEqual(replayed.turnItems, projection.turnItems);
-      }).pipe(Effect.provide(TestLayer)),
-  );
-}
+    const original =
+      yield* sql`SELECT * FROM projection_thread_messages WHERE thread_id = ${THREAD} ORDER BY message_id`;
+    yield* migration.ensureTranscript(THREAD);
+    const projection = yield* projections.getThreadProjection(THREAD);
+    const message = projection.messages.find((row) => row.id === "answer");
+    const item = projection.turnItems.find((row) => row.type === "assistant_message");
+    assert.equal(message?.text, 'Recommendation [1](<https://example.com/guideline> "Guideline")');
+    if (item?.type !== "assistant_message") return assert.fail("Expected historical assistant");
+    assert.equal(item.text, message?.text);
+    assert.equal(item.title, "Existing V2 presentation");
+    assert.equal(item.runId, null);
+    assert.equal(item.nativeItemRef, null);
+    assert.deepEqual(projection.runtimeRequests, []);
+    assert.deepEqual(projection.providerSessions, []);
+    assert.deepEqual(
+      yield* sql`SELECT * FROM projection_thread_messages WHERE thread_id = ${THREAD} ORDER BY message_id`,
+      original,
+    );
+    const sequence = yield* (yield* EventStore.EventStoreV2).latestSequence();
+    yield* Effect.gen(function* () {
+      yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
+    }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)));
+    assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
+    yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+    const replayed = yield* projections.getThreadProjection(THREAD);
+    assert.deepEqual(replayed.messages, projection.messages);
+    assert.deepEqual(replayed.turnItems, projection.turnItems);
+  }).pipe(Effect.provide(TestLayer)),
+);
 
 it.live("retains V2 message and item edits racing a completed Codex citation repair", () =>
   Effect.gen(function* () {
@@ -1322,4 +1322,380 @@ it.live(
         edited,
       );
     }).pipe(Effect.provide(TestLayer), Effect.timeout("10 seconds")),
+);
+
+const command = (status: string, data: Record<string, unknown>) =>
+  JSON.stringify({
+    itemType: "command_execution",
+    toolCallId: "call-1",
+    status,
+    title: "Ran command",
+    data,
+  });
+const seedToolLifecycles = Effect.gen(function* () {
+  yield* seed;
+  const sql = yield* SqlClient.SqlClient;
+  // Real V1 shapes: started and progress rows carry the command, the completed
+  // row does not repeat every field; progress rows also report the icon.
+  const rows: ReadonlyArray<readonly [string, string, string, string, string]> = [
+    [
+      "c1-start",
+      "tool.started",
+      "Ran command started",
+      command("inProgress", { command: "ls" }),
+      "2026-01-03T01:00:00.000Z",
+    ],
+    [
+      "c1-u1",
+      "tool.updated",
+      "Ran command",
+      command("inProgress", { item: { output: "a" } }),
+      "2026-01-03T01:00:01.000Z",
+    ],
+    [
+      "meter",
+      "context-window.updated",
+      "Context window updated",
+      '{"usedTokens":10}',
+      "2026-01-03T01:00:01.500Z",
+    ],
+    [
+      "c1-u2",
+      "tool.updated",
+      "Ran command",
+      JSON.stringify({
+        itemType: "command_execution",
+        toolCallId: "call-1",
+        status: "inProgress",
+        toolIcon: "terminal",
+        data: { item: { output: "ab" } },
+      }),
+      "2026-01-03T01:00:02.000Z",
+    ],
+    [
+      "c1-done",
+      "tool.completed",
+      "Ran command",
+      command("completed", { toolName: "bash", rawOutput: "ab" }),
+      "2026-01-03T01:00:03.000Z",
+    ],
+    ["checkpoint", "checkpoint.captured", "Checkpoint captured", "{}", "2026-01-03T01:00:04.000Z"],
+    [
+      "c1-again",
+      "tool.completed",
+      "Ran command",
+      command("failed", { command: "ls missing" }),
+      "2026-01-03T01:00:05.000Z",
+    ],
+    [
+      "c2-start",
+      "tool.started",
+      "Edited file started",
+      JSON.stringify({ itemType: "file_change", toolCallId: "call-2", status: "inProgress" }),
+      "2026-01-03T01:00:06.000Z",
+    ],
+    [
+      "c3-failing",
+      "tool.updated",
+      "Searched",
+      JSON.stringify({ itemType: "web_search", toolCallId: "call-3", status: "failed" }),
+      "2026-01-03T01:00:07.000Z",
+    ],
+    [
+      "task",
+      "task.progress",
+      "Working",
+      '{"taskId":"task-1","summary":"Working"}',
+      "2026-01-03T01:00:08.000Z",
+    ],
+    // A completion that does not repeat the status its progress rows reported.
+    [
+      "c4-start",
+      "tool.started",
+      "Read file started",
+      JSON.stringify({ itemType: "file_read", toolCallId: "call-4", status: "inProgress" }),
+      "2026-01-03T01:00:09.000Z",
+    ],
+    [
+      "c4-done",
+      "tool.completed",
+      "Read file",
+      JSON.stringify({ itemType: "file_read", toolCallId: "call-4" }),
+      "2026-01-03T01:00:10.000Z",
+    ],
+  ];
+  for (const [id, kind, summary, payload, createdAt] of rows) {
+    yield* sql`INSERT INTO projection_thread_activities (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at)
+      VALUES (${id}, ${THREAD}, 'tool-turn', 'tool', ${kind}, ${summary}, ${payload}, NULL, ${createdAt})`;
+  }
+});
+const activityItem = (id: string) => TurnItemId.make(`migration:v1:history:activity:${id}`);
+
+it.effect("imports one item per tool call with its full content and true outcome", () =>
+  Effect.gen(function* () {
+    yield* seedToolLifecycles;
+    const sql = yield* SqlClient.SqlClient;
+    const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    yield* migration.reconcileShells;
+    yield* migration.ensureTranscript(THREAD);
+    const projection = yield* projections.getThreadProjection(THREAD);
+    const tools = projection.turnItems.filter(
+      (item) =>
+        item.type === "dynamic_tool" && item.id.startsWith("migration:v1:history:activity:"),
+    );
+    // Telemetry is gone; each call is one item placed where it started.
+    assert.deepEqual(
+      tools.map((item) => item.id),
+      [
+        activityItem("c1-start"),
+        activityItem("c1-again"),
+        activityItem("c2-start"),
+        activityItem("c3-failing"),
+        activityItem("task"),
+        activityItem("c4-start"),
+        activityItem("tool-call"),
+      ],
+    );
+    const call = tools.find((item) => item.id === activityItem("c1-start"));
+    assert.ok(call?.type === "dynamic_tool");
+    assert.equal(call.status, "completed");
+    assert.equal(call.title, "Ran command");
+    assert.equal(call.toolName, "tool.completed");
+    assert.equal(DateTime.formatIso(call.startedAt!), "2026-01-03T01:00:00.000Z");
+    assert.equal(DateTime.formatIso(call.completedAt!), "2026-01-03T01:00:03.000Z");
+    const input = call.input as { activityId: string; kind: string; payload: unknown };
+    assert.equal(input.activityId, "c1-start");
+    assert.equal(input.kind, "tool.completed");
+    assert.deepEqual(input.payload, {
+      itemType: "command_execution",
+      toolCallId: "call-1",
+      status: "completed",
+      title: "Ran command",
+      toolIcon: "terminal",
+      data: { toolName: "bash", rawOutput: "ab", item: { output: "ab" }, command: "ls" },
+    });
+    const status = (id: string) => tools.find((item) => item.id === activityItem(id))?.status;
+    assert.equal(status("c1-again"), "failed");
+    assert.equal(status("c2-start"), "interrupted");
+    assert.equal(status("c3-failing"), "failed");
+    assert.equal(status("task"), "completed");
+    assert.equal(status("c4-start"), "completed");
+    // Export reports the outcome, not a progress status the completion did not repeat.
+    const exported = projectWorkLog(
+      conversationSnapshotProjection(projection, null).activities,
+    ).entries.flatMap((entry) => (entry._tag === "tool" ? [[entry.id, entry.status]] : []));
+    // Each folded call is one export entry, with its outcome, even when a
+    // later call reuses its id or the call never got past starting.
+    assert.deepEqual(
+      exported.filter(([id]) => typeof id === "string" && /c\d-/.test(id)),
+      [
+        [activityItem("c1-start"), "completed"],
+        [activityItem("c1-again"), "failed"],
+        [activityItem("c2-start"), "stopped"],
+        [activityItem("c3-failing"), "failed"],
+        [activityItem("c4-start"), "completed"],
+      ],
+    );
+    // Every item has its own position, in order, with no gaps left by folded rows.
+    const positions = yield* sql<{ turn_item_id: string; ordinal: number }>`
+      SELECT turn_item_id, ordinal FROM orchestration_v2_turn_item_positions
+      WHERE thread_id = ${THREAD} ORDER BY ordinal`;
+    const itemIds = new Set(projection.turnItems.map((item) => item.id));
+    assert.isTrue(
+      positions.every((position) => itemIds.has(TurnItemId.make(position.turn_item_id))),
+    );
+    assert.deepEqual(
+      positions.map((position) => position.ordinal),
+      positions.map((_, index) => index + 1),
+    );
+    // Importing again changes nothing; a rebuild from the event log matches.
+    const sequence = yield* (yield* EventStore.EventStoreV2).latestSequence();
+    yield* Effect.gen(function* () {
+      yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
+    }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)));
+    assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
+    yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+    assert.deepEqual(
+      (yield* projections.getThreadProjection(THREAD)).turnItems,
+      projection.turnItems,
+    );
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("keeps a thread an earlier build imported row by row in that shape", () =>
+  Effect.gen(function* () {
+    yield* seedToolLifecycles;
+    const sql = yield* SqlClient.SqlClient;
+    const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    yield* migration.reconcileShells;
+    yield* migration.ensureTranscript(THREAD);
+    // Model the earlier build's result: a progress row imported as its own item.
+    const call = (yield* projections.getThreadProjection(THREAD)).turnItems.find(
+      (item) => item.id === activityItem("c1-start"),
+    );
+    assert.ok(call);
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(activityItem("c1-u1")),
+          type: "turn-item.updated",
+          threadId: THREAD,
+          occurredAt: call.updatedAt,
+          payload: { ...call, id: activityItem("c1-u1") },
+        },
+      ],
+    });
+    yield* sql`UPDATE orchestration_v2_legacy_imports SET history_repair_version = 1 WHERE thread_id = ${THREAD}`;
+    // A later repair must not leave that item without a position.
+    yield* Effect.gen(function* () {
+      yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
+    }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)));
+    const items = (yield* projections.getThreadProjection(THREAD)).turnItems;
+    const positioned = new Set(
+      (yield* sql<{ turn_item_id: string }>`
+        SELECT turn_item_id FROM orchestration_v2_turn_item_positions WHERE thread_id = ${THREAD}`).map(
+        (row) => row.turn_item_id,
+      ),
+    );
+    assert.isTrue(items.every((item) => positioned.has(item.id)));
+    yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+    const repaired = yield* projections.getThreadProjection(THREAD);
+    assert.equal(repaired.turnItems.length, items.length);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("exports the recorded outcome of tool rows that were not folded", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    const sql = yield* SqlClient.SqlClient;
+    const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    // A failed completion without a call id is imported as it is.
+    yield* sql`UPDATE projection_thread_activities
+      SET payload_json = '{"itemType":"command_execution","status":"failed"}'
+      WHERE activity_id = 'tool-call'`;
+    yield* migration.reconcileShells;
+    yield* migration.ensureTranscript(THREAD);
+    const projection = yield* projections.getThreadProjection(THREAD);
+    const exported = projectWorkLog(
+      conversationSnapshotProjection(projection, null).activities,
+    ).entries.flatMap((entry) => (entry._tag === "tool" ? [[entry.id, entry.status]] : []));
+    assert.deepEqual(
+      exported.filter(([id]) => id === activityItem("tool-call")),
+      [[activityItem("tool-call"), "failed"]],
+    );
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("keeps a call an earlier build imported only partly in its row-by-row shape", () =>
+  Effect.gen(function* () {
+    yield* seedToolLifecycles;
+    const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    yield* migration.reconcileShells;
+    // An earlier build imported the call's started row, then stopped.
+    const startedAt = DateTime.makeUnsafe("2026-01-03T01:00:00.000Z");
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(activityItem("c1-start")),
+          type: "turn-item.updated",
+          threadId: THREAD,
+          occurredAt: startedAt,
+          payload: {
+            id: activityItem("c1-start"),
+            threadId: THREAD,
+            runId: null,
+            historyTurnId: TurnId.make("tool-turn"),
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "completed",
+            startedAt,
+            completedAt: startedAt,
+            updatedAt: startedAt,
+            type: "dynamic_tool",
+            title: "Ran command started",
+            toolName: "tool.started",
+            input: { activityId: "c1-start", kind: "tool.started" },
+          },
+        },
+      ],
+    });
+    yield* migration.ensureTranscript(THREAD);
+    const ids = new Set(
+      (yield* projections.getThreadProjection(THREAD)).turnItems.map((item) => item.id),
+    );
+    // The rest of the call is imported row by row, so nothing is lost.
+    for (const id of ["c1-u1", "c1-u2", "c1-done", "c1-again"])
+      assert.isTrue(ids.has(activityItem(id)), id);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("keeps a partly imported call whose rows share one kind in its row-by-row shape", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    const sql = yield* SqlClient.SqlClient;
+    const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    for (const [id, output, createdAt] of [
+      ["p1", "a", "2026-01-03T02:00:00.000Z"],
+      ["p2", "ab", "2026-01-03T02:00:01.000Z"],
+    ] as const) {
+      const payload = JSON.stringify({
+        itemType: "command_execution",
+        toolCallId: "call-p",
+        status: "inProgress",
+        data: { item: { output } },
+      });
+      yield* sql`INSERT INTO projection_thread_activities (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at)
+        VALUES (${id}, ${THREAD}, 'tool-turn', 'tool', 'tool.updated', 'Ran command', ${payload}, NULL, ${createdAt})`;
+    }
+    yield* migration.reconcileShells;
+    // An earlier build imported the first progress row, then stopped.
+    const at = DateTime.makeUnsafe("2026-01-03T02:00:00.000Z");
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(activityItem("p1")),
+          type: "turn-item.updated",
+          threadId: THREAD,
+          occurredAt: at,
+          payload: {
+            id: activityItem("p1"),
+            threadId: THREAD,
+            runId: null,
+            historyTurnId: TurnId.make("tool-turn"),
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "completed",
+            startedAt: at,
+            completedAt: at,
+            updatedAt: at,
+            type: "dynamic_tool",
+            title: "Ran command",
+            toolName: "tool.updated",
+            input: { activityId: "p1", kind: "tool.updated" },
+          },
+        },
+      ],
+    });
+    yield* migration.ensureTranscript(THREAD);
+    const ids = new Set(
+      (yield* projections.getThreadProjection(THREAD)).turnItems.map((item) => item.id),
+    );
+    assert.isTrue(ids.has(activityItem("p2")));
+  }).pipe(Effect.provide(TestLayer)),
 );

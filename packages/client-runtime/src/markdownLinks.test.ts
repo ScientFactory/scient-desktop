@@ -3,12 +3,36 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   fileBasename,
   inlineCodeFilePathCandidate,
+  isMarkdownFileLinkLabel,
   parseFileUrlHref,
   parseMarkdownFileLink,
   splitFilePathPosition,
   workspaceRelativeFilePath,
   collapseAbsoluteFilePath,
 } from "./markdownLinks.ts";
+
+describe("isMarkdownFileLinkLabel", () => {
+  it.each([
+    ["validates the input", "/repo/src/example.ts:12", false],
+    ["read src/example.ts", "/repo/src/example.ts:12", false],
+    ["example.ts?why this matters", "/repo/src/example.ts", false],
+    ["example.ts", "/repo/src/example.ts:12", true],
+    ["example.ts:12", "/repo/src/example.ts:12", true],
+    ["example.ts:99", "/repo/src/example.ts:12", false],
+    ["example.ts:12:2", "/repo/src/example.ts:12:2", true],
+    ["example.ts:12:3", "/repo/src/example.ts:12:2", false],
+    ["example.ts:12", "/repo/src/example.ts", false],
+    ["src/example.ts:12", "/repo/src/example.ts:12", true],
+    ["./src/example.ts", "/repo/src/example.ts", true],
+    ["/repo/src/example.ts", "/repo/src/example.ts", true],
+    ["src/", "/home/me/project/src/", true],
+    ["EXAMPLE.TS", "C:/repo/src/example.ts:12", true],
+    ["file name.ts", "file:///repo/file%20name.ts", true],
+    ["", "/repo/src/example.ts", true],
+  ])("classifies %s for %s", (label, href, expected) => {
+    expect(isMarkdownFileLinkLabel(label, href)).toBe(expected);
+  });
+});
 
 describe("inlineCodeFilePathCandidate", () => {
   it.each([
@@ -18,6 +42,9 @@ describe("inlineCodeFilePathCandidate", () => {
     ["conf.d/nginx.conf", "conf.d/nginx.conf"],
     ["script.pl:10", "script.pl:10"],
     ["node.meta", null],
+    ["src/**/*.ts", null],
+    ["docs/Report(draft).md", null],
+    ["docs/סיכום.md", null],
     ["Recorded evidence here: /tmp/image.png", null],
     ["origin/main", null],
     ["127.0.0.1:3000", null],
@@ -101,6 +128,14 @@ describe("parseMarkdownFileLink", () => {
     ["apps/mobile/src/index.ts:10", "apps/mobile/src/index.ts"],
     ["docs/My%20Folder/checklist.xml", "docs/My Folder/checklist.xml"],
     ["Updated%20cutover%20checklist.md", "Updated cutover checklist.md"],
+    ["LTC - Cystic Fibrosis - new (readable).md", "LTC - Cystic Fibrosis - new (readable).md"],
+    ["Report%20%28readable%29.md", "Report (readable).md"],
+    ["סיכום.md", "סיכום.md"],
+    ["Résumé & results.md", "Résumé & results.md"],
+    ["🧪 Study [final].md", "🧪 Study [final].md"],
+    ["Folder (draft)/סיכום [final].md:12:3", "Folder (draft)/סיכום [final].md"],
+    ["Report%23one%3Ftwo.md#L12", "Report#one?two.md"],
+    ["Report%2528draft%2529.md", "Report%28draft%29.md"],
     ["./scripts/deploy", "./scripts/deploy"],
     ["~/notes/today.md", "~/notes/today.md"],
     ["AGENTS.md", "AGENTS.md"],
@@ -117,6 +152,11 @@ describe("parseMarkdownFileLink", () => {
     "https://example.com/docs",
     "mailto:someone@example.com",
     "javascript:alert(1)",
+    "sandbox:/mnt/data/Report%20(readable).md",
+    "scient://app/סיכום.md",
+    "Report%00.md",
+    "Report%09draft.md",
+    "Folder/Report%0Adraft.md",
     "/chat/settings",
     "/chat/settings#L3",
     "/app#L1",

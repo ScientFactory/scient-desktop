@@ -125,8 +125,9 @@ async function loadRequestHook(): Promise<RequestHook> {
 }
 
 describe("Pi upstream output-budget workaround", () => {
-  for (const key of ["max_tokens", "max_completion_tokens"]) {
-    it(`caps ${key} without changing the conversation or tools`, async () => {
+  it.each(["max_tokens", "max_completion_tokens"])(
+    "caps %s without changing the conversation or tools",
+    async (key) => {
       const hook = await loadRequestHook();
       const payload = {
         model: "moonshotai/kimi-k2.6",
@@ -140,8 +141,8 @@ describe("Pi upstream output-budget workaround", () => {
       assert.strictEqual(result?.tools, payload.tools);
       assert.equal(result?.model, payload.model);
       assert.equal(payload[key], 231_969);
-    });
-  }
+    },
+  );
 
   it("preserves smaller budgets and other providers' payloads", async () => {
     const hook = await loadRequestHook();
@@ -155,25 +156,28 @@ describe("Pi upstream output-budget workaround", () => {
 });
 
 describe("loaded native Pi serialized request guard", () => {
-  for (const key of ["max_tokens", "max_completion_tokens", "max_output_tokens"] as const) {
-    it(`bounds ${key} from final instructions and tools without deleting input`, async () => {
-      const h = await loadContextGuard();
-      const payload = {
-        messages: [{ role: "tool", content: "completed-action-receipt" }],
-        tools: [{ description: "t".repeat(90_000) }],
-        system: "s".repeat(90_000),
-        [key]: 65_536,
-      };
-      const result = h.request(payload);
-      const budget = decodeBudget(result)[key];
-      assert.isNumber(budget);
-      assert.isBelow(budget ?? Infinity, 35_000);
-      assert.strictEqual(Reflect.get(Object(result), "messages"), payload.messages);
-      assert.strictEqual(Reflect.get(Object(result), "tools"), payload.tools);
-      assert.equal(payload[key], 65_536);
-      assert.lengthOf(h.compactions, 0);
-    });
-  }
+  it.each(
+    (["max_tokens", "max_completion_tokens", "max_output_tokens"] as const).map((key) => ({
+      caseTitle: `bounds ${key} from final instructions and tools without deleting input`,
+      key,
+    })),
+  )("$caseTitle", async ({ key }) => {
+    const h = await loadContextGuard();
+    const payload = {
+      messages: [{ role: "tool", content: "completed-action-receipt" }],
+      tools: [{ description: "t".repeat(90_000) }],
+      system: "s".repeat(90_000),
+      [key]: 65_536,
+    };
+    const result = h.request(payload);
+    const budget = decodeBudget(result)[key];
+    assert.isNumber(budget);
+    assert.isBelow(budget ?? Infinity, 35_000);
+    assert.strictEqual(Reflect.get(Object(result), "messages"), payload.messages);
+    assert.strictEqual(Reflect.get(Object(result), "tools"), payload.tools);
+    assert.equal(payload[key], 65_536);
+    assert.lengthOf(h.compactions, 0);
+  });
 
   it("accounts for images and keeps Anthropic thinking inside output", async () => {
     const h = await loadContextGuard();
@@ -300,45 +304,48 @@ describe("loaded native Pi serialized request guard", () => {
 });
 
 describe("native Pi Scient awareness channel", () => {
-  for (const mcpAvailable of [false, true]) {
-    it(`appends exact awareness through before_agent_start with MCP ${mcpAvailable}`, async () => {
-      type Hook = (event: { systemPrompt: string }) => { systemPrompt: string };
-      const handlers = new Map<string, Hook>();
-      const capabilities = mcpAvailable
-        ? new Set(["documents:build", "compute:inventory", "skills:read"] as const)
-        : undefined;
-      const env: Record<string, string> = {
-        SCIENT_PI_AWARENESS: buildScientAwareness(capabilities),
-        ...(mcpAvailable
-          ? { T3_MCP_URL: "http://127.0.0.1:43123/mcp", T3_MCP_BEARER_TOKEN: "synthetic-token" }
-          : {}),
-      };
-      const source = NodeModule.stripTypeScriptTypes(
-        PI_T3_MCP_EXTENSION_SOURCE.replace('import { Type } from "typebox";', "").replace(
-          "export default async function",
-          "async function",
-        ),
-      );
-      await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
-        process: { env },
-        pi: {
-          on: (name: string, handler: Hook) => handlers.set(name, handler),
-          registerCommand: () => undefined,
-        },
-      });
-      const hook = handlers.get("before_agent_start");
-      assert.isDefined(hook);
-      if (!hook) throw new Error("Missing native system prompt hook");
-      const prompt = hook({ systemPrompt: "Native model instructions" }).systemPrompt;
-      assert.include(prompt, `Native model instructions\n\n${buildScientAwareness(capabilities)}`);
-      assert.equal(prompt.includes("scient_pdf_build"), mcpAvailable);
-      assert.equal(prompt.includes("scient_skill_load"), mcpAvailable);
-      assert.notInclude(prompt, "preview_status");
-      assert.notInclude(prompt, "device_list");
-      assert.notInclude(prompt, "synthetic-token");
-      assert.isUndefined(env.SCIENT_PI_AWARENESS);
-      assert.isTrue(handlers.has("tool_call"));
-      if (!mcpAvailable) assert.notInclude(prompt, "delegate_task");
+  it.each(
+    [false, true].map((mcpAvailable) => ({
+      caseTitle: `appends exact awareness through before_agent_start with MCP ${mcpAvailable}`,
+      mcpAvailable,
+    })),
+  )("$caseTitle", async ({ mcpAvailable }) => {
+    type Hook = (event: { systemPrompt: string }) => { systemPrompt: string };
+    const handlers = new Map<string, Hook>();
+    const capabilities = mcpAvailable
+      ? new Set(["documents:build", "compute:inventory", "skills:read"] as const)
+      : undefined;
+    const env: Record<string, string> = {
+      SCIENT_PI_AWARENESS: buildScientAwareness(capabilities),
+      ...(mcpAvailable
+        ? { T3_MCP_URL: "http://127.0.0.1:43123/mcp", T3_MCP_BEARER_TOKEN: "synthetic-token" }
+        : {}),
+    };
+    const source = NodeModule.stripTypeScriptTypes(
+      PI_T3_MCP_EXTENSION_SOURCE.replace('import { Type } from "typebox";', "").replace(
+        "export default async function",
+        "async function",
+      ),
+    );
+    await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
+      process: { env },
+      pi: {
+        on: (name: string, handler: Hook) => handlers.set(name, handler),
+        registerCommand: () => undefined,
+      },
     });
-  }
+    const hook = handlers.get("before_agent_start");
+    assert.isDefined(hook);
+    if (!hook) throw new Error("Missing native system prompt hook");
+    const prompt = hook({ systemPrompt: "Native model instructions" }).systemPrompt;
+    assert.include(prompt, `Native model instructions\n\n${buildScientAwareness(capabilities)}`);
+    assert.equal(prompt.includes("scient_pdf_build"), mcpAvailable);
+    assert.equal(prompt.includes("scient_skill_load"), mcpAvailable);
+    assert.notInclude(prompt, "preview_status");
+    assert.notInclude(prompt, "device_list");
+    assert.notInclude(prompt, "synthetic-token");
+    assert.isUndefined(env.SCIENT_PI_AWARENESS);
+    assert.isTrue(handlers.has("tool_call"));
+    if (!mcpAvailable) assert.notInclude(prompt, "delegate_task");
+  });
 });

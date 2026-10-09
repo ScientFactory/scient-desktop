@@ -202,7 +202,7 @@ it.each([false, true])(
     });
     const buttons = [...document.querySelectorAll("button")];
     expect(buttons.some((button) => button.textContent === "Forking…")).toBe(true);
-    const close = buttons.find((button) => button.textContent === "Close")!;
+    const close = buttons.find((button) => button.textContent === "Cancel")!;
     expect(close.disabled).toBe(false);
     await act(() => close.click());
     await vi.waitFor(async () => {

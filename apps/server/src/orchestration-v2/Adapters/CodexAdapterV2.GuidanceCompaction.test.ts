@@ -10,8 +10,8 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import { HttpServer } from "effect/unstable/http";
-import * as NetAddress from "effect/unstable/net/NetAddress";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { buildCodexDeveloperInstructions } from "../../provider/CodexDeveloperInstructions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
@@ -183,8 +183,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           const scope = yield* registry.resolve(
             issued.config.authorizationHeader.replace(/^Bearer\s+/, ""),
           );
-          assert.equal(scope?.threadId, harness.threadId);
-          assert.equal(scope?.providerInstanceId, modelSelection.instanceId);
+          assert.equal(scope?.thread.threadId, harness.threadId);
+          assert.equal(scope?.thread.providerInstanceId, modelSelection.instanceId);
           assert.deepEqual(scope?.capabilities, capabilities);
           McpProviderSession.setMcpProviderSession(issued.config);
           yield* Effect.addFinalizer(() =>

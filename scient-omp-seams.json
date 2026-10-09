@@ -20,7 +20,7 @@
     "apps/server/scripts/qualifyScientAgentManagedRuntime.ts",
     "apps/server/src/provider/Drivers/OmpDriver.ts",
     "apps/server/src/provider/Drivers/ScientAgentDriver.ts",
-    "apps/server/src/provider/Layers/OmpProvider.ts",
+    "apps/server/src/provider/OmpProvider.ts",
     "apps/server/src/scient/providerLifecycle/OmpManagedRuntimeActions.ts",
     "apps/server/src/scient/providerLifecycle/QualifiedRpcManagedRuntime.ts",
     "apps/server/src/scient/providerLifecycle/ScientAgentConnectionActions.ts",
@@ -170,7 +170,7 @@
     },
     {
       "path": "apps/server/src/mcp/McpHttpServer.ts",
-      "anchor": "export const McpTransportLive",
+      "anchor": "export const layerMcpTransport",
       "purpose": "Let Oh My Pi's Scient tool tests serve the authenticated MCP transport with a subset of toolkits."
     },
     {

@@ -119,6 +119,86 @@ describe("validateScientReleaseNotesCatalog", () => {
     expect(validateScientReleaseNotesCatalog(SCIENT_RELEASE_NOTES)).toEqual([]);
   });
 
+  it("allows the approved expanded note only at its exact release version", () => {
+    const note = SCIENT_RELEASE_NOTES[0];
+    expect(note.version).toBe("0.6.22");
+    expect(note.highlights).toHaveLength(9);
+    expect(note.highlights.slice(0, 4).map(({ title }) => title)).toEqual([
+      "Meet Scient Agent",
+      "Switch agents in the same conversation",
+      "Schedule recurring tasks",
+      "Discover and connect more AI agents",
+    ]);
+    expect(note.highlights[0].description.split("\n\n")).toHaveLength(2);
+    expect(validateScientReleaseNotesCatalog([note])).toEqual([]);
+    for (const version of ["0.6.21", "0.6.23", "0.6.22-rc.1"]) {
+      const issues = validateScientReleaseNotesCatalog([{ ...note, version }]);
+      expect(issues).toContain("release[0].highlights must contain no more than seven items.");
+      expect(issues).toContain(
+        "release[0] must contain no more than 1600 characters of visible copy.",
+      );
+    }
+  });
+
+  it("keeps the extended release bounded at field and highlight limits", () => {
+    const note = {
+      ...paragraphRelease("0.6.22"),
+      headline: "H".repeat(80),
+      alsoIncluded: "A".repeat(400),
+      highlights: [
+        { id: "first", title: "T".repeat(72), description: "D".repeat(500) },
+        ...Array.from({ length: 8 }, (_, index) => ({
+          id: `extra-${index}`,
+          title: "T",
+          description: "D",
+        })),
+      ] as ScientReleaseNote["highlights"],
+    };
+    expect(validateScientReleaseNotesCatalog([note])).toEqual([]);
+    expect(
+      validateScientReleaseNotesCatalog([
+        {
+          ...note,
+          headline: `${note.headline}H`,
+          alsoIncluded: `${note.alsoIncluded}A`,
+          highlights: [
+            { id: "first", title: "T".repeat(73), description: "D".repeat(501) },
+            ...note.highlights.slice(1),
+            { id: "tenth", title: "T", description: "D" },
+          ] as ScientReleaseNote["highlights"],
+        },
+      ]),
+    ).toEqual([
+      "release[0].headline must contain no more than 80 characters.",
+      "release[0].alsoIncluded must contain no more than 400 characters.",
+      "release[0].highlights must contain no more than 9 items.",
+      "release[0].highlights[0].title must contain no more than 72 characters.",
+      "release[0].highlights[0].description must contain no more than 500 characters.",
+    ]);
+  });
+
+  it("accepts exactly 4000 characters for the exception and rejects 4001", () => {
+    const note = {
+      ...paragraphRelease("0.6.22"),
+      headline: "H",
+      alsoIncluded: "A".repeat(400),
+      highlights: Array.from({ length: 9 }, (_, index) => ({
+        id: `highlight-${index}`,
+        title: "T",
+        description: "D".repeat(index === 8 ? 377 : 400),
+      })) as unknown as ScientReleaseNote["highlights"],
+    };
+    expect(validateScientReleaseNotesCatalog([note])).toEqual([]);
+    expect(
+      validateScientReleaseNotesCatalog([
+        {
+          ...note,
+          headline: "HH",
+        },
+      ]),
+    ).toEqual(["release[0] must contain no more than 4000 characters of visible copy."]);
+  });
+
   it("rejects duplicate versions, invalid dates, empty copy, and duplicate highlight ids", () => {
     const first = release("2.4.0", "2030-02-30");
     const invalid = {

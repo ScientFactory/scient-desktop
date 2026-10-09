@@ -2,8 +2,8 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Migrator from "effect/unstable/sql/Migrator";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as Migrator from "effect/sql/Migrator";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "./Migrations.ts";
 import PullRequestFilesViewed from "./Migrations/056_PullRequestFilesViewed.ts";
@@ -44,6 +44,10 @@ describe("V2 preview upgrade", () => {
         [57, "ProjectionThreadsAutoSettleDisabledAt"],
         [58, "ProjectionThreadSections"],
         [60, "RemoveRedundantProjectionIndexes"],
+        [61, "ScheduledTaskWebhooks"],
+        [62, "WebhookRelayDeliveries"],
+        [63, "McpAppModelContext"],
+        [64, "ThreadSnapshotWindowIndexes"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -69,8 +73,9 @@ describe("V2 preview upgrade", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  for (const withIndexes of [false, true]) {
-    it.effect(`upgrades preview migration 54 with index cleanup ${withIndexes}`, () =>
+  it.effect.each([false, true])(
+    "upgrades preview migration 54 with index cleanup %s",
+    (withIndexes) =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         yield* runMigrations({ toMigrationInclusive: 52 });
@@ -98,8 +103,7 @@ describe("V2 preview upgrade", () => {
         }>`PRAGMA table_info(projection_threads)`;
         assert.ok(columns.some((column) => column.name === "auto_settle_disabled_at"));
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
-    );
-  }
+  );
 
   it.effect("rolls back schema and ledger together on failure and can retry", () =>
     Effect.gen(function* () {
@@ -142,6 +146,10 @@ describe("V2 preview upgrade", () => {
         [57, "ProjectionThreadsAutoSettleDisabledAt"],
         [58, "ProjectionThreadSections"],
         [60, "RemoveRedundantProjectionIndexes"],
+        [61, "ScheduledTaskWebhooks"],
+        [62, "WebhookRelayDeliveries"],
+        [63, "McpAppModelContext"],
+        [64, "ThreadSnapshotWindowIndexes"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

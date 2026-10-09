@@ -22,7 +22,7 @@ import {
   ProviderRegistry,
   ProviderRegistryRefreshError,
   type ProviderRegistryShape,
-} from "../../provider/Services/ProviderRegistry.ts";
+} from "../../provider/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../../provider/providerMaintenance.ts";
 import type {
   ProviderConnectionActions,

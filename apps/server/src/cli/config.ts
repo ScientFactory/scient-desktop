@@ -18,11 +18,13 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { Argument, Flag } from "effect/unstable/cli";
+import { Argument, Flag } from "effect/cli";
+import * as CliError from "effect/cli/CliError";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
+import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 const modeFlag = Flag.Literals("mode", ServerConfig.RuntimeMode.literals).pipe(
@@ -267,6 +269,7 @@ export const resolveServerConfig = (
   options?: {
     readonly startupPresentation?: ServerConfig.StartupPresentation;
     readonly forceAutoBootstrapProjectFromCwd?: boolean;
+    readonly rejectRunningServer?: boolean;
   },
 ) =>
   Effect.gen(function* () {
@@ -347,7 +350,9 @@ export const resolveServerConfig = (
         resolveOptionPrecedence(
           explicitBaseDir,
           // The inherited bootstrap field is private IPC, but it still carries
-          // a T3-owned state path. Ignore it in Scient so a direct
+          // SCIENT-FORK:START — Scient-facing copy.
+          // a Scient-owned state path. Ignore it in Scient so a direct
+          // SCIENT-FORK:END
           // server launch cannot be redirected into legacy state.
           SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled
             ? Option.none()
@@ -357,7 +362,6 @@ export const resolveServerConfig = (
     );
     const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
     const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
-    yield* fs.makeDirectory(cwd, { recursive: true });
     const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
       developmentScratchRoot:
         devUrl !== undefined && env.scientNextSafetyEnvelope
@@ -374,6 +378,19 @@ export const resolveServerConfig = (
         (Option.isSome(explicitBaseDir) &&
           !(SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled && Option.isSome(scientEnvBaseDir))),
     });
+    // An interactive CLI must not start over a discovered server. Lifetime locking
+    // and supervisor handoff are separate; this preflight cannot arbitrate two starts.
+    if (options?.rejectRunningServer && mode === "web") {
+      const runtime = yield* readPersistedServerRuntimeState(derivedPaths.serverRuntimeStatePath);
+      if (Option.isSome(runtime) && runtime.value.pid > 0 && isProcessAlive(runtime.value.pid)) {
+        return yield* new CliError.UserError({
+          // SCIENT-FORK:START — Scient-facing copy.
+          cause: `A Scient server is already running for ${baseDir} (pid ${runtime.value.pid}, ${runtime.value.origin}). Connect to that server, stop it before starting another, or use a different --base-dir.`,
+          // SCIENT-FORK:END
+        });
+      }
+    }
+    yield* fs.makeDirectory(cwd, { recursive: true });
     yield* ServerConfig.ensureServerDirectories(derivedPaths);
     const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
       derivedPaths.settingsPath,
@@ -392,8 +409,11 @@ export const resolveServerConfig = (
       () => mode === "desktop",
     );
     const desktopBootstrapToken = bootstrap?.desktopBootstrapToken;
+    const desktopBootstrapSecret = bootstrap?.desktopBootstrapSecret;
     const desktopTelemetryFd = bootstrap?.desktopTelemetryFd;
     const desktopTelemetryControlFd = bootstrap?.desktopTelemetryControlFd;
+    const desktopBrowserFd = bootstrap?.desktopBrowserFd;
+    const desktopBrowserControlFd = bootstrap?.desktopBrowserControlFd;
     const resourceMonitorPath = bootstrap?.resourceMonitorPath;
     const syncTexNavigatorPath = bootstrap?.syncTexNavigatorPath;
     const autoBootstrapProjectFromCwd = Option.getOrElse(
@@ -441,7 +461,9 @@ export const resolveServerConfig = (
 
     const otel = yield* OtelEnvironment.load;
 
-    // T3 Code's own OTLP variables name no signal, so the one answer they give
+    // SCIENT-FORK:START — Scient-facing copy.
+    // Scient's own OTLP variables name no signal, so the one answer they give
+    // SCIENT-FORK:END
     // is the answer for all three.
     const signalExport: SignalExport = {
       protocol: env.otlpProtocol,
@@ -512,8 +534,11 @@ export const resolveServerConfig = (
       noBrowser,
       startupPresentation,
       desktopBootstrapToken,
+      ...(desktopBootstrapSecret === undefined ? {} : { desktopBootstrapSecret }),
       desktopTelemetryFd,
       desktopTelemetryControlFd,
+      desktopBrowserFd,
+      desktopBrowserControlFd,
       resourceMonitorPath,
       syncTexNavigatorPath,
       autoBootstrapProjectFromCwd,

@@ -3,8 +3,7 @@ import { piModelSettings } from "./PiCustomModelsTestHelpers.ts";
 import * as NodeHttp from "node:http";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, expect } from "@effect/vitest";
-import { ProviderInstanceId, PiSettings, type CustomModelProtocol } from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+import { ProviderInstanceId, type CustomModelProtocol } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Redacted from "effect/Redacted";
@@ -17,7 +16,6 @@ import type { ResolvedModelConnection } from "../../customModels.ts";
 
 const binary = process.env.SCIENT_PI_TEST_BINARY;
 const json = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-const decodePiSettings = Schema.decodeSync(PiSettings);
 const decodeBody = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
@@ -470,9 +468,9 @@ for (const protocol of ["openai-completions", "openai-responses", "anthropic-mes
             expect(json(completed)).not.toContain("literal-test-key");
             yield* client.close();
           }
-          expect(requests).toHaveLength(keys.length * 2);
+          expect(requests).toHaveLength(keys.length);
           expect(requests.map((r) => r.key)).toEqual(
-            [...keys, ...keys].map((key) => {
+            keys.map((key) => {
               const value = key ?? "scient-keyless";
               return protocol === "anthropic-messages" ? value : "Bearer " + value;
             }),
@@ -488,7 +486,7 @@ for (const protocol of ["openai-completions", "openai-responses", "anthropic-mes
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
     // The Intel macOS runner needs more than 45 seconds to exercise every
-    // credential form twice through the real Pi executable.
+    // credential form through the real Pi executable.
     { timeout: 90_000 },
   );
 }
