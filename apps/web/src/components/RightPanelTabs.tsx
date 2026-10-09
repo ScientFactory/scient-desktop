@@ -384,11 +384,11 @@ function NewDocumentMenuItems(props: { readonly onChoose: (format: NewDocumentFo
     <>
       <MenuItem onClick={() => props.onChoose("markdown")}>
         <span className="flex-1">Markdown</span>
-        <span className="ps-6 text-muted-foreground text-xs">Notes · Word</span>
+        <span className="ps-4 text-muted-foreground/60 text-xs">Notes · Word</span>
       </MenuItem>
       <MenuItem onClick={() => props.onChoose("latex")}>
         <span className="flex-1">LaTeX</span>
-        <span className="ps-6 text-muted-foreground text-xs">Papers · PDF</span>
+        <span className="ps-4 text-muted-foreground/60 text-xs">Papers · PDF</span>
       </MenuItem>
     </>
   );
@@ -637,7 +637,7 @@ function RightPanelEmptyState(props: {
                       <span className="min-w-0 flex-1 truncate">{action.label}</span>
                       <Kbd>{action.shortcut}</Kbd>
                     </MenuTrigger>
-                    <MenuPopup align="start" side="bottom" sideOffset={4} className="min-w-56">
+                    <MenuPopup align="start" side="bottom" sideOffset={4}>
                       <NewDocumentMenuItems onChoose={(format) => props.onAddDocuments?.(format)} />
                     </MenuPopup>
                   </Menu>
@@ -1541,7 +1541,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                             {action.label}
                             <MenuShortcut>{action.shortcut}</MenuShortcut>
                           </MenuSubTrigger>
-                          <MenuSubPopup className="min-w-56">
+                          <MenuSubPopup>
                             <NewDocumentMenuItems
                               onChoose={(format) => {
                                 setAddSurfaceMenuOpen(false);
