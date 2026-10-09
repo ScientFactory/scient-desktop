@@ -7,6 +7,8 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { rewriteGuidedPlaces } from "../src/scient/latex/latexGuidanceText.ts";
+
 const documents = NodePath.resolve(import.meta.dirname, "../src/scient/documents");
 const templates = NodePath.join(documents, "templates");
 const previews = NodePath.join(documents, "previews");
@@ -64,31 +66,11 @@ function literal(text: string): string {
 }
 
 /**
- * A template's guidance (`% Guide:` comment lines above an empty place) as
- * faint print: what the Visual page shows. The rule matches Visual's
- * (latexGuidance.ts); a document's own PDF never prints guidance.
+ * A template's guidance as faint print: what the Visual page shows, found by
+ * the same rule (latexGuidanceText.ts). A document's own PDF never prints it.
  */
 function faintGuidance(source: string): string {
-  const faint = (lines: string) => {
-    const text = lines
-      .split("\n")
-      .filter(Boolean)
-      .map((line, index) =>
-        (index === 0 ? line.replace(/^%+\s*Guide:\s*/u, "") : line.replace(/^%+\s?/u, "")).trim(),
-      )
-      .join(" ");
-    return `{\\color{black!38}${literal(text)}}`;
-  };
-  return source
-    .replace(
-      /^(%+\s*Guide:[^\n]*\n(?:%[^\n]*\n)*)\\par$/gmu,
-      (_, lines: string) => `${faint(lines)}\\par`,
-    )
-    .replace(
-      /(\\begin\{[A-Za-z]+\*?\}(?:\s*\[[^\]]*\])?\n)(%+\s*Guide:[^\n]*\n(?:%[^\n]*\n)*)(\\end\{)/gu,
-      (_, opening: string, lines: string, closing: string) =>
-        `${opening}${faint(lines)}\n${closing}`,
-    );
+  return rewriteGuidedPlaces(source, (text) => `{\\color{black!38}${literal(text)}}`);
 }
 
 // Publish the whole batch only after every template has built successfully.

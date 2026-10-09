@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { latexDocumentLanguage } from "../latex/latexLanguage";
 import { assembleVisualProject, type VisualProjectFile } from "../latex/latexProjectVisual";
 import { latexGuidance } from "../latex/latexGuidance";
+import { rewriteGuidedPlaces } from "../latex/latexGuidanceText";
 import { projectLatexVisualDocument } from "../latex/latexVisualDocument";
 import {
   DOCUMENT_TEMPLATES,
@@ -154,6 +155,12 @@ describe("new documents", () => {
           ).length;
         expect(latexGuidance(projection).size, `${template.id}/${language}`).toBe(places);
         expect(projection.content.content).toHaveLength(projection.blocks.length);
+        const pictured: string[] = [];
+        rewriteGuidedPlaces(assembled.source, (text) => {
+          pictured.push(text);
+          return "";
+        });
+        expect(pictured).toEqual([...latexGuidance(projection).values()]);
         expect(
           projection.blocks
             .filter((block) => block.node.type === "latexRawBlock")

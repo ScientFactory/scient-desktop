@@ -2,30 +2,11 @@ import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { type EditorState, Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 
+import { GUIDED_ENVIRONMENT, guidanceText } from "./latexGuidanceText";
 import type { LatexVisualDocument } from "./latexVisualDocument";
 import "./latexGuidance.css";
 
-/** How a template marks its guidance: a comment that begins `% Guide:`. */
-const GUIDE = /^%+\s*Guide:\s*/u;
-
-/**
- * The text of a template's guidance: comment lines, the first marked `Guide:`,
- * joined. Null for anything else, an ordinary comment included.
- */
-export function guidanceText(source: string): string | null {
-  const lines = source
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (lines.length === 0 || !GUIDE.test(lines[0]!) || !lines.every((line) => line.startsWith("%")))
-    return null;
-  const text = lines
-    .map((line, index) => (index === 0 ? line.replace(GUIDE, "") : line.replace(/^%+\s?/u, "")))
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .join(" ");
-  return text || null;
-}
+export { guidanceText } from "./latexGuidanceText";
 
 /**
  * The guidance a template leaves for each empty place, by block index: a
@@ -48,8 +29,7 @@ export function latexGuidance(
       if (found) guidance.set(index, found);
       return;
     }
-    const environment =
-      /^\\begin\s*\{([A-Za-z]+\*?)\}(?:\s*\[[^\]]*\])?([\s\S]*)\\end\s*\{\1\}$/u.exec(text);
+    const environment = GUIDED_ENVIRONMENT.exec(text);
     const found = environment ? guidanceText(environment[2]!) : null;
     if (found) guidance.set(index, found);
   });
@@ -68,7 +48,7 @@ function emptyParagraph(
     : null;
 }
 
-export const latexGuidanceKey = new PluginKey("scientLatexGuidance");
+const latexGuidanceKey = new PluginKey("scientLatexGuidance");
 
 /** Whether an editor already runs this version of the guidance plugin. */
 export function hasLatexGuidance(state: EditorState): boolean {

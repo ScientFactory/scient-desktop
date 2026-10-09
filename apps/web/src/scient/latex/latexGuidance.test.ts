@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { guidanceText, latexGuidance } from "./latexGuidance";
+import { rewriteGuidedPlaces } from "./latexGuidanceText";
 import { projectLatexVisualDocument } from "./latexVisualDocument";
 
 const document = (body: string) =>
@@ -38,5 +39,25 @@ describe("template guidance", () => {
       "\\section{Introduction}\n% Guide: Explain the problem.\nOur question.\n\n",
     );
     expect(latexGuidance(projectLatexVisualDocument(source)).size).toBe(0);
+  });
+
+  it("finds the same guidance as the template pictures do", () => {
+    const sources = [
+      "\\section{A}\n% Guide: Explain it.\n\\par\n\n",
+      "\\section{A}\n  % Guide: Indented.\n\n  % and continued.\n\\par\n\n",
+      "\\section{A}\n% Private\n% Guide: Public\n\\par\n\n",
+      "\\begin{problem} [Warm-up]\n% Guide: State it.\n\\end{problem}\n\n",
+      "\\begin{abstract}\n% A private note.\n\\end{abstract}\n\n",
+    ];
+    for (const body of sources) {
+      const source = document(body);
+      const shown = [...latexGuidance(projectLatexVisualDocument(source)).values()];
+      const pictured: string[] = [];
+      rewriteGuidedPlaces(source, (text) => {
+        pictured.push(text);
+        return "";
+      });
+      expect(pictured, body).toEqual(shown);
+    }
   });
 });

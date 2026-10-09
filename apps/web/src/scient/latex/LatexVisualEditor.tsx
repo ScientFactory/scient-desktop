@@ -149,7 +149,7 @@ import {
   latexImageUploads,
   removeLatexImageUpload,
 } from "./latexImageUploads";
-import { hasLatexGuidance, latexGuidanceKey, latexGuidancePlaceholders } from "./latexGuidance";
+import { hasLatexGuidance, latexGuidancePlaceholders } from "./latexGuidance";
 import { LatexMathField, type LatexMathFieldHandle } from "./LatexMathField";
 import { LatexMathPalette } from "./LatexMathPalette";
 import { LatexMatrixDialog } from "./LatexMatrixDialog";
@@ -6023,7 +6023,8 @@ function LatexVisualEditorReady(
       guidancePluginFactory.current !== latexGuidancePlaceholders ||
       !hasLatexGuidance(editor.state)
     ) {
-      editor.unregisterPlugin(latexGuidanceKey);
+      // By name: a hot update makes a new key, and the old plugin keeps the old one.
+      editor.unregisterPlugin("scientLatexGuidance");
       editor.registerPlugin(latexGuidancePlaceholders(() => projection.current));
       guidancePluginFactory.current = latexGuidancePlaceholders;
     }
