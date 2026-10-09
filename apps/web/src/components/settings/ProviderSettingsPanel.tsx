@@ -650,14 +650,6 @@ export function EnvironmentProviderSettings({
       ),
     [serverProviders],
   );
-  const visibleProviderSettings = PROVIDER_SETTINGS.filter(
-    (providerSettings) =>
-      providerSettings.provider !== "cursor" ||
-      serverProviders.some(
-        (provider) =>
-          provider.instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make("cursor")),
-      ),
-  );
   const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
   const textGenInstanceId = textGenerationModelSelection.instanceId;
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
@@ -766,33 +758,26 @@ export function EnvironmentProviderSettings({
   }
 
   const defaultSlotIdsBySource = new Set<string>(
-    visibleProviderSettings.map((providerSettings) =>
+    PROVIDER_SETTINGS.map((providerSettings) =>
       String(defaultInstanceIdForDriver(providerSettings.provider)),
     ),
   );
 
   const rows: InstanceRow[] = [];
   const visibleDriverKinds = new Set<ProviderDriverKind>(
-    visibleProviderSettings.map((providerSettings) => providerSettings.provider),
+    PROVIDER_SETTINGS.map((providerSettings) => providerSettings.provider),
   );
 
-  for (const providerSettings of visibleProviderSettings) {
+  for (const providerSettings of PROVIDER_SETTINGS) {
     const driver = providerSettings.provider;
     const defaultInstanceId = defaultInstanceIdForDriver(driver);
     const explicitInstance = settings.providerInstances?.[defaultInstanceId];
     const effectiveInstance: ProviderInstanceConfig = explicitInstance ?? { driver };
     const isDirty = explicitInstance !== undefined;
-    // Show upstream's default slots when the provider is available by default,
-    // enabled, changed from its legacy default, or opened by a deep link.
+    // Settings exposes built-in default slots without enabling or configuring
+    // them. Drivers without a default slot list only their configured instances.
     const hasDefaultSlot = providerSettings.hasDefaultInstance || explicitInstance !== undefined;
-    if (
-      hasDefaultSlot &&
-      (driver === "codex" ||
-        driver === "claudeAgent" ||
-        isDirty ||
-        resolveProviderInstanceEnabled(effectiveInstance) ||
-        defaultInstanceId === targetInstanceId)
-    ) {
+    if (hasDefaultSlot) {
       rows.push({
         instanceId: defaultInstanceId,
         instance: effectiveInstance,

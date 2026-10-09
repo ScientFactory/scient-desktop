@@ -4,6 +4,7 @@ import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
+  resolveProviderInstanceEnabled,
   type ServerProvider,
   type UnifiedSettings,
 } from "@t3tools/contracts";
@@ -267,6 +268,52 @@ describe("EnvironmentProviderSettings routing", () => {
       .mockReset()
       .mockResolvedValue({ _tag: "Success", value: { accepted: true } });
   });
+
+  it.each(["loading", "empty", "partial"])(
+    "shows built-in default slots with fresh settings and %s provider snapshots without writes",
+    (snapshotState) => {
+      settingsState.value = { ...DEFAULT_UNIFIED_SETTINGS, providerInstances: {} };
+      atoms.providers =
+        snapshotState === "loading" ? null : snapshotState === "empty" ? [] : [provider()];
+      const panel = renderPanel();
+      const drivers = [
+        "codex",
+        "claudeAgent",
+        "antigravity",
+        "scient",
+        "cursor",
+        "grok",
+        "droid",
+        "pi",
+        "omp",
+        "opencode",
+        "muse",
+      ];
+      for (const driver of drivers) {
+        const instance = { driver: ProviderDriverKind.make(driver) };
+        const row = visitElements(
+          panel,
+          (element) => element.props.instanceId === driver && element.props.mode === "list",
+        );
+        expect(row, driver).not.toBeNull();
+        expect(row?.props.instance).toEqual(instance);
+        if (["cursor", "grok", "pi", "opencode", "antigravity", "muse"].includes(driver)) {
+          expect(resolveProviderInstanceEnabled(instance), driver).toBe(false);
+        }
+      }
+      expect(
+        visitElements(
+          panel,
+          (element) => element.props.instanceId === "acpRegistry" && element.props.mode === "list",
+        ),
+      ).toBeNull();
+      expect(visitElements(panel, isAddProviderButton)).not.toBeNull();
+      expect(settingsState.value.providerInstances).toEqual({});
+      expect(settingsState.mutateProviderInstance).not.toHaveBeenCalled();
+      expect(settingsState.updateSettings).not.toHaveBeenCalled();
+      expect(commands.updateProvider).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps explicitly configured provider slots visible when disabled", () => {
     const drivers = [

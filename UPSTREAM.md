@@ -278,6 +278,8 @@ is recorded in [the 2026-10-09 receipt](docs/internals/t3-upstream-sync-20261009
 ([Scient PR #498](https://github.com/ScientFactory/scient-desktop/pull/498)).
 It receives the next 43 official first-parent commits, adopts shared provider packages,
 and preserves Scient's instruction, tool, fork, queue and lifecycle ownership.
+Provider Settings retains visible built-in default slots even when disabled or
+unconfigured; showing a row does not enable, install or persist an instance.
 The receipt records complete local matrix execution, targeted requalification of
 conflicting test contracts, native smoke and platform/live-provider limits.
 Its specific callback-composition tradeoff reduces scoped unmarked inventory debt

@@ -284,5 +284,42 @@ Independent final source review also accepts the four test corrections in
 capability, native replay or session-ownership guarantees. The reviewer ran no
 tests; executable evidence belongs to the qualification above.
 
+## Provider catalogue visibility correction
+
+The user's review found that adopting upstream's configured/enabled row filter
+hid Scient's disabled, unconfigured built-in providers. Settings now enumerates
+all supported built-in default slots from the existing client registry, including
+Cursor before its first snapshot. Synthetic rows preserve the same `{ driver }`
+configuration and existing enablement policy; enumeration does not persist,
+install, authenticate or enable an instance. Drivers without a default slot, such
+as ACP Registry, remain absent until configured. Custom instances, Add provider,
+environment routing and management scope checks are unchanged.
+
+Affected qualification against `532b0883bd` plus this correction:
+
+- From `apps/web`, `pnpm exec vp test run --project unit
+src/components/settings/ProviderSettingsPanel.environment.test.tsx
+src/components/settings/ProviderSettingsPanel.logic.test.ts
+src/components/settings/ProviderInstanceCard.test.ts
+src/components/settings/ProviderInstanceCard.tabs.test.tsx
+src/components/settings/providerDriverMeta.test.ts
+src/components/settings/AddProviderInstanceDialog.environment.test.tsx
+src/components/settings/AddProviderInstanceDialog.test.ts
+src/components/settings/SettingsPanels.logic.test.ts --reporter verbose`:
+  eight files, 124 tests passed. Fresh-settings coverage includes loading, empty
+  and partial snapshots, disabled defaults, no writes and no fabricated ACP slot.
+- `pnpm exec vp run --filter @t3tools/web typecheck`: passed; existing Effect
+  suggestions retained.
+- Targeted formatting, lint and whitespace checks passed; pre-existing lint
+  warnings retained. No dependencies, runtime packages or server code changed.
+- Independent read-only source review found no blocking issue in visibility,
+  enablement, custom/ACP instances or environment ownership; it ran no tests.
+
+This correction removes visibility conditions from the existing shared Settings
+flow. It does not add a parallel provider catalog or change the separate pending
+instruction-extraction proposition. Renderer HMR supplies the candidate change;
+user visual acceptance and hosted qualification of the subsequent push remain
+separate from these local checks.
+
 The final handoff identifies candidate state/process ownership and readiness.
 Visual acceptance, hosted CI and the structural proposition remain separate.
