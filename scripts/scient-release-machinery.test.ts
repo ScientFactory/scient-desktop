@@ -398,13 +398,17 @@ describe("Scient release machinery", () => {
         engines: { node: ">=24" },
         dependencies: {
           effect: "catalog:",
+          "@opencode/client": "2.0.23",
+          "@cursor/sdk": "1.0.35",
+          "node-pty": "^1.1.0",
+          "@effect/platform-bun": "catalog:",
           "@t3tools/shared": "workspace:*",
         },
       },
       version: "0.6.0",
       catalog: { effect: "4.0.0" },
       overrides: { effect: "catalog:" },
-      installedVersions: { effect: "4.0.0" },
+      installedVersions: { "@cursor/sdk": "1.0.35", "node-pty": "1.1.0" },
     });
 
     assert.equal(manifest.name, "t3");
@@ -415,8 +419,8 @@ describe("Scient release machinery", () => {
       directory: "apps/server",
     });
     assert.deepStrictEqual(manifest.files, ["dist", "npm-shrinkwrap.json"]);
-    assert.deepStrictEqual(manifest.dependencies, { effect: "4.0.0" });
-    assert.deepStrictEqual(manifest.overrides, {});
+    assert.deepStrictEqual(manifest.dependencies, { "@cursor/sdk": "1.0.35", "node-pty": "1.1.0" });
+    assert.deepStrictEqual(manifest.overrides, { effect: "4.0.0" });
     assert.deepStrictEqual(manifest.allowScripts, {
       "node-pty@1.1.0": true,
       "msgpackr-extract@3.0.4": true,

@@ -169,6 +169,19 @@ Scient does not publish T3's npm package. Each release instead contains
 `scient-server-<version>.tgz`. SSH launches and background-service updates use
 that immutable GitHub asset at the exact desktop version. The tarball is built
 from the same source SHA and includes native resource monitors from the matrix.
+Its manifest shares the CLI bundler's runtime-external dependency boundary with
+both desktop backends. Ordinary JavaScript and patched SDKs remain bundled;
+only disk-loaded runtime roots and their npm shrinkwrapped closure are installed
+on the remote host. The Electron-only FFF ASAR loader patch is unnecessary in
+this plain filesystem package.
+
+Required CI qualification builds the real tarball on Linux, installs the same
+bytes outside the workspace on Linux, macOS and Windows, probes native file
+search, canvas, Cursor helpers and concurrent terminals, then verifies HTTP
+startup and POSIX graceful shutdown (Windows process termination) using disposable state. The existing required
+`Test` check fails if applicable remote qualification fails or is skipped.
+Release packaging repeats the Linux tarball check after adding native assets,
+before uploading the candidate.
 
 ## What's New ownership
 
