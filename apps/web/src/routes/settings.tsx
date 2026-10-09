@@ -16,6 +16,10 @@ import {
 } from "../components/settings/SettingsScopeContext";
 import { useEnvironments } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
+import {
+  settingsPageChoosesOneEnvironment,
+  settingsPageRendersOffline,
+} from "../scient/settings/settingsPageScopes";
 import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScopeSentence";
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
 import {
@@ -98,7 +102,11 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
         <p className="text-sm text-muted-foreground">{scope.message}</p>
       </SettingsPageContainer>
     );
-  if (scope.kind === "environment" && connectedEnvironments.length === 0) {
+  if (
+    scope.kind === "environment" &&
+    connectedEnvironments.length === 0 &&
+    !settingsPageRendersOffline(pathname)
+  ) {
     return (
       <SettingsPageContainer>
         <p className="text-sm text-muted-foreground">
@@ -149,12 +157,6 @@ function SettingsContentLayout() {
   );
 }
 
-// Pages whose tools are installed per server choose one environment, not an aggregate.
-const SINGLE_ENVIRONMENT_SETTINGS_PATHS: ReadonlySet<string> = new Set([
-  "/settings/providers",
-  "/settings/documents",
-]);
-
 function SettingsRouteLayout() {
   const rawSearch = Route.useSearch();
   const navigate = Route.useNavigate();
@@ -162,7 +164,7 @@ function SettingsRouteLayout() {
   return (
     <SettingsScopeProvider
       search={rawSearch}
-      singleEnvironment={SINGLE_ENVIRONMENT_SETTINGS_PATHS.has(pathname)}
+      singleEnvironment={settingsPageChoosesOneEnvironment(pathname)}
       onChange={(next) => {
         // Send every axis so the retain middleware sees an explicit target
         // even when the choice is "all", which is the absence of a key.
