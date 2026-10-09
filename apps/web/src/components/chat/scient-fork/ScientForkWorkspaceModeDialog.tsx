@@ -402,7 +402,7 @@ export function ScientForkWorkspaceModeDialog({
         </DialogPanel>
         <DialogFooter variant="bare" padding="compact">
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
+            {disabled && skippedImages === null ? "Close" : "Cancel"}
           </Button>
           <Button
             form={formId}

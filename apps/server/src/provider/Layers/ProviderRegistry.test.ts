@@ -3345,6 +3345,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
               ),
             );
             let cursorSpawned = false;
+            let museSpawned = false;
             const scope = yield* Scope.make();
             yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
             const providerRegistryLayer = ProviderRegistryLive.pipe(
@@ -3377,6 +3378,9 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                 mockCommandSpawnerLayer((command, args) => {
                   if (command === "cursor-agent") {
                     cursorSpawned = true;
+                  }
+                  if (command === "muse") {
+                    museSpawned = true;
                   }
                   const joined = args.join(" ");
                   if (joined === "--version") {
@@ -3418,6 +3422,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                 "cursor",
                 "droid",
                 "grok",
+                "muse",
                 "omp",
                 "opencode",
                 "pi",
@@ -3427,6 +3432,12 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
               assert.strictEqual(cursorProvider?.status, "disabled");
               assert.strictEqual(cursorProvider?.message, "Cursor is disabled in Scient settings.");
               assert.strictEqual(cursorSpawned, false);
+              const museProvider = providers.find(
+                (provider) => provider.instanceId === ProviderInstanceId.make("muse"),
+              );
+              assert.strictEqual(museProvider?.enabled, false);
+              assert.strictEqual(museProvider?.status, "disabled");
+              assert.strictEqual(museSpawned, false);
             }).pipe(Effect.provide(runtimeServices));
           }),
       );

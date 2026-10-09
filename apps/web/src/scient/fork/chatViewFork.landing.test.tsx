@@ -19,6 +19,7 @@ type Probed = {
 };
 let probed: Probed;
 let root: Root;
+let container: HTMLDivElement;
 
 function Probe(props: {
   routeThreadKey: string;
@@ -38,7 +39,7 @@ function Probe(props: {
   useLayoutEffect(() => {
     probed = { landing, reveal };
   });
-  return null;
+  return <div data-landing-surface inert={landing.pending} className={reveal.messagesClassName} />;
 }
 
 async function render(props: Parameters<typeof Probe>[0]) {
@@ -47,7 +48,8 @@ async function render(props: Parameters<typeof Probe>[0]) {
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  root = createRoot(document.createElement("div"));
+  container = document.createElement("div");
+  root = createRoot(container);
 });
 afterEach(async () => {
   await act(() => root.unmount());
@@ -63,6 +65,7 @@ describe("fork landing in the chat view", () => {
     expect(probed.reveal.messagesClassName).toBeUndefined();
     expect(probed.reveal.onPositionedThreadKeyChange).toBeUndefined();
     expect(probed.reveal.syncStatusHidden).toBe(false);
+    expect(container.querySelector("[data-landing-surface]")?.hasAttribute("inert")).toBe(false);
   });
 
   it("hides the fork until its own rows are positioned, then shows it once", async () => {
@@ -71,6 +74,7 @@ describe("fork landing in the chat view", () => {
     await render({ routeThreadKey: fork, detailLoaded: false, displayedThreadKey: fork });
     expect(probed.reveal.messagesClassName).toBe("opacity-0");
     expect(probed.reveal.syncStatusHidden).toBe(true);
+    expect(container.querySelector("[data-landing-surface]")?.hasAttribute("inert")).toBe(true);
     // Nothing from the origin is held under the fork's header.
     expect(probed.landing.heldTimeline).toEqual({ threadKey: null, entries: [] });
 
@@ -83,6 +87,7 @@ describe("fork landing in the chat view", () => {
     expect(probed.reveal.messagesClassName).not.toContain("opacity-0");
     expect(probed.reveal.onPositionedThreadKeyChange).toBeUndefined();
     expect(probed.reveal.syncStatusHidden).toBe(false);
+    expect(container.querySelector("[data-landing-surface]")?.hasAttribute("inert")).toBe(false);
 
     // Leaving the fork ends its landing for good.
     await render({ routeThreadKey: origin, detailLoaded: true, displayedThreadKey: origin });
@@ -96,8 +101,10 @@ describe("fork landing in the chat view", () => {
       markForkLanding(fork, 100);
       await render({ routeThreadKey: fork, detailLoaded: false, displayedThreadKey: fork });
       expect(probed.reveal.messagesClassName).toBe("opacity-0");
+      expect(container.querySelector("[data-landing-surface]")?.hasAttribute("inert")).toBe(true);
       await act(() => vi.advanceTimersByTime(100));
       expect(probed.landing.pending).toBe(false);
+      expect(container.querySelector("[data-landing-surface]")?.hasAttribute("inert")).toBe(false);
       expect(probed.reveal.messagesClassName).not.toContain("opacity-0");
       expect(probed.landing.heldTimeline).toBeDefined();
     } finally {

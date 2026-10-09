@@ -13,6 +13,10 @@ import { rehypeScientBidi } from "../bidi/rehypeScientBidi";
 import { remarkScientMath, remarkScientMathRefinements } from "./remarkScientMath";
 import { normalizeScientMathDelimiters } from "./scientMathText";
 import { remarkScientSingleDollarMath } from "./scientSingleDollarMath";
+import {
+  CHAT_MARKDOWN_REMARK_PLUGINS,
+  CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+} from "../markdown/scientMarkdownPipeline";
 
 const chatMarkdownSource = NodeFS.readFileSync(
   new URL("../../components/ChatMarkdown.tsx", import.meta.url),
@@ -23,9 +27,7 @@ describe("ChatMarkdown math seam", () => {
   it("mounts the Scient math modules through the declared imports", () => {
     expect(chatMarkdownSource).toContain('} from "../scient/math/remarkScientMath";');
     expect(chatMarkdownSource).toContain('} from "../scient/math/scientMathText";');
-    expect(chatMarkdownSource).toContain(
-      'import { remarkScientSingleDollarMath } from "../scient/math/scientSingleDollarMath";',
-    );
+    expect(chatMarkdownSource).toContain('} from "../scient/markdown/scientMarkdownPipeline";');
     expect(chatMarkdownSource).toContain("useScientMathMarkdownText,");
     expect(chatMarkdownSource).toMatch(/\buseScientMathRemarkPlugins[\s,]*\}/u);
     expect(chatMarkdownSource).toContain(
@@ -34,11 +36,16 @@ describe("ChatMarkdown math seam", () => {
   });
 
   it("registers the math plugins and refinements in both remark plugin arrays", () => {
-    expect(
-      chatMarkdownSource.match(
-        /remarkGfm,\s+remarkScientMath,\s+remarkScientSingleDollarMath,\s+remarkScientMathRefinements,/gu,
-      ),
-    ).toHaveLength(2);
+    for (const plugins of [
+      CHAT_MARKDOWN_REMARK_PLUGINS,
+      CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+    ]) {
+      expect(plugins.slice(1, 4)).toEqual([
+        remarkScientMath,
+        remarkScientSingleDollarMath,
+        remarkScientMathRefinements,
+      ]);
+    }
   });
 
   it("normalizes delimiters unconditionally — the rewrite is length-preserving", () => {
@@ -52,8 +59,9 @@ describe("ChatMarkdown math seam", () => {
   });
 
   it("routes math code nodes to the Scient components, with streaming state", () => {
+    expect(chatMarkdownSource).toContain("const tex = nodeToPlainText(children);");
     expect(chatMarkdownSource).toContain(
-      "<ScientInlineMath tex={nodeToPlainText(children)} isStreaming={isStreaming} />",
+      "<ScientInlineMath tex={tex} isStreaming={isStreaming} />",
     );
     expect(chatMarkdownSource).toContain(
       "<ScientDisplayMath tex={codeBlock.code} isStreaming={isStreaming} />",

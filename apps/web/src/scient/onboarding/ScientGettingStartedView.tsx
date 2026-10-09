@@ -30,7 +30,7 @@ export function ScientGettingStartedShell(props: {
   const currentIndex = Math.max(0, props.journey.indexOf(props.currentStep));
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
-      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-background">
+      <div className="scrollbar-gutter-both min-h-0 min-w-0 flex-1 overflow-y-auto bg-background">
         <main className="mx-auto flex min-h-full w-full max-w-2xl flex-col justify-center px-5 py-10 sm:px-8">
           <section
             className="relative isolate w-full -translate-y-3 overflow-hidden rounded-xl border border-border/70 bg-card px-5 py-5 shadow-sm sm:-translate-x-3 sm:-translate-y-4 sm:px-7 sm:py-6"

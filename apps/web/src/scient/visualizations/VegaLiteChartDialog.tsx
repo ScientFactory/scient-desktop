@@ -286,7 +286,7 @@ export function VegaLiteChartDialog({
             {errorMessage}
           </div>
         ) : null}
-        <div className="relative min-h-0 flex-1 overflow-auto bg-secondary/30 p-4 sm:p-8">
+        <div className="scrollbar-gutter-both relative min-h-0 flex-1 overflow-auto bg-secondary/30 p-4 sm:p-8">
           {status === "loading" ? (
             <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">
               Rendering interactive chart…

@@ -73,6 +73,8 @@ export interface ProviderMaintenanceCapabilities {
    * while `brew upgrade` refreshes it first and installs this version.
    */
   readonly homebrewApiUrl?: string;
+  /** Compare native release revisions when the provider does not use plain semver. */
+  readonly compareVersions?: (current: string, latest: string) => number;
 }
 
 export interface ProviderMaintenanceCommandAction {
@@ -776,6 +778,7 @@ export const makeCachedProviderMaintenanceResolution = Effect.fn(
 function deriveVersionAdvisory(input: {
   readonly currentVersion: string | null;
   readonly latestVersion: string | null;
+  readonly compareVersions?: (current: string, latest: string) => number;
 }): Pick<ServerProviderVersionAdvisory, "status" | "message"> {
   if (!input.currentVersion) {
     return { status: "unknown", message: null };
@@ -783,7 +786,9 @@ function deriveVersionAdvisory(input: {
   if (!input.latestVersion) {
     return { status: "unknown", message: null };
   }
-  if (compareSemverVersions(input.currentVersion, input.latestVersion) < 0) {
+  if (
+    (input.compareVersions ?? compareSemverVersions)(input.currentVersion, input.latestVersion) < 0
+  ) {
     return {
       status: "behind_latest",
       message: PROVIDER_UPDATE_ACTION_TOAST_MESSAGE,
@@ -805,6 +810,7 @@ export function createProviderVersionAdvisory(input: {
   const advisory = deriveVersionAdvisory({
     currentVersion: input.currentVersion,
     latestVersion,
+    ...(capabilities.compareVersions ? { compareVersions: capabilities.compareVersions } : {}),
   });
 
   return {

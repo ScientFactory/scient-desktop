@@ -387,15 +387,15 @@ const priorScope = prepareScientSkillTurn(
   new Map([[skillReleaseKey(release), release]]),
 ).skillScope;
 
-it.effect(
-  "prepares both structural suffixes inertly and publishes the same selected scope once",
-  () =>
+it.effect.each([{ driver: "codex" }, { driver: "muse" }] as const)(
+  "prepares both structural suffixes inertly and publishes the same selected scope once for $driver",
+  ({ driver }) =>
     Effect.gen(function* () {
       const registry = yield* McpSessionRegistry.McpSessionRegistry;
-      const threadId = ThreadId.make("structural-skill-suffix");
+      const threadId = ThreadId.make(`structural-skill-suffix-${driver}`);
       const issued = yield* registry.issue({
         threadId,
-        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerInstanceId: ProviderInstanceId.make(driver),
         capabilities: new Set(["skills:read"]),
       });
       McpProviderSession.setMcpProviderSession(issued.config);
@@ -404,7 +404,7 @@ it.effect(
       const baseText = "[Scient selected skills for this turn:\nauthored marker\n]";
       const prepared = yield* prepareScientV2SkillScope({
         threadId,
-        driver: ProviderDriverKind.make("codex"),
+        driver: ProviderDriverKind.make(driver),
         mcpSessionInjection: true,
         projectRoot: undefined,
         text: baseText,
@@ -426,6 +426,7 @@ it.effect(
       assert.equal(prepared.text, `${baseText}\n\n${prepared.runtimeInstruction}`);
       assert.include(prepared.runtimeInstruction!, "Scient skill scope for this turn");
       assert.include(prepared.runtimeInstruction!, "Scient selected skills for this turn");
+      assert.include(prepared.runtimeInstruction!, "scient_skill_load");
       assert.notInclude(prepared.runtimeInstruction!, "authored marker");
       assert.equal(
         prepared.textWithoutCatalogMarker,
@@ -544,19 +545,23 @@ it.effect.each(
       session: false,
       skillsGrant: true,
     },
-  ].map((negative) => {
-    const forcedPlan = "plan" in negative ? negative.plan : undefined;
+  ]
+    .flatMap((negative) =>
+      negative.driver === "codex" ? [negative, { ...negative, driver: "muse" }] : [negative],
+    )
+    .map((negative) => {
+      const forcedPlan = "plan" in negative ? negative.plan : undefined;
 
-    return {
-      caseTitle: `withholds empty scope injection for ${negative.label}`,
-      negative,
-      forcedPlan,
-    };
-  }),
+      return {
+        caseTitle: `withholds empty scope injection for ${negative.driver}: ${negative.label}`,
+        negative,
+        forcedPlan,
+      };
+    }),
 )("$caseTitle", ({ negative, forcedPlan }) =>
   Effect.gen(function* () {
     const registry = yield* McpSessionRegistry.McpSessionRegistry;
-    const threadId = ThreadId.make(`empty-skill-negative-${negative.label}`);
+    const threadId = ThreadId.make(`empty-skill-negative-${negative.driver}-${negative.label}`);
     const issued = yield* registry.issue({
       threadId,
       providerInstanceId: ProviderInstanceId.make(negative.driver),

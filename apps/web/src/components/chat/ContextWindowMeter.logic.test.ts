@@ -8,6 +8,7 @@ import {
   formatContextWindowCost,
   resolveContextWindowModelDisplayName,
   shouldOfferResumeCompaction,
+  shouldCompactBeforeSend,
   shouldReserveContextWindowMeter,
 } from "./ContextWindowMeter.logic";
 
@@ -293,4 +294,33 @@ describe("formatContextWindowCost", () => {
     expect(formatContextWindowCost({ amount: 0.42, currency: "USD" })).toBe("USD 0.42");
     expect(formatContextWindowCost({ amount: 0.0042, currency: "USD" })).toBe("USD 0.0042");
   });
+});
+
+describe("resume compaction send admission", () => {
+  const ordinary = {
+    ordinaryServerSend: true,
+    hasCapturedQueueSubmission: false,
+    multipleModels: false,
+    resumeCompactionTokens: 120_000,
+    keepFullHistory: false,
+    messageText: "Continue",
+  };
+
+  it("compacts an ordinary stale-session send", () => {
+    expect(shouldCompactBeforeSend(ordinary)).toBe(true);
+  });
+
+  it.each([
+    { ordinaryServerSend: false },
+    { hasCapturedQueueSubmission: true },
+    { multipleModels: true },
+    { resumeCompactionTokens: null },
+    { keepFullHistory: true },
+    { messageText: " /COMPACT " },
+  ])(
+    "preserves a special action, immutable retry, full-history choice or explicit command: %j",
+    (override) => {
+      expect(shouldCompactBeforeSend({ ...ordinary, ...override })).toBe(false);
+    },
+  );
 });

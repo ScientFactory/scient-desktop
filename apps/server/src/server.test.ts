@@ -1331,6 +1331,7 @@ const buildAppUnderTest = (options?: {
               }),
               install: Effect.die("unused relay-client install"),
               installWithProgress: () => Effect.die("unused relay-client install"),
+              pruneManagedVersions: Effect.die("unused relay-client prune"),
               ...options?.layers?.relayClient,
             }),
           ),
@@ -11597,24 +11598,26 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("routes websocket rpc V2 shell snapshot errors", () =>
-    Effect.gen(function* () {
-      yield* buildAppUnderTest({
-        layers: {
-          threadManagementV2: {
-            getShellSnapshot: () =>
-              Effect.fail(
-                new OrchestratorV2.OrchestratorProjectionError({
-                  threadId: transferV2ThreadId,
-                  cause: new Error("projection unavailable"),
-                }),
-              ),
+  it.effect.each(["read", "decode"] as const)(
+    "routes websocket rpc V2 shell snapshot errors during %s",
+    (stage) =>
+      Effect.gen(function* () {
+        const failure = Effect.fail(
+          new OrchestratorV2.OrchestratorProjectionError({
+            threadId: transferV2ThreadId,
+            cause: new Error("projection unavailable"),
+          }),
+        );
+        yield* buildAppUnderTest({
+          layers: {
+            threadManagementV2: {
+              readShellSnapshot: () => (stage === "read" ? failure : Effect.succeed(failure)),
+            },
           },
-        },
-      });
-      const error = yield* collectV2ShellCatchup(yield* getWsServerUrl("/ws")).pipe(Effect.flip);
-      assert.equal(error._tag, "OrchestrationV2GetShellSnapshotError");
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+        });
+        const error = yield* collectV2ShellCatchup(yield* getWsServerUrl("/ws")).pipe(Effect.flip);
+        assert.equal(error._tag, "OrchestrationV2GetShellSnapshotError");
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("marks an empty V2 shell catch-up replay as synchronized", () =>
@@ -12237,10 +12240,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               Effect.tap(() => Deferred.succeed(captureEntered, undefined)),
               Effect.tap(() => Deferred.await(releaseCapture)),
             ),
-          getShellSnapshot: (options) =>
-            threads.getShellSnapshot(options).pipe(
-              Effect.tap(() => Deferred.succeed(captureEntered, undefined)),
-              Effect.tap(() => Deferred.await(releaseCapture)),
+          readShellSnapshot: (options) =>
+            threads.readShellSnapshot(options).pipe(
+              // The inner decode runs after the shell read transaction commits.
+              // Hold emission here so the competing writer can commit independently.
+              Effect.map((decode) =>
+                decode.pipe(
+                  Effect.tap(() => Deferred.succeed(captureEntered, undefined)),
+                  Effect.tap(() => Deferred.await(releaseCapture)),
+                ),
+              ),
             ),
         }),
       });
