@@ -32,7 +32,7 @@ export function LatexHeadingNumberButton({
         }
       >
         <Button
-          size="micro"
+          size="xs"
           variant={checked ? "selected-strong" : "outline"}
           aria-pressed={checked}
           data-latex-number-toggle=""

@@ -1256,7 +1256,7 @@ function LatexMathView({
                 >
                   <Switch
                     id={`${activationId}-numbering`}
-                    size="sm"
+                    size="default"
                     data-latex-number-toggle=""
                     aria-label="Numbered"
                     checked={numbered}

@@ -1,19 +1,24 @@
 /* The strip under a document editor: one line, always the same height. */
 .scient-document-footer {
+  --scient-document-footer-height: 32px;
+  --scient-document-footer-font-size: 12px;
+  --scient-document-footer-control-height: 26px;
+  --scient-document-footer-field-height: 24px;
+  --scient-document-footer-field-padding: 3px 6px;
   container-name: scient-document-footer;
   container-type: inline-size;
   position: relative;
   display: flex;
-  height: 28px;
+  height: var(--scient-document-footer-height);
   min-width: 0;
   flex: none;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   border-top: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
   background: var(--background);
-  padding-inline: 10px;
+  padding-inline: 12px;
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--scient-document-footer-font-size);
   line-height: 1;
   white-space: nowrap;
 }
@@ -24,14 +29,14 @@
   min-width: 0;
   flex: 1;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
 }
 
 .scient-document-footer-status {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -43,20 +48,20 @@
 
 /* Buttons placed in the footer are smaller than the bar's and never boxed. */
 .scient-document-footer .scient-markdown-command-button {
-  min-width: 1.4rem;
-  min-height: 1.4rem;
-  height: 22px;
-  padding: 0.1rem 0.3rem;
-  font-size: 11px;
+  min-width: var(--scient-document-footer-control-height);
+  min-height: var(--scient-document-footer-control-height);
+  height: var(--scient-document-footer-control-height);
+  padding: 0.125rem 0.375rem;
+  font-size: var(--scient-document-footer-font-size);
 }
 
 .scient-document-footer .scient-markdown-command-button > svg:first-child {
-  width: 0.8125rem;
-  height: 0.8125rem;
+  width: 0.875rem;
+  height: 0.875rem;
 }
 
 .scient-document-footer .scient-markdown-command-divider {
-  height: 0.9rem;
+  height: 1rem;
 }
 
 /* Narrow panes: where the caret is stays; only the count leaves, and late. */

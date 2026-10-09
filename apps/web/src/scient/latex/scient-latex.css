@@ -3754,7 +3754,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 /* The Visual footer follows the shared footer's rules when the reader controls
    live in the header: one compact line for the selected object's options. */
 .scient-latex-reader-footer.scient-document-footer {
-  height: 28px;
+  height: var(--scient-document-footer-height);
   border-top: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
 }
 .scient-latex-reader-footer.scient-document-footer > .scient-latex-visual-recovery {
@@ -3765,7 +3765,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   padding-inline: 0;
 }
 .scient-document-footer .scient-latex-context-tools > button {
-  height: 22px;
+  height: var(--scient-document-footer-control-height);
 }
 
 /* Build messages: the mark sits on the first line of its message. */

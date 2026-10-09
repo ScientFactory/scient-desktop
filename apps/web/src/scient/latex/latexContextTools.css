@@ -186,13 +186,17 @@
   .scient-latex-context-toolbar[data-context-presentation="inline"]:not([hidden]) {
   display: flex;
   align-items: center;
-  gap: 0;
-  height: 28px;
+  gap: 8px;
+  height: var(--scient-document-footer-control-height, 28px);
   white-space: nowrap;
-  font: 11px/16px var(--font-sans);
+  font: var(--scient-document-footer-font-size, 11px)/16px var(--font-sans);
 }
-.scient-latex-context-tools[data-inspector][data-inline] .scient-latex-math-bar {
-  gap: 2px;
+.scient-latex-context-tools[data-inspector][data-inline]
+  .scient-latex-context-toolbar[data-context-presentation="inline"]
+  > button:not([data-slot]) {
+  height: var(--scient-document-footer-control-height, 24px);
+  min-height: var(--scient-document-footer-control-height, 24px);
+  padding: 3px 6px;
 }
 .scient-latex-context-tools[data-inspector][data-inline] .scient-latex-math-source-popover {
   position: absolute;
@@ -231,7 +235,7 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  font: 11px/16px var(--font-sans);
+  font: var(--scient-document-footer-font-size, 11px)/16px var(--font-sans);
 }
 :is(
     .scient-latex-heading-reference,
@@ -260,11 +264,11 @@
     .scient-latex-code-reference
   )
   textarea {
-  height: 22px;
-  min-height: 22px;
-  max-height: 22px;
-  padding: 2px 5px;
-  font: 11px/16px var(--font-sans);
+  height: var(--scient-document-footer-field-height, 22px);
+  min-height: var(--scient-document-footer-field-height, 22px);
+  max-height: var(--scient-document-footer-field-height, 22px);
+  padding: var(--scient-document-footer-field-padding, 2px 5px);
+  font: var(--scient-document-footer-font-size, 11px)/16px var(--font-sans);
   white-space: pre;
   resize: none;
 }

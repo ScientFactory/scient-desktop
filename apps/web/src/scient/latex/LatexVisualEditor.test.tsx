@@ -12,6 +12,8 @@ vi.mock("./LatexMathField", () => ({
       flush: () => true,
       focus: () => {},
       clearSelection: () => {},
+      textFormatActive: () => false,
+      toggleTextFormat: () => false,
     }));
     return <span>{value}</span>;
   },
