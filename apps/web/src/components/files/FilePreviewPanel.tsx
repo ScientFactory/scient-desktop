@@ -129,7 +129,10 @@ import { useMarkdownPersistenceLease } from "~/scient/markdownEditor/persistence
 import { useMarkdownPersistenceGuards } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceGuards";
 import { useMarkdownSourcePersistence } from "~/scient/markdownEditor/persistence/useMarkdownSourcePersistence";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
-import { documentSessionIsCurrent } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
+import {
+  documentIdentity,
+  documentSessionIsCurrent,
+} from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
 import {
   ScientFileFreshnessNotices,
@@ -866,9 +869,12 @@ function EditableFileEditor({
   const [externalFile, setExternalFile] = useState(() =>
     editableFileContents(environmentId, cwd, relativePath, contents),
   );
-  // SCIENT-FORK:START — the key is read only when the editor is created; keeping
-  // the first one lets an in-place rename's hold park and restore source undo.
-  const [editStateKey] = useState(() => `scient-file:${environmentId}:${cwd}:${relativePath}`);
+  // SCIENT-FORK:START — a document session's source undo belongs to the document,
+  // which keeps its id across an in-place rename and across reopening the file.
+  const [fileEditStateKey] = useState(() => `scient-file:${environmentId}:${cwd}:${relativePath}`);
+  const editStateKey = externalPersistence
+    ? `scient-document:${documentIdentity(externalPersistence)}`
+    : fileEditStateKey;
   // SCIENT-FORK:END
   const [editedContents, setEditedContents] = useState<string | null>(null);
   if (contents !== (editedContents ?? externalFile.contents)) {
@@ -1723,7 +1729,7 @@ export default function FilePreviewPanel({
     },
   });
   const documentSurfaceKey = markdownLease
-    ? `${markdownLease.documentId}:${surfaceGeneration}`
+    ? `${documentIdentity(markdownLease)}:${surfaceGeneration}`
     : relativePath;
   // SCIENT-FORK:END
   const handlePendingChange = useCallback(

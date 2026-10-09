@@ -54,17 +54,20 @@ export function useMarkdownPersistenceLease(input: {
   const boundLease = useRef<MarkdownPersistenceLease | null>(null);
   useEffect(
     () =>
-      markdownPersistenceRegistry.onMoved((move) => {
-        const lease = boundLease.current;
-        if (lease === null || lease.documentId !== move.documentId) return;
-        const next = {
-          lease,
-          fromKey: projectFileOperationKey(move.from),
-          toKey: projectFileOperationKey(move.to),
-        };
-        handoff.current = next;
-        setFollowed(next);
-      }),
+      // A registry from older code (kept after a hot reload) has no moves.
+      typeof markdownPersistenceRegistry.onMoved !== "function"
+        ? undefined
+        : markdownPersistenceRegistry.onMoved((move) => {
+            const lease = boundLease.current;
+            if (lease === null || lease.documentId !== move.documentId) return;
+            const next = {
+              lease,
+              fromKey: projectFileOperationKey(move.from),
+              toKey: projectFileOperationKey(move.to),
+            };
+            handoff.current = next;
+            setFollowed(next);
+          }),
     [],
   );
   useEffect(() => {
@@ -73,6 +76,12 @@ export function useMarkdownPersistenceLease(input: {
     let cancelled = false;
     let retained: MarkdownPersistenceLease | null = null;
     const moved = handoff.current;
+    if (moved !== null && moved.toKey !== key) {
+      // The view went elsewhere before following the move: its lease is let go.
+      handoff.current = null;
+      if (boundLease.current === moved.lease) boundLease.current = null;
+      moved.lease.release();
+    }
     if (moved !== null && moved.toKey === key) {
       // Taken over from the previous path's binding, not reopened. A path
       // change is an update, so StrictMode does not replay this effect.
@@ -110,6 +119,15 @@ export function useMarkdownPersistenceLease(input: {
       retained?.release();
     };
   }, [key, available, admissionAttempt]);
+  // Unmounted before following a move: nothing else will release that lease.
+  useEffect(
+    () => () => {
+      const moved = handoff.current;
+      handoff.current = null;
+      moved?.lease.release();
+    },
+    [],
+  );
   const currentBinding =
     binding !== null &&
     binding.attempt === admissionAttempt &&

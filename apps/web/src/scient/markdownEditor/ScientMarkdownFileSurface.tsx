@@ -32,7 +32,10 @@ import type { ScientMarkdownLinkCopyRequest, ScientMarkdownLinkKind } from "./li
 import { isScientMarkdownDocumentPath } from "./markdownDocumentPaths";
 import { resolveMarkdownImageSource } from "./markdownImageSource";
 import { uploadMarkdownImage } from "./assets/client";
-import type { MarkdownPersistenceLease } from "./persistence/markdownPersistenceRegistry";
+import {
+  documentIdentity,
+  type MarkdownPersistenceLease,
+} from "./persistence/markdownPersistenceRegistry";
 import {
   markdownWikiTargetForPath,
   resolveMarkdownHostLinkPath,
@@ -588,7 +591,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     <>
       <ScientMarkdownWorkspaceSurface
         // The open document, not its path: an in-place rename keeps this editor.
-        key={props.persistence.documentId}
+        key={documentIdentity(props.persistence)}
         persistence={props.persistence}
         citationSource={{ ...props.threadRef, cwd: props.cwd, path: props.relativePath }}
         {...(props.onCite ? { onCite: props.onCite } : {})}

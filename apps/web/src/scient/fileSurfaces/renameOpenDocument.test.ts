@@ -44,11 +44,58 @@ function fixture(
   const reopen = vi.fn(() => order.push("reopen"));
   const follow = vi.fn(() => order.push("follow"));
   const followed = vi.fn(async () => true);
-  const run = () => renameOpenDocument({ lease, destination, rename, reopen, follow, followed });
-  return { lease, move, rename, reopen, follow, followed, order, run };
+  let free = true;
+  const destinationFree = vi.fn(() => free);
+  const run = () =>
+    renameOpenDocument({ lease, destination, rename, reopen, follow, followed, destinationFree });
+  return {
+    lease,
+    move,
+    rename,
+    reopen,
+    follow,
+    followed,
+    order,
+    run,
+    setFree: (value: boolean) => (free = value),
+  };
 }
 
 describe("renameOpenDocument", () => {
+  it("renames the ordinary way when another tab shows the destination", async () => {
+    const h = fixture();
+    h.setFree(false);
+    expect(await h.run()).toEqual({ kind: "legacy-required" });
+    expect(h.rename).not.toHaveBeenCalled();
+  });
+
+  it("reopens instead of moving when the destination is opened during the rename", async () => {
+    const h = fixture();
+    h.rename.mockImplementationOnce(async () => {
+      h.setFree(false);
+      return { ok: true as const, destinationRelativePath: "b.md", revision: "r1" };
+    });
+    expect((await h.run()).kind).toBe("renamed");
+    expect(h.move.commit).not.toHaveBeenCalled();
+    expect(h.reopen).toHaveBeenCalledOnce();
+  });
+
+  it("leaves a lease from older code to the ordinary rename", async () => {
+    const h = fixture();
+    const older = { ...h.lease, beginMove: undefined, documentId: undefined };
+    expect(
+      await renameOpenDocument({
+        lease: older as unknown as typeof h.lease,
+        destination,
+        rename: h.rename,
+        reopen: h.reopen,
+        follow: h.follow,
+        followed: h.followed,
+      }),
+    ).toEqual({ kind: "legacy-required" });
+    expect(h.rename).not.toHaveBeenCalled();
+  });
+
   it("moves in place: rename, commit, follow, then release", async () => {
     const h = fixture();
     expect(await h.run()).toEqual({
