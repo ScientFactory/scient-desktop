@@ -24,7 +24,23 @@ const state = vi.hoisted(() => ({
   strip: null as Parameters<typeof ThreadQueueStrip>[0] | null,
 }));
 vi.mock("../../state/entities", () => ({
-  useThreadProjection: () => ({ projection: { messages: [], turnItems: [] } }),
+  useThreadShell: () => null,
+  useThreadProjection: () => ({
+    projection: {
+      thread: { providerInstanceId: "codex" },
+      runs: ["first", "last"].map((name, index) => ({
+        id: `run:${name}`,
+        userMessageId: `message:${name}`,
+        status: "queued",
+        queueHeld: true,
+        ordinal: index + 1,
+        queuePosition: index + 1,
+      })),
+      providerSessions: [],
+      messages: [],
+      turnItems: [],
+    },
+  }),
 }));
 vi.mock("@t3tools/client-runtime/state/thread-workflows", () => ({
   deriveThreadQueueWorkflowState: () => state.workflow,
@@ -161,7 +177,7 @@ describe("native queued keyboard commands", () => {
 });
 
 describe("Scient strip native command adapter", () => {
-  it("maps native row actions and held resume to existing commands without legacy queue IDs", async () => {
+  it("maps native row actions and per-row Send to existing commands without legacy queue IDs", async () => {
     await render();
     const strip = state.strip;
     expect(strip).not.toBeNull();
@@ -193,14 +209,14 @@ describe("Scient strip native command adapter", () => {
     });
     state.workflow.isHeld = true;
     await render();
-    expect(state.strip?.held).toBe(true);
-    await act(() => state.strip?.onResume?.());
-    expect(state.resume).toHaveBeenCalledWith({ environmentId, input: { threadId } });
+    expect(state.strip).not.toHaveProperty("onResume");
     expect(state.strip?.supportsExplicitSend).toBe(true);
-    await act(() => state.strip?.onSend(state.strip.items[0]!));
+    // Send is offered on the last row too; it resumes the queue from that message.
+    expect(state.strip?.canSendItem?.(state.strip.items[1]!)).toBe(true);
+    await act(() => state.strip?.onSend(state.strip.items[1]!));
     expect(state.resume).toHaveBeenLastCalledWith({
       environmentId,
-      input: { threadId, runId: "run:first" },
+      input: { threadId, runId: "run:last" },
     });
   });
   it("preserves unavailable native reorder capability even if a stale drag callback fires", async () => {

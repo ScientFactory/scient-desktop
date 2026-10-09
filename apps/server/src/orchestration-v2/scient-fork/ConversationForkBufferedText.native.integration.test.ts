@@ -51,10 +51,6 @@ import {
 } from "../ProviderAdapter.ts";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 import { ProjectionStoreV2, layerMemory } from "../ProjectionStore.ts";
-import {
-  ScientForkAttachmentCopier,
-  ScientForkAttachmentCopierLive,
-} from "./ForkAttachmentCopier.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
 import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
@@ -686,6 +682,7 @@ it.live.each(
         "close",
         "eof-final",
       ].includes(scenario.control);
+      let planHeld = false;
       yield* Effect.addFinalizer(() => Deferred.succeed(releasePlan, undefined));
       const emissionHeld = yield* Deferred.make<void>();
       const releaseEmission = yield* Deferred.make<void>();
@@ -919,24 +916,18 @@ it.live.each(
                     },
                   }
                 : {}),
-              forkAttachmentCopierLayer: Layer.effect(
-                ScientForkAttachmentCopier,
-                Effect.map(ScientForkAttachmentCopier, (copier) => ({
-                  ...copier,
-                  checkSources: (input) =>
-                    copier
-                      .checkSources(input)
-                      .pipe(
-                        Effect.tap(() =>
-                          cutoffRace
-                            ? Deferred.succeed(planQueued, undefined).pipe(
-                                Effect.andThen(Deferred.await(releasePlan)),
-                              )
-                            : Effect.void,
-                        ),
-                      ),
-                })),
-              ).pipe(Layer.provide(ScientForkAttachmentCopierLive)),
+              // The fork checks its workspace right after planning: hold it there.
+              decorateForkCheckpointBaseline: (baseline) => ({
+                ...baseline,
+                workspaceExists: (path) =>
+                  (cutoffRace && !planHeld
+                    ? Effect.sync(() => (planHeld = true)).pipe(
+                        Effect.andThen(Deferred.succeed(planQueued, undefined)),
+                        Effect.andThen(Deferred.await(releasePlan)),
+                      )
+                    : Effect.void
+                  ).pipe(Effect.andThen(baseline.workspaceExists(path))),
+              }),
               decorateEventSink: (sink) => ({
                 ...sink,
                 write: (input) =>
@@ -1692,7 +1683,10 @@ it.live.each(
                 yield* manager.closeInstance(modelSelection.instanceId);
                 return {
                   frozen: null,
-                  completed: yield* orchestrator.getThreadProjection(threadId),
+                  completed:
+                    scenario.control === "eof-final"
+                      ? yield* waitFor(threadId, (p) => p.runs[0]?.status === "failed")
+                      : yield* orchestrator.getThreadProjection(threadId),
                 };
               }
               yield* Deferred.succeed(releaseEmission, undefined);
@@ -1740,13 +1734,6 @@ it.live.each(
             Stream.runHead,
             Effect.timeout("15 seconds"),
           );
-          assert.isTrue(
-            (yield* (yield* EffectOutboxV2).listByCommandId(forkCommandId)).some(
-              (entry) =>
-                entry.request.type === "scient-fork.provision" && entry.status === "pending",
-            ),
-          );
-          yield* worker.drain(12);
           yield* Fiber.join(forking);
           const frozen = yield* orchestrator.getThreadProjection(forkId);
           assert.equal(frozen.thread.conversationFork?.status, "ready");
@@ -2008,7 +1995,17 @@ it.live.each(
           }).pipe(Effect.provide(layerMemory));
           assert.deepEqual(rebuilt.source.messages, completed.messages);
           assert.deepEqual(rebuilt.source.turnItems, completed.turnItems);
-          assert.deepEqual(rebuilt.child.messages, frozen.messages);
+          // The in-memory store replays only the fork's own records; any shared
+          // history is read from SQL.
+          const shared = new Set(
+            frozen.visibleTurnItems.flatMap(({ sourceThreadId, item }) =>
+              sourceThreadId !== forkId && "messageId" in item ? [item.messageId] : [],
+            ),
+          );
+          assert.deepEqual(
+            rebuilt.child.messages,
+            frozen.messages.filter((message) => !shared.has(message.id)),
+          );
           assert.deepEqual(rebuilt.child.turnItems, frozen.turnItems);
           yield* capture("rebuilt", rebuilt);
           yield* (yield* ProviderSessionManagerV2).closeInstance(modelSelection.instanceId);

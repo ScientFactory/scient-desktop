@@ -301,7 +301,6 @@ it.live(
                 event("thread.created", foreignId, {
                   ...thread(foreignId),
                   archivedAt: now,
-                  deletedAt: now,
                   conversationFork: {
                     commandId: CommandId.make("pending-fork"),
                     sourceThreadId: threadId,

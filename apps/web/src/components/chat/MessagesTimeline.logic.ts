@@ -9,7 +9,7 @@ import {
   collectAssistantCitations,
 } from "@t3tools/shared/assistantCitations";
 import { shallow } from "zustand/vanilla/shallow";
-import { renderCodexDirectivesForCopy } from "@t3tools/client-runtime/codex-markdown-directives";
+import { renderCodexDirectivesForCopy } from "@t3tools/shared/codexMarkdownDirectives";
 import {
   commandDisplayText,
   commandProgramName,
@@ -79,7 +79,6 @@ import {
 } from "@t3tools/shared/toolActivity";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { computeElapsedMs } from "@scientfactory/conversation/work-log-grouping";
-export { shouldPreserveAssistantLineBreaks } from "@scientfactory/conversation/work-log-grouping";
 // SCIENT-FORK:START — historical turns group inert presentation.
 import { timelineEntryHistoryKey } from "../../scient/fork/historicalTimelineTurns";
 // SCIENT-FORK:END
@@ -660,6 +659,8 @@ type MessagesTimelineRowContent =
   | {
       kind: "fork-marker";
       id: string;
+      /** SCIENT-FORK: an earlier fork point this conversation shows, and the conversation it came from. */
+      originThreadId?: ThreadId | undefined;
     }
   | {
       kind: "assistant-meta";
@@ -1363,6 +1364,35 @@ function settleSupersededReasoning(entries: ReadonlyArray<TimelineEntry>) {
   });
 }
 
+function timelineRowEntries(entries: ReadonlyArray<TimelineEntry>) {
+  return withoutSubagentDelegationRows(settleSupersededReasoning(entries));
+}
+
+/** The turn folds the timeline would draw, before applying expansion state. */
+function deriveTimelineTurnFolds(
+  input: Pick<
+    MessagesTimelineRowsInput,
+    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
+  >,
+) {
+  const timelineEntries = timelineRowEntries(input.timelineEntries);
+  const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
+  const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
+  const activeVisualResponseRunIds = deriveActiveVisualResponseRunIds({
+    timelineEntries,
+    unsettledRunId,
+    isWorking: input.isWorking,
+  });
+  return deriveTurnFolds({
+    timelineEntries,
+    terminalAssistantMessageIds: deriveTerminalAssistantMessageIds(timelineEntries),
+    latestRun: input.latestRun ?? null,
+    unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
+    runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
+    liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
+  });
+}
+
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   contextTransfers?: ReadonlyArray<OrchestrationV2ContextTransfer> | undefined;
@@ -1388,9 +1418,7 @@ export function deriveMessagesTimelineRows(input: {
   /** Live bootstrap progress. Renders a stage card under the first user message. */
   worktreeSetup?: WorktreeSetupSnapshot | null;
 }): MessagesTimelineRow[] {
-  const timelineEntries = withoutSubagentDelegationRows(
-    settleSupersededReasoning(input.timelineEntries),
-  ).filter(
+  const timelineEntries = timelineRowEntries(input.timelineEntries).filter(
     (entry) =>
       entry.kind !== "event" ||
       !isForkInitializationHandoff(entry.projectedItem, input.contextTransfers),
@@ -1619,6 +1647,22 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.projectedItem.item.source.type === "message") &&
       timelineEntry.projectedItem.item.targetThreadId === timelineEntry.projectedItem.item.threadId
     ) {
+      continue;
+    }
+    // SCIENT-FORK: an inherited point where an earlier conversation was forked
+    // (a fork of a fork shows its parent's) reads like this fork's own marker.
+    if (
+      timelineEntry.kind === "event" &&
+      timelineEntry.projectedItem.visibility === "inherited" &&
+      timelineEntry.projectedItem.item.type === "fork" &&
+      (timelineEntry.projectedItem.item.source.type === "run" ||
+        timelineEntry.projectedItem.item.source.type === "message")
+    ) {
+      nextRows.push({
+        kind: "fork-marker",
+        id: `fork-marker:${timelineEntry.id}`,
+        originThreadId: timelineEntry.projectedItem.item.source.threadId,
+      });
       continue;
     }
 
@@ -2182,6 +2226,35 @@ export interface MessagesTimelineRowsProjection {
   readonly rows: MessagesTimelineRow[];
 }
 
+/**
+ * The turn fold that holds an entry, keyed as `expandedRunIds` expects. Runless
+ * (imported V1) turns fold under a synthetic key, so the entry's own run id is
+ * not enough to open them.
+ */
+export function timelineEntryTurnFoldRunId(
+  input: Pick<
+    MessagesTimelineRowsInput,
+    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
+  >,
+  entryId: string,
+): RunId | null {
+  return timelineTurnFoldRunIdsByEntryId(input).get(entryId) ?? null;
+}
+
+/** Every folded entry's fold key, computed once for callers that check many entries. */
+export function timelineTurnFoldRunIdsByEntryId(
+  input: Pick<
+    MessagesTimelineRowsInput,
+    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
+  >,
+): ReadonlyMap<string, RunId> {
+  const byEntryId = new Map<string, RunId>();
+  for (const fold of deriveTimelineTurnFolds(input).values()) {
+    for (const entryId of fold.hiddenEntryIds) byEntryId.set(entryId, fold.runId);
+  }
+  return byEntryId;
+}
+
 function sameCheckpointSummaries(
   previous: MessagesTimelineRowsInput["turnDiffSummaries"],
   next: MessagesTimelineRowsInput["turnDiffSummaries"],
@@ -2410,7 +2483,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     }
 
     case "fork-marker":
-      return true;
+      return a.originThreadId === (b as typeof a).originThreadId;
 
     case "message": {
       const bm = b as typeof a;

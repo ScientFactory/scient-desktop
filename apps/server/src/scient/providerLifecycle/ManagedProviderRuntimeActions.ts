@@ -1,5 +1,7 @@
 import {
   ManagedProviderRuntimeError,
+  compareManagedRuntimeReleases,
+  type ManagedRuntimeArtifactReceipt,
   hydrateManagedRuntimeArtifact,
   type ManagedProviderRuntime,
   type ManagedProviderRuntimeProgress,
@@ -33,7 +35,7 @@ import {
   resolveManagedRuntimeCatalogCandidate,
   resolveManagedRuntimeRepairArtifact,
 } from "./ManagedRuntimeCatalog.ts";
-import { compareManagedRuntimeVersions, isManagedRuntimeUpdate } from "./managedRuntimeVersion.ts";
+import { compareManagedRuntimeVersions } from "./managedRuntimeVersion.ts";
 
 const runtimeError = (message: string, cause?: unknown) =>
   new ProviderConnectionActionError({
@@ -142,14 +144,9 @@ export function managedRuntimeDowngradeMessage(input: {
 }
 
 /**
- * What a plan says about switching from the system runtime to the managed
- * release: the user's own choice of the managed copy, offered whatever the two
- * releases are and decided with both in view. When Scient does not know the
- * system runtime's release (it reported none, or the instance is disabled and
- * its tool is not run), the plan says so instead of implying an order. What
- * the user has to decide (an older release, an unknown one) is part of the
- * plan's revision, so a plan made before that changed (the system tool was
- * upgraded meanwhile) is not carried out: the next plan is a new decision.
+ * Diagnostics for choosing the qualified managed release instead of a system
+ * runtime. Unknown versions stay explicit; comparison metadata is bound to the
+ * catalog revision so a changed plan must be refreshed before execution.
  */
 export function managedRuntimeSwitchPlan(input: {
   readonly providerName: string;
@@ -194,6 +191,7 @@ export function resolveManagedRuntimePolicy(input: {
   readonly artifact: ManagedRuntimeArtifact | undefined;
   readonly installed: boolean;
   readonly installedVersion: string | null;
+  readonly installedArtifact?: ManagedRuntimeArtifactReceipt | null | undefined;
   readonly managedInstallationAllowed: boolean;
   readonly systemToManagedSwitchAllowed: boolean;
 }): {
@@ -216,11 +214,15 @@ export function resolveManagedRuntimePolicy(input: {
         : input.source === "scient_managed"
           ? input.installed &&
             input.artifact &&
-            isManagedRuntimeUpdate({
+            input.installedVersion !== null &&
+            compareManagedRuntimeReleases({
               provider: input.artifact.provider,
-              current: input.installedVersion,
-              candidate: input.artifact.version,
-            })
+              current:
+                input.installedArtifact?.version === input.installedVersion
+                  ? input.installedArtifact
+                  : { version: input.installedVersion },
+              candidate: input.artifact,
+            }) === "newer"
             ? ["update", "repair", "remove"]
             : ["repair", "remove"]
           : [];
@@ -386,6 +388,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
     artifact: artifact ?? inspection?.artifact,
     installed: managedInstalled,
     installedVersion: Option.isSome(managedStatus) ? managedStatus.value.activeVersion : null,
+    installedArtifact: Option.isSome(managedStatus) ? managedStatus.value.activeArtifact : null,
     managedInstallationAllowed,
     systemToManagedSwitchAllowed: input.systemToManagedSwitchAllowed,
   });
@@ -416,6 +419,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
       artifact: availableArtifact,
       installed: latestManagedInstalled,
       installedVersion: latest?.activeVersion ?? null,
+      installedArtifact: latest?.activeArtifact,
       managedInstallationAllowed,
       systemToManagedSwitchAllowed: input.systemToManagedSwitchAllowed,
     });
@@ -510,6 +514,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
             artifact: candidateArtifact ?? managedInspection?.artifact,
             installed: true,
             installedVersion: managed.activeVersion,
+            installedArtifact: managed.activeArtifact,
             managedInstallationAllowed,
             systemToManagedSwitchAllowed: input.systemToManagedSwitchAllowed,
           }).actions

@@ -6,7 +6,7 @@ import {
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import * as Schema from "effect/Schema";
 
-import { isAbsolutePath } from "~/terminal-links";
+import { isAbsolutePath } from "@t3tools/shared/path";
 
 import { stackedThreadToast, toastManager } from "../ui/toast";
 

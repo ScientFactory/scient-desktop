@@ -8,6 +8,9 @@ import {
 
 import {
   mergeQualifiedManagedRuntimeProvider,
+  managedRuntimeProviderIdentity,
+  readManagedRuntimeCatalog,
+  verifyManagedRuntimePromotionPointer,
   parseCursorInstallerVersion,
   parseDroidStableVersion,
   parseGrokStableVersion,
@@ -1023,10 +1026,14 @@ describe("managed runtime release discovery", () => {
 
   it("fails closed when an official stable pointer moves backwards", async () => {
     const { fetch_, requested } = stableChannelFetch("0.149.1");
-    await expect(refreshManagedRuntimeCatalog(currentCatalog, fetch_)).rejects.toThrow(
+    await expect(refreshManagedRuntimeProvider(currentCatalog, "codex", fetch_)).rejects.toThrow(
       /moved backwards/u,
     );
     expect(requested).toEqual(["https://releases.openai.com/codex/channels/latest"]);
+    const result = await refreshManagedRuntimeCatalog(currentCatalog, fetch_);
+    expect(result.failedProviders).toEqual(["codex"]);
+    expect(result.catalog.providers.codex).toEqual(currentCatalog.providers.codex);
+    expect(requested).toContain("https://cursor.com/install");
   });
 
   it("rejects a missing family's release below its bundled baseline before collecting artifacts", async () => {
@@ -1040,5 +1047,232 @@ describe("managed runtime release discovery", () => {
       }),
     ).rejects.toThrow(/moved backwards/u);
     expect(requests).toBe(1);
+  });
+});
+
+function cursorRelease(version: string, supersedes?: ReadonlyArray<string>) {
+  const bundled = currentCatalog.providers.cursor!;
+  return {
+    ...bundled,
+    version,
+    ...(supersedes ? { supersedes } : {}),
+    artifacts: Object.fromEntries(
+      Object.entries(bundled.artifacts).map(([key, artifact]) => [
+        key,
+        {
+          ...artifact,
+          url: artifact.url.replace(bundled.version, version),
+        },
+      ]),
+    ),
+  };
+}
+
+const cursorA = "2026.10.01-14929f9";
+const cursorB = "2026.10.01-e373342";
+const cursorC = "2026.10.01-abcdef1";
+const cursorPointer = (version: string) =>
+  new Response(
+    `DOWNLOAD_URL="https://downloads.cursor.com/lab/${version}/` +
+      '${OS}/${ARCH}/agent-cli-package.tar.gz"',
+  );
+
+describe("independent provider publication", () => {
+  it("preserves unknown family names as own data without changing the catalog prototype", () => {
+    const unknown = currentCatalog.providers.claudeAgent!;
+    const providers = Object.fromEntries([
+      ["__proto__", unknown],
+      ["claudeAgent", unknown],
+    ]);
+    const decoded = readManagedRuntimeCatalog({ schemaVersion: 1, providers }, "claudeAgent");
+    expect(Object.hasOwn(decoded.providers, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(decoded.providers)).toBe(Object.prototype);
+    expect(Object.entries(decoded.providers).find(([name]) => name === "__proto__")?.[1]).toEqual(
+      unknown,
+    );
+  });
+
+  it("reads historical and future siblings without granting them current execution policy", () => {
+    const historical = {
+      ...currentCatalog.providers.antigravityAcp!,
+      version: "1.1.1",
+      contractRevision: 1,
+    };
+    const future = { ...currentCatalog.providers.codex!, contractRevision: 999 };
+    const input = {
+      schemaVersion: 1,
+      providers: {
+        claudeAgent: currentCatalog.providers.claudeAgent,
+        antigravityAcp: historical,
+        codex: future,
+        futureFamily: future,
+      },
+    };
+    const current = readManagedRuntimeCatalog(input, "claudeAgent");
+    expect(current.providers.antigravityAcp).toEqual(historical);
+    expect(current.providers.codex).toEqual(future);
+    expect(Object.keys(current.providers)).toContain("futureFamily");
+    expect(() => readManagedRuntimeCatalog(input, "codex")).toThrow(/unsupported.*contract/u);
+    expect(() =>
+      validateManagedRuntimeCandidate(
+        readManagedRuntimeCatalog(input, "antigravityAcp"),
+        "antigravityAcp",
+      ),
+    ).toThrow(/current.*contract/u);
+    const next = {
+      ...current.providers.claudeAgent!,
+      version: nextPatch(current.providers.claudeAgent!.version),
+    };
+    const merged = mergeQualifiedManagedRuntimeProvider({
+      current,
+      candidate: { schemaVersion: 1, providers: { claudeAgent: next } },
+      provider: "claudeAgent",
+    });
+    expect(merged.providers.antigravityAcp).toEqual(historical);
+    expect(merged.providers.codex).toEqual(future);
+  });
+
+  it("quarantines malformed siblings for old clients but fails the selected malformed family", () => {
+    const reports: string[] = [];
+    const input = {
+      schemaVersion: 1,
+      providers: { ...currentCatalog.providers, cursor: { invalid: true } },
+    };
+    const decoded = readManagedRuntimeCatalog(input, "codex", (message) => reports.push(message));
+    expect(decoded.providers.cursor).toBeUndefined();
+    expect(decoded.providers.codex).toEqual(currentCatalog.providers.codex);
+    expect(reports).toEqual(["Quarantined cursor malformed catalog entry."]);
+    expect(() => readManagedRuntimeCatalog(input, "cursor")).toThrow();
+    expect(() => readManagedRuntimeCatalog({ schemaVersion: 999, providers: {} }, "codex")).toThrow(
+      /schema/u,
+    );
+  });
+
+  it("preserves all healthy merges over repeatedly shuffled publication orders", () => {
+    const providers = ["codex", "claudeAgent", "droid", "grok", "pi", "omp"] as const;
+    let seed = 7919;
+    for (let run = 0; run < 100; run++) {
+      const order = [...providers];
+      for (let i = order.length - 1; i > 0; i--) {
+        seed = (seed * 16807) % 2147483647;
+        const j = seed % (i + 1);
+        [order[i], order[j]] = [order[j]!, order[i]!];
+      }
+      let published = currentCatalog;
+      for (const provider of order) {
+        const release = currentCatalog.providers[provider]!;
+        // Every candidate deliberately carries a stale snapshot of all siblings.
+        const candidate = {
+          ...currentCatalog,
+          providers: {
+            ...currentCatalog.providers,
+            [provider]: { ...release, version: nextPatch(release.version) },
+          },
+        };
+        published = mergeQualifiedManagedRuntimeProvider({
+          current: published,
+          candidate,
+          provider,
+        });
+      }
+      for (const provider of providers)
+        expect(published.providers[provider]?.version).toBe(
+          nextPatch(currentCatalog.providers[provider]!.version),
+        );
+      expect(published.providers.antigravityAcp).toEqual(currentCatalog.providers.antigravityAcp);
+    }
+  });
+});
+
+describe("qualified Cursor same-day replacements", () => {
+  it("discovers and promotes B, preserves siblings, and rejects stale predecessors and pointers", async () => {
+    const current: ManagedRuntimeCatalogData = {
+      schemaVersion: 1,
+      providers: { ...currentCatalog.providers, cursor: cursorRelease(cursorA) },
+    };
+    const fetched: string[] = [];
+    const result = await refreshManagedRuntimeProvider(current, "cursor", async (url) => {
+      fetched.push(url.toString());
+      return url.toString() === "https://cursor.com/install"
+        ? cursorPointer(cursorB)
+        : new Response("qualified by a separate native job");
+    });
+    expect(result.catalog.providers.cursor?.supersedes).toEqual([cursorA]);
+    expect(result.catalog.cursorDiscoveryBase).toBe(
+      managedRuntimeProviderIdentity(current.providers.cursor),
+    );
+    expect(fetched.filter((url) => url.startsWith("https://downloads.cursor.com/"))).toHaveLength(
+      6,
+    );
+    const withSibling = {
+      ...current,
+      providers: {
+        ...current.providers,
+        claudeAgent: {
+          ...current.providers.claudeAgent!,
+          version: nextPatch(current.providers.claudeAgent!.version),
+        },
+      },
+    };
+    const published = mergeQualifiedManagedRuntimeProvider({
+      current: withSibling,
+      candidate: result.catalog,
+      provider: "cursor",
+    });
+    expect(published.providers.cursor?.version).toBe(cursorB);
+    expect(published.providers.claudeAgent).toEqual(withSibling.providers.claudeAgent);
+    expect(published.cursorDiscoveryBase).toBeUndefined();
+    expect(
+      mergeQualifiedManagedRuntimeProvider({
+        current: published,
+        candidate: result.catalog,
+        provider: "cursor",
+      }),
+    ).toBe(published);
+    await verifyManagedRuntimePromotionPointer(
+      { current, candidate: result.catalog, provider: "cursor" },
+      async () => cursorPointer(cursorB),
+    );
+    await expect(
+      verifyManagedRuntimePromotionPointer(
+        { current, candidate: result.catalog, provider: "cursor" },
+        async () => cursorPointer(cursorC),
+      ),
+    ).rejects.toThrow(/pointer changed/u);
+    const advanced = {
+      ...published,
+      providers: { ...published.providers, cursor: cursorRelease(cursorC, [cursorA, cursorB]) },
+    };
+    expect(() =>
+      mergeQualifiedManagedRuntimeProvider({
+        current: advanced,
+        candidate: result.catalog,
+        provider: "cursor",
+      }),
+    ).toThrow(/predecessor changed/u);
+    const { cursorDiscoveryBase: _base, ...unbound } = result.catalog;
+    expect(() =>
+      mergeQualifiedManagedRuntimeProvider({ current, candidate: unbound, provider: "cursor" }),
+    ).toThrow(/predecessor changed/u);
+  });
+
+  it("rejects a return to an ancestor and does not alter lineage during same-version expansion", async () => {
+    const current: ManagedRuntimeCatalogData = {
+      schemaVersion: 1,
+      providers: { cursor: cursorRelease(cursorB, [cursorA]) },
+    };
+    await expect(
+      refreshManagedRuntimeProvider(current, "cursor", async () => cursorPointer(cursorA)),
+    ).rejects.toThrow(/moved backwards/u);
+    const candidate = { ...current, providers: { cursor: cursorRelease(cursorB, []) } };
+    expect(() =>
+      mergeQualifiedManagedRuntimeProvider({ current, candidate, provider: "cursor" }),
+    ).toThrow(/repack/u);
+    expect(() =>
+      readManagedRuntimeCatalog(
+        { ...current, providers: { cursor: cursorRelease(cursorB, [cursorA, cursorA]) } },
+        "cursor",
+      ),
+    ).toThrow(/ordering metadata/u);
   });
 });

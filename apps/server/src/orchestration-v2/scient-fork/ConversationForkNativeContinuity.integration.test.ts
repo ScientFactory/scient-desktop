@@ -597,11 +597,14 @@ it.live.each(
             (entry) => entry.type === "emit_inbound" && entry.label === "thread/start/source",
           );
           assert.ok(sourceStart?.type === "emit_inbound");
-          const owned = frozen.turnItems.filter(
-            (item) =>
-              item.runId === null &&
-              (scenario === "changed-instance" || historicalMessage(item) !== null),
-          );
+          // The fork's frozen history: inherited items by reference, then its boundary.
+          const owned = frozen.visibleTurnItems
+            .map((row) => row.item)
+            .filter(
+              (item) =>
+                item.runId === null &&
+                (scenario === "changed-instance" || historicalMessage(item) !== null),
+            );
           const messages = owned.flatMap((item) => {
             const message = historicalMessage(item);
             return message === null ? [] : [message];
@@ -812,7 +815,7 @@ it.live.each(
               THREAD_FORK_NATIVE_SOURCE_PROMPT,
               "source fork seed ok",
               ...(scenario === "native-failure"
-                ? frozen.turnItems.flatMap((item) =>
+                ? frozen.visibleTurnItems.flatMap(({ item }) =>
                     item.type === "user_input_request" ? [historicalMessage(item)?.text] : [],
                   )
                 : []),

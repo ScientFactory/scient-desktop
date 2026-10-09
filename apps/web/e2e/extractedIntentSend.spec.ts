@@ -1088,7 +1088,7 @@ test("diagnoses the public controlled-provider composer readiness before intake"
   }
 }, 180000);
 
-test("drains successful FIFO work and preserves a Stop hold through foreground completion and idle reorder", async () => {
+test("drains successful FIFO work and sends any held row after idle reorder", async () => {
   const f = await fixture();
   const sql = new NodeSqlite.DatabaseSync(NodePath.join(f.base, "userdata/statev2.sqlite"), {
     readOnly: true,
@@ -1182,11 +1182,13 @@ test("drains successful FIFO work and preserves a Stop hold through foreground c
     await queue("held-second");
     await f.page.getByRole("button", { name: "Stop generation", exact: true }).click();
     await expect.poll(() => queued().map((run) => run.held), { timeout: 30000 }).toEqual([1, 1]);
+    // A held queue on an idle thread offers Send on every row and no Resume queue.
     await expect
-      .poll(() => strip.getByRole("button", { name: "Resume queue", exact: true }).isEnabled(), {
+      .poll(() => strip.getByRole("button", { name: "Send", exact: true }).count(), {
         timeout: 15000,
       })
-      .toBe(true);
+      .toBe(2);
+    await expect(strip.getByRole("button", { name: "Resume queue", exact: true })).toHaveCount(0);
     stage("public Stop held both pending messages");
 
     // Exercise the original strip's actual pointer sensor while the thread is idle.
@@ -1212,29 +1214,11 @@ test("drains successful FIFO work and preserves a Stop hold through foreground c
       .toContain("held-second");
     stage("idle pointer reorder reached native queue authority");
 
-    await send(f.page, "ACP_ACCEPTANCE:ANSWER foreground-after-stop");
-    await expect.poll(() => completed("foreground-after-stop"), { timeout: 30000 }).toBe(true);
-    expect(queued().map((run) => run.held)).toEqual([1, 1]);
-    expect(
-      (await audit(f.peer))
-        .filter((event) => event.event === "prompt_accepted")
-        .map((event) => event.label),
-    ).toEqual(["auto-root", "fifo-first", "fifo-second", "stopped-root", "foreground-after-stop"]);
-    await expect
-      .poll(() => strip.getByRole("button", { name: "Resume queue", exact: true }).isEnabled(), {
-        timeout: 15000,
-      })
-      .toBe(true);
-    stage("later foreground success preserved the explicit hold");
-
-    await strip.getByRole("button", { name: "Send", exact: true }).click();
-    await expect.poll(() => completed("held-second"), { timeout: 30000 }).toBe(true);
-    expect(queued().map((run) => ({ text: run.text, held: run.held }))).toEqual([
-      { text: "ACP_ACCEPTANCE:ANSWER held-first", held: 1 },
-    ]);
-    await expect.poll(() => queueRows.count(), { timeout: 15000 }).toBe(1);
-    await strip.getByRole("button", { name: "Resume queue", exact: true }).click();
+    // Send on the second row starts that message now; the rest of the queue
+    // continues after it without a Resume.
+    await queueRows.nth(1).getByRole("button", { name: "Send", exact: true }).click();
     await expect.poll(() => completed("held-first"), { timeout: 30000 }).toBe(true);
+    await expect.poll(() => completed("held-second"), { timeout: 30000 }).toBe(true);
     await expect.poll(() => queueRows.count(), { timeout: 15000 }).toBe(0);
     expect(queued()).toEqual([]);
     expect(
@@ -1246,10 +1230,10 @@ test("drains successful FIFO work and preserves a Stop hold through foreground c
       "fifo-first",
       "fifo-second",
       "stopped-root",
-      "foreground-after-stop",
-      "held-second",
       "held-first",
+      "held-second",
     ]);
+    stage("Send on a non-head row resumed the whole queue");
     console.info("[connected queue policy receipt] " + JSON.stringify(runs()));
   } finally {
     console.info(

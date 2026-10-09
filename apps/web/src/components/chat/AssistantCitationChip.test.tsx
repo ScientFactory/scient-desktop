@@ -10,30 +10,50 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 
-const mocks = vi.hoisted(() => ({ observeSource: vi.fn(), dispose: vi.fn() }));
+const mocks = vi.hoisted(() => ({ observeSource: vi.fn(), dispose: vi.fn(), navigate: vi.fn() }));
 vi.mock("./AssistantCitationSource", () => ({
   observeAssistantCitationCommentSource: mocks.observeSource,
 }));
 vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => vi.fn(),
+  useNavigate: () => mocks.navigate,
   Link: ({ children }: { children: ReactNode }) => <a>{children}</a>,
 }));
 // Keep the real chip/editor lifecycle while replacing DOM positioning and floating layers.
+vi.mock("../ui/popover", async () => {
+  const { cloneElement } = await import("react");
+  type RenderProps = { children: ReactNode; render?: React.ReactElement };
+  const renderControl = ({ children, render }: RenderProps) =>
+    render ? cloneElement(render, undefined, children) : <button>{children}</button>;
+  return {
+    Popover: ({ children }: { children: ReactNode }) => <>{children}</>,
+    PopoverTrigger: renderControl,
+    PopoverClose: renderControl,
+    PopoverTitle: ({ children }: { children: ReactNode }) => <span>{children}</span>,
+    PopoverPopup: ({ children }: { children: ReactNode }) => <>{children}</>,
+  };
+});
 vi.mock("../ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
-  TooltipTrigger: ({ render }: { render: ReactNode }) => render,
+  TooltipTrigger: ({ render }: { render: ReactNode }) => <>{render}</>,
   TooltipPopup: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
-vi.mock("../ui/popover", () => ({
-  Popover: ({ children }: { children: ReactNode }) => <>{children}</>,
-  PopoverTrigger: ({ children }: { children: ReactNode }) => <button>{children}</button>,
-  PopoverPopup: ({ children }: { children: ReactNode }) => <>{children}</>,
-}));
-vi.mock("../ui/button", () => ({
-  Button: (props: React.ComponentProps<"button">) => <button {...props} />,
-}));
+vi.mock("../ui/button", async () => {
+  const { cloneElement } = await import("react");
+  return {
+    Button: ({
+      render,
+      children,
+      ...props
+    }: React.ComponentProps<"button"> & {
+      render?: React.ReactElement<React.ComponentProps<"button">>;
+    }) => (render ? cloneElement(render, props, children) : <button {...props}>{children}</button>),
+  };
+});
 
 import { PopoverPopup } from "../ui/popover";
+import { Link } from "@tanstack/react-router";
+import { assistantCitationHash } from "~/lib/assistantCitationNavigation";
+import { fileCitationHash } from "~/scient/markdownEditor/fileCitationNavigation";
 import { TooltipPopup } from "../ui/tooltip";
 import { AssistantCitationChip } from "./AssistantCitationChip";
 
@@ -63,6 +83,7 @@ function mount(onSave = vi.fn(() => true)) {
     return (
       <AssistantCitationChip
         citation={citation}
+        composer
         commentEditor={{ open, sourceAnchor, onOpenChange: setOpen, onSave }}
       />
     );
@@ -95,6 +116,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mocks.observeSource.mockReset().mockReturnValue(mocks.dispose);
   mocks.dispose.mockClear();
+  mocks.navigate.mockReset();
 });
 
 afterEach(() => {
@@ -210,10 +232,100 @@ describe("citation hover content", () => {
     expect(popupLines()).toContain("Lines 12–18 · unsaved at capture");
   });
 
-  it("keeps the View source tooltip for assistant citations", () => {
+  it("shows the quoted text and saved comment with Go to source for assistant citations", () => {
+    const quoted = { ...citation, text: "hello\nquoted source", comment: "Explain this result" };
+    act(() => {
+      renderer = create(<AssistantCitationChip citation={quoted} />);
+    });
+    const popup = renderer.root.findByType(PopoverPopup);
+    expect(popup.findByType("blockquote").props.children).toBe(quoted.text);
+    expect(popup.findByType("p").props.children).toBe(quoted.comment);
+    expect(renderer.root.findAllByType(TooltipPopup)).toHaveLength(0);
+    const source = popup.findByType(Link);
+    expect(source.props.children).toContain("Go to source");
+    expect(source.props.params).toEqual({
+      environmentId: quoted.environmentId,
+      threadId: quoted.threadId,
+    });
+    expect(source.props.hash).toBe(assistantCitationHash(quoted));
+    expect(source.props.resetScroll).toBe(false);
+    const preventDefault = vi.fn();
+    act(() =>
+      source.props.onClick({
+        button: 0,
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        preventDefault,
+      }),
+    );
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(mocks.navigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: source.props.params,
+        hash: source.props.hash,
+        resetScroll: false,
+        state: { assistantCitationActivation: expect.any(String) },
+      }),
+    );
+  });
+
+  it("omits the comment paragraph when an assistant quote has no saved comment", () => {
     act(() => {
       renderer = create(<AssistantCitationChip citation={citation} />);
     });
-    expect(renderer.root.findByType(TooltipPopup).props.children).toBe("View source");
+    expect(renderer.root.findByType("blockquote").props.children).toBe(citation.text);
+    expect(renderer.root.findByType(PopoverPopup).findAllByType("p")).toHaveLength(0);
+    expect(renderer.root.findByType(Link).props.children).toContain("Go to source");
   });
+
+  it.each([false, true])(
+    "keeps file citations navigating to their exact captured source (composer: %s)",
+    (composer) => {
+      act(() => {
+        renderer = create(<AssistantCitationChip citation={fileCitation} composer={composer} />);
+      });
+      expect(renderer.root.findAllByType(PopoverPopup)).toHaveLength(0);
+      const source = renderer.root.findByType(Link);
+      expect(source.props.hash).toBe(fileCitationHash(fileCitation));
+      expect(source.props.params).toEqual({
+        environmentId: fileCitation.environmentId,
+        threadId: fileCitation.threadId,
+      });
+      const preventDefault = vi.fn();
+      act(() =>
+        source.props.onClick({
+          button: 0,
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+          preventDefault,
+        }),
+      );
+      expect(preventDefault).toHaveBeenCalledOnce();
+      expect(mocks.navigate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hash: fileCitationHash(fileCitation),
+          resetScroll: false,
+          state: { fileCitationActivation: expect.any(String) },
+        }),
+      );
+      mocks.navigate.mockClear();
+      preventDefault.mockClear();
+      act(() =>
+        source.props.onClick({
+          button: 0,
+          metaKey: true,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+          preventDefault,
+        }),
+      );
+      expect(preventDefault).not.toHaveBeenCalled();
+      expect(mocks.navigate).not.toHaveBeenCalled();
+    },
+  );
 });

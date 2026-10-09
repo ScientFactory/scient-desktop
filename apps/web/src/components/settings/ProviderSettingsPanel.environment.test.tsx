@@ -631,6 +631,31 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(settingsState.updateSettings).not.toHaveBeenCalled();
   });
 
+  it("follows changed deep links without remounting and retains manual picks on refresh", () => {
+    atoms.providers = [provider(), missingAntigravityProvider()];
+    let panel = renderPanel({ targetInstanceId: codexId });
+    expect(
+      visitElements(panel, (element) => element.props.mode === "editor")?.props.instanceId,
+    ).toBe(codexId);
+    panel = renderPanel({ targetInstanceId: antigravityId });
+    expect(
+      visitElements(panel, (element) => element.props.mode === "editor")?.props.instanceId,
+    ).toBe(antigravityId);
+    const codexRow = visitElements(
+      panel,
+      (element) => element.props.mode === "list" && element.props.instanceId === codexId,
+    );
+    (codexRow?.props.onSelect as () => void)();
+    panel = renderPanel({ targetInstanceId: antigravityId });
+    expect(
+      visitElements(panel, (element) => element.props.mode === "editor")?.props.instanceId,
+    ).toBe(codexId);
+    panel = renderPanel({ targetInstanceId: codexId });
+    expect(
+      visitElements(panel, (element) => element.props.mode === "editor")?.props.instanceId,
+    ).toBe(codexId);
+  });
+
   it("keeps the editable layout interactive when not read only", () => {
     atoms.providers = [provider()];
     const panel = renderPanel();

@@ -64,9 +64,9 @@ const display =
   'Evidence 😀 שלום [1](<https://example.test/study> "Study"); absent [citation unavailable].';
 const selection = { workLog: false, reasoning: false, throughMessageId: null };
 const assistant = (projection: OrchestrationV2ThreadProjection) => {
-  const item = projection.turnItems.findLast(
-    (entry) => entry.type === "assistant_message" && !entry.streaming,
-  );
+  const item = projection.visibleTurnItems
+    .map((row) => row.item)
+    .findLast((entry) => entry.type === "assistant_message" && !entry.streaming);
   assert.ok(item?.type === "assistant_message");
   return item;
 };

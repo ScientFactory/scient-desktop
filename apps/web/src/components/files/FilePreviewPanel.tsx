@@ -101,7 +101,8 @@ import type {
 } from "~/rightPanelStore";
 import { workspaceFileHostPath } from "./filePath";
 import type { ChatFileAttachment } from "~/types";
-import { isAbsolutePath } from "~/terminal-links";
+import { isAbsolutePath } from "@t3tools/shared/path";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -300,6 +301,7 @@ function WorkspaceImagePreview(props: {
   }
 
   return assetUrl._tag === "Success" && imageUrl !== null ? (
+    // oxlint-disable-next-line t3code/require-centered-scroll-gutter -- The image is capped at max-h-full max-w-full, so this never scrolls.
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
       <MediaActions source={actionsSource}>
         <img
@@ -2002,6 +2004,13 @@ export default function FilePreviewPanel({
                         // through its automatic rename from its title.
                         ...(moveInPlace && isRichMarkdown ? { moveInPlace } : {})
                       }
+                      {...(markdownLease
+                        ? {
+                            prepareRename: () =>
+                              markdownLease.settleRecoveryCopy?.() ?? Promise.resolve(true),
+                          }
+                        : {})}
+                      {...(moveInPlace ? { moveInPlace } : {})}
                       {...(markdownLease
                         ? {
                             prepareRename: () =>

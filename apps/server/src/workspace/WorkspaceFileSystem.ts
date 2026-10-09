@@ -410,14 +410,21 @@ export const make = Effect.gen(function* () {
   const viewFile: WorkspaceFileSystem["Service"]["viewFile"] = (input) =>
     readResolvedFile(input, "view");
   // SCIENT-FORK:START — revision-checked saves, exclusive creates, renames and deletes.
-  const { createBinaryFile, deleteFile, inspectWriteTarget, renameFile, writeFile } =
-    yield* makeWorkspaceFileMutations({
-      fileSystem,
-      path,
-      workspacePaths,
-      workspaceEntries,
-      readFile,
-    });
+  const {
+    createBinaryFile,
+    deleteFile,
+    inspectWriteTarget,
+    renameFile,
+    writeFile,
+    replaceFileRetained,
+    removeFileRetained,
+  } = yield* makeWorkspaceFileMutations({
+    fileSystem,
+    path,
+    workspacePaths,
+    workspaceEntries,
+    readFile,
+  });
   // SCIENT-FORK:END
 
   // SCIENT-FORK:START — open-file watch.
@@ -425,6 +432,8 @@ export const make = Effect.gen(function* () {
   // SCIENT-FORK:END
 
   return WorkspaceFileSystem.of({
+    replaceFileRetained,
+    removeFileRetained,
     createBinaryFile,
     deleteFile,
     inspectWriteTarget,

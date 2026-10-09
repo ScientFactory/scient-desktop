@@ -259,7 +259,7 @@ const decodeCodexAppServerReplayTranscript = Schema.decodeUnknownEffect(
 /** Adapt recorded request expectations for Scient identity and always-on core guidance.
  * Native response/event frames and the structural matcher remain unchanged.
  */
-function materializeScientClientIdentity(transcript: ProviderReplayTranscript) {
+export function materializeScientClientIdentity(transcript: ProviderReplayTranscript) {
   return {
     ...transcript,
     entries: transcript.entries.map((entry) => {

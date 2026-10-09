@@ -3,9 +3,7 @@ import {
   makeForkCheckpointOwnership,
 } from "./ForkCheckpointOwnership.ts";
 import { CheckpointPublicationWitness } from "../../vcs/ScientCheckpointCapture.ts";
-import * as FileSystem from "effect/FileSystem";
-import { ServerConfig } from "../../config.ts";
-import { AttachmentFileArbitration, reserveAttachment } from "../AttachmentFileUse.ts";
+import { AttachmentFileArbitration } from "../AttachmentFileUse.ts";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 import {
   ProviderTextSnapshotError,
@@ -47,10 +45,6 @@ import { ProjectStoreV2 } from "../ProjectStore.ts";
 import { ThreadCommandExecutor } from "../ThreadCommandExecutor.ts";
 import { randomUuidV4 } from "../RandomUuid.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
-import {
-  ScientForkAttachmentCopier,
-  ScientForkAttachmentCopyError,
-} from "./ForkAttachmentCopier.ts";
 import { ScientForkCheckpointBaseline } from "./ForkCheckpointBaseline.ts";
 import {
   planConversationFork,
@@ -100,12 +94,9 @@ const snapshotFailure = (cause: unknown) => {
 };
 
 const isDispatchError = Schema.is(OrchestrationDispatchCommandError);
-const isAttachmentCopyError = Schema.is(ScientForkAttachmentCopyError);
 const isPlanError = Schema.is(ConversationForkPlanError);
 const isAbandonedFailure = (cause: unknown) =>
-  (isDispatchError(cause) && cause.forkDisposition === "abandoned") ||
-  (isAttachmentCopyError(cause) &&
-    (cause.reason === "source-unavailable" || cause.reason === "unsafe-mapping"));
+  isDispatchError(cause) && cause.forkDisposition === "abandoned";
 
 const failure = (
   message: string,
@@ -127,8 +118,6 @@ const withoutVcsDiagnostics = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 const make = Effect.gen(function* () {
   const snapshots = yield* Effect.serviceOption(ProviderSessionManagerV2);
-  const fileSystem = yield* Effect.serviceOption(FileSystem.FileSystem);
-  const serverConfig = yield* Effect.serviceOption(ServerConfig);
   const attachmentArbitration = yield* AttachmentFileArbitration;
   const projections = yield* ProjectionStoreV2;
   const projects = yield* ProjectStoreV2;
@@ -137,7 +126,6 @@ const make = Effect.gen(function* () {
   const executor = yield* ThreadCommandExecutor;
   const titles = yield* KeyedLock.make<string>();
   const baseline = yield* ScientForkCheckpointBaseline;
-  const copier = yield* ScientForkAttachmentCopier;
   const git = yield* GitWorkflowService;
   const legacyImporter = yield* LegacyV1ThreadImporter;
   const checkpointOwnership = yield* makeForkCheckpointOwnership;
@@ -145,7 +133,13 @@ const make = Effect.gen(function* () {
   // beside new forks instead of delaying server startup.
   yield* checkpointOwnership.recover().pipe(Effect.forkScoped);
 
-  const resolveSource = (projection: OrchestrationV2ThreadProjection, input: GetForkOptionsInput) =>
+  const resolveSource = (
+    projection: Pick<
+      OrchestrationV2ThreadProjection,
+      "providerTurns" | "attempts" | "runs" | "visibleTurnItems"
+    >,
+    input: GetForkOptionsInput,
+  ) =>
     Effect.gen(function* () {
       const selected = [
         input.sourceAssistantMessageId,
@@ -197,6 +191,7 @@ const make = Effect.gen(function* () {
     input: GetForkOptionsInput,
     targetThreadId: ThreadId,
     capturedProjection?: OrchestrationV2ThreadProjection,
+    materialize = true,
   ) {
     yield* legacyImporter.ensureTranscript(input.originThreadId);
     const projection =
@@ -207,7 +202,7 @@ const make = Effect.gen(function* () {
     )
       return yield* failure("Finish the original fork's workspace setup first.");
     const source = yield* resolveSource(projection, input);
-    const plan = yield* planConversationFork({ projection, targetThreadId, source });
+    const plan = yield* planConversationFork({ projection, targetThreadId, source, materialize });
     const project = yield* projects.get(projection.thread.projectId);
     if (Option.isNone(project)) return yield* failure("The conversation's project is unavailable.");
     const originCwd = projection.thread.worktreePath ?? project.value.workspaceRoot;
@@ -224,11 +219,11 @@ const make = Effect.gen(function* () {
       plan.boundaryRunId === null &&
       projection.thread.conversationFork?.checkpointRef != null
     ) {
-      const retainedIds = new Set(plan.items.map((item) => item.inheritedFrom?.itemId));
+      const retainedIds = new Set(plan.retained.map((item) => item.id));
       if (
-        projection.turnItems
-          .filter((item) => item.inheritedFrom !== undefined)
-          .every((item) => retainedIds.has(item.inheritedFrom?.itemId))
+        projection.visibleTurnItems
+          .filter(({ item }) => item.inheritedFrom !== undefined)
+          .every(({ item }) => retainedIds.has(item.id))
       )
         fromCheckpointRef = projection.thread.conversationFork.checkpointRef;
     }
@@ -311,16 +306,18 @@ const make = Effect.gen(function* () {
       return null;
     if (Option.isSome(yield* receipts.getByCommandId(command.commandId))) return null;
     yield* legacyImporter.ensureTranscript(command.originThreadId);
-    const projection = yield* projections.getThreadProjection(command.originThreadId);
-    const source = yield* resolveSource(projection, command);
+    // Control records only: the capture reads the source's history once, at its frame.
+    const projection = yield* projections.getThreadRecords(command.originThreadId, [
+      "runs",
+      "attempts",
+      "providerThreads",
+      "providerTurns",
+    ]);
+    const source = yield* resolveSource({ ...projection, visibleTurnItems: [] }, command);
     if (source.kind !== "running-turn") return null;
     const run = projection.runs.find((row) => row.id === source.runId);
     const thread = projection.providerThreads.find((row) => row.id === run?.providerThreadId);
     if (thread?.driver !== "codex") return null;
-    if (Option.isNone(snapshots) || snapshots.value.captureRunningForkText === undefined)
-      return yield* failure(
-        "Native running text capture is unavailable. Retry after reconnecting.",
-      );
     const attempt = projection.attempts.find((row) => row.id === run?.activeAttemptId);
     // Native turn/started can be committed before the start RPC binds the attempt.
     // The accepted turn's exact attempt/root/thread links remain canonical authority.
@@ -333,6 +330,13 @@ const make = Effect.gen(function* () {
         ["running", "waiting"].includes(row.status) &&
         (attempt?.providerTurnId == null || row.id === attempt.providerTurnId),
     );
+    // Before the native turn is accepted (Codex can take many seconds to start),
+    // nothing native is buffered yet: the fork freezes what is committed.
+    if (turns.length === 0) return null;
+    if (Option.isNone(snapshots) || snapshots.value.captureRunningForkText === undefined)
+      return yield* failure(
+        "Native running text capture is unavailable. Retry after reconnecting.",
+      );
     const turn = turns.length === 1 ? turns[0] : undefined;
     if (
       run === undefined ||
@@ -458,26 +462,6 @@ const make = Effect.gen(function* () {
         return yield* failure(
           "This boundary has no saved workspace checkpoint. Fork locally instead.",
         );
-      if (capture !== null && plan.attachmentCopies.length > 0) {
-        if (Option.isNone(fileSystem) || Option.isNone(serverConfig))
-          return yield* failure("Native fork resources are unavailable.");
-        for (const { source } of plan.attachmentCopies) {
-          yield* Effect.acquireRelease(
-            reserveAttachment(source).pipe(
-              Effect.provideService(FileSystem.FileSystem, fileSystem.value),
-              Effect.provideService(ServerConfig, serverConfig.value),
-              Effect.mapError(() =>
-                failure("A captured attachment is unavailable. Retry the fork."),
-              ),
-            ),
-            (reservation) => reservation.release,
-          );
-        }
-      }
-      yield* copier.checkSources({
-        threadId: command.newThreadId,
-        attachments: plan.attachmentCopies.map(({ source }) => source),
-      });
       const requestedCheckpointRef =
         checkpointAvailable &&
         (source.kind !== "running-turn" || command.workspaceMode === "new-worktree")
@@ -528,13 +512,9 @@ const make = Effect.gen(function* () {
         }
       }
       const now = yield* DateTime.now;
-      const retainedSourceIds = new Set(plan.items.map((item) => item.inheritedFrom?.itemId));
       const nativeSource = freezeConversationForkNativeSource({
         projection,
-        retainedSourceItems: projection.visibleTurnItems
-          .toSorted((a, b) => a.position - b.position)
-          .filter(({ item }) => retainedSourceIds.has(item.id))
-          .map(({ item }) => item),
+        retainedSourceItems: plan.retained,
         boundaryRunId: plan.boundaryRunId,
         sourceKind: source.kind,
       });
@@ -574,9 +554,7 @@ const make = Effect.gen(function* () {
       return yield* titles.withLock(
         "conversation-fork-titles",
         Effect.gen(function* () {
-          const shells = yield* projections.getShellSnapshot();
-          const archived = yield* projections.getShellSnapshot({ location: "archive" });
-          const lastAssistant = plan.items.findLast((item) => item.type === "assistant_message");
+          const projectThreads = yield* projections.getProjectThreadTitles(projection.thread.id);
           const thread: OrchestrationV2AppThread = {
             ...projection.thread,
             id: command.newThreadId,
@@ -585,9 +563,7 @@ const make = Effect.gen(function* () {
               deriveForkTitle({
                 origin: projection.thread,
                 originHasForkLineage: projection.thread.forkLineage != null,
-                projectThreads: [...shells.threads, ...archived.archivedThreads].filter(
-                  (thread) => thread.projectId === projection.thread.projectId,
-                ),
+                projectThreads,
               }),
             createdBy: "user",
             creationSource: "web",
@@ -602,8 +578,7 @@ const make = Effect.gen(function* () {
             conversationImport: null,
             forkLineage: {
               originThreadId: projection.thread.id,
-              baselineAssistantMessageId:
-                lastAssistant?.type === "assistant_message" ? lastAssistant.messageId : null,
+              baselineAssistantMessageId: plan.baselineAssistantMessageId,
               ...(projection.thread.conversationImport == null
                 ? projection.thread.forkLineage?.sourceImport === undefined
                   ? {}
@@ -614,10 +589,12 @@ const make = Effect.gen(function* () {
               commandId: command.commandId,
               sourceThreadId: projection.thread.id,
               workspaceMode: command.workspaceMode,
-              status: "pending",
+              // History is shared, so only a new worktree still needs setting up.
+              status: command.workspaceMode === "new-worktree" ? "pending" : "ready",
               cwd,
               checkpointRef,
               checkpointOid,
+              // Shared files, recorded so the client keeps their open previews.
               attachmentCopies: plan.attachmentCopies,
               error: null,
             },
@@ -650,7 +627,7 @@ const make = Effect.gen(function* () {
               type: "thread.created",
               payload: thread,
             },
-            ...(plan.items.length === 0
+            ...(plan.history.length === 0
               ? []
               : [
                   {
@@ -683,7 +660,7 @@ const make = Effect.gen(function* () {
               payload: conversationForkBoundaryItem({
                 targetThreadId: thread.id,
                 source: markerSource,
-                ordinal: plan.items.length,
+                ordinal: plan.history.length,
                 createdAt: now,
               }),
             },
@@ -709,14 +686,18 @@ const make = Effect.gen(function* () {
             commandType: "thread.conversation.fork",
             acceptedAt: now,
             events,
-            effects: [
-              {
-                id: `scient-fork:${command.commandId}:provision`,
-                commandId: command.commandId,
-                threadId: thread.id,
-                request: { type: "scient-fork.provision" },
-              },
-            ],
+            forkHistory: plan.history,
+            effects:
+              thread.conversationFork?.status === "pending"
+                ? [
+                    {
+                      id: `scient-fork:${command.commandId}:provision`,
+                      commandId: command.commandId,
+                      threadId: thread.id,
+                      request: { type: "scient-fork.provision" },
+                    },
+                  ]
+                : [],
           });
           const guardedCommit =
             capture === null
@@ -724,10 +705,6 @@ const make = Effect.gen(function* () {
               : Effect.gen(function* () {
                   if (!(yield* baseline.workspaceExists(cwd)))
                     return yield* failure("The captured workspace is unavailable. Retry the fork.");
-                  yield* copier.checkSources({
-                    threadId: command.newThreadId,
-                    attachments: plan.attachmentCopies.map(({ source }) => source),
-                  });
                   return yield* commit;
                 }).pipe(attachmentArbitration.withPermit);
           const committed = yield* (
@@ -783,7 +760,6 @@ const make = Effect.gen(function* () {
           const thread = yield* projections.getThread(threadId);
           const fork = thread.conversationFork;
           if (fork == null || fork.status === "ready" || thread.deletedAt !== null) return;
-          yield* copier.copyAll({ threadId, copies: fork.attachmentCopies });
           let worktreePath = thread.worktreePath;
           let branch = thread.branch;
           if (fork.workspaceMode === "new-worktree") {
@@ -843,7 +819,19 @@ const make = Effect.gen(function* () {
         }),
       )
       .pipe(Effect.scoped);
+    // The fork records and returns its setup error. Git and storage errors name
+    // workspace paths and carry Git output: those stay in the server log.
     yield* program.pipe(
+      Effect.tapError((cause) =>
+        isDispatchError(cause)
+          ? Effect.void
+          : Effect.logWarning("Fork workspace setup failed", { cause }),
+      ),
+      Effect.mapError((cause) =>
+        isDispatchError(cause)
+          ? cause
+          : failure("Unable to set up this fork's worktree. Retry the fork.", "failed"),
+      ),
       Effect.tapError((cause) =>
         willRetry && !isAbandonedFailure(cause)
           ? Effect.void
@@ -870,18 +858,16 @@ const make = Effect.gen(function* () {
                 };
                 const event = yield* metadataEvent(updated, now);
                 const fork = thread.conversationFork;
+                // An abandoned fork is deleted: it releases what deleting it would.
                 yield* sink.writeWithEffects({
                   events: [abandoned ? { ...event, type: "thread.deleted" } : event],
                   effects: abandoned
                     ? [
                         {
-                          id: `scient-fork:${fork.commandId}:abandoned:attachments`,
+                          id: `scient-fork:${fork.commandId}:abandoned:release-files`,
                           commandId: fork.commandId,
                           threadId,
-                          request: {
-                            type: "attachment.cleanup",
-                            attachmentIds: fork.attachmentCopies.map((copy) => copy.target.id),
-                          },
+                          request: { type: "scient.release-thread-files" },
                         },
                       ]
                     : [],
@@ -919,14 +905,8 @@ const make = Effect.gen(function* () {
       ),
     getOptions: (input) =>
       withoutVcsDiagnostics(
-        inspect(input, ThreadId.make(`scient-options:${input.originThreadId}`)),
+        inspect(input, ThreadId.make(`scient-options:${input.originThreadId}`), undefined, false),
       ).pipe(
-        Effect.tap(({ plan }) =>
-          copier.checkSources({
-            threadId: ThreadId.make(`scient-options:${input.originThreadId}`),
-            attachments: plan.attachmentCopies.map(({ source }) => source),
-          }),
-        ),
         Effect.map(({ source, checkpointAvailable, localAvailable }): ForkOptions => ({
           available: true,
           localAvailable,
@@ -939,9 +919,7 @@ const make = Effect.gen(function* () {
           sourceRunningRunId: source.kind === "running-turn" ? source.runId : null,
         })),
         Effect.catch((cause) =>
-          !isDispatchError(cause) &&
-          !isPlanError(cause) &&
-          !(isAttachmentCopyError(cause) && cause.reason === "source-unavailable")
+          !isDispatchError(cause) && !isPlanError(cause)
             ? Effect.fail(
                 new OrchestrationDispatchCommandError({
                   message: cause.message,

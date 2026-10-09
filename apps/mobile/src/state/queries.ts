@@ -393,7 +393,9 @@ export function useTurnItemDetail(
       : orchestrationEnvironment.turnItem({
           environmentId: target.environmentId,
           input: {
-            threadId: target.row.sourceThreadId,
+            // SCIENT-FORK: the item's own thread, which for a fork's shared history is
+            // the fork: it serves the version the fork shows.
+            threadId: target.row.item.threadId,
             itemId: target.row.sourceItemId,
             revision: turnItemDetailRevision(target.row.item),
           },

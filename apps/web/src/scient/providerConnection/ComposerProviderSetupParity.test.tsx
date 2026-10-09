@@ -620,13 +620,10 @@ describe.each(ACCOUNT_DRIVERS.filter((entry) => entry.driver !== "cursor"))(
       message: `Scient will install private ${entry.name} 1.3.0 and use it instead of the system installation (1.2.3), which stays untouched.`,
       olderThanSystem: false,
     };
-    const stalePlan = Object.assign(new Error("The provider setup plan changed."), {
-      reason: "runtime_plan_stale",
-    });
 
     const button = (label: string) =>
       [...host.querySelectorAll("button")].find(
-        (element) => !element.closest("[hidden]") && element.textContent!.trim() === label,
+        (candidate) => candidate.textContent!.trim() === label,
       );
     const useManaged = async () => {
       await act(() =>
@@ -647,89 +644,30 @@ describe.each(ACCOUNT_DRIVERS.filter((entry) => entry.driver !== "cursor"))(
         .map((frame) => frame.textContent)
         .join("");
 
-    it("shows both versions before an older release replaces the system one", async () => {
-      vi.mocked(controller.planRuntime).mockResolvedValue(older);
-      vi.mocked(controller.startRuntime).mockResolvedValue(system);
-
-      await useManaged();
-
-      // Nothing started from the first click.
-      expect(controller.planRuntime).toHaveBeenCalledWith("install");
-      expect(controller.startRuntime).not.toHaveBeenCalled();
-      expect(decisionText()).toContain(`Use Scient-managed ${entry.name} 1.2.0?`);
-      expect(decisionText()).toContain(older.message);
-      expect(decisionText()).not.toContain("The sign-in window was closed.");
-
-      await act(async () => button("Use Scient-managed")!.click());
-      expect(controller.startRuntime).toHaveBeenCalledExactlyOnceWith(older, {
-        acceptOlderThanSystem: true,
-      });
-      expect(decisionText()).not.toContain(older.message);
-    });
-
-    it("asks before a switch from a system installation whose version is unknown", async () => {
-      const unknown = {
-        ...notOlder,
-        catalogRevision: "revision:system-version-unknown",
-        message: `Scient does not know which ${entry.name} version, if any, is installed on this computer (system version unknown), so Scient-managed ${entry.name} 1.3.0 may be older than it.`,
-        systemVersion: null,
-      };
-      vi.mocked(controller.planRuntime).mockResolvedValue(unknown);
-      vi.mocked(controller.startRuntime).mockResolvedValue(system);
-
-      await useManaged();
-
-      expect(controller.startRuntime).not.toHaveBeenCalled();
-      expect(decisionText()).toContain("system version unknown");
-
-      await act(async () => button("Use Scient-managed")!.click());
-      expect(controller.startRuntime).toHaveBeenCalledExactlyOnceWith(unknown, {
-        acceptOlderThanSystem: true,
-      });
-    });
-
-    it("returns to the setup, with nothing started, on Back", async () => {
-      vi.mocked(controller.planRuntime).mockResolvedValue(older);
-
-      await useManaged();
-      await act(async () => button("Back")!.click());
-
-      expect(controller.startRuntime).not.toHaveBeenCalled();
-      expect(decisionText()).not.toContain(older.message);
-      expect(decisionText()).toContain("The sign-in window was closed.");
-      expect(decisionText()).not.toContain("Scient could not");
-      expect(button(`Use Scient-managed ${entry.name}`)!.disabled).toBe(false);
-    });
-
-    it("starts a release that is not older from the click, as before", async () => {
-      vi.mocked(controller.planRuntime).mockResolvedValue(notOlder);
-      vi.mocked(controller.startRuntime).mockResolvedValue(system);
-
-      await useManaged();
-
-      expect(controller.startRuntime).toHaveBeenCalledExactlyOnceWith(notOlder);
-      expect(decisionText()).not.toContain(notOlder.message);
-    });
-
-    it("asks when the system runtime was upgraded between the plan and the start", async () => {
-      vi.mocked(controller.planRuntime)
-        .mockResolvedValueOnce(notOlder)
-        .mockResolvedValueOnce(older);
-      vi.mocked(controller.startRuntime).mockRejectedValueOnce(stalePlan);
-
-      await useManaged();
-
-      // Not started, and not an error: the current decision.
-      expect(controller.startRuntime).toHaveBeenCalledExactlyOnceWith(notOlder);
-      expect(decisionText()).toContain(older.message);
-      expect(decisionText()).not.toContain("The provider setup plan changed.");
-
-      vi.mocked(controller.startRuntime).mockResolvedValueOnce(system);
-      await act(async () => button("Use Scient-managed")!.click());
-      expect(controller.startRuntime).toHaveBeenLastCalledWith(older, {
-        acceptOlderThanSystem: true,
-      });
-    });
+    it.each(["older", "equal", "newer", "unknown"])(
+      "starts the %s managed release from the first explicit click",
+      async (versionCase) => {
+        const selected =
+          versionCase === "older"
+            ? older
+            : {
+                ...notOlder,
+                systemVersion:
+                  versionCase === "unknown"
+                    ? null
+                    : versionCase === "equal"
+                      ? notOlder.version
+                      : "1.2.3",
+              };
+        vi.mocked(controller.planRuntime).mockResolvedValue(selected);
+        vi.mocked(controller.startRuntime).mockResolvedValue(system);
+        await useManaged();
+        expect(controller.planRuntime).toHaveBeenCalledExactlyOnceWith("install");
+        expect(controller.startRuntime).toHaveBeenCalledExactlyOnceWith(selected);
+        expect(decisionText()).not.toContain(selected.message);
+        expect(button("Back")).toBeUndefined();
+      },
+    );
   },
 );
 

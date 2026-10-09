@@ -11,6 +11,8 @@ import {
   type MarkdownPersistenceReadResult,
 } from "@scientfactory/scient-markdown";
 import { EnvironmentId } from "@t3tools/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { resolveChatShortcutCommand } from "../../keybindings";
 import type { MarkdownPersistenceLease } from "./persistence/markdownPersistenceRegistry";
 import { MarkdownPersistenceRegistry } from "./persistence/markdownPersistenceRegistry";
 
@@ -1656,6 +1658,26 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     roots.push(root);
     const sidebarToggle = vi.fn();
     const commandPaletteToggle = vi.fn();
+    const chatFind = vi.fn();
+    const findCapture: Array<{
+      defaultPrevented: boolean;
+      command: ReturnType<typeof resolveChatShortcutCommand>;
+    }> = [];
+    const onChatFindShortcut = (event: KeyboardEvent) => {
+      // Mirror ChatView's capture-phase resolver: surface ownership must exclude
+      // the app action before the document's bubbling handler prevents default.
+      const command = resolveChatShortcutCommand(event, DEFAULT_RESOLVED_KEYBINDINGS, [], {
+        platform: "Win32",
+      });
+      if (event.ctrlKey && event.key.toLocaleLowerCase() === "f") {
+        findCapture.push({ defaultPrevented: event.defaultPrevented, command });
+      }
+      if (command === "chat.find") {
+        event.preventDefault();
+        event.stopPropagation();
+        chatFind();
+      }
+    };
     const onSidebarShortcut = (event: KeyboardEvent) => {
       if (!event.ctrlKey || event.key.toLocaleLowerCase() !== "b") return;
       if (surfaceOwnsShortcut(event)) return;
@@ -1673,6 +1695,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     };
     window.addEventListener("keydown", onSidebarShortcut, true);
     window.addEventListener("keydown", onPaletteShortcut);
+    window.addEventListener("keydown", onChatFindShortcut, true);
 
     try {
       await act(() =>
@@ -1720,6 +1743,11 @@ describe("ScientMarkdownWorkspaceSurface", () => {
       await act(() => chromeShortcut("z", "KeyZ"));
       expect(controller.session.session.draftSource).not.toContain("**Text**");
       expect(sidebarToggle).not.toHaveBeenCalled();
+      await act(() => chromeShortcut("f", "KeyF"));
+      await vi.waitFor(() => expect(host.querySelector("[aria-label='Find text']")).not.toBeNull());
+      expect(chatFind).not.toHaveBeenCalled();
+      expect(findCapture).toEqual([{ defaultPrevented: false, command: null }]);
+      await act(() => controller.closeFind());
 
       view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)));
       chrome.focus();
@@ -1977,9 +2005,15 @@ describe("ScientMarkdownWorkspaceSurface", () => {
       );
       expect(sidebarToggle).toHaveBeenCalledOnce();
       expect(commandPaletteToggle).toHaveBeenCalledOnce();
+      outside.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "f", bubbles: true, cancelable: true, ctrlKey: true }),
+      );
+      expect(chatFind).toHaveBeenCalledOnce();
+      expect(findCapture.at(-1)).toEqual({ defaultPrevented: false, command: "chat.find" });
     } finally {
       window.removeEventListener("keydown", onSidebarShortcut, true);
       window.removeEventListener("keydown", onPaletteShortcut);
+      window.removeEventListener("keydown", onChatFindShortcut, true);
     }
   });
 });

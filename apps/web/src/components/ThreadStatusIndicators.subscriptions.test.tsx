@@ -88,16 +88,25 @@ afterEach(() => {
 });
 
 it("leases only visible palette results while retaining observed and cached PR badges", async () => {
-  const observers: Array<{ setVisible: (visible: boolean) => void }> = [];
+  const observers: Array<{ setVisible: (visible: boolean, targets: Element[]) => void }> = [];
+  const observedRows: Element[] = [];
   const scrollRoot = {};
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal(
     "IntersectionObserver",
     class {
-      constructor(callback: (entries: ReadonlyArray<{ isIntersecting: boolean }>) => void) {
-        observers.push({ setVisible: (visible) => callback([{ isIntersecting: visible }]) });
+      constructor(
+        callback: (entries: ReadonlyArray<{ target: Element; isIntersecting: boolean }>) => void,
+      ) {
+        observers.push({
+          setVisible: (visible, targets) =>
+            callback(targets.map((target) => ({ target, isIntersecting: visible }))),
+        });
       }
-      observe() {}
+      observe(target: Element) {
+        observedRows.push(target);
+      }
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -156,12 +165,13 @@ it("leases only visible palette results while retaining observed and cached PR b
       mounted.root.findAll(
         (node) => node.type === "span" && String(node.props["aria-label"] ?? "").startsWith("PR #"),
       ).length;
-    expect(observers).toHaveLength(128);
+    expect(observers).toHaveLength(1);
+    expect(observedRows).toHaveLength(128);
     expect(state.queries).toEqual([]);
     expect(badgeCount()).toBe(1);
 
     await act(async () => {
-      for (const observer of observers.slice(0, 8)) observer.setVisible(true);
+      observers[0]!.setVisible(true, observedRows.slice(0, 8));
     });
     expect(state.queries).toHaveLength(8);
     expect(state.queries.filter((key) => key.startsWith("vcs:"))).toHaveLength(4);
@@ -169,8 +179,8 @@ it("leases only visible palette results while retaining observed and cached PR b
     expect(badgeCount()).toBe(9);
 
     await act(async () => {
-      for (const observer of observers.slice(0, 8)) observer.setVisible(false);
-      for (const observer of observers.slice(8, 16)) observer.setVisible(true);
+      observers[0]!.setVisible(false, observedRows.slice(0, 8));
+      observers[0]!.setVisible(true, observedRows.slice(8, 16));
     });
     expect(state.queries).toHaveLength(16);
     expect(badgeCount()).toBe(17);
