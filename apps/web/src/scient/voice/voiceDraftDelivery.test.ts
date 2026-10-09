@@ -11,7 +11,6 @@ import {
 import { useQueueEditSessions } from "../threadQueue/editSession.ts";
 import {
   appendVoiceTranscriptToStoredDraft,
-  hasAsyncSendPreparation,
   deliverVoiceTranscriptToDraft,
   registerVoiceDraftEndpoint,
   reportVoiceDraftFailure,
@@ -20,6 +19,7 @@ import {
   type VoiceDraftNotice,
   type VoiceDraftOrigin,
 } from "./voiceDraftDelivery.ts";
+import { hasAsyncSendPreparation } from "./voiceDraftOrigin.ts";
 
 const LOCAL = EnvironmentId.make("environment-local");
 const REMOTE = EnvironmentId.make("environment-remote");

@@ -6,8 +6,6 @@
 // in the store. Foreground Send happens only through that registered endpoint,
 // re-checked in the frame that submits.
 
-import { useNavigate } from "@tanstack/react-router";
-import { useLayoutEffect, useMemo, useRef } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import {
@@ -16,8 +14,6 @@ import {
   type ComposerThreadTarget,
 } from "../../composerDraftStore.ts";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast.tsx";
-import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../../threadRoutes.ts";
-import { useQueueEditSessions } from "../threadQueue/editSession.ts";
 import { buildVoiceDraftReplacement } from "./voiceComposerInsert.ts";
 
 export interface VoiceDraftOrigin {
@@ -176,18 +172,6 @@ export function deliverVoiceTranscriptToDraft(
   dependencies.notify({ kind: send ? "not-sent" : "added", origin });
 }
 
-/**
- * Extracted queue drafts and open queue edits prepare the send asynchronously
- * (journal intake, edit flush) before the send path reads the composer.
- */
-export function hasAsyncSendPreparation(target: ComposerThreadTarget): boolean {
-  const draft = useComposerDraftStore.getState().getComposerDraft(target);
-  return (
-    Boolean(draft?.extractedIntent) ||
-    useQueueEditSessions.getState().sessions[composerTargetKey(target)] !== undefined
-  );
-}
-
 /** A failure the origin's composer cannot show becomes a notice. */
 export function reportVoiceDraftFailure(
   origin: VoiceDraftOrigin,
@@ -197,62 +181,4 @@ export function reportVoiceDraftFailure(
 ): void {
   if (hasVoiceDraftEndpoint(origin.key)) showInControl(message);
   else notify({ kind: "failed", origin, message });
-}
-
-/**
- * Registers the composer as its draft's voice endpoint and returns the origin
- * that a stop click captures. The endpoint reads the latest render through a
- * ref, so its identity stays fixed for the composer's whole mount.
- */
-export function useScientVoiceDraftOrigin(input: {
-  readonly target: ComposerThreadTarget;
-  readonly environmentId: EnvironmentId;
-  readonly title: string | null;
-  readonly acceptsDraftText: boolean;
-  readonly insert: (text: string) => boolean;
-  /** The composer's own send guards: provider, send-disabled, busy, scope. */
-  readonly sendReady: () => boolean;
-  readonly submit: () => void;
-}): VoiceDraftOrigin {
-  const navigate = useNavigate();
-  const latestRef = useRef(input);
-  latestRef.current = input;
-  const key = composerTargetKey(input.target);
-  const target = input.target;
-  const environmentId = input.environmentId;
-  const title = input.title;
-
-  // Layout timing: a job finishing right after a remount finds the endpoint.
-  useLayoutEffect(
-    () =>
-      registerVoiceDraftEndpoint(key, {
-        acceptsDraftText: () => latestRef.current.acceptsDraftText,
-        environmentId: () => latestRef.current.environmentId,
-        insert: (text) => latestRef.current.insert(text),
-        canSubmit: () =>
-          latestRef.current.sendReady() && !hasAsyncSendPreparation(latestRef.current.target),
-        submit: () => latestRef.current.submit(),
-      }),
-    [key],
-  );
-
-  return useMemo(
-    () => ({
-      key,
-      target,
-      environmentId,
-      title,
-      open: () => {
-        if (typeof target === "string") {
-          void navigate({ to: "/draft/$draftId", params: buildDraftThreadRouteParams(target) });
-        } else {
-          void navigate({
-            to: "/$environmentId/$threadId",
-            params: buildThreadRouteParams(target),
-          });
-        }
-      },
-    }),
-    [environmentId, key, navigate, target, title],
-  );
 }

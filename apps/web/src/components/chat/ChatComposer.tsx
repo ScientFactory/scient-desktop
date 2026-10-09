@@ -78,7 +78,7 @@ import { mergeEffectiveProviderSkills } from "../../scient/skills/effectiveSkill
 import { openComposerSkill, useScientComposerSkills } from "../../scient/skills/composerSkills.ts";
 import { applyVoiceTranscript } from "../../scient/voice/voiceComposerInsert.ts";
 // SCIENT-FORK:START committed voice dictation outlives the composer.
-import { useScientVoiceDraftOrigin } from "../../scient/voice/voiceDraftDelivery.ts";
+import { useScientVoiceDraftOrigin } from "../../scient/voice/voiceDraftOrigin.ts";
 // SCIENT-FORK:END
 import { ProviderOnboardingPicker } from "../../scient/providerConnection/ProviderOnboardingPicker.tsx";
 import {
