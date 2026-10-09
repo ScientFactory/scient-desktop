@@ -19,9 +19,22 @@ import { composerCitationsToPlainText } from "@t3tools/shared/composerCitations"
 import { CornerDownRight, GripVertical, Paperclip, Pencil, Trash2 } from "lucide-react";
 import { useCallback } from "react";
 
+import { useDelayedStatus } from "~/hooks/useDelayedStatus";
 import { cn } from "~/lib/utils";
 
 import { Button } from "../../components/ui/button";
+
+/** Most admissions settle well before this, so their row never says "Queuing…". */
+export const QUEUE_ADMISSION_STATUS_DELAY_MS = 700;
+
+export interface PendingQueueMessage {
+  readonly id: string;
+  readonly text: string;
+  readonly attachmentCount: number;
+  /** Image attachments, which the queued row shows as thumbnails. */
+  readonly imageCount?: number;
+  readonly accepted: boolean;
+}
 
 export interface QueueStripItem {
   readonly queueItemId: string;
@@ -51,9 +64,30 @@ function SortableQueueRow(props: {
   });
 }
 
+/** Keeps a control's space so the row does not shift when the control appears. */
+function GripPlaceholder() {
+  return (
+    <span aria-hidden="true" className="invisible shrink-0">
+      <GripVertical className="size-3" />
+    </span>
+  );
+}
+
+/** A thumbnail's place before its image URL is known, sized like the thumbnail. */
+function ThumbnailSlot() {
+  return (
+    <span
+      aria-hidden="true"
+      data-thumbnail-slot=""
+      className="size-4 shrink-0 rounded border border-border/70 bg-muted"
+    />
+  );
+}
+
 function QueueRow<I extends QueueStripItem>(props: {
   readonly item: I;
   readonly canReorder: boolean;
+  readonly gripSlot: boolean;
   readonly threadBusy: boolean;
   readonly dispatching: boolean;
   readonly canSend: boolean;
@@ -97,6 +131,7 @@ function QueueRow<I extends QueueStripItem>(props: {
               <GripVertical className="size-3" aria-hidden="true" />
             </button>
           )}
+          {!props.canReorder && props.gripSlot && <GripPlaceholder />}
           {props.item.attachments.length > 0 && (
             <span
               className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground"
@@ -107,20 +142,26 @@ function QueueRow<I extends QueueStripItem>(props: {
               {props.item.attachments.length}
             </span>
           )}
-          {props.item.attachments
-            .filter((attachment) => attachment.type === "image")
-            .map((attachment) => {
-              const url =
-                attachment.id === undefined ? undefined : props.attachmentUrls?.get(attachment.id);
-              return url ? (
-                <img
-                  key={attachment.id}
-                  src={url}
-                  alt={attachment.name}
-                  className="size-4 shrink-0 rounded border border-border/70 object-cover"
-                />
-              ) : null;
-            })}
+          {props.attachmentUrls !== undefined &&
+            props.item.attachments
+              .filter((attachment) => attachment.type === "image")
+              .map((attachment, index) => {
+                const url =
+                  attachment.id === undefined
+                    ? undefined
+                    : props.attachmentUrls?.get(attachment.id);
+                // Keep the thumbnail's place while its URL resolves, so the text does not move.
+                return url ? (
+                  <img
+                    key={attachment.id ?? index}
+                    src={url}
+                    alt={attachment.name}
+                    className="size-4 shrink-0 rounded border border-border/70 object-cover"
+                  />
+                ) : (
+                  <ThumbnailSlot key={attachment.id ?? index} />
+                );
+              })}
           <span dir="auto" className="min-w-0 flex-1 truncate text-sm text-foreground">
             {props.editing ? <span className="sr-only">Editing queued message: </span> : null}
             {composerCitationsToPlainText(props.item.text)}
@@ -195,26 +236,98 @@ function QueueRow<I extends QueueStripItem>(props: {
   );
 }
 
+/**
+ * A follow-up the server has not listed yet. It takes the queued row's shape,
+ * with inert placeholders for that row's controls, so nothing moves when the
+ * real row replaces it. "Queuing…" appears only if admission is slow.
+ */
+function PendingQueueRow(props: {
+  readonly message: PendingQueueMessage;
+  readonly gripSlot: boolean;
+  readonly steerSlot: boolean;
+  readonly thumbnailSlots: boolean;
+}) {
+  const { message } = props;
+  const status = useDelayedStatus(message.id, message.accepted ? null : "Queuing…", {
+    showDelayMs: QUEUE_ADMISSION_STATUS_DELAY_MS,
+  });
+  return (
+    <div
+      className="flex min-w-0 items-center gap-1.5 border-t border-border/60 px-2.5 py-1.5 first:border-t-0"
+      data-testid={`thread-queue-pending-${message.id}`}
+    >
+      {props.gripSlot && <GripPlaceholder />}
+      {message.attachmentCount > 0 && (
+        <span
+          className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground"
+          role="img"
+          aria-label={`${message.attachmentCount} ${message.attachmentCount === 1 ? "attachment" : "attachments"}`}
+        >
+          <Paperclip className="size-3" aria-hidden="true" />
+          {message.attachmentCount}
+        </span>
+      )}
+      {props.thumbnailSlots &&
+        Array.from({ length: message.imageCount ?? 0 }, (_, index) => (
+          <ThumbnailSlot key={index} />
+        ))}
+      <span dir="auto" className="min-w-0 flex-1 truncate text-sm text-foreground">
+        {composerCitationsToPlainText(message.text)}
+      </span>
+      {status !== null && (
+        <span role="status" className="shrink-0 text-xs text-muted-foreground">
+          {status}
+        </span>
+      )}
+      {props.steerSlot && (
+        <Button
+          render={<span aria-hidden="true" />}
+          size="micro"
+          variant="ghost-muted"
+          className="invisible"
+        >
+          <CornerDownRight className="size-3.5" />
+          <span className="text-xs leading-none">Steer</span>
+        </Button>
+      )}
+      <Button
+        render={<span aria-hidden="true" />}
+        size="icon-micro"
+        variant="ghost-muted"
+        className="invisible size-5"
+      >
+        <Pencil className="size-3.5" />
+      </Button>
+      <Button
+        render={<span aria-hidden="true" />}
+        size="icon-micro"
+        variant="ghost-muted"
+        className="invisible size-5"
+      >
+        <Trash2 className="size-3.5" />
+      </Button>
+    </div>
+  );
+}
+
 /** A compact composer extension for messages waiting behind the active turn. */
 export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueItem>(props: {
   readonly items: ReadonlyArray<I>;
-  readonly pendingMessages?: ReadonlyArray<{
-    readonly id: string;
-    readonly text: string;
-    readonly attachmentCount: number;
-    readonly accepted: boolean;
-  }>;
+  readonly pendingMessages?: ReadonlyArray<PendingQueueMessage>;
   readonly canReorder?: boolean;
   readonly canSteer?: boolean;
   readonly editingItemId?: string | null;
   readonly onCancelEdit?: () => void;
   readonly attachmentUrls?: ReadonlyMap<string, string>;
-  readonly held?: boolean;
-  readonly onResume?: () => void;
   readonly error: string | null;
   readonly threadBusy: boolean;
   readonly supportsExplicitSend: boolean;
   readonly awaitingCompletion: boolean;
+  /**
+   * Whether the server accepts Send on this row. Send on any row starts that
+   * message and resumes the rest of the queue after it. Absent means every row.
+   */
+  readonly canSendItem?: (item: I) => boolean;
   readonly paused: boolean;
   readonly dispatchingItemId: string | null;
   readonly onSend: (item: I) => void;
@@ -243,6 +356,8 @@ export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueIte
   );
 
   const pendingMessages = props.pendingMessages ?? [];
+  // Once a pending follow-up becomes a queued row, every row gets a grip; reserve it now.
+  const gripSlot = props.items.length + pendingMessages.length > 1 && props.canReorder !== false;
   // Native extraction removes the queued run while its recovered draft remains editable.
   const detachedEdit =
     props.editingItemId != null &&
@@ -274,22 +389,6 @@ export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueIte
           >
             Cancel
           </Button>
-        </div>
-      ) : null}
-      {props.held && props.items.length > 0 ? (
-        <div className="flex items-center gap-2 border-b border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground">
-          <span className="flex-1">Queue held</span>
-          {props.onResume ? (
-            <Button
-              type="button"
-              size="micro"
-              variant="ghost-muted"
-              disabled={props.dispatchingItemId !== null || props.threadBusy}
-              onClick={props.onResume}
-            >
-              Resume queue
-            </Button>
-          ) : null}
         </div>
       ) : null}
       {props.error !== null && (
@@ -324,11 +423,12 @@ export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueIte
                 items={props.items.map((item) => item.queueItemId)}
                 strategy={verticalListSortingStrategy}
               >
-                {props.items.map((item, index) => (
+                {props.items.map((item) => (
                   <QueueRow
                     key={item.queueItemId}
                     item={item}
                     canReorder={props.items.length > 1 && props.canReorder !== false}
+                    gripSlot={gripSlot}
                     canSteer={props.canSteer !== false}
                     editing={props.editingItemId === item.queueItemId}
                     {...(props.onCancelEdit === undefined
@@ -352,12 +452,12 @@ export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueIte
                     }}
                     threadBusy={props.threadBusy}
                     canSend={
-                      index === 0 &&
                       props.supportsExplicitSend &&
                       !props.threadBusy &&
                       props.awaitingCompletion &&
                       !props.paused &&
-                      !props.items.some((entry) => entry.steerRequested)
+                      !props.items.some((entry) => entry.steerRequested) &&
+                      props.canSendItem?.(item) !== false
                     }
                     dispatching={props.dispatchingItemId === item.queueItemId}
                     onSend={props.onSend}
@@ -370,28 +470,13 @@ export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueIte
             </DndContext>
           )}
           {pendingMessages.map((message) => (
-            <div
+            <PendingQueueRow
               key={message.id}
-              className="flex min-w-0 items-center gap-1.5 border-t border-border/60 px-2.5 py-1.5 first:border-t-0"
-              data-testid={`thread-queue-pending-${message.id}`}
-            >
-              {message.attachmentCount > 0 && (
-                <span
-                  className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground"
-                  role="img"
-                  aria-label={`${message.attachmentCount} ${message.attachmentCount === 1 ? "attachment" : "attachments"}`}
-                >
-                  <Paperclip className="size-3" aria-hidden="true" />
-                  {message.attachmentCount}
-                </span>
-              )}
-              <span dir="auto" className="min-w-0 flex-1 truncate text-sm text-foreground">
-                {composerCitationsToPlainText(message.text)}
-              </span>
-              <span role="status" className="shrink-0 text-xs text-muted-foreground">
-                {message.accepted ? "Queued" : "Queuing…"}
-              </span>
-            </div>
+              message={message}
+              gripSlot={gripSlot}
+              steerSlot={props.threadBusy && props.canSteer !== false}
+              thumbnailSlots={props.attachmentUrls !== undefined}
+            />
           ))}
         </div>
       )}

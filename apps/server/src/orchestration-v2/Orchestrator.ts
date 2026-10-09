@@ -84,6 +84,12 @@ import {
 } from "./scient-fork/ConversationForkNativeSource.ts";
 // SCIENT-FORK:START — Scient orchestration modules
 import { dispatchCheckpointRollbackComplete } from "./scient-fork/CheckpointRollbackCompletion.ts";
+import { isQueueUsageLimited } from "@t3tools/shared/scientQueuedRunSend";
+import {
+  planQueuedRunSend,
+  queuedRunsReleasedByDirectSend,
+  startsDirectUserRun,
+} from "./scient-fork/QueuedRunSend.ts";
 import {
   ownerPreservingSwitchPlan,
   settingExecutionOwnerOf,
@@ -11123,6 +11129,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: "Finish this fork's workspace setup before sending a message.",
           });
         yield* dispatchMessage(command, events, effects);
+        // SCIENT-FORK:START queued-run-send — a direct user send resumes the queue.
+        if (startsDirectUserRun(command, yield* Ref.get(events))) {
+          const started = yield* getProjectionWithPendingEvents(command.threadId, events);
+          const now = yield* DateTime.now;
+          for (const run of queuedRunsReleasedByDirectSend(started.runs)) {
+            yield* emit(
+              events,
+              command,
+            )({
+              type: "run.updated",
+              threadId: command.threadId,
+              runId: run.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: now,
+              payload: { ...run, queueHeld: false },
+            });
+          }
+        }
+        // SCIENT-FORK:END queued-run-send
         break;
       }
       case "legacy-queue.import": {
@@ -11206,16 +11231,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Thread ${command.threadId} is not active.`,
           });
         }
-        const sessionError =
-          projection.providerSessions
-            .filter(
-              (session) => session.providerInstanceId === projection.thread.providerInstanceId,
-            )
-            .toSorted(
-              (left, right) =>
-                DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-            )[0]?.lastError ?? null;
-        if (usageLimitBlockedRun(projection.runs, projection.turnItems, sessionError) !== null) {
+        // SCIENT-FORK:START queue-head-send-rule — the queue strip offers Send by this rule.
+        const usageLimited = isQueueUsageLimited(projection);
+        // SCIENT-FORK:END queue-head-send-rule
+        if (usageLimited) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
@@ -11227,20 +11246,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const queueMessages = yield* loadProjectionForCommand(command, ["messages"], {
           messageIds: queued.map((run) => run.userMessageId),
         });
-        const head = nextQueuedRun({ ...projection, messages: queueMessages.messages });
-        if (command.runId !== undefined) {
-          if (head?.id !== command.runId || projection.runs.some(isBlockingRun)) {
-            return yield* new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause: "Only the idle queue head is ready to send.",
-            });
-          }
+        // SCIENT-FORK:START queued-run-send — Send on any queued message starts it
+        // now and resumes the rest of the queue after it.
+        const send =
+          command.runId === undefined
+            ? undefined
+            : planQueuedRunSend(
+                { runs: projection.runs, messages: queueMessages.messages },
+                command.runId,
+              );
+        if (send?.refusal != null) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: send.refusal,
+          });
         }
+        const released = send?.refusal === null ? send.runs : queued;
+        const head =
+          send?.refusal === null
+            ? send.runs[0]
+            : nextQueuedRun({ ...projection, messages: queueMessages.messages });
+        // SCIENT-FORK:END queued-run-send
         if (head !== undefined)
           yield* providerAdapters.get(head.providerInstanceId).pipe(mapDispatchError(command));
-        for (const run of queued) {
-          if (command.runId !== undefined && run.id !== command.runId) continue;
+        for (const run of released) {
           yield* emit(
             events,
             command,
