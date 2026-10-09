@@ -7,30 +7,27 @@
 \usepackage[hidelinks]{hyperref}
 
 \pagestyle{empty}
+% A letter with nothing written yet still makes its (blank) page.
+\AtEndDocument{\ifdim\pagetotal=0pt \null\fi}
 
 \begin{document}
 
-Your name\\
-Department, Institution\\
-Address\\
-Email
+% Your name, position, institution, address, and email.
+\par
 
-Recipient's name\\
-Department, Institution\\
-Address
+% The date.
+\par
 
-Date
+% The recipient's name, position, institution, and address.
+\par
 
-Dear Recipient,
+% Dear …,
+\par
 
-Write the opening paragraph: who you are and why you are writing.
+% Your letter: why you are writing, the details, and what you would like to happen next.
+\par
 
-Give the details in the following paragraphs.
-
-Close with what you would like to happen next.
-
-Sincerely,
-
-Your name
+% Sincerely, and your name.
+\par
 
 \end{document}

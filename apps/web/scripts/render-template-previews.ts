@@ -46,6 +46,17 @@ const entries = [
     .map((entry) => ({ id: entry.name, folder: NodePath.join(templates, entry.name) })),
 ];
 
+/** Guidance comments in empty places, as faint print: what the Visual page shows. */
+function faintGuidance(source: string): string {
+  const faint = (text: string) => `{\\color{black!38}${text}}`;
+  return source
+    .replace(/^%[ \t]?([^\n]*)\n\\par$/gmu, (_, text: string) => `${faint(text)}\\par`)
+    .replace(
+      /(\\begin\{[A-Za-z]+\*?\}(?:\[[^\]]*\])?\n)%[ \t]?([^\n]*)\n(\\end\{)/gu,
+      (_, opening: string, text: string, closing: string) => `${opening}${faint(text)}\n${closing}`,
+    );
+}
+
 // Publish the whole batch only after every template has built successfully.
 const batch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-template-previews-"));
 try {
@@ -61,8 +72,16 @@ try {
       main,
       NodeFS.readFileSync(main, "utf8")
         .replace("<<SCIENT_TITLE>>", "Title")
-        .replace("<<SCIENT_AUTHOR_BLOCK>>", "Author"),
+        .replace("<<SCIENT_AUTHOR_BLOCK>>", "Author")
+        .replace(/^(\\documentclass[^\n]*\n)/u, "$1\\usepackage{xcolor}\n"),
     );
+    // A template's guidance (a comment above an empty place) shows faintly,
+    // as Visual draws it; a document's own PDF never prints it.
+    for (const file of NodeFS.readdirSync(work, { recursive: true, encoding: "utf8" }))
+      if (file.endsWith(".tex")) {
+        const path = NodePath.join(work, file);
+        NodeFS.writeFileSync(path, faintGuidance(NodeFS.readFileSync(path, "utf8")));
+      }
     NodeFS.writeFileSync(NodePath.join(work, "references.bib"), "");
     run(
       engine,

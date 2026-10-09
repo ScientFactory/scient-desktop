@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { latexDocumentLanguage } from "../latex/latexLanguage";
 import { assembleVisualProject, type VisualProjectFile } from "../latex/latexProjectVisual";
+import { latexGuidance } from "../latex/latexGuidance";
 import { projectLatexVisualDocument } from "../latex/latexVisualDocument";
 import {
   DOCUMENT_TEMPLATES,
@@ -143,6 +144,14 @@ describe("new documents", () => {
         const assembled = assembleVisualProject("main.tex", files);
         expect([...assembled.missing, ...assembled.errors]).toEqual([]);
         const projection = projectLatexVisualDocument(assembled.source);
+        // Every place left to write in shows its guidance; no sample text is printed.
+        const places =
+          (assembled.source.match(/^%[^\n]*\n\\par$/gmu) ?? []).length +
+          (
+            assembled.source.match(/\\begin\{[A-Za-z]+\*?\}(?:\[[^\]]*\])?\n%[^\n]*\n\\end\{/gu) ??
+            []
+          ).length;
+        expect(latexGuidance(projection).size, `${template.id}/${language}`).toBe(places);
         expect(
           projection.blocks
             .filter((block) => block.node.type === "latexRawBlock")
