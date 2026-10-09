@@ -1490,6 +1490,44 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         ).toBe(false);
       }),
     );
+    it.effect("removes the folders a move leaves empty when asked", () =>
+      Effect.gen(function* () {
+        const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "thesis/chapters/introduction.tex", "intro");
+        yield* writeTextFile(cwd, "thesis/main.tex", "main");
+
+        const intro = yield* api.readFile({
+          cwd,
+          relativePath: "thesis/chapters/introduction.tex",
+        });
+        yield* api.renameFile({
+          cwd,
+          relativePath: "thesis/chapters/introduction.tex",
+          destinationRelativePath: "spectral-gaps/chapters/introduction.tex",
+          expectedRevision: intro.revision,
+          removeEmptyFolders: true,
+        });
+        expect(yield* fileSystem.exists(path.join(cwd, "thesis/chapters"))).toBe(false);
+        // Still holds main.tex.
+        expect(yield* fileSystem.exists(path.join(cwd, "thesis"))).toBe(true);
+
+        const main = yield* api.readFile({ cwd, relativePath: "thesis/main.tex" });
+        yield* api.renameFile({
+          cwd,
+          relativePath: "thesis/main.tex",
+          destinationRelativePath: "spectral-gaps/main.tex",
+          expectedRevision: main.revision,
+          removeEmptyFolders: true,
+        });
+        expect(yield* fileSystem.exists(path.join(cwd, "thesis"))).toBe(false);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "spectral-gaps/main.tex"))).toBe(
+          "main",
+        );
+      }),
+    );
   });
   describe("deleteFile", () => {
     it.effect("deletes only the revision the client read", () =>

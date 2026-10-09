@@ -147,6 +147,27 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       );
     });
 
+  // `rmdir` removes only an empty folder, so a folder anything else still holds
+  // stays; the walk stops there and never reaches the workspace root.
+  const removeEmptyFoldersAbove = (realWorkspaceRoot: string, filePath: string) =>
+    Effect.promise(async () => {
+      for (let folder = path.dirname(filePath); ; folder = path.dirname(folder)) {
+        const relative = path.relative(realWorkspaceRoot, folder);
+        if (
+          !relative ||
+          relative === ".." ||
+          relative.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(relative)
+        )
+          return;
+        try {
+          await NodeFSP.rmdir(folder);
+        } catch {
+          return;
+        }
+      }
+    });
+
   // Resolve the nearest existing ancestor before creating missing segments.
   // This keeps revision-less creates from escaping through a directory symlink.
   const resolveRealWriteTarget = Effect.fn("WorkspaceFileSystem.resolveRealWriteTarget")(function* (
@@ -772,6 +793,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               }),
           });
           if (!moved) return yield* conflict(revision);
+          if (input.removeEmptyFolders) {
+            yield* removeEmptyFoldersAbove(source.realWorkspaceRoot, source.realTargetPath);
+          }
           yield* workspaceEntries.refresh(input.cwd);
           return {
             relativePath: sourceTarget.relativePath,
@@ -871,26 +895,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             }),
         });
         if (input.removeEmptyFolders) {
-          // `rmdir` removes only an empty folder, so a folder anything else
-          // still holds stays; the walk stops there and never reaches the root.
-          yield* Effect.promise(async () => {
-            const root = resolved.realWorkspaceRoot;
-            for (let folder = path.dirname(targetPath); ; folder = path.dirname(folder)) {
-              const relative = path.relative(root, folder);
-              if (
-                !relative ||
-                relative === ".." ||
-                relative.startsWith(`..${path.sep}`) ||
-                path.isAbsolute(relative)
-              )
-                return;
-              try {
-                await NodeFSP.rmdir(folder);
-              } catch {
-                return;
-              }
-            }
-          });
+          yield* removeEmptyFoldersAbove(resolved.realWorkspaceRoot, targetPath);
         }
         yield* workspaceEntries.refresh(input.cwd);
         return { relativePath: resolved.target.relativePath };

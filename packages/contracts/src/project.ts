@@ -739,6 +739,8 @@ export const ProjectRenameFileInput = Schema.Struct({
    * whole (binary or truncated), which is then renamed without a content check.
    */
   expectedRevision: Schema.optional(TrimmedNonEmptyString),
+  /** Also remove the folders the move leaves empty, never the workspace root itself. */
+  removeEmptyFolders: Schema.optional(Schema.Literal(true)),
 });
 export type ProjectRenameFileInput = typeof ProjectRenameFileInput.Type;
 
