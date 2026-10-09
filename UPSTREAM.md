@@ -236,9 +236,9 @@ policy, workspace and scientific owners. The receipt distinguishes complete loca
 qualification, independent reviews, actual-app approval and hosted delivery,
 including retained publication holds and measured enforcement debt.
 
-The current qualified alignment is recorded in
+The preceding qualified alignment is recorded in
 [the b24f0fbba0 receipt](docs/internals/t3-upstream-sync-20261008-b24f0fbba0.md)
-and `upstream-state.json` ([Scient PR #473](https://github.com/ScientFactory/scient-desktop/pull/473)).
+([Scient PR #473](https://github.com/ScientFactory/scient-desktop/pull/473)).
 It receives all 27 subsequent first-parent official
 commits through `b24f0fbba09d8623c896081b4ff70aa7190c8fda` onto owned base
 `3498143f7221634d9dd6b38e95f84839dc4d2bfe`. Literal merge
@@ -249,6 +249,22 @@ Snapshot indexes append as migration 064; existing migration identities, the
 Approvability guard and privacy-link withholding remain. The receipt records
 two independent source reviews, complete local qualification, actual-app visual
 evidence and the remaining hosted/platform boundaries.
+
+The current locally qualified alignment is recorded in
+[the 2a93885bac receipt](docs/internals/t3-upstream-sync-20261008-2a93885bac.md)
+and `upstream-state.json`.
+It receives all 63 subsequent first-parent official commits through
+`2a93885bac5798a79d55069a0b5dc3e53c6176bc` onto owned base
+`565b3bd15cbb7660250e53b2421915d2f6bdebc5`. Literal merge
+`e0a46f2d5ace0b33fa4a8f714917f029f577db23` retains both as exact parents;
+`ae3f8171fc548a9cb28d43dafba227279f6ddc52` and
+`458b041da22fb1985b461196f78530e8dc30c153` preserve the owned-main catch-ups.
+Conversation Find, compact-before-send, quotations, native Pi continuations,
+bounded snapshots, Usage and client performance compose with Scient ownership.
+Optional Muse remains disabled by default and system-installed; Scient lifecycle,
+frozen history, managed runtime, privacy and publication boundaries remain.
+The receipt separates complete local qualification with exact affected-scope reuse,
+independent review and bounded stress from hosted CI and the user's visual acceptance.
 
 ## Receiving T3 updates
 

@@ -6,24 +6,24 @@
   "officialDefaultBranch": "main",
   "updateMode": "thin-fork-merge",
   "candidateStatus": "active-public-desktop",
-  "integrationBase": "b24f0fbba09d8623c896081b4ff70aa7190c8fda",
-  "reviewedThrough": "b24f0fbba09d8623c896081b4ff70aa7190c8fda",
-  "reviewedAt": "2026-10-08",
-  "reviewRecord": "docs/internals/t3-upstream-sync-20261008-b24f0fbba0.md",
+  "integrationBase": "2a93885bac5798a79d55069a0b5dc3e53c6176bc",
+  "reviewedThrough": "2a93885bac5798a79d55069a0b5dc3e53c6176bc",
+  "reviewedAt": "2026-10-09",
+  "reviewRecord": "docs/internals/t3-upstream-sync-20261008-2a93885bac.md",
   "verifiedBaseline": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTipAtBootstrap": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTagAtBootstrap": "v0.0.32-nightly.20260806.1012",
   "bootstrapBranch": "agent/d4-bootstrap-20260806",
   "bootstrapMerge": "3e8f7bc0e18be4a42c23b021e68bf30e3690bc4d",
   "bootstrapRecord": "docs/internals/scient-next-d4-bootstrap.md",
-  "lastRefreshBase": "3498143f7221634d9dd6b38e95f84839dc4d2bfe",
-  "lastRefreshPreviousOfficialTip": "468ade30495c450ae4e731483187f77bc3c5e42b",
-  "lastRefreshOfficialTip": "b24f0fbba09d8623c896081b4ff70aa7190c8fda",
+  "lastRefreshBase": "565b3bd15cbb7660250e53b2421915d2f6bdebc5",
+  "lastRefreshPreviousOfficialTip": "b24f0fbba09d8623c896081b4ff70aa7190c8fda",
+  "lastRefreshOfficialTip": "2a93885bac5798a79d55069a0b5dc3e53c6176bc",
   "lastRefreshOfficialTag": null,
-  "lastRefreshRangeCount": 27,
-  "lastRefreshMerge": "71015aa7484971d7c84101b2294c88988bee2203",
-  "lastRefreshBranch": "codex/t3-sync-b24f0fbba0-20261008",
-  "lastRefreshVerifiedAt": "2026-10-08T05:57:30Z",
+  "lastRefreshRangeCount": 63,
+  "lastRefreshMerge": "e0a46f2d5ace0b33fa4a8f714917f029f577db23",
+  "lastRefreshBranch": "codex/t3-sync-2a93885bac-20261008",
+  "lastRefreshVerifiedAt": "2026-10-09T01:30:54.353995Z",
   "historicalExceptions": [
     {
       "id": "t3-pr-5822-projectless-threads",
@@ -44,6 +44,6 @@
       "replacementMerge": null
     }
   ],
-  "lastRefreshOwnedMain": "3498143f7221634d9dd6b38e95f84839dc4d2bfe",
-  "lastRefreshOwnedMainMerge": null
+  "lastRefreshOwnedMain": "d0a6976beae37bdabc30e7ccdf4c895c6498c82f",
+  "lastRefreshOwnedMainMerge": "458b041da22fb1985b461196f78530e8dc30c153"
 }
