@@ -349,11 +349,8 @@ function DocumentsSection(props: {
                   <img
                     src={FORMAT_LOGOS[item.id]}
                     alt=""
-                    className={cn(
-                      "size-7 shrink-0 object-contain",
-                      // The LaTeX and Markdown marks are black; Word's carries its own colour.
-                      item.id !== "word" && "dark:invert",
-                    )}
+                    // Each logo is a coloured square tile, so all three read the same in both themes.
+                    className="size-7 shrink-0 object-contain"
                   />
                 }
                 onToggle={() => {
