@@ -1,7 +1,12 @@
 // @vitest-environment happy-dom
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { builtInPreviewReference, sanitizePage, templatePicture } from "./templatePreviews";
+import {
+  builtInPreviewReference,
+  captureVisualPage,
+  sanitizePage,
+  templatePicture,
+} from "./templatePreviews";
 
 describe("template pictures", () => {
   it("shows each built-in template's typeset page, and a copy's until it is updated", () => {
@@ -50,6 +55,52 @@ describe("template pictures", () => {
     expect(html).toContain("data:image/png;base64,AAAA");
     expect(html).not.toContain("https:");
     expect(html).not.toContain("srcset");
+  });
+
+  it("captures a displayed cross-origin figure as durable pixels", async () => {
+    const stage = document.createElement("div");
+    stage.className = "scient-latex-page-stage";
+    stage.innerHTML =
+      '<div class="scient-latex-visual-paper"><img src="https://assets.test/figure?token=expires"></div>';
+    document.body.append(stage);
+    const paper = stage.firstElementChild!;
+    Object.defineProperty(stage, "offsetWidth", { value: 816 });
+    Object.defineProperty(paper, "offsetWidth", { value: 816 });
+    Object.defineProperty(paper, "getClientRects", { value: () => [{}] });
+    const image = stage.querySelector("img")!;
+    Object.defineProperty(image, "complete", { value: true });
+    Object.defineProperty(image, "naturalWidth", { value: 800 });
+    Object.defineProperty(image, "naturalHeight", { value: 600 });
+    const drawImage = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage,
+    } as unknown as ReturnType<HTMLCanvasElement["getContext"]>);
+    vi.spyOn(HTMLCanvasElement.prototype, "toDataURL")
+      .mockImplementationOnce(() => {
+        throw new Error("Tainted canvas");
+      })
+      .mockReturnValue("data:image/png;base64,AAAA");
+    const fetch = vi.fn(async () => ({
+      ok: true,
+      blob: async () => new Blob([], { type: "image/png" }),
+    }));
+    const close = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(async () => ({ close })),
+    );
+    try {
+      const captured = await captureVisualPage();
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(close).toHaveBeenCalledOnce();
+      expect(captured).toContain("data:image/png;base64,AAAA");
+      expect(captured).not.toContain("https:");
+    } finally {
+      stage.remove();
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("refuses a stored page without its size", () => {

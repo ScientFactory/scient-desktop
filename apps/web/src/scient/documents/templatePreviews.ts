@@ -115,7 +115,7 @@ function parsePage(stored: string): { html: string; width: number; height: numbe
  * The first page of the LaTeX document on screen, as Visual draws it, without
  * the new document's own controls; null when no Visual page is showing.
  */
-export function captureVisualPage(): string | null {
+export async function captureVisualPage(): Promise<string | null> {
   const paper = [...document.querySelectorAll<HTMLElement>(".scient-latex-visual-paper")].find(
     (candidate) => candidate.getClientRects().length > 0,
   );
@@ -131,11 +131,12 @@ export function captureVisualPage(): string | null {
   clone.style.transform = "none";
   // Persist figure pixels, never signed URLs that expire after the current session.
   const images = [...stage.querySelectorAll<HTMLImageElement>("img")];
-  [...clone.querySelectorAll<HTMLImageElement>("img")].forEach((copy, index) => {
+  const figures = [...clone.querySelectorAll<HTMLImageElement>("img")].map(async (copy, index) => {
     const image = images[index];
     copy.removeAttribute("src");
     copy.removeAttribute("srcset");
     if (!image?.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
+    const imageUrl = image.currentSrc || image.src;
     const canvas = document.createElement("canvas");
     const scale = Math.min(1, 600 / image.naturalWidth, 600 / image.naturalHeight);
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
@@ -145,8 +146,28 @@ export function captureVisualPage(): string | null {
       if (!context) return;
       context.drawImage(image, 0, 0, canvas.width, canvas.height);
       copy.src = canvas.toDataURL("image/png");
+      return;
     } catch {
-      // An unreadable cross-origin figure leaves its caption, not an expiring URL.
+      // Reading a displayed cross-origin element taints a canvas. A CORS-readable
+      // asset blob gives us independent pixels without changing the live figure.
+    }
+    try {
+      const response = await fetch(imageUrl, { signal: AbortSignal.timeout(5_000) });
+      if (!response.ok) return;
+      const bitmap = await createImageBitmap(await response.blob());
+      try {
+        const clean = document.createElement("canvas");
+        clean.width = canvas.width;
+        clean.height = canvas.height;
+        const context = clean.getContext("2d");
+        if (!context) return;
+        context.drawImage(bitmap, 0, 0, clean.width, clean.height);
+        copy.src = clean.toDataURL("image/png");
+      } finally {
+        bitmap.close();
+      }
+    } catch {
+      // Assets that cannot be read retain their caption, without a transient URL.
     }
   });
   // A field is drawn as its text: what was typed, or its placeholder, faint.
@@ -188,6 +209,7 @@ export function captureVisualPage(): string | null {
       if (original && (original.getBoundingClientRect().top - top) / scale > height) copy.remove();
     });
   }
+  await Promise.all(figures);
   sanitizePage(clone);
   const wrapper = document.createElement("div");
   wrapper.setAttribute("data-page-width", String(width));

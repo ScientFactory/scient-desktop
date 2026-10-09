@@ -52,8 +52,8 @@ export function useTemplateSaving(input: {
   /** The document as a template: its title emptied, and the files it includes. */
   const capture = async (replacing: UserTemplate | null) => {
     // Its first page as Visual draws it, read before anything else can change the screen.
-    const preview = captureVisualPage() ?? replacing?.preview ?? null;
     const source = lease.getSnapshot().draftSource;
+    const picture = captureVisualPage();
     const folder = folderOf(key.relativePath);
     const files: Record<string, string> = {};
     let bytes = source.length;
@@ -66,7 +66,11 @@ export function useTemplateSaving(input: {
       files[name] = contents;
       queue.push(...includedFiles(contents));
     }
-    return { source: withEmptyTitle(source), files, preview };
+    return {
+      source: withEmptyTitle(source),
+      files,
+      preview: (await picture) ?? replacing?.preview ?? null,
+    };
   };
   const save = async (name: string, replacing: UserTemplate | null) => {
     try {
