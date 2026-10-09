@@ -30,6 +30,7 @@ import {
 } from "./documentTemplateLayout";
 import { PageZoomContext } from "./NewDocumentOnPage";
 import { TemplateCard } from "./TemplateCard";
+import { TemplatePreviewDialog } from "./TemplatePreviewDialog";
 import type { TemplatePicture } from "./templatePreviews";
 import { TemplateNameDialog } from "./TemplateNameDialog";
 import type { TemplateChoice } from "./useTemplateChoices";
@@ -63,6 +64,21 @@ export function TemplateRow(props: {
   const isOwn = (id: string) =>
     props.templates.some((template) => template.id === id && template.own);
   const [naming, setNaming] = useState<{ readonly rename: string } | "new" | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreTrigger = useRef<HTMLButtonElement | null>(null);
+  const [preview, setPreview] = useState<{
+    picture: TemplatePicture;
+    name: string;
+    returnFocus: HTMLElement | null;
+  } | null>(null);
+  const expandPreview = (
+    picture: TemplatePicture,
+    name: string,
+    returnFocus: HTMLElement | null,
+  ) => {
+    setMoreOpen(false);
+    setPreview({ picture, name, returnFocus });
+  };
   const chosenInMore = layout.more.includes(props.selected) ? props.selected : null;
   // A drag ends with the pointer released over a template; that is not a choice.
   const justDragged = useRef(false);
@@ -117,12 +133,17 @@ export function TemplateRow(props: {
                 checked={props.selected === id}
                 onChoose={() => choose(id)}
                 onContextMenu={contextMenu(id)}
+                onExpand={(returnFocus) => {
+                  const picture = pictureOf(id);
+                  if (picture) expandPreview(picture, nameOf(id), returnFocus);
+                }}
               />
             ))}
           </SortableContext>
         </DndContext>
-        <Menu>
+        <Menu open={moreOpen} onOpenChange={setMoreOpen}>
           <MenuTrigger
+            ref={moreTrigger}
             render={
               <button
                 type="button"
@@ -159,6 +180,10 @@ export function TemplateRow(props: {
                     onChoose={() => choose(id)}
                     onContextMenu={contextMenu(id)}
                     onActions={(position) => void openActions(id, position)}
+                    onExpand={() => {
+                      const picture = pictureOf(id);
+                      if (picture) expandPreview(picture, nameOf(id), moreTrigger.current);
+                    }}
                   />
                 ))}
               </SortableContext>
@@ -170,6 +195,7 @@ export function TemplateRow(props: {
         </Menu>
       </div>
       {props.trailing}
+      {preview ? <TemplatePreviewDialog {...preview} onClose={() => setPreview(null)} /> : null}
       <TemplateNameDialog
         open={naming !== null}
         title={naming === "new" ? "New template" : "Rename template"}
@@ -198,6 +224,7 @@ function PageTemplate(props: {
   readonly checked: boolean;
   readonly onChoose: () => void;
   readonly onContextMenu: (event: MouseEvent) => void;
+  readonly onExpand: (returnFocus: HTMLElement | null) => void;
 }) {
   // Only the pointer drag: the sortable's role and keyboard attributes would
   // replace the element's own (a radio on the page, a menu item in More).
@@ -208,7 +235,7 @@ function PageTemplate(props: {
   const zoom = useContext(PageZoomContext);
   const moved = transform && { ...transform, x: transform.x / zoom, y: transform.y / zoom };
   return (
-    <TemplateCard picture={props.picture} side="bottom">
+    <TemplateCard picture={props.picture} name={props.name} side="bottom" onExpand={props.onExpand}>
       <button
         ref={setNodeRef}
         type="button"
@@ -234,6 +261,7 @@ function MoreTemplate(props: {
   readonly onChoose: () => void;
   readonly onContextMenu: (event: MouseEvent) => void;
   readonly onActions: (position: { x: number; y: number }) => void;
+  readonly onExpand: (returnFocus: HTMLElement | null) => void;
 }) {
   // Only the pointer drag: the sortable's role and keyboard attributes would
   // replace the element's own (a radio on the page, a menu item in More).
@@ -245,7 +273,12 @@ function MoreTemplate(props: {
     event.preventDefault();
   };
   return (
-    <TemplateCard picture={props.picture} side="inline-end">
+    <TemplateCard
+      picture={props.picture}
+      name={props.name}
+      side="inline-end"
+      onExpand={props.onExpand}
+    >
       <MenuItem
         ref={setNodeRef}
         {...listeners}

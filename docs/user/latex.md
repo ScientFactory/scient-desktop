@@ -27,6 +27,11 @@ make it the default, move it between the page and **More**, or hide it, and
 drag to reorder. **More > New template…** saves a copy of the chosen template
 as your own, which you can then edit, rename, or delete.
 
+Hover over a template name to preview its first page. Click the preview to open
+a larger view with zoom and scrolling; Escape closes it. Opening a preview
+does not select the template. Click the template's name to use it. Previews work
+offline, including saved personal templates with a captured first page.
+
 **Settings > Documents** keeps these choices in one place:
 
 - **LaTeX**: the LaTeX installation on the server (with **Install TinyTeX**

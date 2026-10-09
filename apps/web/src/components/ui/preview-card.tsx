@@ -13,11 +13,13 @@ function PreviewCardPopup({
   align = "start",
   side = "top",
   sideOffset = 6,
+  radius = "default",
   ...props
 }: PreviewCardPrimitive.Popup.Props & {
   align?: PreviewCardPrimitive.Positioner.Props["align"];
   side?: PreviewCardPrimitive.Positioner.Props["side"];
   sideOffset?: PreviewCardPrimitive.Positioner.Props["sideOffset"];
+  radius?: "default" | "small";
 }) {
   return (
     <PreviewCardPrimitive.Portal>
@@ -30,7 +32,8 @@ function PreviewCardPopup({
       >
         <PreviewCardPrimitive.Popup
           className={cn(
-            "origin-(--transform-origin) rounded-lg border bg-popover text-popover-foreground shadow-lg outline-none transition-[scale,opacity] data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0",
+            "origin-(--transform-origin) border bg-popover text-popover-foreground shadow-lg outline-none transition-[scale,opacity] data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0",
+            radius === "small" ? "rounded-sm" : "rounded-lg",
             className,
           )}
           data-slot="preview-card-popup"

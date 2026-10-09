@@ -67,6 +67,7 @@ function DialogPopup({
   padding = "default",
   gap = "default",
   backdropClassName,
+  layer = "default",
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
@@ -79,13 +80,19 @@ function DialogPopup({
   gap?: "default" | "none";
   /** Allows feature-owned dialogs to tune the shared backdrop without replacing it. */
   backdropClassName?: string;
+  /** A viewer opened from a menu or preview card must sit above its opener. */
+  layer?: "default" | "above-popovers";
 }) {
   return (
     <DialogPortal>
       {/* Media opens from inside other overlays (a composer chip, a popover), so it sits above them. */}
       {showBackdrop ? (
         <DialogBackdrop
-          className={cn(variant === "media" && "z-[60]", backdropClassName)}
+          className={cn(
+            variant === "media" && "z-[60]",
+            layer === "above-popovers" && "z-[150]",
+            backdropClassName,
+          )}
           variant={variant}
         />
       ) : null}
@@ -95,6 +102,7 @@ function DialogPopup({
           bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12",
           variant === "media" &&
             "z-[60] grid-rows-1 place-items-center px-4 py-6 [-webkit-app-region:no-drag]",
+          layer === "above-popovers" && "z-[150]",
         )}
       >
         <DialogPrimitive.Popup

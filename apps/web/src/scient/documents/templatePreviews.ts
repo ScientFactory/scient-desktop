@@ -8,22 +8,38 @@ import letter from "./previews/letter.png";
 import problemSet from "./previews/problem-set.png";
 import responseToReviewers from "./previews/response-to-reviewers.png";
 import thesis from "./previews/thesis.png";
+import articleExpanded from "./previews/full/article.png";
+import blankExpanded from "./previews/full/blank.png";
+import cvExpanded from "./previews/full/cv.png";
+import grantProposalExpanded from "./previews/full/grant-proposal.png";
+import labReportExpanded from "./previews/full/lab-report.png";
+import lectureNotesExpanded from "./previews/full/lecture-notes.png";
+import letterExpanded from "./previews/full/letter.png";
+import problemSetExpanded from "./previews/full/problem-set.png";
+import responseToReviewersExpanded from "./previews/full/response-to-reviewers.png";
+import thesisExpanded from "./previews/full/thesis.png";
 
 /**
  * The first page of each built-in template, typeset. Rendered by
  * scripts/render-template-previews.ts; run it again after changing a template.
  */
-const BUILT_IN_PREVIEWS: Readonly<Record<string, string>> = {
-  article,
-  blank,
-  cv,
-  "grant-proposal": grantProposal,
-  "lab-report": labReport,
-  "lecture-notes": lectureNotes,
-  letter,
-  "problem-set": problemSet,
-  "response-to-reviewers": responseToReviewers,
-  thesis,
+const BUILT_IN_PREVIEWS: Readonly<
+  Record<string, { src: string; expandedSrc: string; cropTop: number }>
+> = {
+  article: { src: article, expandedSrc: articleExpanded, cropTop: 0.12 },
+  blank: { src: blank, expandedSrc: blankExpanded, cropTop: 0.1 },
+  cv: { src: cv, expandedSrc: cvExpanded, cropTop: 0.07 },
+  "grant-proposal": { src: grantProposal, expandedSrc: grantProposalExpanded, cropTop: 0.12 },
+  "lab-report": { src: labReport, expandedSrc: labReportExpanded, cropTop: 0.12 },
+  "lecture-notes": { src: lectureNotes, expandedSrc: lectureNotesExpanded, cropTop: 0.12 },
+  letter: { src: letter, expandedSrc: letterExpanded, cropTop: 0.07 },
+  "problem-set": { src: problemSet, expandedSrc: problemSetExpanded, cropTop: 0.12 },
+  "response-to-reviewers": {
+    src: responseToReviewers,
+    expandedSrc: responseToReviewersExpanded,
+    cropTop: 0.12,
+  },
+  thesis: { src: thesis, expandedSrc: thesisExpanded, cropTop: 0.1 },
 };
 
 /** A template copied from a built-in one shows that one's page until it is updated. */
@@ -35,7 +51,13 @@ export function builtInPreviewReference(id: string): string | null {
 
 /** A template's picture: an image, or a page as Visual drew it. */
 export type TemplatePicture =
-  | { readonly kind: "image"; readonly src: string }
+  | {
+      readonly kind: "image";
+      readonly src: string;
+      readonly expandedSrc: string;
+      /** Trim blank top margin on hover; letter/CV headers start higher. */
+      readonly cropTop: number;
+    }
   | {
       readonly kind: "page";
       readonly html: string;
@@ -49,8 +71,8 @@ export function templatePicture(
   stored: string | null,
 ): TemplatePicture | null {
   if (builtInId !== null) {
-    const src = BUILT_IN_PREVIEWS[builtInId];
-    return src ? { kind: "image", src } : null;
+    const picture = BUILT_IN_PREVIEWS[builtInId];
+    return picture ? { kind: "image", ...picture } : null;
   }
   if (!stored) return null;
   if (stored.startsWith(BUILT_IN_REFERENCE))
