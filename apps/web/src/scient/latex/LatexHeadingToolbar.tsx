@@ -1,6 +1,6 @@
 import type { Editor } from "@tiptap/core";
 import { useEditorState } from "@tiptap/react";
-import { LatexReferenceLabelField } from "./LatexReferenceLabelField";
+import { LatexReferenceLabelPopover } from "./LatexReferenceLabelPopover";
 import { useContext, useMemo } from "react";
 import { LatexAuthoringContext } from "./latexObjectAuthoring";
 import { latexLabelInventory } from "./latexLabelAuthoring";
@@ -50,29 +50,26 @@ export function LatexHeadingToolbar({
       data-context-presentation="inline"
       className="scient-latex-context-toolbar scient-latex-heading-bar"
     >
-      <label className="scient-latex-heading-reference">
-        Label
-        <LatexReferenceLabelField
-          key={heading.sourceId}
-          label="Heading reference label"
-          allowEmpty
-          disabled={!editor.isEditable}
-          draftKey={`${draftKey}:heading:${heading.sourceId}:label`}
-          value={heading.referenceLabel}
-          commitOn="blur"
-          isAvailable={(value) =>
-            !value ||
-            value === heading.referenceLabel ||
-            !labels.targets.some((target) => target.key === value)
-          }
-          onCommit={(referenceLabel, fieldId) => {
-            if (referenceLabel === heading.referenceLabel) return;
-            if (heading.referenceLabel && referenceLabel) {
-              onRename(heading.referenceLabel, referenceLabel, fieldId);
-            } else updateHeading({ referenceLabel: referenceLabel || null });
-          }}
-        />
-      </label>
+      <LatexReferenceLabelPopover
+        key={heading.sourceId}
+        label="Heading reference label"
+        allowEmpty
+        disabled={!editor.isEditable}
+        draftKey={`${draftKey}:heading:${heading.sourceId}:label`}
+        value={heading.referenceLabel}
+        commitOn="blur"
+        isAvailable={(value) =>
+          !value ||
+          value === heading.referenceLabel ||
+          !labels.targets.some((target) => target.key === value)
+        }
+        onCommit={(referenceLabel, fieldId) => {
+          if (referenceLabel === heading.referenceLabel) return;
+          if (heading.referenceLabel && referenceLabel) {
+            onRename(heading.referenceLabel, referenceLabel, fieldId);
+          } else updateHeading({ referenceLabel: referenceLabel || null });
+        }}
+      />
     </div>
   );
 }

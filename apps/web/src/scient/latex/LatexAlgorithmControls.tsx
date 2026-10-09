@@ -14,7 +14,7 @@ import {
   DockMenu,
   dockButtonClass,
 } from "../writing/dockChrome";
-import { LatexReferenceLabelField } from "./LatexReferenceLabelField";
+import { LatexReferenceLabelPopover } from "./LatexReferenceLabelPopover";
 import { LatexAuthoringContext, useLatexActionNotice } from "./latexObjectAuthoring";
 import { latexLabelInventory } from "./latexLabelAuthoring";
 import { algorithmStepSelection, type AlgorithmStepOperation } from "./latexAlgorithmEditing";
@@ -206,25 +206,22 @@ export function LatexAlgorithmControls({
         </button>
       )}
       {floating && captioned && (
-        <label className="scient-latex-algorithm-reference">
-          Label
-          <LatexReferenceLabelField
-            label="Algorithm reference label"
-            allowEmpty
-            value={label}
-            draftKey={draftKey && `${draftKey}:label`}
-            commitOn="blur"
-            disabled={!editable}
-            isAvailable={(value) =>
-              !value || value === label || !labels.targets.some((target) => target.key === value)
-            }
-            onCommit={(value, fieldId) => {
-              if (value === label) return;
-              if (label && value && context.renameLabel) context.renameLabel(label, value, fieldId);
-              else property({ label: value });
-            }}
-          />
-        </label>
+        <LatexReferenceLabelPopover
+          label="Algorithm reference label"
+          allowEmpty
+          value={label}
+          draftKey={draftKey && `${draftKey}:label`}
+          commitOn="blur"
+          disabled={!editable}
+          isAvailable={(value) =>
+            !value || value === label || !labels.targets.some((target) => target.key === value)
+          }
+          onCommit={(value, fieldId) => {
+            if (value === label) return;
+            if (label && value && context.renameLabel) context.renameLabel(label, value, fieldId);
+            else property({ label: value });
+          }}
+        />
       )}
     </>
   );

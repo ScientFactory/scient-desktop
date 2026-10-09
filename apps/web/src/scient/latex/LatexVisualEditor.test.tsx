@@ -175,6 +175,18 @@ describe("writing editor source transactions", () => {
     expect(option, optionLabel).toBeDefined();
     await act(() => option!.click());
   }
+  async function openReferenceLabel(label: string) {
+    const trigger = container.querySelector<HTMLButtonElement>(
+      `button[aria-label="Edit ${label.toLowerCase()}"]`,
+    )!;
+    expect(trigger).not.toBeNull();
+    await act(() => trigger.click());
+    const field = document.body.querySelector<HTMLTextAreaElement>(
+      `textarea[aria-label="${label}"]`,
+    )!;
+    expect(field).not.toBeNull();
+    return field;
+  }
   async function selectKind(kind: string) {
     let position = -1;
     editor().state.doc.descendants((node, offset) => {
@@ -224,13 +236,15 @@ describe("writing editor source transactions", () => {
     });
   }
 
-  it("shows a heading label directly in the footer and adds/removes it through source and undo", async () => {
+  it("opens a heading label from the footer and adds/removes it through source and undo", async () => {
     await mount("\\section{Introduction}\n\nSee Section~\\ref{sec:intro}.");
     await act(() => editor().commands.setTextSelection(3));
     const field = () =>
-      container.querySelector<HTMLTextAreaElement>(
+      document.body.querySelector<HTMLTextAreaElement>(
         'textarea[aria-label="Heading reference label"]',
       )!;
+    expect(container.querySelector('textarea[aria-label="Heading reference label"]')).toBeNull();
+    await openReferenceLabel("Heading reference label");
     expect(field()).not.toBeNull();
     expect(container.querySelector(".scient-latex-context-tools[data-inline]")).not.toBeNull();
     expect(container.querySelector(".scient-latex-context-inspector")?.hasAttribute("inert")).toBe(
@@ -260,9 +274,7 @@ describe("writing editor source transactions", () => {
       "\\usepackage{hyperref}\n",
     );
     await act(() => editor().commands.setTextSelection(3));
-    const field = container.querySelector<HTMLTextAreaElement>(
-      'textarea[aria-label="Heading reference label"]',
-    )!;
+    const field = await openReferenceLabel("Heading reference label");
     await act(() => {
       field.focus();
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
@@ -296,8 +308,9 @@ describe("writing editor source transactions", () => {
       "\\section{Introduction}\\label{sec:intro}\n\n\\section{Results}\\label{sec:results}",
     );
     await act(() => editor().commands.setTextSelection(3));
+    await openReferenceLabel("Heading reference label");
     const field = () =>
-      container.querySelector<HTMLTextAreaElement>(
+      document.body.querySelector<HTMLTextAreaElement>(
         'textarea[aria-label="Heading reference label"]',
       )!;
     await setField(field(), "bad label");
@@ -310,6 +323,26 @@ describe("writing editor source transactions", () => {
     await setField(field(), "sec:summary");
     expect(field().getAttribute("aria-invalid")).toBe("false");
     expect(current).toContain("\\label{sec:summary}");
+  });
+
+  it("keeps table label editing attached to its object through the footer popup", async () => {
+    await mount(`\\begin{table}
+\\caption{Results}
+\\label{tab:old}
+\\begin{tabular}{ll}
+Method & Score \\\\
+Control & 1 \\\\
+\\end{tabular}
+\\end{table}`);
+    await selectKind("table");
+    expect(container.querySelector('textarea[aria-label="Table reference label"]')).toBeNull();
+    const field = await openReferenceLabel("Table reference label");
+    expect(field.value).toBe("tab:old");
+    await setField(field, "tab:new");
+    expect(current).toContain("\\label{tab:new}");
+    expect(current).toContain("Control & 1");
+    await act(() => editor().commands.undo());
+    expect(current).toContain("\\label{tab:old}");
   });
 
   it("retains a manual reference until its document save is confirmed", async () => {
@@ -1533,9 +1566,7 @@ Theory & Proofs \\\\
     ).not.toBeNull();
     await selectOption("Table style", "Full grid");
     expect(current).toContain("\\hline");
-    const reference = container.querySelector<HTMLTextAreaElement>(
-      "textarea[aria-label='Table reference label']",
-    )!;
+    const reference = await openReferenceLabel("Table reference label");
     await setField(reference, "tab:research");
     expect(current).toContain("\\label{tab:research}");
   });

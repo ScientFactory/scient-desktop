@@ -2,7 +2,7 @@ import { useContext, useMemo, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/core";
 import { dockButtonClass } from "../writing/dockChrome";
-import { LatexReferenceLabelField } from "./LatexReferenceLabelField";
+import { LatexReferenceLabelPopover } from "./LatexReferenceLabelPopover";
 import { LatexStatementTypeControl } from "./LatexStatementTypeControl";
 import { LatexAuthoringContext } from "./latexObjectAuthoring";
 import { latexLabelInventory } from "./latexLabelAuthoring";
@@ -60,27 +60,25 @@ export function LatexStatementToolbar(props: {
       </button>
       {!props.proof &&
         props.labels.map((label) => (
-          <label key={label.id} className="scient-latex-statement-reference">
-            Label
-            <LatexReferenceLabelField
-              label="Statement reference label"
-              allowEmpty
-              value={label.value}
-              draftKey={label.draftKey}
-              commitOn="blur"
-              disabled={!props.editable}
-              isAvailable={(value) =>
-                !value ||
-                value === label.value ||
-                !inventory.targets.some((target) => target.key === value)
-              }
-              onCommit={(value, fieldId) => {
-                if (value === label.value) return;
-                if (value && label.value && renameLabel) renameLabel(label.value, value, fieldId);
-                else props.onLabel(label.id, value);
-              }}
-            />
-          </label>
+          <LatexReferenceLabelPopover
+            key={label.id}
+            label="Statement reference label"
+            allowEmpty
+            value={label.value}
+            draftKey={label.draftKey}
+            commitOn="blur"
+            disabled={!props.editable}
+            isAvailable={(value) =>
+              !value ||
+              value === label.value ||
+              !inventory.targets.some((target) => target.key === value)
+            }
+            onCommit={(value, fieldId) => {
+              if (value === label.value) return;
+              if (value && label.value && renameLabel) renameLabel(label.value, value, fieldId);
+              else props.onLabel(label.id, value);
+            }}
+          />
         ))}
     </div>,
     host,

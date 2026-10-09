@@ -206,9 +206,9 @@
   max-height: min(400px, 70dvh);
   overflow: auto;
   padding: 0;
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 4px;
-  background: var(--popover);
+  background: transparent;
   box-shadow: 0 6px 22px #0002;
 }
 .scient-latex-context-tools[data-inspector]
@@ -218,32 +218,45 @@
   min-height: 64px;
   max-height: min(320px, 60dvh);
   padding: 8px 10px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--background);
   font: 12px/1.5 var(--font-mono);
   resize: none;
 }
 .scient-latex-source-resize-handle {
-  display: flex;
-  height: 12px;
-  align-items: center;
-  justify-content: center;
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
   cursor: ns-resize;
   touch-action: none;
   user-select: none;
 }
 .scient-latex-source-resize-handle::after {
   content: "";
-  width: 24px;
-  height: 2px;
-  border-radius: 1px;
-  background: color-mix(in srgb, var(--muted-foreground) 45%, transparent);
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 9px;
+  height: 9px;
+  color: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+  background: repeating-linear-gradient(45deg, transparent 0 2px, currentColor 2px 3px);
+  clip-path: polygon(0 0, 100% 0, 100% 100%);
 }
 .scient-latex-source-resize-handle:is(:hover, :focus-visible)::after {
-  background: var(--muted-foreground);
+  color: var(--muted-foreground);
 }
 .scient-latex-source-resize-handle:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: -1px;
+}
+.scient-latex-context-tools[data-inspector]
+  .scient-latex-context-toolbar
+  .scient-latex-math-source-popover:focus-within
+  textarea {
   outline: 1px solid var(--ring);
   outline-offset: -1px;
 }
@@ -293,82 +306,6 @@
   background: var(--popover);
   white-space: normal;
 }
-.scient-latex-context-tools[data-inspector][data-inline]
-  :is(
-    .scient-latex-heading-reference,
-    .scient-latex-math-reference,
-    .scient-latex-table-reference,
-    .scient-latex-figure-reference,
-    .scient-latex-statement-reference,
-    .scient-latex-algorithm-reference,
-    .scient-latex-code-reference
-  ) {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  font: var(--scient-document-footer-font-size, 11px)/16px var(--font-sans);
-}
-:is(
-    .scient-latex-heading-reference,
-    .scient-latex-math-reference,
-    .scient-latex-table-reference,
-    .scient-latex-figure-reference,
-    .scient-latex-statement-reference,
-    .scient-latex-algorithm-reference,
-    .scient-latex-code-reference
-  )
-  .scient-latex-reference-label-field {
-  position: relative;
-  flex: 0 1 120px;
-  min-width: 0;
-  width: 120px;
-  display: flex;
-}
-.scient-latex-context-tools[data-inspector][data-inline]
-  :is(
-    .scient-latex-heading-reference,
-    .scient-latex-math-reference,
-    .scient-latex-table-reference,
-    .scient-latex-figure-reference,
-    .scient-latex-statement-reference,
-    .scient-latex-algorithm-reference,
-    .scient-latex-code-reference
-  )
-  textarea {
-  height: var(--scient-document-footer-field-height, 22px);
-  min-height: var(--scient-document-footer-field-height, 22px);
-  max-height: var(--scient-document-footer-field-height, 22px);
-  padding: var(--scient-document-footer-field-padding, 2px 5px);
-  font: var(--scient-document-footer-font-size, 11px)/16px var(--font-sans);
-  white-space: pre;
-  resize: none;
-}
-:is(
-    .scient-latex-heading-reference,
-    .scient-latex-math-reference,
-    .scient-latex-table-reference,
-    .scient-latex-figure-reference,
-    .scient-latex-statement-reference,
-    .scient-latex-algorithm-reference,
-    .scient-latex-code-reference
-  )
-  .scient-latex-reference-label-field
-  > p {
-  position: absolute;
-  z-index: 60;
-  bottom: calc(100% + 6px);
-  inset-inline-start: 0;
-  width: max-content;
-  max-width: min(260px, 70vw);
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--popover);
-  color: var(--popover-foreground);
-  white-space: normal;
-}
-
 /* Compact forms share native field navigation inside document menus. Shared controls own their look. */
 .scient-latex-context-menu-form {
   display: grid;

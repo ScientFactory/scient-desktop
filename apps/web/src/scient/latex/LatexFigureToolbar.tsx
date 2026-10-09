@@ -21,7 +21,7 @@ import {
   DockMenu,
   dockButtonClass,
 } from "../writing/dockChrome";
-import { LatexReferenceLabelField } from "./LatexReferenceLabelField";
+import { LatexReferenceLabelPopover } from "./LatexReferenceLabelPopover";
 import { LatexLengthField } from "./LatexLengthField";
 import { LatexContextMenuForm } from "./LatexContextMenuForm";
 import { latexEquationReferencesKey } from "./latexEquationReferences";
@@ -310,23 +310,20 @@ export function LatexFigureToolbar(props: {
         Caption
       </button>
       {props.hasCaption && (
-        <label className="scient-latex-figure-reference">
-          Label
-          <LatexReferenceLabelField
-            label="Figure reference label"
-            allowEmpty
-            value={props.label}
-            draftKey={props.draftKey}
-            commitOn="blur"
-            disabled={disabled}
-            isAvailable={(label) =>
-              !label ||
-              label === props.label ||
-              !latexEquationReferencesKey.getState(props.editor.state)?.labels.has(label)
-            }
-            onCommit={props.onLabel}
-          />
-        </label>
+        <LatexReferenceLabelPopover
+          label="Figure reference label"
+          allowEmpty
+          value={props.label}
+          draftKey={props.draftKey}
+          commitOn="blur"
+          disabled={disabled}
+          isAvailable={(label) =>
+            !label ||
+            label === props.label ||
+            !latexEquationReferencesKey.getState(props.editor.state)?.labels.has(label)
+          }
+          onCommit={props.onLabel}
+        />
       )}
     </div>,
     host,

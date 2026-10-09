@@ -15,7 +15,7 @@ import {
   DockMenu,
   dockButtonClass,
 } from "../writing/dockChrome";
-import { LatexReferenceLabelField } from "./LatexReferenceLabelField";
+import { LatexReferenceLabelPopover } from "./LatexReferenceLabelPopover";
 import { useLatexObjectContext } from "./useLatexObjectContext";
 import { LatexTableProperties } from "./LatexTableProperties";
 import { latexEquationReferencesKey } from "./latexEquationReferences";
@@ -296,23 +296,20 @@ export function LatexTableToolbar(props: Props) {
         Caption
       </button>
       {props.hasCaption && (
-        <label className="scient-latex-table-reference">
-          Label
-          <LatexReferenceLabelField
-            label="Table reference label"
-            value={props.label}
-            allowEmpty
-            draftKey={props.draftKey}
-            commitOn="blur"
-            disabled={Boolean(contentReason) || !props.labelEditable}
-            isAvailable={(value) =>
-              !value ||
-              value === props.label ||
-              !latexEquationReferencesKey.getState(props.editor.state)?.labels.has(value)
-            }
-            onCommit={props.onLabel}
-          />
-        </label>
+        <LatexReferenceLabelPopover
+          label="Table reference label"
+          value={props.label}
+          allowEmpty
+          draftKey={props.draftKey}
+          commitOn="blur"
+          disabled={Boolean(contentReason) || !props.labelEditable}
+          isAvailable={(value) =>
+            !value ||
+            value === props.label ||
+            !latexEquationReferencesKey.getState(props.editor.state)?.labels.has(value)
+          }
+          onCommit={props.onLabel}
+        />
       )}
     </div>,
     host,
