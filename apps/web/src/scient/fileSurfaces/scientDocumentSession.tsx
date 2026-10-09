@@ -6,6 +6,7 @@ import {
   refreshProjectEntriesQuery,
 } from "~/components/files/projectFilesQueryState";
 import { Button } from "~/components/ui/button";
+import { templateEdits } from "~/scient/documents/newDocuments";
 import { markdownPersistenceRegistry } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import type { useMarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceLease";
 
@@ -67,6 +68,10 @@ export function applyScientFileRename(input: {
   if (input.usesDocumentSession) {
     markdownPersistenceRegistry.forgetClean({ environmentId, cwd, relativePath });
   }
+  templateEdits.move(
+    { environmentId, cwd, relativePath },
+    { environmentId, cwd, relativePath: destinationRelativePath },
+  );
   clearProjectFileQueryData(environmentId, cwd, relativePath);
   refreshProjectEntriesQuery(environmentId, cwd);
   input.onFileRenamed(relativePath, destinationRelativePath);

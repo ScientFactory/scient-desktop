@@ -194,7 +194,11 @@ import {
 } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import { useInPlaceRename } from "~/scient/fileSurfaces/useInPlaceRename";
-import { newDocuments, pathHasLeftoverDrafts } from "~/scient/documents/newDocuments";
+import {
+  newDocuments,
+  pathHasLeftoverDrafts,
+  templateEdits,
+} from "~/scient/documents/newDocuments";
 import {
   getOptimisticProjectFileQueryData,
   setProjectFileQueryData,
@@ -1766,6 +1770,10 @@ export default function FilePreviewPanel({
       }),
     moveTab: (from, to) => (onFileMoved ?? onFileRenamed)(from, to),
     moveViewState: (from, to) => {
+      templateEdits.move(
+        { environmentId, cwd, relativePath: from },
+        { environmentId, cwd, relativePath: to },
+      );
       setHandledReveal((current) => (current?.path === from ? { ...current, path: to } : current));
       moveFileLineReveal(from, to);
     },
