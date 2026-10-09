@@ -24,12 +24,13 @@ vi.mock("~/components/settings/settingsLayout", () => ({
     </section>
   ),
   SettingsRow: (props: {
+    id?: string;
     title: ReactNode;
     description: ReactNode;
     status?: ReactNode;
     control: ReactNode;
   }) => (
-    <div>
+    <div id={props.id}>
       <h3>{props.title}</h3>
       <p>{props.description}</p>
       <div data-testid="status">{props.status}</div>
@@ -38,7 +39,12 @@ vi.mock("~/components/settings/settingsLayout", () => ({
   ),
 }));
 
-const { WordExportSettingsSection } = await import("./WordExportSettingsSection");
+const { PandocSettingsRow } = await import("./PandocSettingsRow");
+const { usePandocTool } = await import("./usePandocTool");
+
+function WordTab() {
+  return <PandocSettingsRow controller={usePandocTool(EnvironmentId.make("local"))} />;
+}
 
 const SOURCE = "https://github.com/jgm/pandoc/archive/refs/tags/3.11.tar.gz";
 const status = (overrides: Partial<ScientPandocToolStatus> = {}): ScientPandocToolStatus => ({
@@ -77,16 +83,13 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-const render = () =>
-  act(async () =>
-    root.render(<WordExportSettingsSection environmentId={EnvironmentId.make("local")} />),
-  );
+const render = () => act(async () => root.render(<WordTab />));
 
-describe("WordExportSettingsSection", () => {
+describe("PandocSettingsRow", () => {
   it("names the Pandoc release, its licence, and links its exact source", async () => {
     readPandocTool.mockResolvedValue(status());
     await render();
-    expect(container.querySelector("section")?.id).toBe("word-export");
+    expect(container.querySelector("#word-export")).not.toBeNull();
     const line = container.querySelector('[data-testid="status"]');
     expect(line?.textContent).toBe("Pandoc 3.11 · GPL-2.0-or-later · Source code");
     const link = line?.querySelector("a");
@@ -133,7 +136,7 @@ describe("WordExportSettingsSection", () => {
     expect(container.textContent).toContain("Downloading Pandoc");
   });
 
-  it("says Pandoc's state in a few words under the Word export heading", async () => {
+  it("says Pandoc's state in a few words under the Word tab", async () => {
     readPandocTool.mockResolvedValue(status());
     await render();
     expect(container.querySelector("h3")?.textContent).toBe("Pandoc");

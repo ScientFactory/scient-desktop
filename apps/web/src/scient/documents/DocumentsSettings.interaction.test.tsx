@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   scopeEnvironmentId: undefined as string | null | undefined,
   readToolchain: vi.fn(),
   install: vi.fn(),
+  pandocEnvironments: [] as string[],
+  pandocRefresh: vi.fn(),
 }));
 vi.mock("~/state/environments", () => ({
   usePrimaryEnvironmentId: () => "local",
@@ -40,8 +42,16 @@ vi.mock("../latex/client", () => ({
   readLatexToolchain: mocks.readToolchain,
   requestLatexToolchainInstall: mocks.install,
 }));
-vi.mock("../wordExport/WordExportSettingsSection", () => ({
-  WordExportSettingsSection: () => <section>Word export (Pandoc)</section>,
+vi.mock("../wordExport/usePandocTool", () => ({
+  usePandocTool: (environmentId: string) => {
+    mocks.pandocEnvironments.push(environmentId);
+    return {
+      status: null,
+      view: { kind: "ready", detail: "", actionLabel: null, busy: false },
+      act: vi.fn(),
+      refresh: mocks.pandocRefresh,
+    };
+  },
 }));
 import { DocumentsSettings } from "./DocumentsSettings";
 
@@ -64,6 +74,8 @@ describe("Settings ▸ Documents", () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     localStorage.clear();
     mocks.report = report();
+    mocks.pandocEnvironments = [];
+    mocks.pandocRefresh.mockReset();
     mocks.target = null;
     mocks.scopeEnvironmentId = undefined;
     mocks.readToolchain.mockReset().mockImplementation(async () => mocks.report);
@@ -120,16 +132,31 @@ describe("Settings ▸ Documents", () => {
     return value === null ? null : JSON.parse(value);
   };
 
-  it("shows LaTeX and Markdown side by side, then Word export", async () => {
+  it("shows LaTeX, Markdown, and Word as plain tabs, with a state where there is one", async () => {
     await render();
     const strip = container.querySelector('[aria-label="Document formats"]')!;
-    expect(strip.textContent).toContain("LaTeX");
-    expect(strip.textContent).toContain("Installed");
-    expect(strip.textContent).toContain("Markdown");
+    const tab = (format: string) =>
+      strip.querySelector<HTMLElement>(`#documents-${format}-trigger`)!;
+    expect(tab("latex").textContent).toBe("LaTeXInstalled");
+    expect(tab("markdown").textContent).toBe("Markdown");
+    expect(tab("word").textContent).toBe("WordReady");
+    expect(strip.querySelector("svg:not(.lucide-chevron-down), img")).toBeNull();
     expect(container.querySelector("#latex-installation")?.textContent).toContain(
       "latexmk 4.85 · This computer",
     );
-    expect(container.textContent).toContain("Word export (Pandoc)");
+    await act(() => tab("word").click());
+    expect(container.querySelector("#word-export")?.textContent).toContain("Pandoc");
+    expect(mocks.pandocEnvironments.at(-1)).toBe("remote");
+  });
+
+  it("checks both installations again from the header", async () => {
+    await render();
+    await act(async () => {
+      container.querySelector<HTMLElement>('[aria-label="Check installations again"]')!.click();
+      await Promise.resolve();
+    });
+    expect(mocks.pandocRefresh).toHaveBeenCalledTimes(1);
+    expect(mocks.readToolchain).toHaveBeenLastCalledWith("remote", { refresh: true });
   });
 
   it("starts new documents Blank and English, and remembers another choice", async () => {
@@ -202,7 +229,7 @@ describe("Settings ▸ Documents", () => {
       () => new Promise<ScientLatexToolchainReport>((resolve) => (answer = resolve)),
     );
     await act(() =>
-      container.querySelector<HTMLElement>('[aria-label="Find LaTeX again"]')!.click(),
+      container.querySelector<HTMLElement>('[aria-label="Check installations again"]')!.click(),
     );
     expect(installButton()!.disabled).toBe(true);
     await act(async () => {
@@ -231,7 +258,8 @@ describe("Settings ▸ Documents", () => {
     await render(null);
     expect(mocks.readToolchain).not.toHaveBeenCalled();
     expect(container.querySelector("#latex-installation")).toBeNull();
-    expect(container.textContent).not.toContain("Word export (Pandoc)");
+    expect(container.querySelector("#documents-word-trigger")).toBeNull();
+    expect(mocks.pandocEnvironments).toEqual([]);
     expect(select("Template for new documents")).not.toBeNull();
   });
 

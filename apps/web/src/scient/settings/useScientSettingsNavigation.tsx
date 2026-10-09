@@ -36,10 +36,6 @@ const SETTINGS_PAGE_SECTIONS: Partial<
     { label: "Motion", targetId: "motion" },
     { label: "Typography", targetId: "typography" },
   ],
-  "/settings/documents": [
-    { label: "LaTeX & Markdown", targetId: "documents" },
-    { label: "Word export", targetId: "word-export" },
-  ],
   "/settings/source-control": [
     { label: "Version control", targetId: "source-control" },
     { label: "Text generation", targetId: "source-control-text-generation" },

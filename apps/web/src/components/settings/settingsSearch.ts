@@ -195,6 +195,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "word-export",
     title: "Word export (Pandoc)",
     to: "/settings/documents",
+    targetId: "word-export",
     searchTerms: ["word", "docx", "export", "pandoc", "document conversion", "reinstall"],
   },
   {

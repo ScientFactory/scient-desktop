@@ -143,3 +143,22 @@ export function pandocToolView(input: {
     busy: false,
   };
 }
+
+/** The Word tab's one-word state on Settings ▸ Documents. */
+export function pandocToolSummary(view: PandocToolView): string {
+  switch (view.kind) {
+    case "loading":
+      return "Checking…";
+    case "ready":
+      return "Ready";
+    case "installing":
+      return "Installing…";
+    case "reinstall":
+      return "Not working";
+    case "unavailable":
+      return "Unavailable";
+    case "offer":
+    case "failed":
+      return "Not installed";
+  }
+}

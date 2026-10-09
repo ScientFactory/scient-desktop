@@ -41,7 +41,9 @@ import {
   LATEX_PREVIEW_MODES,
   normalizeLatexPreviewMode,
 } from "../latex/scientLatexSurfaceModel";
-import { WordExportSettingsSection } from "../wordExport/WordExportSettingsSection";
+import { PandocSettingsRow } from "../wordExport/PandocSettingsRow";
+import { pandocToolSummary } from "../wordExport/pandocToolModel";
+import { usePandocTool, type PandocToolController } from "../wordExport/usePandocTool";
 import {
   DEFAULT_NEW_DOCUMENT_LANGUAGE,
   DEFAULT_NEW_DOCUMENT_TEMPLATE,
@@ -58,7 +60,7 @@ import {
 import { useLatexInstallation, type LatexInstallationController } from "./useLatexInstallation";
 
 const SELECTED_FORMAT_STORAGE_KEY = "scient.documentsSettingsFormat";
-const DOCUMENT_FORMATS = ["latex", "markdown"] as const;
+const DOCUMENT_FORMATS = ["latex", "markdown", "word"] as const;
 type DocumentFormat = (typeof DOCUMENT_FORMATS)[number];
 
 /** Rows settings search can jump to, and the tab each lives under. */
@@ -68,57 +70,13 @@ const SEARCH_TARGET_FORMATS: Readonly<Record<string, DocumentFormat>> = {
   "new-document-language": "latex",
   "latex-open-in": "latex",
   "markdown-open-in": "markdown",
+  "word-export": "word",
 };
 
 const MARKDOWN_VIEWS = [
   { id: "rich", label: "Rich" },
   { id: "source", label: "Source" },
 ] as const;
-
-/** The LaTeX wordmark's TeX, set the way Knuth set it: E lowered, letters kerned. */
-function LatexMark({ className }: { readonly className?: string }) {
-  return (
-    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" className={className}>
-      <g
-        fill="currentColor"
-        fontFamily="KaTeX_Main, 'Latin Modern Roman', 'Times New Roman', serif"
-        fontSize="12.5"
-      >
-        <text x="0.4" y="15">
-          T
-        </text>
-        <text x="7.3" y="17.7">
-          E
-        </text>
-        <text x="14.2" y="15">
-          X
-        </text>
-      </g>
-    </svg>
-  );
-}
-
-/** The Markdown mark (public domain), drawn in the current colour. */
-function MarkdownMark({ className }: { readonly className?: string }) {
-  return (
-    <svg aria-hidden="true" focusable="false" viewBox="0 0 208 128" className={className}>
-      <rect
-        width="198"
-        height="118"
-        x="5"
-        y="5"
-        ry="10"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="10"
-      />
-      <path
-        fill="currentColor"
-        d="M30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39zm125 0l-30-33h20V30h20v35h20z"
-      />
-    </svg>
-  );
-}
 
 function OptionSelect<T extends string>(props: {
   readonly label: string;
@@ -289,8 +247,26 @@ function MarkdownPanel(props: { readonly hidden: boolean }) {
   );
 }
 
+function WordPanel(props: { readonly hidden: boolean; readonly pandoc: PandocToolController }) {
+  return (
+    <SettingsSourcePanel
+      id="documents-word"
+      aria-labelledby="documents-word-trigger"
+      hidden={props.hidden}
+    >
+      <PandocSettingsRow controller={props.pandoc} />
+    </SettingsSourcePanel>
+  );
+}
+
+/** Server tools; absent while the chosen environment is not connected. */
+interface DocumentsServerTools {
+  readonly installation: LatexInstallationController;
+  readonly pandoc: PandocToolController;
+}
+
 function DocumentsSection(props: {
-  readonly installation: LatexInstallationController | null;
+  readonly server: DocumentsServerTools | null;
   readonly headerAction?: ReactNode;
 }) {
   const [stored, setStored] = useLocalStorage(SELECTED_FORMAT_STORAGE_KEY, "latex", Schema.String);
@@ -308,26 +284,32 @@ function DocumentsSection(props: {
     setCollapsed(false);
     setOpenedFor(target);
   }, [setStored, target, targetFormat]);
-  const selected: DocumentFormat = targetFormat ?? (stored === "markdown" ? "markdown" : "latex");
+  const remembered = DOCUMENT_FORMATS.find((format) => format === stored) ?? "latex";
+  // Word export lives on the server; without one there is no Word tab.
+  const available = (format: DocumentFormat) => format !== "word" || props.server !== null;
+  const selected: DocumentFormat =
+    targetFormat !== null && available(targetFormat)
+      ? targetFormat
+      : available(remembered)
+        ? remembered
+        : "latex";
   const isCollapsed = targetFormat === null && collapsed;
   const items: ReadonlyArray<{
     readonly id: DocumentFormat;
     readonly label: string;
-    readonly detail: string;
-    readonly icon: ReactNode;
+    readonly detail: string | null;
   }> = [
-    {
-      id: "latex",
-      label: "LaTeX",
-      detail: props.installation?.view.summary ?? "",
-      icon: <LatexMark className="size-6 shrink-0 text-foreground" />,
-    },
-    {
-      id: "markdown",
-      label: "Markdown",
-      detail: "Built in",
-      icon: <MarkdownMark className="h-auto w-6 shrink-0 text-foreground" />,
-    },
+    { id: "latex", label: "LaTeX", detail: props.server?.installation.view.summary ?? null },
+    { id: "markdown", label: "Markdown", detail: null },
+    ...(props.server
+      ? [
+          {
+            id: "word" as const,
+            label: "Word",
+            detail: pandocToolSummary(props.server.pandoc.view),
+          },
+        ]
+      : []),
   ];
   return (
     <SettingsSection
@@ -348,8 +330,8 @@ function DocumentsSection(props: {
                 expanded={!isCollapsed && item.id === selected}
                 separated={index > 0}
                 label={item.label}
-                detail={item.detail || undefined}
-                icon={item.icon}
+                {...(item.detail === null ? {} : { detail: item.detail })}
+                icon={null}
                 onToggle={() => {
                   if (item.id === selected) {
                     setCollapsed((current) => !current);
@@ -362,7 +344,9 @@ function DocumentsSection(props: {
             ))}
           </SettingsSourceStrip>
           {selected === "latex" ? (
-            <LatexPanel hidden={isCollapsed} installation={props.installation} />
+            <LatexPanel hidden={isCollapsed} installation={props.server?.installation ?? null} />
+          ) : selected === "word" && props.server ? (
+            <WordPanel hidden={isCollapsed} pandoc={props.server.pandoc} />
           ) : (
             <MarkdownPanel hidden={isCollapsed} />
           )}
@@ -377,10 +361,12 @@ function EnvironmentDocumentsSettings(props: {
   readonly label: string;
 }) {
   const installation = useLatexInstallation(props.environmentId);
+  const pandoc = usePandocTool(props.environmentId);
+  const checking = installation.refreshing || installation.view.busy;
   return (
     <SettingsPageContainer>
       <DocumentsSection
-        installation={installation}
+        server={{ installation, pandoc }}
         headerAction={
           <div className="flex items-center gap-1.5">
             <span className="hidden text-xs text-muted-foreground sm:inline">{props.label}</span>
@@ -390,29 +376,31 @@ function EnvironmentDocumentsSettings(props: {
                   <Button
                     size="icon-xs"
                     variant="ghost-muted"
-                    disabled={installation.refreshing || installation.view.busy}
-                    aria-label="Find LaTeX again"
-                    onClick={() => void installation.refresh()}
+                    disabled={checking}
+                    aria-label="Check installations again"
+                    onClick={() => {
+                      pandoc.refresh();
+                      void installation.refresh();
+                    }}
                   >
                     <RefreshCwIcon className={cn(installation.refreshing && "animate-spin")} />
                   </Button>
                 }
               />
-              <TooltipPopup side="top">Find LaTeX again</TooltipPopup>
+              <TooltipPopup side="top">Check installations again</TooltipPopup>
             </Tooltip>
           </div>
         }
       />
-      <WordExportSettingsSection environmentId={props.environmentId} />
     </SettingsPageContainer>
   );
 }
 
 /**
- * Settings ▸ Documents: LaTeX and Markdown side by side, the way Scientific
- * Computing shows its languages, then Word export, which serves documents and
- * conversations alike. Preferences are this device's; the installs are the
- * server's.
+ * Settings ▸ Documents: LaTeX, Markdown, and Word side by side, the way
+ * Scientific Computing shows its languages. Word holds the export to Word,
+ * which serves LaTeX, Markdown, and conversations alike. Preferences are this
+ * device's; the installs are the server's.
  */
 export function DocumentsSettings(props: { readonly environmentId?: EnvironmentId | undefined }) {
   const primaryId = usePrimaryEnvironmentId();
@@ -426,7 +414,7 @@ export function DocumentsSettings(props: { readonly environmentId?: EnvironmentI
   if (environmentId === null || environment === null) {
     return (
       <SettingsPageContainer>
-        <DocumentsSection installation={null} />
+        <DocumentsSection server={null} />
       </SettingsPageContainer>
     );
   }
