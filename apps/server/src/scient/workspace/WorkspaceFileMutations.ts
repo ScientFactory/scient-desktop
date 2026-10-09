@@ -148,7 +148,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     });
 
   // `rmdir` removes only an empty folder, so a folder anything else still holds
-  // stays; the walk stops there and never reaches the workspace root.
+  // stays; the walk stops there and never reaches the workspace root. Each
+  // folder must still be itself, reached without a link: one replaced by a link
+  // since would lead the walk outside, so the walk stops there.
   const removeEmptyFoldersAbove = (realWorkspaceRoot: string, filePath: string) =>
     Effect.promise(async () => {
       for (let folder = path.dirname(filePath); ; folder = path.dirname(folder)) {
@@ -161,6 +163,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         )
           return;
         try {
+          const stat = await NodeFSP.lstat(folder);
+          if (!stat.isDirectory() || (await NodeFSP.realpath(folder)) !== folder) return;
           await NodeFSP.rmdir(folder);
         } catch {
           return;
@@ -882,18 +886,65 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             currentRevision: current.revision,
           });
         }
-        yield* Effect.tryPromise({
-          try: () => NodeFSP.unlink(targetPath),
+        // Another program can still replace the file between that check and its
+        // removal. So the name is first moved aside, which takes whatever it
+        // holds at that instant; only a file at the expected revision is then
+        // removed, and anything else goes back under its name (or, if that name
+        // was written again meanwhile, beside it as a recovered copy).
+        const aside = path.join(
+          path.dirname(targetPath),
+          `.${path.basename(targetPath)}.scient-delete-${NodeCrypto.randomBytes(6).toString("hex")}`,
+        );
+        const outcome = yield* Effect.tryPromise({
+          try: async (): Promise<{ readonly deleted: true } | { readonly revision: string }> => {
+            await NodeFSP.rename(targetPath, aside);
+            const stat = await NodeFSP.lstat(aside);
+            let revision = "unreadable";
+            if (stat.isFile() && stat.size <= PROJECT_READ_FILE_MAX_BYTES) {
+              revision = revisionForBytes(await NodeFSP.readFile(aside));
+              if (revision === input.expectedRevision) {
+                await NodeFSP.unlink(aside);
+                return { deleted: true };
+              }
+            }
+            const extension = path.extname(targetPath);
+            const stem = targetPath.slice(0, targetPath.length - extension.length);
+            const names = [
+              targetPath,
+              ...Array.from(
+                { length: 20 },
+                (_, index) => `${stem} (recovered${index ? ` ${index + 1}` : ""})${extension}`,
+              ),
+            ];
+            for (const name of names) {
+              try {
+                await NodeFSP.link(aside, name);
+                await NodeFSP.unlink(aside);
+                break;
+              } catch (cause) {
+                if (!isNodeError(cause, "EEXIST")) throw cause;
+              }
+            }
+            return { revision };
+          },
           catch: (cause) =>
             new WorkspaceFileSystemOperationError({
               workspaceRoot: input.cwd,
               relativePath: input.relativePath,
               resolvedPath: targetPath,
-              operationPath: targetPath,
+              operationPath: aside,
               operation: "unlink",
               cause,
             }),
         });
+        if (!("deleted" in outcome)) {
+          return yield* new WorkspaceFileRevisionConflictError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: targetPath,
+            currentRevision: outcome.revision,
+          });
+        }
         if (input.removeEmptyFolders) {
           yield* removeEmptyFoldersAbove(resolved.realWorkspaceRoot, targetPath);
         }
