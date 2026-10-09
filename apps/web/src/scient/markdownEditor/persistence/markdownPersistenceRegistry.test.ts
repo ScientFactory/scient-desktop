@@ -2,6 +2,10 @@ import { EnvironmentId, type ProjectReadFileResult } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import type { MarkdownPersistenceTransport } from "./markdownPersistenceTransport";
+import type {
+  MarkdownDraftCheckpoint,
+  MarkdownDraftCheckpointStore,
+} from "./markdownDraftCheckpoint";
 
 vi.mock("./markdownPersistenceTransport", () => ({ createMarkdownPersistenceTransport: vi.fn() }));
 
@@ -948,4 +952,169 @@ it("keeps file admission available when optional recovery storage is unavailable
     vi.clearAllTimers();
     vi.useRealTimers();
   }
+});
+
+describe("recovery copies across a rename", () => {
+  function memoryStore(initial?: MarkdownDraftCheckpoint) {
+    let value = initial;
+    const store: MarkdownDraftCheckpointStore = {
+      read: vi.fn(async () => value),
+      replace: vi.fn(async (_key, expected, next) => {
+        if (value?.token !== expected) return false;
+        value = next;
+        return true;
+      }),
+    };
+    return { store, value: () => value, set: (next?: MarkdownDraftCheckpoint) => (value = next) };
+  }
+  function diskTransport(source: string) {
+    return () => ({
+      read: async () => ({ source, revision: `r${source}` }),
+      write: async () => ({ revision: "written" }),
+      classifyFailure: () => "terminal" as const,
+      subscribe: () => () => {},
+      project: () => {},
+    });
+  }
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("discards and removes a copy that proves it holds nothing", async () => {
+    const { store, value } = memoryStore({
+      token: "stale",
+      baselineSource: "old text",
+      baselineRevision: "rold",
+      draftSource: "old text",
+      publicationSource: null,
+      conflict: false,
+    });
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: store,
+      createTransport: diskTransport("new file"),
+    });
+    const lease = await registry.open(target);
+    expect(lease.getSnapshot()).toMatchObject({
+      draftSource: "new file",
+      conflict: null,
+      pending: false,
+    });
+    expect(value()).toBeUndefined();
+    lease.release();
+  });
+
+  it("keeps a conflict copy taken after an undo back to the baseline", async () => {
+    // A → B, the file became C, the user undid to A while the conflict was open.
+    const { store } = memoryStore({
+      token: "conflicted",
+      baselineSource: "A",
+      baselineRevision: "rA",
+      draftSource: "A",
+      publicationSource: null,
+      conflict: true,
+    });
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: store,
+      createTransport: diskTransport("C"),
+    });
+    const lease = await registry.open(target);
+    expect(lease.getSnapshot()).toMatchObject({
+      baselineSource: "A",
+      draftSource: "A",
+      conflict: { externalSource: "C" },
+    });
+    lease.release();
+  });
+
+  it("does not let a clean copy that could not be removed raise a conflict", async () => {
+    const stale: MarkdownDraftCheckpoint = {
+      token: "stale",
+      baselineSource: "old text",
+      baselineRevision: "rold",
+      draftSource: "old text",
+      conflict: false,
+    };
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: { read: async () => stale, replace: async () => false },
+      createTransport: diskTransport("new file"),
+    });
+    const lease = await registry.open(target);
+    expect(lease.getSnapshot()).toMatchObject({ draftSource: "new file", conflict: null });
+    lease.release();
+  });
+
+  it("writes no copy while a rename holds a clean document, and removes its copy once renamed", async () => {
+    const { store, value } = memoryStore();
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: store,
+      createTransport: diskTransport("A"),
+    });
+    const lease = registry.acquire(target, initial)!;
+    const release = lease.holdForRename()!;
+    expect(lease.getSnapshot().pending).toBe(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(store.replace).not.toHaveBeenCalled();
+    lease.release();
+    expect(registry.forgetClean(target)).toBe(true);
+    release();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(value()).toBeUndefined();
+  });
+
+  it("makes a new file under the old name wait until the old copy is gone", async () => {
+    let finish!: () => void;
+    let stored: MarkdownDraftCheckpoint | undefined;
+    const store: MarkdownDraftCheckpointStore = {
+      read: vi.fn(async () => stored),
+      replace: vi.fn(async (_key, expected, next) => {
+        if (next !== undefined) await new Promise<void>((done) => (finish = done));
+        if (stored?.token !== expected) return false;
+        stored = next;
+        return true;
+      }),
+    };
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: store,
+      createTransport: diskTransport("A"),
+    });
+    const lease = registry.acquire(target, initial)!;
+    // An edit is saved, but its recovery copy is still being written.
+    expect(lease.change("B", 0)).toBe(true);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(await lease.flushNow()).toBe(true);
+    lease.release();
+    expect(registry.forgetClean(target)).toBe(true);
+    // Another file now takes the old name while the old copy is still in flight.
+    let admitted = false;
+    const reopening = registry.open(target).then((next) => {
+      admitted = true;
+      return next;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(admitted).toBe(false);
+    finish();
+    const next = await reopening;
+    expect(stored).toBeUndefined();
+    expect(next.getSnapshot()).toMatchObject({ conflict: null, pending: false });
+    next.release();
+  });
+
+  it("carries removals still running across a hot reload", async () => {
+    let finish!: () => void;
+    const old = new MarkdownPersistenceRegistry();
+    Object.defineProperty(old, "generation", { value: undefined });
+    (old as unknown as { retiring: Map<string, Promise<void>> }).retiring.set(
+      "key",
+      new Promise<void>((done) => (finish = done)),
+    );
+    const next = adoptRendererRegistry(old, () => new MarkdownPersistenceRegistry());
+    expect(next.current).toBe(true);
+    const carried = (next.registry as unknown as { retiring: Map<string, Promise<void>> }).retiring;
+    expect(carried.has("key")).toBe(true);
+    finish();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(carried.has("key")).toBe(false);
+  });
 });
