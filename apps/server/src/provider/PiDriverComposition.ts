@@ -21,7 +21,6 @@ import * as Effect from "effect/Effect";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { customModelDiscoverySnapshot } from "../customModelCapabilities.ts";
-import { scientTools } from "../mcp/ScientOperationCatalog.ts";
 import { toMcpCapabilities } from "../mcp/McpInvocationContext.ts";
 import { ServerConfig } from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -42,10 +41,6 @@ export type PiCompositionRequirements = PiDriverEnv | ServerConfig | ServerSetti
 type PiCompositionExtension = Pick<ScientProviderInstance, "managedRuntimeActions">;
 
 const piToolProjection = scientToolProjectionForProvider("pi");
-
-/** Defer reading the composed tool catalog until driver creation breaks its startup import cycle. */
-export const buildPiScientToolNameMap = (): Readonly<Record<string, string>> =>
-  Object.fromEntries(scientTools.map((tool) => [tool.name, piToolProjection.name(tool.name)]));
 
 /** Pi's native before-agent-start hook is its supported Scient guidance seam. */
 export const buildPiRuntimeGuidance = (capabilities?: ReadonlySet<string>): string =>
@@ -135,7 +130,7 @@ const resolvePiRuntime = (
       adapterOptions: {
         runtimeGuidance: buildPiRuntimeGuidance,
         orchestrationInstructions: SCIENT_ORCHESTRATION_INSTRUCTIONS,
-        toolNameMap: buildPiScientToolNameMap(),
+        // Omit toolNameMap: Pi's MCP extension defaults to each canonical tool name.
         mapTurnStartError: mapPiTurnStartError,
       },
       decorateSnapshot: (snapshot: ServerProvider) => ({

@@ -39,12 +39,15 @@ import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 import { BUILT_IN_DRIVERS } from "./builtInDrivers.ts";
 import {
   buildPiRuntimeGuidance,
-  buildPiScientToolNameMap,
   mapPiTurnStartError,
   piCustomModelSnapshot,
   PiDriver,
   type PiCompositionRequirements,
 } from "./PiDriverComposition.ts";
+import {
+  CANONICAL_SCIENT_TOOL_PROJECTION,
+  scientToolProjectionForProvider,
+} from "./ScientToolProjection.ts";
 
 const PI = ProviderDriverKind.make("pi");
 const instanceId = ProviderInstanceId.make("pi-scient-composition");
@@ -208,15 +211,15 @@ it("registers the app-composed Pi driver with canonical models and config", () =
   });
 });
 
-it("keeps Pi prompt guidance and model-visible names canonical", () => {
+it("keeps Pi prompt guidance and model-visible names on the canonical default", () => {
   assert.include(buildPiRuntimeGuidance(), "## Scient");
   assert.include(buildPiRuntimeGuidance(new Set(["preview"])), "## Scient browser");
   assert.notInclude(buildPiRuntimeGuidance(new Set()), "## Scient browser");
 
-  const toolNameMap = buildPiScientToolNameMap();
-  assert.strictEqual(toolNameMap.preview_status, "preview_status");
-  assert.strictEqual(toolNameMap.scient_pdf_build, "scient_pdf_build");
-  assert.isFalse(Object.values(toolNameMap).some((name) => name.includes("t3-code")));
+  const piProjection = scientToolProjectionForProvider("pi");
+  assert.strictEqual(piProjection, CANONICAL_SCIENT_TOOL_PROJECTION);
+  assert.strictEqual(piProjection.name("preview_status"), "preview_status");
+  assert.strictEqual(piProjection.name("scient_pdf_build"), "scient_pdf_build");
 });
 
 it("preserves an existing Pi native turn receipt", () => {
