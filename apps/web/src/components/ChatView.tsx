@@ -11767,7 +11767,7 @@ function ChatViewContent(props: ChatViewProps) {
           }
           onOpenFile={openFileSurface}
           // SCIENT-FORK:START — an in-place rename moves the tab with its state
-          onFileRenamed={(fromPath, toPath) =>
+          onFileMoved={(fromPath, toPath) =>
             useRightPanelStore
               .getState()
               .renameFileSurface(activeThreadRef, fromPath, toPath, { keepState: true })

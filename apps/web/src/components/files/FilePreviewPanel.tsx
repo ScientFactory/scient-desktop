@@ -204,8 +204,8 @@ interface FilePreviewPanelProps {
   latexPresentationRequest: LatexFilePresentationRequest | null;
   latexRootRelativePath: string | null;
   onOpenFile: (relativePath: string) => void;
-  /** A renamed file's tab follows it to the new path, keeping its state. */
-  onFileRenamed?: (fromPath: string, toPath: string) => void;
+  /** The open file was moved in place: its tab follows it, keeping its state. */
+  onFileMoved?: (fromPath: string, toPath: string) => void;
   onOpenFileSource: (relativePath: string, line?: number, options?: OpenFileOptions) => void;
   onHtmlPresentationRequestHandled: (
     relativePath: string,
@@ -1377,7 +1377,7 @@ export default function FilePreviewPanel({
   latexPresentationRequest,
   latexRootRelativePath,
   onOpenFile,
-  onFileRenamed,
+  onFileMoved,
   onOpenFileSource,
   onHtmlPresentationRequestHandled,
   onLatexPresentationRequestHandled,
@@ -1716,7 +1716,7 @@ export default function FilePreviewPanel({
         revision,
         onOpenFile,
       }),
-    moveTab: (from, to) => (onFileRenamed ? onFileRenamed(from, to) : onOpenFile(to)),
+    moveTab: (from, to) => (onFileMoved ? onFileMoved(from, to) : onOpenFile(to)),
     moveViewState: (from, to) => {
       setHandledReveal((current) => (current?.path === from ? { ...current, path: to } : current));
       moveFileLineReveal(from, to);
