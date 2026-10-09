@@ -25,11 +25,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import {
-  buildPiRuntimeGuidance,
-  buildPiScientToolNameMap,
-  mapPiTurnStartError,
-} from "../../provider/PiDriverComposition.ts";
+import { buildPiRuntimeGuidance, mapPiTurnStartError } from "../../provider/PiDriverComposition.ts";
 import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "../../provider/ScientProviderInstructions.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
@@ -413,7 +409,6 @@ const makeAdapter = Effect.fnUntraced(function* (
     ...(continuationRequests === undefined ? {} : { continuationRequests }),
     orchestrationInstructions: SCIENT_ORCHESTRATION_INSTRUCTIONS,
     runtimeGuidance: buildPiRuntimeGuidance,
-    toolNameMap: buildPiScientToolNameMap(),
     mapTurnStartError: mapPiTurnStartError,
     settings: { enabled: true, binaryPath: "pi", launchArgs, customModels: [] },
     environment: {},

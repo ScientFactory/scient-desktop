@@ -6,10 +6,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 import { makePiMcpExtensionSource } from "@t3tools/provider-pi/testing";
-import {
-  buildPiRuntimeGuidance,
-  buildPiScientToolNameMap,
-} from "../../provider/PiDriverComposition.ts";
+import { buildPiRuntimeGuidance } from "../../provider/PiDriverComposition.ts";
 import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "../../provider/ScientProviderInstructions.ts";
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
@@ -62,7 +59,6 @@ async function loadBridge(result: unknown, mode = "full-access") {
         T3_MCP_BEARER_TOKEN: "synthetic",
         T3_PI_RUNTIME_MODE: mode,
         PI_RUNTIME_GUIDANCE: runtimeGuidance,
-        PI_TOOL_NAME_MAP: JSON.stringify(buildPiScientToolNameMap()),
       },
     },
     pi: {
