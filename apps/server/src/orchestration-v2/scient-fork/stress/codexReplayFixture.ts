@@ -61,7 +61,7 @@ export function codexReplayPreamble(input: {
       frame: {
         id: 1,
         result: {
-          userAgent: "T3 Code/0.156.1",
+          userAgent: "controlled-codex-peer",
           codexHome: "/tmp/codex-home",
           platformFamily: "unix",
           platformOs: "macos",

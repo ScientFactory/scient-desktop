@@ -8,6 +8,7 @@ import { EventId, MessageId, RunId, ThreadId, TurnItemId } from "@t3tools/contra
 import * as DateTime from "effect/DateTime";
 import { createAttachmentId } from "../../../attachmentStore.ts";
 import { EventSinkV2 } from "../../EventSink.ts";
+import { make as makeThreadSearch } from "../../ThreadSearch.ts";
 import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
@@ -487,6 +488,29 @@ it.live(
         const released = yield* store.getReleasableFiles(source.thread.id);
         assert.include(released, laterPage);
         assert.notInclude(released, shownPage);
+      }),
+    ),
+  120000,
+);
+
+it.live(
+  "search finds a fork by the history it shows, after its original is deleted",
+  () =>
+    run(
+      Effect.gen(function* () {
+        const source = yield* seed({ turns: 2 });
+        const child = (yield* fork(source.thread.id, "search-child")).projection;
+        const search = yield* makeThreadSearch;
+        const query = source.messages.find((message) => message.role === "user")!.text;
+        const found = (yield* search.search({ query })).matches.map((match) => match.threadId);
+        assert.includeMembers(found, [source.thread.id, child.thread.id]);
+        yield* remove(source.thread.id);
+        const after = (yield* search.search({ query })).matches;
+        assert.deepEqual(
+          after.map((match) => match.threadId),
+          [child.thread.id],
+        );
+        assert.equal(after[0]!.source, "user");
       }),
     ),
   120000,
