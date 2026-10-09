@@ -496,6 +496,49 @@ describe("committed composer dictation outlives navigation", () => {
     expect(storedPrompt(THREAD_A)).toBe("");
   });
 
+  it.each([
+    ["another question", "request-1:question-2"],
+    ["no question", null],
+  ])("a live answer recording is cancelled when the field changes to %s", async (_label, next) => {
+    mountComposer(THREAD_A);
+    await act(() => root.render(<Probe origin={null} field="request-1:question-1" />));
+    await record();
+    expect(control.phase).toBe("recording");
+    await act(() =>
+      root.render(<Probe origin={next === null ? originFor(THREAD_A) : null} field={next} />),
+    );
+    expect(recorder.cancel).toHaveBeenCalled();
+    expect(control.phase).toBe("idle");
+    const { done } = await stop(true);
+    await transcribe(done);
+    expect(client.transcribe).not.toHaveBeenCalled();
+    expect(local).not.toHaveBeenCalled();
+    expect(storedPrompt(THREAD_A)).toBe("");
+  });
+
+  it("a live draft recording is cancelled when a question takes over the composer", async () => {
+    mountComposer(THREAD_A);
+    await show(THREAD_A);
+    await record();
+    await act(() =>
+      root.render(
+        <Probe key={composerTargetKey(THREAD_A)} origin={null} field="request-1:question-1" />,
+      ),
+    );
+    expect(recorder.cancel).toHaveBeenCalled();
+    expect(control.phase).toBe("idle");
+    expect(client.transcribe).not.toHaveBeenCalled();
+  });
+
+  it("re-rendering with the same destination keeps the recording", async () => {
+    mountComposer(THREAD_A);
+    await show(THREAD_A);
+    await record();
+    await show(THREAD_A);
+    expect(recorder.cancel).not.toHaveBeenCalled();
+    expect(control.phase).toBe("recording");
+  });
+
   it("answer dictation is delivered to its own unchanged field", async () => {
     await act(() => root.render(<Probe origin={null} field="request-1:question-1" />));
     await record();

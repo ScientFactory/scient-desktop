@@ -163,6 +163,12 @@ export function useScientVoiceController({
   draftOriginRef.current = draftOrigin;
   const localFieldKeyRef = useRef(localFieldKey);
   localFieldKeyRef.current = localFieldKey;
+  // Where this control's text would go now. A recording belongs to the
+  // destination it started with; if that changes first, it is cancelled.
+  const destinationKey = draftOrigin ? `draft:${draftOrigin.key}` : `field:${localFieldKey ?? ""}`;
+  const destinationKeyRef = useRef(destinationKey);
+  destinationKeyRef.current = destinationKey;
+  const recordingDestinationRef = useRef<string | null>(null);
 
   // Committed dictation is shown by owner key: the draft's key for composer
   // drafts (so returning to a thread shows its job), else this control alone.
@@ -252,6 +258,7 @@ export function useScientVoiceController({
 
   const beginRecording = useCallback(async (): Promise<void> => {
     const operation = (operationRef.current += 1);
+    recordingDestinationRef.current = destinationKeyRef.current;
     clearErrors();
     setElapsedMs(0);
     setPhase("requesting-permission");
@@ -362,6 +369,8 @@ export function useScientVoiceController({
       ) {
         return Promise.resolve();
       }
+      // A recording whose destination changed is being cancelled, not committed.
+      if (recordingDestinationRef.current !== destinationKeyRef.current) return Promise.resolve();
       operationRef.current += 1;
       // Starts the recorder's final flush and commits it in the same task, so
       // leaving the thread right after the click cannot drop the dictation.
@@ -404,6 +413,7 @@ export function useScientVoiceController({
 
   autoStopRef.current = (clip) => {
     if (phaseRef.current !== "recording") return;
+    if (recordingDestinationRef.current !== destinationKeyRef.current) return;
     operationRef.current += 1;
     void commit(Promise.resolve(clip), false);
   };
@@ -446,6 +456,14 @@ export function useScientVoiceController({
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [cancel, phase, stop]);
+
+  // A question appearing, changing or closing, or the draft changing, ends a
+  // recording or permission request that started for another destination.
+  useEffect(() => {
+    const phase = phaseRef.current;
+    if (phase !== "recording" && phase !== "requesting-permission") return;
+    if (recordingDestinationRef.current !== destinationKey) void cancel();
+  }, [cancel, destinationKey]);
 
   // Local dictation belongs to the field it started in, such as one question's
   // answer; a different or closed field ends it rather than receiving its text.
