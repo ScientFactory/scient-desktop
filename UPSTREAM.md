@@ -273,6 +273,16 @@ frozen history, managed runtime, privacy and publication boundaries remain.
 The receipt separates complete local qualification with exact affected-scope reuse,
 independent review and bounded stress from hosted CI and the user's visual acceptance.
 
+A candidate alignment through `ec80933ac8cd02fec5c97b342462ccc9567cdb1e`
+is recorded in [the 2026-10-09 receipt](docs/internals/t3-upstream-sync-20261009-ec80933ac8.md).
+It receives the next 43 official first-parent commits, adopts shared provider packages,
+and preserves Scient's instruction, tool, fork, queue and lifecycle ownership.
+The receipt records complete local matrix execution, targeted requalification of
+conflicting test contracts, native smoke and platform/live-provider limits.
+Its specific callback-composition tradeoff reduces scoped unmarked inventory debt
+but increases added source lines in the fixed upstream host scope. That Codex
+proposition requires maintainer acceptance; the qualified cursor remains at `2a93885bac...`.
+
 ## Receiving T3 updates
 
 The local alignment through `1ab2dfb5` is documented in the
