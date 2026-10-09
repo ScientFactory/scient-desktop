@@ -19,6 +19,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
 import { vi } from "vite-plus/test";
 import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
@@ -39,6 +40,7 @@ import * as ServerConfig from "./config.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
+import { SettingsDirectoryWatch } from "./settingsDirectoryWatch.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
@@ -48,17 +50,16 @@ const encodeSettingsJson = Schema.encodeEffect(Schema.fromJsonString(ServerSetti
 
 const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
 
-const makeServerSettingsLayer = (secretLayer = ServerSecretStore.layer) =>
+const makeServerSettingsLayer = (
+  secretLayer = ServerSecretStore.layer,
+  configLayer = Layer.fresh(
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3code-server-settings-test-" }),
+  ),
+) =>
   ServerSettingsModule.layer.pipe(
     Layer.provide(secretLayer),
     Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
-    Layer.provideMerge(
-      Layer.fresh(
-        ServerConfig.layerTest(process.cwd(), {
-          prefix: "t3code-server-settings-test-",
-        }),
-      ),
-    ),
+    Layer.provideMerge(configLayer),
   );
 
 /** Like `layerServerSettings`, but also exposes the secret store for assertions. */
@@ -749,6 +750,348 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         assert.equal(Option.getOrUndefined(change)?.responseStreamingMode, "paragraph");
       }),
     ).pipe(TestClock.withLive, Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect(
+    "registers a dangling destination before ready and re-reads writes during acquisition",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const native = yield* SettingsDirectoryWatch;
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const closed = vi.fn();
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const config = yield* ServerConfig.ServerConfig;
+              const fs = yield* FileSystem.FileSystem;
+              const path = yield* Path.Path;
+              const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-ready-" });
+              const destination = path.join(dotfiles, "held", "settings.json");
+              yield* fs.remove(config.settingsPath, { force: true });
+              yield* fs.symlink(destination, config.settingsPath);
+              const watch = {
+                acquire: Effect.fnUntraced(function* (directory: string) {
+                  if (directory === path.dirname(destination)) {
+                    yield* Deferred.succeed(entered, undefined);
+                    yield* Deferred.await(release);
+                  }
+                  const events = yield* native.acquire(directory);
+                  yield* Effect.addFinalizer(() => Effect.sync(() => closed(directory)));
+                  return events;
+                }),
+              };
+              yield* Effect.gen(function* () {
+                const service = yield* ServerSettingsModule.ServerSettingsService;
+                const startup = yield* service.start.pipe(Effect.forkChild);
+                yield* Deferred.await(entered);
+                // No native target watch exists yet; no creation event can be buffered.
+                yield* writeFileStringAtomically({
+                  filePath: destination,
+                  contents: `{ "responseStreamingMode": "paragraph" }`,
+                });
+                yield* Deferred.succeed(release, undefined);
+                yield* Fiber.join(startup);
+                yield* service.ready;
+                assert.equal((yield* service.getSettings).responseStreamingMode, "paragraph");
+                const changes = yield* service.subscribeChanges;
+                yield* writeFileStringAtomically({
+                  filePath: destination,
+                  contents: `{ "responseStreamingMode": "turn" }`,
+                });
+                const change = yield* changes.pipe(
+                  Stream.filter((settings) => settings.responseStreamingMode === "turn"),
+                  Stream.runHead,
+                  Effect.timeout("2 seconds"),
+                );
+                assert.equal(Option.getOrUndefined(change)?.responseStreamingMode, "turn");
+              }).pipe(
+                Effect.provide(
+                  makeServerSettingsLayer(
+                    ServerSecretStore.layer,
+                    Layer.succeed(ServerConfig.ServerConfig, config),
+                  ),
+                ),
+                Effect.provideService(SettingsDirectoryWatch, watch),
+              );
+            }),
+          );
+          assert.equal(closed.mock.calls.length, 3);
+        }),
+      ).pipe(
+        TestClock.withLive,
+        Effect.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3code-server-settings-ready-test-" }),
+        ),
+      ),
+  );
+
+  it.effect(
+    "resolves the initial link after delayed parent registration and watches its current destination",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const native = yield* SettingsDirectoryWatch;
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const closed = vi.fn();
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const config = yield* ServerConfig.ServerConfig;
+              const fs = yield* FileSystem.FileSystem;
+              const path = yield* Path.Path;
+              const dotfiles = yield* fs.makeTempDirectoryScoped({
+                prefix: "t3-settings-parent-ready-",
+              });
+              const first = path.join(dotfiles, "first", "settings.json");
+              const second = path.join(dotfiles, "second", "settings.json");
+              yield* writeFileStringAtomically({
+                filePath: first,
+                contents: `{ "responseStreamingMode": "turn" }`,
+              });
+              yield* writeFileStringAtomically({
+                filePath: second,
+                contents: `{ "responseStreamingMode": "turn" }`,
+              });
+              yield* fs.remove(config.settingsPath, { force: true });
+              yield* fs.symlink(first, config.settingsPath);
+              let held = false;
+              const watch = {
+                acquire: Effect.fnUntraced(function* (directory: string) {
+                  if (directory === path.dirname(config.settingsPath) && !held) {
+                    held = true;
+                    yield* Deferred.succeed(entered, undefined);
+                    yield* Deferred.await(release);
+                  }
+                  const events = yield* native.acquire(directory);
+                  yield* Effect.addFinalizer(() => Effect.sync(() => closed(directory)));
+                  return events;
+                }),
+              };
+              yield* Effect.gen(function* () {
+                const service = yield* ServerSettingsModule.ServerSettingsService;
+                const startup = yield* service.start.pipe(Effect.forkChild);
+                yield* Deferred.await(entered);
+                yield* fs.remove(config.settingsPath);
+                yield* fs.symlink(second, config.settingsPath);
+                yield* writeFileStringAtomically({
+                  filePath: second,
+                  contents: `{ "responseStreamingMode": "paragraph" }`,
+                });
+                yield* Deferred.succeed(release, undefined);
+                yield* Fiber.join(startup);
+                assert.equal((yield* service.getSettings).responseStreamingMode, "paragraph");
+                const changes = yield* service.subscribeChanges;
+                yield* writeFileStringAtomically({
+                  filePath: second,
+                  contents: `{ "responseStreamingMode": "turn" }`,
+                });
+                const change = yield* changes.pipe(
+                  Stream.filter((settings) => settings.responseStreamingMode === "turn"),
+                  Stream.runHead,
+                  Effect.timeout("2 seconds"),
+                );
+                assert.equal(Option.getOrUndefined(change)?.responseStreamingMode, "turn");
+                assert.equal(
+                  closed.mock.calls.filter(([directory]) => directory === path.dirname(first))
+                    .length,
+                  0,
+                );
+              }).pipe(
+                Effect.provide(
+                  makeServerSettingsLayer(
+                    ServerSecretStore.layer,
+                    Layer.succeed(ServerConfig.ServerConfig, config),
+                  ),
+                ),
+                Effect.provideService(SettingsDirectoryWatch, watch),
+              );
+            }),
+          );
+          assert.equal(closed.mock.calls.length, 3);
+        }),
+      ).pipe(
+        TestClock.withLive,
+        Effect.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3code-server-settings-ready-test-" }),
+        ),
+      ),
+  );
+
+  it.effect("re-reads a repointed settings destination after delayed native registration", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const native = yield* SettingsDirectoryWatch;
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const closed = vi.fn();
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const config = yield* ServerConfig.ServerConfig;
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const dotfiles = yield* fs.makeTempDirectoryScoped({
+              prefix: "t3-settings-repoint-ready-",
+            });
+            const first = path.join(dotfiles, "first", "settings.json");
+            const second = path.join(dotfiles, "second", "settings.json");
+            yield* writeFileStringAtomically({
+              filePath: first,
+              contents: `{ "responseStreamingMode": "turn" }`,
+            });
+            yield* writeFileStringAtomically({
+              filePath: second,
+              contents: `{ "responseStreamingMode": "turn" }`,
+            });
+            yield* fs.remove(config.settingsPath, { force: true });
+            yield* fs.symlink(first, config.settingsPath);
+            const watch = {
+              acquire: Effect.fnUntraced(function* (directory: string) {
+                if (directory === path.dirname(second)) {
+                  yield* Deferred.succeed(entered, undefined);
+                  yield* Deferred.await(release);
+                }
+                const events = yield* native.acquire(directory);
+                yield* Effect.addFinalizer(() => Effect.sync(() => closed(directory)));
+                return events;
+              }),
+            };
+            yield* Effect.gen(function* () {
+              const service = yield* ServerSettingsModule.ServerSettingsService;
+              yield* service.start;
+              const changes = yield* service.subscribeChanges;
+              yield* fs.remove(config.settingsPath);
+              yield* fs.symlink(second, config.settingsPath);
+              yield* Deferred.await(entered);
+              yield* writeFileStringAtomically({
+                filePath: second,
+                contents: `{ "responseStreamingMode": "paragraph" }`,
+              });
+              yield* Deferred.succeed(release, undefined);
+              const change = yield* changes.pipe(
+                Stream.filter((settings) => settings.responseStreamingMode === "paragraph"),
+                Stream.runHead,
+                Effect.timeout("2 seconds"),
+              );
+              assert.equal(Option.getOrUndefined(change)?.responseStreamingMode, "paragraph");
+              assert.equal(
+                closed.mock.calls.filter(([directory]) => directory === path.dirname(first)).length,
+                1,
+              );
+            }).pipe(
+              Effect.provide(
+                makeServerSettingsLayer(
+                  ServerSecretStore.layer,
+                  Layer.succeed(ServerConfig.ServerConfig, config),
+                ),
+              ),
+              Effect.provideService(SettingsDirectoryWatch, watch),
+            );
+          }),
+        );
+        assert.equal(closed.mock.calls.length, 4);
+      }),
+    ).pipe(
+      TestClock.withLive,
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3code-server-settings-ready-test-" }),
+      ),
+    ),
+  );
+
+  it.effect("keeps failed watch registration nonfatal and settles ready", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        yield* service.start.pipe(Effect.timeout("2 seconds"));
+        yield* service.ready;
+        assert.equal(
+          (yield* service.getSettings).responseStreamingMode,
+          DEFAULT_SERVER_SETTINGS.responseStreamingMode,
+        );
+      }),
+    ).pipe(
+      TestClock.withLive,
+      Effect.provide(makeServerSettingsLayer()),
+      Effect.provideService(SettingsDirectoryWatch, {
+        acquire: () =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method: "watch",
+              description: "controlled watch denial",
+            }),
+          ),
+      }),
+    ),
+  );
+
+  it.effect(
+    "closes acquired link watches when startup is interrupted during destination registration",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const native = yield* SettingsDirectoryWatch;
+          const entered = yield* Deferred.make<void>();
+          const neverRegister = yield* Deferred.make<void>();
+          const parentsReady = yield* Deferred.make<void>();
+          const acquired = vi.fn();
+          const closed = vi.fn();
+          const config = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dotfiles = yield* fs.makeTempDirectoryScoped({
+            prefix: "t3-settings-interrupt-ready-",
+          });
+          const destination = path.join(dotfiles, "held", "settings.json");
+          yield* fs.remove(config.settingsPath, { force: true });
+          yield* fs.symlink(destination, config.settingsPath);
+          const watch = {
+            acquire: Effect.fnUntraced(function* (directory: string) {
+              if (directory === path.dirname(destination)) {
+                yield* Deferred.succeed(entered, undefined);
+                yield* Deferred.await(neverRegister);
+              }
+              const events = yield* native.acquire(directory);
+              yield* Effect.sync(() => acquired(directory));
+              if (acquired.mock.calls.length === 2)
+                yield* Deferred.succeed(parentsReady, undefined);
+              yield* Effect.addFinalizer(() => Effect.sync(() => closed(directory)));
+              return events;
+            }),
+          };
+          yield* Effect.gen(function* () {
+            const service = yield* ServerSettingsModule.ServerSettingsService;
+            const startup = yield* service.start.pipe(Effect.forkChild);
+            yield* Deferred.await(entered);
+            yield* Deferred.await(parentsReady);
+            yield* Fiber.interrupt(startup);
+            assert.isTrue(Exit.isFailure(yield* Fiber.await(startup)));
+            const readyExit = yield* service.ready.pipe(Effect.exit, Effect.timeout("2 seconds"));
+            assert.isTrue(Exit.isFailure(readyExit));
+            assert.equal(closed.mock.calls.length, acquired.mock.calls.length);
+            assert.equal(
+              acquired.mock.calls.filter(([directory]) => directory === path.dirname(destination))
+                .length,
+              0,
+            );
+          }).pipe(
+            Effect.provide(
+              makeServerSettingsLayer(
+                ServerSecretStore.layer,
+                Layer.succeed(ServerConfig.ServerConfig, config),
+              ),
+            ),
+            Effect.provideService(SettingsDirectoryWatch, watch),
+          );
+        }),
+      ).pipe(
+        TestClock.withLive,
+        Effect.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3code-server-settings-ready-test-" }),
+        ),
+      ),
   );
 
   it.effect("preserves context when reading a provider environment secret fails", () => {
