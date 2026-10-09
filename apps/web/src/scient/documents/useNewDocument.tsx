@@ -285,7 +285,7 @@ function NewDocumentStartBar(props: {
             {more?.name ?? "More"}
             <ChevronDown aria-hidden="true" />
           </MenuTrigger>
-          <MenuPopup align="start" side="bottom" sideOffset={4} {...strip}>
+          <MenuPopup align="start" side="bottom" sideOffset={4} className="min-w-0" {...strip}>
             {MORE_DOCUMENT_TEMPLATES.map((entry) => (
               <MenuItem key={entry.id} onClick={() => props.onTemplate(entry.id)}>
                 {entry.name}
@@ -307,7 +307,7 @@ function NewDocumentStartBar(props: {
           {NEW_DOCUMENT_LANGUAGES.find((entry) => entry.id === props.language)!.name}
           <ChevronDown aria-hidden="true" />
         </MenuTrigger>
-        <MenuPopup align="end" side="bottom" sideOffset={4} {...strip}>
+        <MenuPopup align="end" side="bottom" sideOffset={4} className="min-w-0" {...strip}>
           {NEW_DOCUMENT_LANGUAGES.map((entry) => (
             <MenuItem key={entry.id} onClick={() => props.onLanguage(entry.id)}>
               {entry.name}
