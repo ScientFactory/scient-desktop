@@ -50,16 +50,12 @@ import { pandocToolSummary } from "../wordExport/pandocToolModel";
 import { usePandocTool, type PandocToolController } from "../wordExport/usePandocTool";
 import {
   DEFAULT_NEW_DOCUMENT_LANGUAGE,
-  DEFAULT_NEW_DOCUMENT_TEMPLATE,
   NEW_DOCUMENT_LANGUAGE_STORAGE_KEY,
-  NEW_DOCUMENT_TEMPLATE_STORAGE_KEY,
   normalizeNewDocumentLanguage,
-  normalizeNewDocumentTemplate,
 } from "./documentPreferences";
-import { useTemplateLayout } from "./documentTemplateLayout";
 import { NEW_DOCUMENT_LANGUAGES } from "./documentTemplates";
 import { useLatexInstallation, type LatexInstallationController } from "./useLatexInstallation";
-import { useTemplateChoices } from "./useTemplateChoices";
+import { TemplatesSettingsRow } from "./TemplateLibrarySettings";
 
 const SELECTED_FORMAT_STORAGE_KEY = "scient.documentsSettingsFormat";
 const FORMAT_LOGOS = { latex: latexLogo, markdown: markdownLogo, word: wordLogo };
@@ -153,22 +149,6 @@ function LatexPanel(props: {
   readonly hidden: boolean;
   readonly installation: LatexInstallationController | null;
 }) {
-  const [template, setTemplate] = useLocalStorage(
-    NEW_DOCUMENT_TEMPLATE_STORAGE_KEY,
-    DEFAULT_NEW_DOCUMENT_TEMPLATE,
-    Schema.String,
-  );
-  // The templates as a new document offers them: its page, then More. A hidden
-  // template stays listed while it is the default.
-  const templates = useTemplateChoices();
-  const { layout } = useTemplateLayout(templates.map((entry) => entry.id));
-  const current = normalizeNewDocumentTemplate(template);
-  const choices = (ids: readonly string[]) =>
-    templates
-      .filter((entry) => ids.includes(entry.id))
-      .toSorted((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id))
-      .map(({ id, name }) => ({ id, name }));
-  const more = layout.hidden.includes(current) ? [...layout.more, current] : layout.more;
   const [language, setLanguage] = useLocalStorage(
     NEW_DOCUMENT_LANGUAGE_STORAGE_KEY,
     DEFAULT_NEW_DOCUMENT_LANGUAGE,
@@ -191,18 +171,7 @@ function LatexPanel(props: {
       ) : (
         <OfflineToolRow id="latex-installation" title="Installation" />
       )}
-      <SettingsRow
-        id="new-document-template"
-        title="Template for new documents"
-        control={
-          <OptionSelect
-            label="Template for new documents"
-            value={current}
-            groups={[choices(layout.page), choices(more)].filter((group) => group.length > 0)}
-            onChange={setTemplate}
-          />
-        }
-      />
+      <TemplatesSettingsRow />
       <SettingsRow
         id="new-document-language"
         title="Language for new documents"

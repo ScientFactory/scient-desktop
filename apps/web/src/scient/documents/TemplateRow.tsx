@@ -18,7 +18,6 @@ import { ChevronDown, Ellipsis } from "lucide-react";
 import { type MouseEvent, type ReactNode, useContext, useRef, useState } from "react";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
-import { requestConfirmDialog } from "~/confirmDialog";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { readLocalApi } from "~/localApi";
 
@@ -32,9 +31,9 @@ import {
 import { PageZoomContext } from "./NewDocumentOnPage";
 import { TemplateCard } from "./TemplateCard";
 import type { TemplatePicture } from "./templatePreviews";
-import { templateEdits } from "./newDocuments";
 import { TemplateNameDialog } from "./TemplateNameDialog";
 import type { TemplateChoice } from "./useTemplateChoices";
+import { deleteOwnTemplate } from "./templateLibrary";
 import { userTemplates } from "./userTemplates";
 
 /**
@@ -90,14 +89,8 @@ export function TemplateRow(props: {
     if (action === "default") props.onSetDefault(id);
     else if (action === "edit") props.onEdit(id);
     else if (action === "rename") setNaming({ rename: id });
-    else if (action === "delete") {
-      const confirmed = await requestConfirmDialog(`Delete the template “${nameOf(id)}”?`, {
-        variant: "destructive",
-      });
-      if (confirmed !== true) return;
-      await userTemplates.remove(id);
-      templateEdits.forgetTemplate(id);
-    } else update((current) => applyTemplateAction(current, action, id));
+    else if (action === "delete") await deleteOwnTemplate(id, nameOf(id));
+    else update((current) => applyTemplateAction(current, action, id));
   };
   const contextMenu = (id: string) => (event: MouseEvent) => {
     event.preventDefault();
