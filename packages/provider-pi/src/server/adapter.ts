@@ -268,6 +268,10 @@ export interface PiAdapterV2Options {
   };
   /** Application guidance to append to Pi's native runtime prompt. */
   readonly runtimeGuidance?: (capabilities: ReadonlySet<string> | undefined) => string;
+  // SCIENT-FORK:START — the host may replace generated orchestration copy, not transport identity.
+  /** Host-owned MCP orchestration text; defaults to the package's generic T3 instructions. */
+  readonly orchestrationInstructions?: string;
+  // SCIENT-FORK:END
   /** Canonical MCP tool name to host-projected model-visible name. */
   readonly toolNameMap?: Readonly<Record<string, string>>;
   /** Preserve the host's native-start receipt when mapping provider errors. */
@@ -508,7 +512,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       // hook. Materialize it even when this session has no MCP credential so
       // Supervised never silently degrades to unrestricted tool execution.
       const extensionPath = yield* provideCacheFs(
-        materializePiT3McpExtension(host.paths.providerStatusCacheDir),
+        // SCIENT-FORK:START — per-driver prompt text is embedded only in its generated extension.
+        materializePiT3McpExtension(
+          host.paths.providerStatusCacheDir,
+          options.orchestrationInstructions,
+        ),
+        // SCIENT-FORK:END
       );
       const resolvedLaunchArgs = resolvePiLaunchArgs(options.settings.launchArgs);
       if (!resolvedLaunchArgs.ok) {

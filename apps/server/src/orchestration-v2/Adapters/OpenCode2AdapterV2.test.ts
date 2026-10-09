@@ -39,8 +39,8 @@ import * as Exit from "effect/Exit";
 import { TestClock } from "effect/testing";
 import { describe } from "vite-plus/test";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
-import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
+import { buildScientOrchestrationSystemPrompt } from "../../provider/ScientProviderInstructions.ts";
 import { buildOpenCodeRuntimeGuidance } from "../../provider/OpenCodeDriverComposition.ts";
 
 import type {
@@ -677,8 +677,8 @@ describe("OpenCode2 adapter", () => {
         const server = "t3-code-thread_opencode2-adapter";
         const instructions = [
           buildOpenCodeRuntimeGuidance(external ? undefined : capabilities),
-          buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
-          t3OrchestrationSystemPrompt(!external),
+          buildScientRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
+          buildScientOrchestrationSystemPrompt(!external),
         ]
           .filter(Boolean)
           .join("\n\n");

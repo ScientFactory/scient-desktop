@@ -24,7 +24,7 @@ import { AntigravityDriver, type AntigravityDriverEnv } from "./Drivers/Antigrav
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
 import type { CursorDriverEnv } from "@t3tools/provider-cursor/server";
-import { MuseDriver, type MuseDriverEnv } from "@t3tools/provider-muse/server";
+import { type MuseDriverEnv } from "@t3tools/provider-muse/server";
 import type { AnyProviderDriver } from "@t3tools/provider-core/server/driver";
 import { compareProviderDriverKinds } from "@t3tools/contracts";
 import { DroidDriver, type DroidDriverEnv } from "./Drivers/DroidDriver.ts";
@@ -42,6 +42,7 @@ import {
 } from "./AppProviderDriverComposition.ts";
 import { OpenCodeDriver, type OpenCodeCompositionEnv } from "./OpenCodeDriverComposition.ts";
 import { PiDriver, type PiCompositionRequirements } from "./PiDriverComposition.ts";
+import { MuseDriver } from "./MuseDriverComposition.ts";
 
 /**
  * Union of infrastructure services required to construct any built-in

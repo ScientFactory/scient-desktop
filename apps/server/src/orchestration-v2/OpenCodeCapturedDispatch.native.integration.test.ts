@@ -33,7 +33,7 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import { buildScientAwareness } from "../provider/ScientAwareness.ts";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import { buildScientRuntimeInstructions } from "../provider/ScientRuntimeInstructions.ts";
 import { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
 import {
@@ -434,7 +434,7 @@ it.live(
           assert.include(prompt.system, buildScientAwareness());
           assert.include(
             prompt.system,
-            buildRuntimeInstructions({ harness: "OpenCode", model: selection.model }),
+            buildScientRuntimeInstructions({ harness: "OpenCode", model: selection.model }),
           );
           assert.lengthOf(prompt.parts, 1);
           assert.include(prompt.parts[0]!.text, currentText);

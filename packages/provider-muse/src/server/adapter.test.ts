@@ -190,7 +190,11 @@ const makeHarness = Effect.fnUntraced(function* (
   policy = runtimePolicy,
   overrides: Pick<
     MuseAdapterV2Options,
-    "createHost" | "nativeEventLogger" | "modelCatalog" | "continuationRequests"
+    | "createHost"
+    | "nativeEventLogger"
+    | "modelCatalog"
+    | "continuationRequests"
+    | "runtimeInstructions"
   > = {},
   configureMcp?: boolean,
 ) {
@@ -398,6 +402,33 @@ describe("MuseAdapterV2", () => {
           { type: "text", text: "Hello Muse" },
         ]);
       }
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("uses optional host-owned runtime copy without changing the package default", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const hostCopy = "<runtime_info>Scient host runtime copy</runtime_info>";
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        {
+          runtimeInstructions: () => hostCopy,
+        },
+      );
+      yield* harness.runtime.startTurn(yield* turnInput(harness.providerThread));
+      const nativeTurn = yield* fake.takeCall("turn/start");
+      const nativeInput = nativeTurn.params.input as ReadonlyArray<{
+        readonly type: string;
+        readonly text?: string;
+      }>;
+
+      assert.equal(nativeInput[0]?.text, hostCopy);
+      assert.notInclude(nativeInput[0]?.text ?? "", "T3 Code");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

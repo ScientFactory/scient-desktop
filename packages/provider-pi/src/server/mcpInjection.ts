@@ -6,6 +6,7 @@ import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcp
 import {
   PI_T3_MCP_EXTENSION_FILENAME,
   PI_T3_MCP_EXTENSION_SOURCE,
+  makePiMcpExtensionSource,
   T3_MCP_BEARER_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
@@ -236,14 +237,23 @@ function piT3McpExtensionDestPath(cacheDir: string): string {
 
 export const materializePiT3McpExtension = Effect.fn("materializePiT3McpExtension")(function* (
   cacheDir: string,
+  // SCIENT-FORK:START — a host may supply policy text while the package default remains unchanged.
+  orchestrationInstructions?: string,
+  // SCIENT-FORK:END
 ) {
   const fs = yield* FileSystem.FileSystem;
   yield* fs.makeDirectory(cacheDir, { recursive: true });
   const dest = piT3McpExtensionDestPath(cacheDir);
+  // SCIENT-FORK:START — keep cache content paired with the selected host policy.
+  const source =
+    orchestrationInstructions === undefined
+      ? PI_T3_MCP_EXTENSION_SOURCE
+      : makePiMcpExtensionSource(orchestrationInstructions);
   const existing = yield* fs.readFileString(dest).pipe(Effect.orElseSucceed(() => ""));
-  if (existing !== PI_T3_MCP_EXTENSION_SOURCE) {
-    yield* fs.writeFileString(dest, PI_T3_MCP_EXTENSION_SOURCE);
+  if (existing !== source) {
+    yield* fs.writeFileString(dest, source);
   }
+  // SCIENT-FORK:END
   return dest;
 });
 

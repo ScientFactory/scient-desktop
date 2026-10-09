@@ -316,6 +316,15 @@ policy in [`AppProviderDriverComposition.ts`](../../apps/server/src/provider/App
 [`PiDriverComposition.ts`](../../apps/server/src/provider/PiDriverComposition.ts),
 [`OpenCodeDriverComposition.ts`](../../apps/server/src/provider/OpenCodeDriverComposition.ts), and
 [`CursorDriverComposition.ts`](../../apps/server/src/provider/Drivers/CursorDriverComposition.ts).
+Scient-owned prompt and runtime wording lives in
+[`ScientProviderInstructions.ts`](../../apps/server/src/provider/ScientProviderInstructions.ts) and
+[`ScientRuntimeInstructions.ts`](../../apps/server/src/provider/ScientRuntimeInstructions.ts).
+The shared provider packages retain their generic defaults and first-run, slash-command, MCP and
+mode-change gates. The app compositions inject Scient copy through optional hooks; Pi's generated
+extension receives the same app-owned wording without changing its canonical tool projection.
+[`MuseDriverComposition.ts`](../../apps/server/src/provider/MuseDriverComposition.ts) supplies
+Muse's runtime copy while retaining the package's single native driver.
+
 [`ProviderHostLive.ts`](../../apps/server/src/provider/ProviderHostLive.ts) supplies server paths,
 settings, background demand, attachments, and credentials; the provider packages do not read the
 application profile directly. Complete current-input validation stays in

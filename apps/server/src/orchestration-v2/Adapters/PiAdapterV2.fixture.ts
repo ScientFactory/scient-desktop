@@ -30,6 +30,7 @@ import {
   buildPiScientToolNameMap,
   mapPiTurnStartError,
 } from "../../provider/PiDriverComposition.ts";
+import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "../../provider/ScientProviderInstructions.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
   ProviderAdapterTurnStartError,
@@ -410,6 +411,7 @@ const makeAdapter = Effect.fnUntraced(function* (
     instanceId: PI_INSTANCE_ID,
     ...(makeConnection === undefined ? {} : { makeConnection }),
     ...(continuationRequests === undefined ? {} : { continuationRequests }),
+    orchestrationInstructions: SCIENT_ORCHESTRATION_INSTRUCTIONS,
     runtimeGuidance: buildPiRuntimeGuidance,
     toolNameMap: buildPiScientToolNameMap(),
     mapTurnStartError: mapPiTurnStartError,

@@ -22,6 +22,8 @@ import { makeCursorSdkConnectionActions } from "../../scient/providerLifecycle/C
 import { turnStartErrorKeepingReceipt } from "../../orchestration-v2/scient-provider/NativeTurnReceipts.ts";
 import * as CursorAgentSdk from "@t3tools/provider-cursor/server/CursorAgentSdk";
 import type { ScientProviderInstance } from "../ScientProviderInstance.ts";
+import { buildScientOrchestrationPromptForFirstRun } from "../ScientProviderInstructions.ts";
+import { buildScientRuntimeInstructions } from "../ScientRuntimeInstructions.ts";
 
 /** App-specific services needed to resolve and compose the managed runtime. */
 export type CursorDriverCompositionEnv =
@@ -74,6 +76,8 @@ const resolveRuntime = (
       effectiveConfig: cursorRuntime.effectiveConfig,
       effectiveEnvironment: cursorRuntime.effectiveProcessEnv,
       maintenanceResolver: cursorRuntime.maintenanceResolver,
+      orchestrationPromptForFirstRun: buildScientOrchestrationPromptForFirstRun,
+      runtimeInstructions: buildScientRuntimeInstructions,
       decorateSnapshot: (snapshot) =>
         decorateCursorSnapshot(
           snapshot,

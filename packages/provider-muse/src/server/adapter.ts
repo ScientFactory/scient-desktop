@@ -38,6 +38,7 @@ import * as Stream from "effect/Stream";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import type { RuntimeInstructionsInput } from "@t3tools/provider-core/server/runtimeInstructions";
 import { museModelCapabilities, resolveMuseReasoningEffort } from "./modelCatalog.ts";
 import {
   MuseApproval,
@@ -191,6 +192,10 @@ export interface MuseAdapterV2Options {
       request: ProviderContinuationRequests.ProviderContinuationRequest,
     ) => Effect.Effect<void>;
   };
+  // SCIENT-FORK:START — host runtime text remains outside the generic adapter by default.
+  /** Host-owned runtime text; defaults to the package's generic T3 policy. */
+  readonly runtimeInstructions?: (input: RuntimeInstructionsInput) => string;
+  // SCIENT-FORK:END
 }
 
 interface ActiveTurn {
@@ -1742,11 +1747,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 input: [
                   {
                     type: "text",
-                    text: buildRuntimeInstructions({
+                    // SCIENT-FORK:START — provider fields use the shared host-selectable formatter.
+                    text: (options.runtimeInstructions ?? buildRuntimeInstructions)({
                       harness: "Muse Code",
                       model: session.model ?? undefined,
                       reasoningEffort: effort,
                     }),
+                    // SCIENT-FORK:END
                   },
                   ...parts,
                 ],

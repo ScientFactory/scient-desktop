@@ -92,7 +92,7 @@ import {
 } from "@t3tools/provider-acp/server/adapter";
 
 import { makeGrokAdapterV2 } from "@t3tools/provider-grok/testing";
-import { scientAcpReceiptBridge } from "./ScientAcpApplicationBridge.ts";
+import { scientAcpProviderBridge } from "./ScientAcpApplicationBridge.ts";
 import {
   acpRegistryPromptFailure,
   registerMistralVibeAcpExtensions,
@@ -619,7 +619,7 @@ describe("AcpAdapterV2", () => {
         flavor: {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
-          application: scientAcpReceiptBridge,
+          application: scientAcpProviderBridge,
           makeRuntime: makeMockRuntime({
             childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
             mockAgentPath: yield* path.fromFileUrl(
@@ -12997,7 +12997,7 @@ describe("AcpAdapterV2", () => {
         flavor: {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
-          application: scientAcpReceiptBridge,
+          application: scientAcpProviderBridge,
           enablePostSettleContinuation: true,
           registerExtensions: ({ requestUserInput }) =>
             Effect.sync(() => {

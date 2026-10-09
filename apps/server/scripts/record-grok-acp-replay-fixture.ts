@@ -43,7 +43,7 @@ import { runOrchestratorV2Scenario } from "../src/orchestration-v2/testkit/Orche
 import * as ProviderReplayHarness from "../src/orchestration-v2/testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { makeGrokAcpRuntime } from "@t3tools/provider-grok/testing";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import { buildScientRuntimeInstructions } from "../src/provider/ScientRuntimeInstructions.ts";
 
 const wallClock = Clock.Clock.defaultValue();
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -567,7 +567,7 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
         workspace: realWorkspace,
         home: process.env.HOME ?? "",
         user: process.env.USER ?? "",
-        runtimeInstructions: buildRuntimeInstructions({
+        runtimeInstructions: buildScientRuntimeInstructions({
           harness: "Grok",
           model: variant.modelSelection.model,
         }),

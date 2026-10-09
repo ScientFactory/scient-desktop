@@ -18,7 +18,7 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
-import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "../../provider/ScientProviderInstructions.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import {
@@ -239,7 +239,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.equal(
             (packet.additionalContext.t3_code_orchestration?.value ?? "") +
               (packet.additionalContext.t3_code_workspace?.value ?? ""),
-            T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+            SCIENT_ORCHESTRATION_INSTRUCTIONS,
           );
           assert.include(
             packet.additionalContext.t3_code_runtime?.value ?? "",

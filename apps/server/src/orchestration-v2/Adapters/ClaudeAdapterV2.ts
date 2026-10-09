@@ -127,8 +127,8 @@ import {
 } from "../../provider/claudeUsageLimits.ts";
 import type { ServerProviderShape } from "@t3tools/provider-core/server/snapshot";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "../../provider/ScientProviderInstructions.ts";
+import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 import {
   mcpToolPresentation,
   normalizeMcpText,
@@ -932,8 +932,8 @@ export function makeClaudeQueryOptions(input: {
       append:
         (input.scientAwareness ?? buildScientAwareness()) +
         "\n\n" +
-        buildRuntimeInstructions({ harness: "Claude Code" }) +
-        (input.mcpServers === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS),
+        buildScientRuntimeInstructions({ harness: "Claude Code" }) +
+        (input.mcpServers === undefined ? "" : SCIENT_ORCHESTRATION_INSTRUCTIONS),
     },
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };

@@ -22,7 +22,7 @@ import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../../config.ts";
 import { toMcpCapabilities } from "../../mcp/McpInvocationContext.ts";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { scientToolProjectionForProvider } from "../../provider/ScientToolProjection.ts";
 import { prepareScientSkillTurn } from "../../scient/skills/ScientSkillInvocation.ts";
@@ -280,7 +280,7 @@ export function materializeScientClientIdentity(transcript: ProviderReplayTransc
               additionalContext: {
                 t3_code_runtime: {
                   kind: "application",
-                  value: buildRuntimeInstructions({
+                  value: buildScientRuntimeInstructions({
                     harness: "Codex",
                     model: typeof frame.params.model === "string" ? frame.params.model : "gpt-5.4",
                     reasoningEffort:

@@ -11,7 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 
 import { piContextExtension } from "./contextExtension.ts";
-import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
+import { makePiMcpExtensionSource, PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
 import { buildPiRpcLaunch, materializePiT3McpExtension } from "./mcpInjection.ts";
 
 const decodeBudget = Schema.decodeUnknownSync(
@@ -649,6 +649,16 @@ describe("loaded native Pi serialized request guard", () => {
 });
 
 describe("native Pi Scient awareness channel", () => {
+  it("embeds host-owned orchestration copy while preserving the generic package default", () => {
+    const hostInstructions = "## Scient orchestration\nUse the Scient capability catalog.";
+    const source = makePiMcpExtensionSource(hostInstructions);
+
+    assert.equal(PI_T3_MCP_EXTENSION_SOURCE, makePiMcpExtensionSource());
+    assert.include(PI_T3_MCP_EXTENSION_SOURCE, "T3 Code orchestration");
+    assert.include(source, JSON.stringify(hostInstructions));
+    assert.notInclude(source, "T3 Code orchestration");
+  });
+
   it.each(
     [false, true].map((mcpAvailable) => ({
       caseTitle: `appends exact awareness through before_agent_start with MCP ${mcpAvailable}`,
@@ -663,11 +673,11 @@ describe("native Pi Scient awareness channel", () => {
         ? { T3_MCP_URL: "http://127.0.0.1:43123/mcp", T3_MCP_BEARER_TOKEN: "synthetic-token" }
         : {}),
     };
+    const hostInstructions = "## Scient orchestration\nUse the Scient capability catalog.";
     const source = NodeModule.stripTypeScriptTypes(
-      PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
-        "export default async function",
-        "async function",
-      ),
+      makePiMcpExtensionSource(hostInstructions)
+        .replace(/^import .*;$/gm, "")
+        .replace("export default async function", "async function"),
     );
     await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
       process: { env },
@@ -681,6 +691,7 @@ describe("native Pi Scient awareness channel", () => {
     if (!hook) throw new Error("Missing native system prompt hook");
     const prompt = hook({ systemPrompt: "Native model instructions" }).systemPrompt;
     assert.include(prompt, "Native model instructions\n\nScient orchestration guidance fixture");
+    assert.equal(prompt.includes(hostInstructions), mcpAvailable);
     assert.notInclude(prompt, "T3 Code");
     assert.notInclude(prompt, "mcp__t3");
     assert.notInclude(prompt, "synthetic-token");

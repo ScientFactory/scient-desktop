@@ -93,10 +93,12 @@ export interface PiRuntimeResolution<Requirements = never, Extension extends obj
   /** Maps host settings to the app-owned custom-model discovery snapshot. */
   readonly customModelSnapshot?: (settings: ServerSettings, instanceId: string) => unknown;
   /** Optional app-owned prompt, canonical tool projection, and receipt behavior. */
+  // SCIENT-FORK:START — keep host instruction copy optional and app supplied.
   readonly adapterOptions?: Pick<
     PiAdapterV2Options,
-    "runtimeGuidance" | "toolNameMap" | "mapTurnStartError"
+    "runtimeGuidance" | "toolNameMap" | "mapTurnStartError" | "orchestrationInstructions"
   >;
+  // SCIENT-FORK:END
   /** Add lifecycle/action fields without moving their authority into this package. */
   readonly composeInstance: (
     instance: ProviderInstance,

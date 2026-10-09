@@ -189,6 +189,14 @@ export const openCodeAdapterOptions = (options: OpenCodeDriverOptions) => ({
   v1: options,
   v2: {
     ...(options.runtimeGuidance === undefined ? {} : { runtimeGuidance: options.runtimeGuidance }),
+    // SCIENT-FORK:START — propagate the same host text to both protocol generations.
+    ...(options.orchestrationSystemPrompt === undefined
+      ? {}
+      : { orchestrationSystemPrompt: options.orchestrationSystemPrompt }),
+    ...(options.runtimeInstructions === undefined
+      ? {}
+      : { runtimeInstructions: options.runtimeInstructions }),
+    // SCIENT-FORK:END
   } satisfies OpenCode2AdapterV2.OpenCode2AdapterOptions,
 });
 

@@ -184,6 +184,8 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     readonly policy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly existingProviderThread?: OrchestrationV2ProviderThread;
     readonly runtimeGuidance?: (capabilities: ReadonlySet<string> | undefined) => string;
+    readonly orchestrationSystemPrompt?: (hasMcp: boolean) => string | undefined;
+    readonly runtimeInstructions?: (input: { readonly harness: string }) => string;
   } = {},
 ) {
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
@@ -200,6 +202,12 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     settings: OPEN_CODE_TEST_SETTINGS,
     environment: {},
     runtimeGuidance: setup.runtimeGuidance ?? (() => "host-supplied test guidance"),
+    ...(setup.orchestrationSystemPrompt === undefined
+      ? {}
+      : { orchestrationSystemPrompt: setup.orchestrationSystemPrompt }),
+    ...(setup.runtimeInstructions === undefined
+      ? {}
+      : { runtimeInstructions: setup.runtimeInstructions }),
   }).pipe(
     Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, {
       connectToOpenCodeServer: () =>
@@ -603,6 +611,7 @@ describe("OpenCodeAdapterV2", () => {
           Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
         );
         let guidanceCapabilities: ReadonlySet<string> | undefined;
+        let orchestrationHasMcp: boolean | undefined;
         const nativeEvents = asyncEventStream();
         let installed = false;
         const h = yield* makeOpenCodeRuntimeHarness(
@@ -630,6 +639,8 @@ describe("OpenCodeAdapterV2", () => {
               }),
               promptAsync: async (input: { system?: string }) => {
                 assert.include(input.system ?? "", expectedGuidance);
+                assert.include(input.system ?? "", `host-orchestration:${!external}`);
+                assert.include(input.system ?? "", "host-runtime:OpenCode");
                 assert.notInclude(input.system ?? "", "preview_status");
                 assert.notInclude(input.system ?? "", "device_list");
                 return { data: true };
@@ -646,10 +657,16 @@ describe("OpenCodeAdapterV2", () => {
                 ? "host-guidance-without-capabilities"
                 : `host-guidance-with-capabilities:${[...received].sort().join(",")}`;
             },
+            orchestrationSystemPrompt: (hasMcp) => {
+              orchestrationHasMcp = hasMcp;
+              return `host-orchestration:${hasMcp}`;
+            },
+            runtimeInstructions: ({ harness: name }) => `host-runtime:${name}`,
           },
         );
         yield* h.startTurn();
         assert.equal(installed, !external);
+        assert.equal(orchestrationHasMcp, !external);
         if (external) {
           assert.isUndefined(guidanceCapabilities);
         } else {

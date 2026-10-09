@@ -26,7 +26,7 @@ import { ServerConfig } from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import {
   scientAcpApplicationBridge,
-  scientAcpReceiptBridge,
+  scientAcpProviderBridge,
 } from "../orchestration-v2/Adapters/ScientAcpApplicationBridge.ts";
 import { setGrokSkillEnabled } from "./Drivers/ScientNativeSkills.ts";
 import { makeNativeSessionShutdown } from "./NativeSessionShutdown.ts";
@@ -151,7 +151,7 @@ export const GrokDriver = makeGrokDriver<GrokCompositionRequirements, GrokCompos
 export type AcpRegistryCompositionEnv = AcpRegistryDriverEnv | ServerSettingsService;
 
 const acpRegistryPackageDriver = makeAcpRegistryDriver({
-  application: scientAcpReceiptBridge,
+  application: scientAcpProviderBridge,
 });
 
 /** Keep installation ownership in Scient while the package owns ACP Registry protocol behavior. */

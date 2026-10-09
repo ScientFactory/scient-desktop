@@ -62,7 +62,10 @@ import {
 } from "@t3tools/provider-core/server/nativeProtocolLogging";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import {
+  buildRuntimeInstructions,
+  type RuntimeInstructionsInput,
+} from "@t3tools/provider-core/server/runtimeInstructions";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -439,6 +442,12 @@ export interface OpenCodeAdapterV2Options {
   readonly nativeEventLogger?: ProviderEventLoggers.EventNdjsonLogger;
   /** Host-owned prompt guidance; provider packages do not own Scient policy. */
   readonly runtimeGuidance?: (capabilities: ReadonlySet<string> | undefined) => string;
+  // SCIENT-FORK:START — optional host copy keeps the package generic by default.
+  /** Host-owned orchestration text; the package keeps its generic T3 default. */
+  readonly orchestrationSystemPrompt?: (hasMcp: boolean) => string | undefined;
+  /** Host-owned runtime text; the package keeps its generic T3 default. */
+  readonly runtimeInstructions?: (input: RuntimeInstructionsInput) => string;
+  // SCIENT-FORK:END
   /** Host-owned native receipt mapping, preserving app-level delivery evidence. */
   readonly mapTurnStartError?: (
     input: Pick<
@@ -999,7 +1008,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             ? undefined
             : McpProviderSession.readMcpProviderSession(input.threadId);
         const hasT3Mcp = mcpSession !== undefined && !connection.external;
-        const orchestrationSystemPrompt = t3OrchestrationSystemPrompt(hasT3Mcp);
+        // SCIENT-FORK:START — select host copy without changing MCP availability gating.
+        const orchestrationSystemPrompt = (
+          options.orchestrationSystemPrompt ?? t3OrchestrationSystemPrompt
+        )(hasT3Mcp);
+        // SCIENT-FORK:END
         if (hasT3Mcp) {
           yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
             client.mcp.add({
@@ -3359,10 +3372,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               const systemPrompt = [
                 options.runtimeGuidance?.(hasT3Mcp ? mcpSession?.capabilities : undefined),
                 orchestrationSystemPrompt,
-                buildRuntimeInstructions({
+                // SCIENT-FORK:START — runtime details share formatting; host owns product wording.
+                (options.runtimeInstructions ?? buildRuntimeInstructions)({
                   harness: "OpenCode",
                   model: turnInput.modelSelection.model,
                 }),
+                // SCIENT-FORK:END
               ]
                 .filter(Boolean)
                 .join("\n\n");
@@ -3836,6 +3851,10 @@ export type OpenCodeAdapterV2DriverEnv =
 export interface OpenCodeAdapterV2DriverOptions {
   readonly runtimeGuidance?: OpenCodeAdapterV2Options["runtimeGuidance"];
   readonly mapTurnStartError?: OpenCodeAdapterV2Options["mapTurnStartError"];
+  // SCIENT-FORK:START — preserve optional host copy through the production driver factory.
+  readonly orchestrationSystemPrompt?: OpenCodeAdapterV2Options["orchestrationSystemPrompt"];
+  readonly runtimeInstructions?: OpenCodeAdapterV2Options["runtimeInstructions"];
+  // SCIENT-FORK:END
 }
 
 export const makeOpenCodeAdapterV2Driver = (
@@ -3858,6 +3877,14 @@ export const makeOpenCodeAdapterV2Driver = (
         ...(adapterOptions.runtimeGuidance === undefined
           ? {}
           : { runtimeGuidance: adapterOptions.runtimeGuidance }),
+        // SCIENT-FORK:START — keep OpenCode's generic defaults when no host override is supplied.
+        ...(adapterOptions.orchestrationSystemPrompt === undefined
+          ? {}
+          : { orchestrationSystemPrompt: adapterOptions.orchestrationSystemPrompt }),
+        ...(adapterOptions.runtimeInstructions === undefined
+          ? {}
+          : { runtimeInstructions: adapterOptions.runtimeInstructions }),
+        // SCIENT-FORK:END
         ...(adapterOptions.mapTurnStartError === undefined
           ? {}
           : { mapTurnStartError: adapterOptions.mapTurnStartError }),

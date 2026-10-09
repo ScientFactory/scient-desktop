@@ -29,6 +29,8 @@ import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderRep
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import { OPENCODE_PROVIDER } from "@t3tools/provider-opencode/testing";
 import { buildOpenCodeRuntimeGuidance } from "../../provider/OpenCodeDriverComposition.ts";
+import { buildScientOrchestrationSystemPrompt } from "../../provider/ScientProviderInstructions.ts";
+import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 import {
   OpenCodeReplayController,
   OpenCodeReplayTranscriptDecodeError,
@@ -334,6 +336,8 @@ const makeReplayAdapter = (
     const server = yield* replayServer(transcript, options);
     return yield* OpenCode2Adapter.make(ProviderInstanceId.make("opencode"), {
       runtimeGuidance: buildOpenCodeRuntimeGuidance,
+      orchestrationSystemPrompt: buildScientOrchestrationSystemPrompt,
+      runtimeInstructions: buildScientRuntimeInstructions,
     }).pipe(Effect.provideService(OpenCode2Server.OpenCode2Server, server));
   });
 

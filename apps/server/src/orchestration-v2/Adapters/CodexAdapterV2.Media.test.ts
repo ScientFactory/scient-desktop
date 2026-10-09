@@ -22,7 +22,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as Logger from "effect/Logger";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
-import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "../../provider/ScientProviderInstructions.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as EventSink from "../EventSink.ts";
@@ -895,7 +895,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.equal(
             (params.additionalContext?.t3_code_orchestration?.value ?? "") +
               (params.additionalContext?.t3_code_workspace?.value ?? ""),
-            T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+            SCIENT_ORCHESTRATION_INSTRUCTIONS,
           );
           assert.equal(params.additionalContext?.t3_code_orchestration?.kind, "application");
           assert.deepEqual(Object.keys(params.additionalContext ?? {}), [

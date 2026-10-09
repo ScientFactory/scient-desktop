@@ -4,7 +4,7 @@ import { it, assert } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
@@ -121,7 +121,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   additionalContext: {
                     t3_code_runtime: {
                       kind: "application",
-                      value: buildRuntimeInstructions({
+                      value: buildScientRuntimeInstructions({
                         harness: "Codex",
                         model: "gpt-5.4",
                         reasoningEffort: "medium",

@@ -32,6 +32,7 @@ import { makePiManagedRuntimeResolution } from "../scient/providerLifecycle/PiMa
 import { turnStartErrorKeepingReceipt } from "../orchestration-v2/scient-provider/NativeTurnReceipts.ts";
 import { buildScientAwareness } from "./ScientAwareness.ts";
 import { scientToolProjectionForProvider } from "./ScientToolProjection.ts";
+import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "./ScientProviderInstructions.ts";
 import type { ScientProviderDriver, ScientProviderInstance } from "./ScientProviderInstance.ts";
 
 const PI_DRIVER = ProviderDriverKind.make("pi");
@@ -133,6 +134,7 @@ const resolvePiRuntime = (
         piCustomModelSnapshot(settings, input.instanceId),
       adapterOptions: {
         runtimeGuidance: buildPiRuntimeGuidance,
+        orchestrationInstructions: SCIENT_ORCHESTRATION_INSTRUCTIONS,
         toolNameMap: buildPiScientToolNameMap(),
         mapTurnStartError: mapPiTurnStartError,
       },

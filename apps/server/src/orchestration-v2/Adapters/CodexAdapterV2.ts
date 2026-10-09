@@ -8,7 +8,7 @@ import {
   emitCodexGeneratedImage,
 } from "../scient-provider/CodexPresentation.ts";
 import { toMcpCapabilities, type McpCapability } from "../../mcp/McpInvocationContext.ts";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
@@ -803,7 +803,7 @@ export function buildCodexTurnStartParams(input: {
         : {
             t3_code_runtime: {
               kind: "application" as const,
-              value: buildRuntimeInstructions({
+              value: buildScientRuntimeInstructions({
                 harness: "Codex",
                 model: input.modelSelection.model,
                 reasoningEffort: effort ?? "medium",

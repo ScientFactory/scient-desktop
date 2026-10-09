@@ -1,7 +1,7 @@
 import type * as CodexReplay from "effect-codex-app-server/replay";
 import packageJson from "../../../../package.json" with { type: "json" };
 import * as CodexAdapterV2 from "../../Adapters/CodexAdapterV2.ts";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import { buildScientRuntimeInstructions } from "../../../provider/ScientRuntimeInstructions.ts";
 import { buildScientAwareness } from "../../../provider/ScientAwareness.ts";
 export function makeCodexReplayTurn(input: {
   readonly id: string;
@@ -139,7 +139,7 @@ export function codexReplayPreamble(input: {
           additionalContext: {
             t3_code_runtime: {
               kind: "application",
-              value: buildRuntimeInstructions({
+              value: buildScientRuntimeInstructions({
                 harness: "Codex",
                 model: "gpt-5.4",
                 reasoningEffort: "medium",

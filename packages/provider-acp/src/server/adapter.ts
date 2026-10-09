@@ -94,7 +94,13 @@ import {
   t3AcpPromptWithInstructions,
   type T3AcpInstructionState,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
+// SCIENT-FORK:START — app composition supplies this optional prompt callback.
+import type { T3AcpPromptWithInstructionsInput } from "@t3tools/provider-core/server/orchestrationInstructions";
+// SCIENT-FORK:END
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+// SCIENT-FORK:START — app composition supplies this optional runtime callback.
+import type { RuntimeInstructionsInput } from "@t3tools/provider-core/server/runtimeInstructions";
+// SCIENT-FORK:END
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { type ProviderContinuationRequest } from "@t3tools/provider-core/server/continuationRequests";
 import {
@@ -281,6 +287,12 @@ export interface AcpDroidSteerSupervision<Turn extends AcpDroidSteerOwnerTurn> {
 /** App-owned policy seams; provider packages do not import Scient app modules. */
 export interface AcpAdapterV2ApplicationBridge {
   readonly scientAwareness?: (capabilities?: ReadonlySet<string>) => string;
+  // SCIENT-FORK:START — host-owned copy is optional and defaults to package text.
+  /** Host-owned ACP prompt text; the shared package composer remains the default. */
+  readonly composePrompt?: (input: T3AcpPromptWithInstructionsInput) => string;
+  /** Host-owned runtime text; the shared package builder remains the default. */
+  readonly runtimeInstructions?: (input: RuntimeInstructionsInput) => string;
+  // SCIENT-FORK:END
   readonly nativeTurnAcceptance?: (turn: {
     readonly acceptedAt: DateTime.Utc | null;
     readonly promptOffered: boolean;
@@ -7104,13 +7116,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             attachments: turnInput.message.attachments,
             resolveAttachmentPath: host.resolveAttachmentPath,
           });
-          const text = t3AcpPromptWithInstructions({
+          // SCIENT-FORK:START — select host copy without changing ACP prompt gates.
+          const text = (flavor.application?.composePrompt ?? t3AcpPromptWithInstructions)({
             prompt: messageText,
             state: instructionState,
             ...(previousInstructionState === undefined
               ? {}
               : { previousState: previousInstructionState }),
           });
+          // SCIENT-FORK:END
           if (text.length > 0) {
             prompt.push({ type: "text", text });
           }
@@ -7164,10 +7178,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           prompt.push({
             type: "text",
-            text: buildRuntimeInstructions({
+            // SCIENT-FORK:START — select host runtime copy without changing the model context.
+            text: (flavor.application?.runtimeInstructions ?? buildRuntimeInstructions)({
               harness: flavor.runtimeHarness ?? driver,
               model: turnInput.modelSelection.model,
             }),
+            // SCIENT-FORK:END
           });
           return { prompt, instructionState: text === messageText ? undefined : instructionState };
         });

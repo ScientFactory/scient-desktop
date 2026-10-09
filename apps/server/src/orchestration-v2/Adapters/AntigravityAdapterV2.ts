@@ -35,7 +35,7 @@ import {
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
-import { scientAcpReceiptBridge } from "./ScientAcpApplicationBridge.ts";
+import { scientAcpProviderBridge } from "./ScientAcpApplicationBridge.ts";
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
@@ -190,7 +190,7 @@ export function makeAntigravityAcpAdapterFlavor(
     capabilities: AntigravityProviderCapabilitiesV2,
     // The official Antigravity ACP runtime has no private system-prompt or
     // rules channel, so only native-delivery observations are bridged here.
-    application: scientAcpReceiptBridge,
+    application: scientAcpProviderBridge,
     makeRuntime,
     // Loading history replays every tool call; resume restores the session
     // without the replay and is what the official client does.

@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import {
-  OpenCodeAdapterV2Driver,
+  makeOpenCodeAdapterV2Driver,
   openCodePermissionRules,
 } from "@t3tools/provider-opencode/server";
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
@@ -26,6 +26,12 @@ import {
   OPENCODE_PROVIDER,
   OPENCODE_SDK_PROTOCOL,
 } from "@t3tools/provider-opencode/testing";
+import {
+  buildOpenCodeRuntimeGuidance,
+  mapOpenCodeTurnStartError,
+} from "../../provider/OpenCodeDriverComposition.ts";
+import { buildScientOrchestrationSystemPrompt } from "../../provider/ScientProviderInstructions.ts";
+import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 
 const OPENCODE_SDK_REPLAY_PROTOCOL = OPENCODE_SDK_PROTOCOL;
 
@@ -531,6 +537,12 @@ function layerOpenCodeReplayRuntime(transcript: OpenCodeSdkReplayTranscript) {
 }
 
 function layerOpenCodeProviderAdapterRegistryReplay(transcript: OpenCodeSdkReplayTranscript) {
+  const OpenCodeAdapterV2Driver = makeOpenCodeAdapterV2Driver({
+    runtimeGuidance: buildOpenCodeRuntimeGuidance,
+    orchestrationSystemPrompt: buildScientOrchestrationSystemPrompt,
+    runtimeInstructions: buildScientRuntimeInstructions,
+    mapTurnStartError: mapOpenCodeTurnStartError,
+  });
   return ProviderAdapterRegistry.layerFromDrivers({
     drivers: [OpenCodeAdapterV2Driver],
     configMap: {

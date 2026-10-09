@@ -74,7 +74,10 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 import * as OpenCode2Server from "./OpenCode2Server.ts";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import {
+  buildRuntimeInstructions,
+  type RuntimeInstructionsInput,
+} from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -105,6 +108,12 @@ export interface OpenCode2AdapterOptions {
   readonly mcpSessionInjection?: boolean;
   /** Host-owned prompt guidance; provider packages do not own Scient policy. */
   readonly runtimeGuidance?: (capabilities: ReadonlySet<string> | undefined) => string;
+  // SCIENT-FORK:START — optional host copy keeps the package generic by default.
+  /** Host-owned orchestration text; the package keeps its generic T3 default. */
+  readonly orchestrationSystemPrompt?: (hasMcp: boolean) => string | undefined;
+  /** Host-owned runtime text; the package keeps its generic T3 default. */
+  readonly runtimeInstructions?: (input: RuntimeInstructionsInput) => string;
+  // SCIENT-FORK:END
 }
 
 const OpenCode2ProviderCapabilities = {
@@ -3326,8 +3335,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       }
       const instructions = [
         options.runtimeGuidance?.(state.mcp !== undefined ? wanted?.capabilities : undefined),
-        buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
-        t3OrchestrationSystemPrompt(state.mcp !== undefined),
+        // SCIENT-FORK:START — host text reuses the package runtime identity fields.
+        (options.runtimeInstructions ?? buildRuntimeInstructions)({
+          harness: "OpenCode",
+          model: turnInput.modelSelection.model,
+        }),
+        (options.orchestrationSystemPrompt ?? t3OrchestrationSystemPrompt)(state.mcp !== undefined),
+        // SCIENT-FORK:END
       ]
         .filter((part) => part !== undefined && part.length > 0)
         .join("\n\n");

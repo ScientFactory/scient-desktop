@@ -76,6 +76,8 @@ const noHttp = HttpClient.make(() => Effect.die("A local binary must not be prob
 
 it("forwards host runtime guidance to both protocol adapters and V1 receipt mapping to V1", () => {
   const runtimeGuidance = (_capabilities: ReadonlySet<string> | undefined) => "host guidance";
+  const orchestrationSystemPrompt = (_hasMcp: boolean) => "host orchestration";
+  const runtimeInstructions = (_input: { readonly harness: string }) => "host runtime";
   const mapTurnStartError: NonNullable<OpenCodeDriverOptions["mapTurnStartError"]> = (
     input,
     cause,
@@ -87,11 +89,20 @@ it("forwards host runtime guidance to both protocol adapters and V1 receipt mapp
       runId: input.runId,
       cause,
     });
-  const options = openCodeAdapterOptions({ runtimeGuidance, mapTurnStartError });
+  const options = openCodeAdapterOptions({
+    runtimeGuidance,
+    orchestrationSystemPrompt,
+    runtimeInstructions,
+    mapTurnStartError,
+  });
 
   assert.strictEqual(options.v1.runtimeGuidance, runtimeGuidance);
+  assert.strictEqual(options.v1.orchestrationSystemPrompt, orchestrationSystemPrompt);
+  assert.strictEqual(options.v1.runtimeInstructions, runtimeInstructions);
   assert.strictEqual(options.v1.mapTurnStartError, mapTurnStartError);
   assert.strictEqual(options.v2.runtimeGuidance, runtimeGuidance);
+  assert.strictEqual(options.v2.orchestrationSystemPrompt, orchestrationSystemPrompt);
+  assert.strictEqual(options.v2.runtimeInstructions, runtimeInstructions);
   assert.isUndefined((options.v2 as { readonly mapTurnStartError?: unknown }).mapTurnStartError);
   assert.strictEqual(makeOpenCodeDriver().driverKind, OpenCodeDriver.driverKind);
 });

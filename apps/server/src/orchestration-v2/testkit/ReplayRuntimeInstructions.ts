@@ -1,6 +1,6 @@
 import type { ProviderDriverKind, ProviderReplayTranscript } from "@t3tools/contracts";
 
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 
 /** Historical wrapper spelling; preserve the recorded body and user request exactly. */
 const currentInstructionWrapper = (text: string) =>
@@ -24,7 +24,7 @@ export function materializeReplayTranscriptRuntimeInstructions(
           ? "acpRegistry"
           : undefined;
   if (harness === undefined) return transcript;
-  const instructions = buildRuntimeInstructions({ harness, model: runtime.model });
+  const instructions = buildScientRuntimeInstructions({ harness, model: runtime.model });
 
   return {
     ...transcript,

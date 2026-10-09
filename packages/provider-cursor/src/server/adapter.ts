@@ -846,6 +846,12 @@ export interface CursorAdapterV2Options {
   readonly settings: CursorSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly turnStartError?: CursorTurnStartErrorMapper;
+  // SCIENT-FORK:START — optional host copy preserves package defaults and first-run gates.
+  /** Host-owned first-run prompt text; defaults to the package's generic T3 policy. */
+  readonly orchestrationPromptForFirstRun?: typeof t3OrchestrationPromptForFirstRun;
+  /** Host-owned runtime text; defaults to the package's generic T3 policy. */
+  readonly runtimeInstructions?: typeof buildRuntimeInstructions;
+  // SCIENT-FORK:END
 }
 
 export interface CursorTurnStartIdentity {
@@ -2157,7 +2163,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 .map((skill) => skill.name),
             );
           }
-          const userText = t3OrchestrationPromptForFirstRun({
+          // SCIENT-FORK:START — inject host-owned first-run wording through the shared gate.
+          const userText = (
+            adapterOptions.orchestrationPromptForFirstRun ?? t3OrchestrationPromptForFirstRun
+          )({
             prompt: providerMessageTextWithAttachmentPaths({
               text:
                 cursorSkillNames === undefined
@@ -2170,6 +2179,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             hasT3Mcp:
               cursorMcpServers(turnInput.threadId, input.configureMcp !== false) !== undefined,
           });
+          // SCIENT-FORK:END
           const images = yield* Effect.forEach(
             turnInput.message.attachments.filter(isProviderNativeImageAttachment),
             (attachment: ChatAttachment) =>
@@ -2204,7 +2214,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               detail: "Cursor turn requires non-empty text or attachments.",
             });
           }
-          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model })}`;
+          // SCIENT-FORK:START — use host-owned product copy while keeping package defaults generic.
+          const text = `${userText}\n\n${(adapterOptions.runtimeInstructions ?? buildRuntimeInstructions)({ harness: "Cursor", model: turnInput.modelSelection.model })}`;
+          // SCIENT-FORK:END
           return images.length === 0
             ? text
             : ({
@@ -2666,6 +2678,10 @@ export type CursorAdapterV2DriverEnv =
 
 export interface CursorAdapterV2DriverOptions {
   readonly turnStartError?: CursorTurnStartErrorMapper;
+  // SCIENT-FORK:START — pass host instruction copy through the provider driver.
+  readonly orchestrationPromptForFirstRun?: typeof t3OrchestrationPromptForFirstRun;
+  readonly runtimeInstructions?: typeof buildRuntimeInstructions;
+  // SCIENT-FORK:END
 }
 
 export function makeCursorAdapterV2Driver(
@@ -2686,6 +2702,14 @@ export function makeCursorAdapterV2Driver(
           },
           environment: mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
           ...(options.turnStartError ? { turnStartError: options.turnStartError } : {}),
+          // SCIENT-FORK:START — retain optional host text at the adapter boundary.
+          ...(options.orchestrationPromptForFirstRun === undefined
+            ? {}
+            : { orchestrationPromptForFirstRun: options.orchestrationPromptForFirstRun }),
+          ...(options.runtimeInstructions === undefined
+            ? {}
+            : { runtimeInstructions: options.runtimeInstructions }),
+          // SCIENT-FORK:END
         });
       },
       (effect, input) =>

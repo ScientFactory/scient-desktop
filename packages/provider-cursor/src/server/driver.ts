@@ -25,6 +25,7 @@ import { makeCursorTextGeneration } from "./textGeneration.ts";
 import {
   makeCursorAdapterV2Driver,
   type CursorAdapterV2DriverEnv,
+  type CursorAdapterV2DriverOptions,
   type CursorTurnStartErrorMapper,
 } from "./adapter.ts";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
@@ -104,6 +105,12 @@ export interface CursorRuntimeResolution<Requirements = never, Extension extends
   readonly maintenanceResolver?: ProviderMaintenanceCapabilitiesResolver;
   /** Host-owned mapping that may retain an already observed native-delivery receipt. */
   readonly turnStartError?: CursorTurnStartErrorMapper;
+  // SCIENT-FORK:START — host-owned copy is optional and does not move runtime policy.
+  /** Host-owned prompt policy; absent means the package's generic T3 default. */
+  readonly orchestrationPromptForFirstRun?: CursorAdapterV2DriverOptions["orchestrationPromptForFirstRun"];
+  /** Host-owned runtime policy; absent means the package's generic T3 default. */
+  readonly runtimeInstructions?: CursorAdapterV2DriverOptions["runtimeInstructions"];
+  // SCIENT-FORK:END
   /** Called after the package stamps the canonical provider-instance identity. */
   readonly decorateSnapshot?: (snapshot: ServerProvider) => ServerProvider;
   /** Compose host-owned lifecycle capabilities around the generic instance. */
@@ -243,6 +250,14 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
 
         const orchestrationAdapter = yield* makeCursorAdapterV2Driver({
           ...(runtime.turnStartError ? { turnStartError: runtime.turnStartError } : {}),
+          // SCIENT-FORK:START — preserve app copy while keeping one Cursor adapter.
+          ...(runtime.orchestrationPromptForFirstRun === undefined
+            ? {}
+            : { orchestrationPromptForFirstRun: runtime.orchestrationPromptForFirstRun }),
+          ...(runtime.runtimeInstructions === undefined
+            ? {}
+            : { runtimeInstructions: runtime.runtimeInstructions }),
+          // SCIENT-FORK:END
         })
           .create({
             ...input,

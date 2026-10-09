@@ -23,7 +23,12 @@ export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
  */
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
-export const PI_T3_MCP_EXTENSION_SOURCE = `\
+// SCIENT-FORK:START — optional host copy keeps the package default generic.
+export const makePiMcpExtensionSource = (
+  orchestrationInstructions = T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+): string => {
+  // SCIENT-FORK:END
+  return `\
 import { stripFrontmatter, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -34,7 +39,11 @@ const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const RUNTIME_GUIDANCE_ENV = "PI_RUNTIME_GUIDANCE";
 const TOOL_NAME_MAP_ENV = "PI_TOOL_NAME_MAP";
-const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
+const ORCHESTRATION_INSTRUCTIONS = ${
+    // SCIENT-FORK:START — serialize the selected host copy into generated source.
+    JSON.stringify(orchestrationInstructions.trim())
+    // SCIENT-FORK:END
+  };
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
@@ -448,3 +457,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
 
 }
 `;
+};
+
+// SCIENT-FORK:START — the package's public source retains its generic default.
+export const PI_T3_MCP_EXTENSION_SOURCE = makePiMcpExtensionSource();
+// SCIENT-FORK:END

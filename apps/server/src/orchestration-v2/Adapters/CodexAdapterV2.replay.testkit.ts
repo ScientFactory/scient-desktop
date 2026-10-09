@@ -23,7 +23,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import packageJson from "../../../package.json" with { type: "json" };
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
@@ -248,7 +248,7 @@ export function codexReplayPreamble(input: {
           additionalContext: {
             t3_code_runtime: {
               kind: "application",
-              value: buildRuntimeInstructions({
+              value: buildScientRuntimeInstructions({
                 harness: "Codex",
                 model: "gpt-5.4",
                 reasoningEffort: "medium",
