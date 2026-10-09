@@ -9,10 +9,13 @@ const wireContract = NodeFS.readFileSync(
   new URL("../../../../../packages/scient-analytics/src/wireContract.ts", import.meta.url),
   "utf8",
 );
-const settingsViewed = wireContract.slice(
-  wireContract.indexOf('"settings.viewed": {'),
-  wireContract.indexOf('"usage.viewed": {'),
-);
+/** The section values `settings.viewed` accepts, read from the contract with its comments removed. */
+function contractSettingsSections(): readonly string[] {
+  const code = wireContract.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/\/\/[^\n]*/gu, "");
+  const event = code.slice(code.indexOf('"settings.viewed": {'), code.indexOf('"usage.viewed": {'));
+  const values = /section:\s*\{[^}]*values:\s*\[([^\]]*)\]/u.exec(event)?.[1] ?? "";
+  return [...values.matchAll(/"([^"]+)"/gu)].map((match) => match[1]!);
+}
 
 it("categorizes nested settings without transmitting identifiers", () => {
   expect(settingsCategory("/settings/providers/PRIVATE")).toBe("providers");
@@ -45,7 +48,9 @@ it("reports every settings page by name, never as other", () => {
   expect(settingsCategory("/settings/documents")).toBe("documents");
   expect(settingsCategory("/settings/storage")).toBe("storage");
   expect(SETTINGS_ANALYTICS_SECTIONS.size).toBeGreaterThan(10);
+  const contract = contractSettingsSections();
+  expect(contract).toContain("other");
   for (const section of SETTINGS_ANALYTICS_SECTIONS) {
-    expect(settingsViewed, `analytics contract names "${section}"`).toContain(`"${section}",`);
+    expect(contract, `analytics contract names "${section}"`).toContain(section);
   }
 });

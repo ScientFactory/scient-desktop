@@ -357,7 +357,8 @@ function EnvironmentDocumentsSettings(props: {
 }) {
   const installation = useLatexInstallation(props.environmentId);
   const pandoc = usePandocTool(props.environmentId);
-  const checking = installation.refreshing || installation.view.busy;
+  const checking =
+    installation.refreshing || installation.view.busy || pandoc.checking || pandoc.view.busy;
   return (
     <SettingsPageContainer>
       <DocumentsSection
@@ -397,14 +398,12 @@ function EnvironmentDocumentsSettings(props: {
  * which serves LaTeX, Markdown, and conversations alike. Preferences are this
  * device's; the installs are the server's.
  */
-export function DocumentsSettings(props: { readonly environmentId?: EnvironmentId | undefined }) {
+export function DocumentsSettings() {
   const primaryId = usePrimaryEnvironmentId();
-  // The environment chosen in the settings scope, unless an older link names
-  // one. A scope that resolves to no connected environment shows no server tools.
+  // The one connected environment the settings scope chose, the same one its
+  // picker names. A scope with none connected shows the server tools Offline.
   const scope = useOptionalSettingsScope();
-  const environmentId =
-    props.environmentId ??
-    (scope === null ? primaryId : (scope.environment?.environmentId ?? null));
+  const environmentId = scope === null ? primaryId : (scope.environment?.environmentId ?? null);
   const environment = useEnvironment(environmentId);
   if (environmentId === null || environment === null) {
     return (

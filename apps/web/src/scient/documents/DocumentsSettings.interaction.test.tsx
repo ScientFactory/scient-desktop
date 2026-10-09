@@ -2,7 +2,7 @@
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, type ScientLatexToolchainReport } from "@t3tools/contracts";
+import type { ScientLatexToolchainReport } from "@t3tools/contracts";
 
 const mocks = vi.hoisted(() => ({
   report: null as ScientLatexToolchainReport | null,
@@ -77,7 +77,7 @@ describe("Settings ▸ Documents", () => {
     mocks.pandocEnvironments = [];
     mocks.pandocRefresh.mockReset();
     mocks.target = null;
-    mocks.scopeEnvironmentId = undefined;
+    mocks.scopeEnvironmentId = "remote";
     mocks.readToolchain.mockReset().mockImplementation(async () => mocks.report);
     mocks.install.mockReset().mockResolvedValue({
       state: "downloading",
@@ -96,13 +96,9 @@ describe("Settings ▸ Documents", () => {
     container.remove();
     vi.unstubAllGlobals();
   });
-  const render = async (environmentId: string | null = "remote") => {
+  const render = async () => {
     await act(async () => {
-      root.render(
-        <DocumentsSettings
-          environmentId={environmentId === null ? undefined : EnvironmentId.make(environmentId)}
-        />,
-      );
+      root.render(<DocumentsSettings />);
       await Promise.resolve();
     });
   };
@@ -292,7 +288,7 @@ describe("Settings ▸ Documents", () => {
 
   it("reads LaTeX on the environment chosen in the settings scope", async () => {
     mocks.scopeEnvironmentId = "scoped";
-    await render(null);
+    await render();
     expect(mocks.readToolchain).toHaveBeenCalledWith("scoped", { refresh: false });
   });
 
@@ -306,7 +302,7 @@ describe("Settings ▸ Documents", () => {
 
   it("shows the server tools as Offline, and keeps preferences editable, with no connected server", async () => {
     mocks.scopeEnvironmentId = null;
-    await render(null);
+    await render();
     expect(mocks.readToolchain).not.toHaveBeenCalled();
     expect(mocks.pandocEnvironments).toEqual([]);
     expect(container.querySelector("#documents-latex-trigger")?.textContent).toBe("LaTeXOffline");
@@ -323,7 +319,7 @@ describe("Settings ▸ Documents", () => {
     mocks.scopeEnvironmentId = null;
     mocks.target = "latex-installation";
     localStorage.setItem("scient.documentsSettingsFormat", JSON.stringify("markdown"));
-    await render(null);
+    await render();
     expect(container.querySelector("#documents-latex")).not.toBeNull();
     await act(() => container.querySelector<HTMLElement>("#documents-markdown-trigger")!.click());
     expect(container.querySelector("#documents-markdown")).not.toBeNull();

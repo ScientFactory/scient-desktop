@@ -130,3 +130,57 @@ describe("usePandocTool reinstall", () => {
     expect(button("Reinstall Pandoc")).toBeUndefined();
   });
 });
+
+describe("usePandocTool answers that arrive out of order", () => {
+  const installed = {
+    ...active,
+    installed: true,
+    install: { ...active.install, state: "idle" as const, bytesReceived: null, totalBytes: null },
+  };
+  let kind = "";
+  const onInstalled = vi.fn();
+  let refresh: () => void = () => undefined;
+  function Watch() {
+    const controller = usePandocTool(environmentId, onInstalled);
+    kind = controller.view.kind;
+    refresh = controller.refresh;
+    return null;
+  }
+  const deferred = () => {
+    let resolve!: (value: unknown) => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    return { promise, resolve, reject };
+  };
+
+  beforeEach(() => onInstalled.mockReset());
+
+  it("keeps the newest answer when an older check finishes last", async () => {
+    const first = deferred();
+    const second = deferred();
+    readPandocTool.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    await act(async () => root.render(<Watch />));
+    await act(async () => refresh());
+    await act(async () => second.resolve(installed));
+    expect(kind).toBe("ready");
+    await act(async () => first.resolve(active));
+    expect(kind).toBe("ready");
+    expect(onInstalled).not.toHaveBeenCalled();
+  });
+
+  it("says Word export became available once a failed check is followed by an installed one", async () => {
+    readPandocTool.mockRejectedValueOnce(new Error("The server did not answer."));
+    await act(async () => root.render(<Watch />));
+    expect(kind).toBe("failed");
+    readPandocTool.mockResolvedValueOnce(installed);
+    await act(async () => refresh());
+    expect(kind).toBe("ready");
+    expect(onInstalled).toHaveBeenCalledTimes(1);
+    readPandocTool.mockResolvedValueOnce(installed);
+    await act(async () => refresh());
+    expect(onInstalled).toHaveBeenCalledTimes(1);
+  });
+});
