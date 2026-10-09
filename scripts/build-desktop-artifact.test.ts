@@ -105,6 +105,11 @@ import {
   WSL_RUNTIME_EXTRA_RESOURCES,
   wslRuntimeArchiveTarTarget,
 } from "./build-desktop-artifact.ts";
+import {
+  WINDOWS_VOICE_FILES,
+  windowsCursorFiles,
+  windowsNativeIgnoreGlobs,
+} from "./lib/windows-payload.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -214,6 +219,14 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   );
   for (const file of ["synctex.exe", "provenance.json", "LICENSE.synctex", "LICENSE.zlib"]) {
     yield* fs.writeFileString(path.join(resourcesDir, "synctex-runtime", file), file);
+  }
+  for (const file of [
+    ...WINDOWS_VOICE_FILES.map((name) => `whisper-runtime/${name}`),
+    ...windowsCursorFiles(input.targetArch ?? "x64").map((name) => `node_modules/@cursor/${name}`),
+  ]) {
+    const target = path.join(resourcesDir, file);
+    yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+    yield* fs.writeFileString(target, "component fixture");
   }
   const appExecutableName = "t3code.exe";
   yield* fs.writeFileString(path.join(packagedAppDir, appExecutableName), "electron");
@@ -824,6 +837,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(win.files, [
         ...DESKTOP_FILE_EXCLUSIONS,
         ...WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS,
+        ...windowsNativeIgnoreGlobs("x64", false).map((glob) => `!${glob}`),
       ]);
       assert.deepStrictEqual(winWithoutWslPrebuild.files, win.files);
       assert.notProperty(mac.mac as Record<string, unknown>, "sign");
@@ -1297,21 +1311,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  it("excludes node-pty binaries for the other Windows architecture", () => {
-    assert.deepStrictEqual(resolveWindowsServerAsarIgnoreGlobs("x64"), [
-      ...WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
-      "**/node_modules/node-pty/prebuilds/win32-arm64",
-      "**/node_modules/node-pty/prebuilds/win32-arm64/**",
-      "**/node_modules/node-pty/third_party/conpty/*/win10-arm64",
-      "**/node_modules/node-pty/third_party/conpty/*/win10-arm64/**",
-    ]);
-    assert.deepStrictEqual(resolveWindowsServerAsarIgnoreGlobs("arm64"), [
-      ...WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
-      "**/node_modules/node-pty/prebuilds/win32-x64",
-      "**/node_modules/node-pty/prebuilds/win32-x64/**",
-      "**/node_modules/node-pty/third_party/conpty/*/win10-x64",
-      "**/node_modules/node-pty/third_party/conpty/*/win10-x64/**",
-    ]);
+  it("shares the Windows and WSL native selection policy with the sidecar packer", () => {
+    for (const arch of ["x64", "arm64"] as const) {
+      assert.deepStrictEqual(resolveWindowsServerAsarIgnoreGlobs(arch), [
+        ...WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
+        ...windowsNativeIgnoreGlobs(arch, true),
+      ]);
+    }
   });
 
   it.effect(
@@ -1329,6 +1335,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             "node_modules/node-pty/prebuilds/win32-x64/conpty/OpenConsole.exe",
             "node_modules/node-pty/prebuilds/win32-arm64/conpty/OpenConsole.exe",
             "node_modules/node-pty/prebuilds/linux-x64/pty.node",
+            "node_modules/node-pty/prebuilds/darwin-x64/pty.node",
+            "node_modules/node-pty/prebuilds/darwin-arm64/pty.node",
+            "node_modules/@yuuang/ffi-rs-win32-ia32-msvc/ffi-rs.win32-ia32-msvc.node",
+            "node_modules/@yuuang/ffi-rs-win32-x64-msvc/ffi-rs.win32-x64-msvc.node",
             "node_modules/node-pty/third_party/conpty/1.0.0/win10-x64/OpenConsole.exe",
             "node_modules/node-pty/third_party/conpty/1.0.0/win10-arm64/OpenConsole.exe",
           ];
@@ -1342,6 +1352,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           const asarPath = path.join(tempDir, "server.asar");
           yield* packWindowsServerAsar({ sourceDir, asarPath, arch: "x64" });
           const unpackedRoot = `${asarPath}.unpacked`;
+          const emittedFiles = listPackage(asarPath, { isPack: false });
+          assert.isFalse(
+            emittedFiles.some((file) => file.includes("darwin-") || file.includes("win32-ia32")),
+          );
+          assert.isTrue(emittedFiles.some((file) => file.includes("ffi-rs-win32-x64")));
 
           assert.isTrue(
             yield* fs.exists(
@@ -2009,7 +2024,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
     return Effect.scoped(
       Effect.gen(function* () {
-        const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
+        const fixture = yield* makeWindowsPayloadFixture({
+          copyUnpackedNatives: true,
+          targetArch: "arm64",
+        });
         yield* validateWindowsPackagedPayload({
           stageDistDir: fixture.stageDistDir,
           appExecutableName: fixture.appExecutableName,
@@ -2045,7 +2063,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
+        const fixture = yield* makeWindowsPayloadFixture({
+          copyUnpackedNatives: true,
+          targetArch: "arm64",
+        });
         const executablePath = path.join(fixture.packagedAppDir, fixture.appExecutableName);
         yield* fs.remove(executablePath);
 

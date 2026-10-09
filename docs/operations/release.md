@@ -30,6 +30,17 @@ separate states and must be reported separately.
   monitor, omit unused Claude SDK platform executables, and package only the
   target Windows `node-pty` architecture. These optimizations do not relax the
   exact-source CI, signing, assembly, or publication gates.
+- The Windows Packaging workflow builds the real x64 NSIS installer on pull
+  requests affecting packaged code, and on merge groups. It runs the release
+  payload validator and packaged terminal/Cursor native probes without signing
+  secrets or publication authority. Release Smoke uses synthetic artifacts and
+  remains a separate workflow/manifest check.
+- Windows loose-file validation retains an 80-file core budget. Pinned voice
+  and Windows/WSL Cursor inventories are admitted separately only after their
+  exact file sets pass validation; missing or extra component files fail even
+  below the total cap. Foreign native targets fail independently of the budget.
+  Dependency updates that change these inventories require reviewing the runtime
+  loaders and updating the inventories and regression fixtures together.
 
 Release versions follow the current stable line. A version does not imply
 proximity to `v1.0.0`; semantic versions permit any number of patch and minor

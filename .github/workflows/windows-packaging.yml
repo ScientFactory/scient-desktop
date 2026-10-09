@@ -1,0 +1,139 @@
+name: Windows Packaging
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/windows-packaging.yml'
+      - '.github/workflows/release.yml'
+      - 'scripts/**'
+      - 'apps/desktop/**'
+      - 'apps/server/**'
+      - 'apps/web/**'
+      - 'packages/**'
+      - 'native/**'
+      - 'package.json'
+      - 'pnpm-*.yaml'
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/windows-packaging.yml'
+      - '.github/workflows/release.yml'
+      - 'scripts/**'
+      - 'apps/desktop/**'
+      - 'apps/server/**'
+      - 'apps/web/**'
+      - 'packages/**'
+      - 'native/**'
+      - 'package.json'
+      - 'pnpm-*.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-packaging-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  linux_runtime:
+    name: Windows packaging / Linux prerequisites
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+      - name: Build Linux x64 node-pty and SyncTeX for WSL
+        shell: bash
+        run: |
+          set -euo pipefail
+          pty_pkg="$(node -e "console.log(require.resolve('node-pty/package.json', { paths: ['$GITHUB_WORKSPACE/apps/server'] }))")"
+          pty_dir="$(dirname "$pty_pkg")"
+          ( cd "$pty_dir" && npx --yes node-gyp@12.3.0 rebuild )
+          mkdir -p windows-prerequisites/wsl-prebuild
+          cp "$pty_dir/build/Release/pty.node" windows-prerequisites/wsl-prebuild/pty.node
+          node scripts/stage-synctex-runtime.ts --platform linux --arch x64 --output windows-prerequisites/synctex-wsl --verbose
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-packaging-prerequisites
+          path: windows-prerequisites/
+          if-no-files-found: error
+
+  package_windows:
+    name: Windows packaging / Installer and native runtime
+    needs: linux_runtime
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+      - name: Resolve package cache path
+        id: package_cache_path
+        shell: pwsh
+        run: '"path=$(vp pm cache dir)" >> $env:GITHUB_OUTPUT'
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ steps.package_cache_path.outputs.path }}
+          key: windows-packaging-packages-v1-${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Install dependencies
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Install Spectre-mitigated MSVC libraries
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -property installationPath
+          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          $process = Start-Process -FilePath $setupExe `
+            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
+            "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre", "--quiet", "--norestart" `
+            -Wait -PassThru -NoNewWindow
+          if ($null -eq $process -or $process.ExitCode -ne 0) { throw "Visual Studio Installer failed" }
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: windows-packaging-prerequisites
+          path: windows-prerequisites
+      - name: Build target SyncTeX runtime
+        run: node scripts/stage-synctex-runtime.ts --platform win --arch x64 --output synctex-runtime --verbose
+      - name: Align qualification package versions
+        run: node scripts/update-release-package-versions.ts 0.6.22
+      # Fixed qualification version exercises Scient's stable packaging shape.
+      # This is the release packer, with no signing secrets or publication step.
+      - name: Build and validate the real NSIS installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          vp run dist:desktop:artifact --platform win --target nsis --arch x64 --build-version 0.6.22 --keep-stage --verbose \
+            --synctex-runtime "$GITHUB_WORKSPACE/synctex-runtime" \
+            --wsl-prebuild "$GITHUB_WORKSPACE/windows-prerequisites/wsl-prebuild/pty.node" \
+            --wsl-synctex-runtime "$GITHUB_WORKSPACE/windows-prerequisites/synctex-wsl"
+      - name: Exercise packaged terminal and Cursor helpers
+        shell: pwsh
+        run: |
+          $stage = Get-ChildItem $env:TEMP -Directory -Filter 't3code-desktop-win-stage-*' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($null -eq $stage) { throw 'Missing retained package stage' }
+          node scripts/qualify-windows-packaged-runtime.mjs "$($stage.FullName)/app/dist/win-unpacked"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: windows-packaging-installer
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest*.yml
+          if-no-files-found: warn
+          retention-days: 7
