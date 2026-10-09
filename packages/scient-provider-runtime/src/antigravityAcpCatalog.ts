@@ -42,8 +42,11 @@ export interface AntigravityAcpCatalogAsset {
 }
 
 // Registry revision of the bundled native ACP release; advance both together during alignment.
-export const ANTIGRAVITY_ACP_REGISTRY_VERSION = "1.1.1";
+export const ANTIGRAVITY_ACP_REGISTRY_VERSION = "1.3.0";
 export const ANTIGRAVITY_ACP_CATALOG_KEY = "antigravityAcp";
+/** The registry now uses numeric versions; historic native identities remain readable. */
+export const isAntigravityAcpNativeVersion = (version: string): boolean =>
+  /^(?:[0-9]{1,10}\.[0-9]{1,10}\.[0-9]{1,10}|agy_acp_server_[A-Za-z0-9_.-]{1,96})$/u.test(version);
 export const ANTIGRAVITY_ACP_TARGETS = [
   {
     platform: "darwin",
@@ -118,7 +121,7 @@ export function resolveAntigravityAcpCatalogAsset(
         candidate: release.version,
       }),
     ) ||
-    !/^agy_acp_server_[A-Za-z0-9_.-]{1,96}$/u.test(payload.version) ||
+    !isAntigravityAcpNativeVersion(payload.version) ||
     artifact.checksum.algorithm !== "sha256" ||
     !/^[a-f0-9]{64}$/u.test(artifact.checksum.digest) ||
     !isBoundedSize(artifact.size) ||

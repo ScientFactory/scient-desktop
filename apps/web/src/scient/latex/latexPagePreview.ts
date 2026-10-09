@@ -17,9 +17,11 @@ export function latexPagePreviewStyles(document: Document) {
 
 function snapshotNode(source: Node): Node {
   if (!(source instanceof Element)) return source.cloneNode(false);
-  if (source.tagName === "MATH-FIELD") {
+  const readingMath = source.classList.contains("scient-latex-math-preview");
+  if (readingMath && source.hasAttribute("hidden")) return source.ownerDocument.createTextNode("");
+  if (source.tagName === "MATH-FIELD" || readingMath) {
     const clone = source.ownerDocument.createElement("span");
-    const formula = source.shadowRoot?.querySelector(".ML__latex");
+    const formula = source.shadowRoot?.querySelector(".ML__latex,[data-math-preview-content]");
     const style = getComputedStyle(source);
     clone.style.cssText = `display:inline-block;vertical-align:baseline;width:${source.clientWidth}px;height:${source.clientHeight}px;`;
     clone.style.fontSize = style.fontSize;
@@ -29,6 +31,11 @@ function snapshotNode(source: Node): Node {
     return clone;
   }
   const clone = source.cloneNode(false) as Element;
+  if (
+    clone instanceof HTMLElement &&
+    (clone.tagName === "P" || clone.classList.contains("scient-latex-visual-display-math"))
+  )
+    clone.style.contentVisibility = "visible";
   for (const attribute of [
     "id",
     "contenteditable",
@@ -41,6 +48,7 @@ function snapshotNode(source: Node): Node {
     "data-math-viewport-active",
     "data-scient-active-slot",
     "data-scient-selection-active",
+    "data-scient-selection-overlay",
     "data-scient-selection-held",
     "data-scient-editing-guides",
     "data-scient-accent-body",
@@ -63,7 +71,7 @@ function snapshotNode(source: Node): Node {
     if (
       child instanceof Element &&
       child.matches(
-        "script,style,.ML__caret,.ML__text-caret,.ML__selection,.scient-latex-longtable-measurements,.scient-latex-table-guides",
+        "script,style,.ML__caret,.ML__text-caret,.ML__selection,[data-scient-math-caret-anchor],.scient-latex-longtable-measurements,.scient-latex-table-guides,.scient-latex-selection-overlay",
       )
     )
       continue;
@@ -98,7 +106,12 @@ export function measureLatexPagePreview(stage: HTMLElement) {
         height: rect.height / scale,
       };
     });
-  return { stage, paper, document, blocks };
+  const variables: [string, string][] = [];
+  const computed = getComputedStyle(stage);
+  for (const name of computed)
+    if (name.startsWith("--scient-") || name.startsWith("--font-"))
+      variables.push([name, computed.getPropertyValue(name)]);
+  return { stage, paper, document, blocks, variables };
 }
 
 /** Copy only blocks intersecting this physical page; crop continuations in place. */
@@ -117,11 +130,7 @@ export function drawLatexPagePreview(
   stage.style.height = `${height}px`;
   stage.style.transformOrigin = "top left";
   stage.style.pointerEvents = "none";
-  const computed = getComputedStyle(measured.stage);
-  for (const name of computed) {
-    if (name.startsWith("--scient-") || name.startsWith("--font-"))
-      stage.style.setProperty(name, computed.getPropertyValue(name));
-  }
+  for (const [name, value] of measured.variables) stage.style.setProperty(name, value);
   const paper = measured.paper.cloneNode(false) as HTMLElement;
   paper.style.minHeight = `${height}px`;
   paper.style.height = `${height}px`;
@@ -139,6 +148,7 @@ export function drawLatexPagePreview(
   document.removeAttribute("contenteditable");
   document.removeAttribute("id");
   document.removeAttribute("data-latex-measuring");
+  document.removeAttribute("data-latex-windowed");
   document.style.cssText = `position:absolute;inset:0;padding:0;margin:0;width:${width}px;min-height:0;height:${height}px;`;
   for (const block of measured.blocks) {
     if (block.top + block.height <= pageTop || block.top >= pageTop + height) continue;

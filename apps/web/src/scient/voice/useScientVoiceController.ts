@@ -236,7 +236,7 @@ export function useScientVoiceController({
         setPhase("correcting");
         const corrected = await correctVoiceTranscript({
           enabled: true,
-          client: correctionClient,
+          correctionClient,
           environmentId,
           transcript: text,
           ...(language ? { language } : {}),

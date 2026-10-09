@@ -17,6 +17,7 @@ import {
   journalAppliedRecovery,
   parkUninstalledTypingDraft,
   parkUnpublishedSource,
+  parkVisualFieldDrafts,
   readableSnapshotText,
   readStartupRecovery,
   readStoredRecovery,
@@ -50,6 +51,42 @@ afterEach(() => {
 const PARKED = `scient:latex-visual-draft:recovered:${KEY}`;
 const SOURCE = `scient:latex-visual-draft:source:${KEY}`;
 const parked = () => JSON.parse(localStorage.getItem(PARKED) ?? "[]") as unknown[];
+
+describe("saved object field input", () => {
+  it("offers orphaned field input as readable recovery before retiring its original slot", () => {
+    const slot = `scient.latex.field:${KEY}:old-object:title`;
+    localStorage.setItem(slot, JSON.stringify({ base: "old title", text: "unsaved title" }));
+    const startup = readStartupRecovery(KEY, { source: tex("Object removed") });
+    expect(startup.recovery?.text).toBe("unsaved title");
+    expect(startup.recovery?.source).toBeNull();
+    expect(startup.recovery?.parked).toBe(true);
+    expect(localStorage.getItem(slot)).toBeNull();
+  });
+
+  it("retains the live field when making a recovery copy during an outside update", () => {
+    const slot = `scient.latex.field:${KEY}:object:body`;
+    const record = JSON.stringify({ base: "body", text: "unfinished input" });
+    localStorage.setItem(slot, record);
+    const saved = parkVisualFieldDrafts(KEY)!;
+    expect(saved.text).toBe("unfinished input");
+    expect(localStorage.getItem(slot)).toBe(record);
+    parkVisualFieldDrafts(KEY);
+    expect(parked()).toHaveLength(1);
+  });
+
+  it("keeps the original slot available when recovery storage is full", () => {
+    const slot = `scient.latex.field:${KEY}:object:title`;
+    const record = JSON.stringify({ base: "title", text: "unsaved" });
+    localStorage.setItem(slot, record);
+    const result = withoutRoomToPark(() => readStartupRecovery(KEY, { source: tex("File") }));
+    expect(result.recovery?.parked).toBe(false);
+    expect(result.recovery?.text).toBe("unsaved");
+    expect(localStorage.getItem(slot)).toBe(record);
+    expect(isRecoveryStored(KEY, result.recovery!)).toBe(true);
+    expect(removeRecovery(KEY, result.recovery!)).toBe(true);
+    expect(localStorage.getItem(slot)).toBeNull();
+  });
+});
 /** Storage that has no room for the parked list. */
 function withoutRoomToPark<T>(run: () => T): T {
   const original = localStorage.setItem.bind(localStorage);

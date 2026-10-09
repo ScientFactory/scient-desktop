@@ -9,6 +9,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -19,6 +20,9 @@ import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+// SCIENT-FORK:START checkpoint-capture-final-attempt
+import { settleUncapturedRunOnFinalAttempt } from "./scient-fork/CheckpointCaptureFinalAttempt.ts";
+// SCIENT-FORK:END checkpoint-capture-final-attempt
 
 export class CheckpointCaptureExecutionError extends Schema.TaggedError<CheckpointCaptureExecutionError>()(
   "CheckpointCaptureExecutionError",
@@ -48,6 +52,7 @@ export class CheckpointCaptureServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   CheckpointCaptureServiceV2,
   never,
+  | Crypto.Crypto
   | CheckpointService.CheckpointServiceV2
   | EventSink.EventSinkV2
   | IdAllocator.IdAllocatorV2
@@ -55,6 +60,7 @@ export const layer: Layer.Layer<
 > = Layer.effect(
   CheckpointCaptureServiceV2,
   Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
     const checkpoints = yield* CheckpointService.CheckpointServiceV2;
     const eventSink = yield* EventSink.EventSinkV2;
     const ids = yield* IdAllocator.IdAllocatorV2;
@@ -242,6 +248,13 @@ export const layer: Layer.Layer<
     return CheckpointCaptureServiceV2.of({
       execute: (input) =>
         execute(input).pipe(
+          // SCIENT-FORK:START checkpoint-capture-final-attempt
+          settleUncapturedRunOnFinalAttempt(
+            { eventSink, ids, projections, makeCheckpointTurnItem },
+            input,
+          ),
+          Effect.provideService(Crypto.Crypto, crypto),
+          // SCIENT-FORK:END checkpoint-capture-final-attempt
           Effect.mapError((cause) =>
             isCheckpointCaptureExecutionError(cause)
               ? cause

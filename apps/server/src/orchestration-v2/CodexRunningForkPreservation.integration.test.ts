@@ -26,7 +26,7 @@ import * as Stream from "effect/Stream";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
-import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlite.ts";
 import { buildRuntimeInstructions } from "../provider/RuntimeInstructions.ts";
 import { buildScientAwareness } from "../provider/ScientAwareness.ts";
 import * as CodexAdapterV2 from "./Adapters/CodexAdapterV2.ts";
@@ -37,13 +37,13 @@ import { EventSinkV2 } from "./EventSink.ts";
 import { EventStoreV2 } from "./EventStore.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { layer as allocatorLayer } from "./IdAllocator.ts";
-import { makeDriverLayer } from "./ProviderAdapterRegistry.ts";
+import { layerFromDrivers as makeDriverLayer } from "./ProviderAdapterRegistry.ts";
 import { ProviderAdapterOpenSessionError } from "./ProviderAdapter.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProjectionStoreV2, layerMemory } from "./ProjectionStore.ts";
 import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import {
-  makeOrchestratorV2ReplayLayerWithRegistry,
+  layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./testkit/ProviderReplayHarness.ts";
 import { makeProviderReplayGate } from "./testkit/ProviderReplayGate.testkit.ts";
@@ -96,6 +96,9 @@ function codexReplayPreamble(input: {
           },
           capabilities: {
             experimentalApi: true,
+            extensions: {
+              "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] },
+            },
             optOutNotificationMethods: ["turn/diff/updated"],
           },
         },
@@ -422,8 +425,8 @@ it.live(
             {
               configureMcp: false,
               runEffectWorker: false,
-              serverConfigLayer: Layer.succeed(ServerConfig.ServerConfig, config),
-              databaseLayer: makeSqlitePersistenceLive(database).pipe(
+              layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
+              layerDatabase: makeSqlitePersistenceLive(database).pipe(
                 Layer.provide(NodeServices.layer),
               ),
             },

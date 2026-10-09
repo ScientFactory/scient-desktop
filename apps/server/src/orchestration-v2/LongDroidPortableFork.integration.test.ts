@@ -25,7 +25,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../config.ts";
 import { makeDroidAcpRuntime } from "../provider/acp/DroidAcpSupport.ts";
 import { BUILT_IN_SKILL_RELEASES } from "../scient/skills/BuiltInSkillReleases.ts";
@@ -37,9 +37,9 @@ import { EffectOutboxV2 } from "./EffectOutbox.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
-import { makeLayer } from "./ProviderAdapterRegistry.ts";
+import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
 import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 
 const encodeString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
@@ -203,7 +203,7 @@ readline.createInterface({input:process.stdin}).on("line", async line => {
             {
               configureMcp: true,
               runEffectWorker: false,
-              serverConfigLayer: Layer.succeed(ServerConfig.ServerConfig, config),
+              layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
             },
           ).pipe(Layer.provide(plannerLayer));
           yield* Effect.gen(function* () {

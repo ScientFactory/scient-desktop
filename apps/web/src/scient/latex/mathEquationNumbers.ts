@@ -2,19 +2,26 @@ import { mathArrayCellSelector } from "./mathEditingGuides";
 
 /** Match outer equation rows to MathLive's rendered baselines without changing math. */
 export function positionEquationNumbers(root: HTMLElement, rowCount: number): () => void {
+  let dispose: (() => void) | undefined;
+  const refresh = () => {
+    dispose?.();
+    dispose = observeEquationNumbers(root, rowCount);
+  };
+  root.addEventListener("scient-latex-math-mounted", refresh);
+  root.addEventListener("scient-latex-math-preview", refresh);
+  refresh();
+  return () => {
+    root.removeEventListener("scient-latex-math-mounted", refresh);
+    root.removeEventListener("scient-latex-math-preview", refresh);
+    dispose?.();
+  };
+}
+
+function observeEquationNumbers(root: HTMLElement, rowCount: number): (() => void) | undefined {
   const math = root.querySelector("math-field");
-  const shadow = math?.shadowRoot;
-  if (!math || !shadow) {
-    let dispose: (() => void) | undefined;
-    const mounted = () => {
-      dispose = positionEquationNumbers(root, rowCount);
-    };
-    root.addEventListener("scient-latex-math-mounted", mounted, { once: true });
-    return () => {
-      root.removeEventListener("scient-latex-math-mounted", mounted);
-      dispose?.();
-    };
-  }
+  const preview = root.querySelector(".scient-latex-math-preview");
+  const shadow = math?.shadowRoot ?? preview?.shadowRoot ?? preview;
+  if (!shadow) return;
   let frame = 0;
   const update = () => {
     frame = 0;
@@ -50,7 +57,7 @@ export function positionEquationNumbers(root: HTMLElement, rowCount: number): ()
   };
   const resize = new ResizeObserver(schedule);
   resize.observe(root);
-  resize.observe(math);
+  if (math) resize.observe(math);
   const mutation = new MutationObserver(schedule);
   mutation.observe(shadow, { childList: true, characterData: true, subtree: true });
   schedule();

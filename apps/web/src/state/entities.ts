@@ -20,7 +20,7 @@ import type {
   ScopedThreadRef,
   ServerConfig,
 } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 // SCIENT-FORK:START useThread composes shell and projection, so it memoizes.
 import { useMemo } from "react";
 // SCIENT-FORK:END
@@ -47,6 +47,7 @@ const EMPTY_THREAD_REFS_ATOM = Atom.make(EMPTY_THREAD_REFS).pipe(
 const EMPTY_THREAD_SHELLS_ATOM = Atom.make(EMPTY_THREAD_SHELLS).pipe(
   Atom.withLabel("web-thread-shells:empty"),
 );
+const EMPTY_ENVIRONMENT_THREAD_SHELLS_ATOM = Atom.make<ReadonlyArray<EnvironmentThreadShell>>([]);
 const EMPTY_THREAD_SHELL_ATOM = Atom.make<EnvironmentThreadShell | null>(null).pipe(
   Atom.withLabel("web-thread-shell:empty"),
 );
@@ -108,8 +109,12 @@ export function useServerConfigs(): ReadonlyMap<EnvironmentId, ServerConfig> {
   return useAtomValue(environmentServerConfigsAtom);
 }
 
-export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
-  return useAtomValue(environmentThreadShells.threadShellsAtom);
+/** Every thread shell. Pass `enabled: false` to read a stable empty list and
+    skip re-rendering on each shell update while the caller does not need them. */
+export function useThreadShells(enabled = true): ReadonlyArray<EnvironmentThreadShell> {
+  return useAtomValue(
+    enabled ? environmentThreadShells.threadShellsAtom : EMPTY_ENVIRONMENT_THREAD_SHELLS_ATOM,
+  );
 }
 
 export function useAllEnvironmentShellsBootstrapped(): boolean {
@@ -244,6 +249,40 @@ export function waitForThreadShell(ref: ScopedThreadRef, timeoutMs = 5_000): Pro
     predicate: (thread) => thread !== null,
     timeoutMs,
   });
+}
+
+/** Whether the environment hosts preview tabs in its own browser (`runtime: "server"`),
+    so clients without Electron can still use the Browser panel. */
+export function useEnvironmentSupportsServerBrowser(environmentId: EnvironmentId | null): boolean {
+  const configs = useServerConfigs();
+  return (
+    environmentId !== null &&
+    configs.get(environmentId)?.environment.capabilities.serverBrowser === true
+  );
+}
+
+export function readEnvironmentSupportsServerBrowser(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .serverBrowser === true
+  );
+}
+
+export function useEnvironmentSupportsServerBrowserPdfExport(
+  environmentId: EnvironmentId,
+): boolean {
+  return (
+    useServerConfigs().get(environmentId)?.environment.capabilities.serverBrowserPdfExport === true
+  );
+}
+
+export function readEnvironmentSupportsServerBrowserPdfExport(
+  environmentId: EnvironmentId,
+): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .serverBrowserPdfExport === true
+  );
 }
 
 export function readEnvironmentSupportsTitleRegeneration(environmentId: EnvironmentId): boolean {

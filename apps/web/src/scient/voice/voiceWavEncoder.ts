@@ -9,7 +9,7 @@
 // Everything here is a pure function of its inputs (no DOM, no globals besides
 // `Math`), so it is exhaustively unit-tested in `voiceWavEncoder.test.ts`.
 
-import * as Encoding from "effect/Encoding";
+import * as Base64 from "effect/encoding/Base64";
 
 /** Sample rate every emitted clip is resampled to before transcription. */
 export const VOICE_CLIP_SAMPLE_RATE_HZ = 24_000;
@@ -52,7 +52,7 @@ export function encodeWavClip(
   const mono = concatFrames(frames);
   const resampled = resampleAudio(mono, inputSampleRate, VOICE_CLIP_SAMPLE_RATE_HZ);
   const wavBytes = encodeWav(resampled);
-  const base64 = Encoding.encodeBase64(wavBytes);
+  const base64 = Base64.encode(wavBytes);
   const durationMs = Math.round((resampled.length / VOICE_CLIP_SAMPLE_RATE_HZ) * 1000);
   return { wavBytes, base64, sampleRateHz: VOICE_CLIP_SAMPLE_RATE_HZ, durationMs };
 }

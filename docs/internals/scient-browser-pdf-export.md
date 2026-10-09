@@ -1,14 +1,27 @@
 # Scient browser HTML → PDF export
 
-This slice adds a first-party export action to the desktop integrated Browser. Its compact menu
-offers **Open PDF** and **Save PDF…**. Both print the currently loaded Chromium guest with
-`webContents.printToPDF()`; neither reloads, serializes, nor reconstructs the page. The browser tab
-remains intact while an immutable PDF revision is published to the existing generated-document
-store. Open activates that revision in the existing Scient PDF reader. Save keeps the reader closed,
-resolves the published revision through the same authorized asset boundary, and opens the native
-destination picker.
+The Browser's compact menu offers **Open PDF** and **Save PDF…**. Both print the
+currently loaded page through its physical browser owner; neither reloads, serializes,
+nor reconstructs the page. Native desktop tabs use `webContents.printToPDF()`.
+Streamed server tabs use the environment's live browser page, even when the client
+runs in Electron. The tab remains intact while an immutable PDF revision is published
+to the environment's generated-document store. Open activates that revision in
+Scient's PDF reader. Save resolves it through the authorized asset boundary and
+uses the client's existing save-copy capability.
 
-## Current contract
+## Browser ownership
+
+`browserPdfExportOwnerModel.ts` selects the owner from the actual tab runtime and
+capabilities. The server path requires the advertised PDF capability and current
+server epoch. Its authenticated export checks the exact thread, tab and main-frame
+URL before rendering and again before publication; navigation, closure or replacement
+invalidates the result. Capture is serialized with other capture operations on that tab.
+It waits for page load, fonts and images within bounded deadlines, prints the live DOM
+with Chromium print media, and restores media afterward. Publication retains the shared
+64 MiB limit and structural PDF validation. Desktop-specific pagination injection and
+global print-slot behavior below must not be inferred for the server path.
+
+## Desktop tab contract
 
 - Profile: `document-layout`.
 - Chromium print is serialized globally so concurrent tabs cannot compete for print resources.

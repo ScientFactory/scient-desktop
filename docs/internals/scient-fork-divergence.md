@@ -131,6 +131,38 @@ an atomic snapshot of an external provider and the filesystem. Re-forking copied
 local frozen prefix rather than borrowing mutable ancestor projections. Rollback preserves that
 inherited prefix.
 
+A running local fork has no fork-time file ref or OID. Its first provider turn captures the
+destination's own execution baseline after any intervening file edits. File rewind requires that
+exact baseline; a missing ref never substitutes `HEAD`, and shared-workspace restore remains
+subject to the V2 ownership guard. Completed forks still retain the selected historical snapshot.
+
+Pre-admission file publication uses `scient_fork_checkpoint_ownership`, a separate internal
+resource journal in the V2 database. Each attempt reserves a unique ref and persists its expected
+OID before Git can publish it. Scope release and background recovery at startup consult the accepted V2 receipt and
+destination metadata. An attempt that was never accepted, or whose command was accepted with
+another attempt's snapshot, compare-deletes only its own unchanged ref. A changed ref, or an
+accepted destination whose metadata no longer matches, keeps its Git ref while its journal row
+is closed. A row stays for a later start only when its workspace is unavailable or its release
+fails or times out (for example a locked ref); a live attempt is never reconciled. Journal recovery does not delete branches or worktrees. Accepted retries continue using their frozen ref and OID.
+Source/destination command locks retain their stable order. Global title serialization covers
+authoritative sibling reads and atomic admission, so another source's local fork can proceed
+during a slow file capture.
+
+Running native-text capture has a 90-second pre-admission deadline, matching the file-capture
+bound. Expiration releases the fork token without retiring the original run. SQL facts already
+committed by its consumer remain valid. Accepted provisioning continues under durable receipts;
+this deadline does not reject or cancel an accepted destination.
+
+Ordinary execution baselines, completed-turn checkpoints, and running-worktree forks share the
+same bounded capture substrate. Changed paths are consumed incrementally with backpressure:
+128 MiB of listing bytes, 250,000 records (including rename sources), and 1 MiB per record.
+The 512 MiB per-file, 1 GiB changed-byte, and 90-second whole-capture limits remain. Diagnostic
+buffer truncation is independent of enumeration completeness. Publication transfers only objects
+new to the private staging repository, preserves Git's loose/packed transfer policy and object
+format, and checks connectivity before publishing the ref. Private indexes and staging files are
+scoped resources. These limits do not make a workspace containing tens of gigabytes eligible;
+workspace ignore rules and maintenance remain separate user decisions.
+
 ### Client operation identity and eligibility
 
 User-message forks prepare images before creating the command or destination draft. Unsupported
@@ -218,7 +250,7 @@ Git availability for valid non-Git local workspaces.
 | `orchestration-v2/EventSink.ts`, `ProjectionStore.ts`, `EffectWorker.ts`                                      | Atomic persistence, read models, provisioning execution                     |
 | `orchestration-v2/ProviderTurnStartService.ts`, `ProviderSessionManager.ts`                                   | Native clone or portable context, exact-session delivery and recovery       |
 | `orchestration-v2/ContextHandoffBudget.ts`, `ContextHandoffDelivery.ts`                                       | Whole-item selection, target allowance, delivery evidence                   |
-| `orchestration-v2/legacy/`, `persistence/Layers/Sqlite.ts`                                                    | Legacy hydration and immutable migration compatibility                      |
+| `orchestration-v2/legacy/`, `persistence/Sqlite.ts`                                                           | Legacy hydration and immutable migration compatibility                      |
 | `ws.ts`, `packages/client-runtime/src/operations/commands.ts`                                                 | Retained message-boundary wire routing and client operation                 |
 | `apps/web/src/components/scient-fork/forkAttempt.ts`, fork hooks/dialog, timeline and right-panel integration | Dialog, draft journal, navigation, and safe continuity                      |
 
@@ -316,7 +348,7 @@ into behavior tests.
 
 ### Live Scient migration preflight
 
-[`Sqlite.ts`](../../apps/server/src/persistence/Layers/Sqlite.ts) still invokes the independent
+[`Sqlite.ts`](../../apps/server/src/persistence/Sqlite.ts) still invokes the independent
 [`scientMigrator.ts`](../../apps/server/src/orchestration-v2/scient-fork/scientMigrator.ts) runner.
 Keep `scient_schema_migrations` separate from upstream's ledger and preserve its immutable ID/name
 manifest. Before applying migrations, the runner transactionally reconciles legacy `applied_at`

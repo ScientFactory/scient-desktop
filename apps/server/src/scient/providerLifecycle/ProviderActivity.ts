@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
-import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
+import { ProviderInstanceRegistry } from "../../provider/ProviderInstanceRegistry.ts";
 
 /** A shared runtime cannot be replaced while any of its instances owns live work. */
 export interface ProviderActivityShape {

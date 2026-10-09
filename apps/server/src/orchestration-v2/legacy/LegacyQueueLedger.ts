@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export class QueueError extends Schema.TaggedError<QueueError>()("QueueError", {
   message: Schema.String,
@@ -25,6 +25,10 @@ const Document = Schema.Struct({
 export type QueueDocument = typeof Document.Type;
 const documentCodec = Schema.fromJsonString(Document);
 const decode = Schema.decodeUnknownEffect(documentCodec);
+const decodeOption = Schema.decodeUnknownOption(documentCodec);
+
+/** Some only for a schema-valid document, so unreadable ledgers keep their recovery path. */
+export const readableQueueDocument = (document: string) => decodeOption(document);
 const encode = Schema.encodeEffect(documentCodec);
 
 export const readQueue = Effect.fn("ScientQueue.read")(function* (

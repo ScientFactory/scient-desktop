@@ -184,7 +184,9 @@ The current inline/display placement has a checkmark. Placement changes retain
 existing math; converting inline math to display math retains the surrounding text
 as paragraphs. Matrix and symbol pickers change nothing until an item is inserted.
 Symbols opens above the footer at the same corner whether opened
-from Math or the footer, with no centered dialog.
+from Math or the footer, with no centered dialog. Drag its **Symbols** header to
+move it within the editor. Its position is retained while this editor stays open.
+With the header focused, arrow keys move it and Home restores the footer position.
 Inside math, insertion uses the current math selection/caret. Outside math,
 matrices and cases start display math; brackets and symbols start inline math.
 **Brackets** opens a compact submenu. **Match** starts on: choosing the left
@@ -270,6 +272,28 @@ surrounding equation selects the brace, expression, and label together. Dragging
 within the label selects its text; an ordinary click places the caret.
 
 Plain typing is not expanded into commands. Start a command with `\`.
+Autocomplete in Source and Visual shows the insertion template, including
+required braces: for example, `\frac{}{}`, `\mathcal{}` or
+`\textcolor{color}{text}`. Argument names in previews are hints, not inserted
+text. Up/Down chooses an entry; Tab, Enter or a click accepts it. Escape dismisses
+the list. The caret starts in the first argument. Source completion includes
+text, math, document commands and environments, plus supported macros defined
+in that file's preamble. Tab moves through the empty arguments of an accepted
+source template.
+
+Completion also works in ordinary Visual paragraphs and editable table text.
+Choosing a text format starts typing with that style; choosing a math command
+creates inline math at that caret. Heading commands work on an otherwise empty
+paragraph. Reference, link and footnote templates keep their arguments available
+for typing; Tab moves to the next empty argument, and Tab, Enter or the final
+closing brace finishes a supported inline command. Commands requiring a source
+layout remain available in Source.
+
+Inside a color argument, completion lists standard colors and literal colors
+defined in the document preamble. Xcolor mixtures also offer percentages and
+the next color, as in `red!50!blue`. Choosing a color for empty Visual colored
+text starts writing in that color. All these lists follow the existing command
+completion setting; they do not open Symbols.
 Inside Visual math, argument braces are paired while typing a command. Accepting
 an argument command such as `\text`, `\textbf`, `\textit`, `\mathbf`, `\mathbb` or `\mathcal` with
 Tab or Enter supplies braces and enters an empty editable slot. Choosing a
@@ -354,10 +378,9 @@ retain exact-source editing and compiler rendering in PDF.
 Edits that cannot round-trip remain local and are marked as unsaved. MathLive's
 separate virtual keyboard and menu are hidden.
 
-The formula field expands common typed shortcuts such as `sqrt`, `alpha`,
-`sum`, `->`, and `<=`. In the formula-code editor, starting a known command
+The formula field keeps bare words and punctuation literal. In the formula-code editor, starting a known command
 such as `\fra` or an inner environment such as `\begin{bmat` shows bounded
-completions; Tab accepts the first suggestion. Unknown commands remain literal
+completions; Up/Down chooses an entry and Tab or Enter accepts it. Unknown commands remain literal
 source; the TeX compiler determines whether their definitions are available.
 
 The Math menu creates display equations, bracket or parenthesis matrices,
@@ -391,9 +414,8 @@ Use **Document > Document settings** for the document type, text size, paper,
 orientation, margins (Narrow, Normal, Wide, or Custom for each side) and
 paragraph style. Each setting shows what the document uses now; **Apply** writes
 only the settings you changed, and **Cancel** discards the draft. Blank custom
-margin fields preserve the current source. Its **Packages and macros** summary
-shows explicit package declarations (including options), declared macros, and
-definitions requiring Source/PDF. Existing package options remain intact, and
+margin fields preserve the current source. Package and macro declarations are
+available in Source. Existing package options remain intact, and
 Visual adds only known missing requirements for inserted tools. Packages are
 never removed automatically. Custom classes retain their class and text style
 in Source. **Open in Source** opens the root setup. If the document changes while
@@ -680,8 +702,10 @@ text and explicitly chosen templates retain their content.
 While editing a description list or other structured block, empty fields
 show small, faint gray corner markers. Math slots show the same corner markers
 within the nearest structure being edited, including nested cases and matrices.
-An empty slot keeps the same marker size and position when you enter it; the caret
-appears alongside it. Ordinary table cells show dashed guides for missing borders,
+An empty slot keeps the same marker size and position when you enter it; the math
+caret appears in its center. Selected empty matrix cells retain their markers,
+with the highlight inside each marker. Selecting the enclosing environment uses
+the whole expression's highlight. Ordinary table cells show dashed guides for missing borders,
 alongside any existing printed rules. Slot markers appear only for math inside a cell.
 Markers disappear when editing leaves the environment; opening a menu retains
 them, and hovering alone does not show them.
@@ -1104,13 +1128,30 @@ to supply this presentation data. Visual does not run BibTeX itself.
 
 The footer shows the environment type, word count and contextual controls,
 without a path through nested structures or formatting.
-Gray corner marks show only the innermost editing slot and disappear when content
-is selected. The caret matches the local text color and size; inside accent bodies
+Gray corner marks show only the innermost editing slot. Occupied-slot marks
+disappear when content is selected; empty math markers remain visible during cell
+selection. The caret matches the local text color and size; inside accent bodies
 such as `\hat{...}` it is slightly shorter, without moving the expression.
+Empty markers are centered on the caret's insertion point; clicking the marker
+enters that exact slot without shifting the caret to a separate box position.
+Text, math and selected cells use the same blue highlight. Only the active editing
+surface paints selection; whole-table selection highlights its cells and caption
+without a blue band across the page or a darker second layer over its cells.
 Selection stays visible with a muted fill
 while you use menus and submenus. Menu commands apply to the retained selection.
 The editing caret pauses during menu use. Escape from the root menu returns to
 the original editor.
+
+Math uses one drag-selection handler and one highlight painter. Whole-cell and
+partial selections follow the same content bounds, including brackets, scripts
+and annotations. Selecting equation rows highlights each row's expression and
+leaves the spacing between rows clear; a trailing comma does not switch to a
+different kind of highlight. Double-click selects a grid cell, and a third click
+selects its enclosing grid. Shift-click extends the current selection.
+Shift+Arrow uses the same math selection rules as dragging. You can continue a
+drag with Shift+Arrow, or continue keyboard selection with Shift-click and drag,
+without changing its original anchor. Reversing direction shrinks the same range;
+menus retain it and its continuation point.
 
 Ordinary arrows move smoothly through text. In math, Tab and Shift+Tab visit
 structural slots, including empty matrix cells. Repeated Up/Down movements retain
@@ -1141,10 +1182,21 @@ the label, the whole underbrace, then the equation and enclosing content. Openin
 menus preserves both the selection and this sequence. Clicking, moving the caret
 or typing starts again from the current scope.
 
+At the outermost scope, Ctrl+A selects the entire document, including formulas,
+tables, figures and captions, title fields, code and source-only blocks. Repeating
+Ctrl+A keeps that selection. Selection across different blocks uses the same
+highlight in editing and reading previews; page gaps remain clear. Dragging into
+a block includes it, and dragging from a figure or source block into surrounding
+text continues as a document selection. Open source fields also expand through
+their block to the document. Menus retain the complete range.
+
 Selecting across the closing bracket and exponent of `\left(x\right)^2` includes
 the complete `(x)^2`. Extending selection out of its base into surrounding math
 also includes the exponent; bases and their superscripts/subscripts share one
 outer selection boundary. Selection inside the body or exponent stays precise.
+Selecting a complete norm such as `\left\lVert y\right\rVert^2` highlights and
+edits the exponent too. Selecting only `y` inside the norm leaves its exponent
+outside the selection.
 A complete underbrace
 has one connected blue selection across its body, brace and label. Selecting only
 the label or its bold text highlights just that part.

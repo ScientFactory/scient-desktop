@@ -51,10 +51,15 @@ export const make = Effect.gen(function* () {
   const gate = yield* Semaphore.make(2);
 
   const render = Effect.fn("LatexTikzPreview.render")(function* (input: ScientLatexArtworkRequest) {
+    const algorithm =
+      /^\s*\\begin\{algorithm\}(?:\[[htbpH!]+\])?/u.test(input.source) &&
+      /\\end\{algorithm\}\s*$/u.test(input.source) &&
+      input.source.includes("\\begin{tikzpicture}");
     if (
-      !/^\s*\\begin\s*\{tikzpicture\}/u.test(input.source) ||
-      !/\\end\s*\{tikzpicture\}\s*$/u.test(input.source) ||
-      /\\(?:begin|end)\s*\{document\}/u.test(input.preamble)
+      (!algorithm &&
+        (!/^\s*\\begin\s*\{tikzpicture\}/u.test(input.source) ||
+          !/\\end\s*\{tikzpicture\}\s*$/u.test(input.source))) ||
+      /\\(?:begin|end)\s*\{document\}/u.test(input.preamble + input.source)
     )
       return unavailable("The drawing is not a complete TikZ picture.");
     // Use the same project boundary and symlink checks as ordinary file operations.
@@ -96,12 +101,40 @@ export const make = Effect.gen(function* () {
         const preamble = /\\documentclass\b/u.test(input.preamble)
           ? input.preamble
           : `\\documentclass{article}\n${input.preamble}`;
+        const labels = algorithm
+          ? yield* workspace
+              .readFile({
+                cwd: input.workspaceRoot,
+                relativePath: input.relativePath.replace(/\.tex$/iu, ".aux"),
+              })
+              .pipe(
+                Effect.map((file) =>
+                  file.truncated
+                    ? ""
+                    : file.contents
+                        .split(/\r?\n/u)
+                        .filter((line) => line.startsWith("\\newlabel{"))
+                        .join("\n"),
+                ),
+                Effect.orElseSucceed(() => ""),
+              )
+          : "";
+        const artwork = algorithm
+          ? `\\setcounter{algorithm}{${(input.algorithmNumber ?? 1) - 1}}\n` +
+            input.source.replace(
+              /^\s*\\begin\{algorithm\}(?:\[[htbpH!]+\])?/u,
+              "\\begin{algorithm}[H]",
+            )
+          : input.source;
         yield* fileSystem.writeFileString(
           sourcePath,
           `${preamble}\n\\usepackage[active,tightpage]{preview}\n` +
-            `\\setlength{\\PreviewBorder}{0.5pt}\n\\begin{document}\n` +
+            `\\setlength{\\PreviewBorder}{0.5pt}\n` +
+            `\\makeatletter\n${labels}\n\\makeatother\n` +
+            `\\begin{document}\n` +
+            `\\setlength{\\textwidth}{${input.widthInches}in}\n\\setlength{\\columnwidth}{${input.widthInches}in}\n` +
             `\\begin{preview}\n\\setlength{\\linewidth}{${input.widthInches}in}\n` +
-            `${input.source}\n\\end{preview}\n\\end{document}\n`,
+            `${artwork}\n\\end{preview}\n\\end{document}\n`,
         );
         const invocation = buildLatexInvocation({
           toolchain: discovered,

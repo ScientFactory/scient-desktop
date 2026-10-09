@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { SqlitePersistenceMemory } from "../../../persistence/Layers/Sqlite.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import { layerMemory as SqlitePersistenceMemory } from "../../../persistence/Sqlite.ts";
 import { runScientMigrations } from "../scientMigrator.ts";
 import Migration016 from "./016_PreserveLegacyForkSessions.ts";
 
@@ -16,6 +16,7 @@ it.effect(
       yield* sql`ALTER TABLE scient_context_handoffs DROP COLUMN continuity_basis`;
       yield* sql`ALTER TABLE scient_context_handoffs DROP COLUMN legacy_revert_sequence`;
       yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id >= 16`;
+      yield* sql`DROP TABLE scient_fork_checkpoint_ownership`;
       for (const [thread, status, rebind, cursor, instance] of [
         ["completed", "inline", 1, '{"threadId":"saved"}', "codex-main"],
         ["ambiguous", "pending", 0, '{"threadId":"saved"}', "codex-main"],

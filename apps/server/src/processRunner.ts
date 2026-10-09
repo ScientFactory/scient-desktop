@@ -7,8 +7,8 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
@@ -27,6 +27,14 @@ export interface ProcessRunInput {
   readonly stdin?: string | undefined;
   /** Receives every stdout chunk, including bytes beyond the buffered output limit. */
   readonly onStdoutChunk?: ((chunk: Uint8Array) => void) | undefined;
+  // SCIENT-FORK:START — binary stdin and an awaited stdout consumer for checkpoint capture.
+  /** Binary stdin. Ignored when text `stdin` is supplied. */
+  readonly stdinBytes?: Uint8Array | undefined;
+  /** Await each chunk before reading the next; failure closes and reaps the child. */
+  readonly onStdoutChunkEffect?:
+    | ((chunk: Uint8Array) => Effect.Effect<void, ProcessReadError>)
+    | undefined;
+  // SCIENT-FORK:END
   readonly maxOutputBytes?: number | undefined;
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly truncatedMarker?: string | undefined;
@@ -171,6 +179,9 @@ export const isWindowsCommandNotFound = Effect.fn("processRunner.isWindowsComman
   },
 );
 
+// SCIENT-FORK:START — an awaited stdout consumer's ProcessReadError passes through.
+const isProcessReadError = Schema.is(ProcessReadError);
+// SCIENT-FORK:END
 // Untraced: no attributes, and its time is the runProcessCore span. Errors fail that span.
 const collectText = Effect.fnUntraced(function* (input: {
   readonly command: string;
@@ -178,23 +189,28 @@ const collectText = Effect.fnUntraced(function* (input: {
   readonly cwd?: string | undefined;
   readonly spawnCwd?: string | undefined;
   readonly streamName: "stdout" | "stderr";
-  readonly stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
+  // SCIENT-FORK:START — an awaited stdout consumer can fail with ProcessReadError.
+  readonly stream: Stream.Stream<Uint8Array, PlatformError.PlatformError | ProcessReadError>;
+  // SCIENT-FORK:END
   readonly maxOutputBytes: number;
   readonly outputMode: "error" | "truncate";
   readonly truncatedMarker: string;
 }) {
   const stream = input.stream.pipe(
-    Stream.mapError(
-      (cause) =>
-        new ProcessReadError({
-          command: input.command,
-          argumentCount: input.args.length,
-          cwd: input.cwd,
-          spawnCwd: input.spawnCwd,
-          stream: input.streamName,
-          cause,
-        }),
+    // SCIENT-FORK:START — pass an awaited stdout consumer's ProcessReadError through unwrapped.
+    Stream.mapError((cause) =>
+      isProcessReadError(cause)
+        ? cause
+        : new ProcessReadError({
+            command: input.command,
+            argumentCount: input.args.length,
+            cwd: input.cwd,
+            spawnCwd: input.spawnCwd,
+            stream: input.streamName,
+            cause,
+          }),
     ),
+    // SCIENT-FORK:END
   );
 
   if (input.outputMode === "truncate") {
@@ -333,12 +349,17 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
       ),
     );
 
-  const stdin = input.stdin;
+  // SCIENT-FORK:START — text or binary stdin, and an awaited stdout consumer.
+  const stdin = input.stdin ?? input.stdinBytes;
   const onStdoutChunk = input.onStdoutChunk;
+  const onStdoutChunkEffect = input.onStdoutChunkEffect;
   const writeStdin =
     stdin === undefined
       ? Effect.void
-      : Stream.run(Stream.encodeText(Stream.make(stdin)), child.stdin).pipe(
+      : Stream.run(
+          typeof stdin === "string" ? Stream.encodeText(Stream.make(stdin)) : Stream.make(stdin),
+          child.stdin,
+        ).pipe(
           Effect.mapError(
             (cause) =>
               new ProcessStdinError({
@@ -346,11 +367,12 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
                 argumentCount: input.args.length,
                 cwd: input.cwd,
                 spawnCwd: input.spawnCwd,
-                stdinBytes: Buffer.byteLength(stdin),
+                stdinBytes: typeof stdin === "string" ? Buffer.byteLength(stdin) : stdin.byteLength,
                 cause,
               }),
           ),
         );
+  // SCIENT-FORK:END
 
   const [stdout, stderr] = yield* Effect.all(
     [
@@ -360,9 +382,18 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
         cwd: input.cwd,
         spawnCwd: input.spawnCwd,
         streamName: "stdout",
-        stream: onStdoutChunk
-          ? child.stdout.pipe(Stream.tap((chunk) => Effect.sync(() => onStdoutChunk(chunk))))
-          : child.stdout,
+        // SCIENT-FORK:START — tap stdout for both the sync and the awaited consumer.
+        stream:
+          onStdoutChunk || onStdoutChunkEffect
+            ? child.stdout.pipe(
+                Stream.tap((chunk) =>
+                  Effect.sync(() => onStdoutChunk?.(chunk)).pipe(
+                    Effect.andThen(() => onStdoutChunkEffect?.(chunk) ?? Effect.void),
+                  ),
+                ),
+              )
+            : child.stdout,
+        // SCIENT-FORK:END
         maxOutputBytes,
         outputMode,
         truncatedMarker,

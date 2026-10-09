@@ -3,6 +3,7 @@ import type { Node as DocumentNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey, NodeSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import { afterEditorPaint } from "./afterEditorPaint";
+import { createEditorBackgroundTask } from "./editorBackgroundTask";
 import { latexParagraphSpacing, type ParagraphSpacingCache } from "./latexParagraphSpacing";
 import { latexCounterLabel } from "./latexDocumentStructure";
 import { latexInlineColumnBreakPositions } from "./latexColumnBreaks";
@@ -198,6 +199,14 @@ interface CachedLines {
   readonly lines: readonly TextFragment[];
 }
 
+interface CachedUnits {
+  readonly element: HTMLElement;
+  readonly width: number;
+  readonly height: number;
+  readonly context: string;
+  readonly units: readonly MeasuredUnit[];
+}
+
 /** Measure continuation rows at the body's column widths, including merged cells. */
 function measureLongTableBand(dom: HTMLElement, kind: "head" | "foot", scale: number): number {
   const template = dom.querySelector<HTMLTableElement>(`[data-latex-longtable-measure="${kind}"]`);
@@ -324,6 +333,8 @@ function measureDocument(
   view: EditorView,
   cache: WeakMap<DocumentNode, CachedLines>,
   dimensions: LatexVisualPaginationOptions,
+  blocks: WeakMap<DocumentNode, CachedUnits>,
+  unchanged: (element: HTMLElement) => boolean,
 ): MeasuredUnit[] {
   const root = view.dom;
   const bounds = root.getBoundingClientRect();
@@ -449,6 +460,7 @@ function measureDocument(
       const cached = cache.get(node);
       if (
         cached &&
+        unchanged(dom) &&
         Math.abs(cached.width - rect.width / scale) < 0.1 &&
         Math.abs(cached.height - rect.height / scale) < 0.1 &&
         cached.font === font
@@ -512,7 +524,52 @@ function measureDocument(
       }),
     );
   };
-  view.state.doc.forEach((node, offset) => visit(node, offset));
+  const context = JSON.stringify([font, chapters, references?.titlePage, dimensions]);
+  view.state.doc.forEach((node, offset) => {
+    const element = view.nodeDOM(offset);
+    if (!(element instanceof HTMLElement)) return;
+    const rect = element.getBoundingClientRect();
+    const display = element.classList.contains("scient-latex-visual-display-math")
+      ? element
+      : element.querySelector<HTMLElement>(":scope > .scient-latex-visual-display-math");
+    if (display)
+      display.style.setProperty(
+        "--scient-latex-block-height",
+        `${display.getBoundingClientRect().height / scale}px`,
+      );
+    const top = y(rect.top);
+    const cached = blocks.get(node);
+    if (
+      cached?.element === element &&
+      cached.context === context &&
+      Math.abs(cached.width - rect.width / scale) < 0.1 &&
+      Math.abs(cached.height - rect.height / scale) < 0.1 &&
+      unchanged(element)
+    ) {
+      for (const unit of cached.units)
+        units.push({
+          ...unit,
+          position: offset + unit.position,
+          top: top + unit.top,
+          bottom: top + unit.bottom,
+        });
+      return;
+    }
+    const start = units.length;
+    visit(node, offset);
+    blocks.set(node, {
+      element,
+      width: rect.width / scale,
+      height: rect.height / scale,
+      context,
+      units: units.slice(start).map((unit) => ({
+        ...unit,
+        position: unit.position - offset,
+        top: unit.top - top,
+        bottom: unit.bottom - top,
+      })),
+    });
+  });
   return units;
 }
 
@@ -600,11 +657,38 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
       let disposed = false;
       let measuring = false;
       let composing = false;
+      let generation = 0;
+      let requested = false;
+      let cancelYield: (() => void) | undefined;
       let signature = "";
       let measuredDocument: DocumentNode | null = null;
+      let typography = "";
       let lineCache = new WeakMap<DocumentNode, CachedLines>();
       let spacingCache: ParagraphSpacingCache = new WeakMap();
+      let blockCache = new WeakMap<DocumentNode, CachedUnits>();
+      const dirtyBlocks = new Set<Element>();
+      const noteHeights = new Map<string, number>();
+      const layoutTask = createEditorBackgroundTask(180, 1200);
       const root = view.dom;
+      const topBlock = (element: Element | null): Element | null => {
+        let current = element;
+        while (current && current.parentElement !== root) current = current.parentElement;
+        return current;
+      };
+      const markDirty = (element: Element | null) => {
+        const block = topBlock(element);
+        if (!block) return;
+        dirtyBlocks.add(block);
+        if (block.previousElementSibling) dirtyBlocks.add(block.previousElementSibling);
+        if (block.nextElementSibling) dirtyBlocks.add(block.nextElementSibling);
+      };
+      const unchanged = (element: HTMLElement) => !dirtyBlocks.has(topBlock(element)!);
+      const invalidate = () => {
+        lineCache = new WeakMap();
+        spacingCache = new WeakMap();
+        blockCache = new WeakMap();
+        noteHeights.clear();
+      };
       const scroll = () => root.closest<HTMLElement>(".scient-latex-visual-scroll");
       const anchor = () => {
         const viewport = scroll();
@@ -623,7 +707,7 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
         const top = view.coordsAtPos(point).top;
         return top >= box.top && top <= box.bottom ? { position: point, top, viewport } : null;
       };
-      const paginate = () => {
+      const paginate = async () => {
         cancelPagination = null;
         if (refreshObservedBlocks) {
           refreshObservedBlocks = false;
@@ -641,6 +725,33 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
         const state = latexPaginationKey.getState(view.state);
         if (!state) return;
         measuring = true;
+        requested = false;
+        const owner = generation;
+        const documentBefore = view.state.doc;
+        const stillCurrent = () =>
+          !disposed &&
+          owner === generation &&
+          view.state.doc === documentBefore &&
+          !view.composing &&
+          !composing &&
+          root.isConnected;
+        const yieldLayout = () => {
+          // Restore the displayed page layout before yielding. Never paint a
+          // document with its page gaps hidden, or publish a stale plan.
+          delete root.dataset.latexColumnMeasuring;
+          delete root.dataset.latexMeasuring;
+          return new Promise<boolean>((resolve) => {
+            const cancel = afterEditorPaint(() => {
+              cancelYield = undefined;
+              resolve(stillCurrent());
+            });
+            cancelYield = () => {
+              cancel();
+              cancelYield = undefined;
+              resolve(false);
+            };
+          });
+        };
         const pinned = anchor();
         const focusedObject = document.activeElement;
         const viewportBefore = scroll()?.getBoundingClientRect();
@@ -659,7 +770,18 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
           // Hiding only our widgets exposes natural flow without replacing the
           // editable DOM or touching its native selection and composition.
           root.dataset.latexMeasuring = "true";
-          const spacing = latexParagraphSpacing(view, spacingCache);
+          const style = getComputedStyle(root);
+          const currentTypography = JSON.stringify([
+            style.font,
+            style.textAlign,
+            style.textIndent,
+            style.letterSpacing,
+          ]);
+          if (currentTypography !== typography) {
+            typography = currentTypography;
+            invalidate();
+          }
+          const spacing = latexParagraphSpacing(view, spacingCache, unchanged);
           const previousSpacing = state.decorations
             .find()
             .filter((item) => item.spec.latexParagraphSpacing !== undefined);
@@ -668,7 +790,21 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
               items.map((item) => [item.from, item.to, item.spec.latexParagraphSpacing]),
             );
           if (spacingSignature(spacing) !== spacingSignature(previousSpacing)) {
-            lineCache = new WeakMap();
+            // Word-spacing changes affect the corresponding paragraph and its
+            // neighbors, not every cached line in the document.
+            const oldSpacing = new Map(
+              previousSpacing.map((item) => [item.from, item.spec.latexParagraphSpacing]),
+            );
+            const newSpacing = new Map(
+              spacing.map((item) => [item.from, item.spec.latexParagraphSpacing]),
+            );
+            for (const position of new Set([...oldSpacing.keys(), ...newSpacing.keys()])) {
+              if (oldSpacing.get(position) === newSpacing.get(position)) continue;
+              const node = view.state.doc.nodeAt(position);
+              if (node) lineCache.delete(node);
+              const element = view.nodeDOM(position);
+              if (element instanceof Element) markDirty(element);
+            }
             view.dispatch(
               view.state.tr
                 .setMeta(latexPaginationKey, {
@@ -682,6 +818,8 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
             schedule();
             return;
           }
+          if (!(await yieldLayout())) return;
+          root.dataset.latexMeasuring = "true";
           root.dataset.latexColumnMeasuring = "true";
           const columnBreaks = latexInlineColumnBreakPositions(view);
           delete root.dataset.latexColumnMeasuring;
@@ -690,7 +828,8 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
             .map((decoration) => decoration.from);
           const columnBreaksChanged =
             JSON.stringify(previousColumnBreaks) !== JSON.stringify(columnBreaks);
-          const units = measureDocument(view, lineCache, state.dimensions);
+          const units = measureDocument(view, lineCache, state.dimensions, blockCache, unchanged);
+          dirtyBlocks.clear();
           const rootStyle = getComputedStyle(root);
           const rootBox = root.getBoundingClientRect();
           const scale = rootBox.width / (Number.parseFloat(rootStyle.width) || root.offsetWidth);
@@ -713,6 +852,14 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
               measure.contentEditable = "false";
               measure.append(row);
               let height = 0;
+              const noteKey = JSON.stringify([
+                note.body,
+                note.number,
+                rootStyle.font,
+                rootStyle.width,
+                state.dimensions,
+              ]);
+              const cachedHeight = noteHeights.get(noteKey);
               // Measure beside the editor, never insert temporary children into
               // ProseMirror's source-owned content DOM.
               const host = document.createElement("div");
@@ -729,9 +876,13 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
                 font: rootStyle.font,
               });
               host.append(measure);
-              root.parentElement?.append(host);
+              if (cachedHeight === undefined) root.parentElement?.append(host);
               try {
-                height = measure.getBoundingClientRect().height / scale;
+                height = cachedHeight ?? measure.getBoundingClientRect().height / scale;
+                if (cachedHeight === undefined) {
+                  if (noteHeights.size >= 256) noteHeights.clear();
+                  noteHeights.set(noteKey, height);
+                }
               } finally {
                 host.remove();
               }
@@ -743,6 +894,7 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
               return { position, row, height, unitIndex, body: note.body, number: note.number };
             },
           );
+          if (!(await yieldLayout())) return;
           const plan = planLatexVisualPagination(units, state.dimensions);
           const notesByPage = new Map<number, typeof notes>();
           for (const note of notes) {
@@ -792,7 +944,29 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
               : [];
           });
           delete root.dataset.latexMeasuring;
+          const paragraphHeights: { position: number; size: number; height: number }[] = [];
+          view.state.doc.descendants((node, position) => {
+            if (node.type.name !== "paragraph") return !node.isAtom;
+            const cached = lineCache.get(node);
+            if (!cached) return false;
+            paragraphHeights.push({
+              position,
+              size: node.nodeSize,
+              height:
+                cached.height +
+                gaps.reduce(
+                  (sum, gap) =>
+                    sum +
+                    (gap.position > position && gap.position < position + node.nodeSize
+                      ? gap.height
+                      : 0),
+                  0,
+                ),
+            });
+            return false;
+          });
           const nextSignature = JSON.stringify([
+            paragraphHeights,
             columnBreaks,
             gaps,
             [...objects].map(([position, object]) => [position, object.gaps, object.continuation]),
@@ -814,6 +988,16 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
                   })),
                   decorations: DecorationSet.create(view.state.doc, [
                     ...spacing,
+                    // ProseMirror must own paragraph attributes. Direct style
+                    // writes make its DOM observer reparse embedded math views.
+                    ...paragraphHeights.map(({ position, size, height }) =>
+                      Decoration.node(
+                        position,
+                        position + size,
+                        { style: `--scient-latex-block-height:${height}px` },
+                        { latexReadingHeight: true },
+                      ),
+                    ),
                     ...columnBreaks.map((position) =>
                       Decoration.widget(
                         position,
@@ -912,6 +1096,7 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
             "--scient-latex-document-height",
             `${plan.pageCount * state.dimensions.pageHeight + (plan.pageCount - 1) * state.dimensions.pageGap}px`,
           );
+          root.dataset.latexWindowed = "true";
           onPageCount(plan.pageCount);
           if (pinned && root.isConnected)
             pinned.viewport.scrollTop += view.coordsAtPos(pinned.position).top - pinned.top;
@@ -933,48 +1118,83 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
           delete root.dataset.latexColumnMeasuring;
           delete root.dataset.latexMeasuring;
           measuring = false;
+          if (requested && !disposed) schedule();
         }
       };
       const schedule = () => {
+        if (measuring) {
+          requested = true;
+          return;
+        }
         if (disposed || cancelPagination) return;
         clearTimeout(settle);
         const delay = Math.max(0, 220 - (performance.now() - lastInput));
         if (delay > 0) settle = setTimeout(schedule, delay);
         else cancelPagination = afterEditorPaint(paginate);
       };
-      const typing = () => {
+      // Formula previews, fonts and image sizes settle in bursts. Measure once
+      // after a quiet interval, with a bounded wait, rather than after every
+      // DOM batch. Typing still owns the longer 220 ms quiet interval above.
+      const layoutChanged = (event?: Event) => {
+        generation++;
+        if (event?.target instanceof Element) markDirty(event.target);
+        if (!disposed) layoutTask.schedule(schedule);
+      };
+      const typing = (event: Event) => {
+        if (event.target instanceof Element) markDirty(event.target);
         lastInput = performance.now();
         cancelPagination?.();
         cancelPagination = null;
-        schedule();
+        layoutChanged();
       };
       const fontsChanged = () => {
-        lineCache = new WeakMap();
-        spacingCache = new WeakMap();
-        schedule();
+        invalidate();
+        layoutChanged();
       };
       const compositionStart = () => {
+        generation++;
         composing = true;
       };
       const compositionEnd = () => {
         composing = false;
         schedule();
       };
-      const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+      const resize =
+        typeof ResizeObserver === "undefined"
+          ? null
+          : new ResizeObserver((entries) => {
+              for (const entry of entries) markDirty(entry.target);
+              layoutChanged();
+            });
+      const observed = new Set<Element>();
       const observe = () => {
-        resize?.disconnect();
-        resize?.observe(root);
+        const next = new Set<Element>([root]);
         for (const child of root.children) {
           if (
             !child.classList.contains("scient-latex-pagination-gap") &&
             !child.classList.contains("scient-latex-page-footnotes")
           )
-            resize?.observe(child);
+            next.add(child);
+        }
+        // Re-observing every child emits a fresh resize entry for every block,
+        // even when typing only changed one paragraph. Retain existing targets.
+        for (const element of observed) {
+          if (next.has(element)) continue;
+          resize?.unobserve(element);
+          observed.delete(element);
+        }
+        for (const element of next) {
+          if (observed.has(element)) continue;
+          resize?.observe(element);
+          observed.add(element);
         }
       };
       observe();
-      root.addEventListener("load", schedule, true);
+      root.addEventListener("load", layoutChanged, true);
+      root.addEventListener("scient-latex-math-preview", layoutChanged);
+      root.addEventListener("scient-latex-math-mounted", layoutChanged);
       root.addEventListener("beforeinput", typing, true);
+      root.addEventListener("input", layoutChanged, true);
       root.addEventListener("compositionstart", compositionStart, true);
       root.addEventListener("compositionend", compositionEnd, true);
       document.fonts?.addEventListener("loadingdone", fontsChanged);
@@ -985,24 +1205,38 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
           const before = latexPaginationKey.getState(previous);
           const after = latexPaginationKey.getState(view.state);
           if (previous.doc !== view.state.doc) {
+            generation++;
             refreshObservedBlocks = true;
-            if (latexReferenceLayoutChanged(previous, view.state)) lineCache = new WeakMap();
+            const beforeNodes = new Set(previous.doc.content.content);
+            view.state.doc.forEach((node, position) => {
+              if (beforeNodes.has(node)) return;
+              const element = view.nodeDOM(position);
+              if (element instanceof Element) markDirty(element);
+            });
+            if (latexReferenceLayoutChanged(previous, view.state)) invalidate();
             schedule();
           } else if (
             before?.revision !== after?.revision ||
             latexReferenceLayoutChanged(previous, view.state)
           ) {
-            lineCache = new WeakMap();
+            generation++;
+            invalidate();
             schedule();
           }
         },
         destroy() {
           disposed = true;
+          delete root.dataset.latexWindowed;
+          cancelYield?.();
+          layoutTask.cancel();
           cancelPagination?.();
           clearTimeout(settle);
           resize?.disconnect();
-          root.removeEventListener("load", schedule, true);
+          root.removeEventListener("load", layoutChanged, true);
+          root.removeEventListener("scient-latex-math-preview", layoutChanged);
+          root.removeEventListener("scient-latex-math-mounted", layoutChanged);
           root.removeEventListener("beforeinput", typing, true);
+          root.removeEventListener("input", layoutChanged, true);
           root.removeEventListener("compositionstart", compositionStart, true);
           root.removeEventListener("compositionend", compositionEnd, true);
           document.fonts?.removeEventListener("loadingdone", fontsChanged);

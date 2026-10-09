@@ -24,7 +24,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 const VALID_WORKSPACE_MODES = new Set(["local", "new-worktree"]);
 const VALID_STATUSES = new Set(["pending", "provisioning", "failed", "abandoned", "ready"]);

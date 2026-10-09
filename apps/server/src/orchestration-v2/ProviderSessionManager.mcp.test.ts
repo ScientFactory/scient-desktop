@@ -1,12 +1,18 @@
 import { assert, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import {
   ExclusiveCapabilities,
@@ -83,6 +89,11 @@ it.effect(
 it.effect("ProviderSessionManagerV2 revokes MCP credentials when release persistence fails", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
+    const releaseWriteFailure = {
+      failing: yield* Ref.make(true),
+      attempted: yield* Deferred.make<void>(),
+      persisted: yield* Deferred.make<void>(),
+    };
     const mcpConfigs = yield* Ref.make<
       ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
     >([]);
@@ -113,8 +124,41 @@ it.effect("ProviderSessionManagerV2 revokes MCP credentials when release persist
       assert.isDefined(token);
       assert.isDefined(yield* registry.resolve(token!));
 
-      const closeError = yield* manager.close(providerSessionId).pipe(Effect.flip);
+      const closeStartedAt = yield* Clock.currentTimeMillis;
+      const closing = yield* manager.close(providerSessionId).pipe(Effect.flip, Effect.forkChild);
+      // Observe a real terminal write failing after physical cleanup and
+      // credential retirement, before advancing the public close's native bound.
+      yield* Deferred.await(releaseWriteFailure.attempted);
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+      assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+      assert.isUndefined(yield* registry.resolve(token!));
+      assert.isUndefined(closing.pollUnsafe());
+      yield* TestClock.adjust("30 seconds");
+      const closeError = yield* Fiber.join(closing);
       assert.equal(closeError._tag, "ProviderSessionCloseError");
+      assert.equal((yield* Clock.currentTimeMillis) - closeStartedAt, 30_000);
+      assert.equal(
+        Option.getOrUndefined(yield* manager.getCloseState!(providerSessionId))?.state,
+        "pending",
+      );
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+
+      // Public timeout does not discard the exact retained close. Restore the
+      // real EventSink and advance at most the native capped retry interval.
+      yield* Ref.set(releaseWriteFailure.failing, false);
+      const recovered = yield* manager.close(providerSessionId).pipe(Effect.forkChild);
+      yield* TestClock.adjust("30 seconds");
+      yield* Deferred.await(releaseWriteFailure.persisted);
+      yield* Fiber.join(recovered);
+      assert.isTrue(Option.isNone(yield* manager.getCloseState!(providerSessionId)));
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const projection = yield* projections.getThreadProjection(threadId);
+      assert.equal(
+        projection.providerSessions.find((session) => session.id === providerSessionId)?.status,
+        "stopped",
+      );
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+      assert.equal((yield* Ref.get(state)).openCount, 1);
       assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
       assert.isUndefined(yield* registry.resolve(token!));
     });
@@ -125,7 +169,7 @@ it.effect("ProviderSessionManagerV2 revokes MCP credentials when release persist
           state,
           idleTimeoutMs: 1_000,
           mcpConfigs,
-          failReleaseEventWrites: true,
+          releaseWriteFailure,
         }),
       ),
     );
@@ -186,7 +230,7 @@ it.effect("ProviderSessionManagerV2 duplicate detach preserves replacement MCP c
         McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId,
         replacement?.providerSessionId,
       );
-      assert.equal((yield* registry.resolve(replacementToken!))?.threadId, threadId);
+      assert.equal((yield* registry.resolve(replacementToken!))?.thread.threadId, threadId);
     });
 
     yield* effect.pipe(
@@ -262,7 +306,7 @@ it.effect(
           McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId,
           replacement?.providerSessionId,
         );
-        assert.equal((yield* registry.resolve(replacementToken!))?.threadId, threadId);
+        assert.equal((yield* registry.resolve(replacementToken!))?.thread.threadId, threadId);
       });
 
       yield* effect.pipe(
@@ -318,7 +362,7 @@ it.effect(
         // process's MCP client keeps using the credential it was started with.
         yield* manager.detach({ providerSessionId, threadId, detail: "Workspace changed." });
         assert.equal(
-          (yield* registry.resolve(originalToken!))?.threadId,
+          (yield* registry.resolve(originalToken!))?.thread.threadId,
           threadId,
           "detach must not revoke the credential the live provider process still holds",
         );
@@ -337,7 +381,7 @@ it.effect(
           original?.providerSessionId,
           "re-attach must reuse the existing credential, not rotate it",
         );
-        assert.equal((yield* registry.resolve(originalToken!))?.threadId, threadId);
+        assert.equal((yield* registry.resolve(originalToken!))?.thread.threadId, threadId);
 
         // Releasing the session (provider process gone) still revokes.
         yield* manager.close(providerSessionId);
@@ -461,7 +505,7 @@ it.effect(
           "the credential the adapter was configured with must remain current",
         );
         assert.equal(
-          (yield* registry.resolve(originalToken!))?.threadId,
+          (yield* registry.resolve(originalToken!))?.thread.threadId,
           threadId,
           "the predecessor release must not revoke a credential reserved by an in-flight open",
         );

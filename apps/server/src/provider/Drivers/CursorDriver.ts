@@ -15,9 +15,9 @@ import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import { readCursorUsageLimits } from "../Layers/cursorUsageLimits.ts";
+import { HttpClient } from "effect/http";
+import { readCursorUsageLimits } from "../cursorUsageLimits.ts";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
@@ -36,8 +36,8 @@ import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
   makeCursorCommandCatalog,
-} from "../Layers/CursorProvider.ts";
-import * as CursorSdkCatalog from "../Layers/CursorSdkCatalog.ts";
+} from "../CursorProvider.ts";
+import * as CursorSdkCatalog from "../CursorSdkCatalog.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -276,7 +276,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.map(stampSnapshot),
-        Effect.provide(CursorSdkCatalog.CursorSdkCatalogLive),
+        Effect.provide(CursorSdkCatalog.layer),
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);

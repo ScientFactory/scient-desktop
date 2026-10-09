@@ -6,7 +6,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Stdio from "effect/Stdio";
-import * as RpcServer from "effect/unstable/rpc/RpcServer";
+import * as RpcServer from "effect/rpc/RpcServer";
 import { CompatAgentRpcs } from "effect-acp/rpc";
 import * as AcpProtocol from "effect-acp/protocol";
 import type * as AcpCompat from "effect-acp/compat";

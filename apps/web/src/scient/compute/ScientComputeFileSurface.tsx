@@ -1,4 +1,6 @@
-import type { EditorSelection, FileOptions, SelectedLineRange } from "@pierre/diffs/react";
+import type { FilePostRender } from "~/scient/fileSurfaces/StaticTextFileSurface";
+import type { EditorSelection } from "@pierre/diffs/edit";
+import type { SelectedLineRange } from "@pierre/diffs/react";
 import type {
   ComputeExecutionId,
   ComputeSessionId,
@@ -61,8 +63,6 @@ import {
   type ComputeFileResultsView,
   type ComputeFileView,
 } from "./computeFileSurfaceModel";
-
-type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
 
 const SEGMENT_BUTTON_CLASS =
   "flex h-5.5 cursor-pointer items-center justify-center rounded-[5px] text-[11px] leading-[18px] text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset";

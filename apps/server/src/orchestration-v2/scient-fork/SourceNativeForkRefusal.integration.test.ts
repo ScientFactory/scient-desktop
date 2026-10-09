@@ -18,7 +18,7 @@ import * as Schema from "effect/Schema";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import {
   CodexOrchestratorReplayHarness,
-  makeCodexProviderAdapterRegistryReplayLayer,
+  layer as makeCodexProviderAdapterRegistryReplayLayer,
 } from "../Adapters/CodexAdapterV2.testkit.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import {
@@ -29,7 +29,7 @@ import {
 } from "../ContextHandoffBudget.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
 import {
   materializeReplayTranscriptWorkspace,

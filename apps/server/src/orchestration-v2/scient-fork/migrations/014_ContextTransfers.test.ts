@@ -1,9 +1,9 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../../persistence/Sqlite.ts";
 import Migration014 from "./014_ContextTransfers.ts";
 
 const NOW = "2026-09-26T12:00:00.000Z";

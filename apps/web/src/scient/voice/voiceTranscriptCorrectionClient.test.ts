@@ -1,5 +1,5 @@
 import { EnvironmentId, ProviderDriverKind } from "@t3tools/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -15,7 +15,7 @@ describe("correctVoiceTranscript", () => {
     const correct = vi.fn<VoiceTranscriptCorrectionClient["correct"]>();
     const result = await correctVoiceTranscript({
       enabled: false,
-      client: { correct },
+      correctionClient: { correct },
       environmentId,
       transcript: "helo",
       signal: new AbortController().signal,
@@ -28,7 +28,7 @@ describe("correctVoiceTranscript", () => {
   it("returns a successful provider correction", async () => {
     const result = await correctVoiceTranscript({
       enabled: true,
-      client: {
+      correctionClient: {
         correct: async () => ({
           text: "Hello.",
           provider: ProviderDriverKind.make("codex"),
@@ -49,7 +49,7 @@ describe("correctVoiceTranscript", () => {
   it("falls back to the exact local transcript on every provider failure", async () => {
     const result = await correctVoiceTranscript({
       enabled: true,
-      client: { correct: async () => Promise.reject(new Error("offline")) },
+      correctionClient: { correct: async () => Promise.reject(new Error("offline")) },
       environmentId,
       transcript: "keep  this raw",
       signal: new AbortController().signal,

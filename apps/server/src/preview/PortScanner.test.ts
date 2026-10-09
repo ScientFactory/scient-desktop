@@ -19,7 +19,7 @@ import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import { expect } from "vite-plus/test";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import * as OwnedLocalEndpoints from "../localEndpoints/OwnedLocalEndpointRegistry.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -39,12 +39,12 @@ const processProbeFailure: ProcessRunner.ProcessRunner["Service"]["run"] = (inpu
     }),
   );
 
-const TestProcessRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+const layerTestProcessRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
   run: processProbeFailure,
 });
 const TestOwnedLocalEndpointsLive = OwnedLocalEndpoints.layer;
 
-const makeProbeFailureLayer = (
+const layerProbeFailure = (
   run: ProcessRunner.ProcessRunner["Service"]["run"],
   fetch: typeof globalThis.fetch = globalThis.fetch,
 ) =>
@@ -59,10 +59,10 @@ const makeProbeFailureLayer = (
     ),
   );
 
-const TestPortDiscoveryLive = PortScanner.layer.pipe(
+const layerTestPortDiscovery = PortScanner.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
-      TestProcessRunner,
+      layerTestProcessRunner,
       Layer.succeed(HostProcessPlatform, "win32"),
       FetchHttpClient.layer,
       TestOwnedLocalEndpointsLive,
@@ -223,7 +223,7 @@ const commonDevServer = Effect.acquireRelease(
   ({ server }) => closeServer(server),
 );
 
-effectIt.layer(TestPortDiscoveryLive)("Explicit Preview URLs without listener metadata", (it) => {
+effectIt.layer(layerTestPortDiscovery)("Explicit Preview URLs without listener metadata", (it) => {
   it.effect("checks an explicitly configured real web server", () =>
     Effect.gen(function* () {
       const { port } = yield* commonDevServer;
@@ -420,7 +420,7 @@ effectIt.effect("probes configured custom ports through a canonical loopback hos
     requests.push(String(input));
     return Promise.resolve(new Response("docs", { headers: { "content-type": "text/html" } }));
   }) as typeof globalThis.fetch;
-  const layer = makeProbeFailureLayer(processProbeFailure, fetchFn);
+  const layer = layerProbeFailure(processProbeFailure, fetchFn);
 
   return Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
@@ -445,7 +445,7 @@ effectIt.effect("preserves explicit loopback hosts and bounds wildcard rewrites"
     requests.push(String(input));
     return Promise.resolve(new Response("docs", { headers: { "content-type": "text/html" } }));
   }) as typeof globalThis.fetch;
-  const layer = makeProbeFailureLayer(processProbeFailure, fetchFn);
+  const layer = layerProbeFailure(processProbeFailure, fetchFn);
 
   return Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
@@ -562,7 +562,7 @@ effectIt.effect("writes no poll span while no client retains the scanner", () =>
       return new Tracer.NativeSpan(options);
     },
   });
-  const layer = makeProbeFailureLayer(processProbeFailure);
+  const layer = layerProbeFailure(processProbeFailure);
 
   return Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
@@ -767,7 +767,7 @@ effectIt.effect("aborts the declared-protocol probe when it times out", () => {
 effectIt.effect("does not swallow process probe defects", () =>
   Effect.gen(function* () {
     const defect = new Error("unexpected process probe defect");
-    const layer = makeProbeFailureLayer(() => Effect.die(defect));
+    const layer = layerProbeFailure(() => Effect.die(defect));
 
     const exit = yield* Effect.flatMap(PortScanner.PortDiscovery, (scanner) =>
       scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`]),
@@ -783,7 +783,7 @@ effectIt.effect("does not swallow process probe defects", () =>
 
 effectIt.effect("does not swallow process probe interruption", () =>
   Effect.gen(function* () {
-    const layer = makeProbeFailureLayer(() => Effect.interrupt);
+    const layer = layerProbeFailure(() => Effect.interrupt);
 
     const exit = yield* Effect.flatMap(PortScanner.PortDiscovery, (scanner) =>
       scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`]),

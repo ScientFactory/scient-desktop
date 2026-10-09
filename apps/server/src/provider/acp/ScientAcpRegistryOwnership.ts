@@ -52,7 +52,7 @@ export interface AcpRegistryOwnershipInput {
     agentId: string,
     distribution: "npx" | "uvx",
     managerPath: string,
-  ) => string;
+  ) => Effect.Effect<string>;
   readonly readPackageReceipt: (
     agent: AcpRegistryAgent,
     distribution: "npx" | "uvx",
@@ -180,7 +180,11 @@ export function makeAcpRegistryOwnership(catalog: AcpRegistryOwnershipInput) {
             : path.join(installRoot, "bin");
         if (
           receiptPath !==
-            packageReceiptPath(receipt.agentId, receipt.distribution, receipt.managerPath) ||
+            (yield* packageReceiptPath(
+              receipt.agentId,
+              receipt.distribution,
+              receipt.managerPath,
+            )) ||
           receipt.binDirectory !== expectedBin ||
           path.dirname(receipt.executablePath) !== expectedBin
         )

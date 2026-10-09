@@ -4,7 +4,7 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useProjectFileQuery } from "~/components/files/projectFilesQueryState";
 import { documentFailureReason } from "~/scient/markdownEditor/persistence/documentFailureReason";
 import { onDocumentSaved } from "~/scient/markdownEditor/persistence/documentPublication";

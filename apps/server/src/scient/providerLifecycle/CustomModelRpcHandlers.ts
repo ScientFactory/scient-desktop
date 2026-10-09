@@ -25,7 +25,7 @@ import { customModelProviderId } from "../../customModels.ts";
 import { droidCustomModelId } from "../../provider/droid/DroidCustomModels.ts";
 import { encodeOmpModelSlug } from "../../provider/omp/OmpModel.ts";
 import { encodePiModelSlug } from "../../provider/pi/PiModel.ts";
-import type * as ProviderInstanceRegistry from "../../provider/Services/ProviderInstanceRegistry.ts";
+import type * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import type * as ServerSettings from "../../serverSettings.ts";
 import { droidToolGuardTestRefusal } from "../../textGeneration/DroidTextGeneration.ts";
 import type { ScientRpcHandlerSubset, ScientRpcObservers } from "../ScientRpcObservers.ts";
@@ -143,9 +143,10 @@ export const makeCustomModelRpcHandlers = ({
             });
           return { revision: input.revision };
         }).pipe(
-          Effect.catchTag("ServerSettingsError", () =>
-            Effect.fail(new CustomModelError({ message: "Could not read custom models." })),
-          ),
+          Effect.catchTags({
+            ServerSettingsError: () =>
+              Effect.fail(new CustomModelError({ message: "Could not read custom models." })),
+          }),
         ),
         { "rpc.aggregate": "server" },
       ),

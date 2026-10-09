@@ -125,7 +125,6 @@ it.layer(NodeServices.layer)("provider voice transcript correction", (it) => {
     Effect.gen(function* () {
       const mock = makeExecutable(
         "agy",
-        // @effect-diagnostics-next-line preferSchemaOverJson:off -- Quote trusted local paths in generated fixture source.
         `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(agyMockPath)} "$@"\n`,
       );
       yield* Effect.addFinalizer(() => removeExecutable(mock.directory));

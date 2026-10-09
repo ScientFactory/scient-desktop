@@ -131,6 +131,27 @@ describe("describeVoiceError", () => {
     expect(shown).not.toContain("file://");
   });
 
+  it.each([
+    {
+      safeMessage:
+        "  VoiceTranscriptionError: Voice messages must be between 1 ms and 180 seconds.",
+    },
+    new Error(
+      "Error invoking remote method 'voice.transcribe': Error: VoiceTranscriptionError: Voice messages must be between 1 ms and 180 seconds.",
+    ),
+  ])("compacts duration validation errors and removes nested transport names", (error) => {
+    expect(describeVoiceError(error)).toBe("Record speech, up to 3 minutes.");
+  });
+
+  it("sanitizes safe messages as well as ordinary Error messages", () => {
+    expect(
+      describeVoiceError({
+        safeMessage:
+          "Error: VoiceTranscriptionError: Model is warming up\n    at file:///secret.ts:1",
+      }),
+    ).toBe("Model is warming up");
+  });
+
   it("falls back to a non-empty generic line for opaque non-errors", () => {
     expect(describeVoiceError(null).length).toBeGreaterThan(0);
     expect(describeVoiceError({}).length).toBeGreaterThan(0);

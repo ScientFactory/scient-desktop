@@ -35,7 +35,7 @@ import {
   type WorkspaceBindingDiagnosticResolution,
 } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
-import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
 import { buildScientLatexForInvocation } from "./latexHandler.ts";
 
 const fixtures: string[] = [];
@@ -328,9 +328,9 @@ function makeBroker(failPresentation = false) {
       ? Effect.fail({ _tag: "PreviewAutomationNoAvailableHostError" } as never)
       : Effect.succeed({}),
   );
-  const broker = PreviewAutomationBroker.PreviewAutomationBroker.of({
+  const broker = DocumentHostBroker.DocumentHostBroker.of({
     invoke,
-  } as unknown as PreviewAutomationBroker.PreviewAutomationBroker["Service"]);
+  } as unknown as DocumentHostBroker.DocumentHostBroker["Service"]);
   return { broker, invoke };
 }
 
@@ -342,7 +342,7 @@ function runBuild(
     readonly resolver?: WorkspaceBindingResolver["Service"];
     readonly builds: LatexBuildService.LatexBuildService["Service"];
     readonly store: GeneratedDocumentStore["Service"];
-    readonly broker: PreviewAutomationBroker.PreviewAutomationBroker["Service"];
+    readonly broker: DocumentHostBroker.DocumentHostBroker["Service"];
   },
 ) {
   return effect.pipe(
@@ -353,7 +353,7 @@ function runBuild(
     ),
     Effect.provideService(LatexBuildService.LatexBuildService, input.builds),
     Effect.provideService(GeneratedDocumentStore, input.store),
-    Effect.provideService(PreviewAutomationBroker.PreviewAutomationBroker, input.broker),
+    Effect.provideService(DocumentHostBroker.DocumentHostBroker, input.broker),
     Effect.provide(NodeServices.layer),
   );
 }

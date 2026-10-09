@@ -18,8 +18,8 @@ import * as NodePath from "node:path";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import * as SqlClient from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../../persistence/Migrations.ts";
@@ -67,7 +67,7 @@ const QuarantinePayloadEvidence = Schema.fromJsonString(
 const decodeQuarantinePayload = Schema.decodeSync(QuarantinePayloadEvidence);
 
 const SCIENT_MIGRATION_IDS = [
-  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
 ];
 const SCIENT_MIGRATION_NAMES = [
   "durable-thread-forks",
@@ -90,6 +90,7 @@ const SCIENT_MIGRATION_NAMES = [
   "import-context-transfers",
   "workspace-authority-cutover",
   "legacy-history-repair-generation",
+  "fork-checkpoint-ownership",
 ];
 const SCIENT_MIGRATIONS_AFTER_BOOTSTRAP = SCIENT_MIGRATION_IDS.slice(2);
 
@@ -131,6 +132,7 @@ const removePostMigrationThreeAnalysisSchema = (sql: SqlClient.SqlClient) =>
   Effect.gen(function* () {
     yield* sql`DROP TABLE IF EXISTS scient_thread_queue`;
     yield* sql`DROP TABLE IF EXISTS scient_queue_receipts`;
+    yield* sql`DROP TABLE IF EXISTS scient_fork_checkpoint_ownership`;
     yield* sql`DROP TABLE IF EXISTS scient_queue_finalization`;
     yield* sql`DROP TABLE IF EXISTS scient_analysis_run_index_state`;
     yield* sql`DROP TABLE IF EXISTS scient_analysis_run_index`;
@@ -636,6 +638,7 @@ it.effect("only unapplied migrations run in ascending order", () =>
           [18, "import-context-transfers"],
           [19, "workspace-authority-cutover"],
           [20, "legacy-history-repair-generation"],
+          [21, "fork-checkpoint-ownership"],
         ] as const,
       );
 
@@ -862,6 +865,7 @@ it.effect("migration 4 repairs databases that already recorded migration 3", () 
       // Reproduce the released development state: migration 3 is recorded,
       // but its later quarantine implementation never ran for this database.
       yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id >= 4`;
+      yield* sql`DROP TABLE IF EXISTS scient_fork_checkpoint_ownership`;
       yield* removePostMigrationThreeAnalysisSchema(sql);
       yield* sql`DROP TABLE scient_thread_lineage_quarantine`;
       yield* sql`
@@ -909,6 +913,7 @@ it.effect("migration 4 upgrades the legacy quarantine without losing evidence", 
       const sql = yield* SqlClient.SqlClient;
       yield* runScientMigrations(sql);
       yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id >= 4`;
+      yield* sql`DROP TABLE IF EXISTS scient_fork_checkpoint_ownership`;
       yield* removePostMigrationThreeAnalysisSchema(sql);
       yield* sql`DROP TABLE scient_thread_lineage_quarantine`;
       yield* sql`
@@ -958,6 +963,7 @@ it.effect("migration 4 quarantines decoder-invalid rows by rowid", () =>
       const sql = yield* SqlClient.SqlClient;
       yield* runScientMigrations(sql);
       yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id >= 4`;
+      yield* sql`DROP TABLE IF EXISTS scient_fork_checkpoint_ownership`;
       yield* removePostMigrationThreeAnalysisSchema(sql);
 
       yield* sql`
@@ -2062,6 +2068,7 @@ it.effect("migration 9 converges a development database that already recorded mi
         [18, "import-context-transfers"],
         [19, "workspace-authority-cutover"],
         [20, "legacy-history-repair-generation"],
+        [21, "fork-checkpoint-ownership"],
       ]);
       const columns = yield* sql<{
         readonly name: string;
@@ -2090,6 +2097,7 @@ it.effect("reconciles only the exact former import-17 ledger without losing rece
           '2026-09-28T00:00:00Z', '2026-09-28T00:00:00Z')
       `;
       yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id >= 18`;
+      yield* sql`DROP TABLE IF EXISTS scient_fork_checkpoint_ownership`;
       yield* sql`
         UPDATE scient_schema_migrations
         SET name = 'import-context-transfers', created_at = '2026-09-28T01:02:03Z'
@@ -2099,6 +2107,7 @@ it.effect("reconciles only the exact former import-17 ledger without losing rece
       assert.deepStrictEqual(yield* runScientMigrations(sql), [
         [19, "workspace-authority-cutover"],
         [20, "legacy-history-repair-generation"],
+        [21, "fork-checkpoint-ownership"],
       ]);
       const ledger = yield* sql<{
         readonly migration_id: number;
@@ -2137,6 +2146,7 @@ it.effect("does not reconcile a former import-17 row with a mismatched prefix", 
       const sql = yield* SqlClient.SqlClient;
       yield* runScientMigrations(sql);
       yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id >= 18`;
+      yield* sql`DROP TABLE IF EXISTS scient_fork_checkpoint_ownership`;
       yield* sql`UPDATE scient_schema_migrations SET name = 'import-context-transfers' WHERE migration_id = 17`;
       yield* sql`UPDATE scient_schema_migrations SET name = 'unknown-migration' WHERE migration_id = 16`;
 
@@ -2163,6 +2173,7 @@ it.effect("rolls back former import-17 reconciliation if fork migration 17 canno
       const sql = yield* SqlClient.SqlClient;
       yield* runScientMigrations(sql);
       yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id >= 18`;
+      yield* sql`DROP TABLE IF EXISTS scient_fork_checkpoint_ownership`;
       yield* sql`UPDATE scient_schema_migrations SET name = 'import-context-transfers' WHERE migration_id = 17`;
       yield* sql`DROP TABLE scient_context_handoffs`;
 
@@ -2207,7 +2218,8 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (18, 'import-context-transfers')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (19, 'workspace-authority-cutover')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (20, 'legacy-history-repair-generation')`;
-      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (21, 'future-migration')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (21, 'fork-checkpoint-ownership')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (22, 'future-migration')`;
 
       const error = yield* Effect.flip(runScientMigrations(sql));
       if (error._tag !== "ScientMigrationError") {
@@ -2215,7 +2227,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       } else {
         assert.strictEqual(error.kind, "BadState");
         assert.isTrue(
-          error.message.includes("unknown migration 21"),
+          error.message.includes("unknown migration 22"),
           `Unexpected message: ${error.message}`,
         );
       }
@@ -2226,7 +2238,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       `;
       assert.deepStrictEqual(
         ledger.map((row) => row.migration_id),
-        [...SCIENT_MIGRATION_IDS, 21],
+        [...SCIENT_MIGRATION_IDS, 22],
       );
     }),
   ),

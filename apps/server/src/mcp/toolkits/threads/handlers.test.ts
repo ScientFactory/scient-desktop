@@ -13,7 +13,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { SqlitePersistenceMemory } from "../../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../../persistence/Sqlite.ts";
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 import { LegacyV1ThreadImporter } from "../../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";

@@ -1,5 +1,3 @@
-import * as NodeCrypto from "node:crypto";
-
 import { describe, expect, it } from "vite-plus/test";
 
 import { inspectAntigravityAcpArtifact } from "./antigravity-acp-artifact.ts";
@@ -18,7 +16,7 @@ describe("Antigravity ACP artifact inspection", () => {
         "localharness_external",
       ),
     ).resolves.toEqual({
-      digest: NodeCrypto.createHash("sha256").update(completeArchive).digest("hex"),
+      digest: "0db06b432bfa0fea3064959c56f6a37d7ad7b1ca05e92307abad25cb33f82b08",
       size: completeArchive.byteLength,
       executableBytes: 20,
       harnessBytes: 14,

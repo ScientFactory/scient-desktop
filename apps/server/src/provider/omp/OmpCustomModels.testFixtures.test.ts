@@ -111,23 +111,29 @@ describe("custom model live qualification outcomes", () => {
     }),
   );
 
-  for (const [type, payload] of [
-    ["turn.completed", { state: "failed" }],
-    ["turn.aborted", { reason: "cancelled" }],
-    ["session.exited", { reason: "stopped" }],
-  ] as const) {
-    it.effect(`rejects ${type} ${JSON.stringify(payload)} despite the requested text`, () =>
-      Effect.gen(function* () {
-        const completed = yield* watchAdapterTextTurn(
-          Stream.concat(
-            Stream.make(textDelta("CUSTOM_ADAPTER_OK"), runtimeEvent(type, payload)),
-            Stream.never,
-          ),
-        );
-        expect(yield* completed.pipe(Effect.flip)).toBeInstanceOf(Error);
-      }),
-    );
-  }
+  it.effect.each(
+    (
+      [
+        ["turn.completed", { state: "failed" }],
+        ["turn.aborted", { reason: "cancelled" }],
+        ["session.exited", { reason: "stopped" }],
+      ] as const
+    ).map(([type, payload]) => ({
+      caseTitle: `rejects ${type} ${JSON.stringify(payload)} despite the requested text`,
+      type,
+      payload,
+    })),
+  )("$caseTitle", ({ type, payload }) =>
+    Effect.gen(function* () {
+      const completed = yield* watchAdapterTextTurn(
+        Stream.concat(
+          Stream.make(textDelta("CUSTOM_ADAPTER_OK"), runtimeEvent(type, payload)),
+          Stream.never,
+        ),
+      );
+      expect(yield* completed.pipe(Effect.flip)).toBeInstanceOf(Error);
+    }),
+  );
 
   it.effect("fails if the native stream closes before any terminal outcome", () =>
     Effect.gen(function* () {

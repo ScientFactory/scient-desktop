@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The Promise RPC fixture assigns isolated random names outside the Effect runtime.
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";

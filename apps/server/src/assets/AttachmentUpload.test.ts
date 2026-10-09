@@ -24,7 +24,7 @@ import {
   validateAttachmentUploadToken,
 } from "./AttachmentUpload.ts";
 
-const testLayer = ServerSecretStore.layer.pipe(
+const layerTest = ServerSecretStore.layer.pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-attachment-upload-" })),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -62,7 +62,7 @@ describe("AttachmentUpload", () => {
         mimeType: "image/png",
         sizeBytes: 6,
       });
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("rejects tampered and malformed upload tokens", () =>
@@ -74,7 +74,7 @@ describe("AttachmentUpload", () => {
       expect(yield* validateAttachmentUploadToken(`${payload}x.${signature}`)).toBeNull();
       expect(yield* validateAttachmentUploadToken(`${token}.extra`)).toBeNull();
       expect(yield* validateAttachmentUploadToken("garbage")).toBeNull();
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("accepts unexpired image upload tokens issued before file support", () =>
@@ -99,7 +99,7 @@ describe("AttachmentUpload", () => {
         type: "image",
         attachmentId: issued.attachmentId,
       });
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("rejects expired upload tokens", () =>
@@ -109,7 +109,7 @@ describe("AttachmentUpload", () => {
 
       yield* TestClock.adjust("11 minutes");
       expect(yield* validateAttachmentUploadToken(token)).toBeNull();
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("removes expired pending uploads while issuing a new upload URL", () =>
@@ -124,7 +124,7 @@ describe("AttachmentUpload", () => {
       yield* issueAttachmentUploadUrl(uploadInput);
 
       expect(NodeFS.existsSync(stalePath)).toBe(false);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("stores the expected bytes without leaving temporary files", () =>
@@ -148,50 +148,53 @@ describe("AttachmentUpload", () => {
       expect(
         NodeFS.readdirSync(config.attachmentsDir).filter((entry) => entry.endsWith(".part")),
       ).toEqual([]);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
-  for (const fixture of [
-    { name: "report.PDF", mimeType: "application/pdf", extension: "pdf" },
-    { name: "page.html", mimeType: "text/html", extension: "html" },
-    { name: "diagram.svg", mimeType: "image/svg+xml", extension: "svg" },
-    { name: "program.exe", mimeType: "application/octet-stream", extension: "exe" },
-    { name: "README", mimeType: "application/octet-stream", extension: "bin" },
-    { name: "archive.part", mimeType: "application/octet-stream", extension: "bin" },
-  ]) {
-    it.effect(`streams generic ${fixture.name} without a format allowlist`, () =>
-      Effect.gen(function* () {
-        const config = yield* ServerConfig.ServerConfig;
-        const issued = yield* issueAttachmentUploadUrl({
-          type: "file",
-          name: fixture.name,
-          mimeType: fixture.mimeType,
-          sizeBytes: 6,
-        });
-        const token = issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length);
-        const claims = yield* validateAttachmentUploadToken(token);
-        if (!claims) {
-          throw new Error("Expected valid upload claims.");
-        }
+  it.effect.each(
+    [
+      { name: "report.PDF", mimeType: "application/pdf", extension: "pdf" },
+      { name: "page.html", mimeType: "text/html", extension: "html" },
+      { name: "diagram.svg", mimeType: "image/svg+xml", extension: "svg" },
+      { name: "program.exe", mimeType: "application/octet-stream", extension: "exe" },
+      { name: "README", mimeType: "application/octet-stream", extension: "bin" },
+      { name: "archive.part", mimeType: "application/octet-stream", extension: "bin" },
+    ].map((fixture) => ({
+      caseTitle: `streams generic ${fixture.name} without a format allowlist`,
+      fixture,
+    })),
+  )("$caseTitle", ({ fixture }) =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const issued = yield* issueAttachmentUploadUrl({
+        type: "file",
+        name: fixture.name,
+        mimeType: fixture.mimeType,
+        sizeBytes: 6,
+      });
+      const token = issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length);
+      const claims = yield* validateAttachmentUploadToken(token);
+      if (!claims) {
+        throw new Error("Expected valid upload claims.");
+      }
 
-        expect(
-          yield* storeAttachmentUpload(
-            claims,
-            Stream.make(new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])),
-          ),
-        ).toEqual({ ok: true });
-        expect(issued.attachmentId.endsWith(`-${fixture.extension}`)).toBe(true);
-        expect(
-          NodeFS.readFileSync(
-            NodePath.join(config.attachmentsDir, `${issued.attachmentId}.${fixture.extension}`),
-          ),
-        ).toEqual(Buffer.from([1, 2, 3, 4, 5, 6]));
+      expect(
+        yield* storeAttachmentUpload(
+          claims,
+          Stream.make(new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])),
+        ),
+      ).toEqual({ ok: true });
+      expect(issued.attachmentId.endsWith(`-${fixture.extension}`)).toBe(true);
+      expect(
+        NodeFS.readFileSync(
+          NodePath.join(config.attachmentsDir, `${issued.attachmentId}.${fixture.extension}`),
+        ),
+      ).toEqual(Buffer.from([1, 2, 3, 4, 5, 6]));
 
-        yield* deletePendingAttachment(issued.attachmentId);
-        expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
-      }).pipe(Effect.provide(testLayer)),
-    );
-  }
+      yield* deletePendingAttachment(issued.attachmentId);
+      expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
+    }).pipe(Effect.provide(layerTest)),
+  );
 
   it.effect("removes partial streamed uploads that exceed their signed size", () =>
     Effect.gen(function* () {
@@ -208,7 +211,7 @@ describe("AttachmentUpload", () => {
         status: 400,
       });
       expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("removes partial streamed uploads when the upload is interrupted", () =>
@@ -238,7 +241,7 @@ describe("AttachmentUpload", () => {
 
       yield* Fiber.interrupt(upload);
       expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("deletes pending uploads without deleting thread-owned copies", () =>
@@ -256,6 +259,6 @@ describe("AttachmentUpload", () => {
 
       expect(NodeFS.existsSync(pendingPath)).toBe(false);
       expect(NodeFS.existsSync(claimedPath)).toBe(true);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 });

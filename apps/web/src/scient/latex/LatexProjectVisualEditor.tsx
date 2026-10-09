@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import {
   useCallback,
   useEffect,
@@ -163,7 +163,9 @@ function ProjectFileSession(props: {
         ? notLive
         : () => {
             const current = lease.getSnapshot();
-            return current.editingBlocked ? null : current.draftSource;
+            return current.editingBlocked || current.error !== null || current.conflict !== null
+              ? null
+              : current.draftSource;
           },
     [lease],
   );
@@ -171,7 +173,15 @@ function ProjectFileSession(props: {
     () =>
       lease === null
         ? refuseWrite
-        : (contents: string) => lease.change(contents, lease.getSnapshot().editVersion),
+        : (contents: string) => {
+            const current = lease.getSnapshot();
+            return (
+              !current.editingBlocked &&
+              current.error === null &&
+              current.conflict === null &&
+              lease.change(contents, current.editVersion)
+            );
+          },
     [lease],
   );
   const unsaved = useMemo(
@@ -294,6 +304,21 @@ export function LatexProjectVisualEditor(props: Props) {
   }, [states, props.relativePath, props.source, props.fileRevision, props.fileTruncated]);
   const root = props.rootRelativePath;
   const document = useMemo(() => (root ? assembleVisualProject(root, files) : null), [root, files]);
+  // A document compiled outside this environment still has its last printed
+  // bibliography. Read that generated file as presentation, never as a session.
+  const bibliography = useProjectFileQuery(
+    props.environmentId,
+    props.cwd,
+    (root ?? props.relativePath).replace(/\.tex$/iu, ".bbl"),
+    root !== null &&
+      props.compiledBibliography == null &&
+      /\\bibliography\b/u.test(document?.source ?? props.source),
+  );
+  const compiledBibliography =
+    props.compiledBibliography ??
+    (bibliography.authoritativeData?.truncated
+      ? null
+      : (bibliography.authoritativeData?.contents ?? null));
   const paths = document?.paths ?? [];
   const readError = paths.map((path) => states.get(path)?.error).find(Boolean) ?? null;
   const saveError = saveErrors.values().next().value ?? null;
@@ -363,7 +388,11 @@ export function LatexProjectVisualEditor(props: Props) {
       }
       // Every working source was checked before any of them is changed.
       const selected = plan.changes.get(props.relativePath);
-      if (selected !== undefined && !props.onEdit(props.source, selected)) return false;
+      if (
+        selected !== undefined &&
+        !props.onEdit(current.files.get(props.relativePath)!.contents, selected)
+      )
+        return false;
       const nextFiles = new Map(current.files);
       const nextStates = new Map(current.states);
       for (const [path, contents] of plan.changes) {
@@ -417,6 +446,7 @@ export function LatexProjectVisualEditor(props: Props) {
       {ready && document ? (
         <LatexVisualEditor
           {...props}
+          compiledBibliography={compiledBibliography}
           key={root}
           source={document.source}
           rootSource={document.source}

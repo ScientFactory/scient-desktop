@@ -2,6 +2,7 @@
  * Projects only the skill component of the user's Antigravity plugins into the
  * managed ACP runtime's private profile.
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Incremental plugin projection fingerprints are synchronous at the native filesystem boundary.
 import * as NodeCrypto from "node:crypto";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's symlink has no type argument, and Windows needs a junction to link without elevation.
 import * as NodeFSP from "node:fs/promises";

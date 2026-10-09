@@ -9,9 +9,15 @@ import {
   type ComponentPropsWithoutRef,
 } from "react";
 import { afterEditorPaint } from "./afterEditorPaint";
+import { createEditorBackgroundTask } from "./editorBackgroundTask";
 import { installLatexTextSelectionSession } from "./latexTextSelectionSession";
+import { createLatexFieldJournal } from "./latexFieldJournal";
 
-export const LatexDraftContext = createContext({
+export const LatexDraftContext = createContext<{
+  reportDraft: (id: string, pending: boolean) => void;
+  undo: (redo: boolean) => void;
+  commit?: (change: () => void | boolean) => boolean;
+}>({
   reportDraft: (_id: string, _pending: boolean) => {},
   undo: (_redo: boolean) => {},
 });
@@ -59,21 +65,24 @@ export function LatexTextField({
   onBlur,
   onCompositionStart,
   onCompositionEnd,
+  onInput,
   onKeyDown,
   onRemoveEmpty,
   ...props
 }: Props) {
+  const [journal] = useState(createLatexFieldJournal);
+  useLayoutEffect(() => journal.observe(draftKey, value), [journal, draftKey, value]);
   const [draft, setDraft] = useState(() => restoredLatexFieldDraft(draftKey, value));
   const previousValue = useRef(value);
   const pending = useRef(draft === value ? null : { key: draftKey, base: value, text: draft });
   const composing = useRef(false);
-  const publishTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [publication] = useState(() => createEditorBackgroundTask(180));
   const cancelJournal = useRef<(() => void) | null>(null);
   const publish = useRef(onValueChange);
   useLayoutEffect(() => {
     publish.current = onValueChange;
   }, [onValueChange]);
-  useEffect(() => () => clearTimeout(publishTimer.current), []);
+  useEffect(() => () => publication.cancel(), [publication]);
   const owner = useRef({ key: draftKey, value });
   useLayoutEffect(() => {
     owner.current = { key: draftKey, value };
@@ -87,12 +96,13 @@ export function LatexTextField({
       entry.base !== owner.current.value
     )
       return;
-    if (commitOn === "blur") publish.current(entry.text, id);
-    else publish.current(entry.text);
+    const change = () =>
+      commitOn === "blur" ? publish.current(entry.text, id) : publish.current(entry.text);
+    if (commit) commit(change);
+    else change();
   };
   const schedule = () => {
-    clearTimeout(publishTimer.current);
-    if (commitOn === "idle") publishTimer.current = setTimeout(publishPending, 180);
+    if (commitOn === "idle") publication.schedule(publishPending);
   };
   const field = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
@@ -101,12 +111,12 @@ export function LatexTextField({
     return installLatexTextSelectionSession(element);
   }, []);
   const id = useId();
-  const { reportDraft, undo } = useContext(LatexDraftContext);
+  const { reportDraft, undo, commit } = useContext(LatexDraftContext);
   useEffect(() => {
     const element = field.current;
     const replace = (event: Event) => {
       if (!(event instanceof CustomEvent) || typeof event.detail !== "string") return;
-      clearTimeout(publishTimer.current);
+      publication.cancel();
       cancelJournal.current?.();
       cancelJournal.current = null;
       composing.current = false;
@@ -116,13 +126,7 @@ export function LatexTextField({
       reportDraft(id, false);
       setDraft(event.detail);
       if (element) element.value = event.detail;
-      if (draftKey) {
-        try {
-          localStorage.removeItem(`scient.latex.field:${draftKey}`);
-        } catch {
-          /* Optional journal. */
-        }
-      }
+      journal.clear(draftKey);
     };
     element?.addEventListener("scient-latex-replace-field-draft", replace);
     return () => element?.removeEventListener("scient-latex-replace-field-draft", replace);
@@ -133,18 +137,17 @@ export function LatexTextField({
       cancelJournal.current = null;
       const entry = pending.current;
       if (!entry?.key) return;
-      try {
-        localStorage.setItem(
-          `scient.latex.field:${entry.key}`,
-          JSON.stringify({ base: entry.base, text: entry.text }),
-        );
-      } catch {
-        /* Keep the live field if storage is unavailable. */
-      }
+      journal.write(entry.key, entry.base, entry.text);
     };
     window.addEventListener("pagehide", persist);
+    const checkpoint = (event: Event) => {
+      const key = pending.current?.key;
+      if (event instanceof CustomEvent && key?.startsWith(`${event.detail}:`)) persist();
+    };
+    window.addEventListener("scient-latex-checkpoint-fields", checkpoint);
     return () => {
       window.removeEventListener("pagehide", persist);
+      window.removeEventListener("scient-latex-checkpoint-fields", checkpoint);
       persist();
     };
   }, []);
@@ -162,13 +165,7 @@ export function LatexTextField({
     ) {
       pending.current = null;
       reportDraft(id, false);
-      if (draftKey) {
-        try {
-          localStorage.removeItem(`scient.latex.field:${draftKey}`);
-        } catch {
-          /* Optional journal. */
-        }
-      }
+      journal.clear(draftKey);
     } else if (previousValue.current !== value && pending.current === null && !composing.current) {
       const element = field.current;
       const focused = element === document.activeElement;
@@ -189,13 +186,7 @@ export function LatexTextField({
       !composing.current && entry.key === draftKey && entry.base === value && text === value
         ? null
         : { ...entry, text };
-    if (pending.current === null && draftKey) {
-      try {
-        localStorage.removeItem(`scient.latex.field:${draftKey}`);
-      } catch {
-        /* Optional journal. */
-      }
-    }
+    if (pending.current === null) journal.clear(draftKey);
     reportDraft(id, pending.current !== null || composing.current);
     setDraft(text);
     if (draftKey) {
@@ -204,14 +195,7 @@ export function LatexTextField({
         cancelJournal.current = null;
         const entry = pending.current;
         if (!entry?.key) return;
-        try {
-          localStorage.setItem(
-            `scient.latex.field:${entry.key}`,
-            JSON.stringify({ base: entry.base, text: entry.text }),
-          );
-        } catch {
-          /* Keep the live draft if storage is full. */
-        }
+        journal.write(entry.key, entry.base, entry.text);
       });
     }
   };
@@ -268,10 +252,11 @@ export function LatexTextField({
         retain(text);
         if (!composing.current) schedule();
       }}
+      onInput={onInput}
       onCompositionStart={(event) => {
         composing.current = true;
         reportDraft(id, true);
-        clearTimeout(publishTimer.current);
+        publication.cancel();
         onCompositionStart?.(event);
       }}
       onCompositionEnd={(event) => {
@@ -281,7 +266,7 @@ export function LatexTextField({
         onCompositionEnd?.(event);
       }}
       onBlur={(event) => {
-        clearTimeout(publishTimer.current);
+        publication.cancel();
         publishPending();
         onBlur?.(event);
       }}

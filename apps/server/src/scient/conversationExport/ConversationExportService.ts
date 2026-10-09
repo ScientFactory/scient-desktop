@@ -1,3 +1,4 @@
+import * as Hex from "effect/encoding/Hex";
 /**
  * Conversation export on the server: capture a snapshot, build its document
  * bundle, write the requested format, and hand back either a temporary file
@@ -40,7 +41,6 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -280,7 +280,7 @@ const make = Effect.gen(function* () {
         throughMessageId: null,
       },
     });
-    const exportValue = Encoding.encodeHex(yield* crypto.randomBytes(6).pipe(Effect.orDie));
+    const exportValue = Hex.encode(yield* crypto.randomBytes(6).pipe(Effect.orDie));
     return {
       snapshot: redactSnapshotStoragePaths(captured.snapshot, storageRoots),
       attachmentFiles: captured.attachmentFiles,
@@ -347,7 +347,7 @@ const make = Effect.gen(function* () {
         _tag: "bytes" as const,
         bytes: bytes.value,
         byteLength: bytes.value.byteLength,
-        sha256: `sha256:${Encoding.encodeHex(digest.value)}` as Sha256Digest,
+        sha256: `sha256:${Hex.encode(digest.value)}` as Sha256Digest,
       };
     });
 
@@ -524,9 +524,9 @@ const make = Effect.gen(function* () {
         outputPath: target.path,
       })
       .pipe(
-        Effect.catchTag("WordConversionError", (error) =>
-          reject(WORD_FAILURE_REASON[error.reason], error.message),
-        ),
+        Effect.catchTags({
+          WordConversionError: (error) => reject(WORD_FAILURE_REASON[error.reason], error.message),
+        }),
       );
     return {
       exportId,

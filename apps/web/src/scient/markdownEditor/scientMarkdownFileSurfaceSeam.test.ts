@@ -50,9 +50,11 @@ describe("Scient Markdown file-preview seam", () => {
     expect(panelSource).toContain("<FileMarkdownPreview");
     expect(panelSource).not.toContain("<ChatMarkdown");
     expect(panelSource).toContain("shouldUseScientMarkdownEditor({");
-    expect(panelSource).toContain("file.data.readOnly && !markdownLease ? (");
+    expect(panelSource).toContain(
+      "relativePath && !markdownLease && !isPdf && file.data?.readOnly ? (",
+    );
     expect(panelSource).toContain("isMarkdownDocument && renderMarkdown ? (");
-    expect(panelSource).toContain("readOnly={false}");
+    expect(panelSource).toContain("readOnly={isHostFile || !canWriteFiles}");
   });
 
   it("keeps parsing, editor state, and persistence policy out of the inherited panel", () => {

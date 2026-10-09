@@ -30,6 +30,30 @@ export function isOrdinaryTyping(transaction: Transaction): boolean {
   });
 }
 
+/** Reuse the projection's editing capabilities; inspect only the changed text slot. */
+export function isSourceOwnedTyping(
+  transaction: Transaction,
+  editableBlock: (index: number) => boolean,
+): boolean {
+  if (!isOrdinaryTyping(transaction)) return false;
+  return transaction.steps.every((step, index) => {
+    if (!(step instanceof ReplaceStep)) return false;
+    const from = transaction.docs[index]!.resolve(step.from);
+    if (!editableBlock(from.index(0))) return false;
+    for (let depth = 1; depth <= from.depth; depth++)
+      if (from.node(depth).attrs.editable === false) return false;
+    // New formatting needs its own capability/package check. Continuing an
+    // existing style needs only escaping and patching its text argument.
+    const marks = from.marks();
+    let existingStyle = true;
+    step.slice.content.forEach((node) => {
+      if (node.marks.some((mark) => !marks.some((existing) => existing.eq(mark))))
+        existingStyle = false;
+    });
+    return existingStyle;
+  });
+}
+
 interface TypingDraft {
   baseSource: string;
   content: JSONContent;
@@ -75,9 +99,16 @@ export function retainTypingDraft(
   key: string,
   baseSource: string,
   doc: DocumentNode,
+  previousIdentity: string | null = null,
 ): string | null {
   const stored = JSON.stringify({ baseSource, content: doc.toJSON() });
   try {
+    const occupant = localStorage.getItem(keyFor(key));
+    if (occupant !== null && occupant !== previousIdentity && occupant !== stored) {
+      // Another window may own the only durable copy of this writing.
+      window.dispatchEvent(new CustomEvent("scient-latex-recovery-error", { detail: key }));
+      return null;
+    }
     localStorage.setItem(keyFor(key), stored);
     return stored;
   } catch {
@@ -97,9 +128,14 @@ export function typingDraftIdentity(key: string): string | null {
 
 /** Remove the snapshot only if it is still the version the caller saw. */
 export function discardTypingDraft(key: string, identity: string): boolean {
-  if (typingDraftIdentity(key) !== identity) return false;
-  clearTypingDraft(key);
-  return true;
+  try {
+    if (localStorage.getItem(keyFor(key)) !== identity) return false;
+    localStorage.removeItem(keyFor(key));
+    return true;
+  } catch {
+    window.dispatchEvent(new CustomEvent("scient-latex-recovery-error", { detail: key }));
+    return false;
+  }
 }
 
 export function clearTypingDraft(key: string): void {

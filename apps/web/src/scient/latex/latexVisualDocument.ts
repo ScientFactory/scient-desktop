@@ -3262,6 +3262,18 @@ const scientificMathCommands = new Set([
   "sf",
   "tt",
   "cal",
+  "bigl",
+  "bigr",
+  "bigm",
+  "Bigl",
+  "Bigr",
+  "Bigm",
+  "biggl",
+  "biggr",
+  "biggm",
+  "Biggl",
+  "Biggr",
+  "Biggm",
 ]);
 
 function supportedScientificMath(node: JSONContent, setup: LatexVisualSetup): boolean {
@@ -3343,6 +3355,32 @@ function parsePageLayoutStructure(
     };
   }
   const algorithm = parseLatexAlgorithm(source);
+  // TikZ marks and overlays depend on the complete algorithm's TeX layout.
+  if (
+    !algorithm &&
+    /^\\begin\{algorithm\}(?:\[[htbpH!]+\])?/u.test(source) &&
+    source.endsWith("\\end{algorithm}") &&
+    source.includes("\\begin{tikzpicture}") &&
+    matchingEnvironmentEnd(source, 0) === source.length
+  ) {
+    const commands = latexSourceCommands(source);
+    const caption = commands.find((command) => command.name === "caption");
+    const label = commands.find((command) => command.name === "label");
+    return {
+      type: "latexRichPreview",
+      attrs: {
+        kind: "compiledAlgorithm",
+        environment: "algorithm",
+        raw: source,
+        editable: false,
+        items: [],
+        sourceMeta: {
+          captioned: caption !== undefined,
+          label: label ? (latexSourceArgument(source, label.to)?.value ?? "") : "",
+        },
+      },
+    };
+  }
   if (algorithm) {
     const content = algorithmContent(algorithm);
     const title = algorithm.caption ? metadataText(algorithm.caption.value) : "";

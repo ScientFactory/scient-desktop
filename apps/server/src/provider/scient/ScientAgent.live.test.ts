@@ -24,7 +24,7 @@ import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 
 import { nativeOmpSession, watchNativeOmpTextTurn } from "../testUtils/nativeOmpSession.ts";
-import { checkOmpProviderStatus } from "../Layers/OmpProvider.ts";
+import { checkOmpProviderStatus } from "../OmpProvider.ts";
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
 import { ompLiveInstance, ompQualifyBinary, ompQualifyModel } from "../omp/OmpLive.testFixtures.ts";
 import {

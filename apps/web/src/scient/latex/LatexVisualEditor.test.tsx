@@ -1628,7 +1628,7 @@ Theory & Proofs \\\\
     await act(async () => new Promise((resolve) => setTimeout(resolve, 300)));
     expect(writes).toHaveBeenCalledWith(external, expect.stringContaining("\\maketitle"));
     expect(writes.mock.lastCall?.[1]).toContain("\\title{Keep this title}");
-    expect(writes.mock.lastCall?.[1]).toContain("ChangXed paragraph");
+    expect(writes.mock.lastCall?.[1]).toContain("ChangedX paragraph");
   });
 
   it("edits labelled equation math while retaining numbering and refusing new outer rows", async () => {

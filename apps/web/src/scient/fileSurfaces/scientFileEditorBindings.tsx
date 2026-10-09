@@ -1,5 +1,6 @@
-import type { EditorSelection, GetHoveredLineResult, SelectedLineRange } from "@pierre/diffs";
-import type { Editor } from "@pierre/diffs/editor";
+import type { EditorSelection } from "@pierre/diffs/edit";
+import type { GetHoveredLineResult, SelectedLineRange } from "@pierre/diffs";
+import type { Editor } from "@pierre/diffs/edit";
 import { MessageSquarePlus } from "lucide-react";
 import {
   useCallback,
@@ -16,6 +17,7 @@ import {
 import { MathInputTools } from "~/scient/math/input/MathInputTools";
 import type { MathInputController } from "~/scient/math/input/controller";
 import { sourceMathController, sourceMathOwnsEvent } from "~/scient/math/input/sourceAdapter";
+import { installLatexFileCompletion } from "~/scient/latex/latexFileCompletion";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 
 import { SCIENT_FILE_UNSAFE_CSS } from "./StaticTextFileSurface";
@@ -38,7 +40,7 @@ export function useScientFileEditorBindings<Annotation>({
   onEditorSelectionChange,
   onRunShortcut,
 }: {
-  editor: Editor<Annotation>;
+  editor: Editor<"file", Annotation, undefined> | null;
   relativePath: string;
   editingBlocked: boolean;
   surfaceRef: RefObject<HTMLDivElement | null>;
@@ -56,7 +58,7 @@ export function useScientFileEditorBindings<Annotation>({
   useLayoutEffect(
     () =>
       externalPersistence?.registerExternalProjection((update) => {
-        if (!editor.getFile() || editor.isComposing) return "defer";
+        if (!editor || !editor.getFile() || editor.isComposing) return "defer";
         const prepared = editor.prepareExternalEdits(
           update.previousSource,
           update.patches.map((patch) => ({
@@ -86,7 +88,7 @@ export function useScientFileEditorBindings<Annotation>({
     }
     editorSelectionFrameRef.current = requestAnimationFrame(() => {
       editorSelectionFrameRef.current = null;
-      onEditorSelectionChange(editor.getState().selections?.at(-1) ?? null);
+      onEditorSelectionChange(editor?.getViewState().selections?.at(-1) ?? null);
     });
   }, [editor, editorSelectionFrameRef, onEditorSelectionChange]);
   const mathEditable = useRef(!editingBlocked);
@@ -97,13 +99,20 @@ export function useScientFileEditorBindings<Annotation>({
       : /\.(?:md|markdown)$/iu.test(relativePath)
         ? "markdown"
         : null;
-    return format ? sourceMathController(editor, format, () => mathEditable.current) : null;
+    return format && editor
+      ? sourceMathController(editor, format, () => mathEditable.current)
+      : null;
   }, [editor, relativePath]);
   useEffect(() => {
     const host = surfaceRef.current;
     if (!host || !mathInput) return;
     return mathInput.attach(host, sourceMathOwnsEvent);
   }, [mathInput, surfaceRef]);
+  useEffect(() => {
+    const host = surfaceRef.current;
+    if (!host || !editor || !/\.tex$/iu.test(relativePath)) return;
+    return installLatexFileCompletion(editor, host, () => mathEditable.current);
+  }, [editor, relativePath, surfaceRef]);
   reportEditorSelectionRef.current = reportEditorSelection;
 
   useEffect(() => {
@@ -138,7 +147,7 @@ export function useScientFileEditorBindings<Annotation>({
         return;
       }
       event.preventDefault();
-      onRunShortcut(editor.getState().selections?.at(-1) ?? null);
+      onRunShortcut(editor?.getViewState().selections?.at(-1) ?? null);
     },
   };
 }

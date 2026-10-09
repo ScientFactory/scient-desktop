@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Pure admission guards compare stable persisted plan fingerprints synchronously.
 import * as NodeCrypto from "node:crypto";
 import type {
   OrchestrationV2PlanArtifact,

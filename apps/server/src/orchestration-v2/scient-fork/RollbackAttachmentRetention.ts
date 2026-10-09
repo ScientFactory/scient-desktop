@@ -2,7 +2,7 @@
  * by a record the rollback does not release, so pruning keeps them. */
 import { type OrchestrationV2ThreadProjection, type RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 type RollbackAttachmentOwner = Pick<
   OrchestrationV2ThreadProjection,

@@ -8,18 +8,21 @@ import {
   ProjectId,
   type AuthSessionState,
   type OrchestrationV2ShellSnapshot,
+  OrchestrationV2ShellSnapshotJson,
   OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2ThreadBoundedSnapshot,
   type OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
+import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Tracer from "effect/Tracer";
 import { TestClock } from "effect/testing";
-import type { HttpClient } from "effect/unstable/http";
+import type { HttpClient } from "effect/http";
 
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import {
@@ -30,18 +33,17 @@ import {
 } from "../connection/model.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import { ManagedRelayDpopSigner, type ManagedRelayDpopProofInput } from "../relay/managedRelay.ts";
-import { remoteHttpClientLayer, type RemoteEnvironmentRequestError } from "../rpc/http.ts";
+import { type RemoteEnvironmentRequestError } from "../rpc/http.ts";
+import * as RpcHttp from "../rpc/http.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 import { withOrchestrationProtocolHeader } from "./environmentHttpAuth.ts";
 import { fetchEnvironmentSessionState } from "./session.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
-import {
-  boundedThreadSnapshotLoaderLayer,
-  fetchEnvironmentBoundedThreadSnapshot,
-} from "./boundedThreadSnapshotHttp.ts";
+import { fetchEnvironmentBoundedThreadSnapshot } from "./boundedThreadSnapshotHttp.ts";
+import * as BoundedThreadSnapshotHttp from "./boundedThreadSnapshotHttp.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
-import { v2Projection } from "./orchestrationV2TestFixtures.ts";
+import { v2Projection, v2ShellSnapshot } from "./orchestrationV2TestFixtures.ts";
 
 const encodeThreadSnapshot = Schema.encodeSync(OrchestrationV2ThreadDetailSnapshot);
 const encodeBoundedSnapshot = Schema.encodeSync(OrchestrationV2ThreadBoundedSnapshot);
@@ -175,7 +177,7 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
       signer: Option.some(signer),
       remoteAuthorization: Option.some(remoteAuthorization),
     },
-    httpLayer: remoteHttpClientLayer(fetchFn),
+    httpLayer: RpcHttp.layerRemoteHttpClient(fetchFn),
   };
 }
 
@@ -256,7 +258,11 @@ const LOADERS: ReadonlyArray<{
     path: "/api/orchestration/shell",
     response: SHELL,
     expected: SHELL,
-    load: fetchEnvironmentShellSnapshot,
+    // Pull request links decode separately; the rows match the response on their own.
+    load: (input: HttpInput) =>
+      fetchEnvironmentShellSnapshot(input).pipe(
+        Effect.map(({ loadPullRequests: _links, ...snapshot }) => snapshot),
+      ),
   },
   {
     name: "thread snapshot",
@@ -295,6 +301,65 @@ const LOADERS: ReadonlyArray<{
 ];
 
 describe("authenticated environment HTTP requests", () => {
+  it.effect(
+    "recovers shell authorization before deferring unreadable PR badges independently of rows",
+    () =>
+      Effect.gen(function* () {
+        const shell = yield* Schema.encodeEffect(OrchestrationV2ShellSnapshotJson)(v2ShellSnapshot);
+        const link = {
+          host: "github.com",
+          repository: "ScientFactory/scient-desktop",
+          number: 472,
+          url: "https://github.com/ScientFactory/scient-desktop/pull/472",
+          source: "agent",
+          linkedAt: "2026-10-08T00:00:00.000Z",
+          snapshot: null,
+          stack: null,
+        };
+        const harness = makeHarness((attempt) =>
+          attempt === 1
+            ? credentialRejectedResponse()
+            : Response.json({
+                ...shell,
+                threads: [
+                  {
+                    ...shell.threads[0]!,
+                    title: "Unreadable badge",
+                    pullRequests: [{ invalid: true }],
+                  },
+                  {
+                    ...shell.threads[0]!,
+                    id: "other-thread",
+                    title: "Valid badge",
+                    pullRequests: [link],
+                  },
+                ],
+              }),
+        );
+        const rows = yield* fetchEnvironmentShellSnapshot(harness.input).pipe(
+          Effect.provide(harness.httpLayer),
+        );
+        expect(rows.threads.map((thread) => thread.title)).toEqual([
+          "Unreadable badge",
+          "Valid badge",
+        ]);
+        expect(rows.threads.every((thread) => thread.pullRequests === undefined)).toBe(true);
+        expect(harness.calls).toHaveLength(2);
+        expect(harness.authorizations[1]).toEqual({
+          expectedEnvironmentId: TARGET.environmentId,
+          rejectedAccessToken: "current-token",
+        });
+        expect(new Headers(harness.calls[1]!.init.headers).get("authorization")).toBe(
+          "DPoP renewed-token",
+        );
+        const fill = yield* rows.loadPullRequests!.pipe(Effect.forkChild);
+        yield* TestClock.adjust("1 millis");
+        const links = yield* Fiber.join(fill);
+        expect(links.get(rows.threads[0]!.id)).toBeUndefined();
+        expect(links.get(rows.threads[1]!.id)).toEqual([link]);
+      }),
+  );
+
   it.effect.each(LOADERS.filter((loader) => loader.name.startsWith("Scient ")))(
     "retries $name once after credential rejection without losing the payload",
     (loader) =>
@@ -336,6 +401,20 @@ describe("authenticated environment HTTP requests", () => {
         .pipe(Effect.provide(harness.httpLayer), Effect.asVoid, Effect.flip);
       expect(result._tag).toBe("RemoteEnvironmentAuthInvalidJsonError");
       expect(harness.calls).toHaveLength(1);
+    }),
+  );
+
+  it.effect("keeps the status of a shell snapshot error that is not a declared error", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => Response.json({ error: "bad_gateway" }, { status: 502 }));
+      const error = yield* fetchEnvironmentShellSnapshot(harness.input).pipe(
+        Effect.provide(harness.httpLayer),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({
+        _tag: "RemoteEnvironmentAuthUndeclaredStatusError",
+        status: 502,
+      });
     }),
   );
 
@@ -446,7 +525,7 @@ describe("authenticated environment HTTP requests", () => {
           ? credentialRejectedResponse()
           : Response.json(encodeBoundedSnapshot(BOUNDED_THREAD)),
       );
-      const loaderLayer = boundedThreadSnapshotLoaderLayer.pipe(
+      const layerLoader = BoundedThreadSnapshotHttp.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             harness.httpLayer,
@@ -459,7 +538,7 @@ describe("authenticated environment HTTP requests", () => {
         ),
       );
       const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader.pipe(
-        Effect.provide(loaderLayer),
+        Effect.provide(layerLoader),
       );
       const result = yield* loader.load(PREPARED, THREAD.projection.thread.id);
       expect(result).toEqual({
@@ -481,7 +560,7 @@ describe("authenticated environment HTTP requests", () => {
   it.effect("uses the authorization service captured by the diff loader layer", () =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json(DIFF_RESULT));
-      const loaderLayer = PullRequestDiffLoader.layer.pipe(
+      const layerLoader = PullRequestDiffLoader.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             harness.httpLayer,
@@ -494,7 +573,7 @@ describe("authenticated environment HTTP requests", () => {
         ),
       );
       const loader = yield* PullRequestDiffLoader.PullRequestDiffLoader.pipe(
-        Effect.provide(loaderLayer),
+        Effect.provide(layerLoader),
       );
       const result = yield* loader.load(PREPARED, DIFF);
 
@@ -730,6 +809,36 @@ describe("authenticated environment HTTP requests", () => {
         message: "No relay authorization service is available for the environment request.",
       });
       expect(harness.calls).toEqual([]);
+    }),
+  );
+});
+
+describe("relay request tracing", () => {
+  it.effect("starts an exported trace for a T3 Connect request", () =>
+    Effect.gen(function* () {
+      const productSpans: Array<{ readonly name: string; readonly root: boolean }> = [];
+      const productTracer = Tracer.make({
+        span: (options) => {
+          productSpans.push({ name: options.name, root: Option.isNone(options.parent) });
+          return new Tracer.NativeSpan(options);
+        },
+      });
+      const harness = makeHarness(() => Response.json(DIFF_RESULT));
+
+      yield* PullRequestDiffLoader.fetchEnvironmentPullRequestDiff({
+        ...harness.input,
+        diff: DIFF,
+      }).pipe(
+        Effect.withSpan("mobile.screen.local"),
+        Effect.provide(harness.httpLayer),
+        Effect.provideService(RelayClientTracer, Option.some(productTracer)),
+      );
+
+      expect(productSpans[0]).toEqual({
+        name: "clientRuntime.state.executeAuthenticatedEnvironmentHttpRequest",
+        root: true,
+      });
+      expect(productSpans.map((span) => span.name)).not.toContain("mobile.screen.local");
     }),
   );
 });

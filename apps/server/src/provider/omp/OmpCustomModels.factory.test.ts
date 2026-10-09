@@ -158,13 +158,11 @@ it.effect(
         expect(Object.keys(launch.env ?? {}).filter((name) => name.startsWith("SCIENT_"))).toEqual(
           [],
         );
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
         expect(JSON.stringify(launch.env)).not.toContain("secret-value");
         expect(launch.extraArgs?.slice(-2)).toEqual([
           "--extension",
           expect.stringContaining("scient-custom-models.mjs"),
         ]);
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
         expect(JSON.stringify(launch.extraArgs)).not.toContain("secret-value");
         expect(yield* responseStatus(url)).toBe(403);
         expect(yield* responseStatus(url, { headers })).toBe(200);

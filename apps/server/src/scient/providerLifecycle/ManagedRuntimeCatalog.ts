@@ -36,7 +36,7 @@ import {
   HttpClientRequest,
   HttpClientResponse,
   HttpIncomingMessage,
-} from "effect/unstable/http";
+} from "effect/http";
 
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import { ServerConfig } from "../../config.ts";

@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- This owned Promise-based Sources coordinator assigns its store operation ID synchronously.
 import * as NodeCrypto from "node:crypto";
 
 import { observeSourceImport, type SourceImportObserver } from "./SourceImportObservation.ts";

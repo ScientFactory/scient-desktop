@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import { makeInstallerFilesystem } from "../src/provider/runtimeFilesystem.ts";
 import { makeAntigravityInstallation } from "../src/provider/AntigravityInstallation.ts";

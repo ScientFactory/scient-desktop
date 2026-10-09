@@ -6,7 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import type { BackgroundPolicy } from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
@@ -27,8 +27,8 @@ import {
   checkOmpProviderStatus,
   makePendingOmpProvider,
   type OmpProviderStatus,
-} from "../Layers/OmpProvider.ts";
-import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
+} from "../OmpProvider.ts";
+import { ProviderEventLoggers } from "../ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { makeOmpCustomModelsClientFactory } from "../omp/OmpCustomModels.ts";
 import type { OmpExecutableGate } from "../omp/OmpExecutableGate.ts";

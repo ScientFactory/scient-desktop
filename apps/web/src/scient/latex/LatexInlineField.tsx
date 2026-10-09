@@ -10,7 +10,7 @@ import {
 import { Extension, Node, type Editor, type Extensions } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { TextSelection } from "@tiptap/pm/state";
+import { Plugin, TextSelection } from "@tiptap/pm/state";
 import { LatexDraftContext, restoredLatexFieldDraft } from "./LatexTextField";
 import {
   latexTableInlineContent,
@@ -18,6 +18,12 @@ import {
   latexVisualNodeSignature,
 } from "./latexVisualDocument";
 import { LatexWritingKeys } from "./latexWritingKeys";
+import { LatexProseCompletion } from "./latexProseCompletion";
+import { LatexCommandContext } from "./LatexCompletionContext";
+import { createEditorBackgroundTask } from "./editorBackgroundTask";
+import { afterEditorPaint } from "./afterEditorPaint";
+import { createLatexFieldJournal } from "./latexFieldJournal";
+import { isSourceOwnedTyping } from "./visualTyping";
 import { LatexStructuredSelection } from "./latexStructuredSelection";
 import {
   activateLatexEditingTarget,
@@ -46,9 +52,17 @@ export function LatexInlineField(props: {
   onTab: (direction: -1 | 1) => void;
   onExit: (direction: -1 | 1) => void;
 }) {
+  const [fieldJournal] = useState(createLatexFieldJournal);
+  useLayoutEffect(
+    () => fieldJournal.observe(props.draftKey, props.source),
+    [fieldJournal, props.draftKey, props.source],
+  );
   const current = useRef(props);
+  const context = useContext(LatexCommandContext);
+  const completionContext = useRef(context);
   useLayoutEffect(() => {
     current.current = props;
+    completionContext.current = context;
   });
   const { reportDraft } = useContext(LatexDraftContext);
   const id = useId();
@@ -56,10 +70,35 @@ export function LatexInlineField(props: {
   const pending = useRef<string | null>(initialSource === props.source ? null : initialSource);
   const acknowledged = useRef(props.source);
   const root = useRef<HTMLDivElement>(null);
+  const innerEditor = useRef<Editor | null>(null);
+  const adopting = useRef(false);
+  const [publication] = useState(createEditorBackgroundTask);
+  const cancelJournal = useRef<(() => void) | null>(null);
+  const journal = () => {
+    const key = current.current.draftKey;
+    if (!key) return;
+    if (pending.current === null) fieldJournal.clear(key);
+    else fieldJournal.write(key, acknowledged.current, pending.current);
+  };
+  const publishPending = () => {
+    publication.cancel();
+    const source = pending.current;
+    if (source === null) return true;
+    journal();
+    if (innerEditor.current?.view.composing) return false;
+    if (current.current.disabled || !current.current.onChange(source)) return false;
+    acknowledged.current = source;
+    pending.current = null;
+    reportDraft(id, false);
+    journal();
+    return true;
+  };
+  const flushCell = useRef<() => boolean>(() => true);
   const editor = useEditor({
     shouldRerenderOnTransaction: false,
     extensions: [
       LatexWritingKeys,
+      LatexProseCompletion.configure({ context: () => completionContext.current }),
       LatexStructuredSelection.configure({
         source: (node) => {
           const document = inlineDocument(current.current.source);
@@ -94,6 +133,31 @@ export function LatexInlineField(props: {
           redo: () => () => current.current.owner.commands.redo(),
         }),
       }),
+      Extension.create({
+        name: "objectSourceGuard",
+        addProseMirrorPlugins: () => [
+          new Plugin({
+            filterTransaction(transaction) {
+              if (!transaction.docChanged || adopting.current) return true;
+              if (current.current.disabled) return false;
+              if (isSourceOwnedTyping(transaction, () => true)) return true;
+              if (!flushCell.current()) return false;
+              const paragraph = transaction.doc.toJSON().content?.[0];
+              const source = paragraph?.content?.length ? serializeLatexVisualBlock(paragraph) : "";
+              // Formatting and embedded objects must pass the owning table's
+              // source check. Ordinary typing uses the coalesced task instead.
+              if (
+                source == null ||
+                latexTableInlineContent(source) === null ||
+                !current.current.onChange(source)
+              )
+                return false;
+              acknowledged.current = source;
+              return true;
+            },
+          }),
+        ],
+      }),
     ],
     content: inlineDocument(initialSource),
     editable: !props.disabled,
@@ -112,32 +176,33 @@ export function LatexInlineField(props: {
         const key = event.key.toLowerCase();
         if (command && (key === "z" || key === "y")) {
           event.preventDefault();
+          if (!flushCell.current()) return true;
           return key === "y" || event.shiftKey
             ? current.current.owner.commands.redo()
             : current.current.owner.commands.undo();
         }
         if (event.key === "Tab") {
           event.preventDefault();
-          current.current.onTab(event.shiftKey ? -1 : 1);
+          if (flushCell.current()) current.current.onTab(event.shiftKey ? -1 : 1);
           return true;
         }
         if (event.key === "Escape") {
-          current.current.onExit(1);
+          if (flushCell.current()) current.current.onExit(1);
           return true;
         }
         // A tabular cell is one inline flow; Enter cannot create another table row accidentally.
         if (event.key === "Enter") {
-          current.current.onTab(1);
+          if (flushCell.current()) current.current.onTab(1);
           return true;
         }
         if (!command && !event.altKey && !event.shiftKey && view.state.selection.empty) {
           const { $from } = view.state.selection;
           if (event.key === "ArrowLeft" && $from.parentOffset === 0) {
-            current.current.onTab(-1);
+            if (flushCell.current()) current.current.onTab(-1);
             return true;
           }
           if (event.key === "ArrowRight" && $from.parentOffset === $from.parent.content.size) {
-            current.current.onTab(1);
+            if (flushCell.current()) current.current.onTab(1);
             return true;
           }
         }
@@ -149,6 +214,7 @@ export function LatexInlineField(props: {
       current.current.onFocus();
     },
     onBlur: ({ editor: field, event }) => {
+      flushCell.current();
       const next = event.relatedTarget;
       if (
         next instanceof Element &&
@@ -161,24 +227,16 @@ export function LatexInlineField(props: {
       const paragraph = field.getJSON().content?.[0];
       const source = paragraph?.content?.length ? serializeLatexVisualBlock(paragraph) : "";
       if (source === null || source === undefined) return;
-      const accepted = current.current.onChange(source);
-      pending.current = accepted ? null : source;
-      if (accepted) acknowledged.current = source;
-      reportDraft(id, !accepted);
-      const key = current.current.draftKey;
-      if (key) {
-        try {
-          if (accepted) localStorage.removeItem(`scient.latex.field:${key}`);
-          else
-            localStorage.setItem(
-              `scient.latex.field:${key}`,
-              JSON.stringify({ base: acknowledged.current, text: source }),
-            );
-        } catch {
-          /* Optional recovery storage. */
-        }
-      }
+      pending.current = source === acknowledged.current ? null : source;
+      reportDraft(id, pending.current !== null);
+      publication.schedule(() => flushCell.current());
+      cancelJournal.current?.();
+      cancelJournal.current = afterEditorPaint(journal);
     },
+  });
+  useLayoutEffect(() => {
+    innerEditor.current = editor;
+    flushCell.current = publishPending;
   });
   useLayoutEffect(() => {
     if (!editor) return;
@@ -192,7 +250,12 @@ export function LatexInlineField(props: {
         if (cancelled || editor.isDestroyed || pending.current !== null) return;
         const { from, to, anchor, head } = editor.state.selection;
         const marks = editor.state.storedMarks;
-        editor.commands.setContent(inlineDocument(props.source), { emitUpdate: false });
+        adopting.current = true;
+        try {
+          editor.commands.setContent(inlineDocument(props.source), { emitUpdate: false });
+        } finally {
+          adopting.current = false;
+        }
         editor.view.dispatch(
           editor.state.tr
             .setSelection(
@@ -216,20 +279,37 @@ export function LatexInlineField(props: {
     const replace = (event: Event) => {
       if (!(event instanceof CustomEvent) || typeof event.detail !== "string") return;
       pending.current = null;
+      publication.cancel();
+      cancelJournal.current?.();
       acknowledged.current = event.detail;
-      editor.commands.setContent(inlineDocument(event.detail), { emitUpdate: false });
+      adopting.current = true;
+      try {
+        editor.commands.setContent(inlineDocument(event.detail), { emitUpdate: false });
+      } finally {
+        adopting.current = false;
+      }
       reportDraft(id, false);
       const key = current.current.draftKey;
-      if (key) {
-        try {
-          localStorage.removeItem(`scient.latex.field:${key}`);
-        } catch {
-          /* Optional recovery storage. */
-        }
-      }
+      fieldJournal.clear(key);
     };
     element.addEventListener("scient-latex-replace-field-draft", replace);
-    return () => element.removeEventListener("scient-latex-replace-field-draft", replace);
+    const flush = () => flushCell.current();
+    const checkpoint = (event: Event) => {
+      if (event instanceof CustomEvent && current.current.draftKey?.startsWith(`${event.detail}:`))
+        journal();
+    };
+    element.addEventListener("scient-latex-flush-field", flush);
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("scient-latex-checkpoint-fields", checkpoint);
+    return () => {
+      element.removeEventListener("scient-latex-replace-field-draft", replace);
+      element.removeEventListener("scient-latex-flush-field", flush);
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("scient-latex-checkpoint-fields", checkpoint);
+      publication.cancel();
+      cancelJournal.current?.();
+      journal();
+    };
   }, [editor, id, reportDraft]);
   useEffect(() => {
     if (!editor) return;

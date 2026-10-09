@@ -27,8 +27,8 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { ChildProcessSpawner } from "effect/process";
+import * as SqlClient from "effect/sql/SqlClient";
 import type { AcpProtocolLogEvent } from "effect-acp/protocol";
 import type { AcpSessionRequestLogEvent } from "../provider/acp/AcpSessionRuntime.ts";
 import * as Config from "../config.ts";
@@ -38,16 +38,16 @@ import { makeDroidAdapterV2 } from "./Adapters/DroidAdapterV2.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
 import { OrchestratorV2, type OrchestratorV2Error } from "./Orchestrator.ts";
-import { makeLayer } from "./ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 
 import { EventSinkV2 } from "./EventSink.ts";
 import { EventStoreV2 } from "./EventStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import { layer as threadCommandExecutorLayer } from "./ThreadCommandExecutor.ts";
 import { ProjectCloneTracker } from "../project/ProjectCloneTracker.ts";
-import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import {
   ConversationImporter,
   conversationContentDigest,
@@ -261,9 +261,9 @@ export const withDroid = <A, E, R>(
         makeLayer([adapter]),
         {
           configureMcp: false,
-          databaseLayer: SqlitePersistenceMemory,
+          layerDatabase: SqlitePersistenceMemory,
           runEffectWorker: !options.manualWorker,
-          serverConfigLayer: Layer.succeed(Config.ServerConfig, config),
+          layerServerConfig: Layer.succeed(Config.ServerConfig, config),
           responseStreamingMode: options.injectEvents ? "paragraph" : "turn",
         },
       );
@@ -396,9 +396,9 @@ export const withDroid = <A, E, R>(
                 Stream.filter(predicate),
                 Stream.runHead,
                 Effect.timeout("15 seconds"),
-                Effect.catchTag("TimeoutError", () =>
-                  Effect.die("Missing native Droid scheduling receipt"),
-                ),
+                Effect.catchTags({
+                  TimeoutError: () => Effect.die("Missing native Droid scheduling receipt"),
+                }),
               );
               assert.ok(Option.isSome(found));
               return found.value;

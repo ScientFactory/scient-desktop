@@ -7,7 +7,7 @@ orchestration layer does not know which one is behind a thread.
 
 Provider protocols, account ownership, permissions, and capabilities belong at the
 [adapter boundary](../../apps/server/src/orchestration-v2/ProviderAdapter.ts). Normalize there
-instead of spreading provider checks through orchestration services and clients.
+instead of spreading provider checks through orchestration and clients.
 
 ## Built-in drivers
 
@@ -35,6 +35,31 @@ protocol packages. Read the driver and its native adapter together. The V1 `prov
 execution facade and its unused service/directory/metrics/queue owners are retired; historical
 readers and migration contracts remain separate compatibility boundaries.
 
+The `opencode` driver probes the installed version and runs the 1.x or 2.x runtime. OpenCode's MCP
+registrations are directory-scoped, while T3's MCP connection is thread-scoped, so threads in one
+directory must not share one T3 MCP entry.
+
+- **1.x** uses one T3-managed chat server per thread, so threads cannot replace each other's
+  connection. Catalog and text-generation work can share the
+  [instance-owned helper](../../apps/server/src/provider/OpenCodeServerOwner.ts), which closes
+  after an idle period. See the [1.x adapter](../../apps/server/src/orchestration-v2/Adapters/OpenCodeAdapterV2.ts).
+- **2.x** serves every directory from one
+  [server per instance](../../apps/server/src/provider/opencode2/OpenCode2Server.ts). Each thread
+  registers its own `t3-code-<thread>` MCP entry, and session permission rules deny every other
+  thread's entry. See the [2.x adapter](../../apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.ts).
+
+External OpenCode servers remain externally owned and can require an external restart to pick up
+configuration changes. OpenCode stores "always" approval grants for the whole project. Automatic
+full-access replies use `once` so they cannot widen a supervised thread's permissions on a shared
+server. On 2.x, a session-wide approval also replies `once` and becomes T3's own rule on that session.
+
+Pi runs the user's own `pi` install in RPC mode and owns native extension, package, and project
+trust discovery. T3 injects only its namespaced MCP bridge, so a Pi session behaves as it does in
+the Pi TUI. Pi session files back native resume, rollback, and same-instance thread forks.
+Forks use Pi's CLI in the destination directory because RPC session switching retains the source
+session's cwd. Provider switches still use portable handoff summaries.
+See the [adapter](../../apps/server/src/orchestration-v2/Adapters/PiAdapterV2.ts).
+
 Antigravity separates account profiles per instance while sharing installed executables across the
 environment. It forces file-based credential storage because the native macOS keychain entry would
 otherwise be shared across instances. The launch environment removes ambient Google credentials,
@@ -58,6 +83,11 @@ order, native dispatch identifiers, or persisted selections.
 | Antigravity           | Native default model family, choosing its verified High Gemini variant when available                                 | High through the native model ID; unsupported/unknown models stay native                        |
 | Pi / Oh My Pi / Droid | Reported default                                                                                                      | Existing reported/configured effort; shared supported-level fallback prefers Medium             |
 | Cursor / Grok         | Reported default                                                                                                      | Native reported effort                                                                          |
+
+Opening a provider session can start MCP servers, run hooks, or launch a login browser.
+[Grok probes](../../apps/server/src/provider/GrokProvider.ts) avoid authentication and
+session creation for this reason. Antigravity likewise reserves authenticated catalog sessions for
+explicit setup or model refresh; background checks use initialization only.
 
 Preferred models must exist in the instance's current non-legacy catalog. When neither
 a preference nor a reported/static fallback is available, the first remaining built-in
@@ -181,12 +211,16 @@ completed runtime. Client disconnects and instance rebuilds do not cancel instal
 The fixed [release table][antigravity-release] supplies the bundled floor. Scient's qualified
 catalog may advance immutable release facts under the separate `antigravityAcp` key; the app
 still owns the allowed targets, Google URL family, exact executable pair, and launch policy.
-The catalog's semver is distinct from the agent's native build version. Downloads stream to disk.
+The catalog's semver is distinct from the agent's native build version. When the bundled
+native release advances, reconcile Scient's registry floor, catalog receipts and accepted
+native build identities together. Preserve the approved targets and exact native URL, hash,
+archive and executable-member facts; artifact availability alone does not qualify a new target.
+Downloads stream to disk.
 Lazy `yauzl` entry streams extract only that pair, with member names, types, duplicates, and
 sizes checked. Validation runs ACP `initialize` in a temporary profile without authentication
 or a session. Progress updates are bounded, not sent for every network chunk.
 
-Complete releases live in immutable version directories under the T3 home
+Complete releases live in immutable version directories under the owning Scient environment's state root
 `tools/antigravity-acp/<platform>-<arch>/versions`. An atomic `active.json` change selects the
 release for new processes. Each process holds a version lease until it exits. Updates do not
 replace running executables. Removal refuses active leases or explicit binary paths that still
@@ -423,7 +457,7 @@ user-facing setup flow. Implementation notes that go beyond the shared runtime:
 - `Drivers/DroidDriver.ts` composes the existing adapter with the optional Scient lifecycle seam.
   It preserves healthy custom and system binaries, otherwise resolves the reviewed app-private
   runtime and exposes only actions that match the current runtime and ACP capabilities.
-- `Layers/DroidProvider.ts` probes version, opens one passive ACP connection, and initializes it to
+- `DroidProvider.ts` probes version, opens one passive ACP connection, and initializes it to
   inspect account capabilities. It calls `session/new` without `authenticate` to classify account
   state and read the model inventory. Model-specific reasoning ladders are discovered best-effort
   and time-bounded; failure keeps the models with unknown ladders instead of publishing wrong ones.
@@ -452,8 +486,8 @@ tolerantly without weakening non-array validation or editing generated schemas.
 
 The official ACP path above is the default on supported hosts. Scient's previous `agy`
 stream-json transport remains only for version-2 continuation cursors, explicit legacy executable
-paths (`agy`, `agy.exe`, or the old managed `antigravity` binary), and the unsupported-ACP Intel Mac
-default. The Antigravity driver's native adapter router chooses `AntigravityAdapterV2` or
+paths (`agy`, `agy.exe`, or the old managed `antigravity` binary), and the default fallback on hosts
+without an official ACP artifact. The Antigravity driver's native adapter router chooses `AntigravityAdapterV2` or
 `LegacyAntigravityAdapterV2` from the configured executable and recorded native reference.
 It never replays or converts one protocol's cursor into the other.
 
@@ -493,7 +527,7 @@ releases unpublished or published ownership only after its owned process scope c
 a later start can then acquire the file. Repeated opens of
 the same provider session share its runtime and spawn one process.
 
-Passive model/catalog discovery remains `provider/Layers/PiProvider.ts`;
+Passive model/catalog discovery remains `provider/PiProvider.ts`;
 `provider/pi/PiCustomModels.ts` and `textGeneration/PiTextGeneration.ts` retain custom-model and
 headless-generation ownership. Managed installation is owned by the driver lifecycle actions and
 shared runtime package. Runtime catalogs and platform qualification remain separate from native
@@ -508,7 +542,7 @@ adapter; real-process tests still do not establish every extension, hosted accou
 [`OmpDriver.ts`][omp] constructs the native
 [`OmpAdapterV2`](../../apps/server/src/orchestration-v2/Adapters/OmpAdapterV2.ts).
 Discovery remains in
-[`provider/Layers/OmpProvider.ts`](../../apps/server/src/provider/Layers/OmpProvider.ts).
+[`provider/OmpProvider.ts`](../../apps/server/src/provider/OmpProvider.ts).
 The driver supplies the custom-model-aware factory from
 [`OmpCustomModels.ts`](../../apps/server/src/provider/omp/OmpCustomModels.ts);
 [`OmpRpcProcess.ts`](../../apps/server/src/provider/omp/OmpRpcProcess.ts) owns process launch and the
@@ -965,13 +999,13 @@ bound client delivery separately from provider execution and stored history.
 [opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts
 [antigravity]: ../../apps/server/src/provider/Drivers/AntigravityDriver.ts
 [antigravity-adapter]: ../../apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.ts
-[antigravity-provider]: ../../apps/server/src/provider/Layers/AntigravityProvider.ts
+[antigravity-provider]: ../../apps/server/src/provider/AntigravityProvider.ts
 [antigravity-installation]: ../../apps/server/src/provider/AntigravityInstallation.ts
 [antigravity-release]: ../../apps/server/src/provider/antigravityRelease.ts
 [antigravity-auth]: ../../apps/server/src/provider/AntigravityAuth.ts
 [antigravity-auth-support]: ../../apps/server/src/provider/antigravityAuthSupport.ts
 [antigravity-text]: ../../apps/server/src/textGeneration/AntigravityTextGeneration.ts
-[provider-auth-service]: ../../apps/server/src/provider/Layers/ProviderAuthService.ts
+[provider-auth-service]: ../../apps/server/src/provider/ProviderAuthService.ts
 [provider-setup]: ../../packages/contracts/src/providerSetup.ts
 [opencode-server-owner]: ../../apps/server/src/provider/OpenCodeServerOwner.ts
 [droid]: ../../apps/server/src/provider/Drivers/DroidDriver.ts
@@ -982,11 +1016,11 @@ bound client delivery separately from provider execution and stored history.
 [agy-session]: ../../apps/server/src/provider/antigravity/AgySession.ts
 [adapter]: ../../apps/server/src/orchestration-v2/ProviderAdapter.ts
 [awareness]: ../../apps/server/src/provider/ScientAwareness.ts
-[instances]: ../../apps/server/src/provider/Services/ProviderInstanceRegistry.ts
+[instances]: ../../apps/server/src/provider/ProviderInstanceRegistry.ts
 [registry]: ../../apps/server/src/orchestration-v2/ProviderAdapterRegistry.ts
 [sessions]: ../../apps/server/src/orchestration-v2/ProviderSessionManager.ts
 [driver]: ../../apps/server/src/provider/ProviderDriver.ts
-[provider-registry]: ../../apps/server/src/provider/Layers/ProviderRegistry.ts
+[provider-registry]: ../../apps/server/src/provider/ProviderRegistry.ts
 [connection-manager]: ../../apps/server/src/scient/providerLifecycle/ProviderConnectionManager.ts
 [runtime-manager]: ../../apps/server/src/scient/providerLifecycle/ProviderRuntimeManager.ts
 [runtime-package]: ../../packages/scient-provider-runtime/
@@ -998,6 +1032,75 @@ but are not enabled in Scient. Native Codex sign-in remains the active connectio
 Antigravity sign-out closes admission to new processes and stops existing processes before clearing account
 metadata. Otherwise a helper or resumed session could retain the old account. Cached model lists
 do not establish current access, and an authoritative empty catalog must clear the old list.
+
+Antigravity text-generation helpers deny tool requests, but native hooks and MCP configuration can
+run before the prompt. They reject profiles with such configuration before launch. Prompt
+instructions and tool denial do not create a native sandbox.
+See [helper constraints](../../apps/server/src/textGeneration/AntigravityTextGeneration.ts).
+
+## Provider updates run only through the owning installer
+
+A package manager runs only when the resolved executable's path proves it owns the install. Homebrew
+and npm are proven by the real path (symlinks followed): a versioned keg or cask under
+`brew --prefix`, or `<prefix>/lib/node_modules/<pkg>/` (Windows: the shim beside `node_modules`).
+Native installer layouts and the global directories of pnpm, Bun, Yarn, and Vite+ may match on
+either the resolved path or its real target, since those installers place real files or their own
+symlinks there. Volta is proven by its `volta-shim` link plus the package's image directory. When
+nothing is proven, the provider's own updater (`claude update`, `codex update`, `opencode upgrade`,
+`pi update --self`, `grok update`) runs instead, because each one detects its installer itself;
+the runner's version check catches an updater that exits 0 without updating. Mise installs stay
+manual-only because their version is pinned in mise's config. npm updates pin `--prefix` because the
+`npm` on `PATH` can belong to a different Node than the one that owns the provider. Homebrew
+compares against `brew info` since casks trail npm by hours; native installs share npm's version
+train, so the registry stays authoritative for them.
+See the [resolver](../../apps/server/src/provider/providerMaintenance.ts).
+
+Ownership is cached per instance and re-read immediately before an update runs. The
+[runner](../../apps/server/src/provider/providerMaintenanceRunner.ts) refuses when the lock key
+changed since the advisory, and reports success only when the refreshed provider is still installed
+with a readable, current version.
+
+## Protocol traps
+
+Codex async questions arrive as notifications and are answered with a new user message. There is
+no pending RPC response to send. The
+[adapter](../../apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts) persists them as
+`user_input_request` turn items and runtime requests with `responseCapability: { type: "message" }`.
+Their execution nodes do not block the run. Web, desktop, and mobile use their normal question
+panels, and requests remain pending after a turn finishes, a provider exits, or the server restarts.
+
+`runtime-request.respond` reads the persisted request and question item, validates required
+answers, and commits the resolution and a user message in one transaction. Repeating the same
+command returns its receipt without posting the answer twice. The normal message path starts or
+resumes a run, queues behind active work, or steers when the adapter supports it. Blocking questions
+retain the provider's live response path. Do not infer that a request has disappeared merely because
+it is outside the recent history window.
+
+Native `/goal` state belongs to the provider and is mirrored on the provider thread. Codex starts
+the next goal turn on its own milliseconds after the last one completes, so the
+[adapter](../../apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts) keeps the run open
+and adds that turn to it. One run can therefore own several native turns. `/goal` commands that
+start no Codex turn settle on a provider turn without a native ref, which native rollback must
+not count. Claude's SDK mode emits no goal events; its adapter reads goal state from the
+synthetic command output and Stop hook feedback in the transcript.
+
+Capabilities must describe what the provider can actually do. Antigravity can capture workspace
+checkpoints but cannot roll back its conversation. The [checkpoint boundary](./overview.md#turn-completion-and-checkpoints)
+therefore rejects revert before touching files. Native permission and question option IDs must
+also survive normalization; a display label is not necessarily a valid reply.
+
+## Attachments and stored history
+
+Attachments live outside the project workspace. The
+[attachment boundary](../../apps/server/src/orchestration-v2/AttachmentClaims.ts) validates and claims
+uploads for a thread; adapters choose native input formats for those environment-local files.
+A path in the prompt does not grant filesystem access. Keep provider sandbox and approval rules
+in force; copying uploads into the project to bypass them changes that boundary.
+
+File attachments introduced a replay compatibility limit. Image-only clients cannot decode
+file-bearing messages, and an image-only server can fail the entire environment's startup when
+replaying one such event. Rollouts and downgrades must account for persisted history as well as
+current client support.
 
 ## Provider diagnostics
 

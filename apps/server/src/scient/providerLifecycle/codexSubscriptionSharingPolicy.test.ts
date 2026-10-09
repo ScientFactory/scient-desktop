@@ -59,21 +59,21 @@ describe("deferred Codex subscription sharing", () => {
       newlyRequestedCodexSubscriptionSharing(DEFAULT_SERVER_SETTINGS, DEFAULT_SERVER_SETTINGS),
     ).toBeUndefined();
   });
-  for (const operation of [
-    "import",
-    "export",
-    "handoff",
-    "callback",
-    "install",
-    "cancel-install",
-    "remove-install",
-    "observe-install",
-  ]) {
-    it.effect(`rejects ${operation} before any side effect`, () =>
-      Effect.gen(function* () {
-        const exit = yield* Effect.exit(rejectCodexSubscriptionSharing(id, operation));
-        expect(Exit.isFailure(exit)).toBe(true);
-      }),
-    );
-  }
+  it.effect.each(
+    [
+      "import",
+      "export",
+      "handoff",
+      "callback",
+      "install",
+      "cancel-install",
+      "remove-install",
+      "observe-install",
+    ].map((operation) => ({ caseTitle: `rejects ${operation} before any side effect`, operation })),
+  )("$caseTitle", ({ operation }) =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(rejectCodexSubscriptionSharing(id, operation));
+      expect(Exit.isFailure(exit)).toBe(true);
+    }),
+  );
 });

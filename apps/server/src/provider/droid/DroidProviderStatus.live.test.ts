@@ -8,7 +8,7 @@ import { expect, it } from "@effect/vitest";
 import { DroidSettings, ProviderInstanceId } from "@t3tools/contracts";
 import { Duration, Effect, FileSystem, Layer, Schema, Stream } from "effect";
 import * as DateTime from "effect/DateTime";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { beforeAll } from "vite-plus/test";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
@@ -17,7 +17,7 @@ import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderCo
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { DroidDriver } from "../Drivers/DroidDriver.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
+import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
 import { qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
 
 const binary = process.env.SCIENT_DROID_TEST_BINARY;

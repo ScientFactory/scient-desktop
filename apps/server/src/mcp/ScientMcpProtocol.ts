@@ -2,9 +2,9 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { McpProtocol, type Tool } from "effect/unstable/ai";
-import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
-import * as RpcMiddleware from "effect/unstable/rpc/RpcMiddleware";
+import { McpProtocol, type Tool } from "effect/ai";
+import * as RpcGroup from "effect/rpc/RpcGroup";
+import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 
 import { AgentInvocationContext } from "../scient/operations/AgentInvocationContext.ts";
 import { listAvailableScientOperations } from "../scient/operations/AgentOperationDispatcher.ts";
@@ -53,12 +53,18 @@ export function makeScientToolListLayer(
           const mcpInvocation = yield* Effect.withFiber((fiber) =>
             Effect.succeed(Context.getUnsafe(fiber.context, McpInvocationContext)),
           );
-          const invocation = scientInvocationForMcp(mcpInvocation);
+          const invocation =
+            mcpInvocation.thread === undefined
+              ? undefined
+              : scientInvocationForMcp({ ...mcpInvocation, thread: mcpInvocation.thread });
           const hasDeviceAccess = mcpInvocation.capabilities.has("device");
-          const available = yield* listAvailableScientOperations().pipe(
-            Effect.provideService(WorkspaceBindingResolver, resolver),
-            Effect.provideService(AgentInvocationContext, invocation),
-          );
+          const available =
+            invocation === undefined
+              ? []
+              : yield* listAvailableScientOperations().pipe(
+                  Effect.provideService(WorkspaceBindingResolver, resolver),
+                  Effect.provideService(AgentInvocationContext, invocation),
+                );
           const ids = new Set(available.map((operation) => operation.id));
           for (const tool of listed.tools) {
             if (!scientOperationCatalog.forTool(tool.name) && !hostNames.has(tool.name))

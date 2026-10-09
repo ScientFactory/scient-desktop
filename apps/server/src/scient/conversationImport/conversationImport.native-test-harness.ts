@@ -13,7 +13,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import type { ProviderAdapterRegistryV2 } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 
 import { ServerConfig } from "../../config.ts";
@@ -23,9 +23,9 @@ import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as Receipts from "../../orchestration-v2/CommandReceiptStore.ts";
 import * as Executor from "../../orchestration-v2/ThreadCommandExecutor.ts";
-import * as SqlitePersistence from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { ProjectCloneTracker } from "../../project/ProjectCloneTracker.ts";
-import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import * as Commit from "./ConversationImportCommit.ts";
 import * as ImporterLive from "./ConversationImporterLive.ts";
 import type { PortableConversationImportPlan } from "./conversationImportPlan.ts";
@@ -56,7 +56,7 @@ export function nativeImportTestLayer(controls: NativeImportTestControls = {}) {
     Layer.provideMerge(
       controls.persistence === "file"
         ? SqlitePersistence.layerConfig
-        : SqlitePersistence.SqlitePersistenceMemory,
+        : SqlitePersistence.layerMemory,
     ),
   );
   const native = Commit.layer.pipe(
@@ -173,11 +173,11 @@ export function nativeImportRuntimeTestLayer(
   registryLayer: Layer.Layer<ProviderAdapterRegistryV2>,
   options: Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2] = {},
 ) {
-  const database = options.databaseLayer ?? SqlitePersistence.SqlitePersistenceMemory;
+  const database = options.layerDatabase ?? SqlitePersistence.layerMemory;
   const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "scient-import-continuation" },
     registryLayer,
-    { databaseLayer: database, configureMcp: false, ...options },
+    { layerDatabase: database, configureMcp: false, ...options },
   ).pipe(
     Layer.provideMerge(database),
     Layer.provideMerge(NodeServices.layer),

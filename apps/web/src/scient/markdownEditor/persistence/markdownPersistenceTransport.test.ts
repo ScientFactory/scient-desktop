@@ -4,9 +4,9 @@ import { bytesToHex } from "@noble/hashes/utils";
 import { EnvironmentId, ProjectWriteFileError } from "@t3tools/contracts";
 import { MarkdownPersistenceCoordinator } from "@scientfactory/scient-markdown";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
-import { RpcClientError } from "effect/unstable/rpc";
-import * as Socket from "effect/unstable/socket/Socket";
+import { AsyncResult } from "effect/reactivity";
+import { RpcClientError } from "effect/rpc";
+import * as Socket from "effect/socket/Socket";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({

@@ -5,67 +5,7 @@ import {
   runLatexSelectionCommand,
 } from "./latexSelectionSession";
 import { latexContainerScope } from "./latexStructuredSelection";
-
-/** Measure the selected text using the field's layout, including wrapping and RTL. */
-function textRects(field: HTMLTextAreaElement, from: number, to: number): DOMRect[] {
-  if (from === to) return [];
-  const rect = field.getBoundingClientRect(),
-    style = getComputedStyle(field);
-  const scale = field.offsetWidth ? rect.width / field.offsetWidth : 1;
-  const mirror = document.createElement("div");
-  const properties = [
-    "fontFamily",
-    "fontWeight",
-    "fontStyle",
-    "fontVariant",
-    "direction",
-    "textAlign",
-    "tabSize",
-  ] as const;
-  for (const property of properties) mirror.style[property] = style[property];
-  for (const property of [
-    "fontSize",
-    "letterSpacing",
-    "paddingTop",
-    "paddingRight",
-    "paddingBottom",
-    "paddingLeft",
-  ] as const) {
-    mirror.style[property] = `${parseFloat(style[property]) * scale || 0}px`;
-  }
-  mirror.style.lineHeight =
-    style.lineHeight === "normal" ? "normal" : `${parseFloat(style.lineHeight) * scale}px`;
-  Object.assign(mirror.style, {
-    position: "fixed",
-    left: `${rect.left - field.scrollLeft * scale}px`,
-    top: `${rect.top - field.scrollTop * scale}px`,
-    width: `${field.clientWidth * scale}px`,
-    boxSizing: "border-box",
-    whiteSpace: "pre-wrap",
-    overflowWrap: "break-word",
-    visibility: "hidden",
-    pointerEvents: "none",
-  });
-  const text = document.createTextNode(field.value);
-  mirror.append(text);
-  document.body.append(mirror);
-  try {
-    const range = document.createRange();
-    range.setStart(text, from);
-    range.setEnd(text, to);
-    return [...range.getClientRects()].flatMap((part) => {
-      const left = Math.max(rect.left, part.left),
-        right = Math.min(rect.right, part.right);
-      const top = Math.max(rect.top, part.top),
-        bottom = Math.min(rect.bottom, part.bottom);
-      return right > left && bottom > top
-        ? [new DOMRect(left, top, right - left, bottom - top)]
-        : [];
-    });
-  } finally {
-    mirror.remove();
-  }
-}
+import { latexTextSelectionRects } from "./latexTextSelectionRects";
 
 export function installLatexTextSelectionSession(field: HTMLTextAreaElement): () => void {
   const history: { start: number; end: number; direction: "forward" | "backward" | "none" }[] = [];
@@ -83,7 +23,7 @@ export function installLatexTextSelectionSession(field: HTMLTextAreaElement): ()
           field.closest('td,th,.scient-latex-rich-preview[data-kind="table"]')
             ? []
             : [field.getBoundingClientRect()],
-        selection: () => textRects(field, start, end),
+        selection: () => latexTextSelectionRects(field, start, end),
         restore: (focus) => {
           if (!field.isConnected || field.value !== value) return false;
           applying = true;

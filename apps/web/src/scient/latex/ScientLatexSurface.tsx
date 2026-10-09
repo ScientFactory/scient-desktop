@@ -1,5 +1,6 @@
 import { LatexSelect } from "./LatexSelect";
-import { File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
+import type { FilePostRender } from "~/scient/fileSurfaces/StaticTextFileSurface";
+import { File, Virtualizer } from "@pierre/diffs/react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   ArtifactAuthority,
@@ -17,7 +18,7 @@ import {
 import { CircleAlert, Ellipsis, LoaderCircle, RotateCw, TriangleAlert, X } from "lucide-react";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import {
   lazy,
   memo,
@@ -114,7 +115,6 @@ import { useLatexAutoBuild } from "./useLatexAutoBuild";
 
 import "./scient-latex.css";
 
-type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
 type LatexPdfDescriptor = ScientLatexBuildSnapshot["descriptor"];
 
 /** What the file header's rename needs to know about a LaTeX file. */
@@ -507,7 +507,7 @@ function sourcePositionFromPointerEvent(event: MouseEvent<HTMLElement>): SourceS
   return null;
 }
 
-export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
+export const ScientLatexSurface = memo(function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const savePdfCopy = usePdfSaveCopy(props.environmentId);
   const [exportingPdf, setExportingPdf] = useState(false);
   const visualDraftKey = `${props.environmentId}\0${props.cwd}\0${props.relativePath}`;
@@ -679,6 +679,8 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     (expected: string, next: string) => {
       if (persistence === null) return false;
       const snapshot = persistence.getSnapshot();
+      if (snapshot.editingBlocked || snapshot.error !== null || snapshot.conflict !== null)
+        return false;
       if (snapshot.draftSource !== expected) return false;
       if (expected === next) return true;
       if (sourceRecovery.blocked) return false;
@@ -1623,7 +1625,12 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                       environmentId={props.environmentId}
                       cwd={props.cwd}
                       relativePath={props.relativePath}
-                      disabled={props.truncated || persistence === null || sourceRecovery.blocked}
+                      disabled={
+                        props.truncated ||
+                        persistence === null ||
+                        sourceRecovery.blocked ||
+                        sourceNeedsAttention
+                      }
                       onEdit={handleVisualEdit}
                       flushReferenceEdits={persistence?.flushNow}
                       documentPersistence={persistence ? [persistence] : []}
@@ -1691,4 +1698,4 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       ) : null}
     </div>
   );
-}
+});

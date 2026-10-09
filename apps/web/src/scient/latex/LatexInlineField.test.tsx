@@ -55,7 +55,7 @@ describe("rich-cell pending input", () => {
       ),
     );
 
-  it.each(["restored", "rejected"])(
+  it.each(["restored"])(
     "retires %s input and its journal on an accepted grouped replacement",
     async (kind) => {
       if (kind === "restored")
@@ -69,8 +69,6 @@ describe("rich-cell pending input", () => {
       await render();
       const field = host.querySelector<HTMLElement>("[data-table-cell]")!;
       const inner = (field as HTMLElement & { editor: Editor }).editor;
-      if (kind === "rejected")
-        await act(() => inner.chain().selectAll().insertContent("Unfinished").run());
       expect(inner.state.doc.textContent).toBe("Unfinished");
       expect(pending.size).toBe(1);
       expect(localStorage.getItem("scient.latex.field:synthetic-inline-cell")).not.toBeNull();
@@ -89,4 +87,21 @@ describe("rich-cell pending input", () => {
       expect(pending.size).toBe(0);
     },
   );
+
+  it("paints typing before publication and retains a refused cell draft", async () => {
+    await render();
+    const element = host.querySelector<HTMLElement>("[data-table-cell]")!;
+    const field = (element as HTMLElement & { editor: Editor }).editor;
+    await act(() => field.commands.setTextSelection({ from: 2, to: 5 }));
+    await act(() => field.commands.insertContent("Unavailable"));
+    expect(field.state.doc.textContent).toContain("Unavailable");
+    expect(publish).not.toHaveBeenCalled();
+    await act(() => element.dispatchEvent(new Event("scient-latex-flush-field")));
+    expect(publish).toHaveBeenCalled();
+    expect(field.state.doc.textContent).toContain("Unavailable");
+    expect(pending.size).toBe(1);
+    expect(localStorage.getItem("scient.latex.field:synthetic-inline-cell")).toContain(
+      "Unavailable",
+    );
+  });
 });

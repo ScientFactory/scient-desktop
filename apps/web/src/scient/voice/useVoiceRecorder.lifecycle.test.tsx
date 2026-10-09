@@ -7,6 +7,7 @@ import {
   useVoiceRecorder,
   type VoiceRecorderControls,
 } from "./useVoiceRecorder.ts";
+import { buildVoiceWaveformLevels, VOICE_WAVEFORM_LEVEL_COUNT } from "./voiceWaveform.ts";
 
 const media = vi.hoisted(() => ({ stop: vi.fn() }));
 vi.mock("./voiceMedia.ts", () => ({
@@ -28,9 +29,11 @@ class FakeWorklet {
   constructor() {
     FakeWorklet.current = this;
   }
-  samples() {
+  samples(rms = 0.1, sampleCount = 240) {
     this.events.dispatchEvent(
-      new MessageEvent("message", { data: { samples: new Float32Array(240), rms: 0.1 } }),
+      new MessageEvent("message", {
+        data: { type: "samples", samples: new Float32Array(sampleCount), rms },
+      }),
     );
   }
 }
@@ -119,5 +122,64 @@ describe("automatic recording finalization", () => {
     await act(() => FakeWorklet.current.samples());
     await act(() => vi.advanceTimersByTimeAsync(MAX_RECORDING_MS + 500));
     expect(onAutoStop).toHaveBeenCalledOnce();
+  });
+
+  it("publishes fresh speech before the full history fills", async () => {
+    await act(async () => {
+      for (let index = 0; index < 32; index += 1) FakeWorklet.current.samples(0);
+      await vi.advanceTimersByTimeAsync(20);
+    });
+    await act(async () => {
+      FakeWorklet.current.samples(0.2);
+      await vi.advanceTimersByTimeAsync(20);
+    });
+    expect(recorder.levels.at(-1)).toBe(0.2);
+    expect(buildVoiceWaveformLevels(recorder.levels).slice(-32).at(-1)).toBe(0.2);
+    expect(recorder.levels.length).toBeLessThan(VOICE_WAVEFORM_LEVEL_COUNT);
+  });
+
+  it("keeps visualization bounded through a three-minute clip without dropping audio", async () => {
+    await act(() => recorder.cancel());
+    await act(() => recorder.start());
+    for (let batch = 0; batch < 33; batch += 1) {
+      await act(async () => {
+        const count = Math.min(64, 2_109 - batch * 64);
+        for (let index = 0; index < count; index += 1) {
+          FakeWorklet.current.samples((batch + 1) / 100, 2_048);
+        }
+        await vi.advanceTimersByTimeAsync(20);
+      });
+      expect(recorder.levels.length).toBeLessThanOrEqual(112);
+      expect(recorder.levels.at(-1)).toBe((batch + 1) / 100);
+    }
+    await act(async () => {
+      FakeWorklet.current.samples(0.4, 768);
+      await vi.advanceTimersByTimeAsync(20);
+    });
+    expect(recorder.levels).toHaveLength(112);
+    expect(buildVoiceWaveformLevels(recorder.levels).at(-1)).toBe(0.4);
+    let stopping!: ReturnType<VoiceRecorderControls["stop"]>;
+    await act(async () => {
+      stopping = recorder.stop();
+      await vi.advanceTimersByTimeAsync(500);
+      await stopping;
+    });
+    const clip = await stopping;
+    expect(clip?.durationMs).toBe(MAX_RECORDING_MS);
+    expect(clip?.wavBytes.length).toBe(44 + 180 * 24_000 * 2);
+    expect(recorder.levels).toEqual([]);
+  });
+
+  it("clears queued waveform updates across repeated cancel and restart cycles", async () => {
+    for (let cycle = 0; cycle < 12; cycle += 1) {
+      await act(async () => {
+        FakeWorklet.current.samples(0.2);
+        await recorder.cancel();
+        await vi.advanceTimersByTimeAsync(20);
+      });
+      expect(recorder.levels).toEqual([]);
+      expect(recorder.status).toBe("idle");
+      await act(() => recorder.start());
+    }
   });
 });

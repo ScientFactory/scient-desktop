@@ -25,8 +25,8 @@ import {
 } from "./AnalyticsEventObserversV2.ts";
 import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
-import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
-import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
+import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
+import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 
 const now = DateTime.makeUnsafe("2026-10-04T10:00:00Z");
 const threadId = ThreadId.make("private-thread");

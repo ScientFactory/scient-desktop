@@ -1,9 +1,22 @@
 import { Extension } from "@tiptap/core";
 import type { Mark, Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { AllSelection, Plugin, TextSelection, type SelectionBookmark } from "@tiptap/pm/state";
+import {
+  AllSelection,
+  NodeSelection,
+  Plugin,
+  TextSelection,
+  type SelectionBookmark,
+} from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { registerLatexSelection } from "./latexSelectionSession";
 import { latexInlineEditingScopes } from "./latexVisualDocument";
+import { latexTextSelectionRects } from "./latexTextSelectionRects";
+import {
+  isLatexSelectionObject,
+  latexObjectOwnsPointerSelection,
+  latexSelectionBetween,
+  latexSelectionObjectAtElement,
+} from "./latexObjectSelection";
 
 interface Scope {
   label: string;
@@ -108,6 +121,12 @@ function proseScopes(view: EditorView, source: string | null): Scope[] {
   const scopes = inlineScopes(view, source).filter(
     (scope) => scope.from <= $head.pos && scope.to >= $head.pos && scope.mark!.isInSet(marks),
   );
+  if (
+    selection instanceof NodeSelection &&
+    isLatexSelectionObject(selection.node) &&
+    !latexObjectOwnsPointerSelection(selection.node)
+  )
+    scopes.push({ label: "Object", from: selection.from, to: selection.to });
   for (let depth = $head.depth; depth > 0; depth--) {
     const node = $head.node(depth);
     scopes.push({
@@ -138,6 +157,98 @@ function rangeRects(view: EditorView, from: number, to: number): DOMRect[] {
     if (rects.length) return rects;
     const caret = view.coordsAtPos(from);
     return [new DOMRect(caret.left, caret.top, 2, caret.bottom - caret.top)];
+  } catch {
+    return [];
+  }
+}
+
+/** One document range paints visible text, fields and embedded objects together. */
+function documentRangeRects(
+  view: EditorView,
+  from: number,
+  to: number,
+  measured?: Set<Element>,
+): DOMRect[] {
+  try {
+    const document = view.dom.ownerDocument;
+    const start = view.domAtPos(from),
+      end = view.domAtPos(to);
+    const range = document.createRange();
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    const root = range.commonAncestorContainer;
+    const excluded =
+      'button,select,[aria-hidden="true"],[hidden],[data-shortcut-status],.scient-latex-visual-raw-label';
+    const owner = root instanceof Element ? root : root.parentElement;
+    const excludedOwner = owner?.closest(excluded);
+    if (excludedOwner && view.dom.contains(excludedOwner)) return [];
+    const filter = (node: Node) => {
+      if (!range.intersectsNode(node)) return NodeFilter.FILTER_REJECT;
+      if (node instanceof Element) {
+        if (node.matches(excluded)) return NodeFilter.FILTER_REJECT;
+        if (
+          node.matches("img,input,textarea,svg,canvas,math-field,.scient-latex-math-preview,td,th")
+        )
+          return NodeFilter.FILTER_ACCEPT;
+        return NodeFilter.FILTER_SKIP;
+      }
+      return node.nodeType === Node.TEXT_NODE ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+    };
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ALL, {
+      acceptNode: filter,
+    });
+    const rects: DOMRect[] = [];
+    let node: Node | null = root.nodeType === Node.TEXT_NODE ? root : walker.nextNode();
+    while (node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (node.parentElement && getComputedStyle(node.parentElement).visibility === "hidden") {
+          node = walker.nextNode();
+          continue;
+        }
+        const leaf = document.createRange();
+        const length = node.textContent?.length ?? 0;
+        const first = node === range.startContainer ? range.startOffset : 0;
+        const last = node === range.endContainer ? range.endOffset : length;
+        if (last > first) {
+          leaf.setStart(node, first);
+          leaf.setEnd(node, last);
+          rects.push(...leaf.getClientRects());
+        }
+      } else if (node instanceof Element) {
+        measured?.add(node);
+        if (getComputedStyle(node).visibility !== "hidden") {
+          if (node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement)
+            rects.push(...latexTextSelectionRects(node, 0, node.value.length));
+          else {
+            const bounds = node.getBoundingClientRect();
+            const viewport = node.closest(".scient-latex-mathfield[data-math-viewport-active]");
+            const clip = viewport?.getBoundingClientRect() ?? bounds;
+            let left = Math.max(bounds.left, clip.left),
+              top = Math.max(bounds.top, clip.top),
+              right = Math.min(bounds.right, clip.right),
+              bottom = Math.min(bounds.bottom, clip.bottom);
+            if (node instanceof HTMLElement && node.matches("td,th")) {
+              const style = getComputedStyle(node);
+              const scale = bounds.width / (node.offsetWidth || 1);
+              // Collapsed borders are shared; adjacent cells must not paint
+              // twice over the same border strip.
+              left += (parseFloat(style.borderLeftWidth) * scale) / 2;
+              right -= (parseFloat(style.borderRightWidth) * scale) / 2;
+              top += (parseFloat(style.borderTopWidth) * scale) / 2;
+              bottom -= (parseFloat(style.borderBottomWidth) * scale) / 2;
+            }
+            rects.push(new DOMRect(left, top, right - left, bottom - top));
+          }
+        }
+        // Replaced content owns its bounds; descendants must not paint again.
+        let next: Node | null = walker.nextSibling();
+        while (!next && walker.parentNode()) next = walker.nextSibling();
+        node = next;
+        continue;
+      }
+      node = walker.nextNode();
+    }
+    return rects.filter((rect) => rect.width > 0 && rect.height > 0);
   } catch {
     return [];
   }
@@ -191,8 +302,26 @@ export const LatexStructuredSelection = Extension.create<{
           },
         },
         view(view) {
+          let observed = new Set<Element>();
+          const refreshGeometry = () => {
+            if (!view.dom.hasAttribute("data-scient-active-slot")) {
+              resize?.disconnect();
+              observed.clear();
+              return;
+            }
+            session.refresh();
+          };
+          const resize =
+            typeof ResizeObserver === "undefined" ? null : new ResizeObserver(refreshGeometry);
           const session = registerLatexSelection({
             element: view.dom,
+            enterFrom: (child) => {
+              const object = latexSelectionObjectAtElement(view, child);
+              if (!object || view.isDestroyed) return;
+              const selection = NodeSelection.create(view.state.doc, object.position);
+              if (!view.state.selection.eq(selection))
+                view.dispatch(view.state.tr.setSelection(selection));
+            },
             capture: () => {
               bookmark = view.state.selection.getBookmark();
               capturedMarks = view.state.storedMarks;
@@ -213,11 +342,20 @@ export const LatexStructuredSelection = Extension.create<{
                   const slot = view.dom.closest(".scient-latex-inline-field");
                   return slot ? [slot.getBoundingClientRect()] : [];
                 },
+                selectionOverlay: true,
                 selection: () => {
                   const selection = bookmark?.resolve(view.state.doc);
-                  return selection && !selection.empty
-                    ? rangeRects(view, selection.from, selection.to)
-                    : [];
+                  const measured = new Set<Element>([view.dom]);
+                  const rects =
+                    selection && !selection.empty
+                      ? documentRangeRects(view, selection.from, selection.to, measured)
+                      : [];
+                  for (const element of observed)
+                    if (!measured.has(element)) resize?.unobserve(element);
+                  for (const element of measured)
+                    if (!observed.has(element)) resize?.observe(element);
+                  observed = measured;
+                  return rects;
                 },
                 restore: (focus) => {
                   if (!bookmark || view.isDestroyed) return false;
@@ -327,7 +465,9 @@ export const LatexStructuredSelection = Extension.create<{
                 tr = tr.setSelection(
                   scope.label === "Document"
                     ? new AllSelection(tr.doc)
-                    : TextSelection.between(tr.doc.resolve(scope.from), tr.doc.resolve(scope.to)),
+                    : scope.label === "Object"
+                      ? NodeSelection.create(tr.doc, scope.from)
+                      : latexSelectionBetween(tr.doc, scope.from, scope.to),
                 );
               } else {
                 const scope = scopes.find((scope) => scope.label !== "Document");
@@ -359,7 +499,24 @@ export const LatexStructuredSelection = Extension.create<{
               return true;
             },
           });
-          return { update: () => session.refresh(), destroy: () => session.dispose() };
+          const mutations = new MutationObserver(refreshGeometry);
+          mutations.observe(view.dom, {
+            subtree: true,
+            childList: true,
+            characterData: true,
+            attributes: true,
+            attributeFilter: ["hidden", "style", "class", "src"],
+          });
+          view.dom.ownerDocument.fonts?.addEventListener("loadingdone", refreshGeometry);
+          return {
+            update: () => session.refresh(),
+            destroy: () => {
+              mutations.disconnect();
+              resize?.disconnect();
+              view.dom.ownerDocument.fonts?.removeEventListener("loadingdone", refreshGeometry);
+              session.dispose();
+            },
+          };
         },
       }),
     ];

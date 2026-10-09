@@ -1,4 +1,4 @@
-import * as Encoding from "effect/Encoding";
+import * as Base64 from "effect/encoding/Base64";
 import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -108,7 +108,7 @@ describe("encodeWavClip base64", () => {
       [new Float32Array([0, 0.5, -0.5, 1, -1])],
       VOICE_CLIP_SAMPLE_RATE_HZ,
     );
-    const decoded = Result.getOrThrow(Encoding.decodeBase64(clip.base64));
+    const decoded = Result.getOrThrow(Base64.decode(clip.base64));
     expect(Array.from(decoded)).toEqual(Array.from(clip.wavBytes));
   });
 

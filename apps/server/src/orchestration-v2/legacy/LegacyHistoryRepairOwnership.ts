@@ -1,6 +1,6 @@
 /** Historical repair guards reread persisted ownership inside the native event transaction. */
 import type { MessageId, ThreadId, TurnItemId } from "@t3tools/contracts";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 export const readLegacyCitationRepairSource = (
   sql: SqlClient.SqlClient,

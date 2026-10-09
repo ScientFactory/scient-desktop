@@ -55,8 +55,9 @@ after an environment downgrade.
 
 [`ws.ts`][ws] serves the group. `websocketRpcRouteLayer` mounts `GET /ws`, authenticates the upgrade
 through `EnvironmentAuth.authenticateWebSocketUpgrade`, then hands the socket to
-`RpcServer.toHttpEffectWebsocket`. Authorization is per method: `RPC_REQUIRED_SCOPE` maps each method
-to a scope, and `authorizeEffect`/`authorizeStream` enforce it. Holding a valid socket is not
+the protocol created by `RpcServer.makeProtocolWithHttpEffectWebsocket` and the server from
+`RpcServer.make`. `RpcAuthorization.layer` enforces each method's declared scope;
+`rpcInstrumentationLayer` retains invocation instrumentation. Holding a valid socket is not
 authorization to call everything on it. See [environment-auth.md](./environment-auth.md).
 
 On the client, [`session.ts`][session] opens the socket and builds the typed client.
@@ -127,6 +128,17 @@ There is no global V1 command worker or authoritative in-memory V1 read model. D
 then commits through [`EventSink.ts`][sink]. The accepted receipt, events, materialized projection,
 and requested effects share one SQL transaction. Publication and worker wakeups follow commit.
 A retry returns the durable receipt; a command ID cannot be reused for another thread.
+
+Thread settlement is server-owned. The
+[settlement service](../../apps/server/src/orchestration-v2/ThreadSettlementService.ts) evaluates PR
+and inactivity settings without a connected client. Merge notifications invalidate cached PR state
+and trigger a check. A merge outside T3, such as an agent running `gh pr merge`, sends no
+notification, so the [PR sync reactor](../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts)
+re-reads a thread's open links when a run that ran a merge or close command ends. The guarded
+`thread.auto-settle` command rejects newer activity, explicit settlement overrides, and live or
+blocked work. It records the activity timestamp for stable
+sorting and detaches idle provider sessions. Clients render the persisted result; they do not
+derive settlement from their own clocks or PR caches.
 
 The disconnected V1 provider service, session directory, metrics and queue execution helpers
 are retired, along with the unused V1 provider-adapter SPI and its orphan integration fixtures.

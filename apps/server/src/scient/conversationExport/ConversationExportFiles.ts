@@ -284,11 +284,12 @@ export const make = (options?: { readonly retention?: Duration.Duration }) =>
         }
       }
     }).pipe(
-      Effect.catchTag("PlatformError", (cause) =>
-        cause.reason._tag === "NotFound"
-          ? Effect.void
-          : Effect.logWarning("Could not remove expired conversation exports.", { cause }),
-      ),
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          cause.reason._tag === "NotFound"
+            ? Effect.void
+            : Effect.logWarning("Could not remove expired conversation exports.", { cause }),
+      }),
     );
 
     yield* Effect.forkScoped(Effect.repeat(sweep, Schedule.spaced(SWEEP_INTERVAL)));

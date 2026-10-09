@@ -866,25 +866,72 @@ describe("managed runtime release discovery", () => {
     expect(requested).toEqual(["https://releases.openai.com/codex/channels/latest"]);
   });
 
-  it("discovers and inspects every approved ACP target as one release family", async () => {
-    const registry = acpRegistry("1.2.0", "agy_acp_server_fixture");
-    const requested: string[] = [];
-    const result = await refreshManagedRuntimeProvider(
-      currentCatalog,
-      "antigravityAcp",
-      async (input) => {
-        const url = input.toString();
-        requested.push(url);
-        if (url.includes("raw.githubusercontent.com")) return Response.json(registry);
-        return new Response(url.includes("windows") ? windowsAcpArchive : unixAcpArchive);
-      },
-    );
+  it.each(["1.3.1", "agy_acp_server_fixture"])(
+    "discovers and inspects every approved ACP target with native identity %s as one release family",
+    async (nativeVersion) => {
+      const version = nextPatch(bundledCatalogJson.providers.antigravityAcp.version);
+      const registry = acpRegistry(version, nativeVersion);
+      const requested: string[] = [];
+      const result = await refreshManagedRuntimeProvider(
+        currentCatalog,
+        "antigravityAcp",
+        async (input) => {
+          const url = input.toString();
+          requested.push(url);
+          if (url.includes("raw.githubusercontent.com")) return Response.json(registry);
+          return new Response(url.includes("windows") ? windowsAcpArchive : unixAcpArchive);
+        },
+      );
 
-    expect(result.changedProviders).toEqual(["antigravityAcp"]);
-    expect(result.catalog.providers.antigravityAcp?.version).toBe("1.2.0");
-    expect(Object.keys(result.catalog.providers.antigravityAcp?.artifacts ?? {})).toHaveLength(5);
-    expect(requested).toHaveLength(7);
-  });
+      expect(result.changedProviders).toEqual(["antigravityAcp"]);
+      expect(result.catalog.providers.antigravityAcp?.version).toBe(version);
+      expect(Object.keys(result.catalog.providers.antigravityAcp?.artifacts ?? {})).toHaveLength(5);
+      expect(
+        Object.values(result.catalog.providers.antigravityAcp?.artifacts ?? {}).map(
+          (artifact) => artifact.antigravityAcp?.version,
+        ),
+      ).toEqual(Array(5).fill(nativeVersion));
+      expect(requested).toHaveLength(7);
+    },
+  );
+
+  it.each([
+    "latest",
+    "1.3",
+    "1.3.0/other",
+    "../1.3.0",
+    "agy_acp_server_",
+    `agy_acp_server_${"a".repeat(97)}`,
+  ])(
+    "refuses malformed ACP native identity %s before inspecting archives",
+    async (nativeVersion) => {
+      const registry = acpRegistry(
+        nextPatch(bundledCatalogJson.providers.antigravityAcp.version),
+        nativeVersion,
+      );
+      const reports: string[] = [];
+      const requested: string[] = [];
+      const originalCatalog = structuredClone(currentCatalog);
+      const refresh = refreshManagedRuntimeProvider(
+        currentCatalog,
+        "antigravityAcp",
+        async (input) => {
+          const url = input.toString();
+          requested.push(url);
+          if (url.includes("raw.githubusercontent.com")) return Response.json(registry);
+          throw new Error("Malformed identities must not fetch an archive.");
+        },
+        (message) => reports.push(message),
+      );
+      await expect(refresh).rejects.toThrow(
+        "Antigravity ACP returned an invalid native release identity.",
+      );
+      expect(currentCatalog).toEqual(originalCatalog);
+      expect(requested).toHaveLength(2);
+      expect(requested.every((url) => url.includes("raw.githubusercontent.com"))).toBe(true);
+      expect(reports.join("\n")).not.toContain("candidate metadata is complete");
+    },
+  );
 
   it("discovers a missing ACP feed entry even when its version equals the bundled release", async () => {
     const current = validateManagedRuntimeCatalog(bundledCatalogJson);

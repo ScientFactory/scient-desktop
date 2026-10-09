@@ -1,6 +1,6 @@
 import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 /** An import creates a message identity. Recheck under the same transaction
  * as its receipt so a competing admission cannot replace existing history. */

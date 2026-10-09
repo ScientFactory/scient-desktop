@@ -4,9 +4,13 @@ import * as NodePath from "node:path";
 import { expect, it } from "@effect/vitest";
 import { hasOperationCapabilities, makeOperationRegistry } from "@scientfactory/operations";
 import * as Schema from "effect/Schema";
-import { Tool } from "effect/unstable/ai";
+import { Tool } from "effect/ai";
 
-import { scientOperationCatalog, makeScientOperationCatalog } from "./ScientOperationCatalog.ts";
+import {
+  scientOperationCatalog,
+  makeScientOperationCatalog,
+  scientTools,
+} from "./ScientOperationCatalog.ts";
 import { ScientOperation } from "./ScientOperationTool.ts";
 import { ScientComputeToolkit } from "./toolkits/compute/tools.ts";
 import { ScientPdfBuildTool } from "./toolkits/documents/tools.ts";
@@ -16,8 +20,8 @@ const ScientSourcesListTool = ScientSourcesToolkit.tools.scient_sources_list;
 import { ScientSkillLoadTool } from "./toolkits/skills/tools.ts";
 import { PreviewSnapshotTool } from "./toolkits/preview/tools.ts";
 
-it("describes all 31 existing tools without replacing their schemas", () => {
-  expect(scientOperationCatalog.list()).toHaveLength(31);
+it("describes every mounted tool without replacing its schema", () => {
+  expect(scientOperationCatalog.list()).toHaveLength(scientTools.length);
   for (const tool of [
     ScientPdfBuildTool,
     ScientComputeToolkit.tools.scient_compute_inventory,
@@ -98,4 +102,23 @@ it("rejects ambiguous IDs, duplicate transport names and tools without operation
       },
     ]),
   ).toThrow("positive integer version");
+});
+
+it("keeps new native browser actions behind the captured Preview grant", () => {
+  for (const [tool, id] of [
+    ["preview_dialog", "browser.dialog"],
+    ["preview_hover", "browser.hover"],
+    ["preview_select", "browser.select"],
+    ["preview_drag", "browser.drag"],
+    ["preview_upload", "browser.upload"],
+  ]) {
+    const operation = scientOperationCatalog.forTool(tool!)!;
+    expect(operation.id).toBe(id);
+    expect(operation.family).toBe("browser");
+    expect(operation.scope).toBe("thread");
+    expect(operation.requiredCapabilities).toEqual(["preview"]);
+    expect(operation.approval).toBe("session-grant");
+    expect(hasOperationCapabilities(operation, new Set())).toBe(false);
+    expect(hasOperationCapabilities(operation, new Set(["preview"] as const))).toBe(true);
+  }
 });
