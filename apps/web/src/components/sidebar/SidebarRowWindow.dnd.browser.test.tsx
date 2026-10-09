@@ -61,6 +61,8 @@ function Slot({ item }: { item: SidebarListItem }) {
 
 function Fixture() {
   const [receipt, setReceipt] = useState("");
+  const [overSection, setOverSection] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
   const items = useMemo(
     (): SidebarListItem[] => [
       { kind: "marker", marker: "pinned-header" },
@@ -90,12 +92,23 @@ function Fixture() {
   const collision = useMemo(() => createSidebarCollisionDetection(() => true, { items }), [items]);
   return (
     <>
-      <output>{receipt}</output>
+      <output data-over-section={overSection} data-over-id={overId}>
+        {receipt}
+      </output>
       <div data-slot="scroll-area-viewport" style={{ height: 400, width: 300, overflow: "auto" }}>
         <DndContext
           sensors={sensors}
           collisionDetection={collision}
           autoScroll={false}
+          onDragOver={({ active, over }) => {
+            setOverId(over ? String(over.id) : null);
+            setOverSection(
+              over
+                ? (resolveSidebarDropTarget(items, String(active.id), String(over.id))?.section ??
+                    null)
+                : null,
+            );
+          }}
           onDragEnd={({ active, over }) => {
             setReceipt(
               JSON.stringify(
@@ -164,7 +177,9 @@ it("uses the real sidebar sensor and sorting strategy to reorder mounted slots",
   const x = await startDrag(source);
   const rect = target.getBoundingClientRect();
   pointer(document, "pointermove", x, rect.top + rect.height / 2);
-  await frame();
+  await expect
+    .poll(() => host!.querySelector("output")!.getAttribute("data-over-id"))
+    .toBe("thread-2");
   pointer(document, "pointerup", x, rect.top + rect.height / 2);
   await frame();
   await expect
@@ -186,7 +201,9 @@ it("keeps the dragged body alive while scrolling to a previously empty settled s
   expect(host!.querySelectorAll("[data-marker]")).toHaveLength(3);
   const rect = target.getBoundingClientRect();
   pointer(document, "pointermove", x, rect.top + rect.height / 2);
-  await frame();
+  await expect
+    .poll(() => host!.querySelector("output")!.getAttribute("data-over-section"))
+    .toBe("settled");
   pointer(document, "pointerup", x, rect.top + rect.height / 2);
   await frame();
   await expect
