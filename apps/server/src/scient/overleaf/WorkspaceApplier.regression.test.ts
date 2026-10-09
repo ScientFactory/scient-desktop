@@ -197,4 +197,160 @@ describe("WorkspaceApplier review regressions", () => {
       );
     },
   );
+  it.live.each(["after-step", "displaced"] as const)(
+    "recovers completed removals before outer progress at $0",
+    (point) => {
+      let crash = true;
+      return fixture(
+        async (h) => {
+          await put(h.cwd, { "old.tex": "old", "new.tex": "merged" });
+          const p = {
+            ...plan({ "old.tex": "old", "new.tex": "merged" }, { "new.tex": "merged" }),
+            renames: [{ from: "old.tex", to: "new.tex" }],
+          };
+          await expect(h.apply("hidden-remove", p)).rejects.toBeTruthy();
+          await put(h.cwd, { "new.tex": "later" });
+          await h.restart();
+          const result = await h.apply("hidden-remove");
+          expect(result.interrupted).toEqual([["old.tex", "new.tex"]]);
+          expect(result.base).toEqual(p.base);
+          expect(await NodeFSP.readFile(NodePath.join(h.cwd, "new.tex"), "utf8")).toBe("later");
+        },
+        {
+          at: async (at) => {
+            if (point === "after-step" && at === point && crash) {
+              crash = false;
+              throw new Error("crash");
+            }
+          },
+        },
+        {
+          at: async (at) => {
+            if (point === "displaced" && at === point && crash) {
+              crash = false;
+              throw new Error("crash");
+            }
+          },
+        },
+      );
+    },
+  );
+
+  it.live.each([false, true])(
+    "recovers exchanges not yet represented in outer progress (legacy=$0)",
+    (legacy) => {
+      let crash = true;
+      return fixture(
+        async (h) => {
+          await put(h.cwd, { "a.tex": "base", "guard.tex": "guard" });
+          const p = {
+            ...plan(
+              { "a.tex": "base", "guard.tex": "guard" },
+              { "a.tex": "remote", "guard.tex": "guard" },
+            ),
+            conflicts: [
+              { paths: ["a.tex", "guard.tex"], types: ["content"], origins: ["merge" as const] },
+            ],
+          };
+          await expect(h.apply("hidden-exchange", p, true)).rejects.toBeTruthy();
+          if (legacy) {
+            const directory = NodePath.join(h.owner, "hidden-exchange");
+            const intent = JSON.parse(
+              await NodeFSP.readFile(NodePath.join(directory, "plan.json"), "utf8"),
+            );
+            const saved = JSON.parse(
+              await NodeFSP.readFile(NodePath.join(directory, "apply.json"), "utf8"),
+            );
+            delete saved.intentRevision;
+            await NodeFSP.writeFile(
+              NodePath.join(directory, "apply.json"),
+              JSON.stringify({ ...intent, ...saved, version: 1 }),
+            );
+            await NodeFSP.unlink(NodePath.join(directory, "plan.json"));
+          }
+          await put(h.cwd, { "guard.tex": "later" });
+          await h.restart();
+          const result = await h.apply("hidden-exchange", undefined, true);
+          expect(result.interrupted).toEqual([["a.tex", "guard.tex"]]);
+          expect(result.base).toEqual(p.base);
+          expect(await NodeFSP.readFile(NodePath.join(h.cwd, "guard.tex"), "utf8")).toBe("later");
+        },
+        {},
+        {
+          at: async (point) => {
+            if (point === "displaced" && crash) {
+              crash = false;
+              throw new Error("crash");
+            }
+          },
+        },
+      );
+    },
+  );
+  it.live.each(["intent", "prepared"] as const)(
+    "does not force a conflict for staging-only crash at $0",
+    (at) => {
+      let crash = true;
+      return fixture(
+        async (h) => {
+          await put(h.cwd, { "a.tex": "base", "guard.tex": "guard" });
+          const p = {
+            ...plan(
+              { "a.tex": "base", "guard.tex": "guard" },
+              { "a.tex": "remote", "guard.tex": "guard" },
+            ),
+            conflicts: [
+              { paths: ["a.tex", "guard.tex"], types: ["content"], origins: ["merge" as const] },
+            ],
+          };
+          await expect(h.apply("staging-only", p, true)).rejects.toBeTruthy();
+          await put(h.cwd, { "guard.tex": "later" });
+          await h.restart();
+          const result = await h.apply("staging-only", undefined, true);
+          expect(result.interrupted).toEqual([]);
+          expect(result.base).toEqual(p.base);
+          expect(await NodeFSP.readFile(NodePath.join(h.cwd, "a.tex"), "utf8")).toBe("base");
+        },
+        {},
+        {
+          at: async (point) => {
+            if (point === at && crash) {
+              crash = false;
+              throw new Error("crash");
+            }
+          },
+        },
+      );
+    },
+  );
+  it.live("recognizes a fallback addition installed before its phase write", () => {
+    let crash = true;
+    return fixture(
+      async (h) => {
+        await put(h.cwd, { "guard.tex": "guard" });
+        const p = {
+          ...plan({ "guard.tex": "guard" }, { "a.tex": "remote", "guard.tex": "guard" }),
+          conflicts: [
+            { paths: ["a.tex", "guard.tex"], types: ["content"], origins: ["merge" as const] },
+          ],
+        };
+        await expect(h.apply("hidden-addition", p)).rejects.toBeTruthy();
+        await put(h.cwd, { "guard.tex": "later" });
+        await h.restart();
+        const result = await h.apply("hidden-addition");
+        expect(result.interrupted).toEqual([["a.tex", "guard.tex"]]);
+        expect(result.base).toEqual(p.base);
+        expect(await NodeFSP.readFile(NodePath.join(h.cwd, "guard.tex"), "utf8")).toBe("later");
+      },
+      {},
+      {
+        at: async (point) => {
+          if (point === "installed" && crash) {
+            crash = false;
+            throw new Error("crash");
+          }
+        },
+      },
+    );
+  });
 });

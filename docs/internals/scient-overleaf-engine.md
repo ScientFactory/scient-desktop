@@ -32,7 +32,10 @@ source-removal dependency layers avoid cyclic ordering. Staging paths are return
 to the coordinator and must be excluded from capture. Directory
 removal is restricted to empty directories. Failed units keep their old base
 across every path of their file identity, and partly completed units are returned
-as forced conflicts for the next review.
+as forced conflicts for the next review. Untouched skips return no forced
+conflict. Recovery consults the per-file journal and staged/displaced identities
+before classifying a failed unit: a completed syscall may precede the outer
+progress write. Staging alone does not count as an applied change.
 
 The two retained mutation methods on `WorkspaceFileSystem` use the same
 canonical-path locks as saves, creates and renames. Their filesystem critical

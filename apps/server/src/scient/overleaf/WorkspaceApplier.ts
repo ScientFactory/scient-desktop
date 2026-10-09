@@ -265,6 +265,62 @@ async function revision(cwd: string, name: string) {
   }
 }
 
+async function unitHasDurableMutation(
+  state: State,
+  unit: readonly string[],
+  retentionRoot: string,
+) {
+  const paths = state.plan.units.flat();
+  for (const name of unit) {
+    if (["done", "attention"].includes(ownValue(state.steps, name) ?? "")) return true;
+    const directory = NodePath.join(retentionRoot, `step-${paths.indexOf(name)}`);
+    let record;
+    try {
+      record = decodeRetainedRecord(
+        await NodeFSP.readFile(NodePath.join(directory, "record.json"), "utf8"),
+      );
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw e;
+    }
+    if (
+      record.target !== NodePath.join(state.cwd, name) ||
+      record.expected !== (ownValue(state.plan.captured, name) ?? null) ||
+      record.desired !== (ownValue(state.plan.target, name)?.revision ?? null)
+    )
+      throw new Error("Retained mutation does not match apply intent.");
+    if (record.phase === "done") {
+      if (record.outcome !== "skipped") return true;
+      continue;
+    }
+    if (record.phase === "preparing") continue;
+    if (record.phase !== "prepared") return true;
+    // The syscall may have completed before the primitive's phase write. The
+    // displaced file or changed staging identity is evidence even if outer
+    // progress is empty. Merely staging a file is not a manuscript mutation.
+    if (await fileIdentity(NodePath.join(directory, "retained"))) return true;
+    if (record.desired !== null) {
+      const target = await fileIdentity(record.target);
+      if (
+        target &&
+        record.stagedIdentity &&
+        target.dev === record.stagedIdentity.dev &&
+        target.ino === record.stagedIdentity.ino
+      )
+        return true;
+      const slot = await fileIdentity(NodePath.join(directory, "slot"));
+      if (
+        !record.stagedIdentity ||
+        !slot ||
+        slot.dev !== record.stagedIdentity.dev ||
+        slot.ino !== record.stagedIdentity.ino
+      )
+        return true;
+    }
+  }
+  return false;
+}
+
 export const make = (hooks: ApplierHooks = {}) =>
   Effect.gen(function* () {
     const files = yield* WorkspaceFileSystem;
@@ -511,13 +567,13 @@ export const make = (hooks: ApplierHooks = {}) =>
                   try: destinationsIntact,
                   catch: (cause) => new WorkspaceApplyError({ cause }),
                 }));
-              const outcome = !failed
-                ? "done"
-                : unit.some(
-                      (name) => state.steps[name] === "done" || state.steps[name] === "attention",
-                    )
-                  ? "interrupted"
-                  : "skipped";
+              const touched =
+                failed &&
+                (yield* Effect.tryPromise({
+                  try: () => unitHasDurableMutation(state, unit, begin.retentionDirectory),
+                  catch: (cause) => new WorkspaceApplyError({ cause }),
+                }));
+              const outcome = !failed ? "done" : touched ? "interrupted" : "skipped";
               state = {
                 ...state,
                 outcomes: state.outcomes.map((old, index) => (index === unitIndex ? outcome : old)),
