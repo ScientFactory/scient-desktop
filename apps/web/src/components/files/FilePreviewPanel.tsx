@@ -2010,13 +2010,6 @@ export default function FilePreviewPanel({
                               markdownLease.settleRecoveryCopy?.() ?? Promise.resolve(true),
                           }
                         : {})}
-                      {...(moveInPlace ? { moveInPlace } : {})}
-                      {...(markdownLease
-                        ? {
-                            prepareRename: () =>
-                              markdownLease.settleRecoveryCopy?.() ?? Promise.resolve(true),
-                          }
-                        : {})}
                       environmentId={environmentId}
                       cwd={cwd}
                       relativePath={relativePath}
