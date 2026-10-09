@@ -6,7 +6,9 @@ import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcp
 import {
   PI_T3_MCP_EXTENSION_FILENAME,
   PI_T3_MCP_EXTENSION_SOURCE,
+  // SCIENT-FORK:START — generate the extension with optional host-owned orchestration copy.
   makePiMcpExtensionSource,
+  // SCIENT-FORK:END
   T3_MCP_BEARER_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,

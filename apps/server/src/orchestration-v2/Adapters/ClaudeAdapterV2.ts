@@ -127,8 +127,10 @@ import {
 } from "../../provider/claudeUsageLimits.ts";
 import type { ServerProviderShape } from "@t3tools/provider-core/server/snapshot";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+// SCIENT-FORK:START Scient instruction owners
 import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "../../provider/ScientProviderInstructions.ts";
 import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
+// SCIENT-FORK:END Scient instruction owners
 import {
   mcpToolPresentation,
   normalizeMcpText,
@@ -929,11 +931,13 @@ export function makeClaudeQueryOptions(input: {
     systemPrompt: {
       type: "preset" as const,
       preset: "claude_code" as const,
+      // SCIENT-FORK:START Scient granted awareness and runtime instruction composition
       append:
         (input.scientAwareness ?? buildScientAwareness()) +
         "\n\n" +
         buildScientRuntimeInstructions({ harness: "Claude Code" }) +
         (input.mcpServers === undefined ? "" : SCIENT_ORCHESTRATION_INSTRUCTIONS),
+      // SCIENT-FORK:END Scient granted awareness and runtime instruction composition
     },
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
@@ -7655,8 +7659,10 @@ export function makeClaudeAdapterV2(
             attachmentsDir,
             settings: adapterOptions.settings,
             environment: { ...adapterOptions.environment, ...mcpOverrides.mcpEnvironment },
+            // SCIENT-FORK:START Scient granted query guidance
             // SCIENT-FORK: deliver the same granted guidance that keys this live query.
             scientAwareness: mcpOverrides.scientAwareness,
+            // SCIENT-FORK:END Scient granted query guidance
             tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
             ...(mcpOverrides.allowedTools === undefined
               ? {}

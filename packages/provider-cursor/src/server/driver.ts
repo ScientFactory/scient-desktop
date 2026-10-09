@@ -25,7 +25,9 @@ import { makeCursorTextGeneration } from "./textGeneration.ts";
 import {
   makeCursorAdapterV2Driver,
   type CursorAdapterV2DriverEnv,
+  // SCIENT-FORK:START — type the optional host copy passed through the runtime resolver.
   type CursorAdapterV2DriverOptions,
+  // SCIENT-FORK:END
   type CursorTurnStartErrorMapper,
 } from "./adapter.ts";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";

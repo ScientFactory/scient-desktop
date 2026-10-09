@@ -216,14 +216,16 @@ composition that preserves both products' defaults. Muse's driver keeps the orig
 layout rather than adding indentation churn. An unconsumed Codex device-policy copy
 and empty retired-policy markers were removed. The host metric still rises by 267 lines.
 
-**Codex proposition, not an approved exception:** retain this bounded neutral callback
-composition and accept this interval's measured host-line increase in exchange for
-removing mutable Scient instruction bodies from generic provider hosts. Scoped debt
-must remain nonincreasing; this does not waive runtime fidelity, future measurement,
-or authorize a general line-budget exception. No protocol amendment or approval is
-claimed here. The separate aggregate-line reduction requirement is not met. Until the
-maintainer accepts this specific tradeoff or a reviewed candidate meets the requirement,
-`upstream-state.json` and the qualified cursor remain at `2a93885bac...`.
+**Maintainer-approved bounded exception — 2026-10-10:** the user accepted retaining
+this reviewed neutral callback composition and requested comments identifying the
+Scient host seams before a history-preserving merge. This accepts the measured
+267-line increase for this fixed interval in exchange for removing mutable Scient
+instruction bodies from generic provider hosts. It does not authorize a general
+line-budget exception, product-policy changes or a waiver of runtime fidelity,
+future measurements and nonincreasing scoped debt. Paired markers added at delivery
+are annotation-only and measured separately below. The earlier unapproved proposition
+and qualified-cursor hold are superseded by this specific acceptance; the current
+pointer advances only after final delivery qualification.
 
 The global advisory report at the measured candidate contains 11,941 unmarked findings
 and 111 unresolved unsupported-language findings; it has no parser/object errors. These are not a

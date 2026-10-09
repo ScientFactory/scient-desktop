@@ -8,7 +8,9 @@ import {
   emitCodexGeneratedImage,
 } from "../scient-provider/CodexPresentation.ts";
 import { toMcpCapabilities, type McpCapability } from "../../mcp/McpInvocationContext.ts";
+// SCIENT-FORK:START Scient runtime instruction owner
 import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
+// SCIENT-FORK:END Scient runtime instruction owner
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
@@ -20,8 +22,10 @@ import {
 } from "../scient-provider/CodexNativeSession.ts";
 // SCIENT-FORK: shared native start receipts and prompt acceptance.
 import { turnStartErrorKeepingReceipt } from "../scient-provider/NativeTurnReceipts.ts";
+// SCIENT-FORK:START Scient complete native input composition
 // SCIENT-FORK: native delivery uses the same complete input composition as preflight.
 import { formatScientCurrentInput } from "../ScientCurrentInput.ts";
+// SCIENT-FORK:END Scient complete native input composition
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import {
   mcpToolPresentation,
@@ -800,6 +804,7 @@ export function buildCodexTurnStartParams(input: {
               ]),
           )
         : {
+            // SCIENT-FORK:START Scient fallback runtime context
             t3_code_runtime: {
               kind: "application" as const,
               value: buildScientRuntimeInstructions({
@@ -809,6 +814,7 @@ export function buildCodexTurnStartParams(input: {
               }),
             },
             scient_awareness: { kind: "application" as const, value: buildScientAwareness() },
+            // SCIENT-FORK:END Scient fallback runtime context
           };
     const additionalContext =
       t3Context === undefined && Object.keys(appContext).length === 0
@@ -3258,6 +3264,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         ) =>
           Effect.gen(function* () {
             const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
+            // SCIENT-FORK:START Scient trusted suffix and captured native input
             // SCIENT-FORK: preserve the structural trusted suffix after captured data.
             const text = formatScientCurrentInput({
               text: codexSkillMentionText(turnInput.message.text),
@@ -3267,6 +3274,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 ? {}
                 : { runtimeInstruction: turnInput.message.runtimeInstruction }),
             });
+            // SCIENT-FORK:END Scient trusted suffix and captured native input
             if (text.length > 0) {
               inputItems.push({
                 type: "text",

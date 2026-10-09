@@ -125,10 +125,14 @@ export function t3AcpPromptWithInstructions(input: T3AcpPromptWithInstructionsIn
  */
 function prependT3OrchestrationInstructions(
   prompt: string,
+  // SCIENT-FORK:START — the shared wrapper accepts host-owned instruction text and identity.
   instructions: string,
   wrapperElement: string,
+  // SCIENT-FORK:END
 ): string {
+  // SCIENT-FORK:START — render the host copy without replacing the shared prompt wrapper.
   return `<${wrapperElement}>${instructions.trim()}</${wrapperElement}>\n\n<user_request>\n${prompt}\n</user_request>`;
+  // SCIENT-FORK:END
 }
 
 export function t3OrchestrationPromptForFirstRun(input: {

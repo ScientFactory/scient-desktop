@@ -190,7 +190,11 @@ export const makeMuseDriver = (
         textGeneration,
       } satisfies ProviderInstance;
     }),
+  // SCIENT-FORK:START — close the optional host-copy driver factory.
 });
+// SCIENT-FORK:END
 
 /** @public Upstream-compatible default for hosts without an app-owned prompt composition. */
+// SCIENT-FORK:START — instantiate the package default through the same host-copy factory.
 export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = makeMuseDriver();
+// SCIENT-FORK:END

@@ -2,11 +2,13 @@ import type { ProviderInteractionMode } from "@t3tools/contracts";
 import type { V2TurnStartParams__AdditionalContextEntry } from "effect-codex-app-server/schema";
 import type { McpCapability } from "../mcp/McpInvocationContext.ts";
 import { buildScientAwareness } from "./ScientAwareness.ts";
+// SCIENT-FORK:START Scient instruction owners
 import {
   SCIENT_ORCHESTRATION_SCOPE_INSTRUCTIONS,
   SCIENT_ORCHESTRATION_WORKSPACE_INSTRUCTIONS,
 } from "./ScientProviderInstructions.ts";
 import { buildScientRuntimeInstructions } from "./ScientRuntimeInstructions.ts";
+// SCIENT-FORK:END Scient instruction owners
 
 const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
 
@@ -183,6 +185,7 @@ export function buildCodexAdditionalContext(
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   // Separate keys keep each value under Codex's per-entry token cap.
   return {
+    // SCIENT-FORK:START Scient additional context entries
     t3_code_orchestration: { kind: "application", value: SCIENT_ORCHESTRATION_SCOPE_INSTRUCTIONS },
     t3_code_workspace: { kind: "application", value: SCIENT_ORCHESTRATION_WORKSPACE_INSTRUCTIONS },
     t3_code_runtime: {
@@ -190,5 +193,6 @@ export function buildCodexAdditionalContext(
       value: buildScientRuntimeInstructions({ harness: "Codex", ...runtime }),
     },
     scient_awareness: { kind: "application", value: buildScientAwareness(capabilities) },
+    // SCIENT-FORK:END Scient additional context entries
   };
 }

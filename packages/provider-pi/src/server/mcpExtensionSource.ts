@@ -27,8 +27,7 @@ export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 export const makePiMcpExtensionSource = (
   orchestrationInstructions = T3_CODE_ORCHESTRATION_INSTRUCTIONS,
 ): string => {
-  // SCIENT-FORK:END
-  return `\
+  return /* SCIENT-FORK:END */ `\
 import { stripFrontmatter, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -457,7 +456,9 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
 
 }
 `;
+  // SCIENT-FORK:START — close the host-selectable source factory outside the generated extension.
 };
+// SCIENT-FORK:END
 
 // SCIENT-FORK:START — the package's public source retains its generic default.
 export const PI_T3_MCP_EXTENSION_SOURCE = makePiMcpExtensionSource();

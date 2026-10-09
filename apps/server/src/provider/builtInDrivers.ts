@@ -42,7 +42,9 @@ import {
 } from "./AppProviderDriverComposition.ts";
 import { OpenCodeDriver, type OpenCodeCompositionEnv } from "./OpenCodeDriverComposition.ts";
 import { PiDriver, type PiCompositionRequirements } from "./PiDriverComposition.ts";
+// SCIENT-FORK:START Scient Muse application composition
 import { MuseDriver } from "./MuseDriverComposition.ts";
+// SCIENT-FORK:END Scient Muse application composition
 
 /**
  * Union of infrastructure services required to construct any built-in
