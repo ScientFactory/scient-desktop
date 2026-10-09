@@ -1138,6 +1138,75 @@ Control & 1 \\\\
     expect(sourceButton.getAttribute("aria-expanded")).toBe("false");
   });
 
+  it("keeps the selected equation and its source editor through whole footer clicks", async () => {
+    const headerSlot = document.createElement("div");
+    document.body.append(headerSlot);
+    try {
+      await mount("\\begin{equation}\nx^2\n\\end{equation}\n\nOther text.", "", headerSlot);
+      await selectKind("latexDisplayMath");
+      await act(() =>
+        container.querySelector<HTMLElement>(".scient-latex-visual-display-math")!.click(),
+      );
+      await act(() =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Edit formula as LaTeX"]')!.click(),
+      );
+      const selected = editor().state.selection.toJSON();
+      const footer = container.querySelector<HTMLElement>(".scient-document-footer")!;
+      for (const selector of [
+        ".scient-document-footer-options",
+        ".scient-document-footer-status",
+        ".scient-document-footer-count",
+      ]) {
+        const target = footer.querySelector<HTMLElement>(selector)!;
+        expect(target).not.toBeNull();
+        await act(() => target.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })));
+        expect(container.querySelector('textarea[aria-label="LaTeX formula code"]')).not.toBeNull();
+        expect(editor().state.selection.toJSON()).toEqual(selected);
+      }
+      await act(() => footer.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })));
+      expect(container.querySelector('[aria-label="Math tools"]')).not.toBeNull();
+      expect(writes).not.toHaveBeenCalled();
+      await act(() =>
+        container
+          .querySelector(".ProseMirror p")!
+          .dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })),
+      );
+      expect(container.querySelector('textarea[aria-label="LaTeX formula code"]')).toBeNull();
+      expect(container.querySelector('[aria-label="Math tools"]')).toBeNull();
+    } finally {
+      headerSlot.remove();
+    }
+  });
+
+  it("saves a label on blur after a footer click while keeping its equation controls", async () => {
+    const headerSlot = document.createElement("div");
+    document.body.append(headerSlot);
+    try {
+      await mount("\\begin{equation}\nx^2\n\\end{equation}", "", headerSlot);
+      await selectKind("latexDisplayMath");
+      const field = await focusReferenceLabel("Equation reference label");
+      await act(() => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+          field,
+          "eq:new",
+        );
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(current).not.toContain("\\label{eq:new}");
+      await act(() => {
+        container
+          .querySelector(".scient-document-footer-count")!
+          .dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+        field.blur();
+      });
+      expect(current).toContain("\\label{eq:new}");
+      expect(container.querySelector('[aria-label="Math tools"]')).not.toBeNull();
+      expect(editor().state.selection.$from.nodeAfter?.type.name).toBe("latexDisplayMath");
+    } finally {
+      headerSlot.remove();
+    }
+  });
+
   it("adds an equation label in its visible footer field without losing the selected equation", async () => {
     await mount("\\begin{equation}\nx^2\n\\end{equation}");
     await selectKind("latexDisplayMath");

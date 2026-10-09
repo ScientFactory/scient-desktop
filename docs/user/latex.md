@@ -137,7 +137,10 @@ inside figures, tables and other objects is not searched.
 
 A thin footer stays under the document. On the left, one control opens the
 current object's options. Extra structural choices are grouped inside that panel.
-Click outside or press Escape to close it; closing keeps unfinished fields intact.
+The entire footer, including its empty space and word count, belongs to the
+current editing context. Clicking there keeps the object controls and open
+options in place. Click elsewhere in the document or outside it, use Close, or
+press Escape to close the options; closing keeps unfinished fields intact.
 Available labels show their reference key in gray directly in the footer.
 Click the key, or **Add label** when empty, to edit it; a thin border appears
 while focused. Press Enter or leave the field to apply a valid change. Invalid
