@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- this Node adapter owns actual watch registration; FileSystem.watch exposes no acquisition-ready signal.
 /** Scoped Node settings watches return only after native registration, before consuming events. */
-import { watch } from "node:fs";
+import * as NodeFS from "node:fs";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -24,7 +24,7 @@ const acquireNative = Effect.fnUntraced(function* (directory: string) {
   yield* Effect.acquireRelease(
     Effect.try({
       try: () => {
-        const watcher = watch(directory, (_event, filename) => {
+        const watcher = NodeFS.watch(directory, (_event, filename) => {
           if (filename !== null) Queue.offerUnsafe(events, filename);
         });
         watcher.on("error", (cause) =>
