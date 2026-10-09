@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as Effect from "effect/Effect";
+import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -14,10 +15,14 @@ import * as Executor from "../src/scient/overleaf/OverleafGitExecutor.ts";
 import * as Repository from "../src/scient/overleaf/OverleafRepository.ts";
 import {
   cloudProbeGitUrl,
+  classifyProbeGitFailure,
   redactProbePushOutput,
   runProtocolProbe,
   type ProbeObservation,
 } from "../src/scient/overleaf/OverleafProtocolProbe.ts";
+
+const isRepositoryError = Schema.is(Repository.OverleafRepositoryError);
+const isGitError = Schema.is(Executor.OverleafGitError);
 
 const probe = Command.make(
   "overleaf-probe",
@@ -115,7 +120,18 @@ const probe = Command.make(
         const git = Executor.OverleafGitExecutor.of({
           availability: rawGit.availability,
           execute: Effect.fnUntraced(function* (command) {
-            const result = yield* rawGit.execute(command);
+            const result = yield* rawGit.execute(command).pipe(
+              Effect.tapError((error) =>
+                observe({
+                  name: "git-command-failure",
+                  status: "failed",
+                  facts: {
+                    command: command.args[0] ?? "unknown",
+                    ...classifyProbeGitFailure(error),
+                  },
+                }).pipe(Effect.orDie),
+              ),
+            );
             if (command.args[0] === "push")
               yield* observe({
                 name: "push-response",
@@ -167,7 +183,10 @@ const probe = Command.make(
             const oid = yield* repository.writeBlob({ repo: writer, bytes: encode(value + "\n") });
             const tree = yield* repository.writeTree({
               repo: writer,
-              entries: [...entries.filter((entry) => entry.path !== path), { path, oid }],
+              entries: [
+                ...entries.filter((entry) => entry.path !== path),
+                ...(stage === "revert" && value === "PROBE_REVERT" ? [] : [{ path, oid }]),
+              ],
             });
             const commit = yield* repository.commit({
               repo: writer,
@@ -287,13 +306,22 @@ const probe = Command.make(
       }),
     ).pipe(Effect.provide(NodeServices.layer));
     yield* run.pipe(
-      Effect.catchCause(() =>
+      Effect.catchCause((cause) =>
         Effect.gen(function* () {
           // Raw Git failures and defects can contain remote output: do not echo them.
+          const failure = cause.reasons.find(Cause.isFailReason)?.error;
           yield* observe({
             name: "probe-stopped",
             status: "failed",
-            facts: { noAutomaticRetry: true },
+            facts: {
+              noAutomaticRetry: true,
+              failureKind: isRepositoryError(failure)
+                ? "repository"
+                : isGitError(failure)
+                  ? "git"
+                  : "other",
+              repositoryReason: isRepositoryError(failure) ? failure.reason : "none",
+            },
           });
           yield* Console.error(
             "Probe stopped. Inspect the redacted report and disposable project before running it again. No push was automatically retried.",

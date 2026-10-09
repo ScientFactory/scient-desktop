@@ -84,6 +84,34 @@ export function redactProbePushOutput(value: string, token: Uint8Array): string 
     .slice(0, 4096);
 }
 
+/** Only fixed categories leave this boundary; Git's error text can contain credentials. */
+export function classifyProbeGitFailure(error: OverleafGitError) {
+  const detail = error.detail;
+  const category =
+    error.reason === "timeout"
+      ? "timeout"
+      : /authentication failed|invalid credentials|\b40[13]\b|access denied|permission denied/iu.test(
+            detail,
+          )
+        ? "authentication-or-access-denied"
+        : /repository not found|project not found|\b404\b/iu.test(detail)
+          ? "project-not-found"
+          : /certificate|\bssl\b|\btls\b|schannel/iu.test(detail)
+            ? "tls"
+            : /could not resolve|name or service not known/iu.test(detail)
+              ? "dns"
+              : /redirect/iu.test(detail)
+                ? "redirect"
+                : /failed to connect|connection reset|connection refused|network is unreachable/iu.test(
+                      detail,
+                    )
+                  ? "connection"
+                  : /askpass|could not read username|could not read password/iu.test(detail)
+                    ? "credential-prompt"
+                    : "unclassified";
+  return { reason: error.reason, exitCode: error.exitCode ?? -1, category };
+}
+
 /** Acceptance evidence is positive only. Missing or rewritten history stays unknown. */
 export const probeAcceptance = Effect.fnUntraced(function* (input: {
   readonly repository: Repository.OverleafRepository["Service"];
@@ -209,6 +237,26 @@ export const runProtocolProbe = Effect.fn("OverleafProtocolProbe.run")(function*
   yield* hooks.reviewMetadata("before-rename", prefix);
   yield* hooks.browser("edit", { prefix, repo, branch, candidate: current });
   const browserState = yield* repository.fetch({ repo, branch, token });
+  const browserEntries = yield* repository.readTree({ repo, tree: browserState.tree });
+  const reviewEntry = browserEntries.find((entry) => entry.path === `${prefix}/review.tex`);
+  const reviewLines = reviewEntry
+    ? new TextDecoder()
+        .decode(yield* repository.readBlob({ repo, oid: reviewEntry.oid, maxBytes: 16 * 1024 }))
+        .split(/\r?\n/u)
+    : [];
+  const markerObserved =
+    reviewLines.includes("PROBE_BROWSER_EDIT") && !reviewLines.includes("PROBE_INITIAL");
+  const headChanged = browserState.commit !== current.commit && browserState.tree !== current.tree;
+  yield* hooks.observe({
+    name: "browser-edit-saved",
+    status: markerObserved && headChanged ? "passed" : "failed",
+    facts: { markerObserved, headChanged },
+  });
+  if (!markerObserved || !headChanged)
+    return yield* new Repository.OverleafRepositoryError({
+      reason: "git-failed",
+      detail: "The required browser edit was not saved. Stop before attempting the stale push.",
+    });
   // This candidate is intentionally based on the pre-browser head.
   const stale = yield* makeCandidate(current, {
     [`${prefix}/stale.tex`]: marker("DO_NOT_ACCEPT_STALE"),
@@ -310,6 +358,20 @@ export const runProtocolProbe = Effect.fn("OverleafProtocolProbe.run")(function*
   }
   yield* hooks.browser("revert", { prefix, repo, branch, candidate: uncertain });
   const verified = yield* repository.fetch({ repo, branch, token });
+  const reverted = verified.commit !== uncertain.commit && verified.tree === current.tree;
+  yield* hooks.observe({
+    name: "browser-revert-saved",
+    status: reverted ? "passed" : "failed",
+    facts: {
+      headChanged: verified.commit !== uncertain.commit,
+      matchesBeforeAck: verified.tree === current.tree,
+    },
+  });
+  if (!reverted)
+    return yield* new Repository.OverleafRepositoryError({
+      reason: "git-failed",
+      detail: "The project was not restored to the pre-ack version. Stop without replay.",
+    });
   const acceptance = yield* probeAcceptance({
     repository,
     repo,

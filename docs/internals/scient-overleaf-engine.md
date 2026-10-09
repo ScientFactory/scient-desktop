@@ -125,9 +125,23 @@ inspection. Never use a working manuscript or put credentials in command argumen
 The script pauses for browser edits, History labels/revert, displayed-author
 inspection, and comments/tracked-change inspection across a content-preserving
 rename. Features not exercised are unverified rather than reported as lost. A
-completed run is an observation report, not an automatic qualification verdict.
+browser confirmation alone is not evidence: the probe fetches the required edit
+before attempting a stale push and verifies restoration to the pre-ack tree
+before testing acceptance after a revert. Missing changes stop the run without
+another push. Git startup failures are reported using fixed diagnostic categories;
+raw errors and credentials are never included. A completed run is an observation
+report, not an automatic qualification verdict.
 Review failed, unknown and unverified observations before proceeding to the
 coordinator; local rehearsal does not qualify Overleaf's Git bridge.
+
+The disposable Cloud probe confirmed non-fast-forward rejection without remote
+mutation, preserved commit/tree identity on fresh reads, and positive acceptance
+evidence in bounded history after a browser restore. A content-preserving Git
+rename appeared as delete/create in browser History and lost the file's comments
+and tracked suggestions. Publication appeared as **You (via Git)**, not a Scient
+author label. The coordinator's review must disclose the rename loss and must not
+promise that label. A discarded acknowledgement was simulated after an accepted
+push; actual network loss remains unverified.
 
 ## Remaining integration gates
 
