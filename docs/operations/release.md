@@ -32,7 +32,8 @@ separate states and must be reported separately.
   exact-source CI, signing, assembly, or publication gates.
 - The Windows Packaging workflow builds the real x64 NSIS installer on pull
   requests affecting packaged code, and on merge groups. It runs the release
-  payload validator and packaged terminal/Cursor native probes without signing
+  payload validator, packaged terminal/Cursor native probes, and an install/upgrade
+  from the checksum-pinned 0.6.21 installer without signing
   secrets or publication authority. Release Smoke uses synthetic artifacts and
   remains a separate workflow/manifest check.
 - Windows loose-file validation retains an 80-file core budget. Pinned voice

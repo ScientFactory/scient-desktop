@@ -1,6 +1,9 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import { runDesktopSmoke } from "../apps/desktop/scripts/smoke-test.mjs";
 
 const packageRoot = NodePath.resolve(process.argv[2] ?? "");
 // eslint-disable-next-line t3code/no-global-process-runtime -- Standalone target-host probe runs outside the Effect application runtime.
@@ -47,3 +50,28 @@ process.stdout.write(probe.stdout ?? "");
 process.stderr.write(probe.stderr ?? "");
 NodeAssert.equal(probe.status, 0, probe.error?.message ?? "Packaged runtime probe failed");
 NodeAssert.match(probe.stdout, /10 concurrent terminals.*passed/);
+
+if (process.argv.includes("--launch-smoke")) {
+  const profileRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-packaged-smoke-"));
+  const smokeEnv = {
+    ...process.env,
+    SCIENT_NEXT_HOME: NodePath.join(profileRoot, "state"),
+    APPDATA: NodePath.join(profileRoot, "appdata"),
+    ELECTRON_ENABLE_LOGGING: "1",
+  };
+  delete smokeEnv.ELECTRON_RUN_AS_NODE;
+  delete smokeEnv.ELECTRON_NO_ASAR;
+  delete smokeEnv.NODE_OPTIONS;
+  const result = await runDesktopSmoke({
+    executable: NodePath.join(packageRoot, "Scient.exe"),
+    cwd: packageRoot,
+    env: smokeEnv,
+  });
+  process.stdout.write(result.output);
+  NodeAssert.ok(
+    result.passed,
+    "Installed desktop must survive the smoke interval and drain on shutdown",
+  );
+  NodeFS.rmSync(profileRoot, { recursive: true, force: true });
+  console.log("Installed Windows desktop launch smoke passed.");
+}

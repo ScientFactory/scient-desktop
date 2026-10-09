@@ -2191,6 +2191,68 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("enforces the original core budget after validating component inventories", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
+        // Fixture has nine core files, plus the 39 approved component files.
+        for (let index = 0; index < 71; index += 1) {
+          yield* fs.writeFileString(
+            path.join(fixture.packagedAppDir, `padding-${index}.txt`),
+            "core",
+          );
+        }
+        const options = {
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64" as const,
+        };
+        const valid = yield* validateWindowsPackagedPayload(options);
+        assert.equal(valid.fileCount, 119);
+        yield* fs.writeFileString(path.join(fixture.packagedAppDir, "spill.txt"), "core");
+        const error = yield* validateWindowsPackagedPayload(options).pipe(Effect.flip);
+        assert.instanceOf(error, WindowsPackagedPayloadValidationError);
+        assert.equal(error.reason, "file-limit-exceeded");
+        assert.equal(error.fileCount, 120);
+        assert.equal(error.fileLimit, 119);
+        assert.include(error.message, "core=81");
+      }),
+    ).pipe(Effect.provideService(HostProcessPlatform, "linux")),
+  );
+
+  it.effect.each([
+    { file: "resources/whisper-runtime/whisper-server.exe", remove: true },
+    { file: "resources/node_modules/@cursor/sdk-win32-x64/extra.dll", remove: false },
+    {
+      file: "resources/app.asar.unpacked/node_modules/@yuuang/ffi-rs-win32-ia32-msvc/ffi-rs.win32-ia32-msvc.node",
+      remove: false,
+    },
+  ])("rejects an invalid final package component: $file", ({ file, remove }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
+        const target = path.join(fixture.packagedAppDir, file);
+        if (remove) yield* fs.remove(target);
+        else {
+          yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+          yield* fs.writeFileString(target, "unexpected");
+        }
+        const error = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+        }).pipe(Effect.flip);
+        assert.instanceOf(error, WindowsPackagedPayloadValidationError);
+        assert.equal(error.reason, "component-inventory-invalid");
+        assert.include(error.message, file);
+      }),
+    ),
+  );
+
   it.effect("rejects a sidecar whose extracted server bundle cannot resolve", () =>
     Effect.scoped(
       Effect.gen(function* () {

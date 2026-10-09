@@ -127,6 +127,25 @@ jobs:
           $stage = Get-ChildItem $env:TEMP -Directory -Filter 't3code-desktop-win-stage-*' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if ($null -eq $stage) { throw 'Missing retained package stage' }
           node scripts/qualify-windows-packaged-runtime.mjs "$($stage.FullName)/app/dist/win-unpacked"
+      - name: Install 0.6.21 and upgrade to the candidate
+        shell: pwsh
+        run: |
+          $oldInstaller = Join-Path $env:RUNNER_TEMP 'Scient-0.6.21-x64.exe'
+          Invoke-WebRequest 'https://github.com/ScientFactory/scient-desktop/releases/download/v0.6.21/Scient-0.6.21-x64.exe' -OutFile $oldInstaller
+          $expectedDigest = '173891f53b4d03c15fd9e551a0bb298fc9cac5ed128176cdd9f5ceb0e6a0a409'
+          if ((Get-FileHash $oldInstaller -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedDigest) { throw 'Stable installer checksum mismatch' }
+          $installDir = Join-Path $env:RUNNER_TEMP 'scient-install-upgrade'
+          $env:SCIENT_NEXT_HOME = Join-Path $env:RUNNER_TEMP 'scient-upgrade-profile'
+          $env:APPDATA = Join-Path $env:RUNNER_TEMP 'scient-upgrade-appdata'
+          foreach ($version in @('0.6.21', '0.6.22')) {
+            $installer = if ($version -eq '0.6.21') { $oldInstaller } else { (Resolve-Path 'release/Scient-0.6.22-x64.exe').Path }
+            $process = Start-Process $installer -ArgumentList '/S', "/D=$installDir" -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw "Installer failed for $version with exit $($process.ExitCode)" }
+            $exe = Join-Path $installDir 'Scient.exe'
+            if (!(Test-Path $exe)) { throw 'Installed executable missing' }
+            if ((Get-Item $exe).VersionInfo.ProductVersion -ne $version) { throw "Installed version is not $version" }
+          }
+          node scripts/qualify-windows-packaged-runtime.mjs "$installDir" --launch-smoke
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
