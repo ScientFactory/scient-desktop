@@ -1063,10 +1063,22 @@ export const layerWithOptions = (
           }),
       });
 
-      const awaitClosingEntry = Effect.fnUntraced(function* (owner: ClosingSessionEntry) {
-        const result = yield* Fiber.join(owner.operation).pipe(
-          Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
-        );
+      const awaitClosingEntry = Effect.fnUntraced(function* (
+        owner: ClosingSessionEntry,
+        firstRecordsAttempt?: ClosingSessionEntry["firstRecordsAttempt"],
+      ) {
+        // First persistence and physical cleanup share one public waiter budget.
+        const completion =
+          firstRecordsAttempt === undefined
+            ? Fiber.join(owner.operation)
+            : Deferred.await(firstRecordsAttempt).pipe(
+                Effect.flatMap((firstRecords) =>
+                  Exit.isFailure(firstRecords)
+                    ? Effect.succeed(firstRecords)
+                    : Fiber.join(owner.operation),
+                ),
+              );
+        const result = yield* completion.pipe(Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS));
         if (Option.isNone(result))
           return yield* new ProviderSessionReleaseError({
             providerSessionId: owner.entry.runtime.providerSessionId,
@@ -1235,14 +1247,7 @@ export const layerWithOptions = (
                 reason: input.reason,
                 cause: invalidation.cause,
               });
-            const firstRecords = yield* restore(Deferred.await(owner.firstRecordsAttempt));
-            if (Exit.isFailure(firstRecords))
-              return yield* new ProviderSessionReleaseError({
-                providerSessionId: input.providerSessionId,
-                reason: input.reason,
-                cause: firstRecords.cause,
-              });
-            return yield* restore(awaitClosingEntry(owner));
+            return yield* restore(awaitClosingEntry(owner, owner.firstRecordsAttempt));
           }),
         );
 
