@@ -182,8 +182,20 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     expectedRevision: string,
   ): Promise<{ readonly deleted: true } | { readonly revision: string }> => {
     const id = NodeCrypto.randomBytes(6).toString("hex");
-    const recovery = path.join(NodeOS.tmpdir(), "scient-deleted-files", id);
-    await NodeFSP.mkdir(recovery, { recursive: true });
+    // Private to this user: a file moved here must not become readable by
+    // others, and a folder someone else made (or a link) is never used.
+    const uid = process.getuid?.();
+    const recoveryRoot = path.join(
+      NodeOS.tmpdir(),
+      uid === undefined ? "scient-deleted-files" : `scient-deleted-files-${uid}`,
+    );
+    await NodeFSP.mkdir(recoveryRoot, { recursive: true, mode: 0o700 });
+    const owned = await NodeFSP.lstat(recoveryRoot);
+    if (!owned.isDirectory() || (uid !== undefined && owned.uid !== uid))
+      throw new Error(`${recoveryRoot} is not this user's own folder.`);
+    await NodeFSP.chmod(recoveryRoot, 0o700);
+    const recovery = path.join(recoveryRoot, id);
+    await NodeFSP.mkdir(recovery, { mode: 0o700 });
     let held = path.join(recovery, path.basename(targetPath));
     let recoverable = true;
     try {

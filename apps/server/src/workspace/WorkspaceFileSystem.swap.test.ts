@@ -227,7 +227,12 @@ describe("WorkspaceFileSystem.deleteFile", () => {
       });
       let armed = true;
       vi.mocked(NodeFSP.lstat).mockImplementation((async (target: string, options?: object) => {
-        if (armed && String(target).includes("scient-deleted-files")) {
+        // The moved file itself, once it sits in the recovery folder.
+        if (
+          armed &&
+          String(target).includes("scient-deleted-files") &&
+          String(target).endsWith("chapter.tex")
+        ) {
           armed = false;
           throw Object.assign(new Error("I/O error"), { code: "EIO" });
         }
