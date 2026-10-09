@@ -19,7 +19,7 @@ export const MANAGED_RUNTIME_POLICY: Readonly<
   codex: { revision: 3, historicalRevisions: [1, 2] },
   claudeAgent: { revision: 1, historicalRevisions: [] },
   antigravity: { revision: 1, historicalRevisions: [] },
-  antigravityAcp: { revision: 1, historicalRevisions: [] },
+  antigravityAcp: { revision: 2, historicalRevisions: [1] },
   cursor: { revision: 1, historicalRevisions: [] },
   droid: { revision: 1, historicalRevisions: [] },
   grok: { revision: 1, historicalRevisions: [] },

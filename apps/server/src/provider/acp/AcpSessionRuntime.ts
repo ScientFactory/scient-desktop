@@ -1808,8 +1808,15 @@ export const make = (
       }
       yield* signalOwnedProcessGroup("SIGKILL");
     }).pipe(withWallClock);
+    let ownedProcessGroupClosed = false;
     const terminateProcessGroup = yield* Effect.cached(
-      Effect.uninterruptible(terminateOwnedProcessGroupImpl),
+      Effect.uninterruptible(terminateOwnedProcessGroupImpl).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            ownedProcessGroupClosed = true;
+          }),
+        ),
+      ),
     );
     if (options.ownDetachedProcessGroup === true) {
       const hostPlatform = yield* HostProcessPlatform;
@@ -1823,9 +1830,9 @@ export const make = (
               : signalOwnedProcessGroup("SIGKILL").pipe(Effect.asVoid);
       yield* Scope.addFinalizer(
         runtimeScope,
-        Effect.uninterruptible(forceTerminateOwnedProcessGroup).pipe(
-          Effect.ignoreCause({ log: true }),
-        ),
+        Effect.suspend(() =>
+          ownedProcessGroupClosed ? Effect.void : forceTerminateOwnedProcessGroup,
+        ).pipe(Effect.uninterruptible, Effect.ignoreCause({ log: true })),
       );
     }
     yield* child.stderr.pipe(

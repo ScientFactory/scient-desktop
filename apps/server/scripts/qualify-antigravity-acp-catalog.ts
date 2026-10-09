@@ -11,7 +11,7 @@ import { FetchHttpClient } from "effect/http";
 
 import { makeInstallerFilesystem } from "../src/provider/runtimeFilesystem.ts";
 import { makeAntigravityInstallation } from "../src/provider/AntigravityInstallation.ts";
-import { ManagedRuntimeCatalogDataSchema } from "../src/scient/providerLifecycle/ManagedRuntimeCatalog.ts";
+import { decodeBoundedCatalogJson } from "../src/scient/providerLifecycle/ManagedRuntimeCatalog.ts";
 
 class AntigravityAcpQualificationError extends Schema.TaggedError<AntigravityAcpQualificationError>()(
   "AntigravityAcpQualificationError",
@@ -31,11 +31,7 @@ const main = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const catalog = yield* fs
     .readFileString(catalogPath)
-    .pipe(
-      Effect.flatMap(
-        Schema.decodeUnknownEffect(Schema.fromJsonString(ManagedRuntimeCatalogDataSchema)),
-      ),
-    );
+    .pipe(Effect.flatMap(decodeBoundedCatalogJson));
   const platform = yield* HostProcessPlatform;
   const arch = yield* HostProcessArchitecture;
   const asset = resolveAntigravityAcpCatalogAsset(catalog, platform, arch);

@@ -24,7 +24,7 @@ import {
 } from "../AntigravityLifecycleBridge.ts";
 import type { AntigravityAuth } from "../AntigravityAuth.ts";
 import type { AntigravityInstallation } from "../AntigravityInstallation.ts";
-import { resolveAntigravityReleaseAsset } from "../antigravityRelease.ts";
+import { ANTIGRAVITY_ACP_TARGETS } from "@scientfactory/provider-runtime";
 import { deriveProviderInstanceConfigMap } from "../ProviderInstanceRegistryHydration.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 
@@ -39,7 +39,9 @@ export function usesLegacyAntigravityBackend(input: {
     const basename = normalized.slice(normalized.lastIndexOf("/") + 1).toLowerCase();
     return basename === "agy" || basename === "agy.exe" || basename === "antigravity";
   }
-  return resolveAntigravityReleaseAsset(input.platform, input.arch) === null;
+  return !ANTIGRAVITY_ACP_TARGETS.some(
+    (target) => target.platform === input.platform && target.arch === input.arch,
+  );
 }
 
 /**

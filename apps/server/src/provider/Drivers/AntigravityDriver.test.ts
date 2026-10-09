@@ -68,7 +68,7 @@ const blockedCredentialKeys = new Set([
   "GOOGLE_GENAI_USE_VERTEXAI",
 ]);
 
-it("selects legacy agy only when explicitly configured or no official ACP asset exists", () => {
+it("selects legacy agy when explicitly configured or the host has no approved ACP target", () => {
   expect(
     usesLegacyAntigravityBackend({
       binaryPath: "/opt/legacy/agy",
@@ -91,7 +91,7 @@ it("selects legacy agy only when explicitly configured or no official ACP asset 
     }),
   ).toBe(false);
   expect(usesLegacyAntigravityBackend({ binaryPath: "", platform: "darwin", arch: "x64" })).toBe(
-    false,
+    true,
   );
   expect(usesLegacyAntigravityBackend({ binaryPath: "", platform: "linux", arch: "x64" })).toBe(
     false,

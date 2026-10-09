@@ -7,7 +7,8 @@ import * as NodePath from "node:path";
 import {
   isManagedRuntimeProvider,
   mergeQualifiedManagedRuntimeProvider,
-  validateManagedRuntimeCatalog,
+  verifyManagedRuntimePromotionPointer,
+  readManagedRuntimeCatalog,
 } from "./lib/managed-runtime-catalog.ts";
 
 function argument(name: string): string | undefined {
@@ -32,9 +33,12 @@ const [currentRaw, candidateRaw] = await Promise.all([
   NodeFSP.readFile(currentPath, "utf8"),
   NodeFSP.readFile(candidatePath, "utf8"),
 ]);
-const current = validateManagedRuntimeCatalog(JSON.parse(currentRaw));
-const candidate = validateManagedRuntimeCatalog(JSON.parse(candidateRaw));
+const current = readManagedRuntimeCatalog(JSON.parse(currentRaw), provider, (message) =>
+  process.stderr.write(`${message}\n`),
+);
+const candidate = readManagedRuntimeCatalog(JSON.parse(candidateRaw), provider);
 const promoted = mergeQualifiedManagedRuntimeProvider({ current, candidate, provider });
+await verifyManagedRuntimePromotionPointer({ current, candidate, provider });
 await NodeFSP.writeFile(outputPath, `${JSON.stringify(promoted, null, 2)}\n`, { mode: 0o600 });
 
 const previousRelease = current.providers[provider];

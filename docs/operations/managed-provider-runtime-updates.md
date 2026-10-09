@@ -47,7 +47,10 @@ When a provider's new releases require changed extraction or execution policy,
 advance only that family's revision and list the previously published revision
 as historical. Published historical entries are preserved as data, without
 interpreting them as candidates for the new installer or relabeling them during
-another provider's update. Unknown revisions are rejected. Discovery collects a
+another provider's update. Unknown revisions are rejected for the selected family;
+structurally valid sibling entries, including future contracts, remain untouched.
+The root schema still fails closed. A malformed sibling is reported and omitted,
+without preventing healthy families from discovering or publishing. Discovery collects a
 fresh complete candidate under the current policy, including when the release
 version has not changed. Every required native runner must qualify it before
 publication may replace the historical entry. A contract-only transition may
@@ -67,6 +70,31 @@ remains 32 entries for other providers. Changing these Codex-specific
 limits requires code review and native qualification, not a feed edit.
 Extraction errors report the entry at rejection, the running entry/byte counts,
 and their limits; the counts are observed so far, not a scan of the entire archive.
+
+Antigravity ACP contract 2 requires registry version 1.3.0 or newer. Contract 1
+remains readable historical publication data, including the published 1.1.1 entry;
+it cannot become a new-install candidate. Validation owns its process group,
+confirms termination, then removes its disposable profile. Failed termination
+fails qualification and retains the profile. Default backend routing follows the
+approved five-target catalog list; Intel macOS uses the legacy backend until native
+ACP qualification approves that target. Explicit custom paths keep their routing.
+
+### Cursor builds on the same date
+
+Cursor's `YYYY.MM.DD-hash` suffix identifies a build; its hashes are not ordered.
+Same-date replacements carry a bounded `supersedes` set of earlier builds qualified
+that day (at most 64, without duplicates or cycles). Discovery binds a candidate to
+the published Cursor predecessor's complete identity. Publication rechecks that
+predecessor and the official stable pointer after native qualification; changes
+require rediscovery. The candidate-only predecessor fingerprint is not published.
+Same-version target expansion preserves both artifact bytes and ordering metadata.
+
+Clients use the same comparator for refresh, Update eligibility, atomic cache
+restore, and durable install receipts. Known older same-date entries cannot replace
+cached successors. Repair preserves a newer installed receipt, including a same-date
+legacy receipt whose order is unknown. Fresh installs use the qualified feed. Both
+app and release qualification require the native Cursor `--version` to match the
+pinned identity. Older apps safely lack this new same-date update capability.
 
 ## Automated path
 
@@ -129,9 +157,9 @@ Grok, Pi, Oh My Pi, and Scient Agent. The release-family runs are intentionally 
    the hosted Linux jobs exercise glibc, not native musl, and must not be reported
    as native musl qualification. Its server dependencies are installed through the
    already-provisioned Vite+ package-manager entrypoint.
-5. Serialize publication, re-read the latest generated catalog, validate both
-   inputs against policy on the immutable discovery commit, and merge only the
-   provider that passed.
+5. Queue every publication (`queue: max`) under one shared writer lock, re-read
+   the latest catalog, validate only the selected family on the immutable
+   discovery commit, and merge only the provider that passed.
 6. Confirm that current `main` still descends from the discovery commit and that
    managed-runtime policy, discovery, qualification, and publication code did
    not change while the candidate was running. For Droid, qualification code
@@ -141,11 +169,15 @@ Grok, Pi, Oh My Pi, and Scient Agent. The release-family runs are intentionally 
    packages behind them. Those paths are folders, so a module added to one of
    them is covered, and `scripts/managed-provider-runtime-workflow.test.ts`
    follows the suites' imports and fails when a module they load lies outside
-   the guard. That wider list voids only a Droid publication; every other
-   provider is guarded by the policy, discovery, artifact-qualification and
-   publication code alone. Other `main` changes do not block publication; a
+   the guard. ACP and Scient's server qualification inputs likewise invalidate
+   only their own families, with import-graph regression coverage. Common policy,
+   discovery, shared package, artifact-qualification and publication changes
+   still invalidate all families. Other `main` changes do not block publication; a
    guarded change requires a fresh run.
-7. Publish with a normal fast-forward push using the release GitHub App.
+7. Publish with a normal fast-forward push using the release GitHub App. If an
+   external writer advances the data branch, retry at most three times, rereading
+   and remerging the selected family each time. Policy code stays on the immutable
+   discovery checkout; a separate temporary Git worktree owns the data commit.
 
 A failed provider is red in its own matrix entry and does not stop other
 providers. Failed discovery, incomplete metadata, a failed native check, a

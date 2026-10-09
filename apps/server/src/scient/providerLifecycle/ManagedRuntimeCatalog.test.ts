@@ -38,6 +38,7 @@ import {
   resolveManagedRuntimeRepairArtifact,
   resolveFetchedManagedRuntimeCatalog,
   changedManagedRuntimeProviders,
+  decodeBoundedCatalogJson,
   type ManagedRuntimeCatalogData,
 } from "./ManagedRuntimeCatalog.ts";
 
@@ -140,6 +141,127 @@ const serviceLayers = (input: {
     Layer.provideMerge(ServerSettings.layerTest(input.settings ?? {})),
     Layer.provideMerge(httpClientLayer(input.response)),
   );
+
+describe("Cursor qualified replacement delivery", () => {
+  const target = { platform: "darwin", arch: "arm64" } as const;
+  const policy = resolveReviewedCursorArtifact(target)!;
+  const a = BUNDLED_MANAGED_RUNTIME_CATALOG.providers.cursor!.version;
+  const date = a.split("-")[0]!;
+  const b = `${date}-1111111`;
+  const c = `${date}-2222222`;
+  const catalog = (
+    version: string,
+    supersedes?: ReadonlyArray<string>,
+  ): ManagedRuntimeCatalogData => ({
+    schemaVersion: 1,
+    providers: {
+      cursor: {
+        ...BUNDLED_MANAGED_RUNTIME_CATALOG.providers.cursor!,
+        version,
+        ...(supersedes ? { supersedes } : {}),
+        artifacts: Object.fromEntries(
+          Object.entries(BUNDLED_MANAGED_RUNTIME_CATALOG.providers.cursor!.artifacts).map(
+            ([key, artifact]) => [key, { ...artifact, url: artifact.url.replace(a, version) }],
+          ),
+        ),
+      },
+    },
+  });
+  const resolve = (data: ManagedRuntimeCatalogData) =>
+    resolveManagedRuntimeCatalogCandidate({
+      catalog: data,
+      bundledArtifact: policy,
+      contractRevision: MANAGED_RUNTIME_POLICY.cursor.revision,
+    })!;
+
+  it("delivers skips, preserves a known successor, and repairs legacy receipts conservatively", () => {
+    const first = catalog(b, [a]);
+    const next = catalog(c, [a, b]);
+    const artifact = resolve(first);
+    assert.deepStrictEqual(artifact.supersedes, [a]);
+    assert.strictEqual(resolve(next).version, c);
+    const current = resolveFetchedManagedRuntimeCatalog(next);
+    assert.strictEqual(
+      resolveFetchedManagedRuntimeCatalog(first, current).providers.cursor?.version,
+      c,
+    );
+    assert.strictEqual(
+      resolveManagedRuntimeRepairArtifact({
+        bundledArtifact: policy,
+        candidateArtifact: resolve(first),
+        activeArtifact: managedRuntimeArtifactReceipt(resolve(next)),
+      })?.version,
+      c,
+    );
+    // Pre-metadata receipts cannot prove same-day order. Repair their pinned bytes.
+    const { supersedes: _lineage, ...legacy } = managedRuntimeArtifactReceipt(resolve(next));
+    assert.strictEqual(
+      resolveManagedRuntimeRepairArtifact({
+        bundledArtifact: policy,
+        candidateArtifact: artifact,
+        activeArtifact: legacy,
+      })?.version,
+      c,
+    );
+    assert.notStrictEqual(artifact.catalogRevision, resolve(catalog(b)).catalogRevision);
+  });
+
+  it.effect("quarantines a malformed sibling without discarding valid releases", () =>
+    Effect.gen(function* () {
+      const good = remoteCatalog();
+      const decoded = yield* decodeBoundedCatalogJson(
+        JSON.stringify({
+          ...good,
+          providers: {
+            ...good.providers,
+            cursor: { ...catalog(b, [a]).providers.cursor, supersedes: [b] },
+            futureFamily: { futureContract: true },
+          },
+        }),
+      );
+      assert.strictEqual(decoded.providers.codex?.version, newerCodexVersion);
+      assert.isUndefined(decoded.providers.cursor);
+      assert.strictEqual(resolveFetchedManagedRuntimeCatalog(decoded).providers.cursor?.version, a);
+    }),
+  );
+
+  it.live(
+    "persists replacement order across refresh, restart, stale fetch and offline repair",
+    () => {
+      let response: unknown = catalog(b, [a]);
+      return Effect.gen(function* () {
+        const service = yield* makeWithOptions({ startBackgroundRefresh: false });
+        const first = resolve(yield* service.refreshNow);
+        assert.strictEqual(first.version, b);
+        response = catalog(c, [a, b]);
+        const latest = resolve(yield* service.refreshNow);
+        assert.deepStrictEqual(latest.supersedes, [a, b]);
+        response = catalog(b, [a]);
+        assert.strictEqual(resolve(yield* service.refreshNow).version, c);
+        response = { schemaVersion: 999 };
+        const rebooted = yield* makeWithOptions({ startBackgroundRefresh: false });
+        assert.strictEqual(resolve(yield* rebooted.current).version, c);
+        assert.strictEqual(resolve(yield* rebooted.refreshNow).version, c);
+        assert.strictEqual(
+          resolveManagedRuntimeRepairArtifact({
+            bundledArtifact: policy,
+            candidateArtifact: resolve(BUNDLED_MANAGED_RUNTIME_CATALOG),
+            activeArtifact: managedRuntimeArtifactReceipt(latest),
+          })?.version,
+          c,
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          serviceLayers({
+            prefix: "cursor-replacement-cache",
+            response: () => Response.json(response),
+          }),
+        ),
+      );
+    },
+  );
+});
 
 describe("managed runtime catalog resolution", () => {
   it("admits Scient's first qualified release using compiled policy without a bundled artifact", () => {
