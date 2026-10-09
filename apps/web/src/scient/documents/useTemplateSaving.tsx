@@ -11,6 +11,7 @@ import { includedFiles, newDocumentTitle, withEmptyTitle } from "./documentTempl
 import { folderOf } from "./newDocumentPlacement";
 import { newDocuments, templateEdits } from "./newDocuments";
 import { TemplateNameDialog } from "./TemplateNameDialog";
+import { captureVisualPage } from "./templatePreviews";
 import { type UserTemplate, userTemplates } from "./userTemplates";
 
 /** The most included files a template carries, and their total size. */
@@ -49,7 +50,9 @@ export function useTemplateSaving(input: {
     return result._tag === "Success" && !result.value.truncated ? result.value.contents : null;
   };
   /** The document as a template: its title emptied, and the files it includes. */
-  const capture = async () => {
+  const capture = async (replacing: UserTemplate | null) => {
+    // Its first page as Visual draws it, read before anything else can change the screen.
+    const preview = captureVisualPage() ?? replacing?.preview ?? null;
     const source = lease.getSnapshot().draftSource;
     const folder = folderOf(key.relativePath);
     const files: Record<string, string> = {};
@@ -63,12 +66,12 @@ export function useTemplateSaving(input: {
       files[name] = contents;
       queue.push(...includedFiles(contents));
     }
-    return { source: withEmptyTitle(source), files, preview: null };
+    return { source: withEmptyTitle(source), files, preview };
   };
   const save = async (name: string, replacing: UserTemplate | null) => {
     try {
       const saved = await userTemplates.save({
-        ...(await capture()),
+        ...(await capture(replacing)),
         ...(replacing ? { id: replacing.id } : {}),
         name: replacing?.name ?? name,
       });

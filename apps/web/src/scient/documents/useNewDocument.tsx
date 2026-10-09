@@ -52,6 +52,7 @@ import {
   untitledStem,
 } from "./newDocumentPlacement";
 import { newDocuments, pathHasLeftoverDrafts, templateEdits } from "./newDocuments";
+import { builtInPreviewReference } from "./templatePreviews";
 import { TemplateRow } from "./TemplateRow";
 import { isPathTaken, useNewDocumentFiles } from "./useNewDocumentFiles";
 import { useTemplateChoices } from "./useTemplateChoices";
@@ -467,7 +468,11 @@ export function useNewDocument(input: {
     const saved = await userTemplates.save({
       ...templateContents(entry.template),
       name,
-      preview: null,
+      // It looks like the one it was copied from until it is updated.
+      preview:
+        builtInPreviewReference(entry.template) ??
+        userTemplates.get(entry.template)?.preview ??
+        null,
     });
     editTemplate(saved.id);
   };

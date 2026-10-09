@@ -30,6 +30,8 @@ import {
   useTemplateLayout,
 } from "./documentTemplateLayout";
 import { PageZoomContext } from "./NewDocumentOnPage";
+import { TemplateCard } from "./TemplateCard";
+import type { TemplatePicture } from "./templatePreviews";
 import { templateEdits } from "./newDocuments";
 import { TemplateNameDialog } from "./TemplateNameDialog";
 import type { TemplateChoice } from "./useTemplateChoices";
@@ -57,6 +59,8 @@ export function TemplateRow(props: {
   const ids = props.templates.map((template) => template.id);
   const { layout, isDefault, update, restoreDefaults } = useTemplateLayout(ids);
   const nameOf = (id: string) => props.templates.find((template) => template.id === id)?.name ?? id;
+  const pictureOf = (id: string) =>
+    props.templates.find((template) => template.id === id)?.picture ?? null;
   const isOwn = (id: string) =>
     props.templates.some((template) => template.id === id && template.own);
   const [naming, setNaming] = useState<{ readonly rename: string } | "new" | null>(null);
@@ -116,6 +120,7 @@ export function TemplateRow(props: {
                 key={id}
                 id={id}
                 name={nameOf(id)}
+                picture={pictureOf(id)}
                 checked={props.selected === id}
                 onChoose={() => choose(id)}
                 onContextMenu={contextMenu(id)}
@@ -157,6 +162,7 @@ export function TemplateRow(props: {
                     key={id}
                     id={id}
                     name={nameOf(id)}
+                    picture={pictureOf(id)}
                     onChoose={() => choose(id)}
                     onContextMenu={contextMenu(id)}
                     onActions={(position) => void openActions(id, position)}
@@ -195,6 +201,7 @@ export function TemplateRow(props: {
 function PageTemplate(props: {
   readonly id: string;
   readonly name: string;
+  readonly picture: TemplatePicture | null;
   readonly checked: boolean;
   readonly onChoose: () => void;
   readonly onContextMenu: (event: MouseEvent) => void;
@@ -208,26 +215,29 @@ function PageTemplate(props: {
   const zoom = useContext(PageZoomContext);
   const moved = transform && { ...transform, x: transform.x / zoom, y: transform.y / zoom };
   return (
-    <button
-      ref={setNodeRef}
-      type="button"
-      {...listeners}
-      role="radio"
-      aria-checked={props.checked}
-      data-dragging={isDragging || undefined}
-      style={{ transform: CSS.Translate.toString(moved), transition }}
-      onMouseDown={(event) => event.preventDefault()}
-      onClick={props.onChoose}
-      onContextMenu={props.onContextMenu}
-    >
-      {props.name}
-    </button>
+    <TemplateCard picture={props.picture} side="bottom">
+      <button
+        ref={setNodeRef}
+        type="button"
+        {...listeners}
+        role="radio"
+        aria-checked={props.checked}
+        data-dragging={isDragging || undefined}
+        style={{ transform: CSS.Translate.toString(moved), transition }}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={props.onChoose}
+        onContextMenu={props.onContextMenu}
+      >
+        {props.name}
+      </button>
+    </TemplateCard>
   );
 }
 
 function MoreTemplate(props: {
   readonly id: string;
   readonly name: string;
+  readonly picture: TemplatePicture | null;
   readonly onChoose: () => void;
   readonly onContextMenu: (event: MouseEvent) => void;
   readonly onActions: (position: { x: number; y: number }) => void;
@@ -242,31 +252,33 @@ function MoreTemplate(props: {
     event.preventDefault();
   };
   return (
-    <MenuItem
-      ref={setNodeRef}
-      {...listeners}
-      data-template-item=""
-      aria-label={props.name}
-      data-dragging={isDragging || undefined}
-      style={{ transform: CSS.Translate.toString(transform), transition }}
-      onClick={props.onChoose}
-      onContextMenu={props.onContextMenu}
-    >
-      <span className="min-w-0 flex-1 truncate">{props.name}</span>
-      <button
-        type="button"
-        className="scient-template-actions"
-        aria-label={`${props.name} options`}
-        onPointerDown={keepToItself}
-        onMouseUp={keepToItself}
-        onClick={(event) => {
-          keepToItself(event);
-          const box = event.currentTarget.getBoundingClientRect();
-          props.onActions({ x: Math.round(box.right), y: Math.round(box.bottom) });
-        }}
+    <TemplateCard picture={props.picture} side="inline-end">
+      <MenuItem
+        ref={setNodeRef}
+        {...listeners}
+        data-template-item=""
+        aria-label={props.name}
+        data-dragging={isDragging || undefined}
+        style={{ transform: CSS.Translate.toString(transform), transition }}
+        onClick={props.onChoose}
+        onContextMenu={props.onContextMenu}
       >
-        <Ellipsis aria-hidden="true" />
-      </button>
-    </MenuItem>
+        <span className="min-w-0 flex-1 truncate">{props.name}</span>
+        <button
+          type="button"
+          className="scient-template-actions"
+          aria-label={`${props.name} options`}
+          onPointerDown={keepToItself}
+          onMouseUp={keepToItself}
+          onClick={(event) => {
+            keepToItself(event);
+            const box = event.currentTarget.getBoundingClientRect();
+            props.onActions({ x: Math.round(box.right), y: Math.round(box.bottom) });
+          }}
+        >
+          <Ellipsis aria-hidden="true" />
+        </button>
+      </MenuItem>
+    </TemplateCard>
   );
 }
