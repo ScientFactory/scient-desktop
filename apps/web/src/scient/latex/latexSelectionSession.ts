@@ -88,7 +88,7 @@ function present(participant: Participant | null, selected = false, selectionOve
 // word's capitals never touch the corners at any zoom.
 const VACANT_GUIDE_MARGIN = 1;
 function currentGuideMargin(rect: DOMRect): number {
-  return Math.min(8, Math.max(4, rect.height * 0.3));
+  return Math.min(7, Math.max(3.5, rect.height * 0.2625));
 }
 
 let measureContext: CanvasRenderingContext2D | null = null;
