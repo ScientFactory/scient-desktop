@@ -8,7 +8,7 @@ import {
 } from "react";
 
 import { readLocalApi } from "~/localApi";
-import { registerRenameParticipant } from "~/scient/fileSurfaces/renameOpenDocument";
+import { registerRenameParticipant } from "~/scient/markdownEditor/persistence/renameOpenDocument";
 import { Button } from "~/components/ui/button";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { attachShortcutHost } from "../keyboard/host";

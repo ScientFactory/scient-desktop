@@ -11,7 +11,10 @@ import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persisten
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { renameOpenDocument, type RenameOpenDocumentResult } from "./renameOpenDocument";
+import {
+  renameOpenDocument,
+  type RenameOpenDocumentResult,
+} from "~/scient/markdownEditor/persistence/renameOpenDocument";
 
 /** How long the views may take to follow a moved document before they are remounted. */
 const FOLLOW_TIMEOUT_MS = 3_000;
