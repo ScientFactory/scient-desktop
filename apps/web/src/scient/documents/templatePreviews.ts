@@ -82,6 +82,18 @@ function keepStyleThatLoadsNothing(element: Element): void {
 }
 
 /**
+ * Whether an attribute (an SVG paint, filter or marker) points at a resource
+ * outside the picture. Every `url()` in it must be a place inside (`#…`); one
+ * written with escapes is not read at all.
+ */
+function pointsOutside(value: string): boolean {
+  if (value.includes("\\") && value.includes("(")) return true;
+  return [...value.matchAll(/url\s*\(\s*(['"]?)([^'")\s]*)/giu)].some(
+    (reference) => !reference[2]!.startsWith("#"),
+  );
+}
+
+/**
  * A page picture made safe to show: no element that runs or loads anything, no
  * style or attribute that fetches a resource, no event handler, no script URL,
  * nothing editable or focusable, and no ids to collide with the page around it.
@@ -105,7 +117,7 @@ export function sanitizePage(root: Element): void {
         name === "poster" ||
         name === "background" ||
         // An SVG paint or filter may point only inside the picture (`url(#…)`).
-        (name !== "style" && /url\s*\(/iu.test(value) && !/url\s*\(\s*['"]?#/iu.test(value)) ||
+        (name !== "style" && pointsOutside(attribute.value)) ||
         (name === "src" &&
           !(
             element.tagName.toLowerCase() === "img" &&

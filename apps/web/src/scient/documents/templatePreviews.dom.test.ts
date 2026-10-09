@@ -109,7 +109,9 @@ describe("template pictures", () => {
       '<p style="width: 10px; background-image: image-set(&quot;https://attacker.example/a.png&quot; 1x)">a</p>' +
       '<p style="background: u\\72l(https://attacker.example/b.png); color: red">b</p>' +
       '<p style="--x: url(https://attacker.example/c.png)">c</p>' +
-      '<svg><rect fill="url(https://attacker.example/d.svg#p)"></rect><rect fill="url(#local)"></rect></svg>' +
+      '<svg><rect fill="url(https://attacker.example/d.svg#p)"></rect><rect fill="url(#local)"></rect>' +
+      '<rect fill="u\\72l(https://attacker.example/e.svg#p)"></rect>' +
+      '<rect filter="url(#local) url(https://attacker.example/f.svg#p)"></rect></svg>' +
       '<p style="width: 10px">d</p>';
     sanitizePage(element);
     const html = element.innerHTML;
