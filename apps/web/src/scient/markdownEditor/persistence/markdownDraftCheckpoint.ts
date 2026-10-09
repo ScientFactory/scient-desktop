@@ -7,6 +7,25 @@ export interface MarkdownDraftCheckpoint {
   readonly baselineRevision: string;
   readonly draftSource: string;
   readonly publicationSource?: string | null;
+  /**
+   * Whether a conflict was open when this copy was taken. Absent in copies
+   * written before it was recorded; only an explicit `false` counts as evidence.
+   */
+  readonly conflict?: boolean;
+}
+
+/**
+ * A copy that provably holds nothing to recover: taken with no conflict open,
+ * no unsaved source and no publication other than its baseline. Copies that
+ * predate the conflict field never qualify.
+ */
+export function checkpointHoldsNothing(checkpoint: MarkdownDraftCheckpoint): boolean {
+  return (
+    checkpoint.conflict === false &&
+    checkpoint.draftSource === checkpoint.baselineSource &&
+    (checkpoint.publicationSource == null ||
+      checkpoint.publicationSource === checkpoint.baselineSource)
+  );
 }
 
 export interface MarkdownDraftCheckpointStore {
@@ -76,6 +95,10 @@ function decode(value: unknown): MarkdownDraftCheckpoint | undefined {
       "publicationSource" in value && typeof value.publicationSource === "string"
         ? value.publicationSource
         : null,
+    // Absent or malformed is unknown, never evidence of a clean copy.
+    ...("conflict" in value && typeof value.conflict === "boolean"
+      ? { conflict: value.conflict }
+      : {}),
   };
 }
 
@@ -142,13 +165,15 @@ export const indexedDbMarkdownDrafts: MarkdownDraftCheckpointStore = {
 /** A coalesced recovery copy, never a second publisher of the Markdown file. */
 export class MarkdownDraftCheckpointWriter {
   private token: string | undefined;
-  private latest: MarkdownPersistenceSnapshot | undefined;
+  private latest: { snapshot: MarkdownPersistenceSnapshot; keep: boolean } | undefined;
   private lastSource: string | undefined;
   private lastBaseline: string | undefined;
   private lastPublication: string | null = null;
+  private lastConflict = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
-  private writing = false;
+  private writing: Promise<void> | undefined;
   private disabled = false;
+  private retired = false;
 
   constructor(
     private readonly key: string,
@@ -158,64 +183,97 @@ export class MarkdownDraftCheckpointWriter {
     this.token = initial?.token;
   }
 
-  update(snapshot: MarkdownPersistenceSnapshot): void {
-    if (this.disabled) return;
-    const source = snapshot.pending ? snapshot.draftSource : undefined;
+  /**
+   * `pendingOnlyForRename`: the document is pending only because a rename holds
+   * it. Such a snapshot has nothing to recover and is never written.
+   */
+  update(snapshot: MarkdownPersistenceSnapshot, pendingOnlyForRename = false): void {
+    if (this.disabled || this.retired) return;
+    const keep = snapshot.pending && !pendingOnlyForRename;
+    const source = keep ? snapshot.draftSource : undefined;
+    const conflict = snapshot.conflict !== null;
     if (
       source === this.lastSource &&
       snapshot.baselineRevision === this.lastBaseline &&
-      snapshot.publicationSource === this.lastPublication
+      snapshot.publicationSource === this.lastPublication &&
+      conflict === this.lastConflict
     )
       return;
     this.lastPublication = snapshot.publicationSource;
     this.lastSource = source;
     this.lastBaseline = snapshot.baselineRevision;
-    this.latest = snapshot;
-    if (!snapshot.pending && this.token === undefined && !this.writing) {
+    this.lastConflict = conflict;
+    this.latest = { snapshot, keep };
+    if (!keep && this.token === undefined && this.writing === undefined) {
       clearTimeout(this.timer);
       this.timer = undefined;
       this.latest = undefined;
       return;
     }
     // Leading deadline, not an endlessly postponed debounce during typing.
-    if (this.timer === undefined && !this.writing)
+    if (this.timer === undefined && this.writing === undefined)
       this.timer = setTimeout(() => {
         this.timer = undefined;
         void this.drain();
       }, 200);
   }
 
-  private async drain(): Promise<void> {
-    if (this.writing || this.disabled || !this.latest) return;
-    this.writing = true;
-    const snapshot = this.latest;
+  /**
+   * The document left this path (a rename). Stops further copies, waits for one
+   * already being written, then removes only the copy this writer owns.
+   */
+  async retire(): Promise<void> {
+    if (this.retired) return;
+    this.retired = true;
+    clearTimeout(this.timer);
+    this.timer = undefined;
     this.latest = undefined;
-    const next = snapshot.pending
+    while (this.writing !== undefined) await this.writing;
+    if (this.disabled || this.token === undefined) return;
+    try {
+      if (await this.store.replace(this.key, this.token, undefined)) this.token = undefined;
+    } catch (error) {
+      // The copy stays. If it holds nothing, admission discards it later.
+      console.error("Markdown recovery checkpoint could not be removed after a rename:", error);
+    }
+  }
+
+  private drain(): Promise<void> {
+    if (this.writing !== undefined || this.disabled || this.retired || !this.latest)
+      return this.writing ?? Promise.resolve();
+    const { snapshot, keep } = this.latest;
+    this.latest = undefined;
+    const next = keep
       ? {
           token: randomUUID(),
           baselineSource: snapshot.baselineSource,
           baselineRevision: snapshot.baselineRevision,
           draftSource: snapshot.draftSource,
           publicationSource: snapshot.publicationSource,
+          conflict: snapshot.conflict !== null,
         }
       : undefined;
-    try {
-      if (this.token !== undefined || next !== undefined) {
-        if (!(await this.store.replace(this.key, this.token, next))) {
-          this.disabled = true;
-          throw new Error(
-            "Another editor owns this file's recovery checkpoint; its draft has been preserved.",
-          );
+    const write = (async () => {
+      try {
+        if (this.token !== undefined || next !== undefined) {
+          if (!(await this.store.replace(this.key, this.token, next))) {
+            this.disabled = true;
+            throw new Error(
+              "Another editor owns this file's recovery checkpoint; its draft has been preserved.",
+            );
+          }
+          this.token = next?.token;
         }
-        this.token = next?.token;
+      } catch (error) {
+        // File publication and its departure guard remain authoritative. A failed
+        // recovery copy must neither acknowledge a save nor stop normal saving.
+        console.error("Markdown recovery checkpoint failed:", error);
       }
-    } catch (error) {
-      // File publication and its departure guard remain authoritative. A failed
-      // recovery copy must neither acknowledge a save nor stop normal saving.
-      console.error("Markdown recovery checkpoint failed:", error);
-    } finally {
-      this.writing = false;
-      if (this.latest && !this.disabled) void this.drain();
-    }
+    })();
+    this.writing = write.finally(() => {
+      this.writing = undefined;
+      if (this.latest && !this.disabled && !this.retired) void this.drain();
+    });
+    return this.writing;
   }
 }

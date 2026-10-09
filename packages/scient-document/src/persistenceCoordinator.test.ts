@@ -580,3 +580,20 @@ describe("DocumentPersistenceCoordinator.applyEdit", () => {
     );
   });
 });
+
+describe("DocumentPersistenceCoordinator.pendingOnlyForRename", () => {
+  it("is true only while a rename alone holds a clean document", () => {
+    const h = fixture();
+    expect(h.coordinator.pendingOnlyForRename()).toBe(false);
+    const release = h.coordinator.holdForRename()!;
+    expect(h.coordinator.getSnapshot().pending).toBe(true);
+    expect(h.coordinator.pendingOnlyForRename()).toBe(true);
+    // Another reason to be pending alongside the rename: no longer rename-only.
+    const resume = h.coordinator.suspendExternalUpdates();
+    expect(h.coordinator.pendingOnlyForRename()).toBe(false);
+    resume();
+    expect(h.coordinator.pendingOnlyForRename()).toBe(true);
+    release();
+    expect(h.coordinator.pendingOnlyForRename()).toBe(false);
+  });
+});
