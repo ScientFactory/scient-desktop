@@ -705,6 +705,8 @@ export const ServerConfig = Schema.Struct({
   threadSnapshotPagination: Schema.optionalKey(Schema.Boolean),
   /** Whether thread reads accept the reasoningMessages opt-in. */
   reasoningMessages: Schema.optionalKey(Schema.Boolean),
+  threadFind: Schema.optionalKey(Schema.Boolean),
+  threadFindProgressive: Schema.optionalKey(Schema.Boolean),
   /**
    * Folder behind this environment's Scratch project, for threads that need
    * no repository. Present only on servers that answer projects.ensureScratch
@@ -902,8 +904,11 @@ export const ServerLifecycleWelcomePayload = Schema.Struct({
 export type ServerLifecycleWelcomePayload = typeof ServerLifecycleWelcomePayload.Type;
 
 export const ServerLifecycleLegacyThreadMigrationPayload = Schema.Struct({
-  status: Schema.Union([Schema.Literal("running"), Schema.Literal("complete")]),
+  status: Schema.Literals(["running", "complete"]),
   totalThreadCount: NonNegativeInt,
+  pendingThreadCount: Schema.optional(NonNegativeInt),
+  // Keep failure readable by clients whose status decoder predates this field.
+  failed: Schema.optional(Schema.Boolean),
 });
 export type ServerLifecycleLegacyThreadMigrationPayload =
   typeof ServerLifecycleLegacyThreadMigrationPayload.Type;

@@ -57,16 +57,38 @@ names and uses concise copy for recording-duration validation.
 
 ## Reliability invariants
 
-- A generation token invalidates permission prompts, model setup, recording,
-  and transcription that complete after cancel, dismiss, unmount, or a newer
-  operation.
+- A generation token invalidates permission prompts, model setup and recording
+  that complete after cancel, dismiss, unmount, or a newer operation. Leaving a
+  thread while recording or awaiting microphone access cancels and releases the
+  microphone; a model download keeps going but cannot start recording for a
+  composer that is gone.
+- Pressing Insert or Send commits the dictation. The stop click captures, in the
+  same task, the recorder's final flush, the language and correction settings,
+  and the origin: the composer draft's environment-scoped target. A window-level
+  job (`scient/voice/voiceProcessing.ts`) then owns flush, transcription and
+  correction, so navigating away does not cancel it. The composer for that
+  draft shows the job again when it returns; another thread's composer,
+  including the same thread id in another environment, never does.
+- Committed dictation lands only in its origin draft
+  (`scient/voice/voiceDraftDelivery.ts`), never in whichever composer is
+  visible. If the origin's composer is mounted and shows its ordinary draft, the
+  text is inserted through it; Send then submits through that same composer in
+  the next frame, after re-checking it is still mounted and not showing a
+  question or approval. Otherwise the text is appended to the stored draft,
+  including anything typed there meanwhile, and a notice says so: "Transcript
+  added to …", or for Send "Transcript saved to …; Message not sent". Send never
+  completes in the background. A closed new-thread draft is not recreated; the
+  notice offers to copy the transcript.
+- Citation comments and question answers keep a local lifecycle: their
+  dictation ends with the control, as before, and is never committed to a draft.
 - Each new renderer transcription carries an immutable request ID through IPC.
   Cancellation only aborts the matching active request; stale and unknown IDs
   are harmless. Legacy cancellation can only affect an identity-less request.
   New renderers on older hosts invalidate local results without issuing global
   cancellation; already-running host inference may finish in the background.
 - Automatic-stop completion is bound to the recording generation. Cancel or
-  unmount during the final audio flush suppresses delivery of that clip.
+  unmount during the final audio flush suppresses delivery of that clip. An
+  explicit stop's flush is not cut short by unmount.
 - The Whisper adapter requests segment text and concatenates it verbatim,
   omitting the server's synthetic separator newlines. Whitespace inside segment
   text is preserved; optional correction runs after this normalization. Appending
@@ -79,8 +101,10 @@ names and uses concise copy for recording-duration validation.
   hardware rate, the encoder uses area-filtered downsampling rather than
   alias-prone point sampling.
 - The shared native runtime serializes inference, while the desktop allows one
-  catalog download at a time. A newer transcription cancels the previous
-  request. Model removal rejects conflicting model mutations, cancels active
+  catalog download at a time. Transcriptions queue in arrival order: a newer
+  request, from any window, waits instead of cancelling the one in progress, and
+  cancelling a queued request removes it before it reaches the engine. Model
+  removal rejects conflicting model mutations, cancels active
   inference, and stops the helper that may hold the model open before deleting
   files.
 - The helper binds to loopback on a random port and a cryptographically random

@@ -2,13 +2,15 @@ import { FileCitation, isFileCitation, type ComposerCitation } from "@t3tools/co
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import {
+  assistantCitationLabel,
   collectAssistantCitations,
   expandAssistantCitationsForProvider,
   parseAssistantCitationHref,
   serializeAssistantCitation,
 } from "./assistantCitations.ts";
 
-const PREFIX = "scient-file-citation://v1/";
+export const FILE_CITATION_PROTOCOL = "scient-file-citation";
+const PREFIX = `${FILE_CITATION_PROTOCOL}://v1/`;
 const MAX_HREF_LENGTH = 240_000;
 // Generated URLs encode parentheses. Reject raw opening parentheses too so a
 // run of unfinished link prefixes cannot repeatedly scan the entire prompt.
@@ -21,7 +23,7 @@ export function parseFileCitationHref(href: string): FileCitation | null {
     const url = new URL(href);
     if (
       url.origin !== "null" ||
-      url.protocol !== "scient-file-citation:" ||
+      url.protocol !== `${FILE_CITATION_PROTOCOL}:` ||
       url.hostname !== "v1" ||
       url.pathname !== "/" ||
       url.hash ||
@@ -36,6 +38,15 @@ export function parseFileCitationHref(href: string): FileCitation | null {
   } catch {
     return null;
   }
+}
+
+/** Visible quote-chip label, shared by rendering and conversation search. */
+export function composerCitationLabel(citation: ComposerCitation): string {
+  if (!isFileCitation(citation)) return assistantCitationLabel(citation);
+  const preview = (citation.comment?.trim() || citation.text).replace(/\s+/g, " ");
+  const excerpt = preview.length > 64 ? `${preview.slice(0, 64)}…` : preview;
+  const filename = citation.path.slice(citation.path.lastIndexOf("/") + 1);
+  return `${filename} · ${excerpt}`;
 }
 
 export function parseComposerCitationHref(href: string): ComposerCitation | null {

@@ -3,7 +3,8 @@ import { piModelSettings } from "./PiCustomModelsTestHelpers.ts";
 import * as NodeHttp from "node:http";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, expect } from "@effect/vitest";
-import { ProviderInstanceId, type CustomModelProtocol } from "@t3tools/contracts";
+import { ProviderInstanceId, PiSettings, type CustomModelProtocol } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Redacted from "effect/Redacted";
@@ -13,9 +14,11 @@ import * as Fiber from "effect/Fiber";
 import { makePiCustomModelsClientFactory } from "./PiCustomModels.ts";
 import { rejectNonPostRequest } from "./PiLiveTestHelpers.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
+import { makePiTextGeneration } from "../../textGeneration/PiTextGeneration.ts";
 
 const binary = process.env.SCIENT_PI_TEST_BINARY;
 const json = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodePiSettings = Schema.decodeSync(PiSettings);
 const decodeBody = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
@@ -427,13 +430,24 @@ for (const protocol of ["openai-completions", "openai-responses", "anthropic-mes
             instanceId,
             root,
           );
-          // SCIENT-FORK:START — the `generateThreadTitle` hop through this factory is
-          // GONE, not migrated. `makePiTextGeneration` no longer accepts an RPC client
-          // factory: upstream rewrote it to spawn Pi directly for JSON output and
-          // dropped the injected-client path (that module is outside this task's
-          // scope). The custom-models client itself is unchanged and is still
-          // asserted directly below via `factory(spawn)`.
-          // SCIENT-FORK:END
+          // Thread titles run through the same custom-models client factory as
+          // sessions (PiDriver passes it to makePiTextGeneration).
+          const generation = yield* makePiTextGeneration(
+            decodePiSettings({ binaryPath: binary!, enabled: true }),
+            environment,
+            factory,
+          );
+          for (const next of keys) {
+            key = next;
+            expect(
+              yield* generation.generateThreadTitle({
+                cwd: root,
+                message: "Connection test",
+                modelSelection: createModelSelection(instanceId, "scient_fixture/synthetic"),
+              }),
+            ).toEqual({ title: "Connection ready" });
+          }
+          expect(requests).toHaveLength(keys.length);
           const spawn = {
             command: binary!,
             args: [
@@ -468,9 +482,9 @@ for (const protocol of ["openai-completions", "openai-responses", "anthropic-mes
             expect(json(completed)).not.toContain("literal-test-key");
             yield* client.close();
           }
-          expect(requests).toHaveLength(keys.length);
+          expect(requests).toHaveLength(keys.length * 2);
           expect(requests.map((r) => r.key)).toEqual(
-            keys.map((key) => {
+            [...keys, ...keys].map((key) => {
               const value = key ?? "scient-keyless";
               return protocol === "anthropic-messages" ? value : "Bearer " + value;
             }),
@@ -486,7 +500,7 @@ for (const protocol of ["openai-completions", "openai-responses", "anthropic-mes
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
     // The Intel macOS runner needs more than 45 seconds to exercise every
-    // credential form through the real Pi executable.
+    // credential form twice through the real Pi executable.
     { timeout: 90_000 },
   );
 }

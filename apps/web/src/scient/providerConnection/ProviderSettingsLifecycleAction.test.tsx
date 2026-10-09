@@ -269,6 +269,106 @@ describe("ProviderSettingsLifecycleAction", () => {
     expect(markup).not.toContain(">Checking<");
   });
 
+  it.each([
+    ["install", "Installing"],
+    ["update", "Updating"],
+    ["repair", "Repairing"],
+    ["remove", "Removing"],
+  ] as const)("keeps %s progress visible beside icon-only management", (action, label) => {
+    const value = withOperation(provider({ source: "scient_managed" }), {
+      operationId: "runtime-1",
+      action,
+      status: action === "remove" ? "removing" : "downloading",
+      startedAt: "2026-10-08T00:00:00.000Z",
+      finishedAt: null,
+      message: "Working.",
+      downloadedBytes: 42,
+      totalBytes: 100,
+    });
+    const markup = render(value);
+
+    expect(markup).toContain(`aria-label="${label} Codex"`);
+    expect(markup).toContain('aria-label="Manage Codex"');
+    expect(markup).not.toContain(">Manage</button>");
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain("text-primary");
+    expect(markup).toContain("animate-spin");
+    if (action === "remove") expect(markup).not.toContain("Download progress");
+    else expect(markup).toContain('aria-label="Download progress 42%"');
+
+    const onManage = vi.fn();
+    settingsButton(value, onManage).props.onClick();
+    expect(onManage).toHaveBeenCalledExactlyOnceWith();
+    expect(commands.plan).not.toHaveBeenCalled();
+    expect(commands.start).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["verifying", false, "Verifying"],
+    ["testing", false, "Verifying"],
+    ["activating", true, "Waiting"],
+  ] as const)("shows %s without implying download progress", (status, waitingForIdle, label) => {
+    const markup = render(
+      withOperation(
+        { ...provider({ source: "scient_managed" }), probePending: true },
+        {
+          operationId: "runtime-1",
+          action: "install",
+          status,
+          waitingForIdle,
+          startedAt: "2026-10-08T00:00:00.000Z",
+          finishedAt: null,
+          message: "Working.",
+          downloadedBytes: 100,
+          totalBytes: 100,
+        },
+      ),
+    );
+    expect(markup).toContain(`aria-label="${label} Codex"`);
+    expect(markup).not.toContain("Download progress");
+  });
+
+  it.each(["succeeded", "cancelled", "failed"] as const)(
+    "clears progress after the runtime operation is %s",
+    (status) => {
+      const markup = render(
+        withOperation(provider({ source: "scient_managed" }), {
+          operationId: "runtime-1",
+          action: "install",
+          status,
+          startedAt: "2026-10-08T00:00:00.000Z",
+          finishedAt: "2026-10-08T00:01:00.000Z",
+          message: "Finished.",
+        }),
+      );
+      expect(markup).not.toContain('aria-label="Installing Codex"');
+      expect(markup).not.toContain("Download progress");
+      expect(markup).toContain(">Manage</button>");
+      expect(commands.start).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps sign-in progress visible while the account is unauthenticated", () => {
+    const ready = provider({ source: "system", authenticated: false });
+    const markup = render({
+      ...ready,
+      connection: {
+        ...ready.connection!,
+        operation: {
+          operationId: "connection-1",
+          method: "codex_browser",
+          status: "waiting_for_browser",
+          startedAt: "2026-10-08T00:00:00.000Z",
+          finishedAt: null,
+          message: "Finish in your browser.",
+        },
+      },
+    });
+    expect(markup).toContain('aria-label="Signing in Codex"');
+    expect(markup).not.toContain(">Manage</button>");
+    expect(markup).not.toContain("Download progress");
+  });
+
   it("keeps Codex browser sign-in direct and routes provider choosers through the dialog", () => {
     const codex = provider({ source: "system", authenticated: false });
     const claude = provider({
@@ -419,7 +519,7 @@ describe("ProviderSettingsLifecycleAction", () => {
     },
   );
 
-  it("opens the decision instead of starting an install that replaces a newer system runtime", async () => {
+  it("starts an install that replaces a newer system runtime without another decision", async () => {
     // Offered as a first installation; the plan found a newer system runtime.
     const value = provider({ source: "missing" });
     const onManage = vi.fn();
@@ -438,13 +538,12 @@ describe("ProviderSettingsLifecycleAction", () => {
 
     await settingsButton(value, onManage).props.onClick();
 
-    expect(commands.start).not.toHaveBeenCalled();
+    expect(commands.start).toHaveBeenCalledTimes(1);
     expect(commands.toast).not.toHaveBeenCalled();
-    // The dialog plans the install again and shows both versions with Back / Use Scient-managed.
-    expect(onManage).toHaveBeenCalledExactlyOnceWith("install");
+    expect(onManage).not.toHaveBeenCalled();
   });
 
-  it("opens the decision instead of starting an install over a system runtime of unknown version", async () => {
+  it("starts an install over a system runtime of unknown version directly", async () => {
     const value = provider({ source: "missing" });
     const onManage = vi.fn();
     commands.plan.mockResolvedValue({
@@ -462,11 +561,11 @@ describe("ProviderSettingsLifecycleAction", () => {
 
     await settingsButton(value, onManage).props.onClick();
 
-    expect(commands.start).not.toHaveBeenCalled();
-    expect(onManage).toHaveBeenCalledExactlyOnceWith("install");
+    expect(commands.start).toHaveBeenCalledTimes(1);
+    expect(onManage).not.toHaveBeenCalled();
   });
 
-  it("opens the decision when the system runtime was upgraded after the plan", async () => {
+  it("reports a stale plan after the controller exhausts its bounded retry", async () => {
     const value = provider({ source: "missing" });
     const onManage = vi.fn();
     commands.start.mockRejectedValue(
@@ -478,8 +577,8 @@ describe("ProviderSettingsLifecycleAction", () => {
     await settingsButton(value, onManage).props.onClick();
 
     expect(commands.start).toHaveBeenCalledTimes(1);
-    expect(commands.toast).not.toHaveBeenCalled();
-    expect(onManage).toHaveBeenCalledExactlyOnceWith("install");
+    expect(commands.toast).toHaveBeenCalledTimes(1);
+    expect(onManage).not.toHaveBeenCalled();
   });
 
   it.each(["install", "update", "repair", "remove"] as const)(
@@ -536,7 +635,8 @@ describe("ProviderSettingsLifecycleAction", () => {
       externalUpdateRunning: true,
       onRunExternalUpdate: vi.fn(),
     });
-    expect(updatingMarkup).toContain(">Manage</button>");
+    expect(updatingMarkup).toContain('aria-label="Updating Codex"');
+    expect(updatingMarkup).not.toContain(">Manage</button>");
     const manageButtonEnd = updatingMarkup.indexOf('aria-label="Manage Codex"');
     const manageButtonStart = updatingMarkup.lastIndexOf("<button", manageButtonEnd);
     const manageButtonClose = updatingMarkup.indexOf("</button>", manageButtonEnd);
@@ -544,4 +644,23 @@ describe("ProviderSettingsLifecycleAction", () => {
       /\sdisabled(?:=|[\s>])/,
     );
   });
+
+  it.each(["queued", "running"] as const)(
+    "reads external update progress from a %s server snapshot after remount",
+    (status) => {
+      const markup = render({
+        ...provider({ source: "system" }),
+        updateState: {
+          status,
+          message: "Updating the external runtime.",
+          output: null,
+          startedAt: "2026-10-08T00:00:00.000Z",
+          finishedAt: null,
+        },
+      });
+      expect(markup).toContain('aria-label="Updating Codex"');
+      expect(markup).not.toContain(">Manage</button>");
+      expect(markup).not.toContain("Download progress");
+    },
+  );
 });

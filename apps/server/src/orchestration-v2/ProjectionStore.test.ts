@@ -8,6 +8,8 @@ import {
   CheckpointScopeId,
   MessageId,
   type ModelSelection,
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2ThreadShellSnapshot,
   NodeId,
   ProjectId,
   ProviderDriverKind,
@@ -2018,6 +2020,158 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         (thread) => thread.id === threadId,
       );
       assert.deepEqual(shell?.providerInstanceHistory, [providerInstanceId, claudeInstanceId]);
+    }),
+  );
+
+  it.effect("shows the native goal of the active provider thread on the shell", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:provider-goal");
+      yield* projectionStore.apply({
+        id: EventId.make("event:provider-goal:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:provider-goal"),
+          title: "Provider goal",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const applyProviderThread = (
+        suffix: string,
+        goal: OrchestrationV2ProviderThread["goal"],
+        seconds: number,
+      ) =>
+        projectionStore.apply({
+          id: EventId.make(`event:provider-goal:${suffix}:${seconds}`),
+          type: "provider-thread.updated",
+          threadId,
+          driver,
+          occurredAt: DateTime.add(now, { seconds }),
+          payload: {
+            id: ProviderThreadId.make(`provider-thread:provider-goal:${suffix}`),
+            driver,
+            providerInstanceId,
+            providerSessionId: null,
+            appThreadId: threadId,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: null,
+            lastRunOrdinal: null,
+            handoffIds: [],
+            forkedFrom: null,
+            goal,
+            createdAt: now,
+            updatedAt: DateTime.add(now, { seconds }),
+          },
+        });
+      const shellGoal = Effect.map(
+        projectionStore.getShellSnapshot(),
+        (snapshot) => snapshot.threads.find((thread) => thread.id === threadId)?.goal,
+      );
+      const goal = { objective: "Ship it", status: "active" as const, tokensUsed: 10 };
+
+      yield* applyProviderThread("first", goal, 0);
+      assert.deepEqual(yield* shellGoal, goal);
+      // A handoff moves the conversation; the previous provider's goal stays behind.
+      yield* applyProviderThread("second", null, 1);
+      assert.isNull(yield* shellGoal);
+    }),
+  );
+
+  it.effect("reads the shell snapshot first and decodes it in a separate step", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const createThread = (threadId: ThreadId) =>
+        projectionStore.apply({
+          id: EventId.make(`event:${threadId}:created`),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project:shell-read"),
+            title: "Shell read",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+      const readThreadId = ThreadId.make("thread:shell-read:before");
+      const laterThreadId = ThreadId.make("thread:shell-read:after");
+      const shellIds = (snapshot: OrchestrationV2ThreadShellSnapshot) =>
+        snapshot.threads
+          .map((thread) => thread.id)
+          .filter((id) => id === readThreadId || id === laterThreadId);
+
+      yield* createThread(readThreadId);
+      const decode = yield* sql.withTransaction(projectionStore.readShellSnapshot());
+      // Commits between the read and the decode, as another request can while
+      // the HTTP and WebSocket loaders decode outside their transaction.
+      yield* createThread(laterThreadId);
+
+      assert.deepEqual(shellIds(yield* decode), [readThreadId]);
+      assert.sameMembers(shellIds(yield* projectionStore.getShellSnapshot()), [
+        readThreadId,
+        laterThreadId,
+      ]);
+
+      // No decoding under the read transaction: a payload that cannot decode
+      // fails the returned step, not the read.
+      const [stored] = yield* sql<{ readonly payload_json: string }>`
+        SELECT payload_json FROM orchestration_v2_projection_threads
+        WHERE thread_id = ${laterThreadId}
+      `;
+      const setPayload = (payload: string) =>
+        sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${payload}
+          WHERE thread_id = ${laterThreadId}`;
+      yield* setPayload("{}");
+      const failure = yield* sql
+        .withTransaction(projectionStore.readShellSnapshot())
+        .pipe(
+          Effect.flatMap(Effect.flip),
+          Effect.ensuring(Effect.orDie(setPayload(stored!.payload_json))),
+        );
+      assert.strictEqual(failure._tag, "ProjectionStoreReadError");
     }),
   );
 

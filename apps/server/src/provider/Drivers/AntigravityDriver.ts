@@ -191,9 +191,8 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         stampBaseIdentity,
       });
       // SCIENT-FORK:END
-      // Google returns every model the account can use, including older
-      // Gemini generations. The manifest names the current ones so the picker
-      // folds the rest under its legacy section, as it does for Codex.
+      // The manifest supplies catalog labels and known generation metadata;
+      // preserve the account's native legacy status for unlisted models.
       const classifyModels = (draft: ServerProviderDraft) =>
         modelManifest.current.pipe(
           Effect.flatMap((manifest) =>

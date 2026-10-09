@@ -13,7 +13,7 @@ import {
   selectThreadRightPanelState,
   useRightPanelStore,
 } from "~/rightPanelStore";
-import { resolvePathLinkTarget } from "~/terminal-links";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
 import {
   pdfReaderSessionDocumentKey,

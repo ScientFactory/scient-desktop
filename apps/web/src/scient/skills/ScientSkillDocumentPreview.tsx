@@ -32,7 +32,7 @@ export function ScientSkillDocumentPreview(props: {
     );
   }
   return (
-    <div className="min-h-0 flex-1 overflow-auto bg-background">
+    <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto bg-background">
       <ChatMarkdown
         text={document.data.instructions}
         cwd={undefined}

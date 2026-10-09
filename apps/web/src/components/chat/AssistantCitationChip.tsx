@@ -1,12 +1,14 @@
 import { isFileCitation, type ComposerCitation, type FileCitation } from "@t3tools/contracts";
-import { serializeComposerCitation } from "@t3tools/shared/composerCitations";
-import { assistantCitationLabel } from "@t3tools/shared/assistantCitations";
+import {
+  composerCitationLabel,
+  serializeComposerCitation,
+} from "@t3tools/shared/composerCitations";
 import {
   fileCitationHash,
   fileCitationNavigation,
 } from "~/scient/markdownEditor/fileCitationNavigation";
-import { basenameOfPath } from "~/pierre-icons";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { ArrowUpRightIcon } from "lucide-react";
 import {
   Fragment,
   useEffect,
@@ -25,9 +27,13 @@ import {
   assistantCitationHash,
   assistantCitationNavigation,
 } from "../../lib/assistantCitationNavigation";
+import { cn } from "~/lib/utils";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { ContextChipPopover } from "../contextChipParts";
+import { Button } from "../ui/button";
+import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
+import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
 import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
@@ -107,11 +113,7 @@ export function AssistantCitationChip({
         },
       }
     : undefined;
-  const preview = (citation.comment?.trim() || citation.text).replace(/\s+/g, " ");
-  const excerpt = preview.length > 64 ? `${preview.slice(0, 64)}…` : preview;
-  const label = isFileCitation(citation)
-    ? `${basenameOfPath(citation.path)} · ${excerpt}`
-    : assistantCitationLabel(citation);
+  const label = composerCitationLabel(citation);
   const sourceLinkProps = {
     to: "/$environmentId/$threadId" as const,
     params: { environmentId: citation.environmentId, threadId: citation.threadId },
@@ -148,6 +150,27 @@ export function AssistantCitationChip({
       <ContextChipLabel className="max-w-[16em]">{label}</ContextChipLabel>
     </Link>
   );
+  if (!composer && !isFileCitation(citation)) {
+    return (
+      <ContextChipPopover
+        kind="citation"
+        icon={<QuoteIcon />}
+        label={label}
+        accessibleLabel={`Quoted assistant text: ${label}`}
+        copyMarkdown={serializeComposerCitation(citation)}
+      >
+        <div className="flex max-h-[calc(var(--available-height)_-_1rem_-_2px)] flex-col items-start gap-3 p-1 text-sm">
+          <AssistantCitationQuote citation={citation} />
+          <PopoverClose
+            render={<Button variant="outline" size="sm" render={<Link {...sourceLinkProps} />} />}
+          >
+            <ArrowUpRightIcon aria-hidden="true" />
+            Go to source
+          </PopoverClose>
+        </div>
+      </ContextChipPopover>
+    );
+  }
   return (
     <ContextChip
       kind="citation"
@@ -316,5 +339,36 @@ function FileCitationHoverCard({
         </span>
       </TooltipPopup>
     </Tooltip>
+  );
+}
+
+function AssistantCitationQuote({ citation }: { citation: ComposerCitation }) {
+  const [fade, setFade] = useState({ top: false, bottom: false });
+  const updateFade = (element: HTMLElement) => {
+    const top = element.scrollTop > 1;
+    const bottom = element.scrollHeight - element.clientHeight - element.scrollTop > 1;
+    setFade((current) =>
+      current.top === top && current.bottom === bottom ? current : { top, bottom },
+    );
+  };
+  return (
+    <div
+      ref={(element) => {
+        if (!element) return;
+        const observer = new ResizeObserver(() => updateFade(element));
+        observer.observe(element);
+        return () => observer.disconnect();
+      }}
+      onScroll={(event) => updateFade(event.currentTarget)}
+      className={cn(
+        "max-h-64 min-h-0 space-y-3 self-stretch overflow-y-auto whitespace-pre-wrap wrap-break-word",
+        getVirtualizedScrollFadeClassName(fade),
+      )}
+    >
+      <blockquote className="border-l-2 border-border pl-3 text-muted-foreground">
+        {citation.text}
+      </blockquote>
+      {citation.comment ? <p>{citation.comment}</p> : null}
+    </div>
   );
 }

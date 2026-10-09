@@ -42,7 +42,7 @@ describe("ScientGettingStartedShell", () => {
     expect(firstStepMarkup).toContain("max-w-2xl");
     expect(firstStepMarkup).toContain("min-h-full");
     expect(firstStepMarkup).toContain("justify-center");
-    expect(firstStepMarkup).toContain("-translate-y-3");
+    expect(firstStepMarkup).toContain("-translate-y-5");
     expect(firstStepMarkup).toContain("sm:-translate-x-3");
     expect(firstStepMarkup).toContain("rounded-xl border border-border/70 bg-card");
     expect(firstStepMarkup).toContain("sm:size-60");

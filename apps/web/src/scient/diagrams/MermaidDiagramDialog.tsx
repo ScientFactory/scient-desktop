@@ -195,7 +195,7 @@ export function MermaidDiagramDialog({
         </span>
         <div
           aria-label="Scrollable diagram canvas"
-          className="scient-mermaid-dialog-stage min-h-0 flex-1 overflow-auto bg-secondary/30 p-6"
+          className="scrollbar-gutter-both scient-mermaid-dialog-stage min-h-0 flex-1 overflow-auto bg-secondary/30 p-6"
           tabIndex={0}
         >
           <div

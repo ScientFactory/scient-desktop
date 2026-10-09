@@ -31,6 +31,7 @@ import { DroidDriver, type DroidDriverEnv } from "./Drivers/DroidDriver.ts";
 import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "./Drivers/OpenCodeDriver.ts";
 import { OmpDriver, type OmpDriverEnv } from "./Drivers/OmpDriver.ts";
+import { MuseDriver, type MuseDriverEnv } from "./Drivers/MuseDriver.ts";
 import { PiDriver, type PiDriverEnv } from "./Drivers/PiDriver.ts";
 import { ScientAgentDriver, type ScientAgentDriverEnv } from "./Drivers/ScientAgentDriver.ts";
 import type { AnyProviderDriver } from "./ProviderDriver.ts";
@@ -51,6 +52,7 @@ export type BuiltInDriversEnv =
   | OpenCodeDriverEnv
   | OmpDriverEnv
   | PiDriverEnv
+  | MuseDriverEnv
   | ScientAgentDriverEnv;
 
 /**
@@ -70,4 +72,5 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   OmpDriver,
   PiDriver,
   ScientAgentDriver,
+  MuseDriver,
 ].toSorted((left, right) => compareProviderDriverKinds(left.driverKind, right.driverKind));
