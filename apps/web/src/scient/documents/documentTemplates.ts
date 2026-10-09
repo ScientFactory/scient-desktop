@@ -176,7 +176,7 @@ export function newDocumentStem(title: string): string {
   );
 }
 
-export function newDocumentExtension(format: NewDocumentFormat): "tex" | "md" {
+function newDocumentExtension(format: NewDocumentFormat): "tex" | "md" {
   return format === "latex" ? "tex" : "md";
 }
 

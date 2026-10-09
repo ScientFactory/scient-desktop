@@ -17,7 +17,7 @@ export interface UserTemplate {
   readonly updatedAt: number;
 }
 
-export const USER_TEMPLATE_PREFIX = "user:";
+const USER_TEMPLATE_PREFIX = "user:";
 const DATABASE = "scient-document-templates";
 const STORE = "templates";
 const CHANNEL = "scient-document-templates";

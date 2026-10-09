@@ -13,7 +13,7 @@ export interface TemplateLayout {
   readonly hidden: readonly string[];
 }
 
-export const TEMPLATE_LAYOUT_STORAGE_KEY = "scient.documentTemplateLayout";
+const TEMPLATE_LAYOUT_STORAGE_KEY = "scient.documentTemplateLayout";
 
 /** The most the page row holds, so it stays one quiet line. */
 export const TEMPLATE_PAGE_LIMIT = 5;

@@ -10,7 +10,8 @@
     "preview": "vp preview",
     "typecheck": "tsc --noEmit",
     "test": "vp test run --passWithNoTests --project unit",
-    "test:layout": "vp test run --project layout"
+    "test:layout": "vp test run --project layout",
+    "templates:previews": "node scripts/render-template-previews.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
