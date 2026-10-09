@@ -258,7 +258,10 @@ It receives all 63 subsequent first-parent official commits through
 `565b3bd15cbb7660250e53b2421915d2f6bdebc5`. Literal merge
 `e0a46f2d5ace0b33fa4a8f714917f029f577db23` retains both as exact parents;
 `ae3f8171fc548a9cb28d43dafba227279f6ddc52` and
-`458b041da22fb1985b461196f78530e8dc30c153` preserve the owned-main catch-ups.
+`458b041da22fb1985b461196f78530e8dc30c153` preserve the earlier owned-main catch-ups.
+`b75327a4359cfdb999ab6e0430bdf7af2c984363` additionally retains main
+`91b9b7cb3f2ca0e777436fdca5a913addcb21ab0`: fork-by-reference history composes
+with Find, paging, source deletion, inert inherited authority and truthful fork landing.
 Conversation Find, compact-before-send, quotations, native Pi continuations,
 bounded snapshots, Usage and client performance compose with Scient ownership.
 Optional Muse remains disabled by default and system-installed; Scient lifecycle,

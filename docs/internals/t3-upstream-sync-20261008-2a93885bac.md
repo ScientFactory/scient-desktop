@@ -1,6 +1,6 @@
 # T3 upstream alignment — 63 commits through 2a93885bac
 
-Local runtime qualification is recorded below. Hosted CI and the user’s visual acceptance are separate pending gates; this record does not authorize merging or releasing.
+Local runtime qualification is recorded below. The user approved visual review of the earlier candidate and explicitly authorized the owned-main catch-up and history-preserving delivery. Its later source and automated qualification are recorded separately; hosted checks still govern delivery. This record does not authorize a release.
 
 ## 1. Immutable integration inputs
 
@@ -20,7 +20,7 @@ Local runtime qualification is recorded below. Hosted CI and the user’s visual
 | Owned publication repository                        | `https://github.com/ScientFactory/scient-desktop.git`                                                                                                                                                                                                           |
 | Owned-main catch-ups                                | `ae3f8171fc548a9cb28d43dafba227279f6ddc52` retains main `31fc34e78d26ebacb543cf9d6471daa5ffc5a949` (#483 composer setup); `458b041da22fb1985b461196f78530e8dc30c153` retains main `d0a6976beae37bdabc30e7ccdf4c895c6498c82f` (#482 provider release isolation). |
 | Frozen source snapshot                              | `3205e2e16c1d377a0869c9d12731115027520e9b`; tree `04c0429a7a5129b0f4b7631fbf125ae4926b581c` (initial complete aggregate revision, exit 1; later fixture repair committed at `1dd32f72f5`)                                                                       |
-| Final runtime candidate                             | `d99d176c1b13446ae6bccf8dee864d99a50d6661`; tree `b65ddfdf12b6ec65363c20fa48c380979726667f` (final runtime source; documentation-only descendants reuse explicitly bound scope evidence)                                                                        |
+| Previously qualified runtime candidate              | `d99d176c1b13446ae6bccf8dee864d99a50d6661`; tree `b65ddfdf12b6ec65363c20fa48c380979726667f` (final runtime source; documentation-only descendants reuse explicitly bound scope evidence)                                                                        |
 
 Inputs come from `plan.json` and the actual merge commit parents. Every official commit below is retained in the merge ancestry; held activation is not omitted upstream history.
 
@@ -306,13 +306,44 @@ Transport-budget fixtures contain 600 rows with 8,192 output bytes each. Existin
 
 Linked relay minimum-version qualification intentionally rejects incompatible PATH/override executables; compatible user-owned overrides are preserved. Managed refresh/pruning remains limited to an already linked, config-gated host. The final advisory inventory at `d99d176c1b13` reports 541 findings classified `marked`, 11,640 classified `new-debt` and 111 unsupported-format findings, with zero parser/input errors (`divergence-metadata-final.json`). The debt classification compares the whole candidate to the exact official snapshot; it is not a count of regressions introduced by this alignment. Independent manual review covered the 15 changed unsupported-format paths (13 Markdown, one CSS, one YAML) and six changed JSON/lock seams. The other 96 unsupported-format paths and 13 unmarkable seams were unchanged from the owned base. No historical baseline waiver or ratchet activation is asserted (`final-advisory-review.md`).
 
-## 7. Publication boundary and review handoff
+## 7. Owned-main fork-by-reference composition
+
+Literal merge `b75327a4359cfdb999ab6e0430bdf7af2c984363` (tree `effa90af53b9cead44885cccac98528c7b69da40`) retains parents `240bda731a710931a68c25d0096f9c9b5095ea34` and owned main `91b9b7cb3f2ca0e777436fdca5a913addcb21ab0`. The official target remains `2a93885bac`; later official advances are a separate report, not additional integrated history. The user explicitly authorized resolving this catch-up as alignment after approving the earlier candidate's visual review.
+
+The 127 changed paths comprise 105 byte-identical incoming-main paths and 22 composed or repaired paths. The timeline conflict retains upstream alignment's Find and restore ownership plus main's positioned-thread callback. Main's transactional shared-history capture, attachment lifetime, queue admission, lazy provider fork and rollback remain in the single V2 execution path.
+
+Source review found two automatic-merge defects: history paging/Find read mutable or deleted source rows instead of frozen reference bytes, and inherited indexes lost message/turn metadata required for whole-turn paging and message jumps. One bounded frozen-aware payload resolver now serves these readers; inherited execution/native/detail references remain inert and read ownership belongs to the target fork. Copied, shared and nested history retain their existing semantics. Both deciding tests failed against the exact pre-repair merge blobs and passed after restoration of the repaired bytes; assertions were not weakened. Source deletion, mutation, cached Find, nested history, page cursors and message jumps are covered.
+
+Accepted fork dismissal says Close and leaves the accepted operation running; pre-submit cancellation remains Cancel. Pending fork landing uses native inert behavior while retaining timeline measurement, restoring interaction after positioning or timeout. The new Chromium proof exercises those hooks and wrapper semantics, not the entire ChatView or a visual review.
+
+### Exact affected-scope qualification
+
+All runtime results below bind to `b75327a4359cfdb999ab6e0430bdf7af2c984363` / the tree above, or the exact unchanged pre-commit source diff. Command arrays, scope hashes, timings and retained failures are in the external `checks/catchup-*` evidence. Node 24.19.0 / pnpm 11.10.0, macOS; heavy lanes run serially.
+
+| Gate                        | Result                                                                                                                                                               |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Static                      | 32 uncached typecheck tasks; formatting, lint, Knip, brand, seams and provenance passed. Advisory warnings are not represented as baseline-clean.                    |
+| Web unit                    | 939 files / 11,507 cases passed.                                                                                                                                     |
+| Mobile unit                 | 245 files / 2,252 cases passed.                                                                                                                                      |
+| Chromium layout/interaction | 34 files / 291 cases passed; no assistant visual review.                                                                                                             |
+| Wire/history                | 18 files / 386 cases passed.                                                                                                                                         |
+| Conversation package        | 12 files / 103 cases passed.                                                                                                                                         |
+| Complete server             | 972 files / 12,563 cases passed; 57 files / 190 cases skipped, exit 0; 2,920.18 seconds.                                                                             |
+| Deliberate fork scale       | Both opt-in fixtures passed: 2,500 forks; 50,000-tool history with unrelated SQL progress. Temporary SQLite, bounded synthetic stress, not live-provider throughput. |
+| Build                       | All six uncached build tasks passed.                                                                                                                                 |
+| macOS native launch smoke   | Fresh external profile, eight-second survival and graceful drainage passed; startup smoke alone is not feature acceptance.                                           |
+
+Contracts, shared, client-runtime, desktop, root manifests and lockfile are byte-unchanged from the earlier qualified head (`catchup-unchanged-owner-reuse.json`); original unaffected-package evidence remains historical reuse. Affected web/mobile/conversation/server results above replace their old rows for this composition. This is not a fresh simultaneous all-workspace run. Independent frozen-reader, server-composition, client and reference-consumer audits reported no actionable source blocker. A legacy unstamped mobile handoff model-label fallback predates both parents and remains a bounded presentation follow-up, not a new authority change.
+
+The same owned candidate was stopped before native smoke and relaunched with its existing isolated state preserved. Recent backend/window logs, exactly one app/backend, owned listeners, both HTTP endpoints and persistence passed (`catchup-dev-app-readiness.json`). No credentials or live profiles were copied; no assistant visual inspection, live vendor account test or native Windows/Linux/iOS proof is claimed. The user's earlier visual acceptance is not presented as a second visual review of this catch-up. Cloud, telemetry, managed provisioning, release and publication authority remain unchanged.
+
+## 8. Publication boundary and review handoff
 
 - **Integration cursor:** `upstream-state.json` and current `UPSTREAM.md` point to the exact locally qualified target and original upstream merge above. This records integration, not main delivery or visual acceptance.
 - **Scient PR:** [Scient PR #487](https://github.com/ScientFactory/scient-desktop/pull/487). Its current head and CI remain directly checkable on GitHub.
-- **Publication branch:** `codex/t3-sync-2a93885bac-20261008`, owned `origin` only. Publish only a documentation descendant of the recorded runtime head after its final checks. No upstream push.
-- **CI:** allowed to run while user reviews the clean dev app; no claim that hosted checks or visual acceptance are complete until their actual evidence exists.
-- **Merge/release:** this user request authorizes alignment, review/stress qualification, clean candidate and PR. A final main merge/release remains a separate acceptance/publication boundary; subsequent user approval is required; green checks alone do not authorize publication.
+- **Publication branch:** `codex/t3-sync-2a93885bac-20261008`, owned `origin` only. Publish only a maintainer-documentation descendant of the latest recorded runtime head after its final checks. No upstream push.
+- **CI:** hosted checks qualify the final pushed revision; no bypass or claim that all hosted checks are complete until their actual evidence exists.
+- **Merge/release:** the user approved the earlier visual review and explicitly authorized the owned-main catch-up and history-preserving merge or queue. Delivery still respects final-head qualification and hosted requirements. No release is authorized by this alignment receipt.
 - **Worktree/candidate:** retain for the requested user review; no cleanup or broad process stops are authorized by this receipt.
 
 ### Evidence location and owners

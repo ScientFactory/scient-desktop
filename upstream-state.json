@@ -23,7 +23,7 @@
   "lastRefreshRangeCount": 63,
   "lastRefreshMerge": "e0a46f2d5ace0b33fa4a8f714917f029f577db23",
   "lastRefreshBranch": "codex/t3-sync-2a93885bac-20261008",
-  "lastRefreshVerifiedAt": "2026-10-09T01:30:54.353995Z",
+  "lastRefreshVerifiedAt": "2026-10-09T06:47:20.070528Z",
   "historicalExceptions": [
     {
       "id": "t3-pr-5822-projectless-threads",
@@ -44,6 +44,6 @@
       "replacementMerge": null
     }
   ],
-  "lastRefreshOwnedMain": "d0a6976beae37bdabc30e7ccdf4c895c6498c82f",
-  "lastRefreshOwnedMainMerge": "458b041da22fb1985b461196f78530e8dc30c153"
+  "lastRefreshOwnedMain": "91b9b7cb3f2ca0e777436fdca5a913addcb21ab0",
+  "lastRefreshOwnedMainMerge": "b75327a4359cfdb999ab6e0430bdf7af2c984363"
 }
