@@ -19,11 +19,11 @@ The Scient MCP server provides app-owned orchestration. Its transport namespace 
 - When you need a secret from the user (a token, API key, or webhook signing secret), call \`request_secret\` so they enter it privately, then pass the returned \`secretRef\` to the tool that needs it, e.g. \`signature.secretRef\` on a webhook task for a sender that signs requests such as GitHub. A \`secretRef\` works once. Never ask for a secret in chat, never invent one, and never repeat one.
 - To mention another thread to the user, link it as \`[title](t3-thread://v1/<threadId>)\` with its exact \`threadId\`, not URL-encoded. Scient opens the thread in the app and shows its current title.
 
+### Choose the workspace before starting a new thread
+
 `;
 
-export const SCIENT_ORCHESTRATION_WORKSPACE_INSTRUCTIONS = `### Choose the workspace before starting a new thread
-
-For independent implementation or a PR stack in its own worktree, use \`scient_thread_launch\` with an explicit \`workspaceStrategy\`. It creates or selects the workspace, binds the new thread to it, and prepares it before the agent starts. Put the task in \`message\`, not \`prompt\`:
+export const SCIENT_ORCHESTRATION_WORKSPACE_INSTRUCTIONS = `For independent implementation or a PR stack in its own worktree, use \`scient_thread_launch\` with an explicit \`workspaceStrategy\`. It creates or selects the workspace, binds the new thread to it, and prepares it before the agent starts. Put the task in \`message\`, not \`prompt\`:
 
 - New worktree: \`{"title":"UI cleanup","workspaceStrategy":{"type":"worktree","baseRef":"feature/base","branch":"feature/ui-cleanup","startFromOrigin":false},"message":"Implement the cleanup and open a PR against feature/base."}\`
 - Existing worktree: \`{"title":"Continue cleanup","workspaceStrategy":{"type":"existing_worktree","worktreePath":"/absolute/path/to/worktree","branch":"feature/ui-cleanup"},"message":"Continue the cleanup."}\`
