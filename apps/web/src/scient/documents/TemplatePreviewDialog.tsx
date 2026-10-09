@@ -84,7 +84,7 @@ export function TemplatePreviewDialog(props: {
             tabIndex={0}
             role="region"
             aria-label={`${props.name} first page`}
-            className="min-h-0 flex-1 overflow-auto px-1 pt-2 pb-1 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto px-1 pt-2 pb-1 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
             <div className="w-fit min-w-full">
               <div className="mx-auto w-fit overflow-hidden rounded-xs shadow-sm">
