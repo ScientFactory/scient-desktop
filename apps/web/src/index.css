@@ -398,6 +398,25 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+/* Paint find results without changing rendered markdown or copied text. */
+::highlight(t3-thread-find) {
+  color: var(--app-theme-search-match-foreground, oklch(0.216164 0.028283 77.423));
+  background-color: var(--app-theme-search-match-background, oklch(0.915 0.11 85));
+
+  @variant dark {
+    color: var(--app-theme-search-match-foreground, oklch(0.970151 0 0));
+    background-color: var(--app-theme-search-match-background, oklch(0.55 0.1 85));
+  }
+}
+
+::highlight(t3-thread-find-active) {
+  color: var(--app-theme-search-match-active-foreground, oklch(0.216164 0.028283 77.423));
+  background-color: var(
+    --app-theme-search-match-active-background,
+    oklch(0.774202 0.151946 74.331)
+  );
+}
+
 @utility dialog-glass {
   background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
@@ -634,6 +653,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   width: calc(100% - var(--live-activity-focus-width) - var(--live-activity-focus-width));
   margin-left: var(--live-activity-focus-width);
 }
+/* SCIENT-FORK:START — one readable live sweep, on the current activity only. */
+@import "./scient/presentation/scient-live-activity.css";
+/* SCIENT-FORK:END */
 /* SCIENT-FORK:START — the line-by-line reveal of a streaming answer. */
 /* A streaming answer while it is revealed (chat/useStreamingBlockEntrance.ts):
    lines appear at the front, a little lighter, and the full tone follows one

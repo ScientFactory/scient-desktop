@@ -10,6 +10,9 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+// SCIENT-FORK:START — compare workspace spellings through the existing filesystem authority.
+import * as FileSystem from "effect/FileSystem";
+// SCIENT-FORK:END
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -63,12 +66,15 @@ const isLiveProviderSession = (
 export const layer: Layer.Layer<
   ProviderSwitchServiceV2,
   never,
-  ProviderAdapterRegistry.ProviderAdapterRegistryV2 | RuntimePolicy.RuntimePolicyV2
+  | ProviderAdapterRegistry.ProviderAdapterRegistryV2
+  | RuntimePolicy.RuntimePolicyV2
+  | FileSystem.FileSystem
 > = Layer.effect(
   ProviderSwitchServiceV2,
   Effect.gen(function* () {
     const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const fileSystem = yield* FileSystem.FileSystem;
     return ProviderSwitchServiceV2.of({
       plan: ({ projection, targetModelSelection, targetThread = projection.thread }) =>
         Effect.gen(function* () {
@@ -145,6 +151,23 @@ export const layer: Layer.Layer<
                   sessionCapabilities: negotiatedCapabilities ?? currentInstance.value.capabilities,
                 })
               : undefined;
+          // SCIENT-FORK:START — native canonical paths do not change workspace authority.
+          const currentWorkspace =
+            currentSession?.cwd ?? projection.thread.worktreePath ?? "<unresolved-workspace>";
+          let targetWorkspace = targetPolicy.cwd ?? currentSession?.cwd ?? "<unresolved-workspace>";
+          if (currentWorkspace !== targetWorkspace) {
+            const sameWorkspace = yield* Effect.all([
+              fileSystem.realPath(currentWorkspace),
+              fileSystem.realPath(targetWorkspace),
+            ]).pipe(
+              Effect.map(([currentRoot, targetRoot]) => currentRoot === targetRoot),
+              Effect.orElseSucceed(() => false),
+            );
+            // Both lookups must succeed. Failure retains the existing conservative
+            // workspace transition rather than granting an unverified equivalence.
+            if (sameWorkspace) targetWorkspace = currentWorkspace;
+          }
+          // SCIENT-FORK:END
           const transition =
             Option.isNone(targetInstance) || Option.isNone(targetAdapter)
               ? ({
@@ -165,10 +188,7 @@ export const layer: Layer.Layer<
                           modelSelection: current,
                           runtimeMode: projection.thread.runtimeMode,
                           interactionMode: projection.thread.interactionMode,
-                          workspace:
-                            currentSession?.cwd ??
-                            projection.thread.worktreePath ??
-                            "<unresolved-workspace>",
+                          workspace: currentWorkspace,
                           capabilities:
                             negotiatedCapabilities ?? currentInstance.value.capabilities,
                         },
@@ -181,7 +201,7 @@ export const layer: Layer.Layer<
                     modelSelection: targetModelSelection,
                     runtimeMode: targetThread.runtimeMode,
                     interactionMode: targetThread.interactionMode,
-                    workspace: targetPolicy.cwd ?? currentSession?.cwd ?? "<unresolved-workspace>",
+                    workspace: targetWorkspace,
                     capabilities: targetInstance.value.capabilities,
                     available: targetInstance.value.enabled,
                   },

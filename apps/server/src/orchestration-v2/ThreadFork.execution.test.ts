@@ -190,13 +190,24 @@ it.effect.each(
                 assert.isNull(fresh.thread.deletedAt);
                 assert.lengthOf(fresh.contextTransfers, 1);
                 assert.lengthOf(fresh.runs, 0);
-                const copied = fresh.turnItems.filter(
-                  (item) => item.inheritedFrom?.threadId === sourceThreadId,
+                // The fork shows the source's items by reference, frozen.
+                const inheritedRows = fresh.visibleTurnItems.filter(
+                  (row) => row.visibility === "inherited",
                 );
-                assert.lengthOf(copied, sourceBefore.visibleTurnItems.length);
+                const copied = inheritedRows.map((row) => row.item);
+                assert.deepEqual(
+                  inheritedRows.map((row) => [row.sourceThreadId, row.sourceItemId]),
+                  sourceBefore.visibleTurnItems.map((row) => [sourceThreadId, row.item.id]),
+                );
                 assert.deepEqual(
                   copied.map((item) => item.type),
                   sourceBefore.visibleTurnItems.map((row) => row.item.type),
+                );
+                assert.isTrue(
+                  copied.every(
+                    (item) =>
+                      item.inheritedFrom?.threadId === sourceThreadId && item.runId === null,
+                  ),
                 );
                 const boundary = fresh.turnItems.filter((item) => item.inheritedFrom === undefined);
                 assert.lengthOf(boundary, 1);
@@ -279,10 +290,20 @@ it.effect.each(
                         (item) => item.threadId === racedTargetId && item.runId === null,
                       ),
                     );
-                    const racedPrefix = owned.turnItems.filter(
-                      (item) => item.inheritedFrom?.threadId === sourceThreadId,
+                    const racedRows = owned.visibleTurnItems.filter(
+                      (row) => row.visibility === "inherited",
                     );
-                    assert.lengthOf(racedPrefix, sourceBefore.visibleTurnItems.length);
+                    const racedPrefix = racedRows.map((row) => row.item);
+                    assert.deepEqual(
+                      racedRows.map((row) => [row.sourceThreadId, row.sourceItemId]),
+                      sourceBefore.visibleTurnItems.map((row) => [sourceThreadId, row.item.id]),
+                    );
+                    assert.isTrue(
+                      racedPrefix.every(
+                        (item) =>
+                          item.inheritedFrom?.threadId === sourceThreadId && item.runId === null,
+                      ),
+                    );
                     assert.deepEqual(
                       racedPrefix.map((item) => item.type),
                       sourceBefore.visibleTurnItems.map((row) => row.item.type),

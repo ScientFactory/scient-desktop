@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
@@ -9,7 +10,9 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
@@ -70,6 +73,7 @@ function layerTest(
   metadata: Readonly<Record<string, { continuationKey: string }>>,
   planSelectionTransition: ProviderAdapterV2Shape["planSelectionTransition"] = () =>
     Effect.succeed({ type: "restart_session" }),
+  realPath?: FileSystem.FileSystem["realPath"],
 ) {
   const adapter = (instanceId: ProviderInstanceId): ProviderAdapterV2Shape => ({
     instanceId,
@@ -101,7 +105,13 @@ function layerTest(
     },
   });
   return ProviderSwitch.layer.pipe(
-    Layer.provide(Layer.mergeAll(layerRegistry, RuntimePolicy.layer)),
+    Layer.provide(
+      Layer.mergeAll(
+        layerRegistry,
+        RuntimePolicy.layer,
+        realPath === undefined ? NodeServices.layer : FileSystem.layerNoop({ realPath }),
+      ),
+    ),
   );
 }
 
@@ -343,4 +353,104 @@ it.effect("distinguishes compatible and incompatible instances of the same drive
       }),
     ),
   ),
+);
+
+it.effect("keeps the live native owner when the target is a symlink to the same workspace", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "provider-switch-alias-" });
+    const workspace = `${directory}/workspace`;
+    const alias = `${directory}/workspace-alias`;
+    yield* fs.makeDirectory(workspace);
+    yield* fs.symlink(workspace, alias);
+    const canonical = yield* fs.realPath(workspace);
+    const current = projection();
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const result = yield* service.plan({
+      projection: {
+        ...current,
+        thread: { ...current.thread, worktreePath: alias },
+        providerSessions: [{ ...current.providerSessions[0]!, cwd: canonical }],
+      },
+      targetModelSelection: current.thread.modelSelection,
+    });
+    assert.equal(result.transition.type, "reuse");
+    assert.deepEqual(result.releaseProviderSessionIds, []);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+        NodeServices.layer,
+      ),
+    ),
+  ),
+);
+
+it.effect("restarts the live owner for genuinely different canonical workspaces", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "provider-switch-distinct-" });
+    const workspace = `${directory}/current`;
+    const target = `${directory}/target`;
+    yield* fs.makeDirectory(workspace);
+    yield* fs.makeDirectory(target);
+    const current = projection();
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const result = yield* service.plan({
+      projection: {
+        ...current,
+        thread: { ...current.thread, worktreePath: target },
+        providerSessions: [{ ...current.providerSessions[0]!, cwd: yield* fs.realPath(workspace) }],
+      },
+      targetModelSelection: current.thread.modelSelection,
+    });
+    assert.equal(result.transition.type, "restart_and_resume");
+    assert.deepEqual(result.releaseProviderSessionIds, [currentSessionId]);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+        NodeServices.layer,
+      ),
+    ),
+  ),
+);
+
+it.effect.each(["current", "target"] as const)(
+  "does not grant workspace equivalence when the %s realpath lookup fails",
+  (failedPath) =>
+    Effect.gen(function* () {
+      const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+      const current = projection();
+      const result = yield* service.plan({
+        projection: {
+          ...current,
+          thread: { ...current.thread, worktreePath: "/alias" },
+          providerSessions: [{ ...current.providerSessions[0]!, cwd: "/canonical" }],
+        },
+        targetModelSelection: current.thread.modelSelection,
+      });
+      assert.equal(result.transition.type, "restart_and_resume");
+      assert.deepEqual(result.releaseProviderSessionIds, [currentSessionId]);
+    }).pipe(
+      Effect.provide(
+        layerTest(
+          { [currentInstanceId]: { continuationKey: "codex:account:primary" } },
+          undefined,
+          (path) =>
+            path === (failedPath === "current" ? "/canonical" : "/alias")
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "realPath",
+                    pathOrDescriptor: path,
+                  }),
+                )
+              : Effect.succeed("/canonical"),
+        ),
+      ),
+    ),
 );

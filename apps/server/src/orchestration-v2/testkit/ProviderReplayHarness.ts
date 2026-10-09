@@ -31,6 +31,7 @@ import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import * as CheckpointCaptureService from "../CheckpointCaptureService.ts";
 import * as CheckpointService from "../CheckpointService.ts";
 import { layer as attachmentRollbackPruneLayer } from "../AttachmentRollbackPruneService.ts";
+import { layer as threadFileReleaseLayer } from "../scient-fork/ThreadFileRelease.ts";
 import { layer as attachmentReconciliationLayer } from "../AttachmentReservationReconciliation.ts";
 import * as CheckpointRollbackService from "../CheckpointRollbackService.ts";
 import * as CommandPolicy from "../CommandPolicy.ts";
@@ -73,7 +74,6 @@ import {
   ScientForkCheckpointBaselineLive,
   type ScientForkCheckpointBaselineShape,
 } from "../scient-fork/ForkCheckpointBaseline.ts";
-import { ScientForkAttachmentCopierLive } from "../scient-fork/ForkAttachmentCopier.ts";
 import {
   runOrchestratorV2Scenario,
   type OrchestratorV2ScenarioStepError,
@@ -345,8 +345,6 @@ export function layerWithRegistry<Error>(
       | V2DatabaseImportError
     >;
     readonly runEffectWorker?: boolean;
-    /** Inject a fault around the production copier without replacing native provisioning. */
-    readonly forkAttachmentCopierLayer?: typeof ScientForkAttachmentCopierLive;
     /** Run actual attachment cleanup on isolated test profiles. */
     readonly resourceCleanupLayer?: Layer.Layer<
       never,
@@ -659,7 +657,6 @@ export function layerWithRegistry<Error>(
               ScientForkCheckpointBaseline,
               Effect.map(ScientForkCheckpointBaseline, options.decorateForkCheckpointBaseline),
             ).pipe(Layer.provide(ScientForkCheckpointBaselineLive)),
-        options.forkAttachmentCopierLayer ?? ScientForkAttachmentCopierLive,
       ).pipe(Layer.provideMerge(layerThreadCommandExecutor)),
     ),
     Layer.provide(
@@ -677,6 +674,11 @@ export function layerWithRegistry<Error>(
               layerServerConfig,
               attachmentReconciliationProvided,
             ).pipe(Layer.provideMerge(layerThreadCommandExecutor)),
+          ),
+        ),
+        threadFileReleaseLayer.pipe(
+          Layer.provide(
+            Layer.mergeAll(layerStores, layerServerConfig, attachmentReconciliationProvided),
           ),
         ),
         options.resourceCleanupLayer?.pipe(

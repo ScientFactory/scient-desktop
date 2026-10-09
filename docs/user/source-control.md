@@ -135,6 +135,9 @@ Run a quick **Rescan** after setting up a new machine or changing credentials.
 
 You can now clone, publish, and create pull requests.
 
+For GitHub Enterprise, sign in with `gh auth login --hostname YOUR_HOST`. Scient treats a
+custom server name as GitHub once it has a credential for that host.
+
 ### For GitLab
 
 1. Install the GitLab CLI:

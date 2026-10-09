@@ -1,4 +1,4 @@
-import { collapseAbsoluteFilePath } from "@t3tools/client-runtime/markdown-links";
+import { collapseAbsoluteFilePath } from "@t3tools/shared/path";
 import type {
   EnvironmentFileLinkResolution,
   EnvironmentId,
@@ -10,7 +10,7 @@ import { chatFileLinkResolveInput } from "~/scient/fileOpening/chatFileLinkResol
 import { environmentFileLinkResolution } from "~/scient/fileOpening/environmentFileState";
 import { useEnvironmentQuery } from "~/state/query";
 import { workspaceFileHostPath } from "~/components/files/filePath";
-import { isAbsolutePath } from "~/terminal-links";
+import { isAbsolutePath } from "@t3tools/shared/path";
 
 export interface MissingFileChoices {
   /** Workspace files a missing path may have meant, as explicit choices. */

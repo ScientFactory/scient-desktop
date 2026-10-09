@@ -1,15 +1,24 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-07T19:00:00Z",
+  "updatedAt": "2026-10-08T14:44:57Z",
   "compatibility": [
     {
       "driver": "codex",
       "t3CodeRange": ">=0.6.18",
       "recommendedRange": ">=0.159.0",
       "ranges": [
-        { "range": ">=0.156.0", "status": "supported" },
-        { "range": ">=0.149.0 <0.156.0", "status": "unsupported" },
-        { "range": "<0.149.0", "status": "broken" }
+        {
+          "range": ">=0.156.0",
+          "status": "supported"
+        },
+        {
+          "range": ">=0.149.0 <0.156.0",
+          "status": "unsupported"
+        },
+        {
+          "range": "<0.149.0",
+          "status": "broken"
+        }
       ]
     },
     {
@@ -17,8 +26,14 @@
       "t3CodeRange": "<0.6.18",
       "recommendedRange": ">=0.129.0",
       "ranges": [
-        { "range": ">=0.129.0", "status": "supported" },
-        { "range": "<0.129.0", "status": "broken" }
+        {
+          "range": ">=0.129.0",
+          "status": "supported"
+        },
+        {
+          "range": "<0.129.0",
+          "status": "broken"
+        }
       ]
     },
     {
@@ -26,9 +41,18 @@
       "t3CodeRange": ">=0.0.42",
       "recommendedRange": ">=2.1.280",
       "ranges": [
-        { "range": ">=2.1.280", "status": "supported" },
-        { "range": ">=2.1.111 <2.1.280", "status": "graceful" },
-        { "range": "<2.1.111", "status": "unsupported" }
+        {
+          "range": ">=2.1.280",
+          "status": "supported"
+        },
+        {
+          "range": ">=2.1.111 <2.1.280",
+          "status": "graceful"
+        },
+        {
+          "range": "<2.1.111",
+          "status": "unsupported"
+        }
       ]
     },
     {
@@ -36,8 +60,14 @@
       "t3CodeRange": ">=0.0.42",
       "recommendedRange": ">=2026.05.09",
       "ranges": [
-        { "range": ">=2026.05.09", "status": "supported" },
-        { "range": "<2026.05.09", "status": "unknown" }
+        {
+          "range": ">=2026.05.09",
+          "status": "supported"
+        },
+        {
+          "range": "<2026.05.09",
+          "status": "unknown"
+        }
       ]
     },
     {
@@ -45,8 +75,14 @@
       "t3CodeRange": ">=0.0.42",
       "recommendedRange": ">=1.0.13",
       "ranges": [
-        { "range": ">=1.0.13", "status": "supported" },
-        { "range": "<1.0.13", "status": "broken" }
+        {
+          "range": ">=1.0.13",
+          "status": "supported"
+        },
+        {
+          "range": "<1.0.13",
+          "status": "broken"
+        }
       ]
     },
     {
@@ -55,9 +91,18 @@
       "recommendedRange": ">=1.14.19 <2.0.0",
       "recommendedVersion": "1.14.19",
       "ranges": [
-        { "range": ">=2.0.0", "status": "broken" },
-        { "range": ">=1.14.19 <2.0.0", "status": "supported" },
-        { "range": "<1.14.19", "status": "broken" }
+        {
+          "range": ">=2.0.0",
+          "status": "broken"
+        },
+        {
+          "range": ">=1.14.19 <2.0.0",
+          "status": "supported"
+        },
+        {
+          "range": "<1.14.19",
+          "status": "broken"
+        }
       ]
     },
     {
@@ -65,25 +110,48 @@
       "t3CodeRange": ">=0.6.18",
       "recommendedRange": ">=2.0.18",
       "ranges": [
-        { "range": ">=2.0.18", "status": "supported" },
-        { "range": ">=2.0.0 <2.0.18", "status": "unsupported" },
-        { "range": ">=1.14.19 <2.0.0", "status": "graceful" },
-        { "range": "<1.14.19", "status": "broken" }
+        {
+          "range": ">=2.0.18",
+          "status": "supported"
+        },
+        {
+          "range": ">=2.0.0 <2.0.18",
+          "status": "unsupported"
+        },
+        {
+          "range": ">=1.14.19 <2.0.0",
+          "status": "graceful"
+        },
+        {
+          "range": "<1.14.19",
+          "status": "broken"
+        }
       ]
     },
     {
       "driver": "antigravity",
       "t3CodeRange": ">=0.0.42",
       "recommendedRange": "=1.1.1",
-      "ranges": [{ "range": "=1.1.1", "status": "supported" }]
+      "ranges": [
+        {
+          "range": "=1.1.1",
+          "status": "supported"
+        }
+      ]
     },
     {
       "driver": "pi",
       "t3CodeRange": ">=0.0.42",
       "recommendedRange": ">=0.84.4",
       "ranges": [
-        { "range": ">=0.84.4", "status": "supported" },
-        { "range": "<0.84.4", "status": "unsupported" }
+        {
+          "range": ">=0.84.4",
+          "status": "supported"
+        },
+        {
+          "range": "<0.84.4",
+          "status": "unsupported"
+        }
       ]
     },
     {
@@ -91,9 +159,18 @@
       "t3CodeRange": ">=0.6.18",
       "recommendedRange": ">=18.2.8 <19.0.0",
       "ranges": [
-        { "range": ">=18.2.8 <19.0.0", "status": "supported" },
-        { "range": ">=19.0.0", "status": "unsupported" },
-        { "range": "<18.2.8", "status": "unsupported" }
+        {
+          "range": ">=18.2.8 <19.0.0",
+          "status": "supported"
+        },
+        {
+          "range": ">=19.0.0",
+          "status": "unsupported"
+        },
+        {
+          "range": "<18.2.8",
+          "status": "unsupported"
+        }
       ]
     },
     {
@@ -101,9 +178,33 @@
       "t3CodeRange": ">=0.6.21",
       "recommendedRange": ">=0.1.0 <1.0.0",
       "ranges": [
-        { "range": ">=0.1.0 <1.0.0", "status": "supported" },
-        { "range": ">=1.0.0", "status": "unsupported" },
-        { "range": "<0.1.0", "status": "unsupported" }
+        {
+          "range": ">=0.1.0 <1.0.0",
+          "status": "supported"
+        },
+        {
+          "range": ">=1.0.0",
+          "status": "unsupported"
+        },
+        {
+          "range": "<0.1.0",
+          "status": "unsupported"
+        }
+      ]
+    },
+    {
+      "driver": "muse",
+      "t3CodeRange": ">=0.0.46",
+      "recommendedRange": ">=1.4.2",
+      "ranges": [
+        {
+          "range": ">=1.4.2",
+          "status": "supported"
+        },
+        {
+          "range": "<1.4.2",
+          "status": "unknown"
+        }
       ]
     }
   ],
@@ -122,10 +223,46 @@
     "codex": {
       "profiles": {},
       "models": [
-        { "slug": "gpt-5.5", "name": "GPT-5.5", "status": "legacy" },
-        { "slug": "gpt-5.4", "name": "GPT-5.4", "status": "legacy" },
-        { "slug": "gpt-5.4-mini", "name": "GPT-5.4 Mini", "status": "legacy" },
-        { "slug": "gpt-5.3-codex", "name": "GPT-5.3 Codex", "status": "legacy" },
+        {
+          "slug": "gpt-6-sol",
+          "name": "GPT-6 Sol",
+          "status": "legacy"
+        },
+        {
+          "slug": "gpt-5.6-sol",
+          "name": "GPT-5.6 Sol",
+          "status": "legacy"
+        },
+        {
+          "slug": "gpt-5.6-terra",
+          "name": "GPT-5.6 Terra",
+          "status": "legacy"
+        },
+        {
+          "slug": "gpt-5.6-luna",
+          "name": "GPT-5.6 Luna",
+          "status": "legacy"
+        },
+        {
+          "slug": "gpt-5.5",
+          "name": "GPT-5.5",
+          "status": "legacy"
+        },
+        {
+          "slug": "gpt-5.4",
+          "name": "GPT-5.4",
+          "status": "legacy"
+        },
+        {
+          "slug": "gpt-5.4-mini",
+          "name": "GPT-5.4 Mini",
+          "status": "legacy"
+        },
+        {
+          "slug": "gpt-5.3-codex",
+          "name": "GPT-5.3 Codex",
+          "status": "legacy"
+        },
         {
           "slug": "gpt-5.3-codex-spark",
           "name": "GPT-5.3 Codex Spark",
@@ -199,26 +336,52 @@
                 "label": "Reasoning",
                 "type": "select",
                 "options": [
-                  { "id": "low", "label": "Low" },
-                  { "id": "medium", "label": "Medium", "isDefault": true },
-                  { "id": "high", "label": "High" },
-                  { "id": "xhigh", "label": "Extra High" },
-                  { "id": "max", "label": "Max" },
+                  {
+                    "id": "low",
+                    "label": "Low"
+                  },
+                  {
+                    "id": "medium",
+                    "label": "Medium",
+                    "isDefault": true
+                  },
+                  {
+                    "id": "high",
+                    "label": "High"
+                  },
+                  {
+                    "id": "xhigh",
+                    "label": "Extra High"
+                  },
+                  {
+                    "id": "max",
+                    "label": "Max"
+                  },
                   {
                     "id": "ultracode",
                     "label": "Ultracode",
                     "description": "xhigh effort plus multi-agent workflow orchestration"
                   },
-                  { "id": "ultrathink", "label": "Ultrathink" }
+                  {
+                    "id": "ultrathink",
+                    "label": "Ultrathink"
+                  }
                 ],
                 "promptInjectedValues": ["ultrathink"]
               },
-              { "id": "fastMode", "label": "Fast Mode", "type": "boolean" }
+              {
+                "id": "fastMode",
+                "label": "Fast Mode",
+                "type": "boolean"
+              }
             ]
           },
           "adapter": {
             "claudeCode": {
-              "effortMap": { "ultracode": "xhigh", "ultrathink": null },
+              "effortMap": {
+                "ultracode": "xhigh",
+                "ultrathink": null
+              },
               "fixedContextWindowTokens": 1000000
             }
           }
@@ -499,7 +662,9 @@
             ]
           },
           "adapter": {
-            "claudeCode": { "fixedContextWindowTokens": 200000 }
+            "claudeCode": {
+              "fixedContextWindowTokens": 200000
+            }
           }
         },
         "sonnet-5": {
@@ -625,12 +790,31 @@
                 "label": "Reasoning",
                 "type": "select",
                 "options": [
-                  { "id": "low", "label": "Low" },
-                  { "id": "medium", "label": "Medium", "isDefault": true },
-                  { "id": "high", "label": "High" },
-                  { "id": "xhigh", "label": "Extra High" },
-                  { "id": "max", "label": "Max" },
-                  { "id": "ultrathink", "label": "Ultrathink" }
+                  {
+                    "id": "low",
+                    "label": "Low"
+                  },
+                  {
+                    "id": "medium",
+                    "label": "Medium",
+                    "isDefault": true
+                  },
+                  {
+                    "id": "high",
+                    "label": "High"
+                  },
+                  {
+                    "id": "xhigh",
+                    "label": "Extra High"
+                  },
+                  {
+                    "id": "max",
+                    "label": "Max"
+                  },
+                  {
+                    "id": "ultrathink",
+                    "label": "Ultrathink"
+                  }
                 ],
                 "promptInjectedValues": ["ultrathink"]
               }
@@ -638,7 +822,9 @@
           },
           "adapter": {
             "claudeCode": {
-              "effortMap": { "ultrathink": null },
+              "effortMap": {
+                "ultrathink": null
+              },
               "fixedContextWindowTokens": 1000000
             }
           }
@@ -654,7 +840,9 @@
             ]
           },
           "adapter": {
-            "claudeCode": { "fixedContextWindowTokens": 200000 }
+            "claudeCode": {
+              "fixedContextWindowTokens": 200000
+            }
           }
         }
       },
@@ -666,7 +854,11 @@
           "status": "current",
           "badge": "new",
           "profile": "opus-5-5",
-          "adapter": { "claudeCode": { "minVersion": "2.1.280" } }
+          "adapter": {
+            "claudeCode": {
+              "minVersion": "2.1.280"
+            }
+          }
         },
         {
           "slug": "claude-sonnet-5-5",
@@ -675,7 +867,11 @@
           "status": "current",
           "badge": "new",
           "profile": "sonnet-5",
-          "adapter": { "claudeCode": { "minVersion": "2.1.284" } }
+          "adapter": {
+            "claudeCode": {
+              "minVersion": "2.1.284"
+            }
+          }
         },
         {
           "slug": "claude-fable-5-1",
@@ -770,7 +966,11 @@
           "status": "current",
           "badge": "new",
           "profile": "haiku-5-5",
-          "adapter": { "claudeCode": { "minVersion": "2.1.293" } }
+          "adapter": {
+            "claudeCode": {
+              "minVersion": "2.1.293"
+            }
+          }
         },
         {
           "slug": "claude-haiku-4-5",
@@ -831,6 +1031,36 @@
           "slug": "gemini-3.8-flash-low",
           "name": "Gemini 3.8 Flash (Low)",
           "status": "current"
+        },
+        {
+          "slug": "gemini-3.7-flash-high",
+          "name": "Gemini 3.7 Flash (High)",
+          "status": "legacy"
+        },
+        {
+          "slug": "gemini-3.7-flash-medium",
+          "name": "Gemini 3.7 Flash (Medium)",
+          "status": "legacy"
+        },
+        {
+          "slug": "gemini-3.7-flash-low",
+          "name": "Gemini 3.7 Flash (Low)",
+          "status": "legacy"
+        },
+        {
+          "slug": "gemini-3.6-flash-high",
+          "name": "Gemini 3.6 Flash (High)",
+          "status": "legacy"
+        },
+        {
+          "slug": "gemini-3.6-flash-medium",
+          "name": "Gemini 3.6 Flash (Medium)",
+          "status": "legacy"
+        },
+        {
+          "slug": "gemini-3.6-flash-low",
+          "name": "Gemini 3.6 Flash (Low)",
+          "status": "legacy"
         }
       ]
     }

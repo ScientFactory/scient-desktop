@@ -94,7 +94,7 @@ describe("native Pi MCP result fidelity", () => {
     const result = { content: [block] };
     const bridge = await loadBridge(result);
     const actual = await bridge.execute();
-    expect(actual.details).toEqual({ server: "t3-code", tool: "scient_fixture", result });
+    expect(actual.details).toEqual({ server: "scient", tool: "scient_fixture", result });
     expect(actual.content).toHaveLength(1);
     const text = actual.content[0];
     expect(text?.type).toBe("text");
@@ -125,7 +125,7 @@ describe("native Pi MCP result fidelity", () => {
     expect(resource.text).toContain("fixture://large");
     expect(resource.text.length).toBeLessThanOrEqual(12_000);
     expect(resource.text).not.toContain(result.structuredContent.snapshot);
-    expect(actual.details).toEqual({ server: "t3-code", tool: "scient_fixture", result });
+    expect(actual.details).toEqual({ server: "scient", tool: "scient_fixture", result });
   });
 
   it("keeps MCP images and complete metadata in native tool details", async () => {
@@ -134,7 +134,7 @@ describe("native Pi MCP result fidelity", () => {
     const bridge = await loadBridge(result);
     expect(await bridge.execute()).toEqual({
       content: [image],
-      details: { server: "t3-code", tool: "scient_fixture", result },
+      details: { server: "scient", tool: "scient_fixture", result },
     });
   });
 
@@ -147,7 +147,7 @@ describe("native Pi MCP result fidelity", () => {
     const bridge = await loadBridge(result);
     expect(await bridge.execute()).toEqual({
       content: result.content,
-      details: { server: "t3-code", tool: "scient_fixture", result },
+      details: { server: "scient", tool: "scient_fixture", result },
       isError: true,
     });
   });
@@ -166,7 +166,7 @@ describe("native Pi MCP result fidelity", () => {
     const bridge = await loadBridge(result);
     expect(await bridge.execute()).toEqual({
       content: result.content,
-      details: { server: "t3-code", tool: "scient_fixture", result },
+      details: { server: "scient", tool: "scient_fixture", result },
     });
   });
 

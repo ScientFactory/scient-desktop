@@ -108,6 +108,26 @@ describe("automatic recording finalization", () => {
     },
   );
 
+  it("an explicit stop keeps its final frame when the control unmounts during the flush", async () => {
+    let stopping!: ReturnType<VoiceRecorderControls["stop"]>;
+    await act(async () => {
+      stopping = recorder.stop();
+    });
+    await act(async () => {
+      root.render(null);
+    });
+    expect(media.stop).not.toHaveBeenCalled();
+    await act(async () => {
+      FakeWorklet.current.samples(0.1, 120);
+      FakeWorklet.current.events.dispatchEvent(
+        new MessageEvent("message", { data: { type: "flushed", requestId: 1 } }),
+      );
+    });
+    const clip = await stopping;
+    expect(clip?.durationMs).toBe(15);
+    expect(media.stop).toHaveBeenCalledOnce();
+  });
+
   it("allows a new recording after cancelling a pending automatic stop", async () => {
     await act(() => vi.advanceTimersByTimeAsync(MAX_RECORDING_MS));
     let cancellation!: Promise<void>;

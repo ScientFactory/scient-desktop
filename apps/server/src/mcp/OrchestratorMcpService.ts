@@ -372,9 +372,11 @@ export function hasPendingChildRuns(
   childProjection: Pick<OrchestrationV2ThreadProjection, "runs">,
   delegatedRun: OrchestrationV2Run | undefined,
 ): boolean {
+  // Held queued runs wait for the user to resume the child; task_cancel holds them.
   return childProjection.runs.some(
     (run) =>
       !ThreadManagementService.isTerminalRunStatus(run.status) &&
+      !(run.status === "queued" && run.queueHeld === true) &&
       (delegatedRun === undefined || run.ordinal > delegatedRun.ordinal),
   );
 }
@@ -2370,12 +2372,16 @@ const make = Effect.gen(function* () {
           })
           .pipe(Effect.mapError(threadManagementFailure));
         const page = timeline.items;
+        // SCIENT-FORK: a Scient fork shows its history's messages as it keeps
+        // them: read them through the fork, not from their original owners.
+        const readThroughFork = target.thread.conversationFork != null;
         const messageIdsByThread = new Map<ThreadId, Array<MessageId>>();
         for (const row of page) {
           if (row.item.type !== "user_message" && row.item.type !== "assistant_message") continue;
-          const ids = messageIdsByThread.get(row.sourceThreadId) ?? [];
+          const owner = readThroughFork ? target.thread.id : row.sourceThreadId;
+          const ids = messageIdsByThread.get(owner) ?? [];
           ids.push(row.item.messageId);
-          messageIdsByThread.set(row.sourceThreadId, ids);
+          messageIdsByThread.set(owner, ids);
         }
         const sourceMessages = yield* Effect.forEach(
           [...messageIdsByThread],
@@ -2387,6 +2393,10 @@ const make = Effect.gen(function* () {
           { concurrency: 1 },
         );
         const messagesByThreadId = new Map(sourceMessages);
+        if (readThroughFork) {
+          const shown = messagesByThreadId.get(target.thread.id) ?? [];
+          for (const row of page) messagesByThreadId.set(row.sourceThreadId, shown);
+        }
         const task = parent === undefined ? undefined : directAppOwnedChildTask(parent, target);
         if (
           parent !== undefined &&

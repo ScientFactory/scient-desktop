@@ -7,10 +7,6 @@ import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { mergeEffectiveProviderSkills } from "@t3tools/client-runtime/providerSkills";
-import {
-  appendCodexArtifactTemplateUsePrompt,
-  type CodexArtifactTemplate,
-} from "@t3tools/client-runtime/codex-artifact-templates";
 import type {
   CodexFeedbackSubmission,
   EnvironmentThreadStatus,
@@ -32,6 +28,10 @@ import type {
   UsageLimitsReport,
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import {
+  appendCodexArtifactTemplateUsePrompt,
+  type CodexArtifactTemplate,
+} from "@t3tools/shared/codexArtifactTemplates";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
 import {
   presentPendingBackgroundWork,

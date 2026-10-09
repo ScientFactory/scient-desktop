@@ -1,7 +1,7 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import type { FileCitation } from "@t3tools/contracts";
 import type { MarkdownCiteHandler } from "./markdownCitation";
-import { workspaceRelativeFilePath } from "@t3tools/client-runtime/markdown-links";
+import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
@@ -14,7 +14,7 @@ import {
 } from "~/components/files/projectFilesQueryState";
 import { anchoredToastManager, toastManager } from "~/components/ui/toast";
 import { readLocalApi } from "~/localApi";
-import { resolvePathLinkTarget } from "~/terminal-links";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { assetEnvironment } from "~/state/assets";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { projectEnvironment } from "~/state/projects";
