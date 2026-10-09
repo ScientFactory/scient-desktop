@@ -1090,20 +1090,27 @@ describe("writing editor source transactions", () => {
     const sourceButton = document.body.querySelector<HTMLButtonElement>(
       "[aria-label='Edit formula as LaTeX']",
     )!;
+    expect(sourceButton.getAttribute("aria-expanded")).toBe("false");
     await act(async () => sourceButton.click());
     const source = container.querySelector(
       "textarea[aria-label='LaTeX formula code']",
     ) as HTMLTextAreaElement;
     expect(source.value).toBe("x^2");
+    expect(sourceButton.getAttribute("aria-expanded")).toBe("true");
     expect(container.textContent).toContain("x^2");
     expect(document.body.querySelector("[aria-label='Math tools']")).not.toBeNull();
     expect(document.body.querySelector("[aria-label='Edit formula as LaTeX']")).not.toBeNull();
     await setField(source, "y^3");
     expect(current).toContain("$y^3$");
-    await act(() =>
-      source.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
-    );
+    const resizeHandle = container.querySelector<HTMLDivElement>(
+      '[aria-label="Resize LaTeX code editor"]',
+    )!;
+    await act(() => {
+      resizeHandle.focus();
+      resizeHandle.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
     expect(container.querySelector("textarea[aria-label='LaTeX formula code']")).toBeNull();
+    expect(sourceButton.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("adds an equation label in its footer popup without losing the selected equation", async () => {

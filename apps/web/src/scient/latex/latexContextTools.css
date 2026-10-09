@@ -222,6 +222,30 @@
   border-radius: 0;
   background: transparent;
   font: 12px/1.5 var(--font-mono);
+  resize: none;
+}
+.scient-latex-source-resize-handle {
+  display: flex;
+  height: 12px;
+  align-items: center;
+  justify-content: center;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+}
+.scient-latex-source-resize-handle::after {
+  content: "";
+  width: 24px;
+  height: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--muted-foreground) 45%, transparent);
+}
+.scient-latex-source-resize-handle:is(:hover, :focus-visible)::after {
+  background: var(--muted-foreground);
+}
+.scient-latex-source-resize-handle:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: -1px;
 }
 .scient-latex-context-tools[data-inline]
   .scient-latex-math-source-popover

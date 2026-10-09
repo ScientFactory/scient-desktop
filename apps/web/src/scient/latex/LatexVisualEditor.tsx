@@ -77,6 +77,8 @@ import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "~/component
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
 import { LatexReferenceLabelPopover } from "./LatexReferenceLabelPopover";
+import { LatexSourceResizeHandle } from "./LatexSourceResizeHandle";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import type { EditorView } from "@tiptap/pm/view";
 import { LatexInsertMenu, LatexInsertMenuContent, type LatexInsertAction } from "./LatexInsertMenu";
 import { LatexDocumentSettings, type LatexDocumentSettingsSection } from "./LatexDocumentSettings";
@@ -1227,6 +1229,7 @@ function LatexMathView({
             <button
               className={dockButtonClass(sourceOpen)}
               aria-pressed={sourceOpen}
+              aria-expanded={sourceOpen}
               aria-label="Edit formula as LaTeX"
               type="button"
               onClick={() => {
@@ -1241,6 +1244,11 @@ function LatexMathView({
               }}
             >
               Edit LaTeX
+              {sourceOpen ? (
+                <ChevronDown className="size-3 shrink-0 opacity-60" />
+              ) : (
+                <ChevronUp className="size-3 shrink-0 opacity-60" />
+              )}
             </button>
             {display && (
               <div className="flex h-6 shrink-0 items-center gap-1.5">
@@ -1327,7 +1335,27 @@ function LatexMathView({
                 role="dialog"
                 aria-label={display ? "Equation source" : "Inline math source"}
                 onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                  if (event.nativeEvent.isComposing) return;
+                  if (
+                    event.key === "Escape" ||
+                    (event.key === "Enter" && (event.ctrlKey || event.metaKey))
+                  ) {
+                    event.preventDefault();
+                    if (!sourceError) {
+                      setSourceOpen(false);
+                      mathField.current?.focus();
+                    }
+                  }
+                }}
               >
+                <LatexSourceResizeHandle
+                  field={sourceEditor}
+                  onResize={(height) => {
+                    if (sourceEditor.current) sourceEditor.current.style.height = `${height}px`;
+                  }}
+                />
                 <textarea
                   ref={sourceEditor}
                   aria-label="LaTeX formula code"
@@ -1344,20 +1372,6 @@ function LatexMathView({
                       publishSource(event.currentTarget.value);
                   }}
                   onCompositionEnd={(event) => publishSource(event.currentTarget.value)}
-                  onKeyDown={(event) => {
-                    event.stopPropagation();
-                    if (event.nativeEvent.isComposing) return;
-                    if (
-                      event.key === "Escape" ||
-                      (event.key === "Enter" && (event.ctrlKey || event.metaKey))
-                    ) {
-                      event.preventDefault();
-                      if (!sourceError) {
-                        setSourceOpen(false);
-                        mathField.current?.focus();
-                      }
-                    }
-                  }}
                 />
                 {sourceError ? (
                   <div className="scient-latex-math-source-error" role="alert">
