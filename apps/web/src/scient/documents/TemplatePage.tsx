@@ -118,15 +118,14 @@ export function TemplatePage(props: {
     cropped && bounds
       ? Math.min(
           (width * magnification) / sourceWidth,
-          Math.max(1, width - 16) / (sourceWidth * (bounds.right - bounds.left)),
+          Math.max(1, width - 16) /
+            (sourceWidth * 2 * Math.max(0.5 - bounds.left, bounds.right - 0.5)),
           Math.max(1, height - 16) / (sourceHeight * (bounds.bottom - bounds.top)),
         )
       : (width * magnification) / sourceWidth;
   const pageWidth = sourceWidth * scale;
-  const left =
-    cropped && bounds
-      ? width / 2 - pageWidth * ((bounds.left + bounds.right) / 2)
-      : (width - pageWidth) / 2;
+  // Short left-aligned lines must not move a centered title away from the page axis.
+  const left = (width - pageWidth) / 2;
   const top = cropped
     ? bounds
       ? height / 2 - sourceHeight * scale * ((bounds.top + bounds.bottom) / 2)

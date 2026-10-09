@@ -50,7 +50,7 @@ describe("small template page framing", () => {
   it.each([
     { left: 20, top: 70, right: 100, bottom: 110 },
     { left: 20, top: 20, right: 150, bottom: 200 },
-  ])("centers all the content with room at every edge: %o", async (content) => {
+  ])("keeps the title centered and the whole content visible: %o", async (content) => {
     pixels(content);
     await act(() => root.render(<TemplatePage picture={picture} width={164} cropped />));
     const image = await load();
@@ -60,7 +60,8 @@ describe("small template page framing", () => {
     const right = parseFloat(image.style.left) + (content.right / 160) * pageWidth;
     const top = parseFloat(image.style.top) + (content.top / 226) * pageHeight;
     const bottom = parseFloat(image.style.top) + (content.bottom / 226) * pageHeight;
-    expect((left + right) / 2).toBeCloseTo(82);
+    // A title centered on the original page stays centered even when body lines are shorter.
+    expect(parseFloat(image.style.left) + pageWidth / 2).toBeCloseTo(82);
     expect((top + bottom) / 2).toBeCloseTo((164 * Math.SQRT2) / 2);
     expect(left).toBeGreaterThanOrEqual(8 - 0.001);
     expect(right).toBeLessThanOrEqual(164 - 8 + 0.001);
@@ -91,7 +92,7 @@ describe("small template page framing", () => {
     expect(image.getAttribute("style")).toBe(before);
   });
 
-  it("centers captured text as a block while preserving its original alignment on expansion", async () => {
+  it("keeps a captured page's horizontal axis and centers its content vertically", async () => {
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
       new DOMRect(0, 0, 408, 528),
     );
@@ -105,7 +106,7 @@ describe("small template page framing", () => {
     await act(() => root.render(<TemplatePage picture={captured} width={164} cropped />));
     const page = host.querySelector<HTMLDivElement>(".origin-top-left")!;
     const scale = Number(page.style.transform.match(/scale\(([^)]+)\)/u)![1]);
-    expect(parseFloat(page.style.left) + 160 * scale).toBeCloseTo(82);
+    expect(parseFloat(page.style.left) + 408 * scale).toBeCloseTo(82);
     expect(parseFloat(page.style.top) + 220 * scale).toBeCloseTo((164 * 1056) / 816 / 2);
     expect(page.querySelector("p")!.style.textAlign).toBe("left");
     await act(() => root.render(<TemplatePage picture={captured} width={632} />));
