@@ -451,7 +451,9 @@ export function withIssuedCodexMcpReplayExpectations(
               return yield* Effect.die("Native MCP replay turn has no recorded native thread id.");
             const recordedInput = yield* decodeReplayCodexInput(params.input).pipe(Effect.orDie);
             const codexInput = recordedInput.map((item) =>
-              item.type === "text" && scope.includeEmptySkillCatalogMarker === true
+              item.type === "text" &&
+              scope.includeEmptySkillCatalogMarker === true &&
+              issued.capabilities.has("skills:read")
                 ? {
                     ...item,
                     text: emptyMcpReplayPrompt(CodexAdapterV2.CODEX_DRIVER_KIND, item.text),

@@ -62,19 +62,16 @@ it.live("exits promptly with a recorded mismatch instead of leaving the ACP chil
       }),
     );
 
-    const exit = yield* Effect.tryPromise({
-      try: () => {
-        child.stdin.end(
-          `${JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            method: "session/prompt",
-            params: { sessionId: "actual" },
-          })}\n`,
-        );
-        return childExit;
-      },
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    const exit = yield* Effect.promise(() => {
+      child.stdin.end(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "session/prompt",
+          params: { sessionId: "actual" },
+        })}\n`,
+      );
+      return childExit;
     }).pipe(Effect.timeout("2 seconds"));
 
     NodeAssert.deepEqual(exit, { code: 1, signal: null });
