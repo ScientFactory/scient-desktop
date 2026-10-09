@@ -29,7 +29,7 @@ import {
   type OmpExecutableGateShape,
 } from "../../provider/omp/OmpExecutableGate.ts";
 import { OMP_ISOLATED_ARGS, makeOmpRpcProcess } from "../../provider/omp/OmpRpcProcess.ts";
-import { spawnAndCollect } from "../../provider/providerSnapshot.ts";
+import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { scientAgentTarget } from "../../provider/scient/ScientAgentTarget.ts";
 import {
   makeManagedProviderRuntimeResolution,

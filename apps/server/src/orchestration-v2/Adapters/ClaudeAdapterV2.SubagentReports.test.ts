@@ -5,8 +5,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
-import { type ProviderAdapterV2Event } from "../ProviderAdapter.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import { type ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   makeWakeHarness,
   makeSubagentAssistantFrames,

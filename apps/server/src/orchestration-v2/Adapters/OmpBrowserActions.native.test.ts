@@ -13,7 +13,7 @@ import type { OmpRpcFrameTrace } from "effect-omp-rpc/client";
 import { ompTarget } from "../../provider/omp/OmpTarget.ts";
 import { nativeOmpSession } from "../../provider/testUtils/nativeOmpSession.ts";
 import { scriptedOmpRpc } from "../../provider/testUtils/scriptedOmpRpc.ts";
-import type { ProviderAdapterV2Event } from "../ProviderAdapter.ts";
+import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 
 const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 it.live(

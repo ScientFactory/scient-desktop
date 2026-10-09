@@ -134,7 +134,7 @@
   ],
   "upstreamMounts": [
     {
-      "path": "apps/server/src/provider/providerSnapshot.ts",
+      "path": "packages/provider-core/src/server/snapshotProbe.ts",
       "anchor": "export function retainUnavailableAgentModels(",
       "purpose": "Retain previously discovered Pi and Oh My Pi models as unavailable after successful catalog removal, scoped to each provider instance."
     },
@@ -184,7 +184,7 @@
       "purpose": "Scope Oh My Pi's supported version range to Scient releases that ship it."
     },
     {
-      "path": "apps/server/src/provider/providerMaintenance.ts",
+      "path": "packages/provider-core/src/server/maintenanceResolver.ts",
       "anchor": "export function formatProviderUpdateCommand",
       "purpose": "Share the copyable update command formatting with Oh My Pi's manual update advisory."
     },
@@ -242,6 +242,13 @@
       "path": "scripts/release-smoke.ts",
       "anchor": "packages/effect-omp-rpc/package.json",
       "purpose": "Include the Oh My Pi wire package in release smoke packaging."
+    }
+  ],
+  "scientMounts": [
+    {
+      "path": "apps/server/src/scientServerSettings.ts",
+      "anchor": "TEXT_GENERATION_FALLBACK_DRIVERS",
+      "purpose": "Keep Oh My Pi in automatic text-generation provider fallback while implicit Scient Agent remains the last resort."
     }
   ],
   "ompDiffSignals": ["Oh My Pi", "effect-omp-rpc", "provider/omp", "Omp", "\"omp\""]

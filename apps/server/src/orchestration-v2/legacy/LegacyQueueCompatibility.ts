@@ -23,7 +23,7 @@ import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ThreadManagementService } from "../ThreadManagementService.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import type { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
-import { randomUuidV4 } from "../RandomUuid.ts";
+import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import type { LegacyV1ThreadImporter } from "./LegacyV1ThreadImporter.ts";
 import { cutOverLegacyQueue } from "./LegacyQueueCutover.ts";
 

@@ -27,7 +27,7 @@ import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSession
 import type {
   ProviderConnectionActionFailure,
   ProviderConnectionAttempt,
-} from "../../provider/ProviderDriver.ts";
+} from "../../provider/ScientProviderInstanceSeams.ts";
 import { ProviderLifecycleCoordinator } from "./ProviderLifecycleCoordinator.ts";
 import { observeAnalyticsEffect } from "../../telemetry/OperationAnalytics.ts";
 

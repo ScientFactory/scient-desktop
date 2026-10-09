@@ -7,10 +7,10 @@ import type { ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 
-import type { ProviderInstance } from "./ProviderDriver.ts";
+import type { ScientProviderInstance } from "./ScientProviderInstance.ts";
 
 export function makeScientProviderInstanceActions(
-  liveSubsRef: Ref.Ref<ReadonlyMap<ProviderInstanceId, ProviderInstance>>,
+  liveSubsRef: Ref.Ref<ReadonlyMap<ProviderInstanceId, ScientProviderInstance>>,
 ) {
   const getProviderConnectionActionsForInstance = Effect.fn(
     "getProviderConnectionActionsForInstance",

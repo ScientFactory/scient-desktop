@@ -1,4 +1,4 @@
-import { withAgentDeviceEnvironment } from "../../mcp/McpProviderSession.ts";
+import { withAgentDeviceEnvironment } from "@t3tools/provider-core/server/mcpSession";
 import { AntigravitySettings, ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
@@ -18,7 +18,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type { AcpError } from "effect-acp/errors";
 
-import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import {
@@ -26,6 +26,7 @@ import {
   makeAntigravityGeneration,
 } from "../../textGeneration/AntigravityTextGeneration.ts";
 import { makeAntigravityAcpVoiceTranscriptCorrection } from "../../scient/voice/AntigravityAcpVoiceTranscriptCorrection.ts";
+import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
 import { makeAntigravityAuth, type AntigravityAuth } from "../AntigravityAuth.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
 import {
@@ -42,27 +43,23 @@ import {
   makeAntigravityAcpRuntime,
   type AntigravityAcpRuntimeInput,
 } from "../acp/AntigravityAcpSupport.ts";
-import type { AcpSessionRuntime, AcpSessionRuntimeStartResult } from "../acp/AcpSessionRuntime.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   removeAntigravityRuntimeTempDirs,
   removeAntigravitySessionFiles,
 } from "../acp/AntigravitySessionFiles.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
-import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
 import { makeAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/AntigravityAdapterV2.ts";
-import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
-import { ProviderDriverError } from "../Errors.ts";
+import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeAntigravityProvider } from "../AntigravityProvider.ts";
-import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ModelManifest from "../ModelManifest.ts";
-import {
-  defaultProviderContinuationIdentity,
-  type ProviderDriver,
-  type ProviderInstance,
-} from "../ProviderDriver.ts";
-import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { withInstanceIdentity } from "./instanceIdentity.ts";
+import { defaultProviderContinuationIdentity } from "@t3tools/provider-core/server/driver";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 // SCIENT-FORK:START — legacy routing, managed runtime identity and account actions.
 import {
   makeAntigravityInstanceConnectionActions,
@@ -83,7 +80,7 @@ const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
 
 export type AntigravityDriverEnv =
   | AntigravityInstallation.AntigravityInstallation
-  | BackgroundPolicy.BackgroundPolicy
+  | ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
@@ -96,7 +93,7 @@ export type AntigravityDriverEnv =
   | LegacyAntigravityDriverEnv;
 
 /** Each instance owns its Google profile. Executable releases are shared by the environment. */
-export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityDriverEnv> = {
+export const AntigravityDriver: ScientProviderDriver<AntigravitySettings, AntigravityDriverEnv> = {
   driverKind: DRIVER,
   metadata: { displayName: "Antigravity", supportsMultipleInstances: true },
   configSchema: AntigravitySettings,
@@ -121,12 +118,11 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const serverConfig = yield* ServerConfig.ServerConfig;
+      const host = yield* ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const installation = yield* AntigravityInstallation.AntigravityInstallation;
       const loggers = yield* ProviderEventLoggers.ProviderEventLoggers;
       const modelManifest = yield* ModelManifest.ModelManifest;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
       const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -140,7 +136,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const processEnvironment = mergeProviderInstanceEnvironment(environment);
       const userHome = resolveAntigravityUserHome(yield* HostProcessPlatform, processEnvironment);
       const directories = yield* resolveAntigravityInstanceDirectories(
-        serverConfig.stateDir,
+        host.paths.stateDir,
         instanceId,
       ).pipe(
         Effect.provideService(Crypto.Crypto, crypto),
@@ -204,7 +200,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
         options?: { readonly initializeOnly: true },
       ): Effect.fn.Return<
-        AcpSessionRuntime["Service"],
+        AcpSessionRuntime.AcpSessionRuntime["Service"],
         AcpError | ProviderSetupError,
         Scope.Scope
       > {
@@ -349,8 +345,8 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       });
 
       const publishCatalog = (
-        started: AcpSessionRuntimeStartResult,
-        runtime: Pick<AcpSessionRuntime["Service"], "getEvents" | "drainEvents">,
+        started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
+        runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "getEvents" | "drainEvents">,
       ): Effect.Effect<void> =>
         Effect.gen(function* () {
           yield* provider.onSessionStarted(started);
@@ -451,13 +447,8 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const defaultModel = modelManifest.current.pipe(
         Effect.map((manifest) => ModelManifest.manifestDefaultModel(manifest, DRIVER)),
       );
-      const orchestrationAdapter = makeAntigravityAdapterV2({
+      const orchestrationAdapter = yield* makeAntigravityAdapterV2({
         instanceId,
-        crypto,
-        fileSystem,
-        path,
-        idAllocator,
-        serverConfig,
         selfInvocation,
         makeRuntime,
         withProcess: authFlow.withProcess,
@@ -581,6 +572,6 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         connectionActions,
         managedRuntimeActions,
         refreshModels,
-      } satisfies ProviderInstance;
+      } satisfies ScientProviderInstance;
     }),
 };

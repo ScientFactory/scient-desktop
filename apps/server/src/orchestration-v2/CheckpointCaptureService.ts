@@ -18,7 +18,7 @@ import * as Schema from "effect/Schema";
 
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 // SCIENT-FORK:START checkpoint-capture-final-attempt
 import { settleUncapturedRunOnFinalAttempt } from "./scient-fork/CheckpointCaptureFinalAttempt.ts";

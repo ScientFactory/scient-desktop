@@ -13,7 +13,7 @@ import type * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import type { OrchestratorDispatchError } from "../Orchestrator.ts";
-import type { ProviderAdapterV2SessionRuntime } from "../ProviderAdapter.ts";
+import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderSessionManagerV2Shape } from "../ProviderSessionManager.ts";
 
 type ProviderWorkAdmitCommand = Extract<

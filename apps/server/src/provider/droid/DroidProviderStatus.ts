@@ -36,7 +36,7 @@ import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import type { ServerProviderShape } from "../ServerProvider.ts";
+import type { ServerProviderShape } from "@t3tools/provider-core/server/snapshot";
 
 const MAX_RECOVERY_BACKOFF_MILLIS = 3_600_000;
 

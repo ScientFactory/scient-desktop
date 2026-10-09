@@ -31,16 +31,14 @@ import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneration.ts";
-import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import * as ServerConfig from "../../config.ts";
-import { expandHomePath } from "../../pathExpansion.ts";
-import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   createCodexAdapterV2,
   type CodexAdapterV2DriverEnv,
 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
-import * as ServerSettings from "../../serverSettings.ts";
-import { ProviderDriverError } from "../Errors.ts";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
 import {
@@ -50,18 +48,18 @@ import {
   setCodexSkillEnabled,
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
-
-import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelManifest from "../ModelManifest.ts";
-import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
-import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { makeCodexConnectionActions } from "../../scient/providerLifecycle/CodexConnectionActions.ts";
 import {
   isStandInForManagedCodex,
   makeCodexManagedRuntimeResolution,
 } from "../../scient/providerLifecycle/CodexManagedRuntimeActions.ts";
 import { makeCodexVoiceTranscriptCorrection } from "../../scient/voice/CodexVoiceTranscriptCorrection.ts";
+import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeManualOnlyProviderMaintenanceCapabilities,
@@ -69,12 +67,12 @@ import {
   makePackageManagedProviderMaintenanceResolver,
   normalizeCommandPath,
   resolveProviderMaintenanceCapabilitiesEffect,
-} from "../providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   haveProviderSnapshotSettingsChanged,
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
-} from "../providerUpdateSettings.ts";
+} from "@t3tools/provider-core/server/snapshotSettings";
 import {
   codexContinuationIdentity,
   materializeCodexShadowHome,
@@ -119,7 +117,7 @@ function makeCodexMaintenanceResolver(sharedHomePath: string) {
  */
 export type CodexDriverEnv =
   | CodexAdapterV2DriverEnv
-  | BackgroundPolicy.BackgroundPolicy
+  | ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
   | ResetCreditCoordinator.ResetCreditCoordinator
   | Crypto.Crypto
@@ -128,7 +126,6 @@ export type CodexDriverEnv =
   | ModelManifest.ModelManifest
   | Path.Path
   | ServerConfig.ServerConfig
-  | ServerSettings.ServerSettingsService
   | ServerSecretStore.ServerSecretStore
   | ServerEnvironment.ServerEnvironmentIdentity
   | CodexInstallation.CodexInstallation;
@@ -162,7 +159,7 @@ const withInstanceIdentity =
       runtime: input.runtime,
     },
   });
-export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
+export const CodexDriver: ScientProviderDriver<CodexSettings, CodexDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: {
     displayName: "Codex",
@@ -185,7 +182,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
-      const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const host = yield* ProviderHost;
       const modelManifest = yield* ModelManifest.ModelManifest;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const homeLayout = yield* resolveCodexHomeLayout(config);
@@ -320,7 +317,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         ),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
+      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, host.settings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<CodexSettings>>({
         resolveMaintenance,
         getSettings: snapshotSettings.getSettings,
@@ -470,6 +467,6 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         connectionActions,
         managedRuntimeActions: managedRuntime.actions,
         skillActions,
-      } satisfies ProviderInstance;
+      } satisfies ScientProviderInstance;
     }),
 };

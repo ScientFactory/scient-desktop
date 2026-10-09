@@ -92,6 +92,41 @@ describe("mobile model options", () => {
     expect(isModelSelectionUnavailable(config, saved)).toBe(true);
     expect(resolveDefaultableModelSelection(config, saved)).toBeNull();
   });
+
+  it("keeps the update-required advisory for a saved selection when provider probing errors", () => {
+    const selection = {
+      instanceId: ProviderInstanceId.make("codex_work"),
+      model: "gpt-5.6-sol",
+    };
+    const updateRequiredModels = [{ slug: "gpt-next", name: "GPT Next", minVersion: "1.2.0" }];
+    const config = {
+      providers: [
+        {
+          instanceId: "codex_work",
+          driver: "codex",
+          displayName: "Codex Work",
+          enabled: true,
+          installed: true,
+          status: "error",
+          auth: { status: "unknown" },
+          models: [
+            { slug: "gpt-5.6-sol", name: "GPT-5.6 Sol", isCustom: false, capabilities: null },
+          ],
+          updateRequiredModels,
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    expect(groupByProvider(buildModelOptions(config, selection))).toMatchObject([
+      {
+        providerKey: "codex_work",
+        providerLabel: "Codex Work",
+        updateRequired: { driver: "codex", updateRequiredModels },
+        models: [{ selection }],
+      },
+    ]);
+  });
+
   it.each(["droid", "pi"])(
     "consumes %s discovered connections without legacy model settings",
     (driver) => {

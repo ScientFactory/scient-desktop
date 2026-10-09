@@ -14,29 +14,30 @@ import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import * as CodexInstallation from "../CodexInstallation.ts";
 import { CodexAppServerClientFactory } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ClaudeAgentSdkQueryRunner } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
-import { CursorAgentSdkRunner } from "../../orchestration-v2/Adapters/CursorAgentSdk.ts";
+import { CursorAgentSdkRunner } from "@t3tools/provider-cursor/server/CursorAgentSdk";
 import { ClaudeDriver } from "./ClaudeDriver.ts";
 import { CodexDriver } from "./CodexDriver.ts";
-import { CursorDriver } from "./CursorDriver.ts";
+import { CursorDriver } from "@t3tools/provider-cursor/server";
 import { BackgroundPolicy } from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
-import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { PtyAdapter } from "../../terminal/PtyAdapter.ts";
+import { PtyAdapter } from "@t3tools/shared/PtyAdapter";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
-import { PiDriver } from "./PiDriver.ts";
+import { PiDriver } from "@t3tools/provider-pi/server";
 import { OmpDriver } from "./OmpDriver.ts";
 import { ScientAgentDriver } from "./ScientAgentDriver.ts";
 import { DroidDriver } from "./DroidDriver.ts";
 import { LegacyAntigravityDriver } from "./LegacyAntigravityDriver.ts";
+import { layerConfigConsistentTestProviderHost } from "../testUtils/providerHost.ts";
 
 const noProcess = () => Effect.die("Continuation identity must not start a provider process");
 const baseLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-native-continuation-identity-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
-const testLayer = baseLayer.pipe(
+const providerDependenciesLayer = baseLayer.pipe(
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(ProviderContinuationRequests.layer),
   Layer.provideMerge(OmpExecutableGate.layer),
@@ -66,6 +67,9 @@ const testLayer = baseLayer.pipe(
   Layer.provideMerge(
     Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, ChildProcessSpawner.make(noProcess)),
   ),
+);
+const testLayer = layerConfigConsistentTestProviderHost.pipe(
+  Layer.provideMerge(providerDependenciesLayer),
 );
 
 const input = (kind: string, ordinal: number) => ({

@@ -29,19 +29,21 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as ScientTestProviderHost from "../testkit/ScientTestProviderHost.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import * as ProviderAdapter from "../ProviderAdapter.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeAntigravityAdapterV2 } from "./AntigravityAdapterV2.ts";
 
-const layer = Layer.mergeAll(
+const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-antigravity-native-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
 );
+const layer = ScientTestProviderHost.layer.pipe(Layer.provideMerge(fixtureServices));
 const decodeRequest = Schema.decodeUnknownSync(
   Schema.fromJsonString(
     Schema.Struct({
@@ -212,18 +214,13 @@ await import(${encodeString(mockAgentPath)});`,
   });
   const commands: string[] = [];
   const selections: string[] = [];
-  const adapter = makeAntigravityAdapterV2({
+  const adapter = yield* makeAntigravityAdapterV2({
     testHooks: {
       afterPromptSettledWithBackgroundWork: () =>
         Deferred.succeed(heldSettlement, undefined).pipe(Effect.asVoid),
     },
     instanceId,
-    crypto,
-    fileSystem,
-    path,
     selfInvocation: yield* resolveSelfInvocation(),
-    idAllocator: yield* IdAllocator.IdAllocatorV2,
-    serverConfig: yield* ServerConfig.ServerConfig,
     withProcess: (_stop, task) => task,
     defaultModel: Effect.succeed(undefined),
     makeRuntime: (input) =>

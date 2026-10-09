@@ -6,13 +6,17 @@ import * as Duration from "effect/Duration";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import * as ServerConfig from "../../config.ts";
-import * as OpenCodeRuntime from "../../provider/opencodeRuntime.ts";
+import {
+  OpenCodeAdapterV2Driver,
+  openCodePermissionRules,
+} from "@t3tools/provider-opencode/server";
+import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
-import type { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import type { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   makeReplayServerConfig,
   type OrchestratorV2ProviderReplayHarness,
@@ -21,9 +25,7 @@ import {
   OPENCODE_DEFAULT_INSTANCE_ID,
   OPENCODE_PROVIDER,
   OPENCODE_SDK_PROTOCOL,
-  OpenCodeAdapterV2Driver,
-  openCodePermissionRules,
-} from "./OpenCodeAdapterV2.ts";
+} from "@t3tools/provider-opencode/testing";
 
 const OPENCODE_SDK_REPLAY_PROTOCOL = OPENCODE_SDK_PROTOCOL;
 
@@ -529,10 +531,6 @@ function layerOpenCodeReplayRuntime(transcript: OpenCodeSdkReplayTranscript) {
 }
 
 function layerOpenCodeProviderAdapterRegistryReplay(transcript: OpenCodeSdkReplayTranscript) {
-  const layerServerConfig = Layer.effect(
-    ServerConfig.ServerConfig,
-    makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
-  ).pipe(Layer.provide(NodeServices.layer));
   return ProviderAdapterRegistry.layerFromDrivers({
     drivers: [OpenCodeAdapterV2Driver],
     configMap: {
@@ -545,7 +543,7 @@ function layerOpenCodeProviderAdapterRegistryReplay(transcript: OpenCodeSdkRepla
     Layer.provide(
       Layer.mergeAll(
         layerOpenCodeReplayRuntime(transcript),
-        layerServerConfig,
+        layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
         NodeServices.layer,
         IdAllocator.layer,
         Layer.succeed(

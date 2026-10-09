@@ -38,7 +38,7 @@ import {
   projectLegacyCitationText,
 } from "../legacyCitationProjection.ts";
 
-import { randomUuidV4 } from "../RandomUuid.ts";
+import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import {
   importMarkerField,
   makeForkLineageQueries,

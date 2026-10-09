@@ -31,7 +31,7 @@ import { openCodexAppServerConnection } from "../../provider/CodexProvider.ts";
 import type {
   ProviderManagedRuntimeActions,
   ProviderManagedRuntimeProgress,
-} from "../../provider/ProviderDriver.ts";
+} from "../../provider/ScientProviderInstanceSeams.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import {
   ManagedRuntimeCatalog,

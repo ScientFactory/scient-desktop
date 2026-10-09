@@ -13,12 +13,12 @@ import {
 import {
   AntigravitySettings,
   ClaudeSettings,
-  CursorSettings,
   DroidSettings,
-  GrokSettings,
   OmpSettings,
-  PiSettings,
 } from "@t3tools/contracts";
+import { CursorSettings } from "@t3tools/provider-cursor/settings";
+import { GrokSettings } from "@t3tools/provider-grok/settings";
+import { PiSettings } from "@t3tools/provider-pi/settings";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { afterEach, describe, expect } from "vite-plus/test";
 import * as Effect from "effect/Effect";

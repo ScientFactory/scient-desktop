@@ -14,7 +14,7 @@ import * as Stream from "effect/Stream";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
-import { writeFileStringAtomically } from "../../atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { customModelProviderId } from "../../customModels.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { assessModelConnections } from "../../customModelReadiness.ts";

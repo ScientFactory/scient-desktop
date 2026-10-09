@@ -532,8 +532,9 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                 const png = new Uint8Array(Buffer.from(screenshot.data, "base64"));
                 const screenshotPath =
                   payload?.save === true ? yield* saveScreenshot(snapshot.url, png) : undefined;
-                if (screenshotPath !== undefined && payload?.includeImage === false) {
-                  // The agent only wants a file to show the user. The url keeps the site icon on the tool row.
+                // Avoid replaying large images on every provider turn unless requested.
+                const includeImage = payload?.includeImage === true;
+                if (screenshotPath !== undefined && !includeImage) {
                   const saved = {
                     url: cutText(snapshot.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
                     screenshotPath,
@@ -561,7 +562,6 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                       ? bounded.value
                       : { ...bounded.value, omitted: bounded.omitted },
                   content: [
-                    // Keep the page identity readable even if a provider truncates the snapshot.
                     {
                       type: "text",
                       text: encodeJsonText({
@@ -577,9 +577,9 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                             text: `Snapshot text was bounded. Omitted: ${bounded.omitted.join("; ")}.`,
                           },
                         ]),
-                    ...(payload?.includeImage === false
-                      ? []
-                      : [{ type: "image" as const, data: png, mimeType: screenshot.mimeType }]),
+                    ...(includeImage
+                      ? [{ type: "image" as const, data: png, mimeType: screenshot.mimeType }]
+                      : []),
                   ],
                 });
               }),
@@ -954,7 +954,7 @@ const layerEnvironmentRegistration = toolkitRegistration(
 
 const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
 
-const layerAttachmentRegistration = toolkitRegistration(
+export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,
   AttachmentHandlers.layer,
 );
@@ -1011,7 +1011,7 @@ export const layer = Layer.mergeAll(
   layerPreviewToolkit,
   layerOrchestratorToolkit,
   layerThreadToolkit,
-  layerAttachmentRegistration,
+  layerAttachmentToolkit,
   layerProjectRegistration,
   layerEnvironmentRegistration,
   layerPreviewControlsRegistration,

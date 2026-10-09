@@ -45,7 +45,7 @@ import * as ServerConfig from "../config.ts";
 import { resolveAttachmentPath, parseThreadSegmentFromAttachmentId } from "../attachmentStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { requireThreadScope, type McpInvocationScope } from "../mcp/McpInvocationContext.ts";
-import * as McpProviderSession from "../mcp/McpProviderSession.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { scientInvocationForMcp } from "../mcp/ScientMcpInvocation.ts";
 import {
@@ -61,7 +61,10 @@ import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import { makeCodexAdapterV2 } from "./Adapters/CodexAdapterV2.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
+import {
+  IdAllocatorV2,
+  layer as idAllocatorLayer,
+} from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { ProjectStoreV2 } from "./ProjectStore.ts";
 import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
@@ -69,7 +72,7 @@ import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const jsonSchema = Schema.fromJsonString(Schema.Unknown);
 const encodeJson = Schema.encodeSync(jsonSchema);

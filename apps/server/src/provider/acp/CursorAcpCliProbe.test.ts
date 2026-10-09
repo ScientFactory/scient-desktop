@@ -8,7 +8,7 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import { describe, expect } from "vite-plus/test";
 
-import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", () => {
   it.effect("initialize and authenticate against real cursor-agent acp", () =>

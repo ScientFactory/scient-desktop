@@ -25,22 +25,25 @@ import * as NetAddress from "effect/net/NetAddress";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { requireThreadScope, type McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import { scientInvocationForMcp } from "../../mcp/ScientMcpInvocation.ts";
 import {
   listScientSkillsForInvocation,
   loadScientSkillForInvocation,
 } from "../../mcp/toolkits/skills/handlers.ts";
-import { providerMessageTextWithAttachmentPaths } from "../../orchestration-v2/AttachmentPrompt.ts";
-import { AcpProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/AcpAdapterV2.ts";
+import { formatScientCurrentInput as providerMessageTextWithAttachmentPaths } from "../../orchestration-v2/ScientCurrentInput.ts";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import { makeNativeSessionAdapterV2 } from "../../orchestration-v2/Adapters/NativeSessionAdapterV2.ts";
 import { runDaemonWithOptions } from "../../orchestration-v2/EffectWorker.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../../orchestration-v2/IdAllocator.ts";
+import {
+  IdAllocatorV2,
+  layer as idAllocatorLayer,
+} from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import { layerFromAdapters as makeLayer } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../../orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
 import { dispatchScientOperation } from "../operations/AgentOperationDispatcher.ts";
 import { BUILT_IN_SKILL_RELEASES } from "./BuiltInSkillReleases.ts";

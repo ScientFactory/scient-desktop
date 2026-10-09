@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import { HttpClient } from "effect/http";
 
-import { readCursorUsageLimits } from "./cursorUsageLimits.ts";
+import { readCursorUsageLimits } from "@t3tools/provider-cursor/server";
 
 // Reading the Cursor CLI's Keychain login makes macOS ask for a password, and the
 // provider check runs at launch. With default settings it must never be read.

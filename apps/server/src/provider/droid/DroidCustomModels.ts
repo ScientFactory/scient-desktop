@@ -37,7 +37,7 @@ import {
   type CustomModelReasoning,
 } from "../../customModelCapabilities.ts";
 import type { ServerSettingsService } from "../../serverSettings.ts";
-import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { makeDroidAcpRuntime, type DroidAcpRuntimeFactory } from "../acp/DroidAcpSupport.ts";
 import {
   makeDroidRunBudgetStore,

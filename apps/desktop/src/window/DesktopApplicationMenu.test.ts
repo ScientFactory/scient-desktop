@@ -87,6 +87,8 @@ const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
     dispatchSnapShotEvent: () => Effect.void,
     zoomMain: (direction) =>
       Deferred.succeed(selectedAction, `zoom-${direction}`).pipe(Effect.asVoid),
+    runMainContentsCommand: (command) =>
+      Deferred.succeed(selectedAction, `main-${command}`).pipe(Effect.asVoid),
     syncAppearance: Effect.void,
   } satisfies DesktopWindow.DesktopWindow["Service"]);
 
@@ -271,7 +273,9 @@ describe("DesktopApplicationMenu", () => {
       }
 
       assert.isUndefined(
-        viewMenu.submenu.find((item) => item.role?.toLowerCase().includes("zoom")),
+        viewMenu.submenu.find((item) =>
+          ["zoom", "reload", "devtools"].some((role) => item.role?.toLowerCase().includes(role)),
+        ),
       );
 
       const zoomIn = viewMenu.submenu.find((item) => item.label === "Zoom In");
@@ -286,23 +290,30 @@ describe("DesktopApplicationMenu", () => {
     }),
   );
 
-  it.effect("routes Reload and Force Reload through the app renderer", () =>
+  it.effect("routes reload commands to the main window contents", () =>
     Effect.gen(function* () {
-      for (const [label, action, accelerator] of [
-        ["Reload", "reload-main", "CmdOrCtrl+R"],
-        ["Force Reload", "force-reload-main", "Shift+CmdOrCtrl+R"],
-      ]) {
+      for (const [label, command, accelerator, action] of [
+        ["Reload", "reload", "CmdOrCtrl+R", "main-reload"],
+        ["Force Reload", "forceReload", "Shift+CmdOrCtrl+R", "main-forceReload"],
+      ] as const) {
         const selectedAction = yield* Deferred.make<string>();
         const applicationMenuTemplate =
           yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
         yield* configureMenu(selectedAction, applicationMenuTemplate);
+
         const template = yield* Deferred.await(applicationMenuTemplate);
         const viewMenu = template.find((item) => item.label === "View");
-        if (!Array.isArray(viewMenu?.submenu)) throw new Error("Expected View menu.");
+        if (!Array.isArray(viewMenu?.submenu)) {
+          throw new Error("Expected View menu submenu to be an array.");
+        }
         const item = viewMenu.submenu.find((entry) => entry.label === label);
         assert.equal(item?.accelerator, accelerator);
         assert.isUndefined(item?.role);
-        if (typeof item?.click !== "function") throw new Error(`Expected ${label} click handler.`);
+        if (typeof item?.click !== "function") {
+          throw new Error("Expected menu item to have a click handler.");
+        }
+
         item.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
         assert.equal(yield* Deferred.await(selectedAction), action);
       }

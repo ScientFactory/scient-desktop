@@ -55,7 +55,7 @@ import {
 // SCIENT-FORK:END
 
 import { ServerConfig } from "../config.ts";
-import { validateProviderCurrentInput } from "./AttachmentPrompt.ts";
+import { validateProviderCurrentInput } from "./ScientCurrentInput.ts";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -71,18 +71,18 @@ import {
   contextUsageForHandoff,
   historicalMessage,
   latestNativeContextUsage,
-} from "./ContextHandoffBudget.ts";
+} from "./ScientHistoricalContext.ts";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 import {
   ProviderAdapterTurnStartError,
   type ProviderAdapterV2Error,
   type ProviderAdapterV2HistoricalContext,
   type ProviderAdapterV2SessionRuntime,
-} from "./ProviderAdapter.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
-import { makeProviderFailure } from "./ProviderFailure.ts";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import {

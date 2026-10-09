@@ -26,14 +26,14 @@ import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import * as ProviderLifecycleCoordinator from "../scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
-import type { ProviderVoiceTranscriptCorrection } from "./ProviderDriver.ts";
+import type { ProviderVoiceTranscriptCorrection } from "./ScientProviderInstanceSeams.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import {
   makeProviderMaintenanceCapabilities,
   ProviderVersionCache,
   type ProviderMaintenanceCapabilities,
-} from "./providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import { ompMaintenance } from "./omp/OmpMaintenance.ts";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 

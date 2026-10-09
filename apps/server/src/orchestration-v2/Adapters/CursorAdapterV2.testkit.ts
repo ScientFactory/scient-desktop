@@ -1,6 +1,6 @@
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
+import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import type { InteractionUpdate, RunResult } from "@cursor/sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -20,19 +20,20 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../../config.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
-import * as CursorAgentSdk from "./CursorAgentSdk.ts";
+import { CursorAdapterV2Driver } from "@t3tools/provider-cursor/server";
+import * as CursorAgentSdk from "@t3tools/provider-cursor/server/CursorAgentSdk";
 import {
   CURSOR_DEFAULT_INSTANCE_ID,
   CURSOR_DRIVER_KIND,
-  CursorAdapterV2Driver,
   cursorSdkModelSelection,
   makeCursorAgentOptions,
-} from "./CursorAdapterV2.ts";
-import type { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+} from "@t3tools/provider-cursor/testing";
+import type { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { RuntimePolicyV2Override } from "../RuntimePolicy.ts";
 
 const CursorAgentSdkReplayTranscript = Schema.Struct({
@@ -609,10 +610,6 @@ export function layer(
     readonly assertCompleteOnFinalize?: boolean;
   },
 ) {
-  const layerServerConfig = Layer.effect(
-    ServerConfig.ServerConfig,
-    makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
-  ).pipe(Layer.provide(NodeServices.layer));
   // Skill discovery also scans user roots under HOME; an empty HOME keeps
   // replays from picking up the host's own skills.
   const layerHostEnvironment = Layer.effect(
@@ -634,7 +631,7 @@ export function layer(
     Layer.provide(
       Layer.mergeAll(
         layerCursorAgentSdkReplay(transcript, options),
-        layerServerConfig,
+        layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
         layerHostEnvironment,
         NodeServices.layer,
         IdAllocator.layer,

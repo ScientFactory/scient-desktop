@@ -17,17 +17,23 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
 
-export const CLOUDFLARED_VERSION = "2026.5.2";
+export const CLOUDFLARED_VERSION = "2026.10.0";
 // The oldest release that accepts every flag the connector is started with
 // (`--output` arrived in 2025.6.1). Override, PATH, and older managed binaries
 // below it are skipped, since they exit immediately on the unknown flag.
 export const CLOUDFLARED_MIN_VERSION = "2025.6.1";
 const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
+
+// Generous bound for a ~40MB binary download; without it a stalled
+// connection parks the install forever (same unbounded-wait family as the
+// other relay/cloud network calls).
+const CLOUDFLARED_DOWNLOAD_TIMEOUT = "10 minutes";
 
 export type RelayClientExecutableSource = "override" | "managed" | "path";
 
@@ -79,34 +85,34 @@ const CLOUDFLARED_RELEASE_ASSETS: Readonly<
   Partial<Record<`${NodeJS.Platform}-${string}`, CloudflaredReleaseAsset>>
 > = {
   "darwin-arm64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.5.2/cloudflared-darwin-arm64.tgz",
-    sha256: "ba94054c9fd4297645093d59d51442e5e546d07bb0516120e694a13d5b216d38",
+    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-darwin-arm64.tgz",
+    sha256: "a2f79ff7b9420aa537d74af239f376da170bbabeb529aec416002adac6a72e70",
     archive: "tgz",
   },
   "darwin-x64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.5.2/cloudflared-darwin-amd64.tgz",
-    sha256: "7240f709506bc2c1eb9da4d89cf2555499c60280ecb854b7d80e8f17d4b7903d",
+    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-darwin-amd64.tgz",
+    sha256: "903845b81828c8cb3c5d13d816a2de71c06a3da5785469df8eb0e1b736d92f9f",
     archive: "tgz",
   },
   "linux-arm64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.5.2/cloudflared-linux-arm64",
-    sha256: "5a4e8ce2701105271412059f44b6a0bf1ae4542b4d98ff3180c0c019443a5815",
+    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-linux-arm64",
+    sha256: "e6422b9d4f72d3194bc5a38676f13667c06666523217b842a877d72a80b5ac08",
     archive: "binary",
   },
   "linux-x64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.5.2/cloudflared-linux-amd64",
-    sha256: "5286698547f03df745adb2355f04c12dde52ef425491e81f433642d695521886",
+    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-linux-amd64",
+    sha256: "d33ff2d14475178d2012c2c56beba87389ac5ded27649519f198a7d3134a99db",
     archive: "binary",
   },
   "win32-x64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.5.2/cloudflared-windows-amd64.exe",
-    sha256: "20b9638f685333d623798e733effbad2487093f15ba592f6c7752360ff3b7ab7",
+    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-windows-amd64.exe",
+    sha256: "86aee4017b26625cee8484c113558f48effa4cd47f7aa05fcf425604e5d2b23c",
     archive: "binary",
   },
   // Cloudflare publishes no Windows ARM64 build; Windows 11 on ARM runs x64 under emulation.
   "win32-arm64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.5.2/cloudflared-windows-amd64.exe",
-    sha256: "20b9638f685333d623798e733effbad2487093f15ba592f6c7752360ff3b7ab7",
+    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-windows-amd64.exe",
+    sha256: "86aee4017b26625cee8484c113558f48effa4cd47f7aa05fcf425604e5d2b23c",
     archive: "binary",
   },
 };
@@ -115,6 +121,9 @@ const INSTALL_LOCK_RETRY_COUNT = 100;
 const INSTALL_LOCK_RETRY_DELAY = "100 millis";
 const INSTALL_LOCK_STALE_MS = 5 * 60 * 1_000;
 const VERSION_PROBE_TIMEOUT = "10 seconds";
+
+const ACTIVATE_RETRY_COUNT = 40;
+const ACTIVATE_RETRY_DELAY = "250 millis";
 
 const trimmedString = (name: string) =>
   Config.String(name).pipe(
@@ -203,6 +212,13 @@ class VersionProbeKey extends Data.Class<{
 
 function isAlreadyExists(error: PlatformError.PlatformError): boolean {
   return error.reason._tag === "AlreadyExists";
+}
+
+// Windows refuses to rename a file another process briefly holds open, such as a virus
+// scanner reading the binary that just ran. These codes clear once it lets go.
+function isTransientWindowsLock(error: PlatformError.PlatformError): boolean {
+  const code = (error.reason.cause as NodeJS.ErrnoException | undefined)?.code;
+  return code === "EBUSY" || code === "EPERM" || code === "EACCES";
 }
 
 const wrapInstallFailure =
@@ -397,6 +413,16 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     }
   }).pipe(Effect.withSpan("cloudflared.pruneManagedVersions"));
 
+  /** Moves the new binary toward its final path, waiting out a brief Windows lock. */
+  const renameWhenUnlocked = (from: string, to: string) =>
+    fileSystem.rename(from, to).pipe(
+      Effect.retry({
+        times: ACTIVATE_RETRY_COUNT,
+        schedule: Schedule.spaced(ACTIVATE_RETRY_DELAY),
+        while: (error) => platform === "win32" && isTransientWindowsLock(error),
+      }),
+    );
+
   const runCommand = Effect.fn("cloudflared.runCommand")(function* (
     command: string,
     args: ReadonlyArray<string>,
@@ -420,6 +446,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   ) {
     yield* report("downloading");
     const response = yield* httpClient.execute(HttpClientRequest.get(asset.url)).pipe(
+      Effect.timeout(CLOUDFLARED_DOWNLOAD_TIMEOUT),
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.mapError(
         (cause) =>
@@ -432,6 +459,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     );
     const bytes = new Uint8Array(
       yield* response.arrayBuffer.pipe(
+        Effect.timeout(CLOUDFLARED_DOWNLOAD_TIMEOUT),
         Effect.mapError(
           (cause) =>
             new RelayClientInstallError({
@@ -466,7 +494,10 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     lockPath: string,
   ) {
     for (let attempt = 0; attempt < INSTALL_LOCK_RETRY_COUNT; attempt += 1) {
-      const acquired = yield* fileSystem.writeFileString(lockPath, "", { flag: "wx" }).pipe(
+      const acquired = yield* Effect.acquireRelease(
+        fileSystem.writeFileString(lockPath, "", { flag: "wx" }),
+        () => fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore),
+      ).pipe(
         Effect.as(true),
         Effect.catchIf(isAlreadyExists, () => Effect.succeed(false)),
       );
@@ -574,15 +605,13 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
 
       const stagedPath = `${managedPath}.${yield* crypto.randomUUIDv4}.tmp`;
       yield* report("activating");
-      yield* fileSystem
-        .rename(executablePath, stagedPath)
-        .pipe(wrapInstallFailure("write_failed", "Could not stage the relay client."));
-      yield* fileSystem
-        .rename(stagedPath, managedPath)
-        .pipe(
-          wrapInstallFailure("write_failed", "Could not activate the relay client."),
-          Effect.ensuring(fileSystem.remove(stagedPath, { force: true }).pipe(Effect.ignore)),
-        );
+      yield* renameWhenUnlocked(executablePath, stagedPath).pipe(
+        wrapInstallFailure("write_failed", "Could not stage the relay client."),
+      );
+      yield* renameWhenUnlocked(stagedPath, managedPath).pipe(
+        wrapInstallFailure("write_failed", "Could not activate the relay client."),
+        Effect.ensuring(fileSystem.remove(stagedPath, { force: true }).pipe(Effect.ignore)),
+      );
       return {
         status: "available",
         executablePath: managedPath,
@@ -591,7 +620,6 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       } satisfies AvailableRelayClient;
     }).pipe(
       Effect.scoped,
-      Effect.ensuring(fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore)),
       Effect.catchIf(
         (cause) => !(cause instanceof RelayClientInstallError),
         (cause) =>
@@ -612,7 +640,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
           type: "progress",
           stage,
         }),
-      ),
+      ).pipe(Effect.scoped),
     );
   const install = installWithProgress(() => Effect.void);
 

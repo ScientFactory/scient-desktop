@@ -2,7 +2,7 @@ import * as NetAddress from "effect/net/NetAddress";
 import { HttpServer } from "effect/http";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
-import * as McpProviderSession from "./McpProviderSession.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
@@ -64,7 +64,7 @@ import {
   emptyMcpReplayPrompt,
   withIssuedCodexMcpReplayExpectations,
 } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
-import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -73,10 +73,10 @@ import {
   ProviderAdapterProtocolError,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2TurnInput,
-} from "../orchestration-v2/ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
-import * as ProviderContinuationRequests from "../orchestration-v2/ProviderContinuationRequests.ts";
-import { checkpointWorkspace } from "../orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
@@ -85,7 +85,7 @@ import {
 import {
   decodeProviderReplayNdjson,
   materializeReplayTranscriptWorkspace,
-} from "../orchestration-v2/testkit/ReplayTranscriptNdjson.ts";
+} from "@t3tools/provider-testing/replayTranscript";
 import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { layer as makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";

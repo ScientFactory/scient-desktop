@@ -47,7 +47,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import type { DriverOption, ProviderEnvironmentFieldDefinition } from "./providerDriverMeta";
+import type { ProviderEnvironmentField } from "@t3tools/provider-core/client";
 import { deriveProviderSettingsFields, ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderVersionLabel } from "./ProviderVersionLabel";
@@ -64,6 +64,7 @@ import { providerSettingsTabClassName } from "./providerSettingsTabs";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
+import type { DriverOption } from "./providerDriverMeta";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -236,7 +237,7 @@ export function providerEnvironmentWithoutNames(
 
 export function nextProviderEnvironmentWithFieldValue(
   environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
-  field: ProviderEnvironmentFieldDefinition,
+  field: ProviderEnvironmentField,
   value: string,
 ): ReadonlyArray<ProviderInstanceEnvironmentVariable> {
   const trimmed = value.trim();
@@ -270,11 +271,11 @@ export function nextProviderEnvironmentWithFieldValue(
 }
 
 function ProviderEnvironmentFieldRow(props: {
-  readonly field: ProviderEnvironmentFieldDefinition;
+  readonly field: ProviderEnvironmentField;
   readonly variable: ProviderInstanceEnvironmentVariable | undefined;
   readonly idPrefix: string;
-  readonly onCommit: (field: ProviderEnvironmentFieldDefinition, value: string) => void;
-  readonly onRemove: (field: ProviderEnvironmentFieldDefinition) => void;
+  readonly onCommit: (field: ProviderEnvironmentField, value: string) => void;
+  readonly onRemove: (field: ProviderEnvironmentField) => void;
 }) {
   const inputId = `${props.idPrefix}-environment-${props.field.name}`;
   const value = props.variable?.valueRedacted ? "" : (props.variable?.value ?? "");
@@ -655,7 +656,6 @@ export function ProviderInstanceCard({
       : versionAdvisory?.targetVersion
         ? onInstallRecommended
         : onRunUpdate;
-  const FallbackIconComponent = driverOption?.icon;
 
   const urlAuthAction = liveProvider?.auth.action;
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
@@ -764,10 +764,10 @@ export function ProviderInstanceCard({
     );
     updateEnvironment([...dedicatedEnvironment, ...environment]);
   };
-  const updateEnvironmentField = (field: ProviderEnvironmentFieldDefinition, value: string) => {
+  const updateEnvironmentField = (field: ProviderEnvironmentField, value: string) => {
     updateEnvironment(nextProviderEnvironmentWithFieldValue(instance.environment, field, value));
   };
-  const removeEnvironmentField = (field: ProviderEnvironmentFieldDefinition) => {
+  const removeEnvironmentField = (field: ProviderEnvironmentField) => {
     updateEnvironment(providerEnvironmentWithoutNames(instance.environment, new Set([field.name])));
   };
 
@@ -862,6 +862,15 @@ export function ProviderInstanceCard({
       ) : null}
     </>
   );
+  const listHealthStatusNode =
+    (statusKey === "warning" || statusKey === "error") &&
+    connectionPresentation.kind !== "sign-in-required" &&
+    liveProvider?.auth.status !== "unauthenticated" ? (
+      <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+        {statusDotNode}
+        <span>{statusHeadline}</span>
+      </span>
+    ) : null;
   const versionAdvisoryNode = versionAdvisory ? (
     <Popover>
       <Tooltip>
@@ -1017,6 +1026,7 @@ export function ProviderInstanceCard({
                 {vendorLabel}
               </span>
             ) : null}
+            {listHealthStatusNode}
             {/* SCIENT-FORK:START — keep vendor identity; report update progress separately. */}
             {updateProgress || updateProblem ? (
               <span
@@ -1082,7 +1092,7 @@ export function ProviderInstanceCard({
 
   const runtimeFields = driverOption ? (
     <ProviderSettingsForm
-      definition={driverOption}
+      definition={driverOption.clientDefinition}
       value={instance.config}
       idPrefix={`provider-instance-${instanceId}`}
       variant="settings"
@@ -1243,7 +1253,7 @@ export function ProviderInstanceCard({
           </div>
         ) : usesScientManagedRuntime ||
           !driverOption ||
-          deriveProviderSettingsFields(driverOption).length > 0 ? (
+          deriveProviderSettingsFields(driverOption.clientDefinition).length > 0 ? (
           <SettingsSection
             title="Runtime"
             inert={readOnly}

@@ -39,15 +39,17 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import * as ProviderHostLive from "../ProviderHostLive.ts";
 import {
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
   resolveAntigravityInstanceDirectories,
 } from "../antigravityAuthSupport.ts";
 import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
-import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { AntigravityDriver, usesLegacyAntigravityBackend } from "./AntigravityDriver.ts";
 import { bundledAntigravityAcpAsset } from "../../scient/providerLifecycle/antigravityAcpCatalog.ts";
 
@@ -458,7 +460,7 @@ const openNative = Effect.fn("openFactoryAntigravityNative")(function* (
   return { session, threadId, mcp, turn };
 });
 
-const testLayer = ServerConfig.layerTest(process.cwd(), {
+const layerDeps = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-antigravity-driver-config-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -492,6 +494,10 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
     ),
   ),
   Layer.provideMerge(IdAllocator.layer),
+);
+const testLayer = ProviderHostLive.layer.pipe(
+  Layer.provideMerge(ServerSecretStore.layer),
+  Layer.provideMerge(layerDeps),
 );
 
 it.layer(testLayer)("AntigravityDriver", (it) => {

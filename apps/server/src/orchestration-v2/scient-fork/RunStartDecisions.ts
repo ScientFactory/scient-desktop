@@ -10,7 +10,7 @@ import type {
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
 
-import type { IdAllocatorV2DeriveShape } from "../IdAllocator.ts";
+import type { IdAllocatorV2DeriveShape } from "@t3tools/provider-core/server/IdAllocator";
 
 /** A failed attempt is retried as a fresh pending attempt; any other attempt starts as is. */
 export function queuedRunStartAttempt(input: {

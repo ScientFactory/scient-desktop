@@ -1,11 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, expect } from "@effect/vitest";
-import { PiSettings } from "@t3tools/contracts";
+import { PiSettings } from "@t3tools/provider-pi/settings";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { checkPiProviderStatus } from "../PiProvider.ts";
+import { checkPiProviderStatus } from "@t3tools/provider-pi/server";
 
 const binary = process.env.SCIENT_PI_TEST_BINARY;
 const decodePiSettings = Schema.decodeSync(PiSettings);

@@ -18,11 +18,9 @@ import { AcpRegistryOrchestratorReplayHarness } from "../Adapters/AcpRegistryAda
 import { EventSinkV2 } from "../EventSink.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { layerProviderReplay as makeOrchestratorV2ProviderReplayLayer } from "../testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
-import {
-  materializeReplayTranscriptRuntimeInstructions,
-  readProviderReplayTranscript,
-} from "../testkit/ReplayTranscriptNdjson.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { readProviderReplayTranscript } from "@t3tools/provider-testing/replayTranscript";
+import { materializeReplayTranscriptRuntimeInstructions } from "../testkit/ReplayRuntimeInstructions.ts";
 import { SIMPLE_PROMPT } from "../testkit/fixtures/shared.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
 

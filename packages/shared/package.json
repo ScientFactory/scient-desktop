@@ -490,6 +490,26 @@
     "./inlineSkills": {
       "types": "./src/inlineSkills.ts",
       "import": "./src/inlineSkills.ts"
+    },
+    "./authScopeOptions": {
+      "types": "./src/authScopeOptions.ts",
+      "import": "./src/authScopeOptions.ts"
+    },
+    "./composerContextLegacySend": {
+      "types": "./src/composerContextLegacySend.ts",
+      "import": "./src/composerContextLegacySend.ts"
+    },
+    "./atomicWrite": {
+      "types": "./src/atomicWrite.ts",
+      "import": "./src/atomicWrite.ts"
+    },
+    "./mcpResponsePayloads": {
+      "types": "./src/mcpResponsePayloads.ts",
+      "import": "./src/mcpResponsePayloads.ts"
+    },
+    "./PtyAdapter": {
+      "types": "./src/PtyAdapter.ts",
+      "import": "./src/PtyAdapter.ts"
     }
   },
   "scripts": {

@@ -31,7 +31,7 @@ import * as Stream from "effect/Stream";
 import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
 import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sqlite.ts";
-import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import * as CodexAdapterV2 from "../Adapters/CodexAdapterV2.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
@@ -42,13 +42,13 @@ import { EventSinkV2 } from "../EventSink.ts";
 import { EventStoreV2 } from "../EventStore.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import type { ThreadManagementServiceShape } from "../ThreadManagementService.ts";
-import { layer as allocatorLayer } from "../IdAllocator.ts";
+import { layer as allocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
 import { layerFromDrivers as makeDriverLayer } from "../ProviderAdapterRegistry.ts";
 import {
   ProviderAdapterOpenSessionError,
   type ProviderTextSnapshotOwner,
   type ProviderTextSnapshotBatch,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 import { ProjectionStoreV2, layerMemory } from "../ProjectionStore.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
@@ -56,8 +56,8 @@ import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "../testkit/ProviderReplayHarness.ts";
-import { makeProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
-import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
+import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 function makeCodexReplayTurn(input: {
   readonly id: string;
   readonly status: "inProgress" | "completed" | "interrupted" | "failed";

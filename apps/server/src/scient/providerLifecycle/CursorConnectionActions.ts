@@ -1,4 +1,7 @@
-import type { CursorSettings, ProviderConnectionMethod } from "@t3tools/contracts";
+import type { ProviderConnectionMethod } from "@t3tools/contracts";
+import type { CursorSettings } from "@t3tools/provider-cursor/settings";
+import { parseCursorAboutOutput, runCursorAboutCommand } from "@t3tools/provider-cursor/server";
+import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -10,12 +13,10 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { cursorCliArgs } from "../../provider/CursorCli.ts";
-import { parseCursorAboutOutput, runCursorAboutCommand } from "../../provider/CursorProvider.ts";
 import type {
   ProviderConnectionActions,
   ProviderConnectionActionFailure,
-} from "../../provider/ProviderDriver.ts";
-import { spawnAndCollect } from "../../provider/providerSnapshot.ts";
+} from "../../provider/ScientProviderInstanceSeams.ts";
 import {
   findTerminalAuthorizationUrl,
   normalizeTerminalOutput,
@@ -276,7 +277,7 @@ export const makeCursorConnectionActions = Effect.fn("CursorConnectionActions.ma
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
 ): Effect.Effect<ProviderConnectionActions> => {
   const accountEnvironment = officialCursorAccountEnvironment(environment);
-  const verifyAbout = runCursorAboutCommand(settings, accountEnvironment).pipe(
+  const verifyAbout = runCursorAboutCommand(settings, accountEnvironment, cursorCliArgs).pipe(
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Effect.timeoutOption(AUTH_STATUS_TIMEOUT),
     Effect.mapError((cause) =>

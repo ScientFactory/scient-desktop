@@ -46,7 +46,7 @@ import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type {
   ProviderAdapterV2Event,
   ProviderAdapterV2EventSubscription,
@@ -54,12 +54,15 @@ import type {
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2TurnMessage,
   ProviderTextSnapshotConsumerOwner,
-} from "./ProviderAdapter.ts";
-import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
+import { ProviderAdapterTurnStartError } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
 import { upsertProviderTurn } from "./ProjectionStore.ts";
-import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
+import {
+  makeProviderFailure,
+  makeProviderFailureTurnItem,
+} from "@t3tools/provider-core/server/failure";
 import {
   ThreadCommandExecutor,
   layer as threadCommandExecutorLayer,

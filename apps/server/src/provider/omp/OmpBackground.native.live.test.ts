@@ -12,7 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import * as ServerConfig from "../../config.ts";
-import { layer as allocatorLayer } from "../../orchestration-v2/IdAllocator.ts";
+import { layer as allocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSessionManager.ts";
 import { EventStoreV2 } from "../../orchestration-v2/EventStore.ts";
 import { applyToProjection, emptyProjection } from "../../orchestration-v2/ProjectionStore.ts";

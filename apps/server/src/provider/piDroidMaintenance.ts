@@ -6,7 +6,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import { HttpClient } from "effect/http";
-import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
   makePackageManagedProviderMaintenanceResolver,
@@ -15,7 +15,7 @@ import {
   resolvePackageManagedProviderMaintenance,
   type ProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
-} from "./providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
 
 const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 // The legacy package cannot reach Scient's minimum supported Pi version.

@@ -213,15 +213,15 @@ import * as EffectWorkerV2 from "./orchestration-v2/EffectWorker.ts";
 import * as EffectOutboxV2 from "./orchestration-v2/EffectOutbox.ts";
 import * as ConversationFork from "./orchestration-v2/scient-fork/ConversationForkService.ts";
 import * as ProviderSessionsV2 from "./orchestration-v2/ProviderSessionManager.ts";
-import * as IdAllocatorV2 from "./orchestration-v2/IdAllocator.ts";
+import * as IdAllocatorV2 from "@t3tools/provider-core/server/IdAllocator";
 import * as CommandReceiptsV2 from "./orchestration-v2/CommandReceiptStore.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import * as ResourceCleanupV2 from "./orchestration-v2/ResourceCleanupService.ts";
 import * as ThreadSearchV2 from "./orchestration-v2/ThreadSearch.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
-import { AcpRegistryCatalog } from "./provider/acp/AcpRegistrySupport.ts";
-import { AcpRegistryRuntimeCoordinator } from "./provider/acp/AcpRegistryRuntimeCoordinator.ts";
+import { AcpRegistryCatalog } from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
+import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as McpSessionRegistryTestkit from "./mcp/McpSessionRegistry.testkit.ts";
 import * as OrchestrationRuntime from "./orchestration-v2/runtimeLayer.ts";
@@ -244,7 +244,7 @@ import { makeNativeSessionAdapterV2 } from "./orchestration-v2/Adapters/NativeSe
 import {
   ProviderAdapterProtocolError,
   type ProviderAdapterV2SessionRuntime,
-} from "./orchestration-v2/ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import {
   ProviderAuthService,
@@ -256,11 +256,11 @@ import {
   AntigravityInstallationError,
 } from "./provider/AntigravityInstallation.ts";
 import { CodexInstallation } from "./provider/CodexInstallation.ts";
-import type { ProviderInstance } from "./provider/ProviderDriver.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
   ProviderVersionCache,
-} from "./provider/providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
@@ -7078,7 +7078,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(htmlResponse.headers["content-type"], "text/html; charset=utf-8");
         assert.equal(
           htmlResponse.headers["content-security-policy"],
-          "sandbox allow-scripts allow-forms allow-popups",
+          "sandbox allow-scripts allow-forms allow-popups allow-downloads",
         );
         assert.equal(htmlResponse.headers["x-content-type-options"], "nosniff");
         assert.equal(yield* htmlResponse.text, html);

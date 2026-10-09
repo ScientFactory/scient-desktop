@@ -21,8 +21,8 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeOmpManagedRuntimeResolution } from "../../scient/providerLifecycle/OmpManagedRuntimeActions.ts";
 import { makeOmpAdapterV2 } from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
-import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
-import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderContinuationRequests } from "@t3tools/provider-core/server/continuationRequests";
 import { makeOmpCustomModelsClientFactory } from "../omp/OmpCustomModels.ts";
 import { sweepStaleOmpExtensionFiles } from "../omp/OmpExtensionBootstrap.ts";
 import type { OmpExecutableGate } from "../omp/OmpExecutableGate.ts";
@@ -32,29 +32,28 @@ import { makeOmpTextGeneration } from "../../textGeneration/OmpTextGeneration.ts
 import { ProviderDriverError } from "../Errors.ts";
 import { ProviderEventLoggers } from "../ProviderEventLoggers.ts";
 import { checkOmpProviderStatus, makePendingOmpProvider } from "../OmpProvider.ts";
-import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
-import {
-  defaultProviderContinuationIdentity,
-  type ProviderDriver,
-  type ProviderInstance,
-} from "../ProviderDriver.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
+import { defaultProviderContinuationIdentity } from "@t3tools/provider-core/server/driver";
+import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   resolveOmpInstallation,
   resolveOmpLatestVersion,
   shapeOmpVersionAdvisory,
 } from "../omp/OmpMaintenance.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   haveProviderSnapshotSettingsChanged,
   type ProviderSnapshotSettings,
-} from "../providerUpdateSettings.ts";
-import { withInstanceIdentity } from "./instanceIdentity.ts";
+} from "@t3tools/provider-core/server/snapshotSettings";
+import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
+import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
+import type { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 
 const DRIVER_KIND = ompTarget.driverKind;
 const decodeSettings = Schema.decodeSync(OmpSettings);
 
 export type OmpDriverEnv =
+  | ProviderHost
   | BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
@@ -67,7 +66,7 @@ export type OmpDriverEnv =
   | ServerConfig
   | ServerSettingsService;
 
-export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
+export const OmpDriver: ScientProviderDriver<OmpSettings, OmpDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Oh My Pi", supportsMultipleInstances: true },
   configSchema: OmpSettings,
@@ -291,6 +290,6 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         orchestrationAdapter,
         textGeneration,
         managedRuntimeActions: managedRuntime.actions,
-      } satisfies ProviderInstance;
+      } satisfies ScientProviderInstance;
     }),
 };

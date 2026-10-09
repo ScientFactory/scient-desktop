@@ -12,7 +12,7 @@ import {
   ProviderAdapterProtocolError,
   type ProviderAdapterV2SessionRuntime,
   type ProviderAdapterV2Shape,
-} from "../orchestration-v2/ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 
 const guardRuntime = (
   runtime: ProviderAdapterV2SessionRuntime,

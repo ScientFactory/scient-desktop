@@ -303,21 +303,26 @@ Session and adapter policies live in
 [`orchestration-v2/scient-provider/`](../../apps/server/src/orchestration-v2/scient-provider/).
 The adapter still owns its native provider protocol.
 
-| Host mount                                              | Extracted owners                                                                                                             | Boundary to preserve                                                                                  |
-| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `ProviderSessionManager.ts`                             | `StartupSessionHold.ts`, `SessionRetirement.ts`, `SessionAuthority.ts`, `ProviderTextSnapshots.ts`, `PiSessionFileLeases.ts` | Exact runtime/generation admission, physical release/join, text-snapshot consumers and Pi file leases |
-| `Adapters/CodexAdapterV2.ts`                            | `CodexNativeSession.ts`, `CodexPresentation.ts`, `ProviderTextSnapshots.ts`, `NativeTurnReceipts.ts`                         | Launch-scoped capacity/selection, offered-versus-accepted receipt and native presentation             |
-| `Adapters/ClaudeAdapterV2.ts`, `OpenCode2AdapterV2.ts`  | `ClaudeWorkflowMemberPresentation.ts`, `OpenCodeTurnAcceptance.ts`                                                           | Coordinator-owned workflow observations and provider-confirmed prompt boundaries                      |
-| `Adapters/PiAdapterV2.ts`                               | `PiInputCapabilities.ts`, `PiNativeSelection.ts`, `NativeTurnReceipts.ts`                                                    | Native input eligibility and confirmed selection without moving Pi protocol/FS reads                  |
-| `Adapters/NativeSessionAdapterV2.ts`, `OmpAdapterV2.ts` | `NativeProducerLifecycle.ts`, `NativeTurnReceipts.ts`, `OmpProcessOwnership.ts`                                              | Retained native producers and OMP process ownership; Pi remains a separate protocol                   |
+| Host mount                                                     | Extracted owners                                                                                                             | Boundary to preserve                                                                                  |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `ProviderSessionManager.ts`                                    | `StartupSessionHold.ts`, `SessionRetirement.ts`, `SessionAuthority.ts`, `ProviderTextSnapshots.ts`, `PiSessionFileLeases.ts` | Exact runtime/generation admission, physical release/join, text-snapshot consumers and Pi file leases |
+| `Adapters/CodexAdapterV2.ts`                                   | `CodexNativeSession.ts`, `CodexPresentation.ts`, `ProviderTextSnapshots.ts`, `NativeTurnReceipts.ts`                         | Launch-scoped capacity/selection, offered-versus-accepted receipt and native presentation             |
+| `Adapters/ClaudeAdapterV2.ts`, package-owned OpenCode adapters | `ClaudeWorkflowMemberPresentation.ts`, `provider/OpenCodeDriverComposition.ts`, package-owned `turnAcceptance.ts`            | Coordinator-owned workflow observations and provider-confirmed prompt boundaries                      |
+| Package-owned Pi adapter                                       | `provider/PiDriverComposition.ts`, package-owned `inputCapabilities.ts` and `nativeSelection.ts`, `NativeTurnReceipts.ts`    | Native input eligibility and confirmed selection without moving Pi protocol/FS reads                  |
+| `Adapters/NativeSessionAdapterV2.ts`, `OmpAdapterV2.ts`        | `NativeProducerLifecycle.ts`, `NativeTurnReceipts.ts`, `OmpProcessOwnership.ts`                                              | Retained native producers and OMP process ownership; Pi remains a separate protocol                   |
 
-Provider-layer mounts also retain their Scient-specific owners:
-[`AcpRegistrySupport.ts`](../../apps/server/src/provider/acp/AcpRegistrySupport.ts) composes
-`ScientAcpRegistryOwnership.ts`; `acp/AcpSessionRuntime.ts` composes
-`ScientAcpConfirmedConfigWrites.ts`. `provider/Errors.ts` exposes the live input-validation error
-from `ScientProviderErrors.ts`. Native shutdown and the OMP driver/runtime remain the physical
-resource owners described in [provider lifecycle](./provider-lifecycle.md) and
-[providers](./providers.md); moving a policy helper does not certify their cleanup.
+Provider packages own native protocol, selection, and executable probing. Scient composes its
+policy in [`AppProviderDriverComposition.ts`](../../apps/server/src/provider/AppProviderDriverComposition.ts),
+[`PiDriverComposition.ts`](../../apps/server/src/provider/PiDriverComposition.ts),
+[`OpenCodeDriverComposition.ts`](../../apps/server/src/provider/OpenCodeDriverComposition.ts), and
+[`CursorDriverComposition.ts`](../../apps/server/src/provider/Drivers/CursorDriverComposition.ts).
+[`ProviderHostLive.ts`](../../apps/server/src/provider/ProviderHostLive.ts) supplies server paths,
+settings, background demand, attachments, and credentials; the provider packages do not read the
+application profile directly. Complete current-input validation stays in
+[`ScientCurrentInput.ts`](../../apps/server/src/orchestration-v2/ScientCurrentInput.ts) and delegates
+formatting to the shared provider package. Native shutdown and OMP remain the physical resource
+owners described in [provider lifecycle](./provider-lifecycle.md) and [providers](./providers.md);
+relocating a helper does not certify cleanup.
 
 #### Contracts, transport and composition
 

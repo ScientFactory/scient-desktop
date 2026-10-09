@@ -29,7 +29,7 @@ import * as Schema from "effect/Schema";
 
 import { checkpointRefForScopeOrdinal } from "../CheckpointService.ts";
 import type * as EventSink from "../EventSink.ts";
-import type * as IdAllocator from "../IdAllocator.ts";
+import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProjectionStore from "../ProjectionStore.ts";
 
 /** True while the effect worker runs a capture's last attempt. */

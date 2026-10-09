@@ -44,17 +44,20 @@ import { ServerConfig } from "../../config.ts";
 import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { makeCodexAdapterV2 } from "../Adapters/CodexAdapterV2.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
+import {
+  IdAllocatorV2,
+  layer as idAllocatorLayer,
+} from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
-import { ProviderAdapterEventStreamError } from "../ProviderAdapter.ts";
+import { ProviderAdapterEventStreamError } from "@t3tools/provider-core/server/ProviderAdapter";
 import { EventSinkV2 } from "../EventSink.ts";
 import { EventStoreV2 } from "../EventStore.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { nativeModelWindowKey } from "../scient-fork/NativeModelContextWindow.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 // SCIENT-FORK:START — failure-only evidence before the synthetic server unwinds.
 import { ScientCapacityFailureObservation } from "./ScientCapacityFailureObservation.test-support.ts";
 // SCIENT-FORK:END
@@ -1062,8 +1065,9 @@ it.live(
                 text,
               );
               assert.deepEqual(
-                (yield* (yield* ServerSettings.ServerSettingsService).getSettings).providers,
-                nominal.providers,
+                (yield* (yield* ServerSettings.ServerSettingsService).getSettings)
+                  .providerInstances,
+                nominal.providerInstances,
               );
               yield* (yield* ProviderSessionManagerV2).closeInstance(test.selection.instanceId);
             }

@@ -15,7 +15,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { makeAgySession } from "../../provider/antigravity/AgySession.ts";
 import type { ServerConfig } from "../../config.ts";
-import { AcpProviderCapabilitiesV2 } from "./AcpAdapterV2.ts";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
   makeNativeSessionAdapterV2,
   nativeSessionFailure,

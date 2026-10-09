@@ -1,35 +1,34 @@
 import {
-  AcpRegistrySettings,
   AntigravitySettings,
   ClaudeSettings,
   CodexSettings,
-  CursorSettings,
   DroidSettings,
-  GrokSettings,
-  OpenCodeSettings,
-  PiSettings,
   OmpSettings,
   ScientAgentSettings,
   compareProviderDriverKinds,
-  MuseSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
+import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
+import { makeProviderClientRegistry } from "@t3tools/provider-core/client";
+import type { ProviderClientDefinition as CoreProviderClientDefinition } from "@t3tools/provider-core/client";
+import { cursorClient } from "@t3tools/provider-cursor/client";
+import { grokClient } from "@t3tools/provider-grok/client";
+import { museClient } from "@t3tools/provider-muse/client";
+import { openCodeClient } from "@t3tools/provider-opencode/client";
+import { piClient } from "@t3tools/provider-pi/client";
 import type * as Schema from "effect/Schema";
+
 import {
   ACPRegistryIcon,
   AntigravityIcon,
   ClaudeAI,
-  CursorIcon,
   DroidIcon,
-  GrokIcon,
-  MuseIcon,
   type Icon,
   OpenAI,
-  OpenCodeIcon,
-  PiIcon,
   OhMyPiIcon,
   ScientAgentIcon,
 } from "../Icons";
+import { PROVIDER_ICON_BY_PROVIDER } from "../chat/providerIconUtils";
 
 type ProviderSettingsSchema = {
   readonly fields: Readonly<Record<string, Schema.Top>>;
@@ -44,163 +43,138 @@ export interface ProviderEnvironmentFieldDefinition {
   readonly sensitive?: boolean;
 }
 
-/**
- * Browser-safe provider definition. This is deliberately shaped like the
- * future provider package client export: the core web app gets a schema with
- * field annotations plus provider-level presentation metadata, then renders
- * settings generically.
- */
-export interface ProviderClientDefinition {
+/** React-facing metadata retained for Scient onboarding and provider settings. */
+export interface DriverOption {
   readonly value: ProviderDriverKind;
   readonly label: string;
   readonly icon: Icon;
+  /** The schema and generic fields owned by the provider package. */
+  readonly clientDefinition: CoreProviderClientDefinition;
   readonly settingsSchema: ProviderSettingsSchema;
-  /** False when model definitions must come from the native provider catalog. */
   readonly supportsCustomModels?: boolean;
   readonly environmentFields?: readonly ProviderEnvironmentFieldDefinition[];
-  /** Whether this driver has a built-in default instance backed by legacy settings. */
   readonly hasDefaultInstance?: boolean;
-  /**
-   * Optional short label rendered as a `variant="warning"` badge next to
-   * the instance title. The flag is a property of the driver kind (not a
-   * specific instance), so every instance of that driver — built-in default
-   * or custom — advertises the same marker.
-   *
-   * SCIENT-FORK:START — only Muse retains its incoming Beta marker. Upstream badges Pi and ACP
-   * Registry "Early Access"; the fork moved that signal to the model picker's
-   * `pickerSidebarBadge` instead (see `providerOrdering.test.ts`).
-   * SCIENT-FORK:END
-   */
   readonly badgeLabel?: string;
-  /**
-   * Company behind the provider, shown beside its product name so people who
-   * know "ChatGPT" or "Gemini" but not "Codex" or "Antigravity" can find it.
-   */
   readonly vendorLabel?: string;
-  /** The account people sign in with, named the way they know it. */
   readonly accountLabel?: string;
-  /** Extra lowercase terms provider search should match, e.g. "chatgpt". */
   readonly searchAliases?: ReadonlyArray<string>;
 }
 
-const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[] = [
+/**
+ * The browser-safe provider packages own their schemas and plain-data icons.
+ * These local entries retain Scient providers that upstream does not ship.
+ */
+const localProviderClients: ReadonlyArray<CoreProviderClientDefinition> = [
   {
-    value: ProviderDriverKind.make("pi"),
-    label: "Pi",
-    icon: PiIcon,
-    settingsSchema: PiSettings,
-    supportsCustomModels: false,
-  },
-  {
-    value: ProviderDriverKind.make("omp"),
-    label: "Oh My Pi",
-    icon: OhMyPiIcon,
-    settingsSchema: OmpSettings,
-    supportsCustomModels: false,
-  },
-  {
-    value: ProviderDriverKind.make("scient"),
-    label: "Scient",
-    icon: ScientAgentIcon,
-    settingsSchema: ScientAgentSettings,
-    supportsCustomModels: false,
-  },
-  {
-    value: ProviderDriverKind.make("codex"),
-    label: "Codex",
-    vendorLabel: "OpenAI",
-    accountLabel: "ChatGPT subscription",
-    searchAliases: ["openai", "chatgpt", "gpt"],
-    icon: OpenAI,
-    settingsSchema: CodexSettings,
-  },
-  {
-    value: ProviderDriverKind.make("claudeAgent"),
-    label: "Claude",
-    vendorLabel: "Anthropic",
-    accountLabel: "Claude subscription",
-    searchAliases: ["anthropic"],
-    icon: ClaudeAI,
-    settingsSchema: ClaudeSettings,
-  },
-  {
-    value: ProviderDriverKind.make("cursor"),
-    label: "Cursor",
-    icon: CursorIcon,
-    settingsSchema: CursorSettings,
-    environmentFields: [
-      {
-        name: "CURSOR_API_KEY",
-        label: "Cursor API key",
-        description: "Optional. Overrides browser sign-in for this provider.",
-        placeholder: "Paste API key",
-        sensitive: true,
-      },
-    ],
-  },
-  {
-    value: ProviderDriverKind.make("grok"),
-    label: "Grok",
-    vendorLabel: "xAI",
-    searchAliases: ["xai"],
-    icon: GrokIcon,
-    settingsSchema: GrokSettings,
-  },
-  {
-    value: ProviderDriverKind.make("droid"),
+    driverKind: ProviderDriverKind.make("droid"),
     label: "Droid",
-    vendorLabel: "Factory",
-    searchAliases: ["factory"],
-    icon: DroidIcon,
     settingsSchema: DroidSettings,
-    supportsCustomModels: false,
   },
   {
-    value: ProviderDriverKind.make("opencode"),
-    label: "OpenCode",
-    icon: OpenCodeIcon,
-    settingsSchema: OpenCodeSettings,
+    driverKind: ProviderDriverKind.make("omp"),
+    label: "Oh My Pi",
+    settingsSchema: OmpSettings,
   },
   {
-    value: ProviderDriverKind.make("antigravity"),
-    label: "Antigravity",
-    vendorLabel: "Google",
-    accountLabel: "Gemini subscription",
-    searchAliases: ["google", "gemini"],
-    icon: AntigravityIcon,
-    settingsSchema: AntigravitySettings,
-    supportsCustomModels: false,
-  },
-  {
-    value: ProviderDriverKind.make("muse"),
-    label: "Muse Code",
-    icon: MuseIcon,
-    settingsSchema: MuseSettings,
-    badgeLabel: "Beta",
-  },
-  {
-    value: ProviderDriverKind.make("acpRegistry"),
-    label: "ACP Registry",
-    icon: ACPRegistryIcon,
-    settingsSchema: AcpRegistrySettings,
-    hasDefaultInstance: false,
-    supportsCustomModels: false,
+    driverKind: ProviderDriverKind.make("scient"),
+    label: "Scient",
+    settingsSchema: ScientAgentSettings,
   },
 ];
 
-const PROVIDER_CLIENT_DEFINITIONS = PROVIDER_CLIENT_DEFINITIONS_UNORDERED.toSorted((left, right) =>
+/** The provider client definitions this web build supports. */
+export const providerClients = makeProviderClientRegistry([
+  {
+    driverKind: ProviderDriverKind.make("codex"),
+    label: "Codex",
+    settingsSchema: CodexSettings,
+  },
+  {
+    driverKind: ProviderDriverKind.make("claudeAgent"),
+    label: "Claude",
+    settingsSchema: ClaudeSettings,
+  },
+  cursorClient,
+  grokClient,
+  openCodeClient,
+  {
+    driverKind: ProviderDriverKind.make("antigravity"),
+    label: "Antigravity",
+    settingsSchema: AntigravitySettings,
+  },
+  museClient,
+  piClient,
+  acpRegistryClient,
+  ...localProviderClients,
+]);
+
+const metadataByDriver: Readonly<
+  Record<
+    string,
+    Omit<Partial<DriverOption>, "value" | "label" | "clientDefinition" | "settingsSchema" | "icon">
+  >
+> = {
+  codex: {
+    vendorLabel: "OpenAI",
+    accountLabel: "ChatGPT subscription",
+    searchAliases: ["openai", "chatgpt", "gpt"],
+  },
+  claudeAgent: {
+    vendorLabel: "Anthropic",
+    accountLabel: "Claude subscription",
+    searchAliases: ["anthropic"],
+  },
+  grok: { vendorLabel: "xAI", searchAliases: ["xai"] },
+  droid: { vendorLabel: "Factory", searchAliases: ["factory"], supportsCustomModels: false },
+  antigravity: {
+    vendorLabel: "Google",
+    accountLabel: "Gemini subscription",
+    searchAliases: ["google", "gemini"],
+    supportsCustomModels: false,
+  },
+  pi: { supportsCustomModels: false },
+  omp: { supportsCustomModels: false },
+  scient: { supportsCustomModels: false },
+  acpRegistry: { hasDefaultInstance: false, supportsCustomModels: false },
+  muse: { badgeLabel: "Beta" },
+};
+
+const providerOptionsUnordered: readonly DriverOption[] = providerClients.definitions.map(
+  (definition) => {
+    const metadata = metadataByDriver[String(definition.driverKind)];
+    const icon =
+      PROVIDER_ICON_BY_PROVIDER[definition.driverKind] ??
+      (definition.driverKind === "acpRegistry" ? ACPRegistryIcon : undefined);
+    if (!icon) {
+      throw new Error(`Provider '${definition.driverKind}' has no client icon.`);
+    }
+    return {
+      value: definition.driverKind,
+      label: definition.label,
+      icon,
+      clientDefinition: definition,
+      settingsSchema: definition.settingsSchema,
+      ...(definition.environmentFields ? { environmentFields: definition.environmentFields } : {}),
+      ...(definition.hasDefaultInstance === undefined
+        ? {}
+        : { hasDefaultInstance: definition.hasDefaultInstance }),
+      ...(definition.badgeLabel === undefined ? {} : { badgeLabel: definition.badgeLabel }),
+      ...metadata,
+    };
+  },
+);
+
+const PROVIDER_CLIENT_DEFINITIONS = providerOptionsUnordered.toSorted((left, right) =>
   compareProviderDriverKinds(left.value, right.value),
 );
 
-const PROVIDER_CLIENT_DEFINITION_BY_VALUE: Partial<
-  Record<ProviderDriverKind, ProviderClientDefinition>
-> = Object.fromEntries(
-  PROVIDER_CLIENT_DEFINITIONS.map((definition) => [definition.value, definition]),
-);
+const PROVIDER_CLIENT_DEFINITION_BY_VALUE: Partial<Record<ProviderDriverKind, DriverOption>> =
+  Object.fromEntries(
+    PROVIDER_CLIENT_DEFINITIONS.map((definition) => [definition.value, definition]),
+  );
 
 export const DRIVER_OPTIONS = PROVIDER_CLIENT_DEFINITIONS;
 export const DRIVER_OPTION_BY_VALUE = PROVIDER_CLIENT_DEFINITION_BY_VALUE;
-export type DriverOption = ProviderClientDefinition;
 
 /** Whether a provider search query matches its name, company, or aliases. */
 export function driverOptionMatchesQuery(definition: DriverOption, query: string): boolean {
@@ -211,11 +185,7 @@ export function driverOptionMatchesQuery(definition: DriverOption, query: string
   );
 }
 
-/**
- * Look up the driver metadata for an instance's `driver` field. Accepts
- * Returns `undefined` for fork / unknown drivers so callers can decide how
- * to render them — typically by falling back to a generic card.
- */
+/** Look up the presentation metadata for a driver's settings or onboarding row. */
 export function getDriverOption(driver: ProviderDriverKind | undefined): DriverOption | undefined {
   if (driver === undefined) return undefined;
   return PROVIDER_CLIENT_DEFINITION_BY_VALUE[driver];

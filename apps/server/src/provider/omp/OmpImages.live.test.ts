@@ -17,7 +17,7 @@ import * as Stream from "effect/Stream";
 
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { nativeOmpSession } from "../testUtils/nativeOmpSession.ts";
-import type { ProviderAdapterV2Event } from "../../orchestration-v2/ProviderAdapter.ts";
+import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
 import { ompLiveInstance, ompQualifyBinary, ompQualifyTarget } from "./OmpLive.testFixtures.ts";

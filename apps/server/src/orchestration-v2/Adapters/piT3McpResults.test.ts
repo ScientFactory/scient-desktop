@@ -2,7 +2,7 @@
 import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { describe, expect, it } from "vite-plus/test";
-import { PI_T3_MCP_EXTENSION_SOURCE } from "./piT3McpExtensionSource.ts";
+import { PI_T3_MCP_EXTENSION_SOURCE } from "@t3tools/provider-pi/testing";
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 type Tool = {

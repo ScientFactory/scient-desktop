@@ -8,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/http";
 
-import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
+import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import {
   formatProviderUpdateCommand,
   homebrewOwnershipFromCommandPath,
@@ -16,7 +16,7 @@ import {
   ProviderVersionCache,
   type ProviderMaintenanceCapabilitiesResolver,
   type ProviderMaintenanceResolutionContext,
-} from "../providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import { ompTarget } from "./OmpTarget.ts";
 
 /**

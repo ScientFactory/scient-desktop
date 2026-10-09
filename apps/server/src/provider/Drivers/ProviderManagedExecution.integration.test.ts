@@ -29,14 +29,15 @@ import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
 import * as CodexInstallation from "../CodexInstallation.ts";
 import * as CodexAdapterV2 from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as ClaudeAdapterV2 from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
-import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
-import { ProviderAdapterV2RuntimePolicy } from "../../orchestration-v2/ProviderAdapter.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import { CodexDriver } from "./CodexDriver.ts";
 import { ClaudeDriver } from "./ClaudeDriver.ts";
-import { GrokDriver } from "./GrokDriver.ts";
+import { GrokDriver } from "../AppProviderDriverComposition.ts";
+import { layerConfigConsistentTestProviderHost } from "../testUtils/providerHost.ts";
 
-const testLayer = ServerConfig.layerTest(process.cwd(), {
+const providerDependenciesLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-managed-native-execution-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -71,6 +72,9 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
       HttpClient.make(() => Effect.die("No external HTTP in native launch fixture")),
     ),
   ),
+);
+const testLayer = layerConfigConsistentTestProviderHost.pipe(
+  Layer.provideMerge(providerDependenciesLayer),
 );
 
 it.layer(testLayer)("Resolved driver native execution", (it) => {

@@ -30,8 +30,8 @@ export interface CdpRelayTarget {
 }
 
 export interface CdpRelayConnection {
-  /** Feed one message from the server. */
-  readonly receive: (raw: string) => void;
+  /** Feed one message from the server, optionally observing its completion. */
+  readonly receive: (raw: string, onComplete?: () => void) => void;
   /** Feed one debugger event from the tab. */
   readonly event: (method: string, params: unknown, sessionId: string | undefined) => void;
 }
@@ -170,18 +170,27 @@ export function createCdpRelayConnection(
   };
 
   return {
-    receive: (raw) => {
+    receive: (raw, onComplete) => {
       let command: unknown;
       try {
         command = JSON.parse(raw);
       } catch {
+        onComplete?.();
         return;
       }
-      if (!isCommand(command)) return;
-      const result =
-        command.sessionId === undefined || sessions.get(command.sessionId) === "browser"
-          ? browserCommand(command)
-          : pageCommand(command);
+      if (!isCommand(command)) {
+        onComplete?.();
+        return;
+      }
+      let result: Promise<unknown>;
+      try {
+        result =
+          command.sessionId === undefined || sessions.get(command.sessionId) === "browser"
+            ? browserCommand(command)
+            : pageCommand(command);
+      } catch (cause) {
+        result = Promise.reject(cause);
+      }
       const route = command.sessionId === undefined ? {} : { sessionId: command.sessionId };
       // Replies leave as commands finish, as Chromium's do, so a slow command
       // such as a screenshot never holds up the ones behind it.
@@ -191,18 +200,27 @@ export function createCdpRelayConnection(
             typeof value === "object" && value !== null && ANNOUNCE in value
               ? (value as { [ANNOUNCE]: Record<string, unknown> })[ANNOUNCE]
               : undefined;
-          send({ id: command.id, result: announce ? {} : (value ?? {}), ...route });
-          if (announce) send(announce);
+          try {
+            send({ id: command.id, result: announce ? {} : (value ?? {}), ...route });
+            if (announce) send(announce);
+          } finally {
+            onComplete?.();
+          }
         },
-        (cause: unknown) =>
-          send({
-            id: command.id,
-            error: {
-              code: -32000,
-              message: cause instanceof Error ? cause.message : String(cause),
-            },
-            ...route,
-          }),
+        (cause: unknown) => {
+          try {
+            send({
+              id: command.id,
+              error: {
+                code: -32000,
+                message: cause instanceof Error ? cause.message : String(cause),
+              },
+              ...route,
+            });
+          } finally {
+            onComplete?.();
+          }
+        },
       );
     },
     event: (method, params, sessionId) => {

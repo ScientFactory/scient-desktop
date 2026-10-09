@@ -8,7 +8,7 @@ import type { ThreadManagementServiceShape } from "../ThreadManagementService.ts
 import { EventStoreV2 } from "../EventStore.ts";
 import { applyToProjection, emptyProjection } from "../ProjectionStore.ts";
 import * as ServerConfig from "../../config.ts";
-import { layer as allocatorLayer } from "../IdAllocator.ts";
+import { layer as allocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
 import { nativeOmpOrchestration as fixture } from "../../provider/testUtils/nativeOmpOrchestration.ts";
 
 const dependencies = Layer.mergeAll(

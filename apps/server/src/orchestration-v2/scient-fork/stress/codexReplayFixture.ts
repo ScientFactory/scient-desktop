@@ -1,7 +1,7 @@
 import type * as CodexReplay from "effect-codex-app-server/replay";
 import packageJson from "../../../../package.json" with { type: "json" };
 import * as CodexAdapterV2 from "../../Adapters/CodexAdapterV2.ts";
-import { buildRuntimeInstructions } from "../../../provider/RuntimeInstructions.ts";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { buildScientAwareness } from "../../../provider/ScientAwareness.ts";
 export function makeCodexReplayTurn(input: {
   readonly id: string;

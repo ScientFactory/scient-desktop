@@ -19,7 +19,7 @@ import * as Stream from "effect/Stream";
 
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { nativeOmpSession, watchNativeOmpTextTurn } from "../testUtils/nativeOmpSession.ts";
-import type { ProviderAdapterV2Event } from "../../orchestration-v2/ProviderAdapter.ts";
+import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import { OMP_ISOLATED_ARGS } from "./OmpRpcProcess.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";

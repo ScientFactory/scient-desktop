@@ -19,7 +19,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 // SCIENT-FORK:END
 
-import * as AcpSessionRuntimeType from "./acp/AcpSessionRuntime.ts";
+import * as AcpSessionRuntimeType from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -32,11 +32,11 @@ import {
   providerModelsFromSettings,
   spawnAndCollect,
   type ServerProviderDraft,
-} from "./providerSnapshot.ts";
+} from "@t3tools/provider-core/server/snapshotProbe";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
-} from "./providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   buildDroidCapabilitiesFromEfforts,
   buildDroidModelsFromConfigOptions,

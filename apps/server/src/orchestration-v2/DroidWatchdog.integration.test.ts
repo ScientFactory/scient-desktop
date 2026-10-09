@@ -10,9 +10,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -21,24 +19,26 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../config.ts";
+import * as ScientTestProviderHost from "./testkit/ScientTestProviderHost.ts";
 import { makeDroidAcpRuntime } from "../provider/acp/DroidAcpSupport.ts";
 import { scriptedDroid } from "../provider/testUtils/scriptedDroid.ts";
 import { makeDroidAdapterV2 } from "./Adapters/DroidAdapterV2.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
+import { layer as idAllocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const decodeSettings = Schema.decodeEffect(DroidSettings);
-const layer = Layer.mergeAll(
+const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
   idAllocatorLayer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-droid-watchdog-sql-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
 );
+const layer = ScientTestProviderHost.layer.pipe(Layer.provideMerge(fixtureServices));
 it.layer(layer)("Droid native idle supervision persistence", (it) => {
   it.effect(
     "fails the silent owned turn durably and holds queued messages without delivering them",
@@ -50,25 +50,18 @@ it.layer(layer)("Droid native idle supervision persistence", (it) => {
       update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "watchdog-ready" } });
     }`);
           const config = yield* ServerConfig.ServerConfig;
-          const fs = yield* FileSystem.FileSystem;
-          const crypto = yield* Crypto.Crypto;
-          const allocator = yield* IdAllocatorV2;
           const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
           const instanceId = ProviderInstanceId.make("droid-watchdog-instance");
           const threadId = ThreadId.make("droid-watchdog-thread");
           const modelSelection = { instanceId, model: "droid-native" };
           const nativeReady = yield* Queue.unbounded<void>();
-          const adapter = makeDroidAdapterV2({
+          const adapter = yield* makeDroidAdapterV2({
             instanceId,
             settings: yield* decodeSettings({ enabled: true, binaryPath: peer.binaryPath }),
             environment: { PATH: process.env.PATH },
             sensitiveEnvironmentValues: [],
             makeRuntime: makeDroidAcpRuntime,
             childProcessSpawner: spawner,
-            fileSystem: fs,
-            crypto,
-            serverConfig: config,
-            idAllocator: allocator,
             selfInvocation: yield* resolveSelfInvocation(),
             onAuthenticationRejected: () =>
               Effect.die("No authentication in controlled Droid peer"),

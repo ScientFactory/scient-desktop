@@ -64,7 +64,7 @@ import {
   derivePendingBackgroundWork,
   pendingBackgroundTurnItems,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { historicalMessage } from "./ContextHandoffBudget.ts";
+import { hasScientContextHistory, historicalMessage } from "./ScientHistoricalContext.ts";
 import * as Context from "effect/Context";
 import { OrchestrationThreadSettleBlockedError } from "./Errors.ts";
 import * as DateTime from "effect/DateTime";
@@ -121,8 +121,7 @@ import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { CommandPolicyV2, resolveMessageDispatchIntent } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
-import { hasScientContextHistory } from "./ContextHandoffBudget.ts";
-import { notificationTurnItem } from "./Notification.ts";
+import { notificationTurnItem } from "@t3tools/provider-core/server/notification";
 import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { threadShellFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
@@ -138,7 +137,7 @@ import {
   planLegacyQueueReorder,
 } from "./legacy/HeldQueueAdmission.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
-import { IdAllocatorV2 } from "./IdAllocator.ts";
+import { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import {
@@ -153,13 +152,16 @@ import {
   type ProjectionCheckpointContext,
   type ShellSnapshotOptions,
 } from "./ProjectionStore.ts";
-import type { ProviderAdapterV2Shape, ProviderAdapterV2SessionRuntime } from "./ProviderAdapter.ts";
+import type {
+  ProviderAdapterV2Shape,
+  ProviderAdapterV2SessionRuntime,
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   ProviderAdapterRegistryV2,
   ProviderAdapterRegistryLookupError,
 } from "./ProviderAdapterRegistry.ts";
-import { ProviderContinuationRequests } from "./ProviderContinuationRequests.ts";
-import { makeProviderFailure } from "./ProviderFailure.ts";
+import { ProviderContinuationRequests } from "@t3tools/provider-core/server/continuationRequests";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
@@ -170,7 +172,7 @@ import {
   subagentResultForRun,
   delegatedTaskProgress,
   subagentThreadTitle,
-} from "./SubagentProjection.ts";
+} from "@t3tools/provider-core/server/subagentProjection";
 import {
   forkableSourceRunStatusError,
   isForkableSourceRunStatus,

@@ -32,12 +32,12 @@ import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { CheckpointServiceV2 } from "../CheckpointService.ts";
-import { AcpProviderCapabilitiesV2 } from "../Adapters/AcpAdapterV2.ts";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
   makeNativeSessionAdapterV2,
   NativeSessionOperationError,
 } from "../Adapters/NativeSessionAdapterV2.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as GitWorkflow from "../../git/GitWorkflowService.ts";
 import * as GitManager from "../../git/GitManager.ts";
 import * as GitVcs from "../../vcs/GitVcsDriver.ts";

@@ -17,7 +17,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { parseThreadSegmentFromAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
-import { randomUuidV4 } from "./RandomUuid.ts";
+import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 
 /** Short arbitration only: never hold it across thread dispatch or native work. */
 export class AttachmentFileArbitration extends Context.Reference<Semaphore.Semaphore>(

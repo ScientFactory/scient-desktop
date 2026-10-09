@@ -5,7 +5,7 @@ import {
   managedRuntimeTargetKey,
   resolveReviewedGrokArtifact,
 } from "@scientfactory/provider-runtime";
-import type { GrokSettings } from "@t3tools/contracts";
+import type { GrokSettings } from "@t3tools/provider-grok/settings";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";

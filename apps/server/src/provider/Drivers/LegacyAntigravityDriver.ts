@@ -29,31 +29,31 @@ import { ChildProcessSpawner } from "effect/process";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import { makeAntigravityTextGeneration } from "../../textGeneration/LegacyAntigravityTextGeneration.ts";
 import { makeLegacyAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/LegacyAntigravityAdapterV2.ts";
-import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
-import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderContinuationRequests } from "@t3tools/provider-core/server/continuationRequests";
 import { ProviderDriverError } from "../Errors.ts";
 import {
   buildInitialAntigravityProviderSnapshot,
   checkAntigravityProviderStatus,
   enrichAntigravitySnapshot,
 } from "../LegacyAntigravityProvider.ts";
-import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { makeNativeSessionShutdown } from "../NativeSessionShutdown.ts";
 import {
   defaultProviderContinuationIdentity,
-  type ProviderDriver,
   type ProviderInstance,
-} from "../ProviderDriver.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
-import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+} from "@t3tools/provider-core/server/driver";
+import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   haveProviderSnapshotSettingsChanged,
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
-} from "../providerUpdateSettings.ts";
+} from "@t3tools/provider-core/server/snapshotSettings";
 import {
   makeAntigravityConnectionActions,
   makeAntigravityLocalCredentialStore,
@@ -62,7 +62,8 @@ import {
 } from "../../scient/providerLifecycle/AntigravityConnectionActions.ts";
 import { makeAntigravityManagedRuntimeResolution } from "../../scient/providerLifecycle/AntigravityManagedRuntimeActions.ts";
 import { makeAntigravityVoiceTranscriptCorrection } from "../../scient/voice/AntigravityVoiceTranscriptCorrection.ts";
-import { PtyAdapter } from "../../terminal/PtyAdapter.ts";
+import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
+import { PtyAdapter } from "@t3tools/shared/PtyAdapter";
 import { discoverAntigravitySkills } from "./LegacyAntigravitySkills.ts";
 
 const decodeAntigravitySettings = Schema.decodeSync(AntigravitySettings);
@@ -74,6 +75,7 @@ const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
 });
 
 export type LegacyAntigravityDriverEnv =
+  | ProviderHost
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
@@ -131,6 +133,7 @@ export const LegacyAntigravityDriver = {
       const serverConfig = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
+      const host = yield* ProviderHost;
       // Antigravity is intentionally the Google-account/subscription provider.
       // Do not let ambient Gemini/API-key variables silently change billing or
       // make an unauthenticated account appear connected.
@@ -226,7 +229,7 @@ export const LegacyAntigravityDriver = {
         Effect.provideService(Path.Path, path),
       );
 
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
+      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, host.settings);
       const snapshot = yield* makeManagedServerProvider<
         ProviderSnapshotSettings<AntigravitySettings>
       >({
@@ -283,6 +286,6 @@ export const LegacyAntigravityDriver = {
         voiceTranscriptCorrection,
         connectionActions,
         managedRuntimeActions: managedRuntime.actions,
-      } satisfies ProviderInstance;
+      } satisfies ScientProviderInstance;
     }),
-} satisfies ProviderDriver<AntigravitySettings, LegacyAntigravityDriverEnv>;
+} satisfies ScientProviderDriver<AntigravitySettings, LegacyAntigravityDriverEnv>;

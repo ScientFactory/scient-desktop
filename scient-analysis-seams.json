@@ -106,7 +106,7 @@
       "purpose": "Resolve typed analysis artifacts and compute session outputs through the shared asset service."
     },
     {
-      "path": "apps/server/src/atomicWrite.ts",
+      "path": "packages/shared/src/atomicWrite.ts",
       "anchor": "fs.chmod",
       "purpose": "Preserve executable mode through the inherited atomic-write primitive."
     },

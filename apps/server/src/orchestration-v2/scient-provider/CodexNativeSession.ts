@@ -13,11 +13,11 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
-import type { IdAllocatorV2Shape } from "../IdAllocator.ts";
+import type { IdAllocatorV2Shape } from "@t3tools/provider-core/server/IdAllocator";
 import {
   ProviderAdapterTurnStartError,
   type ProviderAdapterV2TurnInput,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import { isPreAcceptanceRejectionCode } from "./NativeTurnReceipts.ts";
 
 const encodeRuntime = Schema.encodeUnknownSync(

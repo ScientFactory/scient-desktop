@@ -20,7 +20,7 @@ import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
-import { writeFileStringAtomically } from "../../atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import type * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import {
   WorkspaceFilePathEscapeError,

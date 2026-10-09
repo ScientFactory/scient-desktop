@@ -28,7 +28,7 @@ import type {
   OrchestrationEffectRequestV2,
   PendingOrchestrationEffectV2,
 } from "../EffectOutbox.ts";
-import type { IdAllocatorV2Shape } from "../IdAllocator.ts";
+import type { IdAllocatorV2Shape } from "@t3tools/provider-core/server/IdAllocator";
 import type {
   OrchestratorDispatchError,
   OrchestratorProjectionError,
@@ -40,7 +40,7 @@ import type {
   ProjectionRecords,
   ProjectionStoreV2Shape,
 } from "../ProjectionStore.ts";
-import type { ProviderAdapterV2SessionRuntime } from "../ProviderAdapter.ts";
+import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderSessionManagerV2Shape } from "../ProviderSessionManager.ts";
 import type { RuntimePolicyV2Shape } from "../RuntimePolicy.ts";
 

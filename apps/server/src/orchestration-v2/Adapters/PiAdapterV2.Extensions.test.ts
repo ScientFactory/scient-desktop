@@ -12,9 +12,9 @@ import * as Scope from "effect/Scope";
 import * as Exit from "effect/Exit";
 import * as TestClock from "effect/testing/TestClock";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import { PI_PROVIDER } from "./PiAdapterV2.ts";
-import { makePiRpcConnection, PiRpcError, type PiRpcRecord } from "./PiRpc.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import { PI_PROVIDER } from "@t3tools/provider-pi/testing";
+import { makePiRpcConnection, PiRpcError, type PiRpcRecord } from "@t3tools/provider-pi/testing";
 import {
   testLayer,
   PI_INSTANCE_ID,
@@ -136,7 +136,7 @@ describe("PiAdapterV2", () => {
       const fake = yield* makeFakePi;
       yield* openRuntime(fake);
       const spawn = fake.lastSpawn();
-      assert.equal(spawn.env.SCIENT_PI_AWARENESS, buildScientAwareness());
+      assert.equal(spawn.env.PI_RUNTIME_GUIDANCE, buildScientAwareness());
       assert.isUndefined(spawn.env.T3_MCP_URL);
       assert.isTrue(spawn.args.includes("--extension"));
       assert.isTrue(spawn.args.some((arg) => arg.endsWith("pi-t3-mcp-extension.ts")));
@@ -166,7 +166,7 @@ describe("PiAdapterV2", () => {
       assert.equal(spawn.env.T3_MCP_URL, "http://127.0.0.1:43123/mcp");
       assert.equal(spawn.env.T3_MCP_BEARER_TOKEN, "secret-pi-token");
       assert.equal(spawn.env.T3_PI_RUNTIME_MODE, "full-access");
-      assert.equal(spawn.env.SCIENT_PI_AWARENESS, buildScientAwareness(new Set(["preview"])));
+      assert.equal(spawn.env.PI_RUNTIME_GUIDANCE, buildScientAwareness(new Set(["preview"])));
     }).pipe(
       Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(THREAD_ID))),
       Effect.scoped,

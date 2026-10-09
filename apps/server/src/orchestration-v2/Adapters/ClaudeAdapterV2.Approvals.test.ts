@@ -19,10 +19,10 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { CLAUDE_SCIENT_TOOL_PROJECTION } from "../../provider/ScientToolProjection.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   DEFAULT_CLAUDE_SETTINGS,
   CLAUDE_TEST_MODEL_SELECTION,

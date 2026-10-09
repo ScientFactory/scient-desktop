@@ -63,7 +63,7 @@ import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../provider/testUtils/providerRegistryMock.ts";
-import type { ProviderInstance } from "../provider/ProviderDriver.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -80,7 +80,10 @@ import * as PullRequestWatchReactor from "./PullRequestWatchReactor.ts";
 import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import type { ProviderAdapterV2SessionRuntime, ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
+import type {
+  ProviderAdapterV2SessionRuntime,
+  ProviderAdapterV2Shape,
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
@@ -89,6 +92,7 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import * as PreviewManager from "../preview/Manager.ts";
 
 const dispatchRpc = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
 if (!dispatchRpc) throw new Error("Missing registered dispatch RPC");
@@ -319,7 +323,12 @@ const layerTest = Layer.mergeAll(
 const AttachmentDeletionTestLayer = layerTest.pipe(
   Layer.provide(
     ResourceCleanupService.layer.pipe(
-      Layer.provide(Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void })),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void }),
+          Layer.mock(PreviewManager.PreviewManager)({ close: () => Effect.void }),
+        ),
+      ),
       Layer.provide(layerServerConfig),
       Layer.provide(PlatformTestLayer),
     ),
@@ -2159,14 +2168,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.deepEqual(
         pending.map((effect) => effect.request),
         // SCIENT: files are released after the deletion commits.
-        [{ type: "scient.release-thread-files" }, { type: "terminal.cleanup" }],
+        [
+          { type: "preview.cleanup" },
+          { type: "scient.release-thread-files" },
+          { type: "terminal.cleanup" },
+        ],
       );
       assert.isTrue(pending.every((effect) => effect.status === "pending"));
       assert.deepEqual(yield* fileSystem.readFile(attachmentPath), bytes);
       yield* worker.drain();
       assert.isFalse(yield* fileSystem.exists(attachmentPath));
       const completed = yield* outbox.listByCommandId(command.commandId);
-      assert.lengthOf(completed, 2);
+      assert.lengthOf(completed, 3);
       assert.isTrue(completed.every((effect) => effect.status === "succeeded"));
       assert.deepEqual(yield* readReceipt, [
         { status: "accepted", resultSequence: accepted.sequence },

@@ -24,11 +24,11 @@ import { ServerConfig } from "../config.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapters from "./ProviderAdapterRegistry.ts";
-import { ProviderAdapterOpenSessionError } from "./ProviderAdapter.ts";
+import { ProviderAdapterOpenSessionError } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const instanceId = ProviderInstanceId.make("codex");
 const driver = ProviderDriverKind.make("codex");

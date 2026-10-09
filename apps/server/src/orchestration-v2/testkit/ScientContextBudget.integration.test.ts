@@ -1,4 +1,4 @@
-import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
+import { formatScientCurrentInput } from "../ScientCurrentInput.ts";
 import { assert, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -23,7 +23,7 @@ import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import type { McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import { scientInvocationForMcp } from "../../mcp/ScientMcpInvocation.ts";
 import {
@@ -46,13 +46,16 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import { AcpProviderCapabilitiesV2 } from "../Adapters/AcpAdapterV2.ts";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
   makeNativeSessionAdapterV2,
   NativeSessionOperationError,
   type NativeSession,
 } from "../Adapters/NativeSessionAdapterV2.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
+import {
+  IdAllocatorV2,
+  layer as idAllocatorLayer,
+} from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ProjectStoreV2 } from "../ProjectStore.ts";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
@@ -63,11 +66,11 @@ import { EventSinkV2 } from "../EventSink.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
-import { handoffBudget } from "../ContextHandoffBudget.ts";
+import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
 import { scientContextHandoffPolicy } from "../ScientContextHandoffPolicy.ts";
 import { deliverContextHandoffs } from "../ContextHandoffDelivery.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const skillRegistryLayer = McpSessionRegistry.layer.pipe(
   Layer.provide(
@@ -445,7 +448,7 @@ it.live.each(
                         offeredScopes.push(issued);
                       }
                       offers.push(
-                        providerMessageTextWithAttachmentPaths({
+                        formatScientCurrentInput({
                           ...input.message,
                           attachmentsDir: cwd,
                         }),

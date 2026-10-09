@@ -21,7 +21,7 @@ import * as ServerConfig from "../../config.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
-import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { DroidAcpRuntimeInput } from "../acp/DroidAcpSupport.ts";
 import { makeDroidCustomModelsRuntimeFactory } from "./DroidCustomModels.ts";
 

@@ -13,6 +13,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
@@ -44,13 +45,18 @@ const layerTestProcessRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
 });
 const TestOwnedLocalEndpointsLive = OwnedLocalEndpoints.layer;
 
+/** A host without `/proc`, so a missing `lsof` falls back to common ports. */
+const layerNoProc = FileSystem.layerNoop({});
+
 const layerProbeFailure = (
   run: ProcessRunner.ProcessRunner["Service"]["run"],
   fetch: typeof globalThis.fetch = globalThis.fetch,
+  fileSystem: Layer.Layer<FileSystem.FileSystem> = layerNoProc,
 ) =>
   PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        fileSystem,
         Layer.succeed(ProcessRunner.ProcessRunner, { run }),
         Layer.succeed(HostProcessPlatform, "linux"),
         FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch))),
@@ -62,6 +68,7 @@ const layerProbeFailure = (
 const layerTestPortDiscovery = PortScanner.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      layerNoProc,
       layerTestProcessRunner,
       Layer.succeed(HostProcessPlatform, "win32"),
       FetchHttpClient.layer,
@@ -157,6 +164,7 @@ const makeLsofScannerLayer = (input: {
   PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        layerNoProc,
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: () =>
             Effect.succeed({
@@ -780,6 +788,117 @@ effectIt.effect("does not swallow process probe defects", () =>
     }
   }),
 );
+
+// /proc/net/tcp: 127.0.0.1:8765 and 0.0.0.0:22 listening, an established
+// connection, and a non-loopback listener; /proc/net/tcp6 adds [::]:3001.
+const PROC_NET_TCP = `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:223D 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 5001 1 0000000000000000 100 0 0 10 0
+   1: 00000000:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 5002 1 0000000000000000 100 0 0 10 0
+   2: 0100007F:223D 0100007F:C350 01 00000000:00000000 00:00000000 00000000  1000        0 5003 1 0000000000000000 20 4 30 10 -1
+   3: 0A00000F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 5005 1 0000000000000000 100 0 0 10 0
+`;
+const PROC_NET_TCP6 = `  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000000000000000000000000000:0BB9 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 5004 1 0000000000000000 100 0 0 10 0
+`;
+
+effectIt.effect("uses Linux /proc listener metadata for explicit URLs when lsof is missing", () => {
+  let lsofSpawns = 0;
+  const probes: string[] = [];
+  const fdWalks: string[] = [];
+  const procFiles: Record<string, string> = {
+    "/proc/net/tcp": PROC_NET_TCP,
+    "/proc/net/tcp6": PROC_NET_TCP6,
+    "/proc/4242/comm": "python3\n",
+  };
+  const procFds: Record<string, Record<string, string>> = {
+    "4242": { "0": "/dev/null", "3": "socket:[5001]" },
+    "77": { "5": "socket:[9999]" },
+  };
+  const missing = FileSystem.makeNoop({});
+  const fileSystem = FileSystem.layerNoop({
+    readFileString: (path) => {
+      const content = procFiles[path];
+      return content === undefined ? missing.readFileString(path) : Effect.succeed(content);
+    },
+    readDirectory: (path) => {
+      if (path === "/proc") return Effect.succeed(["self", "77", "4242"]);
+      const pid = /^\/proc\/(\d+)\/fd$/.exec(path)?.[1];
+      const fds = pid === undefined ? undefined : procFds[pid];
+      if (pid === undefined || fds === undefined) return missing.readDirectory(path);
+      fdWalks.push(pid);
+      return Effect.succeed(Object.keys(fds));
+    },
+    readLink: (path) => {
+      const [, pid, fd] = /^\/proc\/(\d+)\/fd\/(\d+)$/.exec(path) ?? [];
+      const target = pid && fd ? procFds[pid]?.[fd] : undefined;
+      return target === undefined ? missing.readLink(path) : Effect.succeed(target);
+    },
+  });
+  const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) => {
+    probes.push(String(input));
+    return Promise.resolve(new Response("hello", { headers: { "content-type": "text/html" } }));
+  }) as typeof globalThis.fetch;
+  const layer = layerProbeFailure(
+    (input) => {
+      lsofSpawns += 1;
+      return processProbeFailure(input);
+    },
+    fetchFn,
+    fileSystem,
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    expect(yield* scanner.scan()).toEqual([]);
+    expect(lsofSpawns).toBe(0);
+    expect(probes).toEqual([]);
+
+    const explicitUrl = "http://localhost:8765/";
+    const first = yield* scanner.scan([explicitUrl]);
+    expect(
+      first.map(({ port, pid, processName, url }) => ({ port, pid, processName, url })),
+    ).toEqual([{ port: 8765, pid: 4242, processName: "python3", url: explicitUrl }]);
+    yield* scanner.scan([explicitUrl]);
+    expect(lsofSpawns).toBe(1);
+    // Ports 22 and 3001 have no readable owner, so the second scan walks
+    // again; it stops at 77, which holds no listener, once nothing is left.
+    expect(fdWalks).toEqual(["77", "4242", "77", "4242"]);
+    expect(probes).toEqual([explicitUrl]);
+    yield* scanner.scan([explicitUrl]);
+    yield* scanner.scan([explicitUrl]);
+    // Unresolved owners are retried a bounded number of times.
+    expect(fdWalks).toEqual(["77", "4242", "77", "4242", "77", "4242"]);
+    // Unknown listeners and their HTTP/HTTPS guesses are never probed.
+    expect(probes).toEqual([explicitUrl]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect("keeps spawning lsof after a spawn failure that is not a missing command", () => {
+  let lsofSpawns = 0;
+  const layer = layerProbeFailure((input) => {
+    lsofSpawns += 1;
+    return Effect.fail(
+      new ProcessRunner.ProcessSpawnError({
+        command: input.command,
+        argumentCount: input.args.length,
+        cwd: input.cwd,
+        cause: PlatformError.systemError({
+          _tag: "Unknown",
+          module: "ChildProcess",
+          method: "spawn",
+          description: "EAGAIN",
+        }),
+      }),
+    );
+  });
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    const explicitUrl = `http://localhost:${LSOF_TEST_PORT}/`;
+    yield* scanner.scan([explicitUrl]);
+    yield* scanner.scan([explicitUrl]);
+    expect(lsofSpawns).toBe(2);
+  }).pipe(Effect.provide(layer));
+});
 
 effectIt.effect("does not swallow process probe interruption", () =>
   Effect.gen(function* () {

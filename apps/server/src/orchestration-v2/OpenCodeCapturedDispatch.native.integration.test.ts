@@ -10,7 +10,6 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
-  OpenCodeSettings,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -30,26 +29,42 @@ import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as McpProviderSession from "../mcp/McpProviderSession.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import { buildScientAwareness } from "../provider/ScientAwareness.ts";
-import { buildRuntimeInstructions } from "../provider/RuntimeInstructions.ts";
-import type { OpenCodeRuntimeShape } from "../provider/opencodeRuntime.ts";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
+import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
+import {
+  ProviderEventLoggers,
+  NoOpProviderEventLoggers,
+} from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ScientTestProviderHost from "./testkit/ScientTestProviderHost.ts";
+import {
+  buildOpenCodeRuntimeGuidance,
+  mapOpenCodeTurnStartError,
+} from "../provider/OpenCodeDriverComposition.ts";
 import * as ScientSkillSession from "../scient/skills/ScientSkillSession.ts";
 import * as ScientSkillRegistry from "../scient/skills/ScientSkillRegistry.ts";
 import * as ScientSkillPolicy from "../scient/skills/ScientSkillPolicy.ts";
-import { makeOpenCodeAdapterV2, openCodePermissionRules } from "./Adapters/OpenCodeAdapterV2.ts";
-import { layer as idAllocatorLayer, IdAllocatorV2 } from "./IdAllocator.ts";
+import {
+  makeOpenCodeAdapterV2Driver,
+  openCodePermissionRules,
+} from "@t3tools/provider-opencode/server";
+import {
+  layer as idAllocatorLayer,
+  IdAllocatorV2,
+} from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { ProjectStoreV2 } from "./ProjectStore.ts";
 import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
-import { ProviderAdapterV2RuntimePolicy } from "./ProviderAdapter.ts";
+import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const Prompt = Schema.Struct({
   messageID: Schema.String,
@@ -311,30 +326,41 @@ it.live(
               throwOnError: true,
             });
           },
-        } as unknown as OpenCodeRuntimeShape;
+        } as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
         const settings = yield* decodeSettings({});
-        const adapter = makeOpenCodeAdapterV2({
-          instanceId,
-          settings,
-          environment: {},
-          runtime,
-          idAllocator: allocator,
-          serverConfig: config,
+        const adapterDriver = makeOpenCodeAdapterV2Driver({
+          runtimeGuidance: buildOpenCodeRuntimeGuidance,
+          mapTurnStartError: mapOpenCodeTurnStartError,
         });
-        const foreign = makeOpenCodeAdapterV2({
-          instanceId: ProviderInstanceId.make("opencode"),
-          settings,
-          environment: {},
-          runtime: {
-            ...runtime,
-            connectToOpenCodeServer: () =>
-              Effect.sync(() => {
-                foreignConnectCount++;
-                throw new Error("The default OpenCode instance must not be selected");
-              }),
-          },
-          idAllocator: allocator,
-          serverConfig: config,
+        const createAdapter = (
+          id: ProviderInstanceId,
+          ownedRuntime: OpenCodeRuntime.OpenCodeRuntimeShape,
+        ) =>
+          adapterDriver
+            .create({
+              instanceId: id,
+              displayName: undefined,
+              config: settings,
+              enabled: settings.enabled,
+              environment: [],
+            })
+            .pipe(
+              Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, ownedRuntime),
+              Effect.provideService(ProviderEventLoggers, NoOpProviderEventLoggers),
+              Effect.provide(
+                ScientTestProviderHost.layer.pipe(
+                  Layer.provide(Layer.succeed(ServerConfig.ServerConfig, config)),
+                ),
+              ),
+            );
+        const adapter = yield* createAdapter(instanceId, runtime);
+        const foreign = yield* createAdapter(ProviderInstanceId.make("opencode"), {
+          ...runtime,
+          connectToOpenCodeServer: () =>
+            Effect.sync(() => {
+              foreignConnectCount++;
+              throw new Error("The default OpenCode instance must not be selected");
+            }),
         });
         const layer = makeOrchestratorV2ReplayLayerWithRegistry(
           { name, runtimePolicyOverride: { cwd } },

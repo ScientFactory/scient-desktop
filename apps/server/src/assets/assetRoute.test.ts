@@ -178,7 +178,7 @@ describe("asset route", () => {
       expect(html.status).toBe(200);
       expect(html.headers.get("content-type")).toContain("text/html");
       expect(html.headers.get("content-security-policy")).toBe(
-        "sandbox allow-scripts allow-forms allow-popups",
+        "sandbox allow-scripts allow-forms allow-popups allow-downloads",
       );
       expect(html.headers.get("content-security-policy")).not.toContain("allow-modals");
       expect(html.headers.get("cache-control")).toBe("no-store");

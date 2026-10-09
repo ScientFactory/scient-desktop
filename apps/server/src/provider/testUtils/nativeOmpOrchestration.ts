@@ -18,13 +18,13 @@ import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
 import { ompTarget } from "../omp/OmpTarget.ts";
 import { scriptedOmpRpc } from "./scriptedOmpRpc.ts";
-import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
+import { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
 import { EffectOutboxV2 } from "../../orchestration-v2/EffectOutbox.ts";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import { layerFromAdaptersEffect as makeLayerEffect } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
-import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import { ProviderContinuationRequests } from "@t3tools/provider-core/server/continuationRequests";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../../orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { makeOmpAdapterV2 } from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
 
 /** Real native RPC, continuation worker and durable projection share one provider session. */

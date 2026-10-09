@@ -25,6 +25,7 @@ import {
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
+  HUMAN_INPUT_PERMISSION_CHANNEL,
   MOUSE_NAVIGATE_CHANNEL,
   RECORDING_CURSOR_CHANNEL,
   RECORDING_POINTER_CHANNEL,
@@ -168,6 +169,7 @@ const applyAnnotationTheme = (
 
 const reportHumanPointerInput = (event: PointerEvent): void => {
   if (!event.isTrusted) return;
+  if (ipcRenderer.sendSync(HUMAN_INPUT_PERMISSION_CHANNEL, "pointer") !== true) return;
   ipcRenderer.send(HUMAN_INPUT_CHANNEL, {
     kind: "pointer",
     x: event.clientX,
@@ -178,6 +180,7 @@ const reportHumanPointerInput = (event: PointerEvent): void => {
 
 const reportHumanKeyInput = (event: KeyboardEvent): void => {
   if (!event.isTrusted) return;
+  if (ipcRenderer.sendSync(HUMAN_INPUT_PERMISSION_CHANNEL, "key") !== true) return;
   ipcRenderer.send(HUMAN_INPUT_CHANNEL, {
     kind: "key",
     key: event.key,
@@ -1410,6 +1413,8 @@ function startAnnotation(sendEnabled: boolean): void {
           annotation,
           screenshotRect,
           submission === "send" && !sendEnabled ? "attach" : submission,
+          // Main crops a full-page capture, whose pixels are CSS px × this.
+          window.devicePixelRatio,
         );
       })
       .catch(() => {

@@ -17,7 +17,7 @@ import * as Checkpoints from "./CheckpointService.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as CheckpointDiffQuery from "../checkpointing/CheckpointDiffQuery.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";

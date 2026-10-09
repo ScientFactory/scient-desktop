@@ -18,15 +18,15 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/process";
 import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
-import { makePiAdapterV2 } from "./Adapters/PiAdapterV2.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import { makePiAdapterV2 } from "@t3tools/provider-pi/testing";
+import * as ScientTestProviderHost from "./testkit/ScientTestProviderHost.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
-import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
 import * as ProjectStore from "./ProjectStore.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { layerFromAdaptersEffect as makeLayerEffect } from "./ProviderAdapterRegistry.ts";
@@ -34,7 +34,7 @@ import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const json = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeWire = Schema.decodeUnknownSync(
@@ -135,26 +135,24 @@ if(r.id)emit({type:'response',id:r.id,command:r.type,success:true,data});
     const database = makeSqlitePersistenceLive(`${profile}/state.sqlite`).pipe(
       Layer.provide(outer),
     );
+    const adapterServices = ScientTestProviderHost.layer.pipe(
+      Layer.provideMerge(Layer.merge(outer, configLayer)),
+    );
     const registry = makeLayerEffect(
       Effect.gen(function* () {
-        return [
-          makePiAdapterV2({
-            instanceId,
-            settings: { enabled: true, binaryPath: binary, launchArgs: "", customModels: [] },
-            environment: {
-              HOME: profile,
-              PATH: process.env.PATH,
-              PI_EFFORT_CONTROL: control,
-              PI_EFFORT_WIRE: wire,
-            },
-            spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-            fileSystem: fs,
-            serverConfig: config,
-            continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
-            idAllocator: yield* IdAllocator.IdAllocatorV2,
-          }),
-        ];
-      }).pipe(Effect.provide(outer)),
+        const adapter = yield* makePiAdapterV2({
+          instanceId,
+          settings: { enabled: true, binaryPath: binary, launchArgs: "", customModels: [] },
+          environment: {
+            HOME: profile,
+            PATH: process.env.PATH,
+            PI_EFFORT_CONTROL: control,
+            PI_EFFORT_WIRE: wire,
+          },
+          continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
+        });
+        return [adapter];
+      }).pipe(Effect.provide(adapterServices)),
     );
     const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
       // The replay policy ignores project roots; without this cwd the run (and its

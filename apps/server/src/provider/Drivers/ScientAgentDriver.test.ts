@@ -21,13 +21,14 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
 import { ScientAgentDriver } from "./ScientAgentDriver.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import { layerConfigConsistentTestProviderHost } from "../testUtils/providerHost.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeJsonPath = Schema.decodeSync(Schema.fromJsonString(Schema.String));
 
-const testLayer = ServerConfig.layerTest(process.cwd(), {
+const providerDependenciesLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-scient-driver-managed-actions-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -57,6 +58,9 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
       ),
     ),
   ),
+);
+const testLayer = layerConfigConsistentTestProviderHost.pipe(
+  Layer.provideMerge(providerDependenciesLayer),
 );
 
 const noSpawn = ChildProcessSpawner.make(() =>

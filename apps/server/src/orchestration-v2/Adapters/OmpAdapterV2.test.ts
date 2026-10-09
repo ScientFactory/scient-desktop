@@ -18,7 +18,10 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
-import { setMcpProviderSession, clearMcpProviderSession } from "../../mcp/McpProviderSession.ts";
+import {
+  setMcpProviderSession,
+  clearMcpProviderSession,
+} from "@t3tools/provider-core/server/mcpSession";
 import { ompProcessEnvironment } from "../../provider/omp/OmpEnvironment.ts";
 import { SCIENT_CORE_AWARENESS } from "../../provider/ScientAwareness.ts";
 import { ompScientExtensionSource } from "../../provider/omp/OmpScientExtension.ts";
@@ -44,7 +47,7 @@ import type { OmpRpcNotification } from "effect-omp-rpc/client";
 import { OMP_KNOWN_EVENT_TYPES, type OmpRpcResponse } from "effect-omp-rpc/schema";
 import * as ServerConfig from "../../config.ts";
 import { makeOmpRedaction, type OmpRpcProcess } from "../../provider/omp/OmpRpcProcess.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeOmpAdapterV2 } from "./OmpAdapterV2.ts";
 import { makeOmpRpcClient } from "effect-omp-rpc/client";
 import {
@@ -60,7 +63,10 @@ import {
   scientAgentTarget,
   scientAgentProcessEnvironment,
 } from "../../provider/scient/ScientAgentTarget.ts";
-import type { ProviderAdapterV2Event, ProviderAdapterV2Error } from "../ProviderAdapter.ts";
+import type {
+  ProviderAdapterV2Event,
+  ProviderAdapterV2Error,
+} from "@t3tools/provider-core/server/ProviderAdapter";
 const decodeOmpSettings = Schema.decodeEffect(OmpSettings);
 
 const TestLayer = Layer.mergeAll(

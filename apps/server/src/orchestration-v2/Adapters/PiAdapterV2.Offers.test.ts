@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
-import { makePiRpcConnection, PiRpcError } from "./PiRpc.ts";
+import { makePiRpcConnection, PiRpcError } from "@t3tools/provider-pi/testing";
 import {
   isNativeStartReceiptError,
   testLayer,

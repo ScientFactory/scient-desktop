@@ -15,7 +15,7 @@ import { makeOmpScriptedWire } from "../../provider/omp/OmpCaptureReplay.testFix
 import { makeOmpRedaction } from "../../provider/omp/OmpRpcProcess.ts";
 import { ompTarget } from "../../provider/omp/OmpTarget.ts";
 import { nativeOmpSession } from "../../provider/testUtils/nativeOmpSession.ts";
-import type { ProviderAdapterV2Event } from "../ProviderAdapter.ts";
+import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 const toJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 /** A custom-model key only the process knows: the adapter never sees it. */
 const KEY = "customlivekey-0123456789abcdef";

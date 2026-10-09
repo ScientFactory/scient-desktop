@@ -6,8 +6,8 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
-import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   makeWakeHarness,
   claudeSdkFrame,

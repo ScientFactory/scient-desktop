@@ -21,18 +21,19 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../../config.ts";
-import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import { toMcpCapabilities } from "../../mcp/McpInvocationContext.ts";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { scientToolProjectionForProvider } from "../../provider/ScientToolProjection.ts";
 import { prepareScientSkillTurn } from "../../scient/skills/ScientSkillInvocation.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import type { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
-import { ProviderAdapterOpenSessionError } from "../ProviderAdapter.ts";
-import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import type { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
+import { ProviderAdapterOpenSessionError } from "@t3tools/provider-core/server/ProviderAdapter";
+import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
-import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
+import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 
 export class CodexReplayTranscriptDecodeError extends Schema.TaggedError<CodexReplayTranscriptDecodeError>()(
@@ -461,7 +462,7 @@ export function withIssuedCodexMcpReplayExpectations(
               runtimePolicy: scope.runtimePolicy,
               modelSelection: scope.modelSelection,
               hasT3Mcp: true,
-              mcpCapabilities: issued.capabilities,
+              mcpCapabilities: toMcpCapabilities(issued.capabilities),
             }).pipe(Effect.orDie);
             return {
               ...frame,

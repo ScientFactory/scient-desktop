@@ -13,7 +13,7 @@ import * as Option from "effect/Option";
 import * as ServerConfig from "../../config.ts";
 import { nativeOmpOrchestration } from "../../provider/testUtils/nativeOmpOrchestration.ts";
 import { scriptedOmpRpc } from "../../provider/testUtils/scriptedOmpRpc.ts";
-import { IdAllocatorV2, layer as allocatorLayer } from "../IdAllocator.ts";
+import { IdAllocatorV2, layer as allocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 
 const TestLayer = Layer.mergeAll(

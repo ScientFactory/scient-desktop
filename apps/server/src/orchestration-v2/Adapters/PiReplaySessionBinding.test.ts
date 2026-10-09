@@ -5,7 +5,7 @@ import * as Predicate from "effect/Predicate";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { ProviderReplayTranscript } from "@t3tools/contracts";
-import { decodeProviderReplayNdjson } from "../testkit/ReplayTranscriptNdjson.ts";
+import { decodeProviderReplayNdjson } from "@t3tools/provider-testing/replayTranscript";
 import { assert, describe, it } from "@effect/vitest";
 import type { ProviderReplayEntry } from "@t3tools/contracts";
 import {

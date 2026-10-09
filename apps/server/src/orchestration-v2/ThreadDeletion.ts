@@ -7,7 +7,7 @@ import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
-import type { IdAllocatorV2, IdAllocatorV2Error } from "./IdAllocator.ts";
+import type { IdAllocatorV2, IdAllocatorV2Error } from "@t3tools/provider-core/server/IdAllocator";
 
 export interface ThreadDeletionPlan {
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -214,9 +214,16 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     threadId: command.threadId,
     request: { type: "terminal.cleanup" },
   });
-  // SCIENT-FORK:START — files can be shown by other conversations (forks share
-  // them, messages can reuse them): release them after the deletion commits,
-  // keeping any a live conversation still names.
+  effects.push({
+    id: `effect:${command.commandId}:preview.cleanup`,
+    commandId: command.commandId,
+    threadId: command.threadId,
+    request: { type: "preview.cleanup" },
+  });
+  // SCIENT-FORK:START — the upstream attachment.cleanup effect unlinks every file
+  // named by this thread without checking whether a fork or another live
+  // conversation still references it. The reference-aware release runs after
+  // deletion commits and arbitrates against active attachment reservations.
   effects.push({
     id: `effect:${command.commandId}:scient.release-thread-files`,
     commandId: command.commandId,

@@ -1,6 +1,5 @@
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import type { ProviderAdapterV2TurnInput } from "./ProviderAdapter.ts";
 import { assert, it, vi } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -52,14 +51,15 @@ import * as CheckpointService from "./CheckpointService.ts";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   ProviderAdapterEventStreamError,
   ProviderAdapterTurnStartError,
   type ProviderAdapterV2Error,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2SessionRuntime,
-} from "./ProviderAdapter.ts";
+  type ProviderAdapterV2TurnInput,
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import {

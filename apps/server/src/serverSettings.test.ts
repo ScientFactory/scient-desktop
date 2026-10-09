@@ -3,6 +3,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ANTIGRAVITY_DEFAULT_MODEL,
   DROID_DEFAULT_MODEL,
+  DroidSettings,
   SCIENT_DEFAULT_TEXT_GENERATION_MODEL,
   type CustomModel,
   ModelSelection,
@@ -41,7 +42,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
-import { writeFileStringAtomically } from "./atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerSettingsModule from "./serverSettings.ts";
 import {
   SettingsDirectoryWatch,
@@ -133,18 +134,42 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
     `;
   });
 
+const fallbackProviderDrivers = [
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "muse",
+  "grok",
+  "opencode",
+  "droid",
+  "pi",
+  "omp",
+  "antigravity",
+  "scient",
+] as const;
+
+const providerInstance = (driver: string, enabled: boolean, config: unknown = {}) => ({
+  driver: ProviderDriverKind.make(driver),
+  enabled,
+  config,
+});
+
+const providerInstancesForDrivers = (
+  drivers: ReadonlyArray<string>,
+  enabledDrivers: ReadonlyArray<string> = [],
+) =>
+  Object.fromEntries(
+    drivers.map((driver) => [
+      ProviderInstanceId.make(driver),
+      providerInstance(driver, enabledDrivers.includes(driver)),
+    ]),
+  );
+
 it.layer(NodeServices.layer)("server settings", (it) => {
   it.effect("rejects subscription-sharing activation without persisting settings or secrets", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;
       const before = yield* service.getSettings;
-      const result = yield* Effect.exit(
-        service.updateSettings({
-          providers: { codex: { setupMode: "managed" } },
-        }),
-      );
-      assert.equal(result._tag, "Failure");
-      assert.deepEqual(yield* service.getSettings, before);
       const id = ProviderInstanceId.make("deferred-personal");
       const instanceResult = yield* Effect.exit(
         service.updateSettings({
@@ -1548,26 +1573,54 @@ it.layer(NodeServices.layer)("server settings", (it) => {
   it.effect("saves and resets Droid's Factory sync setting through the settings patch", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      const config = yield* ServerConfig.ServerConfig;
+      const serverConfig = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;
-      const persistedSync = fs.readFileString(config.settingsPath).pipe(
-        Effect.flatMap(decodeSettingsJson),
-        Effect.map((persisted) => persisted.providers.droid.cloudSessionSync),
+      const droidId = ProviderInstanceId.make("droid");
+      const persistedSync = fs.readFileString(serverConfig.settingsPath).pipe(
+        Effect.map((raw) => {
+          const persisted = JSON.parse(raw) as {
+            providerInstances?: Record<
+              string,
+              { readonly config?: Pick<DroidSettings, "cloudSessionSync"> }
+            >;
+          };
+          return persisted.providerInstances?.[droidId]?.config?.cloudSessionSync;
+        }),
       );
       // As the settings RPC receives it: decoded through the patch contract.
-      const off = yield* decodeSettingsPatch({ providers: { droid: { cloudSessionSync: false } } });
+      const off = yield* decodeSettingsPatch({
+        providerInstances: {
+          [droidId]: {
+            driver: ProviderDriverKind.make("droid"),
+            config: { cloudSessionSync: false },
+          },
+        },
+      });
+      const disabled = yield* serverSettings.updateSettings(off);
       assert.equal(
-        (yield* serverSettings.updateSettings(off)).providers.droid.cloudSessionSync,
+        (disabled.providerInstances[droidId]?.config as Pick<DroidSettings, "cloudSessionSync">)
+          .cloudSessionSync,
         false,
       );
-      assert.equal((yield* serverSettings.getSettings).providers.droid.cloudSessionSync, false);
       assert.equal(yield* persistedSync, false);
-      // "Reset default instance" sends the driver's default settings back.
+      // Reset sends the driver's defaults inside the default instance.
+      const { enabled, ...defaultConfig } = yield* Schema.decodeEffect(DroidSettings)({});
       const reset = yield* decodeSettingsPatch({
-        providers: { droid: DEFAULT_SERVER_SETTINGS.providers.droid },
+        providerInstances: {
+          [droidId]: {
+            driver: ProviderDriverKind.make("droid"),
+            enabled,
+            config: defaultConfig,
+          },
+        },
       });
       assert.equal(
-        (yield* serverSettings.updateSettings(reset)).providers.droid.cloudSessionSync,
+        (
+          (yield* serverSettings.updateSettings(reset)).providerInstances[droidId]?.config as Pick<
+            DroidSettings,
+            "cloudSessionSync"
+          >
+        ).cloudSessionSync,
         true,
       );
       assert.equal(yield* persistedSync, true);
@@ -1576,13 +1629,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
   it.effect("decodes nested settings patches", () =>
     Effect.gen(function* () {
-      assert.deepEqual(
-        yield* decodeSettingsPatch({ providers: { codex: { binaryPath: "/tmp/codex" } } }),
-        {
-          providers: { codex: { binaryPath: "/tmp/codex" } },
-        },
-      );
-
       assert.deepEqual(
         yield* decodeSettingsPatch({
           textGenerationModelSelection: {
@@ -1623,16 +1669,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
 
       yield* serverSettings.updateSettings({
-        providers: {
-          codex: {
-            binaryPath: "/usr/local/bin/codex",
-            homePath: "/Users/julius/.codex",
-          },
-          claudeAgent: {
-            binaryPath: "/usr/local/bin/claude",
-            customModels: ["claude-custom"],
-          },
-        },
+        observability: { otlpTracesUrl: "http://localhost:4318/v1/traces" },
         textGenerationModelSelection: {
           instanceId: ProviderInstanceId.make("codex"),
           model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
@@ -1648,32 +1685,14 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
 
       const next = yield* serverSettings.updateSettings({
-        providers: {
-          codex: {
-            binaryPath: "/opt/homebrew/bin/codex",
-          },
-        },
+        observability: { otlpMetricsUrl: "http://localhost:4318/v1/metrics" },
         textGenerationModelSelection: {
           options: [{ id: "fastMode", value: false }],
         },
       });
 
-      assert.deepEqual(next.providers.codex, {
-        enabled: true,
-        binaryPath: "/opt/homebrew/bin/codex",
-        homePath: "/Users/julius/.codex",
-        shadowHomePath: "",
-        launchArgs: "",
-        customModels: [],
-      });
-      assert.deepEqual(next.providers.claudeAgent, {
-        enabled: true,
-        binaryPath: "/usr/local/bin/claude",
-        homePath: "",
-        customModels: ["claude-custom"],
-        launchArgs: "",
-        autoCompactWindow: "",
-      });
+      assert.equal(next.observability.otlpTracesUrl, "http://localhost:4318/v1/traces");
+      assert.equal(next.observability.otlpMetricsUrl, "http://localhost:4318/v1/metrics");
       assert.deepEqual(
         next.textGenerationModelSelection,
         createModelSelection(
@@ -1770,18 +1789,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         const changes = yield* serverSettings.subscribeChanges;
 
         yield* serverSettings.updateSettings({
-          providers: {
-            codex: {
-              binaryPath: "/usr/local/bin/codex-next",
-            },
-          },
+          addProjectBaseDirectory: "~/next",
         });
 
         const firstChange = yield* changes.pipe(Stream.runHead, Effect.timeout("1 second"));
-        assert.equal(
-          Option.getOrUndefined(firstChange)?.providers.codex.binaryPath,
-          "/usr/local/bin/codex-next",
-        );
+        assert.equal(Option.getOrUndefined(firstChange)?.addProjectBaseDirectory, "~/next");
       }),
     ).pipe(Effect.provide(makeServerSettingsLayer())),
   );
@@ -1880,16 +1892,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
   it.effect("gives Droid-only users Droid's own default model for text generation", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      const disabled = { enabled: false };
       const next = yield* serverSettings.updateSettings({
-        providers: {
-          codex: disabled,
-          claudeAgent: disabled,
-          cursor: disabled,
-          grok: disabled,
-          opencode: disabled,
-          droid: { enabled: true },
-        },
+        providerInstances: providerInstancesForDrivers(fallbackProviderDrivers, ["droid"]),
       });
       assert.deepEqual(next.textGenerationModelSelection, {
         instanceId: ProviderInstanceId.make("droid"),
@@ -1899,22 +1903,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
   );
 
   describe("automatic text-generation provider with every built-in instance disabled", () => {
-    const disabled = { enabled: false };
-    const builtInsDisabled = {
-      codex: disabled,
-      claudeAgent: disabled,
-      cursor: disabled,
-      grok: disabled,
-      opencode: disabled,
-      droid: disabled,
-      pi: disabled,
-      omp: disabled,
-      antigravity: disabled,
-    };
-    const named = (driver: string, enabled = true) => ({
-      driver: ProviderDriverKind.make(driver),
-      enabled,
-    });
+    const builtInsDisabled = providerInstancesForDrivers(fallbackProviderDrivers);
+    const named = (driver: string, enabled = true) => providerInstance(driver, enabled);
     const selectionWith = (
       patch: Parameters<ServerSettingsModule.ServerSettingsService["Service"]["updateSettings"]>[0],
     ) =>
@@ -1927,58 +1917,76 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       Effect.gen(function* () {
         assert.deepEqual(
           yield* selectionWith({
-            providers: builtInsDisabled,
-            providerInstances: { [ProviderInstanceId.make("droid_work")]: named("droid") },
+            providerInstances: {
+              ...builtInsDisabled,
+              [ProviderInstanceId.make("droid_work")]: named("droid"),
+            },
           }),
           { instanceId: ProviderInstanceId.make("droid_work"), model: DROID_DEFAULT_MODEL },
         );
       }),
     );
 
-    it.effect.each(
-      (["pi", "omp"] as const).flatMap((driver) => {
-        return [
-          {
-            caseTitle: `uses the automatic native model marker for ${driver}-only users`,
-            run: () =>
-              Effect.gen(function* () {
-                assert.deepEqual(
-                  yield* selectionWith({
-                    providers: { ...builtInsDisabled, [driver]: { enabled: true } },
-                  }),
-                  { instanceId: ProviderInstanceId.make(driver), model: `${driver}-default` },
-                );
-              }),
-          },
-          {
-            caseTitle: `uses the selected ${driver} instance without assuming a hosted model`,
-            run: () =>
-              Effect.gen(function* () {
-                assert.deepEqual(
-                  yield* selectionWith({
-                    providers: builtInsDisabled,
-                    providerInstances: {
-                      [ProviderInstanceId.make(`${driver}_b`)]: named(driver),
-                      [ProviderInstanceId.make(`${driver}_a`)]: named(driver),
-                    },
-                  }),
-                  {
-                    instanceId: ProviderInstanceId.make(`${driver}_a`),
-                    model: `${driver}-default`,
-                  },
-                );
-              }),
-          },
-        ];
+    it.effect("uses the automatic native model marker for Pi-only users", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(
+          yield* selectionWith({
+            providerInstances: providerInstancesForDrivers(fallbackProviderDrivers, ["pi"]),
+          }),
+          { instanceId: ProviderInstanceId.make("pi"), model: "pi-default" },
+        );
       }),
-    )("$caseTitle", ({ run }) => run());
+    );
+
+    it.effect("uses the automatic native model marker for OMP-only users", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(
+          yield* selectionWith({
+            providerInstances: providerInstancesForDrivers(fallbackProviderDrivers, ["omp"]),
+          }),
+          { instanceId: ProviderInstanceId.make("omp"), model: "omp-default" },
+        );
+      }),
+    );
+
+    it.effect("uses the selected named Pi instance without assuming a hosted model", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(
+          yield* selectionWith({
+            providerInstances: {
+              ...builtInsDisabled,
+              [ProviderInstanceId.make("pi_b")]: named("pi"),
+              [ProviderInstanceId.make("pi_a")]: named("pi"),
+            },
+          }),
+          { instanceId: ProviderInstanceId.make("pi_a"), model: "pi-default" },
+        );
+      }),
+    );
+
+    it.effect("uses the selected named OMP instance without assuming a hosted model", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(
+          yield* selectionWith({
+            providerInstances: {
+              ...builtInsDisabled,
+              [ProviderInstanceId.make("omp_b")]: named("omp"),
+              [ProviderInstanceId.make("omp_a")]: named("omp"),
+            },
+          }),
+          { instanceId: ProviderInstanceId.make("omp_a"), model: "omp-default" },
+        );
+      }),
+    );
 
     it.effect("uses a named instance of any other provider, with that provider's model", () =>
       Effect.gen(function* () {
         assert.deepEqual(
           yield* selectionWith({
-            providers: builtInsDisabled,
-            providerInstances: { [ProviderInstanceId.make("claude_work")]: named("claudeAgent") },
+            providerInstances: {
+              ...builtInsDisabled,
+              [ProviderInstanceId.make("claude_work")]: named("claudeAgent"),
+            },
           }),
           { instanceId: ProviderInstanceId.make("claude_work"), model: "claude-haiku-4-5" },
         );
@@ -1989,8 +1997,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       Effect.gen(function* () {
         assert.deepEqual(
           yield* selectionWith({
-            providers: builtInsDisabled,
             providerInstances: {
+              ...builtInsDisabled,
               [ProviderInstanceId.make("droid_work")]: named("droid"),
               [ProviderInstanceId.make("claude_b")]: named("claudeAgent"),
               [ProviderInstanceId.make("claude_a")]: named("claudeAgent"),
@@ -2006,22 +2014,43 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
     it.effect("leaves Scient Agent, on by default, as the last resort", () =>
       Effect.gen(function* () {
+        // An explicitly enabled named provider also precedes the implicit Scient default.
+        assert.deepEqual(
+          yield* selectionWith({
+            providerInstances: {
+              ...providerInstancesForDrivers(
+                fallbackProviderDrivers.filter((driver) => driver !== "scient"),
+              ),
+              [ProviderInstanceId.make("droid_work")]: named("droid"),
+            },
+          }),
+          { instanceId: ProviderInstanceId.make("droid_work"), model: DROID_DEFAULT_MODEL },
+        );
         // Another enabled built-in comes first, even one that sorts after it.
         assert.deepEqual(
           yield* selectionWith({
-            providers: { ...builtInsDisabled, antigravity: { enabled: true } },
+            providerInstances: providerInstancesForDrivers(
+              fallbackProviderDrivers.filter((driver) => driver !== "scient"),
+              ["antigravity"],
+            ),
           }),
           { instanceId: ProviderInstanceId.make("antigravity"), model: ANTIGRAVITY_DEFAULT_MODEL },
         );
         // With every other provider off, it is what is left.
-        assert.deepEqual(yield* selectionWith({ providers: builtInsDisabled }), {
-          instanceId: ProviderInstanceId.make("scient"),
-          model: SCIENT_DEFAULT_TEXT_GENERATION_MODEL,
-        });
+        assert.deepEqual(
+          yield* selectionWith({
+            providerInstances: providerInstancesForDrivers(
+              fallbackProviderDrivers.filter((driver) => driver !== "scient"),
+            ),
+          }),
+          {
+            instanceId: ProviderInstanceId.make("scient"),
+            model: SCIENT_DEFAULT_TEXT_GENERATION_MODEL,
+          },
+        );
         // Turned off, nothing is chosen for it.
         assert.equal(
-          (yield* selectionWith({ providers: { ...builtInsDisabled, scient: disabled } }))
-            ?.instanceId,
+          (yield* selectionWith({ providerInstances: builtInsDisabled }))?.instanceId,
           ProviderInstanceId.make("codex"),
         );
       }),
@@ -2031,8 +2060,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       Effect.gen(function* () {
         assert.deepEqual(
           yield* selectionWith({
-            providers: { ...builtInsDisabled, droid: { enabled: true } },
-            providerInstances: { [ProviderInstanceId.make("claude_work")]: named("claudeAgent") },
+            providerInstances: {
+              ...builtInsDisabled,
+              [ProviderInstanceId.make("droid")]: named("droid"),
+              [ProviderInstanceId.make("claude_work")]: named("claudeAgent"),
+            },
           }),
           { instanceId: ProviderInstanceId.make("droid"), model: DROID_DEFAULT_MODEL },
         );
@@ -2083,19 +2115,18 @@ it.layer(NodeServices.layer)("server settings", (it) => {
   );
 
   it.effect(
-    "uses explicit provider instance enabled state over legacy provider enabled state",
+    "keeps a custom instance's selection when the driver's default instance is disabled",
     () =>
       Effect.gen(function* () {
         const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
         const instanceId = ProviderInstanceId.make("claude_openrouter");
 
         const next = yield* serverSettings.updateSettings({
-          providers: {
-            claudeAgent: {
+          providerInstances: {
+            [ProviderInstanceId.make("claudeAgent")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
               enabled: false,
             },
-          },
-          providerInstances: {
             [instanceId]: {
               driver: ProviderDriverKind.make("claudeAgent"),
               enabled: true,
@@ -2129,6 +2160,10 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           const fallbackInstanceId = ProviderInstanceId.make(fallbackId);
           const selection = { instanceId: writerId, model: "claude-sonnet-4-6" };
           const providerInstances = {
+            [ProviderInstanceId.make("claudeAgent")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              enabled: false,
+            },
             [fallbackInstanceId]: {
               driver: ProviderDriverKind.make("codex"),
               enabled: true,
@@ -2142,11 +2177,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           };
 
           yield* serverSettings.updateSettings({
-            providers: Object.fromEntries(
-              Object.keys(DEFAULT_SERVER_SETTINGS.providers).map(
-                (provider) => [provider, { enabled: false }] as const,
-              ),
-            ),
             providerInstances,
             textGenerationModelSelection: selection,
           });
@@ -2183,7 +2213,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       ).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("skips explicitly disabled instances when choosing a legacy fallback", () =>
+  it.effect("skips explicitly disabled default instances when choosing a fallback", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       const next = yield* serverSettings.updateSettings({
@@ -2362,179 +2392,156 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("enables previously used providers from sparse settings files", () =>
+  it.effect("moves customized legacy provider settings into default instances on load", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
-        '{"providers":{"opencode":{"serverUrl":"http://127.0.0.1:4096"}}}',
+        JSON.stringify({
+          addProjectBaseDirectory: "~/Development",
+          providers: {
+            codex: { binaryPath: "/opt/guard/bin/codex" },
+            claudeAgent: { enabled: false },
+            cursor: { enabled: false },
+            grok: { enabled: false },
+            opencode: { enabled: false },
+          },
+        }),
       );
-      yield* recordProviderUsage("opencode");
 
       const settings = yield* serverSettings.getSettings;
 
-      assert.isFalse(settings.providers.grok.enabled);
-      assert.isTrue(settings.providers.opencode.enabled);
-      assert.isFalse(settings.providers.cursor.enabled);
-      assert.isFalse(settings.providers.droid.enabled);
-      assert.equal(settings.providers.opencode.serverUrl, "http://127.0.0.1:4096");
+      assert.deepEqual(settings.providerInstances, {
+        [ProviderInstanceId.make("codex")]: {
+          driver: ProviderDriverKind.make("codex"),
+          config: { binaryPath: "/opt/guard/bin/codex" },
+        },
+        [ProviderInstanceId.make("claudeAgent")]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: false,
+          config: {},
+        },
+      });
+      // The file is rewritten once: instances persist and the retired map is gone.
+      const persisted = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));
+      assert.isUndefined(persisted.providers);
+      assert.equal(persisted.addProjectBaseDirectory, "~/Development");
+      assert.deepEqual(persisted.providerInstances.codex, {
+        driver: "codex",
+        config: { binaryPath: "/opt/guard/bin/codex" },
+      });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("restores a previously used Scient Droid provider and instance", () =>
+  it.effect("keeps an explicit default instance over the legacy blob for its driver", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
-        '{"providerInstances":{"droid_work":{"driver":"droid","config":{}}}}',
+        JSON.stringify({
+          providers: { codex: { binaryPath: "/legacy/codex" } },
+          providerInstances: {
+            codex: { driver: "codex", enabled: true, config: { binaryPath: "/explicit/codex" } },
+          },
+        }),
       );
+
+      const settings = yield* serverSettings.getSettings;
+
+      assert.deepEqual(settings.providerInstances[ProviderInstanceId.make("codex")], {
+        driver: ProviderDriverKind.make("codex"),
+        enabled: true,
+        config: { binaryPath: "/explicit/codex" },
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("enables previously used optional providers while migrating legacy settings", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        JSON.stringify({
+          providers: { opencode: { serverUrl: "http://127.0.0.1:4096" }, cursor: {} },
+          providerInstances: {
+            cursor_work: { driver: "cursor", config: {} },
+            droid_work: { driver: "droid", config: {} },
+            opencode_unused: { driver: "opencode", config: {} },
+          },
+        }),
+      );
+      yield* recordProviderUsage("opencode");
+      yield* recordProviderUsage("grok", null);
+      yield* recordProviderUsage("cursor", "cursor_work");
       yield* recordProviderUsage("droid", "droid_work");
 
       const settings = yield* serverSettings.getSettings;
 
-      assert.isTrue(settings.providers.droid.enabled);
-      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("droid_work")]?.enabled);
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
-  );
-
-  it.effect("preserves existing provider instances without explicit enabled flags", () =>
-    Effect.gen(function* () {
-      const serverConfig = yield* ServerConfig.ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      yield* fileSystem.writeFileString(
-        serverConfig.settingsPath,
-        '{"providerInstances":{"cursor_work":{"driver":"cursor","config":{}},"grok":{"driver":"grok","config":{}},"opencode_work":{"driver":"opencode","config":{"serverUrl":"http://127.0.0.1:4096"}},"opencode_unused":{"driver":"opencode","config":{}}}}',
-      );
-      yield* recordProviderUsage("cursor", "cursor_work");
-      yield* recordProviderUsage("grok", null);
-      yield* recordProviderUsage("opencode", "opencode_work");
-
-      const settings = yield* serverSettings.getSettings;
-
-      assert.isTrue(settings.providers.cursor.enabled);
-      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("cursor_work")]?.enabled);
+      assert.deepEqual(settings.providerInstances[ProviderInstanceId.make("opencode")], {
+        driver: ProviderDriverKind.make("opencode"),
+        enabled: true,
+        config: { serverUrl: "http://127.0.0.1:4096" },
+      });
+      // Used without any legacy blob or instance: the slot is created enabled.
       assert.isTrue(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
-      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("opencode_work")]?.enabled);
+      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("cursor_work")]?.enabled);
+      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("droid_work")]?.enabled);
+      // Using any cursor instance counts as opting into the driver.
+      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("cursor")]?.enabled);
+      // Droid history opts in its default instance too.
+      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("droid")]?.enabled);
       const unused = settings.providerInstances[ProviderInstanceId.make("opencode_unused")];
       assert.isDefined(unused);
       assert.isFalse(resolveProviderInstanceEnabled(unused));
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("preserves explicit provider disables in existing settings files", () =>
+  it.effect("keeps explicit legacy disables even when provider history shows use", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
-        '{"providers":{"grok":{"enabled":false},"opencode":{"enabled":false},"cursor":{"enabled":false}},"providerInstances":{"grok":{"driver":"grok","enabled":false,"config":{}},"opencode":{"driver":"opencode","config":{"enabled":false}},"cursor":{"driver":"cursor","enabled":false,"config":{}}}}',
+        JSON.stringify({ providers: { grok: { enabled: false, binaryPath: "/opt/grok" } } }),
       );
       yield* recordProviderUsage("grok");
-      yield* recordProviderUsage("opencode");
-      yield* recordProviderUsage("cursor");
 
       const settings = yield* serverSettings.getSettings;
 
-      assert.isFalse(settings.providers.grok.enabled);
-      assert.isFalse(settings.providers.opencode.enabled);
-      assert.isFalse(settings.providers.cursor.enabled);
-      assert.isFalse(settings.providers.droid.enabled);
-      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
-      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("opencode")]?.enabled);
-      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("cursor")]?.enabled);
+      assert.deepEqual(settings.providerInstances[ProviderInstanceId.make("grok")], {
+        driver: ProviderDriverKind.make("grok"),
+        enabled: false,
+        config: { binaryPath: "/opt/grok" },
+      });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("skips a disabled provider instance when picking the text generation fallback", () =>
-    Effect.gen(function* () {
-      const serverConfig = yield* ServerConfig.ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      // The Providers UI writes providerInstances only, so the legacy providers
-      // map decodes to defaults where codex is enabled and listed first.
-      yield* fileSystem.writeFileString(
-        serverConfig.settingsPath,
-        '{"providerInstances":{"codex":{"driver":"codex","enabled":false,"config":{}}}}',
-      );
-
-      const settings = yield* serverSettings.getSettings;
-
-      assert.equal(settings.textGenerationModelSelection.instanceId, "claudeAgent");
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
-  );
-
-  it.effect("keeps unused providers disabled in existing sparse settings files", () =>
+  it.effect("restores provider history when a settings file has no legacy provider map", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       yield* fileSystem.writeFileString(serverConfig.settingsPath, "{}");
-
-      const settings = yield* serverSettings.getSettings;
-
-      assert.isFalse(settings.providers.grok.enabled);
-      assert.isFalse(settings.providers.opencode.enabled);
-      assert.isFalse(settings.providers.cursor.enabled);
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
-  );
-
-  it.effect("preserves provider history when no settings file exists", () =>
-    Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       yield* recordProviderUsage("grok");
 
       const settings = yield* serverSettings.getSettings;
 
-      assert.isTrue(settings.providers.grok.enabled);
-      assert.isFalse(settings.providers.opencode.enabled);
-      assert.isFalse(settings.providers.cursor.enabled);
-      assert.isFalse(settings.providers.droid.enabled);
+      assert.deepEqual(settings.providerInstances[ProviderInstanceId.make("grok")], {
+        driver: ProviderDriverKind.make("grok"),
+        enabled: true,
+        config: {},
+      });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("preserves provider history when the settings file is invalid", () =>
-    Effect.gen(function* () {
-      const serverConfig = yield* ServerConfig.ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      yield* fileSystem.writeFileString(serverConfig.settingsPath, "{invalid json");
-      yield* recordProviderUsage("cursor");
-
-      const settings = yield* serverSettings.getSettings;
-
-      assert.isTrue(settings.providers.cursor.enabled);
-      assert.isFalse(settings.providers.grok.enabled);
-      assert.isFalse(settings.providers.opencode.enabled);
-      assert.isFalse(settings.providers.droid.enabled);
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
-  );
-
-  it.effect("preserves valid provider flags when another settings field is invalid", () =>
-    Effect.gen(function* () {
-      const serverConfig = yield* ServerConfig.ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      yield* fileSystem.writeFileString(
-        serverConfig.settingsPath,
-        '{"addProjectBaseDirectory":42,"providers":{"cursor":{"enabled":false},"grok":{"enabled":true}}}',
-      );
-      yield* recordProviderUsage("cursor");
-
-      const settings = yield* serverSettings.getSettings;
-
-      assert.isFalse(settings.providers.cursor.enabled);
-      assert.isTrue(settings.providers.grok.enabled);
-      assert.isFalse(settings.providers.opencode.enabled);
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
-  );
-
-  it.effect("restores providers from persisted runtime sessions", () =>
+  it.effect("restores provider history from persisted runtime sessions", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       const sql = yield* SqlClient.SqlClient;
@@ -2559,70 +2566,110 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       const settings = yield* serverSettings.getSettings;
 
-      assert.isFalse(settings.providers.grok.enabled);
-      assert.isTrue(settings.providers.opencode.enabled);
-      assert.isFalse(settings.providers.cursor.enabled);
+      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("opencode")]?.enabled);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("persists explicit disables after a provider has been used", () =>
+  it.effect("restores provider history when no settings file exists", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* recordProviderUsage("grok");
+
+      const settings = yield* serverSettings.getSettings;
+
+      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("persists an explicit disable after provider history enabled the instance", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const grokId = ProviderInstanceId.make("grok");
       yield* recordProviderUsage("grok");
 
-      assert.isTrue((yield* serverSettings.getSettings).providers.grok.enabled);
-
+      assert.isTrue((yield* serverSettings.getSettings).providerInstances[grokId]?.enabled);
       const settings = yield* serverSettings.updateSettings({
-        providers: { grok: { enabled: false } },
+        providerInstances: {
+          [grokId]: {
+            driver: ProviderDriverKind.make("grok"),
+            enabled: false,
+            config: {},
+          },
+        },
       });
-      assert.isFalse(settings.providers.grok.enabled);
+      assert.isFalse(settings.providerInstances[grokId]?.enabled);
 
-      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
-      assert.isFalse(JSON.parse(raw).providers.grok.enabled);
+      const persisted = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));
+      assert.isUndefined(persisted.providers);
+      assert.isFalse(persisted.providerInstances.grok.enabled);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("persists explicit provider enables before their first use", () =>
+  it.effect("persists explicit optional-provider enables before first use", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
 
       yield* serverSettings.updateSettings({
-        providers: {
-          cursor: { enabled: true },
-          droid: { enabled: true },
-          grok: { enabled: true },
-          opencode: { enabled: true },
-        },
+        providerInstances: providerInstancesForDrivers(
+          ["cursor", "droid", "grok", "opencode"],
+          ["cursor", "droid", "grok", "opencode"],
+        ),
       });
       yield* serverSettings.updateSettings({ addProjectBaseDirectory: "~/Development" });
 
-      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
-      const persisted = JSON.parse(raw);
-      assert.isTrue(persisted.providers.cursor.enabled);
-      assert.isTrue(persisted.providers.droid.enabled);
-      assert.isTrue(persisted.providers.grok.enabled);
-      assert.isTrue(persisted.providers.opencode.enabled);
+      const persisted = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));
+      for (const driver of ["cursor", "droid", "grok", "opencode"]) {
+        assert.isTrue(persisted.providerInstances[driver].enabled);
+      }
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("keeps optional providers disabled after a new installation writes settings", () =>
+  it.effect("migrates legacy providers from an invalid file without rewriting it", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const raw = '{"addProjectBaseDirectory":42,"providers":{"codex":{"binaryPath":"/x"}}}';
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, raw);
+
+      const settings = yield* serverSettings.getSettings;
+
+      // The readable provider settings still apply, but the file stays for the user to repair.
+      assert.deepEqual(settings.providerInstances[ProviderInstanceId.make("codex")], {
+        driver: ProviderDriverKind.make("codex"),
+        config: { binaryPath: "/x" },
+      });
+      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), raw);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("skips a disabled provider instance when picking the text generation fallback", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"providerInstances":{"codex":{"driver":"codex","enabled":false,"config":{}}}}',
+      );
+
+      const settings = yield* serverSettings.getSettings;
+
+      assert.equal(settings.textGenerationModelSelection.instanceId, "claudeAgent");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("keeps a default-off provider's new instance disabled and sparse on disk", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
 
-      const initial = yield* serverSettings.getSettings;
-      assert.isFalse(initial.providers.grok.enabled);
-      assert.isFalse(initial.providers.opencode.enabled);
-      assert.isFalse(initial.providers.cursor.enabled);
-      assert.isFalse(initial.providers.droid.enabled);
-
       const next = yield* serverSettings.updateSettings({
-        addProjectBaseDirectory: "~/Development",
         providerInstances: {
           [ProviderInstanceId.make("grok")]: {
             driver: ProviderDriverKind.make("grok"),
@@ -2631,20 +2678,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         },
       });
 
-      assert.isFalse(next.providers.grok.enabled);
-      assert.isFalse(next.providers.opencode.enabled);
-      assert.isFalse(next.providers.cursor.enabled);
-      assert.isFalse(next.providers.droid.enabled);
       const grok = next.providerInstances[ProviderInstanceId.make("grok")];
       assert.isDefined(grok);
       assert.isFalse(resolveProviderInstanceEnabled(grok));
-
-      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
-      const persisted = JSON.parse(raw);
-      assert.isFalse(persisted.providers.cursor.enabled);
-      assert.isFalse(persisted.providers.droid.enabled);
-      assert.isFalse(persisted.providers.grok.enabled);
-      assert.isFalse(persisted.providers.opencode.enabled);
+      const persisted = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));
+      assert.isUndefined(persisted.providers);
       assert.isUndefined(persisted.providerInstances.grok.enabled);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
@@ -2708,54 +2746,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("trims provider path settings when updates are applied", () =>
-    Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-
-      const next = yield* serverSettings.updateSettings({
-        providers: {
-          codex: {
-            binaryPath: "  /opt/homebrew/bin/codex  ",
-            homePath: "   ",
-          },
-          claudeAgent: {
-            binaryPath: "  /opt/homebrew/bin/claude  ",
-          },
-          opencode: {
-            binaryPath: "  /opt/homebrew/bin/opencode  ",
-            serverUrl: "  http://127.0.0.1:4096  ",
-            serverPassword: "  secret-password  ",
-          },
-        },
-      });
-
-      assert.deepEqual(next.providers.codex, {
-        enabled: true,
-        binaryPath: "/opt/homebrew/bin/codex",
-        homePath: "",
-        shadowHomePath: "",
-        launchArgs: "",
-        customModels: [],
-      });
-      assert.deepEqual(next.providers.claudeAgent, {
-        enabled: true,
-        binaryPath: "/opt/homebrew/bin/claude",
-        homePath: "",
-        customModels: [],
-        launchArgs: "",
-        autoCompactWindow: "",
-      });
-      assert.deepEqual(next.providers.opencode, {
-        // OpenCode is disabled by default; this update only touches paths.
-        enabled: false,
-        binaryPath: "/opt/homebrew/bin/opencode",
-        serverUrl: "http://127.0.0.1:4096",
-        serverPassword: "secret-password",
-        customModels: [],
-      });
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
-  );
-
   it.effect("trims observability settings when updates are applied", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
@@ -2778,50 +2768,19 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("defaults blank binary paths to provider executables", () =>
-    Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-
-      const next = yield* serverSettings.updateSettings({
-        providers: {
-          codex: {
-            binaryPath: "   ",
-          },
-          claudeAgent: {
-            binaryPath: "",
-          },
-        },
-      });
-
-      assert.equal(next.providers.codex.binaryPath, "codex");
-      assert.equal(next.providers.claudeAgent.binaryPath, "claude");
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
-  );
-
-  it.effect("writes non-default settings and explicit optional provider defaults to disk", () =>
+  it.effect("writes only non-default settings to disk", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       const serverConfig = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
-      const next = yield* serverSettings.updateSettings({
+      yield* serverSettings.updateSettings({
         addProjectBaseDirectory: "~/Development",
         observability: {
           otlpTracesUrl: "http://localhost:4318/v1/traces",
           otlpMetricsUrl: "http://localhost:4318/v1/metrics",
         },
-        providers: {
-          codex: {
-            binaryPath: "/opt/homebrew/bin/codex",
-          },
-          opencode: {
-            serverUrl: "http://127.0.0.1:4096",
-            serverPassword: "secret-password",
-          },
-        },
         automaticGitFetchInterval: Duration.seconds(10),
       });
-
-      assert.equal(next.providers.codex.binaryPath, "/opt/homebrew/bin/codex");
 
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
       assert.deepEqual(JSON.parse(raw), {
@@ -2829,25 +2788,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         observability: {
           otlpTracesUrl: "http://localhost:4318/v1/traces",
           otlpMetricsUrl: "http://localhost:4318/v1/metrics",
-        },
-        providers: {
-          codex: {
-            binaryPath: "/opt/homebrew/bin/codex",
-          },
-          cursor: {
-            enabled: false,
-          },
-          droid: {
-            enabled: false,
-          },
-          grok: {
-            enabled: false,
-          },
-          opencode: {
-            enabled: false,
-            serverUrl: "http://127.0.0.1:4096",
-            serverPassword: "secret-password",
-          },
         },
         backgroundActivity: {
           schemaVersion: 1,

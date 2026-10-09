@@ -6,7 +6,7 @@ import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import {
   ProviderVersionCache,
   type ProviderMaintenanceResolutionContext,
-} from "../providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   classifyOmpInstallation,
   OMP_HOMEBREW_FORMULA_URL,

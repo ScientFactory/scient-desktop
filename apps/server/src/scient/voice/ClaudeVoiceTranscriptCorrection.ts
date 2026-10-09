@@ -14,8 +14,8 @@ import {
   resolveClaudeCatalogEffort,
   scopeClaudeModelCatalog,
 } from "../../provider/ClaudeModelCatalog.ts";
-import { toJsonSchemaObject } from "../../textGeneration/TextGenerationUtils.ts";
-import type { ProviderVoiceTranscriptCorrection } from "../../provider/ProviderDriver.ts";
+import { toJsonSchemaObject } from "@t3tools/provider-core/server/textGenerationUtils";
+import type { ProviderVoiceTranscriptCorrection } from "../../provider/ScientProviderInstanceSeams.ts";
 import {
   buildVoiceTranscriptCorrectionPrompt,
   validateVoiceTranscriptCorrectionOutput,

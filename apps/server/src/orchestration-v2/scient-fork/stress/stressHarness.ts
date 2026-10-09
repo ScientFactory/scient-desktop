@@ -8,6 +8,7 @@ import * as Stream from "effect/Stream";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { layer as resourceCleanupLayer } from "../../ResourceCleanupService.ts";
 import { TerminalManager } from "../../../terminal/Manager.ts";
+import { PreviewManager } from "../../../preview/Manager.ts";
 import { ServerConfig } from "../../../config.ts";
 import { ConversationImporter } from "../../../scient/conversationImport/ConversationImporter.ts";
 import {
@@ -40,7 +41,12 @@ export const inertRegistry = layerFromAdapters([
 ]);
 export const runtimeOptions = {
   resourceCleanupLayer: resourceCleanupLayer.pipe(
-    Layer.provide(Layer.mock(TerminalManager, { close: () => Effect.void })),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(TerminalManager, { close: () => Effect.void }),
+        Layer.mock(PreviewManager, { close: () => Effect.void }),
+      ),
+    ),
   ),
 };
 const runtime = nativeImportRuntimeTestLayer(inertRegistry, runtimeOptions).pipe(

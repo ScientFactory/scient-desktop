@@ -14,7 +14,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
-import type { IdAllocatorV2DeriveShape } from "../IdAllocator.ts";
+import type { IdAllocatorV2DeriveShape } from "@t3tools/provider-core/server/IdAllocator";
 import { queuedRunsInDeliveryOrder } from "../QueuedRunOrder.ts";
 
 /** Why a held legacy entry cannot be admitted, or undefined when it can. Its source stays intact. */

@@ -14,7 +14,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 
-import type { ProviderAdapterV2Event } from "../ProviderAdapter.ts";
+import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import type {
   ProviderEventRouteIdentity,
   ProviderEventRoutingState,

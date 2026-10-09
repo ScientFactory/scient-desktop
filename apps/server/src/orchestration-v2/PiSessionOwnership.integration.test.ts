@@ -3,10 +3,15 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  MessageId,
+  NodeId,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
+  RunAttemptId,
+  RunId,
   ThreadId,
+  type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -22,14 +27,14 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 import * as Config from "../config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
+import * as ScientTestProviderHost from "./testkit/ScientTestProviderHost.ts";
 import * as McpRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../provider/testUtils/providerRegistryMock.ts";
-import { makePiAdapterV2 } from "./Adapters/PiAdapterV2.ts";
-import { makePiRpcConnection } from "./Adapters/PiRpc.ts";
+import { makePiAdapterV2, makePiRpcConnection } from "@t3tools/provider-pi/testing";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as Ingestor from "./ProviderEventIngestor.ts";
 import { layerSingle as makeSingleLayer } from "./ProviderAdapterRegistry.ts";
@@ -54,13 +59,14 @@ const stores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
   Layer.provide(SqlitePersistenceMemory),
 );
 const sink = EventSink.layer.pipe(Layer.provide(Layer.merge(stores, SqlitePersistenceMemory)));
-const outer = Layer.mergeAll(
+const fixtureServices = Layer.mergeAll(
   Layer.merge(NodeServices.layer, ThreadCommandExecutor.layer),
   IdAllocator.layer,
   Config.layerTest(process.cwd(), { prefix: "pi-native-owner-" }).pipe(
     Layer.provide(Layer.merge(NodeServices.layer, ThreadCommandExecutor.layer)),
   ),
 );
+const outer = ScientTestProviderHost.layer.pipe(Layer.provideMerge(fixtureServices));
 
 const withNativePi = <A, E, R>(
   run: (h: {
@@ -84,7 +90,6 @@ const withNativePi = <A, E, R>(
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const config = yield* Config.ServerConfig;
       const allocator = yield* IdAllocator.IdAllocatorV2;
       const nativeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const processes: number[] = [];
@@ -133,14 +138,10 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
       const publicationReleased = yield* Deferred.make<void>();
       let startupHeld = false;
       let publicationHeld = false;
-      const adapter = makePiAdapterV2({
+      const adapter = yield* makePiAdapterV2({
         instanceId,
         settings: { enabled: true, binaryPath: binary, launchArgs: "", customModels: [] },
         environment: { PI_OWNER_FILE: file, PI_OWNER_LOG: log },
-        spawner,
-        fileSystem: fs,
-        serverConfig: config,
-        idAllocator: allocator,
         makeConnection: (input) =>
           makePiRpcConnection(input).pipe(
             Effect.tap(() =>
@@ -156,7 +157,7 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
               );
             }),
           ),
-      });
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
       const controlledSink = Layer.effect(
         EventSink.EventSinkV2,
         Effect.gen(function* () {
@@ -394,8 +395,9 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
       withNativePi((h) =>
         Effect.gen(function* () {
           const first = yield* h.open("pi-session", "pi-owner-thread", h.file);
-          yield* first.ensureThread({
-            threadId: ThreadId.make("pi-owner-thread"),
+          const ownerThreadId = ThreadId.make("pi-owner-thread");
+          const providerThread = yield* first.ensureThread({
+            threadId: ownerThreadId,
             modelSelection: selection,
             runtimePolicy: policy,
           });
@@ -408,17 +410,67 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
             1,
           );
           yield* h.manager.close(ProviderSessionId.make("pi-session"));
-          assert.isTrue(
-            Exit.isFailure(
-              yield* first
-                .ensureThread({
-                  threadId: ThreadId.make("pi-owner-thread"),
-                  modelSelection: selection,
-                  runtimePolicy: policy,
-                })
-                .pipe(Effect.exit),
-            ),
-          );
+          const staleEnsure = yield* first
+            .ensureThread({
+              threadId: ownerThreadId,
+              modelSelection: selection,
+              runtimePolicy: policy,
+            })
+            .pipe(Effect.exit, Effect.timeoutOption("2 seconds"));
+          const staleExit = Option.getOrThrow(staleEnsure);
+          assert.isTrue(Exit.isFailure(staleExit));
+          const appThread = {
+            id: ownerThreadId,
+            projectId: ProjectId.make("pi-owner-project"),
+            title: "Pi ownership",
+            providerInstanceId: instanceId,
+            modelSelection: selection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: {
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: ownerThreadId,
+            },
+            forkedFrom: null,
+            createdAt: providerThread.createdAt,
+            updatedAt: providerThread.updatedAt,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+            createdBy: "user",
+            creationSource: "web",
+          } satisfies OrchestrationV2AppThread;
+          const requestCountAfterClose = (yield* h.requests).length;
+          const staleStart = yield* first
+            .startTurn({
+              appThread,
+              threadId: ownerThreadId,
+              runId: RunId.make("pi-stale-start-run"),
+              runOrdinal: 1,
+              providerTurnOrdinal: 1,
+              attemptId: RunAttemptId.make("pi-stale-start-attempt"),
+              rootNodeId: NodeId.make("pi-stale-start-node"),
+              providerThread,
+              message: {
+                messageId: MessageId.make("pi-stale-start-message"),
+                text: "This must not reach the closed Pi process",
+                attachments: [],
+                createdBy: "user",
+                creationSource: "web",
+              },
+              modelSelection: selection,
+              runtimePolicy: policy,
+            })
+            .pipe(Effect.exit, Effect.timeoutOption("2 seconds"));
+          const staleStartExit = Option.getOrThrow(staleStart);
+          assert.isTrue(Exit.isFailure(staleStartExit));
+          assert.lengthOf(yield* h.requests, requestCountAfterClose);
           const replacement = yield* h.open("pi-other-session", "pi-other-thread", h.file);
           yield* replacement.ensureThread({
             threadId: ThreadId.make("pi-other-thread"),

@@ -5,8 +5,9 @@ import {
   managedRuntimeTargetKey,
   resolveReviewedPiArtifact,
 } from "@scientfactory/provider-runtime";
-import type { PiSettings } from "@t3tools/contracts";
+import type { PiSettings } from "@t3tools/provider-pi/settings";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -36,8 +37,9 @@ export const makePiManagedRuntimeResolution = Effect.fn("PiManagedRuntime.makeRe
     readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
     readonly managedInstallationAllowed: boolean;
   }): Effect.fn.Return<PiManagedRuntimeResolution, never> {
-    const platform = yield* HostProcessPlatform;
-    const arch = yield* HostProcessArchitecture;
+    const hostContext = yield* Effect.context<never>();
+    const platform = Context.get(hostContext, HostProcessPlatform);
+    const arch = Context.get(hostContext, HostProcessArchitecture);
     const target = detectTargetSafely({ platform, arch });
     const artifact = target ? resolveReviewedPiArtifact(target) : undefined;
     const targetLabel = target ? managedRuntimeTargetKey(target) : `${platform}-${arch}`;

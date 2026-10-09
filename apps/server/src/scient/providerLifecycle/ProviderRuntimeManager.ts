@@ -28,7 +28,7 @@ import * as Semaphore from "effect/Semaphore";
 import type {
   ProviderManagedRuntimeActions,
   ProviderManagedRuntimeProgress,
-} from "../../provider/ProviderDriver.ts";
+} from "../../provider/ScientProviderInstanceSeams.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSessionManager.ts";
 import { ProviderActivity } from "./ProviderActivity.ts";

@@ -22,7 +22,6 @@ import {
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -40,6 +39,7 @@ import type { AcpProtocolLogEvent } from "effect-acp/protocol";
 import * as Config from "../config.ts";
 import { createDeterministicAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
+import * as ScientTestProviderHost from "./testkit/ScientTestProviderHost.ts";
 import { makeDroidAcpRuntime } from "../provider/acp/DroidAcpSupport.ts";
 import { scriptedDroid } from "../provider/testUtils/scriptedDroid.ts";
 import { AcpTransportError } from "effect-acp/errors";
@@ -56,14 +56,14 @@ import {
   ProviderAdapterTurnStartError,
   type ProviderAdapterV2SessionRuntime,
   type ProviderAdapterV2TurnInput,
-} from "./ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
+import { layer as idAllocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const decodeDroidSettings = Schema.decodeEffect(DroidSettings);
 const decodeMessageContext = Schema.decodeUnknownSync(OrchestrationMessageContext);
@@ -83,13 +83,14 @@ const decodeNativePrompt = Schema.decodeUnknownSync(
   }),
 );
 
-const outer = Layer.mergeAll(
+const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
   idAllocatorLayer,
   Config.layerTest(process.cwd(), { prefix: "droid-steer-preservation-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
 );
+const outer = ScientTestProviderHost.layer.pipe(Layer.provideMerge(fixtureServices));
 const userText = (text: string) =>
   text.match(/<user_request>\n([\s\S]*)\n<\/user_request>$/u)?.[1] ?? text;
 const decodePhase = Schema.decodeSync(
@@ -304,14 +305,10 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
         })),
       ),
     childProcessSpawner: spawner,
-    crypto: yield* Crypto.Crypto,
-    fileSystem: fs,
-    serverConfig: config,
-    idAllocator: yield* IdAllocatorV2,
     selfInvocation: yield* resolveSelfInvocation(),
     onAuthenticationRejected: () => Effect.die("Synthetic Droid must not authenticate"),
   } satisfies DroidAdapterV2Options;
-  const nativeAdapter = makeDroidAdapterV2(adapterOptions);
+  const nativeAdapter = yield* makeDroidAdapterV2(adapterOptions);
   const terminalProbes: Array<{
     attemptId: RunAttemptId;
     status: Parameters<NonNullable<ProviderAdapterV2SessionRuntime["droidSteerTerminalHeld"]>>[1];
@@ -361,7 +358,7 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
         })),
       ),
   };
-  const otherAdapter = makeDroidAdapterV2({
+  const otherAdapter = yield* makeDroidAdapterV2({
     ...adapterOptions,
     instanceId: otherSelection.instanceId,
   });

@@ -25,7 +25,7 @@ import * as Semaphore from "effect/Semaphore";
 import {
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
-} from "../SubagentProjection.ts";
+} from "@t3tools/provider-core/server/subagentProjection";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -38,11 +38,11 @@ import * as Exit from "effect/Exit";
 import { makeNativeEventQueue, type NativeEventQueueStorage } from "./NativeEventQueue.ts";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as ProviderAdapter from "../ProviderAdapter.ts";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { turnStartErrorKeepingReceipt } from "../scient-provider/NativeTurnReceipts.ts";
-import type { IdAllocatorV2 } from "../IdAllocator.ts";
-import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
-import { makeProviderFailure } from "../ProviderFailure.ts";
+import type { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
+import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/continuationRequests";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 
 const encodeNativeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 

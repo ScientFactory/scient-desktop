@@ -1,4 +1,5 @@
 import { ScientAgentSettings, type ServerProvider, type ServerSettings } from "@t3tools/contracts";
+import type { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -21,37 +22,35 @@ import { makeScientAgentManagedRuntimeResolution } from "../../scient/providerLi
 import { makeOmpTextGeneration } from "../../textGeneration/OmpTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeOmpAdapterV2 } from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
-import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
-import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderContinuationRequests } from "@t3tools/provider-core/server/continuationRequests";
 import {
   checkOmpProviderStatus,
   makePendingOmpProvider,
   type OmpProviderStatus,
 } from "../OmpProvider.ts";
 import { ProviderEventLoggers } from "../ProviderEventLoggers.ts";
-import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { makeOmpCustomModelsClientFactory } from "../omp/OmpCustomModels.ts";
 import type { OmpExecutableGate } from "../omp/OmpExecutableGate.ts";
 import { sweepStaleOmpExtensionFiles } from "../omp/OmpExtensionBootstrap.ts";
 import { OMP_ISOLATED_ARGS } from "../omp/OmpRpcProcess.ts";
-import {
-  defaultProviderContinuationIdentity,
-  type ProviderDriver,
-  type ProviderInstance,
-} from "../ProviderDriver.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
+import { defaultProviderContinuationIdentity } from "@t3tools/provider-core/server/driver";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   haveProviderSnapshotSettingsChanged,
   type ProviderSnapshotSettings,
-} from "../providerUpdateSettings.ts";
+} from "@t3tools/provider-core/server/snapshotSettings";
 import { scientAgentProcessEnvironment, scientAgentTarget } from "../scient/ScientAgentTarget.ts";
-import { withInstanceIdentity } from "./instanceIdentity.ts";
+import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
+import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 
 const DRIVER_KIND = scientAgentTarget.driverKind;
 const decodeSettings = Schema.decodeSync(ScientAgentSettings);
 
 export type ScientAgentDriverEnv =
+  | ProviderHost
   | BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
@@ -73,7 +72,7 @@ export type ScientAgentDriverEnv =
  * One instance for now. Managed installation uses qualified ScientFactory
  * releases; a configured executable remains usable before the first release.
  */
-export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentDriverEnv> = {
+export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, ScientAgentDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: scientAgentTarget.displayName, supportsMultipleInstances: false },
   configSchema: ScientAgentSettings,
@@ -271,6 +270,6 @@ export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentD
         textGeneration,
         connectionActions,
         managedRuntimeActions: managedRuntime.actions,
-      } satisfies ProviderInstance;
+      } satisfies ScientProviderInstance;
     }),
 };

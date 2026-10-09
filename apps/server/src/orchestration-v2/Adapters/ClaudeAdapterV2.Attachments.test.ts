@@ -20,7 +20,7 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   DEFAULT_CLAUDE_SETTINGS,
   CLAUDE_TEST_MODEL_SELECTION,

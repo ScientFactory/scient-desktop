@@ -21,7 +21,8 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
-  type ProviderReplayEntry,
+  ProviderReplayEntry,
+  type ProviderReplayTranscript,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -37,21 +38,24 @@ import * as Stream from "effect/Stream";
 import * as Exit from "effect/Exit";
 import { TestClock } from "effect/testing";
 import { describe } from "vite-plus/test";
+import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { buildOpenCodeRuntimeGuidance } from "../../provider/OpenCodeDriverComposition.ts";
 
 import type {
   ProviderAdapterV2Event,
   ProviderAdapterV2SessionRuntime,
-} from "../ProviderAdapter.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
-import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
-import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
-import { t3OrchestrationSystemPrompt } from "../../provider/T3OrchestrationInstructions.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
-import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
-import { OPENCODE_PROVIDER } from "./OpenCodeAdapterV2.ts";
-import { OPENCODE_2_STILL_STOPPING, t3McpServerName } from "./OpenCode2AdapterV2.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/continuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import {
+  OPENCODE_2_STILL_STOPPING,
+  OPENCODE_PROVIDER,
+  t3McpServerName,
+} from "@t3tools/provider-opencode/testing";
 import { openCode2ReplayRuntime } from "./OpenCode2AdapterV2.testkit.ts";
 
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
@@ -600,10 +604,16 @@ describe("OpenCode2 adapter", () => {
       ]);
       const receipts: OrchestrationV2ProviderTurn[] = [];
       const terminal = yield* Deferred.make<void>();
+      const confirmedBoundary = yield* Deferred.make<void>();
       yield* runtime.events.pipe(
         Stream.runForEach((entry) =>
           Effect.gen(function* () {
-            if (entry.type === "provider_turn.updated") receipts.push(entry.providerTurn);
+            if (entry.type === "provider_turn.updated") {
+              receipts.push(entry.providerTurn);
+              if (entry.providerTurn.nativeTurnRef?.strength === "strong") {
+                yield* Deferred.succeed(confirmedBoundary, undefined);
+              }
+            }
             if (entry.type === "turn.terminal") yield* Deferred.succeed(terminal, undefined);
           }),
         ),
@@ -611,6 +621,9 @@ describe("OpenCode2 adapter", () => {
       );
       yield* runtime.startTurn(turnInput(thread));
       yield* Deferred.await(terminal);
+      // The native execution can finish before the session.prompt response
+      // confirms the exact message id; fork only after that receipt arrives.
+      yield* Deferred.await(confirmedBoundary);
       const confirmed = receipts.at(-1);
       assert.ok(confirmed);
       assert.equal(confirmed.nativeTurnRef?.strength, "strong");
@@ -663,7 +676,7 @@ describe("OpenCode2 adapter", () => {
         );
         const server = "t3-code-thread_opencode2-adapter";
         const instructions = [
-          buildScientAwareness(external ? undefined : capabilities),
+          buildOpenCodeRuntimeGuidance(external ? undefined : capabilities),
           buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
           t3OrchestrationSystemPrompt(!external),
         ]
@@ -1775,16 +1788,26 @@ describe("OpenCode2 adapter", () => {
         event("session.execution.succeeded", { sessionID: SESSION }),
       ]);
       let terminalCount = 0;
+      const secondInput = secondTurn(thread);
+      let secondAccepted = false;
       const observed = yield* runtime.events.pipe(
         Stream.takeUntil((event) => {
           if (event.type === "turn.terminal") terminalCount += 1;
-          return terminalCount === 2;
+          if (
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.runAttemptId === secondInput.attemptId &&
+            event.providerTurn.nativeAcceptance === "accepted" &&
+            event.providerTurn.acceptedAt !== undefined
+          ) {
+            secondAccepted = true;
+          }
+          return terminalCount === 2 && secondAccepted;
         }),
         Stream.runCollect,
         Effect.forkScoped,
       );
       yield* runtime.startTurn(turnInput(thread)).pipe(Effect.ignore);
-      yield* runtime.startTurn(secondTurn(thread));
+      yield* runtime.startTurn(secondInput);
       const events = yield* Fiber.join(observed);
       const turns = events.flatMap((event) =>
         event.type === "provider_turn.updated" ? [event.providerTurn] : [],

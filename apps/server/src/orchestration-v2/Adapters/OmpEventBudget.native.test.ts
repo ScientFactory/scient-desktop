@@ -17,8 +17,8 @@ import { nativeOmpSession } from "../../provider/testUtils/nativeOmpSession.ts";
 import { nativeOmpOrchestration } from "../../provider/testUtils/nativeOmpOrchestration.ts";
 import { scriptedOmpRpc } from "../../provider/testUtils/scriptedOmpRpc.ts";
 import { ompTarget } from "../../provider/omp/OmpTarget.ts";
-import { layer as allocatorLayer } from "../IdAllocator.ts";
-import type { ProviderAdapterV2Event } from "../ProviderAdapter.ts";
+import { layer as allocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
+import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 
 const encodeEventJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 

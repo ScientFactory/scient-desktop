@@ -30,6 +30,16 @@ const ALL_MCP_CAPABILITIES = [
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
+const MCP_CAPABILITY_SET: ReadonlySet<string> = new Set(ALL_MCP_CAPABILITIES);
+
+/** Decode package capability names into the grants recognized by the Scient MCP host. */
+export const toMcpCapabilities = (capabilities: ReadonlySet<string>): ReadonlySet<McpCapability> =>
+  new Set(
+    Array.from(capabilities).filter((capability): capability is McpCapability =>
+      MCP_CAPABILITY_SET.has(capability),
+    ),
+  );
+
 /** A provider session T3 Code launched for one thread. */
 export interface McpThreadCaller {
   readonly threadId: ThreadId;

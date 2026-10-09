@@ -33,13 +33,13 @@ import { OrchestrationEffectWorkerV2 } from "../../EffectWorker.ts";
 import { ProjectionStoreV2 } from "../../ProjectionStore.ts";
 import { layerWithRegistry } from "../../testkit/ProviderReplayHarness.ts";
 import { makeReplayServerConfig } from "../../testkit/ProviderReplayHarness.ts";
-import { layer as allocatorLayer } from "../../IdAllocator.ts";
+import { layer as allocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
 import { layerFromDrivers } from "../../ProviderAdapterRegistry.ts";
 import * as CodexAdapterV2 from "../../Adapters/CodexAdapterV2.ts";
-import { ProviderAdapterOpenSessionError } from "../../ProviderAdapter.ts";
-import { makeProviderReplayGate } from "../../testkit/ProviderReplayGate.testkit.ts";
-import { checkpointWorkspace } from "../../testkit/ReplayFixtureWorkspace.ts";
-import { providerMessageTextWithAttachmentPaths } from "../../AttachmentPrompt.ts";
+import { ProviderAdapterOpenSessionError } from "@t3tools/provider-core/server/ProviderAdapter";
+import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
 import { ConversationForkService } from "../ConversationForkService.ts";
 import { codexReplayPreamble, makeCodexReplayTurn } from "./codexReplayFixture.ts";
 import { runtimeOptions } from "./stressHarness.ts";
@@ -106,7 +106,8 @@ it.live.each([false, true])(
         const sentPrompt = providerMessageTextWithAttachmentPaths({
           text: "Partial answer",
           attachments,
-          attachmentsDir: config.attachmentsDir,
+          resolveAttachmentPath: (attachment) =>
+            resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment }),
         });
         const chunks = ["a", "bc", "\n\n", "```ts\n", "const x=1;", "\n```", "\n\n", "tail"];
         const gate = makeProviderReplayGate(Array.from({ length: 9 }, (_, n) => `cut-${n}`));

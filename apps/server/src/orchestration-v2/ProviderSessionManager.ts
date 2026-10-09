@@ -57,12 +57,12 @@ import {
 } from "../observability/Metrics.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import * as McpProviderSession from "../mcp/McpProviderSession.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import type { McpThreadCaller } from "../mcp/McpInvocationContext.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import {
   type ProviderTextSnapshotError,
@@ -76,7 +76,7 @@ import {
   type ProviderTextSnapshotSubscription,
   type ProviderAdapterV2SessionRuntime,
   type ProviderAdapterV2InitiatedWorkIdentity,
-} from "./ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -313,6 +313,7 @@ interface ClosingSessionEntry {
   entry: LiveSessionEntry;
   readonly reason: ProviderSessionReleaseReason;
   readonly operation: Fiber.Fiber<Exit.Exit<void, unknown>, never>;
+  readonly firstRecordsAttempt: Deferred.Deferred<Exit.Exit<void, unknown>>;
   state: "pending" | "failed";
 }
 
@@ -324,6 +325,7 @@ interface ReleaseEntryInput {
   readonly onlyIfIdleGeneration?: number;
   readonly gracefulSubscribers?: boolean;
   readonly expectedRuntime?: ProviderAdapterV2SessionRuntime;
+  readonly onFirstRecordsAttempt?: (exit: Exit.Exit<void, unknown>) => Effect.Effect<void>;
 }
 
 type ProviderSessionEventSignal =
@@ -487,18 +489,46 @@ export const layerWithOptions = (
             cause,
           }),
         );
-      const closeScopeWithin = (scope: Scope.Closeable, context: { readonly reason: string }) =>
-        Scope.close(scope, Exit.void).pipe(
-          Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
-          Effect.flatMap((closed) =>
-            Option.isSome(closed)
-              ? Effect.void
-              : Effect.logWarning(
-                  "orchestration-v2.provider-session-parent-close-timeout",
+      const observeLateScopeClose = (
+        closing: Fiber.Fiber<Exit.Exit<void, never>, never>,
+        context: { readonly providerSessionId?: ProviderSessionId; readonly reason: string },
+      ) =>
+        Fiber.join(closing).pipe(
+          Effect.flatMap((exit) =>
+            Exit.isFailure(exit)
+              ? Effect.logWarning("orchestration-v2.provider-session-scope-close-failed", {
+                  ...context,
+                  cause: exit.cause,
+                })
+              : Effect.logInfo(
+                  "orchestration-v2.provider-session-scope-close-completed-late",
                   context,
                 ),
           ),
+          Effect.forkDetach,
         );
+      const closeScopeWithin = (
+        scope: Scope.Closeable,
+        context: { readonly providerSessionId?: ProviderSessionId; readonly reason: string },
+      ) =>
+        Effect.gen(function* () {
+          const closing = yield* Scope.close(scope, Exit.void).pipe(
+            Effect.exit,
+            Effect.forkDetach({ startImmediately: true }),
+          );
+          const result = yield* Fiber.join(closing).pipe(
+            Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+          );
+          if (Option.isNone(result)) {
+            yield* Effect.logWarning("orchestration-v2.provider-session-scope-close-timeout", {
+              ...context,
+              timeoutMs: RELEASE_SCOPE_CLOSE_TIMEOUT_MS,
+            });
+            yield* observeLateScopeClose(closing, context);
+            return;
+          }
+          if (Exit.isFailure(result.value)) return yield* Effect.failCause(result.value.cause);
+        });
 
       // Ctrl+C, or a stop that signals the whole process group, reaches the
       // provider CLIs with the server. They report their own background work
@@ -541,14 +571,20 @@ export const layerWithOptions = (
         Scope.Closeable,
         Fiber.Fiber<Exit.Exit<void, never>, never>
       >();
+      const timedOutOwnedScopeCloses = new WeakSet<object>();
       const parentScopeOwners = new WeakMap<
         Scope.Closeable,
         { readonly scope: Scope.Closeable; retiring: boolean; closed: boolean }
       >();
       // Scope.close marks a scope closed before its finalizers finish. All exact
       // owners must join the same physical close before releasing Pi file leases.
-      const closeOwnedScope = (scope: Scope.Closeable) =>
-        Effect.uninterruptibleMask((restore) =>
+      const closeOwnedScope = (
+        scope: Scope.Closeable,
+        context: { readonly providerSessionId?: ProviderSessionId; readonly reason: string } = {
+          reason: "session_scope_close",
+        },
+      ) =>
+        Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
             let closing = ownedScopeCloses.get(scope);
             if (closing === undefined) {
@@ -566,8 +602,32 @@ export const layerWithOptions = (
               );
               ownedScopeCloses.set(scope, closing);
             }
-            const result = yield* restore(Fiber.join(closing));
-            if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
+            // An interrupted open reaches this cleanup while its caller already
+            // has an interruption exit to preserve. Treat interruption of only
+            // this bounded join as a timeout; the caller's open/close waiter
+            // still observes its original interruption, and the exact physical
+            // close remains owned until its finalizer releases leases.
+            const wait = yield* Effect.interruptible(
+              Effect.exit(
+                Fiber.join(closing).pipe(Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS)),
+              ),
+            );
+            if (Exit.isFailure(wait)) {
+              if (!Cause.hasInterruptsOnly(wait.cause)) return yield* Effect.failCause(wait.cause);
+            }
+            const result = Exit.isFailure(wait) ? Option.none() : wait.value;
+            if (Option.isNone(result)) {
+              if (!timedOutOwnedScopeCloses.has(closing)) {
+                timedOutOwnedScopeCloses.add(closing);
+                yield* Effect.logWarning("orchestration-v2.provider-session-scope-close-timeout", {
+                  ...context,
+                  timeoutMs: RELEASE_SCOPE_CLOSE_TIMEOUT_MS,
+                });
+                yield* observeLateScopeClose(closing, context);
+              }
+              return;
+            }
+            if (Exit.isFailure(result.value)) return yield* Effect.failCause(result.value.cause);
           }),
         );
       // SCIENT-FORK:END
@@ -633,7 +693,7 @@ export const layerWithOptions = (
         threadId: ThreadId,
         providerInstanceId: ProviderInstanceId,
         adapter: Pick<
-          import("./ProviderAdapter.ts").ProviderAdapterV2Shape,
+          import("@t3tools/provider-core/server/ProviderAdapter").ProviderAdapterV2Shape,
           "driver" | "mcpSessionInjection"
         >,
       ): Effect.Effect<PreparedMcpCredential> =>
@@ -1072,12 +1132,18 @@ export const layerWithOptions = (
             )
               return;
             const begin = yield* Deferred.make<void>();
+            const firstRecordsAttempt = yield* Deferred.make<Exit.Exit<void, unknown>>();
             let captured = candidate;
             let releasedAt = yield* DateTime.now;
             const operation = yield* Deferred.await(begin).pipe(
               Effect.andThen(
                 Effect.suspend(() =>
-                  closeRetiringEntry(captured, { ...input, releasedAt }).pipe(
+                  closeRetiringEntry(captured, {
+                    ...input,
+                    releasedAt,
+                    onFirstRecordsAttempt: (exit) =>
+                      Deferred.succeed(firstRecordsAttempt, exit).pipe(Effect.asVoid),
+                  }).pipe(
                     withMetrics({
                       counter: providerSessionsTotal,
                       attributes: {
@@ -1091,16 +1157,21 @@ export const layerWithOptions = (
               ),
               Effect.exit,
               Effect.tap((result) =>
-                Effect.sync(() => {
-                  const current = closingSessions.get(key);
-                  if (
-                    current?.entry.runtime !== captured.runtime ||
-                    current.entry.scope !== captured.scope
-                  )
-                    return;
-                  if (Exit.isFailure(result)) current.state = "failed";
-                  else closingSessions.delete(key);
-                }),
+                Deferred.succeed(firstRecordsAttempt, result).pipe(
+                  Effect.asVoid,
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      const current = closingSessions.get(key);
+                      if (
+                        current?.entry.runtime !== captured.runtime ||
+                        current.entry.scope !== captured.scope
+                      )
+                        return;
+                      if (Exit.isFailure(result)) current.state = "failed";
+                      else closingSessions.delete(key);
+                    }),
+                  ),
+                ),
               ),
               Effect.forkDetach({ startImmediately: true }),
             );
@@ -1109,6 +1180,7 @@ export const layerWithOptions = (
               reason: input.reason,
               state: "pending",
               operation,
+              firstRecordsAttempt,
             };
             const reserveMutation = Ref.modify(sessions, (current) => {
               const existing = current.get(key);
@@ -1192,6 +1264,13 @@ export const layerWithOptions = (
                 providerSessionId: input.providerSessionId,
                 reason: input.reason,
                 cause: invalidation.cause,
+              });
+            const firstRecords = yield* restore(Deferred.await(owner.firstRecordsAttempt));
+            if (Exit.isFailure(firstRecords))
+              return yield* new ProviderSessionReleaseError({
+                providerSessionId: input.providerSessionId,
+                reason: input.reason,
+                cause: firstRecords.cause,
               });
             return yield* restore(awaitClosingEntry(owner));
           }),
@@ -2564,7 +2643,12 @@ export const layerWithOptions = (
                                 prepared.issued,
                               ),
                         ),
-                        Effect.ensuring(closeOwnedScope(sessionScope)),
+                        Effect.ensuring(
+                          closeOwnedScope(sessionScope, {
+                            providerSessionId: input.providerSessionId,
+                            reason: "open_failed",
+                          }),
+                        ),
                         Effect.ignoreCause({ log: true }),
                       );
                       const openingOwner = {
@@ -2584,7 +2668,12 @@ export const layerWithOptions = (
                                 expectedRuntime: openedRuntime,
                                 reason: "server_shutdown",
                               }).pipe(
-                                Effect.ensuring(closeOwnedScope(sessionScope)),
+                                Effect.ensuring(
+                                  closeOwnedScope(sessionScope, {
+                                    providerSessionId: input.providerSessionId,
+                                    reason: "server_shutdown",
+                                  }),
+                                ),
                                 Effect.ignoreCause({ log: true }),
                               )
                             : cleanupOpening;

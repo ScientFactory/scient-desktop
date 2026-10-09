@@ -32,14 +32,17 @@ import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 
 import { customModelProviderId, type ResolvedModelConnection } from "../../customModels.ts";
-import { clearMcpProviderSession, setMcpProviderSession } from "../../mcp/McpProviderSession.ts";
+import {
+  clearMcpProviderSession,
+  setMcpProviderSession,
+} from "@t3tools/provider-core/server/mcpSession";
 import { nativeOmpOrchestration } from "../testUtils/nativeOmpOrchestration.ts";
 import { McpSessionRegistry } from "../../mcp/McpSessionRegistry.ts";
 import * as ServerConfig from "../../config.ts";
-import { layer as allocatorLayer } from "../../orchestration-v2/IdAllocator.ts";
+import { layer as allocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSessionManager.ts";
 import { nativeOmpSession } from "../testUtils/nativeOmpSession.ts";
-import type { ProviderAdapterV2Event } from "../../orchestration-v2/ProviderAdapter.ts";
+import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import { SCIENT_CORE_AWARENESS } from "../ScientAwareness.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
 import { writeOmpExtensionFiles } from "./OmpExtensionBootstrap.ts";

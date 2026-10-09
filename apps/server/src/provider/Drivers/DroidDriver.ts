@@ -23,9 +23,9 @@ import { customModelDiscoverySnapshot } from "../../customModelCapabilities.ts";
 import { makeDroidTextGeneration } from "../../textGeneration/DroidTextGeneration.ts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import { makeDroidAdapterV2 } from "../../orchestration-v2/Adapters/DroidAdapterV2.ts";
-import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
-import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
-import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
+import { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderContinuationRequests } from "@t3tools/provider-core/server/continuationRequests";
+import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeNativeSessionShutdown } from "../NativeSessionShutdown.ts";
 import {
@@ -35,13 +35,12 @@ import {
   probeDroidCliVersion,
 } from "../DroidProvider.ts";
 import { ProviderEventLoggers } from "../ProviderEventLoggers.ts";
-import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import {
   defaultProviderContinuationIdentity,
-  type ProviderDriver,
   type ProviderInstance,
-} from "../ProviderDriver.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
+} from "@t3tools/provider-core/server/driver";
+import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   agentProcessEnvironment,
   withoutInheritedEnvironment,
@@ -50,12 +49,12 @@ import {
   makeCachedProviderMaintenanceResolution,
   makeManualOnlyProviderMaintenanceCapabilities,
   resolveProviderMaintenanceCapabilitiesEffect,
-} from "../providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import { droidMaintenance, withDroidReleaseVersion } from "../piDroidMaintenance.ts";
 import {
   haveProviderSnapshotSettingsChanged,
   type ProviderSnapshotSettings,
-} from "../providerUpdateSettings.ts";
+} from "@t3tools/provider-core/server/snapshotSettings";
 import {
   hasDroidApiKeyEnvironment,
   type DroidAccountCapabilities,
@@ -66,6 +65,8 @@ import {
   withDroidSessionShutdown,
 } from "../../scient/providerLifecycle/DroidConnectionActions.ts";
 import { makeDroidManagedRuntimeResolution } from "../../scient/providerLifecycle/DroidManagedRuntimeActions.ts";
+import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
+import type { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import { makeDroidCustomModelsRuntimeFactory } from "../droid/DroidCustomModels.ts";
 import { makeDroidProviderStatus } from "../droid/DroidProviderStatus.ts";
 import { discoverDroidSkills, setDroidSkillEnabled } from "./DroidSkills.ts";
@@ -87,6 +88,7 @@ function canDiscoverDroidSkills(
 }
 
 export type DroidDriverEnv =
+  | ProviderHost
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
@@ -137,7 +139,7 @@ const withInstanceIdentity =
     };
   };
 
-export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
+export const DroidDriver: ScientProviderDriver<DroidSettings, DroidDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: {
     displayName: "Droid",
@@ -245,17 +247,13 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
       let status: Effect.Success<ReturnType<typeof makeDroidProviderStatus>> | undefined;
       const nativeLogger = yield* makeAcpNativeLoggerFactory();
       const nativeSessions = yield* makeNativeSessionShutdown(
-        makeDroidAdapterV2({
+        yield* makeDroidAdapterV2({
           instanceId,
           settings: effectiveConfig,
           environment: processEnv,
           sensitiveEnvironmentValues,
           makeRuntime: makeAcpRuntime,
           childProcessSpawner: spawner,
-          crypto,
-          fileSystem,
-          serverConfig,
-          idAllocator: yield* IdAllocatorV2,
           selfInvocation: yield* resolveSelfInvocation().pipe(
             Effect.mapError(
               (cause) =>
@@ -441,6 +439,6 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
         skillActions,
         ...(connectionActions ? { connectionActions } : {}),
         managedRuntimeActions: managedRuntime.actions,
-      } satisfies ProviderInstance;
+      } satisfies ScientProviderInstance;
     }),
 };

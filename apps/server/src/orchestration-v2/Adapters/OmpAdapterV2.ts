@@ -26,7 +26,8 @@ import {
   type OmpRpcImage,
 } from "effect-omp-rpc/schema";
 import type { OmpRpcFrameTrace, OmpRpcNotification } from "effect-omp-rpc/client";
-import { expandHomePath } from "../../pathExpansion.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { toMcpCapabilities } from "../../mcp/McpInvocationContext.ts";
 import { ompTarget, type OmpTarget } from "../../provider/omp/OmpTarget.ts";
 import {
   assertReadableOmpSessionFile,
@@ -37,7 +38,7 @@ import type { ServerConfig } from "../../config.ts";
 import {
   readMcpProviderSession,
   withAgentDeviceEnvironment,
-} from "../../mcp/McpProviderSession.ts";
+} from "@t3tools/provider-core/server/mcpSession";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { ompCommandDecision } from "../../provider/omp/OmpCommandPolicy.ts";
 import { writeOmpExtensionFiles } from "../../provider/omp/OmpExtensionBootstrap.ts";
@@ -73,8 +74,8 @@ import {
   browserActionText,
   browserActionDiagnostic,
 } from "../../provider/omp/OmpBrowserAction.ts";
-import type * as ProviderAdapter from "../ProviderAdapter.ts";
-import { AcpProviderCapabilitiesV2 } from "./AcpAdapterV2.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
   makeNativeSessionAdapterV2,
   nativeSessionFailure,
@@ -283,7 +284,9 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             bootstrap: {
               endpoint: mcp?.endpoint ?? null,
               authorization: mcp?.authorizationHeader ?? null,
-              awareness: buildScientAwareness(mcp?.capabilities),
+              awareness: buildScientAwareness(
+                mcp?.capabilities === undefined ? undefined : toMcpCapabilities(mcp.capabilities),
+              ),
             },
           }).pipe(
             Effect.provideService(FileSystem.FileSystem, fs),

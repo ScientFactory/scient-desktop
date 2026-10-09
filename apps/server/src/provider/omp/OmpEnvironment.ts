@@ -1,6 +1,6 @@
 import type { ProviderInstanceEnvironment } from "@t3tools/contracts";
 
-import { expandHomePath } from "../../pathExpansion.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { agentProcessEnvironment } from "../agentProcessEnvironment.ts";
 import { ompTarget } from "./OmpTarget.ts";
 

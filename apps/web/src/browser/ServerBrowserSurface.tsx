@@ -156,6 +156,8 @@ export function ServerBrowserSurface(props: {
   readonly onFirstFrame?: () => void;
   readonly onViewport?: (viewport: PreviewStreamViewport) => void;
   readonly onControl?: (control: PreviewStreamControl | null) => void;
+  /** The page opened a new tab from this viewer's click; the viewer should switch to it. */
+  readonly onPopup?: (tabId: string) => void;
   readonly className?: string;
   readonly ref?: Ref<ServerBrowserHandle>;
 }) {
@@ -170,6 +172,7 @@ export function ServerBrowserSurface(props: {
     onFirstFrame,
     onViewport,
     onControl,
+    onPopup,
     className,
     ref,
   } = props;
@@ -223,6 +226,7 @@ export function ServerBrowserSurface(props: {
     onViewport?.(viewport),
   );
   const controlChanged = useEffectEvent((next: PreviewStreamControl | null) => onControl?.(next));
+  const popupOpened = useEffectEvent((popupTabId: string) => onPopup?.(popupTabId));
   // Frame cap in device px, fixed per socket. It grows with the surface and
   // never shrinks, so only outgrowing it reconnects.
   const [cap, setCap] = useState<{ width: number; height: number } | null>(null);
@@ -402,6 +406,7 @@ export function ServerBrowserSurface(props: {
         },
         onClipboard: (text) => void copyPageText(text),
         onDownload: offerDownload,
+        onPopup: popupOpened,
         onFileChooser: setFileChooser,
         onViewport: (viewport) => {
           viewportRef.current = viewport;

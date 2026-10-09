@@ -30,6 +30,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
+import * as ServerConfig from "../../config.ts";
+import * as ScientTestProviderHost from "../testkit/ScientTestProviderHost.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
@@ -39,7 +41,7 @@ import type {
   ProviderAdapterV2Event,
   ProviderAdapterV2Shape,
   ProviderAdapterV2SessionRuntime,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import { EventSinkV2 } from "../EventSink.ts";
 import { checkpointRefForScopeOrdinal } from "../CheckpointService.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
@@ -47,11 +49,16 @@ import { layerFromAdaptersEffect as makeLayerEffect } from "../ProviderAdapterRe
 import {
   ProviderContinuationRequests,
   type ProviderContinuationRequest,
-} from "../ProviderContinuationRequests.ts";
+} from "@t3tools/provider-core/server/continuationRequests";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
-import { makePiAdapterV2 } from "./PiAdapterV2.ts";
-import { makePiRpcConnection, type PiRpcRecord, type PiRpcConnection } from "./PiRpc.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { makePiAdapterV2 } from "@t3tools/provider-pi/testing";
+import {
+  makePiRpcConnection,
+  type PiRpcRecord,
+  type PiRpcConnection,
+} from "@t3tools/provider-pi/testing";
 import { fixture, serve, decodeRecord, json } from "./PiNativeTestHarness.ts";
 
 const isProviderWorkDeferred = Schema.is(OrchestratorProviderWorkDeferredError);
@@ -238,10 +245,19 @@ export default function(pi) {
         ),
         Layer.orDie,
       );
+      const adapterServices = ScientTestProviderHost.layer.pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(
+            NodeServices.layer,
+            IdAllocator.layer,
+            Layer.succeed(ServerConfig.ServerConfig, h.serverConfig),
+          ),
+        ),
+      );
       const registry = makeLayerEffect(
         Effect.gen(function* () {
           const bus = yield* ProviderContinuationRequests;
-          const adapter = makePiAdapterV2({
+          const adapter = yield* makePiAdapterV2({
             ...h.adapterOptions,
             continuationRequests: {
               ...bus,
@@ -325,7 +341,7 @@ export default function(pi) {
           return [
             {
               ...adapter,
-              openSession: (input) =>
+              openSession: (input: Parameters<ProviderAdapterV2Shape["openSession"]>[0]) =>
                 Effect.sync(() => opens++).pipe(
                   Effect.andThen(
                     probe?.wrapOpen?.(adapter.openSession(input)) ?? adapter.openSession(input),
@@ -340,22 +356,28 @@ export default function(pi) {
                         }),
                       ),
                     ),
-                    startTurn: (input) =>
+                    startTurn: (
+                      input: Parameters<ProviderAdapterV2SessionRuntime["startTurn"]>[0],
+                    ) =>
                       runtime
                         .startTurn(input)
                         .pipe(Effect.tapCause((c) => Effect.logError(Cause.pretty(c)))),
                     get providerSession() {
                       return runtime.providerSession;
                     },
-                    ensureThread: (input) =>
+                    ensureThread: (
+                      input: Parameters<ProviderAdapterV2SessionRuntime["ensureThread"]>[0],
+                    ) =>
                       Effect.sync(() => loads++).pipe(Effect.andThen(runtime.ensureThread(input))),
-                    resumeThread: (input) =>
+                    resumeThread: (
+                      input: Parameters<ProviderAdapterV2SessionRuntime["resumeThread"]>[0],
+                    ) =>
                       Effect.sync(() => loads++).pipe(Effect.andThen(runtime.resumeThread(input))),
                   })),
                 ),
             },
           ];
-        }),
+        }).pipe(Effect.provide(adapterServices)),
       );
       const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
         { name: "pi-real-initiated" },

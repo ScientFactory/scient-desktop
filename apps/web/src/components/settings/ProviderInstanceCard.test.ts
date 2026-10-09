@@ -400,10 +400,54 @@ describe("deriveProviderModelsForDisplay", () => {
         expect(markup).toContain("Unavailable");
         expect(markup).toContain("is not a symlink");
       } else {
-        expect(markup).not.toContain("Unavailable");
+        expect(markup).toContain("Unavailable");
         expect(markup).not.toContain("is not a symlink");
       }
     }
+  });
+
+  it("keeps sign-in required out of an unselected left list row", () => {
+    const instanceId = ProviderInstanceId.make("codex_work");
+    const driver = ProviderDriverKind.make("codex");
+    const liveProvider: ServerProvider = {
+      instanceId,
+      driver,
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "unauthenticated", required: true },
+      checkedAt: "2026-08-28T12:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+      connection: { methods: ["codex_browser"], canDisconnect: false, operation: null },
+    };
+    const props = {
+      environmentId,
+      instanceId,
+      instance: { driver },
+      driverOption: getDriverOption(driver),
+      liveProvider,
+      onUpdate: () => undefined,
+      hiddenModels: [],
+      favoriteModels: [],
+      modelOrder: [],
+      onHiddenModelsChange: () => undefined,
+      onFavoriteModelsChange: () => undefined,
+      onModelOrderChange: () => undefined,
+    } as const;
+
+    const list = renderToStaticMarkup(
+      createElement(ProviderInstanceCard, { ...props, mode: "list" }),
+    );
+    const editor = renderToStaticMarkup(
+      createElement(ProviderInstanceCard, { ...props, mode: "editor" }),
+    );
+
+    expect(list).toContain('aria-pressed="false"');
+    expect(list).not.toContain("Sign-in required");
+    expect(editor).toContain("Sign-in required");
   });
 });
 

@@ -5,7 +5,8 @@
  * selection path, assistant output collected from the ordered event stream,
  * and a bounded total duration.
  */
-import { TextGenerationError, type ModelSelection, type PiSettings } from "@t3tools/contracts";
+import { TextGenerationError, type ModelSelection } from "@t3tools/contracts";
+import type { PiSettings } from "@t3tools/provider-pi/settings";
 import {
   getModelSelectionStringOptionValue,
   MODEL_TOKEN_LIMIT_MESSAGE,
@@ -21,10 +22,7 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 
-import {
-  buildPiRpcLaunch,
-  resolvePiLaunchArgs,
-} from "../orchestration-v2/Adapters/piT3McpInjection.ts";
+import { buildPiRpcLaunch, resolvePiLaunchArgs } from "@t3tools/provider-pi/server";
 import { decodePiModelSlug } from "../provider/pi/PiModel.ts";
 import { applyPiModelSelection } from "../provider/pi/PiModelSelection.ts";
 import type { PiRpcClient, PiRpcError, PiRpcSpawnOptions } from "../provider/pi/PiRpcClient.ts";

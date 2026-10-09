@@ -31,9 +31,9 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type {
   ProviderConnectionActions,
   ProviderConnectionActionFailure,
-} from "../../provider/ProviderDriver.ts";
-import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
-import type * as PtyAdapter from "../../terminal/PtyAdapter.ts";
+} from "../../provider/ScientProviderInstanceSeams.ts";
+import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
+import type * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import {
   findTerminalAuthorizationUrl,
   normalizeTerminalOutput,

@@ -9,9 +9,9 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
-import { ProviderContinuationRequests } from "../ProviderContinuationRequests.ts";
-import { piContinuationRequestsIfProvided } from "./PiAdapterV2.ts";
-import { makePiRpcConnection } from "./PiRpc.ts";
+import { ProviderContinuationRequests } from "@t3tools/provider-core/server/continuationRequests";
+import { piContinuationRequestsIfProvided } from "@t3tools/provider-pi/testing";
+import { makePiRpcConnection } from "@t3tools/provider-pi/testing";
 import {
   testLayer,
   THREAD_ID,
@@ -29,7 +29,7 @@ describe("Pi captured work admission fences", () => {
       const fake = yield* makeFakePi;
       const offered =
         yield* Queue.unbounded<
-          import("../ProviderContinuationRequests.ts").ProviderContinuationRequest
+          import("@t3tools/provider-core/server/continuationRequests").ProviderContinuationRequest
         >();
       const { runtime } = yield* openRuntime(
         fake,
@@ -126,7 +126,7 @@ describe("Pi captured work admission fences", () => {
       const fake = yield* makeFakePi;
       const offered =
         yield* Queue.unbounded<
-          import("../ProviderContinuationRequests.ts").ProviderContinuationRequest
+          import("@t3tools/provider-core/server/continuationRequests").ProviderContinuationRequest
         >();
       const { runtime, observed, takeEvent } = yield* openRuntime(
         fake,
@@ -233,7 +233,7 @@ it.effect("refuses an ordinary prompt when native work races its correlated prep
     const release = yield* Deferred.make<void>();
     const offered =
       yield* Queue.unbounded<
-        import("../ProviderContinuationRequests.ts").ProviderContinuationRequest
+        import("@t3tools/provider-core/server/continuationRequests").ProviderContinuationRequest
       >();
     let selectionStarted = false;
     let held = false;

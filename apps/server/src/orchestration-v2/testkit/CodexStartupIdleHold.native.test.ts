@@ -30,11 +30,14 @@ import * as Stream from "effect/Stream";
 import { ServerConfig } from "../../config.ts";
 import { makeCodexAdapterV2 } from "../Adapters/CodexAdapterV2.ts";
 import { EventStoreV2 } from "../EventStore.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
+import {
+  IdAllocatorV2,
+  layer as idAllocatorLayer,
+} from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const instanceId = ProviderInstanceId.make("codex");
 const selection = { instanceId, model: "gpt-5.4" };

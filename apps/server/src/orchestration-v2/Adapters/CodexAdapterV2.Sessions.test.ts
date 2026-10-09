@@ -1,5 +1,5 @@
-import { historyResponseItems } from "../ContextHandoffBudget.ts";
-import { type ProviderAdapterV2HistoricalContext } from "../ProviderAdapter.ts";
+import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
+import { type ProviderAdapterV2HistoricalContext } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ThreadId, EnvironmentId, RunAttemptId, RunId, TurnItemId } from "@t3tools/contracts";
 import { it, assert } from "@effect/vitest";
@@ -8,8 +8,8 @@ import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Layer from "effect/Layer";
 import packageJson from "../../../package.json" with { type: "json" };
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import {
   CODEX_TEST_MODEL_SELECTION,

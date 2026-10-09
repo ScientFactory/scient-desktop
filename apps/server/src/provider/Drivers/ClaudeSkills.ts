@@ -24,7 +24,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { parse as parseYamlDocument } from "yaml";
 
-import { expandHomePath } from "../../pathExpansion.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 // SCIENT-FORK:START — skill activation controls and the SDK skill merge.
 import { claudeSkillEnabledControl, makeSetClaudeSkillEnabled } from "./ScientNativeSkills.ts";
 export { mergeClaudeReportedSkills } from "./ScientNativeSkills.ts";

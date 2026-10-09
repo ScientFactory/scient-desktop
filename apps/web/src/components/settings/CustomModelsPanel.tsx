@@ -28,7 +28,8 @@ import {
   ServerIcon,
   Trash2Icon,
 } from "lucide-react";
-import { ClaudeAI, GrokIcon, OpenAI, OpenRouterIcon, type Icon } from "../Icons";
+import { ClaudeAI, OpenAI, OpenRouterIcon, type Icon } from "../Icons";
+import { PROVIDER_ICON_BY_PROVIDER } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import {
@@ -72,7 +73,7 @@ const CONNECTION_ICON_BY_PRESET: Partial<Record<string, Icon>> = {
   openrouter: OpenRouterIcon,
   openai: OpenAI,
   anthropic: ClaudeAI,
-  spacexai: GrokIcon,
+  spacexai: PROVIDER_ICON_BY_PROVIDER[ProviderDriverKind.make("grok")],
 };
 
 function CustomModelConnectionIcon({ connection }: { connection: CustomModelConnection }) {

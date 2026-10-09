@@ -32,7 +32,7 @@ import * as NodeFSP from "node:fs/promises";
 import { ServerConfig } from "../config.ts";
 import { openZipArchive } from "../zipArchive.ts";
 import { makeInstallerFilesystem } from "./runtimeFilesystem.ts";
-import { writeFileStringAtomically } from "../atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { ManagedRuntimeCatalog } from "../scient/providerLifecycle/ManagedRuntimeCatalog.ts";
 import {
   bundledAntigravityAcpAsset,

@@ -32,7 +32,7 @@ import {
   type WorkspaceRootNormalizationError,
 } from "../scient/workspace/WorkspaceDirectoryListing.ts";
 import { workspaceEntryDisposition } from "../scient/workspace/WorkspaceEntryPolicy.ts";
-import { expandHomePathWith } from "../pathExpansion.ts";
+import { expandHomePathWith } from "@t3tools/provider-core/server/pathExpansion";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";

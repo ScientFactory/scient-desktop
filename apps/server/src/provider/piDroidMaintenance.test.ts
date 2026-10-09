@@ -10,7 +10,7 @@ import {
   createProviderVersionAdvisory,
   ProviderVersionCache,
   type ProviderMaintenanceResolutionContext,
-} from "./providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import { droidMaintenance, piMaintenance, withDroidReleaseVersion } from "./piDroidMaintenance.ts";
 
 const context = (path: string): ProviderMaintenanceResolutionContext => ({

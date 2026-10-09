@@ -8,8 +8,8 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import * as Effect from "effect/Effect";
 
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
-import { readMcpProviderSession } from "../../mcp/McpProviderSession.ts";
-import { validateProviderCurrentInput } from "../../orchestration-v2/AttachmentPrompt.ts";
+import { readMcpProviderSession } from "@t3tools/provider-core/server/mcpSession";
+import { validateProviderCurrentInput } from "../../orchestration-v2/ScientCurrentInput.ts";
 import { scientToolProjectionForProvider } from "../../provider/ScientToolProjection.ts";
 import { prepareScientSkillTurn } from "./ScientSkillInvocation.ts";
 import * as ScientSkillSession from "./ScientSkillSession.ts";

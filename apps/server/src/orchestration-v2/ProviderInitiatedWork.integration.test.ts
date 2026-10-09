@@ -51,16 +51,16 @@ import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import {
   ProviderContinuationRequests,
   type ProviderContinuationRequest,
-} from "./ProviderContinuationRequests.ts";
+} from "@t3tools/provider-core/server/continuationRequests";
 import {
   ProviderAdapterProtocolError,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2TurnInput,
-} from "./ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import { layerFromAdaptersEffect as makeLayerEffect } from "./ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const driver = ProviderDriverKind.make("pi");
 const instanceId = ProviderInstanceId.make("pi-initiated-fixture");

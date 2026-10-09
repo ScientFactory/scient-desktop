@@ -5,7 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { expect, it } from "vite-plus/test";
-import { writeFakeCli } from "./fakeCli.ts";
+import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 
 it.skipIf(HostProcessPlatform.defaultValue() === "win32")(
   "runs a quoted fixture path without ambient PATH",

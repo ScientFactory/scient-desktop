@@ -12,7 +12,10 @@ import * as Schema from "effect/Schema";
 import type * as CodexSchema from "effect-codex-app-server/schema";
 
 import { materializeGeneratedImageAttachment } from "../../generatedImageAttachments.ts";
-import type { ProviderAdapterProtocolError, ProviderAdapterV2Event } from "../ProviderAdapter.ts";
+import type {
+  ProviderAdapterProtocolError,
+  ProviderAdapterV2Event,
+} from "@t3tools/provider-core/server/ProviderAdapter";
 
 import {
   canRenderProviderCitationMarkdown,

@@ -1,7 +1,7 @@
 import type {
   ProviderConnectionActions,
   ProviderConnectionActionFailure,
-} from "../../provider/ProviderDriver.ts";
+} from "../../provider/ScientProviderInstanceSeams.ts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 

@@ -29,22 +29,26 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as ScientTestProviderHost from "./ScientTestProviderHost.ts";
 import { ServerConfig } from "../../config.ts";
 import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sqlite.ts";
 import {
   makeClaudeAdapterV2,
   type ClaudeAgentSdkQueryOpenInput,
 } from "../Adapters/ClaudeAdapterV2.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
+import {
+  IdAllocatorV2,
+  layer as idAllocatorLayer,
+} from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "../Orchestrator.ts";
-import type { ProviderAdapterV2Event } from "../ProviderAdapter.ts";
+import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { ProjectionStoreV2, layer as projectionStoreLayer } from "../ProjectionStore.ts";
 import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const threadId = ThreadId.make("thread:native-reading-identity");
 const instanceId = ProviderInstanceId.make("claude-native-reading");
@@ -238,7 +242,7 @@ function onPrompt(message) {
   const chosen =
     droid === undefined
       ? nativeAdapter
-      : makeDroidAdapterV2({
+      : yield* makeDroidAdapterV2({
           instanceId,
           settings: yield* Schema.decodeEffect(DroidSettings)({
             enabled: true,
@@ -248,13 +252,13 @@ function onPrompt(message) {
           sensitiveEnvironmentValues: [],
           makeRuntime: makeDroidAcpRuntime,
           childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-          fileSystem: fs,
-          crypto: yield* Crypto.Crypto,
-          serverConfig: config,
-          idAllocator: allocator,
           selfInvocation: yield* resolveSelfInvocation(),
           onAuthenticationRejected: () => Effect.die("No authentication in reading peer"),
-        });
+        }).pipe(
+          Effect.provide(
+            ScientTestProviderHost.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config))),
+          ),
+        );
   const adapter = {
     ...chosen,
     openSession: (input: Parameters<typeof chosen.openSession>[0]) =>

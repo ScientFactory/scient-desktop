@@ -26,12 +26,15 @@ import { makeOmpCustomModelsClientFactory } from "../provider/omp/OmpCustomModel
 import { layer as gateLayer } from "../provider/omp/OmpExecutableGate.ts";
 import { ompTarget } from "../provider/omp/OmpTarget.ts";
 import { makeOmpAdapterV2 } from "./Adapters/OmpAdapterV2.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
+import {
+  IdAllocatorV2,
+  layer as idAllocatorLayer,
+} from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const Audit = Schema.Struct({
   pid: Schema.Int,

@@ -119,6 +119,94 @@ describe("LazyWorkspaceTreeController", () => {
     harness.destroy();
   });
 
+  it("bounds directory requests when many branches are expanded together", async () => {
+    const directoryPaths = Array.from({ length: 8 }, (_, index) => `folder-${index}`);
+    const pending: Array<{
+      relativeDirectory: string;
+      resolve: (result: ProjectListDirectoryResult) => void;
+    }> = [];
+    let activeRequests = 0;
+    let maximumActiveRequests = 0;
+    const loadDirectory = vi.fn(
+      (relativeDirectory: string): Promise<ProjectListDirectoryResult> => {
+        if (relativeDirectory === "") {
+          return Promise.resolve(complete(...directoryPaths.map((path) => directory(path))));
+        }
+        return new Promise((resolve) => {
+          activeRequests += 1;
+          maximumActiveRequests = Math.max(maximumActiveRequests, activeRequests);
+          pending.push({
+            relativeDirectory,
+            resolve: (result) => {
+              activeRequests -= 1;
+              resolve(result);
+            },
+          });
+        });
+      },
+    );
+    const harness = makeController(loadDirectory);
+
+    await harness.controller.start();
+    for (const relativeDirectory of directoryPaths) {
+      const item = harness.model.getItem(relativeDirectory);
+      if (!item || !("expand" in item)) throw new Error(`Expected ${relativeDirectory} directory`);
+      item.expand();
+    }
+
+    expect(pending).toHaveLength(4);
+    expect(maximumActiveRequests).toBe(4);
+    expect([...harness.snapshot()!.loadingDirectories].sort()).toEqual([...directoryPaths].sort());
+
+    const flushMicrotasks = async () => {
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+    };
+    for (let index = 0; index < directoryPaths.length; index += 1) {
+      const request = pending[index];
+      if (!request) throw new Error(`Expected request ${index} to have started`);
+      request.resolve(complete(file(`${request.relativeDirectory}/child.txt`)));
+      await flushMicrotasks();
+
+      expect(pending).toHaveLength(Math.min(4 + index + 1, directoryPaths.length));
+      expect(maximumActiveRequests).toBeLessThanOrEqual(4);
+    }
+
+    expect(harness.snapshot()?.loadingDirectories.size).toBe(0);
+    for (const relativeDirectory of directoryPaths) {
+      expect(harness.model.getItem(`${relativeDirectory}/child.txt`)).not.toBeNull();
+    }
+    harness.destroy();
+  });
+
+  it("keeps cached rows visible without a first-load spinner during refresh", async () => {
+    let branchLoads = 0;
+    let resolveRefresh!: (result: ProjectListDirectoryResult) => void;
+    const loadDirectory = vi.fn(
+      (relativeDirectory: string): Promise<ProjectListDirectoryResult> => {
+        if (relativeDirectory === "") return Promise.resolve(complete(directory("src")));
+        branchLoads += 1;
+        if (branchLoads === 1) return Promise.resolve(complete(file("src/old.ts")));
+        return new Promise((resolve) => {
+          resolveRefresh = resolve;
+        });
+      },
+    );
+    const harness = makeController(loadDirectory);
+
+    await harness.controller.start();
+    await harness.controller.load("src");
+    const refresh = harness.controller.load("src", true);
+
+    expect(harness.snapshot()?.loadingDirectories.has("src")).toBe(false);
+    expect(harness.model.getItem("src/old.ts")).not.toBeNull();
+    resolveRefresh(complete(file("src/current.ts")));
+    await refresh;
+
+    expect(harness.model.getItem("src/old.ts")).toBeNull();
+    expect(harness.model.getItem("src/current.ts")).not.toBeNull();
+    harness.destroy();
+  });
+
   it("refreshes loaded branches incrementally without resetting expansion", async () => {
     let revision = 0;
     const loadDirectory = vi.fn(

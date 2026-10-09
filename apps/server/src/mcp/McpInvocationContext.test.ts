@@ -12,6 +12,14 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { AgentInvocationContext } from "../scient/operations/AgentInvocationContext.ts";
 import { scientInvocationForMcp } from "./ScientMcpInvocation.ts";
 
+it("decodes only capabilities declared by the Scient MCP host", () => {
+  expect(
+    McpInvocationContext.toMcpCapabilities(
+      new Set(["preview", "threads:read", "provider:future-capability"]),
+    ),
+  ).toEqual(new Set(["preview", "threads:read"]));
+});
+
 it.effect("reports the scoped credential context when preview capability is unavailable", () => {
   const invocation: McpInvocationContext.McpInvocationScope = {
     environmentId: EnvironmentId.make("environment-1"),

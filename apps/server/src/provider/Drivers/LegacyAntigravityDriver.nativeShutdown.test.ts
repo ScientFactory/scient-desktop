@@ -38,21 +38,21 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as NetAddress from "effect/net/NetAddress";
 import { HttpClient, HttpServer } from "effect/http";
-import { PtyAdapter, PtySpawnError, type PtyExitEvent } from "../../terminal/PtyAdapter.ts";
+import { PtyAdapter, PtySpawnError, type PtyExitEvent } from "@t3tools/shared/PtyAdapter";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as EventStore from "../../orchestration-v2/EventStore.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
-import type { ProviderAdapterV2SessionRuntime } from "../../orchestration-v2/ProviderAdapter.ts";
+import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
-import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
 import * as ProviderEventIngestor from "../../orchestration-v2/ProviderEventIngestor.ts";
 import * as ProviderSessionManager from "../../orchestration-v2/ProviderSessionManager.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
@@ -64,7 +64,8 @@ import * as ProviderRegistry from "../ProviderRegistry.ts";
 import { LegacyAntigravityDriver } from "./LegacyAntigravityDriver.ts";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../../orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { layerConfigConsistentTestProviderHost } from "../testUtils/providerHost.ts";
 
 const first = ProviderInstanceId.make("legacy-agy-shutdown-target");
 const second = ProviderInstanceId.make("legacy-agy-shutdown-peer");
@@ -106,7 +107,7 @@ const mcp = Layer.effect(
   ),
   Layer.provide(NodeServices.layer),
 );
-const testLayer = ServerConfig.layerTest(process.cwd(), {
+const providerDependenciesLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "legacy-agy-native-shutdown-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -126,6 +127,9 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
     ),
   ),
   Layer.provideMerge(Layer.mergeAll(stores, sink, mcp)),
+);
+const testLayer = layerConfigConsistentTestProviderHost.pipe(
+  Layer.provideMerge(providerDependenciesLayer),
 );
 
 const harness = Effect.fn("LegacyShutdown.harness")(function* () {
@@ -280,7 +284,7 @@ const harness = Effect.fn("LegacyShutdown.harness")(function* () {
         command.command !== path.join(home, "agy")
       )
         return yield* Effect.die(
-          "Only this fixture's configured agy may spawn; Keychain/vendor calls forbidden",
+          `Only this fixture's configured agy may spawn; received ${command.command} with HOME=${home ?? "<unset>"}`,
         );
       if (!command.args.includes("stream-json")) return yield* spawner.spawn(command);
       const scope = yield* Effect.scope;

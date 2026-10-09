@@ -2,7 +2,7 @@ import {
   ProviderTextSnapshotError,
   type ProviderTextSnapshotOwner,
   type ProviderTextSnapshotProjection,
-} from "./ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   readOwnedNativeModelCapacity,
   recordNativeModelContextWindow,

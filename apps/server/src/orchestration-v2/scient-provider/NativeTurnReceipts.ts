@@ -8,7 +8,7 @@ import type {
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
-import { ProviderAdapterTurnStartError } from "../ProviderAdapter.ts";
+import { ProviderAdapterTurnStartError } from "@t3tools/provider-core/server/ProviderAdapter";
 
 type TurnStartIdentity = {
   readonly threadId: ThreadId;

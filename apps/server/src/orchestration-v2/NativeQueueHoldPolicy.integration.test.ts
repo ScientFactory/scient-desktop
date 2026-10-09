@@ -51,13 +51,16 @@ import { RunFinalizationObserver } from "./RunFinalizationService.ts";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as Scope from "effect/Scope";
-import { AcpProviderCapabilitiesV2 } from "./Adapters/AcpAdapterV2.ts";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
   makeNativeSessionAdapterV2,
   NativeSessionOperationError,
   type NativeSessionUpdate,
 } from "./Adapters/NativeSessionAdapterV2.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
+import {
+  IdAllocatorV2,
+  layer as idAllocatorLayer,
+} from "@t3tools/provider-core/server/IdAllocator";
 import {
   OrchestratorV2,
   OrchestratorProjectionError,
@@ -69,7 +72,7 @@ import {
   type ProviderAdapterV2TurnInput,
   type ProviderAdapterV2SteerInput,
   type ProviderAdapterV2Event,
-} from "./ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   layerFromAdapters as makeLayer,
   ProviderAdapterRegistryMetadataError,
@@ -81,7 +84,7 @@ import {
 } from "./testkit/ProviderReplayHarness.ts";
 import { nativeSettlementTrace } from "./testkit/OmpNativeConjunctions.ts";
 import * as SqlClient from "effect/sql/SqlClient";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { sourcePlanFingerprint } from "./SourcePlan.ts";
 import { checkpointRefForScopeOrdinal } from "./CheckpointService.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
@@ -101,7 +104,7 @@ import * as NetAddress from "effect/net/NetAddress";
 import { HttpServer } from "effect/http";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
-import { readMcpProviderSession } from "../mcp/McpProviderSession.ts";
+import { readMcpProviderSession } from "@t3tools/provider-core/server/mcpSession";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ScientSkillSession from "../scient/skills/ScientSkillSession.ts";
 import * as ScientSkillRegistry from "../scient/skills/ScientSkillRegistry.ts";

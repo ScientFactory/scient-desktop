@@ -34,14 +34,15 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../../config.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import {
   makeReplayServerConfig,
   type OrchestratorV2ProviderReplayHarness,
 } from "../testkit/ProviderReplayHarness.ts";
-import { PI_PROVIDER, PiAdapterV2Driver } from "./PiAdapterV2.ts";
+import { PI_PROVIDER, PiAdapterV2Driver } from "@t3tools/provider-pi/server";
 import { piInstanceStateRoot } from "../../provider/pi/PiSessionFile.ts";
 import {
   PiReplaySessionBinding,
@@ -472,7 +473,7 @@ export function layer<E, R>(input: {
 }) {
   const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
-    makeReplayServerConfig(`pi-${input.scenario}`).pipe(Effect.orDie),
+    makeReplayServerConfig(input.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
   return ProviderAdapterRegistry.layerFromDrivers({
     drivers: [PiAdapterV2Driver],
@@ -486,7 +487,14 @@ export function layer<E, R>(input: {
     },
   }).pipe(
     Layer.provide(input.spawner),
-    Layer.provide(Layer.mergeAll(layerServerConfig, NodeServices.layer, IdAllocator.layer)),
+    Layer.provide(
+      Layer.mergeAll(
+        layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
+        layerServerConfig,
+        NodeServices.layer,
+        IdAllocator.layer,
+      ),
+    ),
   );
 }
 

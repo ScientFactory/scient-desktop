@@ -17,9 +17,9 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import type * as EffectOutbox from "../EffectOutbox.ts";
-import type * as IdAllocator from "../IdAllocator.ts";
+import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProjectionStore from "../ProjectionStore.ts";
-import type { ProviderAdapterV2SessionRuntime } from "../ProviderAdapter.ts";
+import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import type { RunExecutionServiceV2StartRootRunInput } from "../RunExecutionService.ts";
 

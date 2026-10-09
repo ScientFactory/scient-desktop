@@ -15,7 +15,7 @@ import {
   type PiRpcConnection,
   type PiRpcRecord,
   type PiRpcSpawnOptions as ConnectionSpawnOptions,
-} from "../../orchestration-v2/Adapters/PiRpc.ts";
+} from "@t3tools/provider-pi/server";
 import type { ServerSettingsService } from "../../serverSettings.ts";
 import { makePiCustomModelsClientFactory } from "./PiCustomModels.ts";
 import { PiRpcProtocolError, type PiRpcClient, type PiRpcError } from "./PiRpcClient.ts";

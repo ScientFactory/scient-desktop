@@ -61,6 +61,7 @@ import {
 } from "./ScientMiniPlayerParts";
 import { StaticAssetImageSurface } from "./StaticAssetImageSurface";
 // SCIENT-FORK:END
+import { showPreviewPopup } from "./showPreviewPopup";
 import {
   clampPreviewMiniPlayerPosition,
   NO_PREVIEW_MINI_PLAYER_OBSTACLES,
@@ -272,6 +273,7 @@ function BrowserMiniPlayer({
               followSize={false}
               controlPosition="bottom"
               onViewport={setStreamViewport}
+              onPopup={(popupTabId) => showPreviewPopup(threadRef, popupTabId, "floating")}
               className="size-full"
             />
           </div>
