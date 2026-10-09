@@ -877,6 +877,15 @@
       ],
       "sourceUrl": "https://github.com/jgm/pandoc/archive/refs/tags/3.11.tar.gz",
       "version": "3.11"
+    },
+    {
+      "bundles": ["server"],
+      "includeInBundles": ["server", "desktop", "web"],
+      "license": "Unicode-3.0",
+      "name": "Unicode 9.0 case folding data",
+      "version": "9.0.0",
+      "sourceUrl": "https://www.unicode.org/Public/9.0.0/ucd/CaseFolding.txt",
+      "noticeFile": "apps/server/src/scient/overleaf/unicode-case-fold.LICENSE"
     }
   ]
 }
