@@ -191,6 +191,11 @@ export const LatexMathField = forwardRef<
   const lastAcknowledged = useRef(value);
   const dirty = useRef(false);
   const journalKey = useRef(draftKey);
+  // An in-place rename moves where drafts are kept. A field with unsaved input
+  // keeps its key until that input is published (a rename waits for it anyway).
+  useLayoutEffect(() => {
+    if (!dirty.current) journalKey.current = draftKey;
+  }, [draftKey]);
   const { reportDraft } = useContext(LatexDraftContext);
   const draftId = useId();
   const change = useRef(onChange);

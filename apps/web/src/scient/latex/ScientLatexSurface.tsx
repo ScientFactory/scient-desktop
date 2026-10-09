@@ -50,6 +50,7 @@ import {
   markdownPersistenceRegistry,
   type MarkdownPersistenceLease,
 } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
+import { registerRenameParticipant } from "~/scient/fileSurfaces/renameOpenDocument";
 import { ResizeSeparator } from "~/scient/layout/ResizeSeparator";
 import type {
   PdfForwardSyncTarget,
@@ -123,6 +124,11 @@ export interface LatexRenameContext {
   readonly includedBy: string | null;
   /** Unsaved Visual work would be lost by renaming now. */
   readonly blocked: boolean;
+  /**
+   * The open editors can follow a rename in place: one self-contained file,
+   * resolved as its own document, never built, with nothing to recover.
+   */
+  readonly movable: boolean;
 }
 
 interface ScientLatexSurfaceProps {
@@ -528,11 +534,26 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     manualRootSelection.carriedRootRelativePath === props.latexRootRelativePath
       ? manualRootSelection.selectedRootRelativePath
       : (props.latexRootRelativePath ?? undefined);
+  // An in-place rename moved this document here: until the new path is
+  // resolved, the old resolution stands for it, so nothing reloads.
+  const [moved, setMoved] = useState<{ readonly from: string; readonly to: string } | null>(null);
+  const documentId = props.persistence?.documentId ?? null;
+  useEffect(
+    () =>
+      documentId === null
+        ? undefined
+        : markdownPersistenceRegistry.onMoved((move) => {
+            if (move.documentId === documentId)
+              setMoved({ from: move.from.relativePath, to: move.to.relativePath });
+          }),
+    [documentId],
+  );
   const resolution = useLatexDocumentResolution({
     environmentId: props.environmentId,
     workspaceRoot: props.cwd,
     sourceRelativePath: props.relativePath,
     sourceRevision: props.revision,
+    ...(moved?.to === props.relativePath ? { movedFrom: moved.from } : {}),
     ...(selectedRootRelativePath === undefined
       ? {}
       : { contextRootRelativePath: selectedRootRelativePath }),
@@ -612,6 +633,11 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const sourcePending = useSyncExternalStore(
     persistence?.subscribe ?? noSubscription,
     persistence ? () => persistence.getSnapshot().pending : notPending,
+  );
+  // A rename holds the document: no edits until it has moved or failed.
+  const renaming = useSyncExternalStore(
+    persistence?.subscribe ?? noSubscription,
+    persistence ? () => persistence.getSnapshot().editingBlocked : notPending,
   );
   // A conflict or a failed save: the session's notice is asking for a decision.
   const sourceNeedsAttention = useSyncExternalStore(
@@ -1210,9 +1236,40 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   // Recovered work is kept under this file's name: decide on it first.
   const renameBlocked =
     hasLocalVisualDraft || visualProjectState.pending || sourceRecovery.recovery !== null;
+  const renameMovable =
+    !renameBlocked &&
+    manualRootSelection === null &&
+    !resolution.pending &&
+    resolution.result?._tag === "resolved" &&
+    resolution.result.complete &&
+    resolution.result.reason === "self-document" &&
+    resolution.result.rootRelativePath === props.relativePath &&
+    resolution.result.candidates.every(
+      (candidate) => candidate.rootRelativePath === props.relativePath,
+    ) &&
+    !/\\(?:input|include|subfile|subimport|import)\b/u.test(props.contents) &&
+    // Never built: a PDF, its SyncTeX and its build directory belong to the old name.
+    (build.snapshot === null ||
+      (build.snapshot.state === "idle" && build.snapshot.descriptor === null));
   useEffect(() => {
-    onRenameContext({ includedBy: renameIncludedBy, blocked: renameBlocked });
-  }, [onRenameContext, renameIncludedBy, renameBlocked]);
+    onRenameContext({
+      includedBy: renameIncludedBy,
+      blocked: renameBlocked,
+      movable: renameMovable,
+    });
+  }, [onRenameContext, renameIncludedBy, renameBlocked, renameMovable]);
+  // An in-place rename waits while Visual holds unsaved input.
+  const renameReady = useRef(!renameBlocked);
+  useLayoutEffect(() => {
+    renameReady.current = !renameBlocked;
+  }, [renameBlocked]);
+  useEffect(
+    () =>
+      documentId === null
+        ? undefined
+        : registerRenameParticipant(documentId, { readyToMove: () => renameReady.current }),
+    [documentId],
+  );
   useEffect(() => () => onRenameContext(null), [onRenameContext]);
   const exportMenu = (plain: boolean) => (
     <DocumentExportMenuItems
@@ -1629,7 +1686,10 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                           ? (build.snapshot.compiledBibliography ?? null)
                           : null
                       }
-                      key={visualDraftKey}
+                      // The open document, not its path: an in-place rename keeps
+                      // this editor, while its drafts move with `draftKey`.
+                      key={documentId ?? visualDraftKey}
+                      {...(documentId === null ? {} : { editorInstanceKey: documentId })}
                       source={props.contents}
                       onLocalDraftChange={reportLocalVisualDraft}
                       draftKey={visualDraftKey}
@@ -1640,6 +1700,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                       disabled={
                         props.truncated ||
                         persistence === null ||
+                        renaming ||
                         sourceRecovery.blocked ||
                         sourceNeedsAttention
                       }

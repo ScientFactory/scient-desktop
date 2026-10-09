@@ -194,6 +194,7 @@ import {
 } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import { useInPlaceRename } from "~/scient/fileSurfaces/useInPlaceRename";
+import { newDocuments } from "~/scient/documents/newDocuments";
 import {
   getOptimisticProjectFileQueryData,
   setProjectFileQueryData,
@@ -1728,6 +1729,45 @@ export default function FilePreviewPanel({
     effectiveSourcePending ||
     (latexRename?.blocked ?? false) ||
     (file.data === null && file.failure !== "binary_file");
+  const { onPostRender: onFilePostRender, move: moveFileLineReveal } = useFileLineReveal(
+    relativePath,
+    revealLine,
+    revealRequestId,
+  );
+  // SCIENT-FORK:START — an open Markdown document renames in place, keeping its editor
+  const { moveInPlace, surfaceGeneration } = useInPlaceRename({
+    environmentId,
+    cwd,
+    relativePath,
+    lease: markdownLease,
+    // Markdown; and a LaTeX document just started from the Documents menu,
+    // while its surface says its editors can follow. Everything else keeps
+    // the ordinary rename.
+    canMove: (from, to) =>
+      (isScientMarkdownDocumentPath(from) && isScientMarkdownDocumentPath(to)) ||
+      (isLatexPreviewFile(from) &&
+        /\.tex$/iu.test(to) &&
+        latexRename?.movable === true &&
+        newDocuments.get({ environmentId, cwd, relativePath: from }) !== null),
+    reopen: (from, to) =>
+      applyScientFileRename({
+        environmentId,
+        cwd,
+        relativePath: from,
+        usesDocumentSession,
+        destinationRelativePath: to,
+        onFileRenamed,
+      }),
+    moveTab: (from, to) => (onFileMoved ?? onFileRenamed)(from, to),
+    moveViewState: (from, to) => {
+      setHandledReveal((current) => (current?.path === from ? { ...current, path: to } : current));
+      moveFileLineReveal(from, to);
+    },
+  });
+  const documentSurfaceKey = markdownLease
+    ? `${markdownLease.documentId}:${surfaceGeneration}`
+    : relativePath;
+  // SCIENT-FORK:END
   // A document started from the Documents menu: its template row, then its one rename.
   const newDocument = useNewDocument({
     environmentId,
@@ -1736,6 +1776,10 @@ export default function FilePreviewPanel({
     lease: markdownLease,
     snapshot: markdownSnapshot ?? null,
     renameDisabled,
+    ...(moveInPlace ? { moveInPlace } : {}),
+    canMoveInPlace:
+      relativePath !== null &&
+      (isRichMarkdown || (isLatexPreviewFile(relativePath) && latexRename?.movable === true)),
     onRenamed: (destinationRelativePath) => {
       if (relativePath === null) return;
       applyScientFileRename({
@@ -1762,39 +1806,6 @@ export default function FilePreviewPanel({
       }),
     [absolutePath, cwd, environmentId, relativePath, threadRef.threadId],
   );
-  const { onPostRender: onFilePostRender, move: moveFileLineReveal } = useFileLineReveal(
-    relativePath,
-    revealLine,
-    revealRequestId,
-  );
-  // SCIENT-FORK:START — an open Markdown document renames in place, keeping its editor
-  const { moveInPlace, surfaceGeneration } = useInPlaceRename({
-    environmentId,
-    cwd,
-    relativePath,
-    lease: markdownLease,
-    // Markdown only for now; other document kinds keep the ordinary rename.
-    canMove: (from, to) => isScientMarkdownDocumentPath(from) && isScientMarkdownDocumentPath(to),
-    reopen: (from, to, revision) =>
-      applyScientMarkdownRename({
-        environmentId,
-        cwd,
-        relativePath: from,
-        fileData: file.data,
-        destinationRelativePath: to,
-        revision,
-        onOpenFile,
-      }),
-    moveTab: (from, to) => (onFileMoved ? onFileMoved(from, to) : onOpenFile(to)),
-    moveViewState: (from, to) => {
-      setHandledReveal((current) => (current?.path === from ? { ...current, path: to } : current));
-      moveFileLineReveal(from, to);
-    },
-  });
-  const documentSurfaceKey = markdownLease
-    ? `${documentIdentity(markdownLease)}:${surfaceGeneration}`
-    : relativePath;
-  // SCIENT-FORK:END
   const handlePendingChange = useCallback(
     (path: string, pending: boolean) => {
       setPendingPaths((current) => {
@@ -2264,7 +2275,7 @@ export default function FilePreviewPanel({
             ) : isLatexPreviewFile(relativePath) ? (
               <ScientSurfaceSuspense>
                 <ScientLatexSurface
-                  key={`${relativePath}:${resolvedTheme}`}
+                  key={`${documentSurfaceKey}:${resolvedTheme}`}
                   onDownloadActions={setLatexDownloads}
                   onRenameContext={setLatexRename}
                   startBar={newDocument.startBar}

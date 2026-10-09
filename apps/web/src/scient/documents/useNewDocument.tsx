@@ -58,6 +58,7 @@ import { isPathTaken, useNewDocumentFiles } from "./useNewDocumentFiles";
 import { useTemplateChoices } from "./useTemplateChoices";
 import { useTemplateSaving } from "./useTemplateSaving";
 import { userTemplates } from "./userTemplates";
+import type { RenameOpenDocumentResult } from "~/scient/fileSurfaces/renameOpenDocument";
 import "./newDocument.css";
 
 function waitUntil(condition: () => boolean, timeoutMs: number): Promise<boolean> {
@@ -124,6 +125,12 @@ export function useNewDocument(input: {
   readonly snapshot: ReturnType<MarkdownPersistenceLease["getSnapshot"]> | null;
   readonly renameDisabled: boolean;
   readonly onRenamed: (destinationRelativePath: string) => void;
+  /**
+   * Renames the open document in place, keeping its editor, when this document
+   * can move (`canMoveInPlace`). Otherwise the ordinary rename runs.
+   */
+  readonly moveInPlace?: (destinationRelativePath: string) => Promise<RenameOpenDocumentResult>;
+  readonly canMoveInPlace?: boolean;
 }): { readonly startBar: ReactNode; readonly templateActions: ReactNode } {
   const { environmentId, cwd, relativePath, lease, snapshot } = input;
   const key = relativePath === null ? null : { environmentId, cwd, relativePath };
@@ -144,6 +151,15 @@ export function useNewDocument(input: {
   const renaming = useRef(false);
   const switching = useRef(false);
   const onRenamed = useEffectEvent(input.onRenamed);
+  const moveInPlace = useEffectEvent((destination: string) => input.moveInPlace!(destination));
+  // An in-place move was refused for this document: rename the ordinary way.
+  const [moveRefused, setMoveRefused] = useState<string | null>(null);
+  // The route is chosen before the rename starts, so the ordinary rename's
+  // waits still apply when the document cannot move in place.
+  const moves =
+    input.moveInPlace !== undefined &&
+    input.canMoveInPlace === true &&
+    moveRefused !== relativePath;
 
   const draft = snapshot?.draftSource ?? null;
   const untouched =
@@ -173,9 +189,11 @@ export function useNewDocument(input: {
         ? newDocumentTitle(snapshot.baselineSource, entry.format)
         : (entry.name ?? "")
       : "";
-  // A Markdown line just started under the heading is not in the file yet; renaming
-  // remounts the editor, so wait for its first words or for the caret to leave.
+  // A Markdown line just started under the heading is not in the file yet; the
+  // ordinary rename remounts the editor, so wait for its first words or for the
+  // caret to leave. A move in place keeps the editor and need not wait.
   const markdownWaits =
+    !moves &&
     entry?.format === "markdown" &&
     snapshot !== null &&
     !/^#[^\n]*\n[\s\S]*\S/u.test(snapshot.baselineSource) &&
@@ -284,6 +302,43 @@ export function useNewDocument(input: {
     }
     // Read before the hold: holding the document for its rename can drop the selection.
     const caretBefore = caretOffsetInEditor();
+    if (moves) {
+      renaming.current = true;
+      const from = key.relativePath;
+      void (async () => {
+        try {
+          for (let attempt = 1; attempt <= 20; attempt++) {
+            const outcome = await moveInPlace(
+              newDocumentCandidate(stem, entry.format, attempt, folder),
+            );
+            if (outcome.kind === "legacy-required") {
+              setMoveRefused(from);
+              return;
+            }
+            if (outcome.kind === "failed") {
+              const cause = outcome.cause;
+              const taken =
+                typeof cause === "object" &&
+                cause !== null &&
+                "failure" in cause &&
+                cause.failure === "path_exists";
+              if (taken) continue;
+              break;
+            }
+            newDocuments.forget(key);
+            // Moved: the editor and caret stayed. Reopened or remounted: put the caret back.
+            if (outcome.kind !== "moved" && caretBefore !== null)
+              focusNewDocumentWhenOpen({ offset: caretBefore });
+            return;
+          }
+          // Not renamed: the file keeps its name and stays renamable from the header.
+          newDocuments.forget(key);
+        } finally {
+          renaming.current = false;
+        }
+      })();
+      return;
+    }
     const release = lease.holdForRename();
     if (!release) return;
     renaming.current = true;
@@ -302,14 +357,15 @@ export function useNewDocument(input: {
           });
           if (result._tag === "Success") {
             // The editor remounts under the new name; the caret comes back where it was.
+            // The old session is forgotten while still held, so no read starts at the old path.
             const caret = caretBefore;
             newDocuments.forget(key);
             templateEdits.move(key, {
               ...key,
               relativePath: result.value.destinationRelativePath,
             });
-            release();
             onRenamed(result.value.destinationRelativePath);
+            release();
             if (caret !== null) focusNewDocumentWhenOpen({ offset: caret });
             return;
           }
