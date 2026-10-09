@@ -33,7 +33,7 @@ export function ScientGettingStartedShell(props: {
       <div className="scrollbar-gutter-both min-h-0 min-w-0 flex-1 overflow-y-auto bg-background">
         <main className="mx-auto flex min-h-full w-full max-w-2xl flex-col justify-center px-5 py-10 sm:px-8">
           <section
-            className="relative isolate w-full -translate-y-3 overflow-hidden rounded-xl border border-border/70 bg-card px-5 py-5 shadow-sm sm:-translate-x-3 sm:-translate-y-4 sm:px-7 sm:py-6"
+            className="relative isolate w-full -translate-y-5 overflow-hidden rounded-xl border border-border/70 bg-card px-5 py-5 shadow-sm sm:-translate-x-3 sm:-translate-y-6 sm:px-7 sm:py-6"
             data-scient-getting-started-card="true"
           >
             <ScientSymbol className="pointer-events-none absolute right-6 top-16 z-0 size-48 opacity-[0.045] [mask-image:linear-gradient(to_right,black_0%,black_88%,transparent_100%)] sm:right-12 sm:top-12 sm:size-60 dark:opacity-[0.065]" />
@@ -84,7 +84,7 @@ export function ScientGettingStartedShell(props: {
                   Skip
                 </Button>
               </div>
-              <div className="mt-4">{props.children}</div>
+              <div className="mt-2">{props.children}</div>
             </div>
           </section>
         </main>
@@ -99,10 +99,10 @@ function GettingStartedStepHeading(props: {
 }) {
   return (
     <header>
-      <h1 className="text-2xl font-semibold tracking-[-0.035em] text-foreground sm:text-[1.7rem]">
+      <h1 className="text-[1.375rem] leading-tight font-semibold tracking-[-0.035em] text-foreground sm:text-2xl">
         {props.title}
       </h1>
-      <p className="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
+      <p className="mt-1 max-w-lg text-sm leading-relaxed text-muted-foreground">
         {props.description}
       </p>
     </header>
@@ -165,7 +165,7 @@ export function GettingStartedAgentStep(props: {
   return (
     <div>
       <GettingStartedStepHeading
-        description="Use a ChatGPT, Claude, or Google subscription you already have, or skip this for now."
+        description="Use a ChatGPT, Claude, or Google subscription you already have."
         title="Choose an AI"
       />
       <div
@@ -173,7 +173,7 @@ export function GettingStartedAgentStep(props: {
         role="region"
         aria-label="AI providers"
         tabIndex={0}
-        className="mt-6 max-h-[14rem] overflow-y-auto overscroll-y-contain divide-y divide-border/70 border-t border-border/70"
+        className="mt-3 max-h-[14rem] overflow-y-auto overscroll-y-contain divide-y divide-border/70 border-t border-border/70"
       >
         {props.choices.map((choice) => (
           <div
