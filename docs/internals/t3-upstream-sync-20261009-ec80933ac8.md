@@ -427,3 +427,73 @@ execution. CLI failure preservation does not add a cross-process ownership
 transaction around pre-existing ownership checks. Browser profile ownership's
 existing shared-report limitation remains documented above. No visual interaction,
 merge, queue, auto-merge, release or cursor advance was performed in this pass.
+
+## Additional Main-preservation review
+
+The subsequent review compared the active provider, onboarding, chat, sidebar,
+mobile and desktop consumers with refreshed owned main
+`b631232d51fa6705a72e3f0021cee139999c6b69`. It found four further preservation
+issues and repaired them in source `511bc318c4aca9123e0f966693629264c93e6a17`,
+tree `2def71f23ac44f85529594314d1196b64488b10b`:
+
+- Remove the new left-column warning/error headline from the shared provider
+  card. Main's compact vendor/version row, update icon, update progress/failure
+  copy and right-pane diagnostics retain their existing behavior. Pi's existing
+  suppression of routine inventory copy is preserved, rather than inventing a
+  new warning-display policy.
+- Replace OpenCode's live “T3 Code” Server URL help with neutral schema copy.
+  The generic form still reads the provider package annotation; no duplicate
+  form, schema decoder or product-name abstraction is introduced.
+- Preserve Scient's 20px desktop chat lane instead of absorbing upstream
+  #17372's unconditional 48px margins. CSS, measured probe and pure geometry
+  agree. The 800px comfortable lane remains 736px; the details card remains
+  available throughout 984–1011px. Existing marker hitboxes still cap themselves
+  to the measured gutter, and mobile padding and preview clearance are retained.
+  Greater marker availability at the expense of chat width is a separate
+  product tradeoff, not an implicit alignment decision.
+- Make the new shared desktop contents-command API delegate Reload/Force
+  Reload to Scient's existing renderer save barrier. Upstream menu routing
+  remains intact, and all API callers use the same guarded path. Non-revealing
+  dispatch targets the registered main window even when an OAuth popup has
+  focus. DevTools still targets main directly. The preexisting unload guard was
+  not removed by the regression; the defect was bypassed flush/continuation and
+  blocked-reload feedback, not demonstrated unconditional file loss.
+
+Independent source review found no further blocking preservation issue in those
+inspected consumers, and reviewed the repairs separately from their author.
+Scient-first order, subscription/vendor labels, shared lifecycle controls,
+scrollable onboarding, pinned project actions, sidebar design, explicit models
+and saved provider options remain preserved. Saved reasoning selections stay
+pinned; an existing conversation with no saved reasoning selection follows the
+approved provider default dynamically, as Main's selection mechanism already
+did. This does not rewrite its saved history or options.
+
+On macOS with Node 24.19.0 and pnpm 11.10.0, the following requalification passed:
+
+| Check                                                         | Result                                                                                              |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Provider card/form/catalog/tab tests                          | 47 passed; left-copy and branding assertions first reproduced their defects.                        |
+| Chat geometry/details-card tests                              | 35 passed, including the 800px lane and each 984–1011px card boundary.                              |
+| Desktop menu/window/IPC and renderer save-guard tests         | 65 passed; popup targeting, no immediate native reload, save completion and blocked reload covered. |
+| Affected web, desktop and OpenCode typechecks                 | All three tasks passed; desktop was checked again after its error-channel refinement.               |
+| Whole-repository formatting and lint                          | Passed; existing warnings retained.                                                                 |
+| Branding, literal provenance and all five frozen-target seams | Passed; the qualified cursor remains held.                                                          |
+| Full build and desktop smoke                                  | All six build tasks passed; smoke passed in temporary state under the safety envelope.              |
+| Whitespace, index and main ancestry                           | Clean; no unresolved paths; refreshed main remains an ancestor.                                     |
+
+The 147 targeted tests are overlapping requalification, not additions to the
+earlier 36,082-test matrix. That full matrix remains evidence for unchanged
+runtime paths; it was not rerun or presented as a new full-suite result here.
+The fixed 21-path extraction measurement and its separate maintainer approval
+hold are unchanged. No CI suppression, cursor advance or policy waiver was added.
+
+The same isolated candidate was refreshed for its bundled desktop/package
+changes. Its old service/processes/listeners stopped before relaunch. The
+readiness snapshot records runner 25193, Electron 53468, backend 53933 and web
+25276, with the same candidate service/bundle identity and retained state. Ports
+14049/6009 have those owners and return HTTP 200; new-start traces at
+2026-10-09T23:23:52Z record backend readiness and main-window creation. No live
+profile was copied or reset and no other candidate or stable launcher changed.
+Startup/smoke and source review do not establish visual or real-provider
+acceptance. The candidate stays available for the user, and this PR remains held
+without merge, queue or auto-merge.
