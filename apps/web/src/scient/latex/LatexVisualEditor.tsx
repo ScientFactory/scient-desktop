@@ -6197,18 +6197,46 @@ function LatexVisualEditorReady(
   );
 
   // Briefly read-only (an in-place rename holds the document): give the caret
-  // back where it was once editing resumes, as the Markdown editor does.
-  const focusedWhenLocked = useRef(false);
+  // back where it was once editing resumes, in the editor or in one of its
+  // fields (title, author, captions), as the Markdown editor does.
+  const focusedWhenLocked = useRef<{
+    readonly element: HTMLElement;
+    readonly selection: readonly [number, number] | null;
+  } | null>(null);
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
-    if (readOnly && editor.isEditable) focusedWhenLocked.current = editor.isFocused;
-    editor.setEditable(!readOnly);
-    if (!readOnly && focusedWhenLocked.current) {
-      focusedWhenLocked.current = false;
-      // Only if focus has gone nowhere else meanwhile (a dialog, a field).
+    if (readOnly && editor.isEditable) {
       const active = document.activeElement;
-      if (active === null || active === document.body || editor.view.dom.contains(active))
+      focusedWhenLocked.current =
+        active instanceof HTMLElement && editor.view.dom.contains(active)
+          ? {
+              element: active,
+              selection:
+                active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement
+                  ? [active.selectionStart ?? 0, active.selectionEnd ?? 0]
+                  : null,
+            }
+          : null;
+    }
+    editor.setEditable(!readOnly);
+    const locked = focusedWhenLocked.current;
+    if (!readOnly && locked) {
+      focusedWhenLocked.current = null;
+      // Only if focus has gone nowhere else meanwhile (a dialog, another field).
+      const active = document.activeElement;
+      if (active !== null && active !== document.body && !editor.view.dom.contains(active)) return;
+      if (locked.element === editor.view.dom || !locked.element.isConnected) {
         editor.commands.focus(undefined, { scrollIntoView: false });
+        return;
+      }
+      // A field is enabled again in this same commit; focus it and its selection.
+      locked.element.focus({ preventScroll: true });
+      if (
+        locked.selection &&
+        (locked.element instanceof HTMLTextAreaElement ||
+          locked.element instanceof HTMLInputElement)
+      )
+        locked.element.setSelectionRange(locked.selection[0], locked.selection[1]);
     }
   }, [editor, readOnly]);
 

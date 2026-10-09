@@ -1756,10 +1756,17 @@ export default function FilePreviewPanel({
       (isLatexPreviewFile(from) &&
         /\.tex$/iu.test(to) &&
         latexRename?.movable === true &&
-        newDocuments.get({ environmentId, cwd, relativePath: from }) !== null &&
-        // Drafts left at the new name by an earlier file would be offered as
-        // this document's recovery; unreadable storage counts as occupied.
-        !pathHasLeftoverDrafts({ environmentId, cwd, relativePath: to }, true)),
+        newDocuments.get({ environmentId, cwd, relativePath: from }) !== null),
+    // Visual drafts still stored under the old name (being confirmed, or parked
+    // recovery) would be left behind; wait for them. Unreadable counts as busy.
+    sourceBusy: (from) =>
+      isLatexPreviewFile(from) &&
+      pathHasLeftoverDrafts({ environmentId, cwd, relativePath: from }, true),
+    // Drafts left at the new name by an earlier file would be offered as this
+    // document's recovery, or overwritten. Unreadable counts as occupied.
+    destinationStorageFree: (to) =>
+      !isLatexPreviewFile(to) ||
+      !pathHasLeftoverDrafts({ environmentId, cwd, relativePath: to }, true),
     reopen: (from, to) =>
       applyScientFileRename({
         environmentId,
@@ -1990,7 +1997,11 @@ export default function FilePreviewPanel({
                             ),
                           }
                         : {})}
-                      {...(moveInPlace ? { moveInPlace } : {})}
+                      {
+                        // The header moves Markdown in place; a LaTeX document moves only
+                        // through its automatic rename from its title.
+                        ...(moveInPlace && isRichMarkdown ? { moveInPlace } : {})
+                      }
                       {...(markdownLease
                         ? {
                             prepareRename: () =>

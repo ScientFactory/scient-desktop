@@ -1250,7 +1250,11 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       (candidate) => candidate.rootRelativePath === props.relativePath,
     ) &&
     !/\\(?:input|include|subfile|subimport|import)\b/u.test(props.contents) &&
-    // Never built: a PDF, its SyncTeX and its build directory belong to the old name.
+    // Never built, and nothing on its way: a PDF, its SyncTeX and its build
+    // directory belong to the old name.
+    !build.requesting &&
+    !build.installRequesting &&
+    build.managedInstall === null &&
     (build.snapshot === null ||
       (build.snapshot.state === "idle" && build.snapshot.descriptor === null));
   useEffect(() => {

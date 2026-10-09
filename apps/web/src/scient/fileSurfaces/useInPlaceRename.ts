@@ -50,6 +50,10 @@ export function useInPlaceRename(input: {
   readonly lease: MarkdownPersistenceLease | null;
   /** Whether this kind of document may move in place (same kind at both paths). */
   readonly canMove: (from: string, to: string) => boolean;
+  /** Something of this document is still settling under its old name; retry shortly. */
+  readonly sourceBusy?: (from: string) => boolean;
+  /** No stored drafts wait at the new name. Checked before starting and before moving. */
+  readonly destinationStorageFree?: (to: string) => boolean;
   /** The ordinary rename's follow-up, for a file renamed on disk that did not move. */
   readonly reopen: (from: string, to: string, revision: string) => void;
   /** Moves the tab to the new path, keeping its state. */
@@ -95,6 +99,7 @@ export function useInPlaceRename(input: {
     const from = relativePath;
     if (folderOf(from) !== folderOf(destination) || !input.canMove(from, destination))
       return { kind: "legacy-required" };
+    if (input.sourceBusy?.(from)) return { kind: "legacy-required", reason: "busy" };
     const outcome = await renameOpenDocument({
       lease,
       destination: {
@@ -123,7 +128,9 @@ export function useInPlaceRename(input: {
           cause: result._tag === "Failure" ? squashAtomCommandFailure(result) : null,
         };
       },
-      destinationFree: () => destinationTabFree(input.threadRef, destination),
+      destinationFree: () =>
+        destinationTabFree(input.threadRef, destination) &&
+        (input.destinationStorageFree?.(destination) ?? true),
       reopen: (to, revision) => input.reopen(from, to, revision),
       follow: (to) => {
         input.moveViewState(from, to);
