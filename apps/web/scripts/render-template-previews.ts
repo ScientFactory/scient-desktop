@@ -46,14 +46,48 @@ const entries = [
     .map((entry) => ({ id: entry.name, folder: NodePath.join(templates, entry.name) })),
 ];
 
-/** Guidance comments in empty places, as faint print: what the Visual page shows. */
+/** Text as TeX prints it literally. */
+function literal(text: string): string {
+  const escapes: Record<string, string> = {
+    "\\": "\\textbackslash{}",
+    "{": "\\{",
+    "}": "\\}",
+    "%": "\\%",
+    $: "\\$",
+    "&": "\\&",
+    "#": "\\#",
+    _: "\\_",
+    "~": "\\textasciitilde{}",
+    "^": "\\textasciicircum{}",
+  };
+  return text.replace(/[\\{}%$&#_~^]/gu, (character) => escapes[character]!);
+}
+
+/**
+ * A template's guidance (`% Guide:` comment lines above an empty place) as
+ * faint print: what the Visual page shows. The rule matches Visual's
+ * (latexGuidance.ts); a document's own PDF never prints guidance.
+ */
 function faintGuidance(source: string): string {
-  const faint = (text: string) => `{\\color{black!38}${text}}`;
+  const faint = (lines: string) => {
+    const text = lines
+      .split("\n")
+      .filter(Boolean)
+      .map((line, index) =>
+        (index === 0 ? line.replace(/^%+\s*Guide:\s*/u, "") : line.replace(/^%+\s?/u, "")).trim(),
+      )
+      .join(" ");
+    return `{\\color{black!38}${literal(text)}}`;
+  };
   return source
-    .replace(/^%[ \t]?([^\n]*)\n\\par$/gmu, (_, text: string) => `${faint(text)}\\par`)
     .replace(
-      /(\\begin\{[A-Za-z]+\*?\}(?:\[[^\]]*\])?\n)%[ \t]?([^\n]*)\n(\\end\{)/gu,
-      (_, opening: string, text: string, closing: string) => `${opening}${faint(text)}\n${closing}`,
+      /^(%+\s*Guide:[^\n]*\n(?:%[^\n]*\n)*)\\par$/gmu,
+      (_, lines: string) => `${faint(lines)}\\par`,
+    )
+    .replace(
+      /(\\begin\{[A-Za-z]+\*?\}(?:\s*\[[^\]]*\])?\n)(%+\s*Guide:[^\n]*\n(?:%[^\n]*\n)*)(\\end\{)/gu,
+      (_, opening: string, lines: string, closing: string) =>
+        `${opening}${faint(lines)}\n${closing}`,
     );
 }
 

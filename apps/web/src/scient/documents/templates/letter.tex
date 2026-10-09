@@ -7,27 +7,28 @@
 \usepackage[hidelinks]{hyperref}
 
 \pagestyle{empty}
-% A letter with nothing written yet still makes its (blank) page.
-\AtEndDocument{\ifdim\pagetotal=0pt \null\fi}
+% A letter with nothing written yet still makes its (blank) page; once
+% anything is printed, this does nothing.
+\AtEndDocument{\ifnum\ReadonlyShipoutCounter=0 \ifdim\pagetotal=0pt \null\fi\fi}
 
 \begin{document}
 
-% Your name, position, institution, address, and email.
+% Guide: Your name, position, institution, address, and email.
 \par
 
-% The date.
+% Guide: The date.
 \par
 
-% The recipient's name, position, institution, and address.
+% Guide: The recipient's name, position, institution, and address.
 \par
 
-% Dear …,
+% Guide: Dear …,
 \par
 
-% Your letter: why you are writing, the details, and what you would like to happen next.
+% Guide: Your letter: why you are writing, the details, and what you would like to happen next.
 \par
 
-% Sincerely, and your name.
+% Guide: Sincerely, and your name.
 \par
 
 \end{document}

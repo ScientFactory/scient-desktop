@@ -146,12 +146,14 @@ describe("new documents", () => {
         const projection = projectLatexVisualDocument(assembled.source);
         // Every place left to write in shows its guidance; no sample text is printed.
         const places =
-          (assembled.source.match(/^%[^\n]*\n\\par$/gmu) ?? []).length +
+          (assembled.source.match(/^% Guide:[^\n]*\n\\par$/gmu) ?? []).length +
           (
-            assembled.source.match(/\\begin\{[A-Za-z]+\*?\}(?:\[[^\]]*\])?\n%[^\n]*\n\\end\{/gu) ??
-            []
+            assembled.source.match(
+              /\\begin\{[A-Za-z]+\*?\}(?:\[[^\]]*\])?\n% Guide:[^\n]*\n\\end\{/gu,
+            ) ?? []
           ).length;
         expect(latexGuidance(projection).size, `${template.id}/${language}`).toBe(places);
+        expect(projection.content.content).toHaveLength(projection.blocks.length);
         expect(
           projection.blocks
             .filter((block) => block.node.type === "latexRawBlock")

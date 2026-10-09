@@ -149,7 +149,7 @@ import {
   latexImageUploads,
   removeLatexImageUpload,
 } from "./latexImageUploads";
-import { latexGuidancePlaceholders } from "./latexGuidance";
+import { hasLatexGuidance, latexGuidanceKey, latexGuidancePlaceholders } from "./latexGuidance";
 import { LatexMathField, type LatexMathFieldHandle } from "./LatexMathField";
 import { LatexMathPalette } from "./LatexMathPalette";
 import { LatexMatrixDialog } from "./LatexMatrixDialog";
@@ -6015,6 +6015,19 @@ function LatexVisualEditorReady(
   useLayoutEffect(() => {
     editorRef.current = editor;
   }, [editor]);
+  const guidancePluginFactory = useRef(latexGuidancePlaceholders);
+  useLayoutEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    // A renderer hot update keeps the existing editor and its original plugins.
+    if (
+      guidancePluginFactory.current !== latexGuidancePlaceholders ||
+      !hasLatexGuidance(editor.state)
+    ) {
+      editor.unregisterPlugin(latexGuidanceKey);
+      editor.registerPlugin(latexGuidancePlaceholders(() => projection.current));
+      guidancePluginFactory.current = latexGuidancePlaceholders;
+    }
+  }, [editor, latexGuidancePlaceholders]);
   const referencePluginFactory = useRef(latexEquationReferences);
   const paginationPluginFactory = useRef(createLatexVisualPagination);
   useLayoutEffect(() => {

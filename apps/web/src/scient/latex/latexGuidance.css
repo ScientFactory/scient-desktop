@@ -10,3 +10,10 @@
   pointer-events: none;
   user-select: none;
 }
+
+/* Printing the page prints the document, not the template's guidance. */
+@media print {
+  .scient-latex-visual-paper p.scient-latex-guidance::before {
+    content: none;
+  }
+}
