@@ -135,7 +135,7 @@ function OptionSelect<T extends string>(props: {
         if (next) props.onChange(next.id);
       }}
     >
-      <SelectTrigger size="sm" className="w-auto max-w-52" aria-label={props.label}>
+      <SelectTrigger size="sm" className="w-44" aria-label={props.label}>
         <SelectValue>{options.find((option) => option.id === props.value)?.name}</SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false} matchTriggerWidth={false}>

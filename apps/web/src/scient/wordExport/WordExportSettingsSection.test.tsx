@@ -132,4 +132,16 @@ describe("WordExportSettingsSection", () => {
     expect(installPandocTool).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain("Downloading Pandoc");
   });
+
+  it("says Pandoc's state in a few words under the Word export heading", async () => {
+    readPandocTool.mockResolvedValue(status());
+    await render();
+    expect(container.querySelector("h3")?.textContent).toBe("Pandoc");
+    expect(container.querySelector("p")?.textContent).toBe("Installed");
+    readPandocTool.mockResolvedValue(status({ installed: false }));
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await render();
+    expect(container.querySelector("p")?.textContent).toBe("Not installed · 40 MB");
+  });
 });
