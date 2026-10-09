@@ -232,6 +232,8 @@ export const readForkHistoryIndex = Effect.fn("ForkHistory.readIndex")(function*
   sql: SqlClient.SqlClient,
   threadId: ThreadId,
   positions?: readonly [first: number, last: number],
+  /** Only rows of these item types. */
+  types?: ReadonlyArray<string>,
 ) {
   const rows = yield* sql<{
     readonly position: number;
@@ -246,6 +248,7 @@ export const readForkHistoryIndex = Effect.fn("ForkHistory.readIndex")(function*
     FROM scient_fork_history
     WHERE thread_id = ${threadId}
       ${positions === undefined ? sql`` : sql`AND position BETWEEN ${positions[0]} AND ${positions[1]}`}
+      ${types === undefined ? sql`` : sql`AND item_type IN (SELECT value FROM json_each(${encodeJson(types)}))`}
     ORDER BY position
   `;
   return rows.map((row): ForkHistoryIndexRow => ({
@@ -594,8 +597,14 @@ export const readLiveToolPageReferences = (sql: SqlClient.SqlClient, ids: Readon
         WHERE thread_id IN (SELECT thread_id FROM live)
           OR EXISTS (
             SELECT 1 FROM scient_fork_history AS history
-            WHERE history.source_item_id = named.turn_item_id
+            WHERE history.source_thread_id = named.thread_id
+              AND history.source_item_id = named.turn_item_id
               AND history.thread_id IN (SELECT thread_id FROM live)
+              -- A fork with a kept version shows that, not the current item.
+              AND NOT EXISTS (
+                SELECT 1 FROM scient_fork_frozen_items AS kept
+                WHERE kept.thread_id = history.thread_id AND kept.position = history.position
+              )
           )
         UNION
         SELECT wanted.id FROM scient_fork_frozen_items AS frozen CROSS JOIN wanted

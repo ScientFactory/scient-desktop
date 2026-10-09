@@ -4078,11 +4078,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         );
         // SCIENT-FORK:START — a fork's inherited history comes first, as frozen history.
         if (runIds !== undefined) return local;
-        const forkHistory = yield* readForkHistoryIndex(sql, threadId);
-        if (forkHistory.length === 0) return local;
-        const inherited = new Set<string>(forkHistory.map((row) => row.sourceItemId));
+        if (!(yield* hasForkHistory(sql, threadId))) return local;
         // Only rows of a type turn-start history can hold are read, and of
-        // questions only the answered ones, as the fork shows them.
+        // questions only the answered ones, as the fork shows them (the stored
+        // status first; a kept version's own status otherwise).
+        const index = yield* readForkHistoryIndex(sql, threadId, undefined, [
+          ...TURN_START_HISTORY_TYPES,
+          "reasoning",
+          "dynamic_tool",
+          "user_input_request",
+        ]);
         const answered = new Set(
           (yield* sql<{ readonly position: number }>`
             SELECT history.position FROM scient_fork_history AS history
@@ -4092,16 +4097,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ON item.turn_item_id = history.source_item_id
             WHERE history.thread_id = ${threadId}
               AND history.item_type = 'user_input_request'
-              AND json_extract(COALESCE(frozen.item_json, item.payload_json), '$.status') = 'completed'
-              AND json_type(COALESCE(frozen.item_json, item.payload_json), '$.questionAnswer') = 'object'
+              AND CASE
+                WHEN frozen.item_json IS NULL THEN item.status = 'completed'
+                  AND json_type(item.payload_json, '$.questionAnswer') = 'object'
+                ELSE json_extract(frozen.item_json, '$.status') = 'completed'
+                  AND json_type(frozen.item_json, '$.questionAnswer') = 'object'
+              END
           `).map((row) => row.position),
         );
-        const candidates = forkHistory.filter(
-          (row) =>
-            TURN_START_HISTORY_TYPES.has(row.type) ||
-            row.type === "reasoning" ||
-            row.type === "dynamic_tool" ||
-            (row.type === "user_input_request" && answered.has(row.position)),
+        const candidates = index.filter(
+          (row) => row.type !== "user_input_request" || answered.has(row.position),
+        );
+        // The fork's own copies are listed in its history: shown there, not twice.
+        const inherited = yield* readForkCopyIds(
+          sql,
+          threadId,
+          local.map((item) => item.id),
         );
         const history = (yield* readForkHistoryRows(sql, threadId, candidates))
           .map((row) => row.item)

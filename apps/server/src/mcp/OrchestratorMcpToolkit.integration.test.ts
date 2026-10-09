@@ -2844,6 +2844,31 @@ describe("orchestrator MCP toolkit", () => {
               createdBy: "agent",
               creationSource: "mcp",
             });
+            // Rewriting the original's provenance after the fork leaves the fork's
+            // report as the fork shows it.
+            const shownPrompt = promptedProjection.messages.find(
+              (message) => message.text === createdThreadPrompt,
+            )!;
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("event:mcp-orchestrator-inherited-provenance"),
+                  type: "message.updated",
+                  threadId: promptedThread.threadId,
+                  occurredAt: yield* DateTime.now,
+                  payload: { ...shownPrompt, createdBy: "user", creationSource: "web" },
+                },
+              ],
+            });
+            const reread = yield* decodeThreadReadResult(
+              (yield* invoke("scient_thread_inspect", { threadId: forkedThreadId }))
+                .structuredContent,
+            ).pipe(Effect.orDie);
+            expect(reread.items.find((item) => item.text === createdThreadPrompt)).toMatchObject({
+              sourceThreadId: promptedThread.threadId,
+              createdBy: "agent",
+              creationSource: "mcp",
+            });
 
             const ordinaryLoopPrompt = "Run an ordinary thread loop iteration.";
             const sendCall = yield* invoke("scient_thread_send", {

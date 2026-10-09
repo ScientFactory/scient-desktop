@@ -2,11 +2,12 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 /**
- * Point reads of a fork's history by the fork and an item or message, and the
- * fork's inherited activity: the latest times of the user messages it shows
- * from its history. History is frozen, so these are fixed when the fork is
- * accepted (`writeForkHistory`); shell and settlement reads look them up
- * instead of scanning the history.
+ * Indexes for point reads of a fork's history by the fork and an item or
+ * message, and for its turn starts (window selection). And the fork's
+ * inherited activity: the latest times of the user messages it shows from its
+ * history. History is frozen, so these are fixed when the fork is accepted
+ * (`writeForkHistory`); shell and settlement reads look them up instead of
+ * scanning the history.
  */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -14,6 +15,8 @@ export default Effect.gen(function* () {
     ON scient_fork_history (thread_id, source_item_id)`;
   yield* sql`CREATE INDEX IF NOT EXISTS scient_fork_history_message
     ON scient_fork_history (thread_id, message_id)`;
+  yield* sql`CREATE INDEX IF NOT EXISTS scient_fork_history_turn_start
+    ON scient_fork_history (thread_id, position) WHERE turn_start = 1`;
   yield* sql`CREATE TABLE IF NOT EXISTS scient_fork_inherited_activity (
     thread_id TEXT PRIMARY KEY,
     user_message_at TEXT,

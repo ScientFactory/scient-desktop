@@ -6,6 +6,7 @@ import { ProjectionMaintenanceV2, layer as maintenanceLayer } from "../../Projec
 import { fork, remove, run, seed } from "./stressHarness.ts";
 import { EventId, MessageId, RunId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { createAttachmentId } from "../../../attachmentStore.ts";
 import { EventSinkV2 } from "../../EventSink.ts";
 import {
   buildBoundedThreadProjection,
@@ -391,6 +392,101 @@ it.live(
         assert.isFalse(
           (yield* store.getTurnStartContext(child.thread.id, RunId.make("none"))).hasConversation,
         );
+      }),
+    ),
+  120000,
+);
+
+it.live(
+  "a fork keeps the tool page it shows, not one its original was rewritten to show",
+  () =>
+    run(
+      Effect.gen(function* () {
+        const source = yield* seed({ turns: 2 });
+        const store = yield* ProjectionStoreV2;
+        const sink = yield* EventSinkV2;
+        const now = yield* DateTime.now;
+        const shownPage = createAttachmentId(source.thread.id, "html")!;
+        const laterPage = createAttachmentId(source.thread.id, "html")!;
+        const toolItem = (page: string) => ({
+          id: TurnItemId.make(`${source.thread.id}~page-tool`),
+          type: "dynamic_tool" as const,
+          threadId: source.thread.id,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 0,
+          status: "completed" as const,
+          title: "Weather",
+          toolName: "weather.get_weather",
+          input: {},
+          output: {
+            t3McpApp: {
+              attachmentId: page,
+              server: "weather",
+              tool: "get_weather",
+              resourceUri: "ui://weather/dashboard",
+            },
+          },
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+        });
+        const lastAnswer = source.turnItems.findLast((item) => item.type === "assistant_message")!;
+        const lastMessage = source.messages.findLast((message) => message.role === "assistant")!;
+        assert.ok(lastAnswer.type === "assistant_message");
+        const laterId = MessageId.make(`${lastMessage.id}~after-page`);
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("page-tool-shown"),
+              threadId: source.thread.id,
+              type: "turn-item.updated",
+              occurredAt: now,
+              payload: toolItem(shownPage),
+            },
+            {
+              id: EventId.make("page-tool-answer-message"),
+              threadId: source.thread.id,
+              type: "message.updated",
+              occurredAt: now,
+              payload: { ...lastMessage, id: laterId, text: "After the page" },
+            },
+            {
+              id: EventId.make("page-tool-answer-item"),
+              threadId: source.thread.id,
+              type: "turn-item.updated",
+              occurredAt: now,
+              payload: {
+                ...lastAnswer,
+                id: TurnItemId.make(`${lastAnswer.id}~after-page`),
+                messageId: laterId,
+                text: "After the page",
+              },
+            },
+          ],
+        });
+        const child = (yield* fork(source.thread.id, "page-rewrite-child")).projection;
+        assert.isTrue(child.visibleTurnItems.some((row) => row.item.type === "dynamic_tool"));
+        // The original is rewritten to show another page; the fork keeps its own.
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("page-tool-rewritten"),
+              threadId: source.thread.id,
+              type: "turn-item.updated",
+              occurredAt: now,
+              payload: toolItem(laterPage),
+            },
+          ],
+        });
+        yield* remove(source.thread.id);
+        const released = yield* store.getReleasableFiles(source.thread.id);
+        assert.include(released, laterPage);
+        assert.notInclude(released, shownPage);
       }),
     ),
   120000,
