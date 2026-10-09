@@ -132,15 +132,15 @@ describe("Settings ▸ Documents", () => {
     return value === null ? null : JSON.parse(value);
   };
 
-  it("shows LaTeX, Markdown, and Word as plain tabs, with a state where there is one", async () => {
+  it("shows LaTeX, Markdown, and Word with their logos and states", async () => {
     await render();
     const strip = container.querySelector('[aria-label="Document formats"]')!;
     const tab = (format: string) =>
       strip.querySelector<HTMLElement>(`#documents-${format}-trigger`)!;
     expect(tab("latex").textContent).toBe("LaTeXInstalled");
-    expect(tab("markdown").textContent).toBe("Markdown");
+    expect(tab("markdown").textContent).toBe("MarkdownBuilt in");
     expect(tab("word").textContent).toBe("WordReady");
-    expect(strip.querySelector("svg:not(.lucide-chevron-down), img")).toBeNull();
+    expect(strip.querySelectorAll("img")).toHaveLength(3);
     expect(container.querySelector("#latex-installation")?.textContent).toContain(
       "latexmk 4.85 · This computer",
     );

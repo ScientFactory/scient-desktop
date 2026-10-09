@@ -3,6 +3,10 @@ import { FileTextIcon, RefreshCwIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 
+import latexLogo from "~/assets/documents/latex.svg";
+import markdownLogo from "~/assets/documents/markdown.svg";
+import wordLogo from "~/assets/documents/word.svg";
+
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { cn } from "~/lib/utils";
 import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
@@ -60,6 +64,7 @@ import {
 import { useLatexInstallation, type LatexInstallationController } from "./useLatexInstallation";
 
 const SELECTED_FORMAT_STORAGE_KEY = "scient.documentsSettingsFormat";
+const FORMAT_LOGOS = { latex: latexLogo, markdown: markdownLogo, word: wordLogo };
 const DOCUMENT_FORMATS = ["latex", "markdown", "word"] as const;
 type DocumentFormat = (typeof DOCUMENT_FORMATS)[number];
 
@@ -300,7 +305,7 @@ function DocumentsSection(props: {
     readonly detail: string | null;
   }> = [
     { id: "latex", label: "LaTeX", detail: props.server?.installation.view.summary ?? null },
-    { id: "markdown", label: "Markdown", detail: null },
+    { id: "markdown", label: "Markdown", detail: "Built in" },
     ...(props.server
       ? [
           {
@@ -331,7 +336,13 @@ function DocumentsSection(props: {
                 separated={index > 0}
                 label={item.label}
                 {...(item.detail === null ? {} : { detail: item.detail })}
-                icon={null}
+                icon={
+                  <img
+                    src={FORMAT_LOGOS[item.id]}
+                    alt=""
+                    className="size-7 shrink-0 object-contain"
+                  />
+                }
                 onToggle={() => {
                   if (item.id === selected) {
                     setCollapsed((current) => !current);
