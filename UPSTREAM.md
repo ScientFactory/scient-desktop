@@ -929,7 +929,10 @@ LaTeX compilation is isolated under `apps/server/src/scient/latex` and
 `apps/web/src/scient/latex`, with `packages/contracts/src/scientLatex.ts` and
 `packages/client-runtime/src/state/scientLatexHttp.ts` as owned contracts and
 transport. The pure source-preserving visual projection lives in
-`packages/shared/src/latexVisual.ts`. The inherited-host seams are limited to file-preview
+`packages/shared/src/latexVisual.ts`. Settings and installation helpers, file-editor
+bindings, preview and glyph generators, standalone selection qualification, and
+historical responsiveness reports are also Scient-owned files, enumerated in
+`scient-latex-seams.json`. The inherited-host seams are limited to file-preview
 recognition, the file-panel surface mount, server config and service wiring, and
 the contract and client export points. Future T3 merges should preserve those
 narrow mounts rather than moving build coordination or toolchain discovery into
