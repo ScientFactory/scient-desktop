@@ -9,11 +9,24 @@ import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/component
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import type { RenameOpenDocumentResult } from "~/scient/fileSurfaces/renameOpenDocument";
+
 import { normalizeMarkdownCreatePath } from "./ScientMarkdownCreateButton";
 
 function failureCode(cause: unknown): string | null {
   if (typeof cause !== "object" || cause === null || !("failure" in cause)) return null;
   return typeof cause.failure === "string" ? cause.failure : null;
+}
+
+function renameFailureMessage(cause: unknown): string {
+  const failure = failureCode(cause);
+  return failure === "path_exists"
+    ? "A file already exists at that path."
+    : failure === "revision_conflict"
+      ? "The file changed before it could be renamed. Reload it and try again."
+      : cause instanceof Error
+        ? cause.message
+        : "Unable to rename the Markdown file.";
 }
 
 interface ScientMarkdownRenameButtonProps {
@@ -26,6 +39,11 @@ interface ScientMarkdownRenameButtonProps {
   readonly beforeRename?: () => (() => void) | null;
   readonly label: string;
   readonly onRenamed: (destinationRelativePath: string, revision: string) => void;
+  /**
+   * Renames the open document in place, keeping its editor. When it reports
+   * `legacy-required`, the ordinary rename runs instead.
+   */
+  readonly moveInPlace?: (destinationRelativePath: string) => Promise<RenameOpenDocumentResult>;
 }
 
 export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProps) {
@@ -66,6 +84,26 @@ export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProp
       setOpen(false);
       return;
     }
+    if (props.moveInPlace) {
+      setSubmitting(true);
+      setError(null);
+      let outcome: RenameOpenDocumentResult;
+      try {
+        outcome = await props.moveInPlace(destinationRelativePath);
+      } catch (cause) {
+        outcome = { kind: "failed", cause };
+      } finally {
+        setSubmitting(false);
+      }
+      if (outcome.kind === "failed") {
+        setError(renameFailureMessage(outcome.cause));
+        return;
+      }
+      if (outcome.kind !== "legacy-required") {
+        setOpen(false);
+        return;
+      }
+    }
     const release = props.beforeRename?.();
     if (props.beforeRename && !release) {
       setError("Finish the current file operation before renaming.");
@@ -89,17 +127,7 @@ export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProp
         return;
       }
       if (result._tag !== "Failure") return;
-      const cause = squashAtomCommandFailure(result);
-      const failure = failureCode(cause);
-      setError(
-        failure === "path_exists"
-          ? "A file already exists at that path."
-          : failure === "revision_conflict"
-            ? "The file changed before it could be renamed. Reload it and try again."
-            : cause instanceof Error
-              ? cause.message
-              : "Unable to rename the Markdown file.",
-      );
+      setError(renameFailureMessage(squashAtomCommandFailure(result)));
     } finally {
       release?.();
       setSubmitting(false);

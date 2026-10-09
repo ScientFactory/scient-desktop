@@ -182,6 +182,31 @@ describe("rightPanelStore", () => {
     ).toEqual(["diff", "device", "files"]);
   });
 
+  it("moves a renamed file's tab in place, keeping its state only when asked", () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "notes/other.md");
+    store.openFile(refA, "notes/a.md", 12);
+    store.renameFileSurface(refA, "notes/a.md", "notes/b.md", { keepState: true });
+    let state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      "file:notes/other.md",
+      "file:notes/b.md",
+    ]);
+    expect(state.activeSurfaceId).toBe("file:notes/b.md");
+    expect(state.surfaces[1]).toMatchObject({
+      relativePath: "notes/b.md",
+      revealLine: 12,
+      revealRequestId: 1,
+    });
+    store.renameFileSurface(refA, "notes/b.md", "notes/c.md");
+    state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces[1]).toMatchObject({
+      id: "file:notes/c.md",
+      revealLine: null,
+      revealRequestId: 0,
+    });
+  });
+
   it("does not save an incidental Files replacement when opening an existing file", () => {
     const store = useRightPanelStore.getState();
     store.openFile(refA, "src/app.ts");

@@ -180,6 +180,7 @@ import {
   shouldShowFileExplorer,
 } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
+import { useInPlaceRename } from "~/scient/fileSurfaces/useInPlaceRename";
 import {
   getOptimisticProjectFileQueryData,
   setProjectFileQueryData,
@@ -203,6 +204,8 @@ interface FilePreviewPanelProps {
   latexPresentationRequest: LatexFilePresentationRequest | null;
   latexRootRelativePath: string | null;
   onOpenFile: (relativePath: string) => void;
+  /** A renamed file's tab follows it to the new path, keeping its state. */
+  onFileRenamed?: (fromPath: string, toPath: string) => void;
   onOpenFileSource: (relativePath: string, line?: number, options?: OpenFileOptions) => void;
   onHtmlPresentationRequestHandled: (
     relativePath: string,
@@ -497,10 +500,20 @@ function useFileLineReveal(
   relativePath: string | null,
   revealLine: number | null,
   revealRequestId: number,
-): FilePostRender {
+): { readonly onPostRender: FilePostRender; readonly move: (from: string, to: string) => void } {
   const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
-
-  return useCallback<FilePostRender>(
+  // SCIENT-FORK:START — an in-place rename carries a handled reveal along, never replays it
+  const move = useCallback(
+    (from: string, to: string) => {
+      const state = revealStatesByPath.get(from);
+      if (state === undefined) return;
+      revealStatesByPath.delete(from);
+      revealStatesByPath.set(to, state);
+    },
+    [revealStatesByPath],
+  );
+  // SCIENT-FORK:END
+  const onPostRender = useCallback<FilePostRender>(
     (fileContainer, instance, phase) => {
       if (relativePath === null) return;
 
@@ -658,6 +671,7 @@ function useFileLineReveal(
     },
     [revealStatesByPath, relativePath, revealLine, revealRequestId],
   );
+  return { onPostRender, move };
 }
 
 const createFileEditor: EditorFactory<FileCommentAnnotationGroup, undefined> = (
@@ -852,6 +866,10 @@ function EditableFileEditor({
   const [externalFile, setExternalFile] = useState(() =>
     editableFileContents(environmentId, cwd, relativePath, contents),
   );
+  // SCIENT-FORK:START — the key is read only when the editor is created; keeping
+  // the first one lets an in-place rename's hold park and restore source undo.
+  const [editStateKey] = useState(() => `scient-file:${environmentId}:${cwd}:${relativePath}`);
+  // SCIENT-FORK:END
   const [editedContents, setEditedContents] = useState<string | null>(null);
   if (contents !== (editedContents ?? externalFile.contents)) {
     setExternalFile(editableFileContents(environmentId, cwd, relativePath, contents));
@@ -1201,7 +1219,7 @@ function EditableFileEditor({
           <File<FileCommentAnnotationGroup>
             file={externalFile}
             edit={editable && !editingBlocked && !restorationBlocked}
-            editStateKey={`scient-file:${environmentId}:${cwd}:${relativePath}`}
+            editStateKey={editStateKey}
             editorOptions={editorOptions}
             onEditChange={handleEditChange}
             options={{
@@ -1359,6 +1377,7 @@ export default function FilePreviewPanel({
   latexPresentationRequest,
   latexRootRelativePath,
   onOpenFile,
+  onFileRenamed,
   onOpenFileSource,
   onHtmlPresentationRequestHandled,
   onLatexPresentationRequestHandled,
@@ -1674,7 +1693,39 @@ export default function FilePreviewPanel({
       }),
     [absolutePath, cwd, environmentId, relativePath, threadRef.threadId],
   );
-  const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
+  const { onPostRender: onFilePostRender, move: moveFileLineReveal } = useFileLineReveal(
+    relativePath,
+    revealLine,
+    revealRequestId,
+  );
+  // SCIENT-FORK:START — an open Markdown document renames in place, keeping its editor
+  const { moveInPlace, surfaceGeneration } = useInPlaceRename({
+    environmentId,
+    cwd,
+    relativePath,
+    lease: markdownLease,
+    // Markdown only for now; other document kinds keep the ordinary rename.
+    canMove: (from, to) => isScientMarkdownDocumentPath(from) && isScientMarkdownDocumentPath(to),
+    reopen: (from, to, revision) =>
+      applyScientMarkdownRename({
+        environmentId,
+        cwd,
+        relativePath: from,
+        fileData: file.data,
+        destinationRelativePath: to,
+        revision,
+        onOpenFile,
+      }),
+    moveTab: (from, to) => (onFileRenamed ? onFileRenamed(from, to) : onOpenFile(to)),
+    moveViewState: (from, to) => {
+      setHandledReveal((current) => (current?.path === from ? { ...current, path: to } : current));
+      moveFileLineReveal(from, to);
+    },
+  });
+  const documentSurfaceKey = markdownLease
+    ? `${markdownLease.documentId}:${surfaceGeneration}`
+    : relativePath;
+  // SCIENT-FORK:END
   const handlePendingChange = useCallback(
     (path: string, pending: boolean) => {
       setPendingPaths((current) => {
@@ -1811,6 +1862,7 @@ export default function FilePreviewPanel({
                       {...(markdownLease
                         ? { beforeRename: () => markdownLease.holdForRename() }
                         : {})}
+                      {...(moveInPlace ? { moveInPlace } : {})}
                       environmentId={environmentId}
                       cwd={cwd}
                       relativePath={relativePath}
@@ -1910,7 +1962,7 @@ export default function FilePreviewPanel({
       ) : null}
       {markdownLease ? (
         <ScientMarkdownPersistenceNotice
-          key={relativePath}
+          key={documentSurfaceKey}
           persistence={markdownLease}
           {...(!renderMarkdown ? { onReturnToRich: () => applyMarkdownViewChange(true) } : {})}
           {...(markdownRefreshCopy ? { refreshCopy: markdownRefreshCopy } : {})}
@@ -2144,7 +2196,7 @@ export default function FilePreviewPanel({
             ) : usesScientMarkdownEditor && markdownLease ? (
               <ScientSurfaceSuspense>
                 <ScientMarkdownFileSurface
-                  key={relativePath}
+                  key={documentSurfaceKey}
                   environmentId={environmentId}
                   cwd={cwd}
                   relativePath={relativePath}
@@ -2162,7 +2214,7 @@ export default function FilePreviewPanel({
               </ScientSurfaceSuspense>
             ) : markdownLease ? (
               <MarkdownSourceSurface
-                key={relativePath}
+                key={documentSurfaceKey}
                 persistence={markdownLease}
                 environmentId={environmentId}
                 cwd={cwd}
