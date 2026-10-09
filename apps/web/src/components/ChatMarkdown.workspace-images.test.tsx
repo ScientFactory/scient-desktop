@@ -85,7 +85,7 @@ function render(
       threadRef={threadRef}
       text={markdown}
       parseRawHtml={parseRawHtml}
-      contentDirection={contentDirection}
+      {...(contentDirection === undefined ? {} : { contentDirection })}
     />,
   );
 }
