@@ -28,7 +28,9 @@ reset. This does not rewrite imports already acknowledged by an earlier build.
 
 Background restoration reports completion only after the import ledger has no pending threads.
 An incomplete pass or failed completion check produces a persistent restoration notice, including
-the remaining thread count when it can be verified. Unaffected threads remain usable. Opening an
+the remaining thread count when it can be verified. Failure details are optional on the existing
+lifecycle payload: older clients can still decode it and see restoration as incomplete, while
+updated clients show the error notice. Unaffected threads remain usable. Opening an
 incomplete thread retries its import, and restarting retries the background pass and refreshes the
 overall status. The original V1 database and copied legacy tables are retained for recovery.
 

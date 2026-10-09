@@ -53,7 +53,7 @@ it("keeps a failed restoration visible and removes it after verified completion"
   const directory = import.meta.env.VITE_SCIENT_MIGRATION_SCREENSHOTS;
   // The old failure path used this complete state, leaving no notice.
   if (directory) await page.screenshot({ path: `${directory}/before-failure.png` });
-  await render({ status: "failed", totalThreadCount: 2, pendingThreadCount: 1 });
+  await render({ status: "running", failed: true, totalThreadCount: 2, pendingThreadCount: 1 });
   await expect.element(page.getByText("Thread restoration needs attention")).toBeVisible();
   await expect.element(page.getByText(/1 thread still needs restoration/)).toBeVisible();
   await expect

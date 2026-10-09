@@ -31,7 +31,7 @@ async function render(migration: ServerLifecycleLegacyThreadMigrationPayload) {
 
 it("replaces a running spinner with a persistent failure and clears it after successful retry", async () => {
   await render({ status: "running", totalThreadCount: 2 });
-  await render({ status: "failed", totalThreadCount: 2, pendingThreadCount: 1 });
+  await render({ status: "running", failed: true, totalThreadCount: 2, pendingThreadCount: 1 });
   expect(state.close).toHaveBeenCalledWith("migration-toast");
   expect(state.add).toHaveBeenLastCalledWith(
     expect.objectContaining({
@@ -40,7 +40,7 @@ it("replaces a running spinner with a persistent failure and clears it after suc
       description: expect.stringContaining("1 thread still needs restoration"),
     }),
   );
-  await render({ status: "failed", totalThreadCount: 2, pendingThreadCount: 1 });
+  await render({ status: "running", failed: true, totalThreadCount: 2, pendingThreadCount: 1 });
   expect(state.add).toHaveBeenCalledTimes(2);
   await render({ status: "complete", totalThreadCount: 2, pendingThreadCount: 0 });
   expect(state.close).toHaveBeenCalledTimes(2);
@@ -48,7 +48,7 @@ it("replaces a running spinner with a persistent failure and clears it after suc
 });
 
 it("shows a replayed failure without a preceding spinner or an invented pending count", async () => {
-  await render({ status: "failed", totalThreadCount: 3 });
+  await render({ status: "running", failed: true, totalThreadCount: 3 });
   expect(state.add).toHaveBeenCalledWith(
     expect.objectContaining({
       type: "error",
@@ -62,7 +62,7 @@ it("shows a replayed failure without a preceding spinner or an invented pending 
 it("cleans up on unmount and supports older completion payloads without counts", async () => {
   await render({ status: "complete", totalThreadCount: 3 });
   expect(state.add).not.toHaveBeenCalled();
-  await render({ status: "failed", totalThreadCount: 3, pendingThreadCount: 2 });
+  await render({ status: "running", failed: true, totalThreadCount: 3, pendingThreadCount: 2 });
   await act(async () => renderer?.unmount());
   renderer = undefined;
   expect(state.close).toHaveBeenCalledWith("migration-toast");

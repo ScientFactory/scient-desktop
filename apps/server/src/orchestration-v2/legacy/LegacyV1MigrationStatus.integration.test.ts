@@ -1,5 +1,9 @@
 import { assert, it } from "@effect/vitest";
-import { ServerLifecycleLegacyThreadMigrationPayload, ThreadId } from "@t3tools/contracts";
+import {
+  NonNegativeInt,
+  ServerLifecycleLegacyThreadMigrationPayload,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -39,12 +43,19 @@ const seed = Effect.fnUntraced(function* (id: string, attachmentsJson: string | 
     VALUES (${`${id}-message`},${id},'user','Original text',${attachmentsJson},0,'2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z')`;
 });
 
+// Freeze the previous wire decoder: optional failure details must not break it.
+const previousMigrationPayload = Schema.Struct({
+  status: Schema.Literals(["running", "complete"]),
+  totalThreadCount: NonNegativeInt,
+});
+
 const migrationPayload = Effect.gen(function* () {
   const lifecycle = yield* Lifecycle.ServerLifecycleEvents;
   const snapshot = yield* lifecycle.snapshot;
   const event = snapshot.events.find((event) => event.type === "legacyThreadMigration");
   assert.isDefined(event);
   if (event?.type !== "legacyThreadMigration") throw new Error("Missing migration status");
+  yield* Schema.decodeUnknownEffect(previousMigrationPayload)(event.payload);
   return yield* Schema.decodeUnknownEffect(ServerLifecycleLegacyThreadMigrationPayload)(
     event.payload,
   );
@@ -68,7 +79,8 @@ it.effect(
       BEGIN SELECT RAISE(ABORT,'injected import failure'); END`;
       yield* importLegacyTranscriptsWithStatus(2);
       assert.deepEqual(yield* migrationPayload, {
-        status: "failed",
+        status: "running",
+        failed: true,
         totalThreadCount: 2,
         pendingThreadCount: 1,
       });
@@ -109,7 +121,11 @@ it.effect("never reports completion when the final ledger inspection fails", () 
         ),
       }),
     );
-    assert.deepEqual(yield* migrationPayload, { status: "failed", totalThreadCount: 1 });
+    assert.deepEqual(yield* migrationPayload, {
+      status: "running",
+      failed: true,
+      totalThreadCount: 1,
+    });
   }).pipe(Effect.provide(testLayer)),
 );
 
@@ -136,7 +152,8 @@ it.effect(
       yield* importer.reconcileShells;
       yield* importLegacyTranscriptsWithStatus(1);
       assert.deepEqual(yield* migrationPayload, {
-        status: "failed",
+        status: "running",
+        failed: true,
         totalThreadCount: 1,
         pendingThreadCount: 1,
       });
@@ -161,7 +178,7 @@ it.effect.each(["{", "{}"])("reports malformed attachment JSON/shape: %s", (raw)
     yield* seed("invalid", raw);
     yield* importer.reconcileShells;
     yield* importLegacyTranscriptsWithStatus(1);
-    assert.equal((yield* migrationPayload).status, "failed");
+    assert.equal((yield* migrationPayload).failed, true);
     assert.equal(yield* importer.pendingThreadCount, 1);
   }).pipe(Effect.provide(testLayer)),
 );

@@ -8,7 +8,7 @@ type MigrationToastId = ReturnType<typeof toastManager.add>;
 
 export function LegacyThreadMigrationToast() {
   const migration = useAtomValue(primaryServerLegacyThreadMigrationAtom);
-  const status = migration?.status;
+  const status = migration?.failed === true ? "failed" : migration?.status;
   const totalThreadCount = migration?.totalThreadCount ?? 0;
   const pendingThreadCount = migration?.pendingThreadCount;
   const toastIdRef = useRef<MigrationToastId | null>(null);
