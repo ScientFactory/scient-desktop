@@ -36,7 +36,13 @@ for (let i = 0; i < 10; i++) {
   terminal.onExit(({ exitCode }) => {
     assert.equal(exitCode, 0);
     assert.ok(output.includes(token), output);
-    if (++finished === 10) console.log('Packaged Windows runtime: 10 concurrent terminals, Cursor rg and tree-sitter passed.');
+    // Raw node-pty retains its Windows connection workers after shell exit.
+    // Release this probe's terminal resources; the installed-app smoke below
+    // checks the actual application's shutdown independently.
+    terminal.kill();
+    if (++finished === 10) {
+      process.stdout.write('Packaged Windows runtime: 10 concurrent terminals, Cursor rg and tree-sitter passed.\\n', () => process.exit(0));
+    }
   });
 }
 setTimeout(() => { assert.equal(finished, 10, 'All packaged terminals must finish'); }, 15000).unref();

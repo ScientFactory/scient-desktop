@@ -1,33 +1,7 @@
 name: Windows Packaging
 
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/windows-packaging.yml'
-      - '.github/workflows/release.yml'
-      - 'scripts/**'
-      - 'apps/desktop/**'
-      - 'apps/server/**'
-      - 'apps/web/**'
-      - 'packages/**'
-      - 'native/**'
-      - 'package.json'
-      - 'pnpm-*.yaml'
-  merge_group:
-    types: [checks_requested]
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/windows-packaging.yml'
-      - '.github/workflows/release.yml'
-      - 'scripts/**'
-      - 'apps/desktop/**'
-      - 'apps/server/**'
-      - 'apps/web/**'
-      - 'packages/**'
-      - 'native/**'
-      - 'package.json'
-      - 'pnpm-*.yaml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:

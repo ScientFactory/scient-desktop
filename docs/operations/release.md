@@ -30,8 +30,10 @@ separate states and must be reported separately.
   monitor, omit unused Claude SDK platform executables, and package only the
   target Windows `node-pty` architecture. These optimizations do not relax the
   exact-source CI, signing, assembly, or publication gates.
-- The Windows Packaging workflow builds the real x64 NSIS installer on pull
-  requests affecting packaged code, and on merge groups. It runs the release
+- CI calls Windows Packaging for changes affecting packaged code on pull
+  requests, merge groups, and main. Successful qualification is part of the
+  existing required `Test` check; an unresolved diff runs qualification, and
+  a failed detector or an unqualified skip fails the gate. It runs the release
   payload validator, packaged terminal/Cursor native probes, and an install/upgrade
   from the checksum-pinned 0.6.21 installer without signing
   secrets or publication authority. Release Smoke uses synthetic artifacts and
