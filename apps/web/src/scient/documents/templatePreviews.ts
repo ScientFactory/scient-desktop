@@ -24,10 +24,10 @@ import thesisExpanded from "./previews/full/thesis.png";
  * scripts/render-template-previews.ts; run it again after changing a template.
  */
 const BUILT_IN_PREVIEWS: Readonly<
-  Record<string, { src: string; expandedSrc: string; cropTop: number }>
+  Record<string, { src: string; expandedSrc: string; cropTop: number; cropScale?: number }>
 > = {
   article: { src: article, expandedSrc: articleExpanded, cropTop: 0.12 },
-  blank: { src: blank, expandedSrc: blankExpanded, cropTop: 0.1 },
+  blank: { src: blank, expandedSrc: blankExpanded, cropTop: 0, cropScale: 3 },
   cv: { src: cv, expandedSrc: cvExpanded, cropTop: 0.07 },
   "grant-proposal": { src: grantProposal, expandedSrc: grantProposalExpanded, cropTop: 0.12 },
   "lab-report": { src: labReport, expandedSrc: labReportExpanded, cropTop: 0.12 },
@@ -39,7 +39,7 @@ const BUILT_IN_PREVIEWS: Readonly<
     expandedSrc: responseToReviewersExpanded,
     cropTop: 0.12,
   },
-  thesis: { src: thesis, expandedSrc: thesisExpanded, cropTop: 0.1 },
+  thesis: { src: thesis, expandedSrc: thesisExpanded, cropTop: 0.26, cropScale: 3 },
 };
 
 /** A template copied from a built-in one shows that one's page until it is updated. */
@@ -57,6 +57,8 @@ export type TemplatePicture =
       readonly expandedSrc: string;
       /** Trim blank top margin on hover; letter/CV headers start higher. */
       readonly cropTop: number;
+      /** Sparse title pages are framed closer than pages with body text. */
+      readonly cropScale?: number;
     }
   | {
       readonly kind: "page";

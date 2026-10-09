@@ -9,7 +9,12 @@ export function TemplatePage(props: {
   const { picture, width, cropped = false } = props;
   const sourceWidth = picture.kind === "page" ? picture.width : 1;
   const sourceHeight = picture.kind === "page" ? picture.height : Math.SQRT2;
-  const pageWidth = width * (cropped ? 1.25 : 1);
+  const magnification = cropped
+    ? picture.kind === "image"
+      ? (picture.cropScale ?? 1.25)
+      : 1.25
+    : 1;
+  const pageWidth = width * magnification;
   const scale = pageWidth / sourceWidth;
   const height = (width * sourceHeight) / sourceWidth;
   const top = cropped
@@ -24,7 +29,8 @@ export function TemplatePage(props: {
     >
       {picture.kind === "image" ? (
         <img
-          src={cropped ? picture.src : picture.expandedSrc}
+          // A closer crop of a sparse page needs its sharper image too.
+          src={cropped && magnification <= 1.25 ? picture.src : picture.expandedSrc}
           alt=""
           className="absolute block max-w-none"
           style={{ width: pageWidth, left: (width - pageWidth) / 2, top }}

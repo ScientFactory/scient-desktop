@@ -33,7 +33,7 @@ function PreviewCardPopup({
         <PreviewCardPrimitive.Popup
           className={cn(
             "origin-(--transform-origin) border bg-popover text-popover-foreground shadow-lg outline-none transition-[scale,opacity] data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0",
-            radius === "small" ? "rounded-sm" : "rounded-lg",
+            radius === "small" ? "rounded-xs" : "rounded-lg",
             className,
           )}
           data-slot="preview-card-popup"

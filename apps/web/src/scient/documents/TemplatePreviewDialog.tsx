@@ -1,8 +1,8 @@
-import { MinusIcon, PlusIcon } from "lucide-react";
+import { MinusIcon, PlusIcon, XIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
-import { Dialog, DialogPopup, DialogTitle } from "~/components/ui/dialog";
+import { Dialog, DialogClose, DialogPopup, DialogTitle } from "~/components/ui/dialog";
 
 import type { TemplatePicture } from "./templatePreviews";
 import { TemplatePage } from "./TemplatePage";
@@ -20,7 +20,7 @@ export function TemplatePreviewDialog(props: {
   const attachViewport = useCallback((element: HTMLDivElement | null) => {
     viewport.current = element;
     if (!element) return;
-    const measure = () => setPageWidth(Math.max(1, Math.min(720, element.clientWidth - 32)));
+    const measure = () => setPageWidth(Math.max(1, Math.min(720, element.clientWidth - 8)));
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
@@ -29,17 +29,17 @@ export function TemplatePreviewDialog(props: {
   return (
     <Dialog open onOpenChange={(open) => !open && props.onClose()}>
       <DialogPopup
-        variant="media"
+        variant="paper"
         layer="above-popovers"
         bottomStickOnMobile={false}
+        showCloseButton={false}
         className="row-start-1"
         finalFocus={() => (props.returnFocus?.isConnected ? props.returnFocus : null)}
       >
-        <div className="flex h-[min(84vh,56rem)] w-[min(88vw,48rem)] min-h-0 flex-col overflow-hidden rounded-sm border border-border bg-background text-foreground shadow-xl">
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-2.5 pe-12">
+        <div className="flex h-[min(88vh,56rem)] w-[min(88vw,48rem)] min-h-0 flex-col text-foreground">
+          <div className="flex shrink-0 items-center justify-between gap-3 px-1 py-2">
             <div className="min-w-0">
-              <DialogTitle size="compact">{props.name}</DialogTitle>
-              <span className="text-xs text-muted-foreground">First page</span>
+              <DialogTitle size="caption">{props.name}</DialogTitle>
             </div>
             <div className="flex shrink-0 items-center gap-1">
               <Button
@@ -71,6 +71,12 @@ export function TemplatePreviewDialog(props: {
               >
                 <PlusIcon />
               </Button>
+              <DialogClose
+                aria-label="Close"
+                render={<Button size="icon-xs" variant="ghost-muted" />}
+              >
+                <XIcon />
+              </DialogClose>
             </div>
           </div>
           <div
@@ -78,10 +84,10 @@ export function TemplatePreviewDialog(props: {
             tabIndex={0}
             role="region"
             aria-label={`${props.name} first page`}
-            className="min-h-0 flex-1 overflow-auto p-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            className="min-h-0 flex-1 overflow-auto px-1 pt-2 pb-1 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
             <div className="w-fit min-w-full">
-              <div className="mx-auto w-fit border border-black/10 shadow-sm">
+              <div className="mx-auto w-fit overflow-hidden rounded-xs shadow-sm">
                 <TemplatePage picture={props.picture} width={Math.round(pageWidth * zoom)} />
               </div>
             </div>
