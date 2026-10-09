@@ -9,24 +9,38 @@ change it, and drag the divider to resize either side.
 
 ## Start a document
 
-Choose **Documents** from **Open a surface** or the panel's **+** menu. Enter a
-filename and press Enter (or **Create**). The `.tex` extension is added when needed,
-and the filename becomes the default printed title. A blank article is the default;
-**Use a template** optionally selects Assignment, Report, Research proposal, or
-Thesis in the same form. Author and date can be added while writing. Known filename
-collisions receive a numbered suffix; existing files are never overwritten.
+Choose **Documents** in the side panel, or under **+**, then **LaTeX** (or
+**Markdown**). A new `untitled.tex` opens straight in Visual, set up from your
+default template, with the cursor in the title. Nothing else needs filling in:
+type the title and keep writing. Once the title is saved and you move on, the
+file takes its name from it once, for example `spectral-bounds.tex`; later
+title changes leave the file name alone. Templates without a title, such as a
+letter or a CV, ask for a document name instead. Existing files are never
+overwritten, and a name that is taken gets a number.
 
-Built-in starters are bundled `.tex` templates. A successful save reports the
-created filename; creation failures keep your entries and display an error.
+Until you write in the body, the templates and the document language (English
+or Hebrew) sit above the page: choosing another one switches the empty
+document in place and keeps your title. The first few templates are on the
+page; the rest are under **More**. The Thesis template is a folder of its own,
+with chapters and a bibliography beside `main.tex`. Right-click a template to
+make it the default, move it between the page and **More**, or hide it, and
+drag to reorder. **More > New template…** saves a copy of the chosen template
+as your own, which you can then edit, rename, or delete.
 
-The Documents surface also searches the project's `.tex` files and remembers
-documents opened through it on this device. **Use a project template** copies an
-existing `.tex` file beside its original, keeping relative supporting-file paths
-intact. For an institutional template with supporting files, open that folder as
-a project first. The built-in thesis starter is a general article-based structure,
-not an institutional thesis class. Project creation remains in the project sidebar.
+**Settings > Documents** keeps these choices in one place:
 
-Templates, writing, project image selection, and bibliography search work locally.
+- **LaTeX**: the LaTeX installation on the server (with **Install TinyTeX**
+  when none is found), **Templates** (the default and the full list to arrange,
+  hide, show again, rename, or delete your own), the language for new
+  documents, and the view LaTeX files open in.
+- **Markdown**: whether Markdown files open Rich or as Source.
+- **Word**: the Pandoc converter that Word export uses, and its install.
+
+Template, language, and view choices stay on this device. The installs belong
+to the server shown at the top of the page; with that server offline, they
+read **Offline**. The view a file opens in is the one you last used, in
+Settings or in the editor.
+
 PDF generation requires an installed TeX toolchain and the packages used by your
 document. Install those packages before working offline; no hosted compiler or AI
 service is required for the writing workflow.
