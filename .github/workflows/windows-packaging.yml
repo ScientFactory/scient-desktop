@@ -117,7 +117,11 @@ jobs:
             if ($process.ExitCode -ne 0) { throw "Installer failed for $version with exit $($process.ExitCode)" }
             $exe = Join-Path $installDir 'Scient.exe'
             if (!(Test-Path $exe)) { throw 'Installed executable missing' }
-            if ((Get-Item $exe).VersionInfo.ProductVersion -ne $version) { throw "Installed version is not $version" }
+            # electron-builder writes the Windows product version with a fourth
+            # revision component, including for the published 0.6.21 installer.
+            $installedVersion = (Get-Item $exe).VersionInfo.ProductVersion
+            Write-Host "Installed Windows product version: $installedVersion"
+            if ($installedVersion -ne "$version.0") { throw "Installed version $installedVersion is not $version.0" }
           }
           node scripts/qualify-windows-packaged-runtime.mjs "$installDir" --launch-smoke
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
