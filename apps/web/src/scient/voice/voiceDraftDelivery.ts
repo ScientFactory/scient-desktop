@@ -8,11 +8,7 @@
 
 import type { EnvironmentId } from "@t3tools/contracts";
 
-import {
-  composerTargetKey,
-  useComposerDraftStore,
-  type ComposerThreadTarget,
-} from "../../composerDraftStore.ts";
+import { useComposerDraftStore, type ComposerThreadTarget } from "../../composerDraftStore.ts";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast.tsx";
 import { buildVoiceDraftReplacement } from "./voiceComposerInsert.ts";
 
