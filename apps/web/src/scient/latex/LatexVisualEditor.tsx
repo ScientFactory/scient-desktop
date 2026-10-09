@@ -1340,7 +1340,7 @@ function LatexMathView({
             />
             {editing && sourceOpen ? (
               <div
-                className="scient-latex-math-source-popover"
+                className="scient-latex-math-source-popover scient-content-scrollbar"
                 role="dialog"
                 aria-label={display ? "Equation source" : "Inline math source"}
                 onClick={(event) => event.stopPropagation()}
@@ -1367,6 +1367,7 @@ function LatexMathView({
                 />
                 <textarea
                   ref={sourceEditor}
+                  className="scient-content-scrollbar"
                   aria-label="LaTeX formula code"
                   aria-invalid={Boolean(sourceError)}
                   spellCheck={false}
