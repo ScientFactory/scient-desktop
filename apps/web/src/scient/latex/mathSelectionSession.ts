@@ -1,7 +1,11 @@
 import type { MathfieldElement } from "mathlive";
 import { enterMathFormattingArgument } from "./mathTextFormatting";
 import { registerLatexSelection } from "./latexSelectionSession";
-import { mathEditingGuideRects, mathEmptyGuideRects } from "./mathEditingGuides";
+import {
+  mathEditingGuideRects,
+  mathEmptyGuideRects,
+  mathVacantGuideRects,
+} from "./mathEditingGuides";
 import { latexContainerScope } from "./latexStructuredSelection";
 import {
   mathEditingScopes,
@@ -65,8 +69,8 @@ export function installMathSelectionSession(
         path: [...latexContainerScope(math), ...scopes.toReversed().map((scope) => scope.label)],
         selectionOverlay: Boolean(rectangle) || selection.ranges.some(([from, to]) => from !== to),
         selectionKind: rectangle ? ("cells" as const) : ("text" as const),
-        scopePadding: 0,
         scopes: () => mathEditingGuideRects(math),
+        vacantScopes: () => mathVacantGuideRects(math),
         emptyScopes: () => mathEmptyGuideRects(math),
         selection: () =>
           mathSelectionRects(

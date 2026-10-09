@@ -39,14 +39,21 @@ export function mathEmptyGuideRects(math: MathfieldElement): DOMRect[] {
   return emptyGuideSlots(math).map((slot) => mathEmptySlotRect(math, slot));
 }
 
-/** Active and vacant slots share one measured box and one overlay renderer. */
+/** The other vacant slots while editing; the current one is drawn as the scope. */
+export function mathVacantGuideRects(math: MathfieldElement): DOMRect[] {
+  return emptyGuideSlots(math)
+    .filter((slot) => !slot.hasAttribute("data-guide-current"))
+    .map((slot) => mathEmptySlotRect(math, slot));
+}
+
+/** The current scope: the vacant slot holding the caret, or what the caret is in. */
 export function mathEditingGuideRects(math: MathfieldElement): DOMRect[] {
   const root = math.shadowRoot;
   if (!root || math.readOnly) return [];
-  const empty = emptyGuideSlots(math);
-  const rects = empty.map((slot) => mathEmptySlotRect(math, slot));
-  // Keep the identical empty-slot marker when the caret enters that slot.
-  if (empty.some((slot) => slot.hasAttribute("data-guide-current"))) return rects;
+  const rects: DOMRect[] = [];
+  // Keep the same measured marker when the caret enters a vacant slot.
+  const current = emptyGuideSlots(math).find((slot) => slot.hasAttribute("data-guide-current"));
+  if (current) return [mathEmptySlotRect(math, current)];
   if (math.hasAttribute("data-scient-empty")) {
     const caret = root.querySelector<HTMLElement>(".ML__caret,.ML__text-caret");
     if (caret) {

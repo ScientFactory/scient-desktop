@@ -26,6 +26,8 @@ export interface LatexSelectionSnapshot {
   readonly scopes: () => readonly DOMRect[];
   /** Vacant slots remain identifiable while their contents are selected. */
   readonly emptyScopes?: () => readonly DOMRect[];
+  /** The other vacant slots while editing, marked lighter than the current scope. */
+  readonly vacantScopes?: () => readonly DOMRect[];
   readonly scopePadding?: number;
   readonly selection: () => readonly DOMRect[];
   /** False means the surface paints its selection even while a menu owns focus. */
@@ -80,41 +82,64 @@ function present(participant: Participant | null, selected = false, selectionOve
   guideOwner?.toggleAttribute("data-scient-selection-active", selected);
 }
 
-function emptyTextGuideRects(owner: HTMLElement | null): DOMRect[] {
+// Guides sit outside what they mark, so the marked text stays readable: the
+// current scope a little further out and darker than the other vacant slots.
+// The current margin grows with what it surrounds, so a letter's tail or a
+// word's capitals never touch the corners at any zoom.
+const VACANT_GUIDE_MARGIN = 1;
+function currentGuideMargin(rect: DOMRect): number {
+  return Math.min(8, Math.max(4, rect.height * 0.3));
+}
+
+let measureContext: CanvasRenderingContext2D | null = null;
+
+/** Where an empty field's text would be: its hint word, or one letter's room. */
+function emptyFieldGuideRect(field: HTMLInputElement | HTMLTextAreaElement): DOMRect {
+  const bounds = field.getBoundingClientRect();
+  const style = getComputedStyle(field);
+  const scale = bounds.width / (field.offsetWidth || 1);
+  const em = parseFloat(style.fontSize) * scale;
+  const paddingLeft = parseFloat(style.paddingLeft) * scale;
+  const paddingRight = parseFloat(style.paddingRight) * scale;
+  let width = 0.6 * em;
+  if (field.placeholder) {
+    measureContext ??= document.createElement("canvas").getContext("2d");
+    if (measureContext) {
+      measureContext.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      width = Math.min(
+        bounds.width - paddingLeft - paddingRight,
+        measureContext.measureText(field.placeholder).width * scale,
+      );
+    }
+  }
+  const rightAligned =
+    style.textAlign === "right" ||
+    (style.textAlign === "start" && style.direction === "rtl") ||
+    (style.textAlign === "end" && style.direction !== "rtl");
+  const left =
+    style.textAlign === "center"
+      ? bounds.left + (bounds.width - width) / 2
+      : rightAligned
+        ? bounds.right - paddingRight - width
+        : bounds.left + paddingLeft;
+  const lineHeight = (parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.2) * scale;
+  const height = (field.placeholder ? 0.9 : 0.75) * em;
+  return new DOMRect(
+    left,
+    bounds.top + parseFloat(style.paddingTop) * scale + (lineHeight - height) / 2,
+    width,
+    height,
+  );
+}
+
+function emptyTextFields(owner: HTMLElement | null) {
   if (!owner || owner.matches('math-field,.scient-latex-rich-preview[data-kind="table"]'))
     return [];
   return [
     ...owner.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
       "input[data-empty]:enabled,textarea[data-empty]:enabled",
     ),
-  ]
-    .filter((field) => !field.value && !field.readOnly && !field.closest("td,th"))
-    .map((field) => {
-      const bounds = field.getBoundingClientRect();
-      const style = getComputedStyle(field);
-      const scale = bounds.width / (field.offsetWidth || 1);
-      const em = parseFloat(style.fontSize) * scale;
-      const paddingLeft = parseFloat(style.paddingLeft) * scale;
-      const paddingRight = parseFloat(style.paddingRight) * scale;
-      const width = 0.6 * em;
-      const rightAligned =
-        style.textAlign === "right" ||
-        (style.textAlign === "start" && style.direction === "rtl") ||
-        (style.textAlign === "end" && style.direction !== "rtl");
-      const left =
-        style.textAlign === "center"
-          ? bounds.left + (bounds.width - width) / 2
-          : rightAligned
-            ? bounds.right - paddingRight - width
-            : bounds.left + paddingLeft;
-      const lineHeight = (parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.2) * scale;
-      return new DOMRect(
-        left,
-        bounds.top + parseFloat(style.paddingTop) * scale + (lineHeight - 0.75 * em) / 2,
-        width,
-        0.75 * em,
-      );
-    });
+  ].filter((field) => !field.value && !field.readOnly && !field.closest("td,th"));
 }
 
 function paint() {
@@ -155,10 +180,12 @@ function paint() {
   const boxes = (
     rects: readonly DOMRect[],
     kind: string,
-    scopePadding = snapshot.scopePadding ?? 2,
+    scopePadding = snapshot.scopePadding,
+    vacant = false,
   ) =>
     rects.flatMap((rect) => {
-      const padding = kind === "scient-latex-scope-outline" ? scopePadding : 0;
+      const padding =
+        kind === "scient-latex-scope-outline" ? (scopePadding ?? currentGuideMargin(rect)) : 0;
       // Keep complete rectangles, including offscreen ones. The scrolling
       // ancestors clip them natively; truncating at today's viewport edges
       // would leave cut-off highlights when that content scrolls into view.
@@ -169,6 +196,7 @@ function paint() {
       if (right < left || bottom <= top) return [];
       const box = document.createElement("span");
       box.className = kind;
+      if (vacant) box.dataset.guide = "vacant";
       Object.assign(box.style, {
         left: `${(left - origin.left) / origin.width}px`,
         top: `${(top - origin.top) / origin.height}px`,
@@ -188,17 +216,34 @@ function paint() {
     "--scient-latex-retained-selection-background",
   ])
     overlay.style.setProperty(name, documentStyle.getPropertyValue(name));
-  const emptyText = emptyTextGuideRects(guideOwner);
-  const activeEmptyText =
-    (active.element instanceof HTMLInputElement || active.element instanceof HTMLTextAreaElement) &&
-    !active.element.value;
+  const activeField =
+    active.element instanceof HTMLInputElement || active.element instanceof HTMLTextAreaElement
+      ? active.element
+      : null;
+  const emptyFields = emptyTextFields(guideOwner);
+  const vacantText = emptyFields.filter((field) => field !== activeField).map(emptyFieldGuideRect);
+  // An empty field being typed in is framed around its hint word.
+  const current =
+    activeField && !activeField.value && !activeField.closest("td,th")
+      ? [emptyFieldGuideRect(activeField)]
+      : snapshot.scopes();
   overlay.toggleAttribute("data-scient-selection-held", Boolean(held));
   overlay.replaceChildren(
     ...(selection.length
-      ? boxes(snapshot.emptyScopes?.() ?? [], "scient-latex-scope-outline", 0)
+      ? boxes(
+          snapshot.emptyScopes?.() ?? [],
+          "scient-latex-scope-outline",
+          VACANT_GUIDE_MARGIN,
+          true,
+        )
       : [
-          ...boxes(emptyText, "scient-latex-scope-outline", 0),
-          ...(activeEmptyText ? [] : boxes(snapshot.scopes(), "scient-latex-scope-outline")),
+          ...boxes(
+            [...vacantText, ...(snapshot.vacantScopes?.() ?? [])],
+            "scient-latex-scope-outline",
+            VACANT_GUIDE_MARGIN,
+            true,
+          ),
+          ...boxes(current, "scient-latex-scope-outline"),
         ]),
     ...((held && snapshot.selectionOverlay !== false) || snapshot.selectionOverlay
       ? boxes(

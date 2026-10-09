@@ -3941,8 +3941,8 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 
 .scient-latex-scope-outline {
-  --scient-scope-ink: rgba(100, 106, 116, 0.8);
-  --scient-scope-corner: min(calc(3 * var(--scient-scope-pixel, 1px)), 25%);
+  --scient-scope-ink: rgba(100, 106, 116, 0.5);
+  --scient-scope-corner: min(calc(4 * var(--scient-scope-pixel, 1px)), 32%);
   background:
     linear-gradient(var(--scient-scope-ink), var(--scient-scope-ink)) left top /
       var(--scient-scope-corner) var(--scient-scope-pixel, 1px),
@@ -3963,8 +3963,12 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   background-repeat: no-repeat;
   border-radius: 0;
 }
+/* The other vacant slots: present, but quieter than where the caret is. */
+.scient-latex-scope-outline[data-guide="vacant"] {
+  --scient-scope-ink: rgba(100, 106, 116, 0.32);
+}
 .scient-latex-selection-overlay[data-scient-selection-held] .scient-latex-scope-outline {
-  --scient-scope-ink: rgba(100, 106, 116, 0.5);
+  --scient-scope-ink: rgba(100, 106, 116, 0.32);
 }
 
 .scient-latex-retained-selection {
