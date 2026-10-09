@@ -36,6 +36,20 @@ export function useNewDocumentFiles() {
   const listDirectory = useAtomCommand(projectEnvironment.listDirectory, {
     reportFailure: false,
   });
+  const readFile = useAtomCommand(projectEnvironment.readFileOrdered, { reportFailure: false });
+  const revisionOf = useCallback(
+    async (
+      target: { readonly environmentId: EnvironmentId; readonly cwd: string },
+      relativePath: string,
+    ): Promise<string | null> => {
+      const result = await readFile({
+        environmentId: target.environmentId,
+        input: { cwd: target.cwd, relativePath },
+      });
+      return result._tag === "Success" && !result.value.truncated ? result.value.revision : null;
+    },
+    [readFile],
+  );
   const create = useCallback(
     async (
       target: { readonly environmentId: EnvironmentId; readonly cwd: string },
@@ -125,8 +139,9 @@ export function useNewDocumentFiles() {
       replace: (file, contents) => replace(target, file, contents),
       remove: (file, options) => remove(target, file, options),
       list: (relativeDirectory) => list(target, relativeDirectory),
+      revisionOf: (relativePath) => revisionOf(target, relativePath),
     }),
-    [create, list, remove, replace],
+    [create, list, remove, replace, revisionOf],
   );
   return { commandsFor };
 }

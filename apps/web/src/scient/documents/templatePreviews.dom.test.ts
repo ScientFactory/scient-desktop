@@ -103,6 +103,21 @@ describe("template pictures", () => {
     }
   });
 
+  it("keeps no style or attribute that can fetch a resource", () => {
+    const element = document.createElement("div");
+    element.innerHTML =
+      '<p style="width: 10px; background-image: image-set(&quot;https://attacker.example/a.png&quot; 1x)">a</p>' +
+      '<p style="background: u\\72l(https://attacker.example/b.png); color: red">b</p>' +
+      '<p style="--x: url(https://attacker.example/c.png)">c</p>' +
+      '<svg><rect fill="url(https://attacker.example/d.svg#p)"></rect><rect fill="url(#local)"></rect></svg>' +
+      '<p style="width: 10px">d</p>';
+    sanitizePage(element);
+    const html = element.innerHTML;
+    expect(html).not.toContain("attacker.example");
+    expect(html).toContain("width: 10px");
+    expect(html).toContain('fill="url(#local)"');
+  });
+
   it("refuses a stored page without its size", () => {
     expect(templatePicture(null, "<div><p>Text</p></div>")).toBeNull();
     const element = document.createElement("div");

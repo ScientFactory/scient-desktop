@@ -3,6 +3,8 @@ import * as NodeFS from "node:fs";
 
 import { describe, expect, it } from "vite-plus/test";
 
+import { RENDER_MARKDOWN_STORAGE_KEY } from "../fileOpening/fileOpeningPolicy";
+
 const panelSource = [
   "../../components/files/FilePreviewPanel.tsx",
   "../fileSurfaces/scientLazyFileSurfaces.tsx",
@@ -87,7 +89,11 @@ describe("Scient Markdown file-preview seam", () => {
     expect(panelSource).not.toContain("editChrome=");
     expect(panelSource).toContain("renderMarkdown ?");
     expect(panelSource).not.toContain('aria-label="Markdown mode"');
-    expect(panelSource).toContain('const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";');
+    // One remembered Rich/Source choice, shared with Settings ▸ Documents.
+    expect(RENDER_MARKDOWN_STORAGE_KEY).toBe("t3code.renderMarkdown");
+    expect(panelSource).toContain(
+      "RENDER_MARKDOWN_STORAGE_KEY,\n    SCIENT_DEFAULT_RENDER_MARKDOWN,",
+    );
     expect(panelSource).toContain("runAfterPendingSave([relativePath], apply);");
     for (const retired of ['value="write"', 'value="read"', 'value="split"', 'value="source"']) {
       expect(panelSource).not.toContain(retired);

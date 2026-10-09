@@ -41,9 +41,15 @@ vi.mock("~/components/settings/settingsLayout", () => ({
 
 const { PandocSettingsRow } = await import("./PandocSettingsRow");
 const { usePandocTool } = await import("./usePandocTool");
+const { pandocToolSummary } = await import("./pandocToolModel");
 
+let lastSummary = "";
+let refreshWordTab: () => void = () => undefined;
 function WordTab() {
-  return <PandocSettingsRow controller={usePandocTool(EnvironmentId.make("local"))} />;
+  const controller = usePandocTool(EnvironmentId.make("local"));
+  lastSummary = pandocToolSummary(controller.view);
+  refreshWordTab = controller.refresh;
+  return <PandocSettingsRow controller={controller} />;
 }
 
 const SOURCE = "https://github.com/jgm/pandoc/archive/refs/tags/3.11.tar.gz";
@@ -146,5 +152,46 @@ describe("PandocSettingsRow", () => {
     root = createRoot(container);
     await render();
     expect(container.querySelector("p")?.textContent).toBe("Not installed · 40 MB");
+  });
+
+  it("waits for a running check before installing, so an older answer cannot undo the install", async () => {
+    readPandocTool.mockResolvedValue(status({ installed: false }));
+    await render();
+    let answer!: (value: ScientPandocToolStatus) => void;
+    readPandocTool.mockImplementationOnce(
+      () => new Promise<ScientPandocToolStatus>((resolve) => (answer = resolve)),
+    );
+    await act(async () => refreshWordTab());
+    const install = container.querySelector("button")!;
+    expect(install.disabled).toBe(true);
+    await act(async () => install.click());
+    expect(installPandocTool).not.toHaveBeenCalled();
+    await act(async () => answer(status({ installed: false })));
+    installPandocTool.mockResolvedValue(
+      status({
+        installed: false,
+        install: {
+          state: "downloading",
+          bytesReceived: 0,
+          totalBytes: 41_832_712,
+          failureReason: null,
+          updatedAtEpochMs: 2,
+        },
+      }),
+    );
+    await act(async () => container.querySelector("button")!.click());
+    expect(installPandocTool).toHaveBeenCalledTimes(1);
+    expect(lastSummary).toBe("Installing…");
+  });
+
+  it("says Not checked, not Not installed, when only the check failed", async () => {
+    readPandocTool.mockResolvedValue(status());
+    await render();
+    expect(lastSummary).toBe("Ready");
+    readPandocTool.mockRejectedValueOnce(new Error("The server did not answer."));
+    await act(async () => refreshWordTab());
+    expect(lastSummary).toBe("Not checked");
+    expect(container.textContent).toContain("The server did not answer.");
+    expect(container.querySelector("button")?.textContent).toBe("Check again");
   });
 });

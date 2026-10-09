@@ -142,7 +142,7 @@ describe("Settings ▸ Documents", () => {
     expect(tab("word").textContent).toBe("WordReady");
     expect(strip.querySelectorAll("img")).toHaveLength(3);
     expect(container.querySelector("#latex-installation")?.textContent).toContain(
-      "latexmk 4.85 · This computer",
+      "latexmk 4.85 · System installation",
     );
     await act(() => tab("word").click());
     expect(container.querySelector("#word-export")?.textContent).toContain("Pandoc");
@@ -159,15 +159,66 @@ describe("Settings ▸ Documents", () => {
     expect(mocks.readToolchain).toHaveBeenLastCalledWith("remote", { refresh: true });
   });
 
+  const manage = async () => {
+    const button = [
+      ...container.querySelectorAll<HTMLButtonElement>("#new-document-template button"),
+    ].find((node) => node.textContent === "Manage")!;
+    await act(() => button.click());
+  };
+  const library = () => container.querySelector<HTMLElement>("#document-template-library")!;
+  const place = (label: string) =>
+    [...library().querySelectorAll(`section[aria-label="${label}"] li`)].map(
+      (node) => node.querySelector("span")!.textContent,
+    );
+  const templateAction = async (name: string, action: string) => {
+    await act(() =>
+      library().querySelector<HTMLElement>(`[aria-label="${name} actions"]`)!.click(),
+    );
+    const item = [...document.querySelectorAll<HTMLElement>('[data-slot="menu-item"]')].find(
+      (node) => node.textContent === action,
+    );
+    expect(item, `${name}: ${action}`).toBeDefined();
+    await act(async () => {
+      item!.click();
+      await Promise.resolve();
+    });
+  };
+
   it("starts new documents Blank and English, and remembers another choice", async () => {
     await render();
-    expect(select("Template for new documents").textContent).toBe("Blank");
+    expect(container.querySelector("#new-document-template")?.textContent).toContain(
+      "New documents start as Blank",
+    );
     expect(select("Language for new documents").textContent).toBe("English");
-    await choose("Template for new documents", "Thesis");
+    await manage();
+    await templateAction("Thesis", "Set as default");
     await choose("Language for new documents", "Hebrew");
     expect(stored("scient.newDocumentTemplate")).toBe("thesis");
     expect(stored("scient.newDocumentLanguage")).toBe("hebrew");
-    expect(select("Template for new documents").textContent).toBe("Thesis");
+    expect(container.querySelector("#new-document-template")?.textContent).toContain(
+      "New documents start as Thesis",
+    );
+  });
+
+  it("arranges, hides, shows, and restores templates the way a new document offers them", async () => {
+    await render();
+    await manage();
+    expect(place("On the page")).toEqual(["Blank", "Article", "Thesis", "Problem set"]);
+    await templateAction("Thesis", "Move up");
+    expect(place("On the page")).toEqual(["Blank", "Thesis", "Article", "Problem set"]);
+    await templateAction("Article", "Move to More");
+    expect(place("On the page")).not.toContain("Article");
+    expect(place("More")[0]).toBe("Article");
+    await templateAction("Letter", "Hide");
+    expect(place("Hidden")).toEqual(["Letter"]);
+    await templateAction("Letter", "Show");
+    expect(place("More")[0]).toBe("Letter");
+    expect(library().querySelector('section[aria-label="Hidden"]')).toBeNull();
+    const restore = [...library().querySelectorAll<HTMLButtonElement>("button")].find(
+      (node) => node.textContent === "Restore defaults",
+    )!;
+    await act(() => restore.click());
+    expect(place("On the page")).toEqual(["Blank", "Article", "Thesis", "Problem set"]);
   });
 
   it("opens LaTeX files in the view the editor remembers", async () => {
@@ -253,14 +304,19 @@ describe("Settings ▸ Documents", () => {
     expect(stored("scient.documentsSettingsFormat")).toBe("latex");
   });
 
-  it("shows no server tools when the chosen scope has no connected environment", async () => {
+  it("shows the server tools as Offline, and keeps preferences editable, with no connected server", async () => {
     mocks.scopeEnvironmentId = null;
     await render(null);
     expect(mocks.readToolchain).not.toHaveBeenCalled();
-    expect(container.querySelector("#latex-installation")).toBeNull();
-    expect(container.querySelector("#documents-word-trigger")).toBeNull();
     expect(mocks.pandocEnvironments).toEqual([]);
-    expect(select("Template for new documents")).not.toBeNull();
+    expect(container.querySelector("#documents-latex-trigger")?.textContent).toBe("LaTeXOffline");
+    expect(container.querySelector("#latex-installation")?.textContent).toContain("Offline");
+    expect(container.querySelector("#new-document-template")).not.toBeNull();
+    const word = container.querySelector<HTMLElement>("#documents-word-trigger")!;
+    expect(word.textContent).toBe("WordOffline");
+    await act(() => word.click());
+    expect(container.querySelector("#word-export")?.textContent).toContain("Offline");
+    expect(container.querySelector("#word-export button")).toBeNull();
   });
 
   it("lets the tabs change while a search jump is still waiting for its row", async () => {

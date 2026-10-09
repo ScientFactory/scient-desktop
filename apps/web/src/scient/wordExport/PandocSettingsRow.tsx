@@ -13,7 +13,7 @@ import type { PandocToolController } from "./usePandocTool";
  * "Pandoc".
  */
 export function PandocSettingsRow({ controller }: { readonly controller: PandocToolController }) {
-  const { status, view, act } = controller;
+  const { status, view, act, checking } = controller;
   const notice = pandocReleaseNotice(status);
   // The Word tab already says what this is for, so the row names Pandoc and
   // keeps the export dialogs' longer sentences for the states that need them.
@@ -55,7 +55,13 @@ export function PandocSettingsRow({ controller }: { readonly controller: PandocT
       serverScoped
       control={
         view.actionLabel === null ? null : (
-          <Button type="button" size="sm" variant="outline" disabled={view.busy} onClick={act}>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={view.busy || checking}
+            onClick={act}
+          >
             {view.kind === "offer" ? "Install now" : view.actionLabel}
           </Button>
         )

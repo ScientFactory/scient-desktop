@@ -42,7 +42,7 @@ export function latexInstallationView(input: {
   if (report.kind !== null && !requesting && !isActiveLatexInstall(install)) {
     const engine = [ENGINE_LABELS[report.kind], report.version].filter(Boolean).join(" ");
     const origin =
-      report.source === "scient-managed" ? "TinyTeX, installed by Scient" : "This computer";
+      report.source === "scient-managed" ? "TinyTeX, installed by Scient" : "System installation";
     return {
       kind: "ready",
       summary: "Installed",

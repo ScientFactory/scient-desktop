@@ -116,4 +116,23 @@ describe("placing a new document", () => {
     });
     expect(placed).toEqual({ relativePath: "notes/untitled.md", revision: "r1", companions: [] });
   });
+
+  it("makes nothing when a file of the template's own cannot be written", async () => {
+    const { files, commands } = project();
+    const failing = {
+      ...commands,
+      create: async (path: string, contents: string) =>
+        path.endsWith("chapters/methods.tex") ? null : commands.create(path, contents),
+    };
+    const placed = await placeNewDocument({
+      format: "latex",
+      base: "",
+      stem: "thesis",
+      template: "thesis",
+      source: thesis,
+      commands: failing,
+    });
+    expect(placed).toBeNull();
+    expect([...files.keys()]).toEqual([]);
+  });
 });

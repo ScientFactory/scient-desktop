@@ -27,6 +27,19 @@ export interface NewDocumentFileCommands {
   ) => Promise<boolean>;
   /** What a folder ("" for the project root) holds, or null if it cannot be read. */
   readonly list: (relativeDirectory: string) => Promise<readonly FolderEntry[] | null>;
+  /** A file's revision as it is on disk now, or null if it cannot be read whole. */
+  readonly revisionOf?: (relativePath: string) => Promise<string | null>;
+}
+
+/** Whether every file a new document made is still exactly as it was made. */
+export async function companionsUnchanged(
+  commands: NewDocumentFileCommands,
+  companions: readonly CreatedCompanion[],
+): Promise<boolean> {
+  if (!commands.revisionOf) return companions.length === 0;
+  for (const file of companions)
+    if ((await commands.revisionOf(file.relativePath)) !== file.revision) return false;
+  return true;
 }
 
 export interface FolderEntry {
@@ -107,7 +120,8 @@ export function untitledStem(format: NewDocumentFormat, template: DocumentTempla
  * template that is a folder, `<stem>/main.tex` in a folder nothing in the
  * project uses yet; then the files it keeps beside it. Further attempts number
  * the name. A path `skip` rejects is passed over. Null if nothing could be
- * created.
+ * created, or if a file of the template's own could not be: what was made is
+ * then removed again.
  */
 export async function placeNewDocument(input: {
   readonly format: NewDocumentFormat;
@@ -132,16 +146,25 @@ export async function placeNewDocument(input: {
     const created = await input.commands.create(relativePath, input.source);
     if (created === "exists") continue;
     if (created === null) return null;
-    const companions = latex
-      ? await syncCompanionFiles({
-          folder: folderOf(relativePath),
-          files: templateCompanions(input.template, input.source),
-          created: [],
-          create: input.commands.create,
-          remove: input.commands.remove,
-        })
-      : [];
-    return { relativePath, revision: created.revision, companions };
+    if (!latex) return { relativePath, revision: created.revision, companions: [] };
+    const synced = await syncCompanionFiles({
+      folder: folderOf(relativePath),
+      files: templateCompanions(input.template, input.source),
+      created: [],
+      create: input.commands.create,
+      remove: input.commands.remove,
+    });
+    if (!synced.complete) {
+      // A document missing a file of its own (a chapter) is not made at all.
+      for (const file of synced.companions)
+        await input.commands.remove(file, { removeEmptyFolders: true });
+      await input.commands.remove(
+        { relativePath, revision: created.revision },
+        { removeEmptyFolders: true },
+      );
+      return null;
+    }
+    return { relativePath, revision: created.revision, companions: synced.companions };
   }
   return null;
 }

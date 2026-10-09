@@ -3,6 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 import { companionFiles, templateCompanions } from "./documentTemplates";
 import { type CreatedCompanion, syncCompanionFiles } from "./newDocumentCompanions";
 
+const sync = async (input: Parameters<typeof syncCompanionFiles>[0]) =>
+  (await syncCompanionFiles(input)).companions;
+
 function disk(initial: Record<string, string> = {}) {
   const files = new Map(Object.entries(initial));
   let next = 0;
@@ -39,7 +42,7 @@ describe("companion files", () => {
 
   it("creates the bibliography beside the document, or uses the one already there", async () => {
     const fresh = disk();
-    const created = await syncCompanionFiles({
+    const created = await sync({
       folder: "papers/",
       files: bibliography,
       created: [],
@@ -48,27 +51,25 @@ describe("companion files", () => {
     expect(created).toEqual([{ relativePath: "papers/references.bib", revision: "r1" }]);
 
     const existing = disk({ "references.bib": "theirs" });
-    expect(
-      await syncCompanionFiles({ folder: "", files: bibliography, created: [], ...existing }),
-    ).toEqual([]);
+    expect(await sync({ folder: "", files: bibliography, created: [], ...existing })).toEqual([]);
     expect(existing.stored.get("references.bib")).toBe("theirs");
   });
 
   it("retains a bibliography another document may already share", async () => {
     const files = disk();
-    const created = await syncCompanionFiles({
+    const created = await sync({
       folder: "",
       files: bibliography,
       created: [],
       ...files,
     });
-    await syncCompanionFiles({ folder: "", files: [], created, ...files });
+    await sync({ folder: "", files: [], created, ...files });
     expect(files.stored.has("references.bib")).toBe(true);
   });
 
   it("refreshes same-name private companions only while their revision is unchanged", async () => {
     const files = disk();
-    const created = await syncCompanionFiles({
+    const created = await sync({
       folder: "",
       files: [{ name: "chapter.tex", contents: "old" }],
       created: [],
@@ -79,7 +80,7 @@ describe("companion files", () => {
       files.stored.set(file.relativePath, contents);
       return { revision: contents };
     };
-    const changed = await syncCompanionFiles({
+    const changed = await sync({
       folder: "",
       files: [{ name: "chapter.tex", contents: "new" }],
       created,
@@ -88,7 +89,7 @@ describe("companion files", () => {
     });
     expect(files.stored.get("chapter.tex")).toBe("new");
     files.stored.set("chapter.tex", "user work");
-    await syncCompanionFiles({
+    await sync({
       folder: "",
       files: [{ name: "chapter.tex", contents: "other" }],
       created: changed,
@@ -101,25 +102,41 @@ describe("companion files", () => {
   it("removes only its own unchanged private file when a template no longer needs it", async () => {
     const bibliography = [{ name: "chapter.tex", contents: "chapter" }];
     const files = disk();
-    const created = await syncCompanionFiles({
+    const created = await sync({
       folder: "",
       files: bibliography,
       created: [],
       ...files,
     });
-    expect(await syncCompanionFiles({ folder: "", files: [], created, ...files })).toEqual([]);
+    expect(await sync({ folder: "", files: [], created, ...files })).toEqual([]);
     expect(files.stored.has("chapter.tex")).toBe(false);
 
-    const again = await syncCompanionFiles({
+    const again = await sync({
       folder: "",
       files: bibliography,
       created: [],
       ...files,
     });
     files.stored.set("chapter.tex", "edited");
-    expect(await syncCompanionFiles({ folder: "", files: [], created: again, ...files })).toEqual(
-      [],
-    );
+    expect(await sync({ folder: "", files: [], created: again, ...files })).toEqual([]);
     expect(files.stored.get("chapter.tex")).toBe("edited");
+  });
+
+  it("says when the template's own files are not all as it wants them", async () => {
+    const files = disk({ "chapter.tex": "someone else's" });
+    const result = await syncCompanionFiles({
+      folder: "",
+      files: [{ name: "chapter.tex", contents: "chapter" }, ...bibliography],
+      created: [],
+      ...files,
+    });
+    // The bibliography was made; the chapter's place is taken by another file.
+    expect(result.companions.map((file) => file.relativePath)).toEqual(["references.bib"]);
+    expect(result.complete).toBe(false);
+    const failing = { ...disk(), create: async () => null };
+    expect(
+      (await syncCompanionFiles({ folder: "", files: bibliography, created: [], ...failing }))
+        .complete,
+    ).toBe(true);
   });
 });
