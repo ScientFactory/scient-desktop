@@ -274,7 +274,8 @@ The receipt separates complete local qualification with exact affected-scope reu
 independent review and bounded stress from hosted CI and the user's visual acceptance.
 
 A candidate alignment through `ec80933ac8cd02fec5c97b342462ccc9567cdb1e`
-is recorded in [the 2026-10-09 receipt](docs/internals/t3-upstream-sync-20261009-ec80933ac8.md).
+is recorded in [the 2026-10-09 receipt](docs/internals/t3-upstream-sync-20261009-ec80933ac8.md)
+([Scient PR #498](https://github.com/ScientFactory/scient-desktop/pull/498)).
 It receives the next 43 official first-parent commits, adopts shared provider packages,
 and preserves Scient's instruction, tool, fork, queue and lifecycle ownership.
 The receipt records complete local matrix execution, targeted requalification of

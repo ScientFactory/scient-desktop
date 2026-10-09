@@ -151,6 +151,10 @@ OAuth/deep-link ownership and the user's visual acceptance are not established b
 markup, typecheck or static packaging tests. Candidate launch readiness is recorded
 separately from feature acceptance. Publication remains held.
 
+`pnpm lint:mobile` found 16 Swift and 27 Kotlin source files, but SwiftLint,
+ktlint and detekt were unavailable and their checks were skipped. Generated native
+folders were excluded. This is an explicit qualification gap, not a native lint pass.
+
 ## Separation measurement and maintainer review
 
 The declared instruction extraction uses the same 21 non-test upstream host paths
