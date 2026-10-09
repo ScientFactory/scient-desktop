@@ -1,8 +1,19 @@
 import { CornerDownLeft } from "lucide-react";
-import { type ReactNode, type RefObject, useEffect, useEffectEvent, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type RefObject,
+  createContext,
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 
 import { focusNewDocumentWhenOpen } from "./focusNewDocument";
+
+/** The page's zoom, for controls drawn on the page: a drag moves in page pixels. */
+export const PageZoomContext = createContext(1);
 
 /** Marks the new document's own controls, so focus there still counts as naming it. */
 export const STRIP_ATTRIBUTE = "data-new-document-strip";
@@ -56,7 +67,7 @@ export function NewDocumentOnPage(props: {
   if (page?.kind === "latex") {
     const fontSize = Math.max(PAGE_FONT_PX, MIN_SCREEN_FONT_PX / Math.max(page.zoom, 0.1));
     content = (
-      <>
+      <PageZoomContext.Provider value={page.zoom}>
         {props.row || props.name ? (
           <div
             className="scient-new-document-margin"
@@ -78,7 +89,7 @@ export function NewDocumentOnPage(props: {
         {props.hint ? (
           <LatexTitleHint paper={page.paper} fontSize={fontSize} fileName={fileName} />
         ) : null}
-      </>
+      </PageZoomContext.Provider>
     );
   } else if (page?.kind === "markdown" && props.hint) {
     content = <MarkdownHeadingHint host={page.host} fileName={fileName} />;

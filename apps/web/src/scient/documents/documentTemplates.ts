@@ -41,6 +41,10 @@ export const DOCUMENT_TEMPLATES = [
 export type DocumentTemplate = (typeof DOCUMENT_TEMPLATES)[number];
 export type DocumentTemplateId = DocumentTemplate["id"];
 
+export function isDocumentTemplateId(id: string): id is DocumentTemplateId {
+  return DOCUMENT_TEMPLATES.some((template) => template.id === id);
+}
+
 /**
  * Templates that are a folder of their own: the document is the folder's
  * `main.tex`, and these files, relative to it, are created with it.
@@ -128,15 +132,6 @@ export function companionFiles(source: string): readonly string[] {
 
 export type NewDocumentFormat = "markdown" | "latex";
 export type NewDocumentLanguage = "english" | "hebrew";
-
-/** The starting points shown in the row on a new LaTeX document, in order. */
-export const NEW_DOCUMENT_TEMPLATES: ReadonlyArray<DocumentTemplate> = DOCUMENT_TEMPLATES.slice(
-  0,
-  4,
-);
-
-/** The rest, behind "More". */
-export const MORE_DOCUMENT_TEMPLATES: ReadonlyArray<DocumentTemplate> = DOCUMENT_TEMPLATES.slice(4);
 
 export const NEW_DOCUMENT_LANGUAGES: ReadonlyArray<{
   readonly id: NewDocumentLanguage;

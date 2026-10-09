@@ -10,7 +10,7 @@ import {
   normalizeNewDocumentTemplate,
   readNewDocumentDefaults,
 } from "./documentPreferences";
-import { MORE_DOCUMENT_TEMPLATES, NEW_DOCUMENT_TEMPLATES } from "./documentTemplates";
+import { DOCUMENT_TEMPLATES } from "./documentTemplates";
 
 afterEach(() => {
   removeLocalStorageItem(NEW_DOCUMENT_TEMPLATE_STORAGE_KEY);
@@ -43,7 +43,7 @@ describe("new document defaults", () => {
   });
 
   it("can be any template the new page offers", () => {
-    for (const template of [...NEW_DOCUMENT_TEMPLATES, ...MORE_DOCUMENT_TEMPLATES]) {
+    for (const template of DOCUMENT_TEMPLATES) {
       expect(normalizeNewDocumentTemplate(template.id)).toBe(template.id);
     }
   });

@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { ChevronDown } from "lucide-react";
 import {
   type ReactNode,
@@ -12,17 +13,18 @@ import {
 import { setProjectFileQueryData } from "~/components/files/projectFilesQueryState";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { toastManager } from "~/components/ui/toast";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import {
   FOLDER_DOCUMENT_MAIN,
-  MORE_DOCUMENT_TEMPLATES,
+  DOCUMENT_TEMPLATES,
   NEW_DOCUMENT_LANGUAGES,
-  NEW_DOCUMENT_TEMPLATES,
   type DocumentTemplateId,
   type NewDocumentLanguage,
+  isDocumentTemplateId,
   isFolderTemplate,
   isUntouchedNewLatexDocument,
   newDocumentCandidate,
@@ -34,6 +36,11 @@ import {
   templateHasTitle,
 } from "./documentTemplates";
 import { caretOffsetInEditor, focusNewDocumentWhenOpen } from "./focusNewDocument";
+import {
+  DEFAULT_NEW_DOCUMENT_TEMPLATE,
+  NEW_DOCUMENT_TEMPLATE_STORAGE_KEY,
+  normalizeNewDocumentTemplate,
+} from "./documentPreferences";
 import { NewDocumentOnPage, STRIP_ATTRIBUTE } from "./NewDocumentOnPage";
 import { syncCompanionFiles } from "./newDocumentCompanions";
 import {
@@ -45,6 +52,7 @@ import {
   untitledStem,
 } from "./newDocumentPlacement";
 import { newDocuments, pathHasLeftoverDrafts } from "./newDocuments";
+import { TemplateRow } from "./TemplateRow";
 import { isPathTaken, useNewDocumentFiles } from "./useNewDocumentFiles";
 import "./newDocument.css";
 
@@ -120,6 +128,12 @@ export function useNewDocument(input: {
   );
   const renameFile = useAtomCommand(projectEnvironment.renameFile, { reportFailure: false });
   const documentFiles = useNewDocumentFiles();
+  const [storedDefault, setStoredDefault] = useLocalStorage(
+    NEW_DOCUMENT_TEMPLATE_STORAGE_KEY,
+    DEFAULT_NEW_DOCUMENT_TEMPLATE,
+    Schema.String,
+  );
+  const defaultTemplate = normalizeNewDocumentTemplate(storedDefault);
   const inTitle = useCaretInTitle(entry !== null);
   const renaming = useRef(false);
   const switching = useRef(false);
@@ -436,11 +450,22 @@ export function useNewDocument(input: {
       <NewDocumentOnPage
         row={
           untouched ? (
-            <NewDocumentStartBar
-              template={entry.template}
-              language={entry.language}
-              onTemplate={(template) => choose(template, entry.language)}
-              onLanguage={(language) => choose(entry.template, language)}
+            <TemplateRow
+              templates={DOCUMENT_TEMPLATES}
+              selected={entry.template}
+              defaultTemplate={defaultTemplate}
+              onSelect={(template) => {
+                if (isDocumentTemplateId(template)) choose(template, entry.language);
+              }}
+              onSetDefault={setStoredDefault}
+              strip={strip}
+              trailing={
+                <LanguageMenu
+                  language={entry.language}
+                  strip={strip}
+                  onLanguage={(language) => choose(entry.template, language)}
+                />
+              }
             />
           ) : null
         }
@@ -465,73 +490,34 @@ export function useNewDocument(input: {
   };
 }
 
-function NewDocumentStartBar(props: {
-  readonly template: DocumentTemplateId;
+const strip = { [STRIP_ATTRIBUTE]: "" };
+
+function LanguageMenu(props: {
   readonly language: NewDocumentLanguage;
-  readonly onTemplate: (template: DocumentTemplateId) => void;
+  readonly strip: Readonly<Record<string, string>>;
   readonly onLanguage: (language: NewDocumentLanguage) => void;
 }) {
-  const more = MORE_DOCUMENT_TEMPLATES.find((entry) => entry.id === props.template);
-  const strip = { [STRIP_ATTRIBUTE]: "" };
   return (
-    <div className="scient-new-document-bar">
-      <div role="radiogroup" aria-label="Template">
-        {NEW_DOCUMENT_TEMPLATES.map((entry) => (
+    <Menu>
+      <MenuTrigger
+        render={
           <button
-            key={entry.id}
             type="button"
-            role="radio"
-            aria-checked={props.template === entry.id}
+            aria-label="Language"
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => props.onTemplate(entry.id)}
-          >
+          />
+        }
+      >
+        {NEW_DOCUMENT_LANGUAGES.find((entry) => entry.id === props.language)!.name}
+        <ChevronDown aria-hidden="true" />
+      </MenuTrigger>
+      <MenuPopup align="end" side="bottom" sideOffset={4} className="min-w-0" {...props.strip}>
+        {NEW_DOCUMENT_LANGUAGES.map((entry) => (
+          <MenuItem key={entry.id} onClick={() => props.onLanguage(entry.id)}>
             {entry.name}
-          </button>
+          </MenuItem>
         ))}
-        <Menu>
-          <MenuTrigger
-            render={
-              <button
-                type="button"
-                role="radio"
-                aria-checked={more !== undefined}
-                onMouseDown={(event) => event.preventDefault()}
-              />
-            }
-          >
-            {more?.name ?? "More"}
-            <ChevronDown aria-hidden="true" />
-          </MenuTrigger>
-          <MenuPopup align="start" side="bottom" sideOffset={4} className="min-w-0" {...strip}>
-            {MORE_DOCUMENT_TEMPLATES.map((entry) => (
-              <MenuItem key={entry.id} onClick={() => props.onTemplate(entry.id)}>
-                {entry.name}
-              </MenuItem>
-            ))}
-          </MenuPopup>
-        </Menu>
-      </div>
-      <Menu>
-        <MenuTrigger
-          render={
-            <button
-              type="button"
-              aria-label="Language"
-              onMouseDown={(event) => event.preventDefault()}
-            />
-          }
-        >
-          {NEW_DOCUMENT_LANGUAGES.find((entry) => entry.id === props.language)!.name}
-          <ChevronDown aria-hidden="true" />
-        </MenuTrigger>
-        <MenuPopup align="end" side="bottom" sideOffset={4} className="min-w-0" {...strip}>
-          {NEW_DOCUMENT_LANGUAGES.map((entry) => (
-            <MenuItem key={entry.id} onClick={() => props.onLanguage(entry.id)}>
-              {entry.name}
-            </MenuItem>
-          ))}
-        </MenuPopup>
-      </Menu>
-    </div>
+      </MenuPopup>
+    </Menu>
   );
 }
