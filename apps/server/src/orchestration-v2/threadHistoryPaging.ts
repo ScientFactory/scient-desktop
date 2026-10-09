@@ -556,7 +556,11 @@ export function buildBoundedThreadProjection(input: {
     ...controlProjection,
     plans,
     contextHandoffs,
-    messages: messagesForBoundedProjection(controlProjection, turnItems),
+    // SCIENT-FORK: a fork's shared history shows messages its own items do not.
+    messages: messagesForBoundedProjection(controlProjection, [
+      ...turnItems,
+      ...visibleTurnItems.map((row) => row.item),
+    ]),
     turnItems,
     visibleTurnItems,
   };

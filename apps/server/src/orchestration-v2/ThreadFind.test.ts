@@ -12,6 +12,9 @@ import {
   type OrchestrationV2ThreadHistoryPage,
   ProjectId,
   ProviderInstanceId,
+  ProviderDriverKind,
+  ProviderThreadId,
+  ProviderTurnId,
   ThreadId,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
@@ -29,6 +32,12 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as EventStore from "./EventStore.ts";
 import { encodeThreadHistoryCursor, selectHistoryPageFromCursor } from "./threadHistoryPaging.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
+import {
+  forkHistoryEntry,
+  writeForkHistory,
+  frozenHistoryFields,
+} from "./scient-fork/ForkHistory.ts";
+import { freezeShownHistory } from "./scient-fork/ForkHistoryFreeze.ts";
 
 const layerTest = Layer.mergeAll(EventStore.layer, ProjectionStore.layer, ProjectStore.layer).pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
@@ -849,6 +858,234 @@ describe("V2 thread find", () => {
 });
 
 describe("V2 history materialization", () => {
+  it.effect(
+    "keeps Find and older history on the fork's frozen version after source mutation and deletion",
+    () =>
+      Effect.gen(function* () {
+        const projection = yield* setup;
+        const sql = yield* SqlClient.SqlClient;
+        const forkId = ThreadId.make("thread:frozen-find");
+        const nestedId = ThreadId.make("thread:nested-frozen-find");
+        const originals = [
+          item("frozen-user-item", 0, "original needle user", "user_message"),
+          {
+            ...item("frozen-answer-item", 1, "original needle answer"),
+            messageId: MessageId.make("frozen-answer-message"),
+            providerThreadId: ProviderThreadId.make("provider:source"),
+            providerTurnId: ProviderTurnId.make("turn:source"),
+            nativeItemRef: {
+              driver: ProviderDriverKind.make("codex"),
+              nativeId: "item:source",
+              strength: "strong" as const,
+            },
+          },
+        ];
+        yield* putItems(originals);
+        const child = thread(forkId, projectId);
+        const nested = thread(nestedId, projectId);
+        assert.equal(child.type, "thread.created");
+        assert.equal(nested.type, "thread.created");
+        if (child.type !== "thread.created" || nested.type !== "thread.created") return;
+        yield* commit([
+          {
+            ...child,
+            payload: {
+              ...child.payload,
+              lineage: {
+                parentThreadId: threadId,
+                rootThreadId: threadId,
+                relationshipToParent: "fork",
+              },
+            },
+          },
+          {
+            ...nested,
+            payload: {
+              ...nested.payload,
+              lineage: {
+                parentThreadId: forkId,
+                rootThreadId: threadId,
+                relationshipToParent: "fork",
+              },
+            },
+          },
+        ]);
+        const originalPlan = item("original-plan", 2, "copied needle plan", "proposed_plan");
+        const copied = {
+          ...originalPlan,
+          ...frozenHistoryFields(originalPlan),
+          id: TurnItemId.make("copied-plan"),
+          threadId: forkId,
+        };
+        yield* putItems([copied]);
+        const history = [
+          ...originals.map((entry) => forkHistoryEntry(threadId, entry.id, entry)),
+          forkHistoryEntry(forkId, copied.id, copied),
+        ];
+        yield* sql.withTransaction(writeForkHistory(sql, forkId, history));
+        assert.equal(
+          (yield* projection.searchThread({ threadId: forkId, query: "needle" })).totalMatches,
+          3,
+        );
+        for (const original of originals) {
+          if (original.type === "proposed_plan") throw new Error("Expected user/assistant fixture");
+          yield* sql.withTransaction(
+            freezeShownHistory(sql, {
+              id: EventId.make(`freeze:${original.id}`),
+              threadId,
+              type: "turn-item.updated",
+              occurredAt: at(3),
+              payload: { ...original, text: "source changed" },
+            }),
+          );
+        }
+        yield* putItems(
+          originals.map((original) => ({ ...original, text: "source changed" })),
+          "changed-after-fork",
+        );
+        // A nested fork keeps the parent's frozen version, not the newly changed original.
+        yield* sql.withTransaction(writeForkHistory(sql, nestedId, history));
+        const deleted = thread(threadId, projectId, { deletedAt: at(4) });
+        if (deleted.type !== "thread.created") return;
+        yield* commit([
+          { ...deleted, id: EventId.make("delete:frozen-source"), type: "thread.deleted" },
+        ]);
+        yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE thread_id = ${threadId}`;
+        for (const owner of [forkId, nestedId]) {
+          const timeline = yield* projection.getTimelinePage(owner, {
+            view: "activity",
+            limit: 10,
+          });
+          const page = yield* projection.getThreadHistoryPage(
+            owner,
+            encodeThreadHistoryCursor({
+              snapshotSequence: 0,
+              sourceThreadId: owner,
+              sourceItemId: "absent",
+              position: 3,
+            }),
+          );
+          assert.deepEqual(
+            page.items.map((row) => row.item),
+            timeline.items.map((row) => projectTurnItemForWire(row.item)),
+          );
+          assert.deepEqual(
+            page.items.map((row) => row.sourceItemId),
+            history.map((row) => row.sourceItemId),
+          );
+          assert.equal(page.items[1]!.item.threadId, owner);
+          assert.deepEqual(
+            yield* projection.getTurnItem({
+              threadId: owner,
+              itemId: TurnItemId.make("frozen-answer-item"),
+            }),
+            timeline.items[1]!.item,
+          );
+          for (const { item: shown } of page.items) {
+            assert.isNull(shown.runId);
+            assert.isNull(shown.nodeId);
+            assert.isNull(shown.providerThreadId);
+            assert.isNull(shown.providerTurnId);
+            assert.isNull(shown.nativeItemRef);
+          }
+          assert.equal(
+            (yield* projection.searchThread({ threadId: owner, query: "source changed" }))
+              .totalMatches,
+            0,
+          );
+          const found = yield* projection.searchThread({
+            threadId: owner,
+            query: "needle",
+            start: { entryId: "frozen-answer-message", occurrence: 0 },
+          });
+          assert.equal(found.totalMatches, 3);
+          assert.deepEqual(found.match, {
+            entryId: "frozen-answer-message",
+            runId: null,
+            occurrence: 0,
+          });
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "pages inherited-only forks in complete turns and jumps by inherited message identity",
+    () =>
+      Effect.gen(function* () {
+        const projection = yield* setup;
+        const sql = yield* SqlClient.SqlClient;
+        const forkId = ThreadId.make("thread:inherited-pages");
+        const originals = Array.from({ length: 45 }, (_, turn) => [
+          item(`inherited-user:${turn}`, turn * 3, `turn ${turn}`, "user_message"),
+          {
+            ...item(`inherited-answer:${turn}`, turn * 3 + 1, `needle answer ${turn}`),
+            messageId: MessageId.make(`inherited-message:${turn}`),
+          },
+          {
+            ...item(`inherited-tool:${turn}`, turn * 3 + 2, ""),
+            type: "command_execution" as const,
+            input: "pwd",
+            output: "tool output".repeat(1000),
+            exitCode: 0,
+          },
+        ]).flat();
+        yield* putItems(originals);
+        yield* commit([thread(forkId, projectId)]);
+        yield* sql.withTransaction(
+          writeForkHistory(
+            sql,
+            forkId,
+            originals.map((entry) => forkHistoryEntry(threadId, entry.id, entry)),
+          ),
+        );
+        const cursor = encodeThreadHistoryCursor({
+          snapshotSequence: 0,
+          sourceThreadId: forkId,
+          sourceItemId: "absent",
+          position: originals.length,
+        });
+        const ordinary = yield* projection.getThreadHistoryPage(forkId, cursor);
+        assert.equal(ordinary.items[0]?.sourceItemId, "inherited-user:25");
+        assert.equal(ordinary.items.length, 60);
+        const targeted = yield* projection.getThreadHistoryPage(
+          forkId,
+          cursor,
+          "inherited-message:10",
+        );
+        assert.equal(targeted.items[0]?.sourceItemId, "inherited-user:10");
+        assert.equal(targeted.items.length, 105);
+        const conversation = yield* projection.getThreadHistoryPage(
+          forkId,
+          cursor,
+          "inherited-message:10",
+          true,
+        );
+        assert.equal(conversation.items.length, 70);
+        assert.equal(conversation.nextCursor, targeted.nextCursor);
+        assert.deepEqual(
+          conversation.items.map((row) => row.sourceItemId),
+          targeted.items
+            .filter((row) => row.item.type !== "command_execution")
+            .map((row) => row.sourceItemId),
+        );
+        assert.isTrue(targeted.hasMoreHistory);
+        const earlier = yield* projection.getThreadHistoryPage(forkId, targeted.nextCursor!);
+        assert.deepEqual(
+          earlier.items.map((row) => row.sourceItemId),
+          originals.slice(0, 30).map((entry) => entry.id),
+        );
+        assert.isFalse(earlier.hasMoreHistory);
+        assert.equal(
+          (yield* projection.searchThread({
+            threadId: forkId,
+            query: "needle",
+            start: { entryId: "inherited-message:10", occurrence: 0 },
+          })).match?.runId,
+          null,
+        );
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect(
     "combines history pages through a match's message identity without skipping intervening turns",
     () =>

@@ -220,7 +220,7 @@ describe("V2 deleted-worktree cleanup lifecycle", () => {
           (yield* outbox.listByCommandId(deletionId)).every((row) => row.status === "cancelled"),
         );
       } else
-        for (const row of effects) {
+        for (let claimedCount = 0; claimedCount < effects.length; claimedCount += 1) {
           const claimed = yield* outbox.claimNext({
             workerId: "cleanup-test",
             leaseDurationMs: 60_000,
@@ -230,7 +230,10 @@ describe("V2 deleted-worktree cleanup lifecycle", () => {
           assert.isTrue(
             yield* outbox.succeed({ effectId: claimed.value.id, workerId: "cleanup-test" }),
           );
-          assert.strictEqual(Option.getOrNull(yield* outbox.get(row.id))?.status, "succeeded");
+          assert.strictEqual(
+            Option.getOrNull(yield* outbox.get(claimed.value.id))?.status,
+            "succeeded",
+          );
         }
       yield* Deferred.await(completionRead);
       yield* cleanup.drain;

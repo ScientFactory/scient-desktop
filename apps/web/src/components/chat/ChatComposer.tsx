@@ -1627,6 +1627,9 @@ export interface ChatComposerProps {
   activeTasksProgress: ComposerTasksProgress | null;
   activeTaskSteps: readonly ComposerTaskStep[] | null;
   threadSyncPhase: ThreadSyncPhase | null;
+  // SCIENT-FORK:START — a landing fork keeps its load status out of view (scient/fork/chatViewFork.tsx).
+  syncStatusHidden?: boolean;
+  // SCIENT-FORK:END
 
   // Mode
   runtimeMode: RuntimeMode;
@@ -1849,7 +1852,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Opening a running thread resyncs for a few frames. Show the sync row, and
   // hide the tasks row for it, only when the sync lasts. Logic that depends on
   // the real phase keeps reading `props.threadSyncPhase`.
-  const shownSyncPhase = useDelayedStatus(composerDraftTargetKey, props.threadSyncPhase);
+  const shownSyncPhase = useDelayedStatus(
+    composerDraftTargetKey,
+    // SCIENT-FORK: a landing fork's status row would only show and leave after its messages.
+    props.syncStatusHidden ? null : props.threadSyncPhase,
+  );
   const activeTasksProgress = shownSyncPhase === null ? props.activeTasksProgress : null;
   const activeTaskSteps = shownSyncPhase === null ? props.activeTaskSteps : null;
   // ------------------------------------------------------------------

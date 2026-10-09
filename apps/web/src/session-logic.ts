@@ -757,7 +757,9 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         kind: "mcp-app",
         createdAt,
         runId: item.runId,
-        sourceThreadId: row.sourceThreadId,
+        // SCIENT-FORK: the item's own thread, which for a fork's shared history is
+        // the fork: it serves the version the fork shows.
+        sourceThreadId: item.threadId,
         itemId: row.sourceItemId,
         revision: turnItemDetailRevision(item),
         mcpApp,

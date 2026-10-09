@@ -7,7 +7,6 @@ import {
   TurnItemId,
   OrchestrationV2ConversationMessageJson,
   OrchestrationV2TurnItemJson,
-  ChatAttachment,
   type CommandId,
   type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
@@ -17,20 +16,25 @@ import {
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type RunId,
+  type ChatAttachment,
   type ThreadForkAttachmentCopy,
+  type UserInputAttachmentAnswerPayload,
+  questionAnswerMessageId,
 } from "@t3tools/contracts";
-import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { resolveForkInitialization } from "@t3tools/shared/orchestrationV2ForkInitialization";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { attachmentFileExtension, createDeterministicAttachmentId } from "../../attachmentStore.ts";
+import { readHistoricalSystemMessage } from "../legacy/HistoricalSystemMessage.ts";
 import type { PendingOrchestrationEffectV2 } from "../EffectOutbox.ts";
 import {
-  readHistoricalSystemMessage,
-  HistoricalSystemMessage,
-} from "../legacy/HistoricalSystemMessage.ts";
+  forkHistoryEntry,
+  frozenHistoryFields,
+  isCopiedForkItem,
+  openRunIds,
+  type ForkHistoryEntry,
+} from "./ForkHistory.ts";
 
 export type ConversationForkSource =
   | { readonly kind: "assistant-response"; readonly messageId: MessageId }
@@ -49,13 +53,14 @@ export class ConversationForkPlanError extends Schema.TaggedError<ConversationFo
 
 const itemJson = Schema.fromJsonString(OrchestrationV2TurnItemJson);
 const messageJson = Schema.fromJsonString(OrchestrationV2ConversationMessageJson);
-const attachmentJson = Schema.fromJsonString(ChatAttachment);
 
 /** Freeze the visible conversation prefix; no source execution or pending request is adopted. */
 export const planConversationFork = Effect.fn("ScientConversationFork.plan")(function* (input: {
   readonly projection: OrchestrationV2ThreadProjection;
   readonly targetThreadId: ThreadId;
   readonly source: ConversationForkSource;
+  /** False to check a fork without building its copies (the options check). */
+  readonly materialize?: boolean;
 }) {
   const { projection, source, targetThreadId } = input;
   const reject = (detail: string) =>
@@ -182,35 +187,12 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
         item.runId === null ||
         (runOrdinals.get(item.runId) ?? Infinity) <= selectedRun.ordinal,
     );
-  const messageIds = new Map<MessageId, MessageId>();
-  const itemIds = new Map<TurnItemId, TurnItemId>();
-  const attachmentMap = new Map<string, ChatAttachment>();
-  const attachmentCopies: ThreadForkAttachmentCopy[] = [];
-  const sourceAttachments: ChatAttachment[] = [];
-  const systemMessages = new Map<TurnItemId, typeof HistoricalSystemMessage.Type>();
-  const collectAttachments = (attachments: ReadonlyArray<ChatAttachment>) => {
-    for (const source of attachments) {
-      if (attachmentMap.has(source.id)) continue;
-      const rawId = createDeterministicAttachmentId(
-        targetThreadId,
-        `scient-conversation-fork:${source.id}`,
-      );
-      if (rawId === null) return false;
-      const id =
-        source.type === "file"
-          ? `${rawId}-${attachmentFileExtension(source.name).slice(1)}`
-          : rawId;
-      const frozenSource = Schema.decodeSync(attachmentJson)(
-        Schema.encodeSync(attachmentJson)(source),
-      );
-      const target = { ...frozenSource, id };
-      attachmentMap.set(source.id, target);
-      sourceAttachments.push(frozenSource);
-      attachmentCopies.push({ source: frozenSource, target });
-    }
-    return true;
-  };
-  for (const [index, { item }] of retained.entries()) {
+  // The fork shares the retained history by reference (its frozen membership)
+  // and owns copies only of what still changes or what it can act on.
+  const openRuns = openRunIds(projection.runs);
+  const copies = (row: (typeof retained)[number]) => isCopiedForkItem(row.item, openRuns);
+  const copied = retained.filter(copies);
+  for (const { item } of retained)
     if (
       item.type === "user_input_request" &&
       item.questionAnswer !== undefined &&
@@ -222,48 +204,42 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
       return yield* reject(
         "A retained submitted question answer has no authoritative turn boundary.",
       );
-    itemIds.set(item.id, TurnItemId.make(`scient-fork:${targetThreadId}:item:${index}`));
-    if (item.type === "user_message" || item.type === "assistant_message") {
-      if (!messageIds.has(item.messageId))
-        messageIds.set(
-          item.messageId,
-          MessageId.make(`scient-fork:${targetThreadId}:message:${messageIds.size}`),
-        );
-      if (!collectAttachments(item.attachments ?? []))
-        return yield* reject("The destination cannot own retained attachment files.");
-    }
-    const historicalSystem = readHistoricalSystemMessage(item);
-    if (Option.isSome(historicalSystem)) {
-      const system = historicalSystem.value;
-      systemMessages.set(item.id, system);
-      if (!messageIds.has(system.messageId)) {
-        messageIds.set(
-          system.messageId,
-          MessageId.make(`scient-fork:${targetThreadId}:message:${messageIds.size}`),
-        );
-      }
-      if (!collectAttachments(system.attachments ?? [])) {
-        return yield* reject("The destination cannot own retained system attachments.");
-      }
-    }
-    if (item.type === "user_input_request" && item.questionAnswer) {
-      const answerMessageId = item.questionAnswer.messageId;
-      if (answerMessageId !== undefined && !messageIds.has(answerMessageId))
-        messageIds.set(
-          answerMessageId,
-          MessageId.make(`scient-fork:${targetThreadId}:message:${messageIds.size}`),
-        );
-      if (!collectAttachments(Object.values(item.questionAnswer.attachmentsByQuestionId).flat()))
-        return yield* reject("The destination cannot own retained answer attachments.");
-    }
-  }
-  for (const message of projection.messages) {
-    if (messageIds.has(message.id) && !collectAttachments(message.attachments))
-      return yield* reject("The destination cannot own retained attachment files.");
-  }
-  const remapAttachments = <A extends ChatAttachment>(attachments: ReadonlyArray<A>) =>
-    attachments.map((attachment) => ({ ...attachment, id: attachmentMap.get(attachment.id)!.id }));
-  const messages = projection.messages
+  const copyIds = new Map<TurnItemId, TurnItemId>(
+    retained.flatMap((row, index) =>
+      copies(row)
+        ? [[row.item.id, TurnItemId.make(`scient-fork:${targetThreadId}:item:${index}`)] as const]
+        : [],
+    ),
+  );
+  const messageIds = new Map<MessageId, MessageId>();
+  for (const { item } of copied)
+    if (
+      (item.type === "user_message" || item.type === "assistant_message") &&
+      !messageIds.has(item.messageId)
+    )
+      messageIds.set(
+        item.messageId,
+        MessageId.make(`scient-fork:${targetThreadId}:message:${messageIds.size}`),
+      );
+  const answerMessageId = (answer: UserInputAttachmentAnswerPayload) => {
+    const source = MessageId.make(questionAnswerMessageId(answer));
+    return messageIds.get(source) ?? source;
+  };
+  const history: ReadonlyArray<ForkHistoryEntry> = retained.map(
+    ({ item, sourceThreadId, sourceItemId }) => {
+      const copyId = copyIds.get(item.id);
+      if (copyId === undefined) return forkHistoryEntry(sourceThreadId, sourceItemId, item);
+      const entry = forkHistoryEntry(targetThreadId, copyId, item);
+      return entry.messageId === null
+        ? entry
+        : {
+            ...entry,
+            messageId: messageIds.get(MessageId.make(entry.messageId)) ?? entry.messageId,
+          };
+    },
+  );
+  const materialize = input.materialize !== false;
+  const messages = (materialize ? projection.messages : [])
     .filter((message) => messageIds.has(message.id))
     .map((source) => {
       const message = Schema.decodeSync(messageJson)(Schema.encodeSync(messageJson)(source));
@@ -274,40 +250,25 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
         runId: null,
         nodeId: null,
         streaming: false,
-        attachments: remapAttachments(message.attachments),
-        ...(message.context === undefined
-          ? {}
-          : {
-              context: remapComposerContextAttachments(message.context, sourceAttachments, [
-                ...attachmentMap.values(),
-              ]),
-            }),
       } satisfies OrchestrationV2ConversationMessage;
     });
   const plans = new Map<PlanId, OrchestrationV2PlanArtifact>();
   const nodes = new Map<NodeId, OrchestrationV2ExecutionNode>();
-  const items = retained.map(({ item: sourceItem }, ordinal): OrchestrationV2TurnItem => {
+  const positions = new Map(retained.map(({ item }, index) => [item.id, index]));
+  const items = (materialize ? copied : []).map(({ item: sourceItem }): OrchestrationV2TurnItem => {
     const original = Schema.decodeSync(itemJson)(Schema.encodeSync(itemJson)(sourceItem));
+    const ordinal = positions.get(sourceItem.id)!;
     const base = {
-      id: itemIds.get(original.id)!,
+      ...frozenHistoryFields(original),
+      id: copyIds.get(original.id)!,
       threadId: targetThreadId,
-      runId: null,
-      nodeId: null as OrchestrationV2TurnItem["nodeId"],
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
+      // A copied parent is named by its copy; a shared one keeps its id.
       parentItemId:
-        original.parentItemId === null ? null : (itemIds.get(original.parentItemId) ?? null),
+        original.parentItemId === null
+          ? null
+          : (copyIds.get(original.parentItemId) ??
+            (positions.has(original.parentItemId) ? original.parentItemId : null)),
       ordinal,
-      status: ["idle", "pending", "running", "waiting"].includes(original.status)
-        ? ("interrupted" as const)
-        : original.status,
-      inheritedFrom: original.inheritedFrom ?? {
-        threadId: original.threadId,
-        itemId: original.id,
-        runId: original.runId,
-        status: original.status,
-      },
     };
     if (original.type === "proposed_plan" || original.type === "todo_list") {
       // Historical plans remain explicitly actionable, with destination-owned
@@ -363,53 +324,14 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
           ...(forkInitialization === undefined ? {} : { forkInitialization }),
         };
       }
-      case "dynamic_tool": {
-        const system = systemMessages.get(original.id);
-        return system === undefined
-          ? { ...original, ...base }
-          : {
-              ...original,
-              ...base,
-              input: {
-                ...system,
-                messageId: messageIds.get(system.messageId)!,
-                attachments:
-                  system.attachments === null ? null : remapAttachments(system.attachments),
-                context:
-                  system.context === null
-                    ? null
-                    : remapComposerContextAttachments(system.context, sourceAttachments, [
-                        ...attachmentMap.values(),
-                      ]),
-              },
-            };
-      }
       case "user_message":
-        return {
-          ...original,
-          ...base,
-          messageId: messageIds.get(original.messageId)!,
-          attachments: remapAttachments(original.attachments),
-          ...(original.context === undefined
-            ? {}
-            : {
-                context: remapComposerContextAttachments(original.context, sourceAttachments, [
-                  ...attachmentMap.values(),
-                ]),
-              }),
-        };
       case "assistant_message":
         return {
           ...original,
           ...base,
-          type: original.type,
           messageId: messageIds.get(original.messageId)!,
-          text: original.text,
-          streaming: false,
-          ...(original.attachments === undefined
-            ? {}
-            : { attachments: remapAttachments(original.attachments) }),
-        };
+          ...(original.type === "assistant_message" ? { streaming: false } : {}),
+        } as OrchestrationV2TurnItem;
       case "reasoning":
         return { ...original, ...base, type: original.type, text: original.text, streaming: false };
       case "proposed_plan":
@@ -452,16 +374,8 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
                 questionAnswer: {
                   ...original.questionAnswer,
                   requestId,
-                  ...(original.questionAnswer.messageId === undefined
-                    ? {}
-                    : {
-                        messageId: messageIds.get(original.questionAnswer.messageId)!,
-                      }),
-                  attachmentsByQuestionId: Object.fromEntries(
-                    Object.entries(original.questionAnswer.attachmentsByQuestionId).map(
-                      ([key, attachments]) => [key, remapAttachments(attachments)],
-                    ),
-                  ),
+                  // The answer's message keeps its link through the new request id.
+                  messageId: answerMessageId(original.questionAnswer),
                 },
               }),
         };
@@ -475,12 +389,42 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
         return { ...original, ...base };
     }
   });
+  // Retained files are shared, not copied: each maps to itself.
+  const sharedAttachments = new Map<string, ChatAttachment>();
+  const share = (attachments: ReadonlyArray<ChatAttachment> | null | undefined) => {
+    for (const attachment of attachments ?? [])
+      if (!sharedAttachments.has(attachment.id)) sharedAttachments.set(attachment.id, attachment);
+  };
+  const retainedMessageIds = new Set<string>();
+  for (const { item } of retained) {
+    if (item.type === "user_message" || item.type === "assistant_message") {
+      share(item.attachments);
+      retainedMessageIds.add(item.messageId);
+    }
+    if (item.type === "user_input_request" && item.questionAnswer !== undefined)
+      share(Object.values(item.questionAnswer.attachmentsByQuestionId).flat());
+    const system = readHistoricalSystemMessage(item);
+    if (Option.isSome(system)) share(system.value.attachments);
+  }
+  for (const message of projection.messages)
+    if (retainedMessageIds.has(message.id)) share(message.attachments);
+  const lastAssistant = retained.findLast(({ item }) => item.type === "assistant_message")?.item;
   return {
+    /** The retained prefix as the source shows it, in order. */
+    retained: retained.map(({ item }) => item),
+    /** The fork's last retained answer, by the message id the fork shows for it. */
+    baselineAssistantMessageId:
+      lastAssistant?.type === "assistant_message"
+        ? (messageIds.get(lastAssistant.messageId) ?? lastAssistant.messageId)
+        : null,
+    attachmentCopies: [...sharedAttachments.values()].map(
+      (attachment): ThreadForkAttachmentCopy => ({ source: attachment, target: attachment }),
+    ),
+    history,
     items,
     messages,
     plans: [...plans.values()],
     nodes: [...nodes.values()],
-    attachmentCopies,
     boundaryRunId,
   };
 });

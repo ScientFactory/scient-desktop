@@ -2158,10 +2158,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const pending = yield* outbox.listByCommandId(command.commandId);
       assert.deepEqual(
         pending.map((effect) => effect.request),
-        [
-          { type: "attachment.cleanup", attachmentIds: [attachmentId] },
-          { type: "terminal.cleanup" },
-        ],
+        // SCIENT: files are released after the deletion commits.
+        [{ type: "scient.release-thread-files" }, { type: "terminal.cleanup" }],
       );
       assert.isTrue(pending.every((effect) => effect.status === "pending"));
       assert.deepEqual(yield* fileSystem.readFile(attachmentPath), bytes);

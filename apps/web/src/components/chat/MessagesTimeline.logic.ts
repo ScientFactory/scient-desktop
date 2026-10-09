@@ -659,6 +659,8 @@ type MessagesTimelineRowContent =
   | {
       kind: "fork-marker";
       id: string;
+      /** SCIENT-FORK: an earlier fork point this conversation shows, and the conversation it came from. */
+      originThreadId?: ThreadId | undefined;
     }
   | {
       kind: "assistant-meta";
@@ -1647,6 +1649,22 @@ export function deriveMessagesTimelineRows(input: {
     ) {
       continue;
     }
+    // SCIENT-FORK: an inherited point where an earlier conversation was forked
+    // (a fork of a fork shows its parent's) reads like this fork's own marker.
+    if (
+      timelineEntry.kind === "event" &&
+      timelineEntry.projectedItem.visibility === "inherited" &&
+      timelineEntry.projectedItem.item.type === "fork" &&
+      (timelineEntry.projectedItem.item.source.type === "run" ||
+        timelineEntry.projectedItem.item.source.type === "message")
+    ) {
+      nextRows.push({
+        kind: "fork-marker",
+        id: `fork-marker:${timelineEntry.id}`,
+        originThreadId: timelineEntry.projectedItem.item.source.threadId,
+      });
+      continue;
+    }
 
     const turnFold = foldsByAnchorEntryId.get(timelineEntry.id);
     if (turnFold) {
@@ -2465,7 +2483,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     }
 
     case "fork-marker":
-      return true;
+      return a.originThreadId === (b as typeof a).originThreadId;
 
     case "message": {
       const bm = b as typeof a;

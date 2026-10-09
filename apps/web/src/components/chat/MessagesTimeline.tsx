@@ -269,6 +269,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger, TooltipScrollDismissArea } from "../ui/tooltip";
 import { ScientForkMessageButton } from "./scient-fork/ScientForkMessageButton";
+import { settledListThreadKey } from "../scient-fork/forkLanding";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import {
   ContextChipPopover as UserMessageContextPopover,
@@ -587,6 +588,10 @@ interface MessagesTimelineProps {
   onManualNavigation: () => void;
   findOpen?: boolean;
   cancelPositionRestoreRef?: React.RefObject<(() => void) | null> | undefined;
+  // SCIENT-FORK:START — a landing fork shows once its list is in place (scient/fork/chatViewFork.tsx).
+  /** The thread whose rows the loaded list has positioned and held still, else null. */
+  onPositionedThreadKeyChange?: ((threadKey: string | null) => void) | undefined;
+  // SCIENT-FORK:END
   hideEmptyPlaceholder?: boolean;
   positionHistoryLoading?: boolean;
   topFadeEnabled?: boolean;
@@ -698,6 +703,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onToolOutputCollapsedAtEnd,
   onManualNavigation,
   cancelPositionRestoreRef,
+  // SCIENT-FORK:START
+  onPositionedThreadKeyChange,
+  // SCIENT-FORK:END
   hideEmptyPlaceholder = false,
   positionHistoryLoading = false,
   topFadeEnabled = false,
@@ -751,6 +759,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     rememberedPosition?.atEnd === false ? null : listIdentityKey,
   );
   const restoringThreadPosition = positionedThreadKey !== listIdentityKey;
+  // SCIENT-FORK: the thread whose positioning ran out of frames before it held still.
+  const [abandonedPositionKey, setAbandonedPositionKey] = useState<string | null>(null);
   const listIdentityRef = useRef(listIdentityKey);
   const previousLatestRunRef = useRef(latestRun);
   let paintedExpandedRunIds = expandedRunIds;
@@ -760,6 +770,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   if (listIdentityRef.current !== listIdentityKey) {
     listIdentityRef.current = listIdentityKey;
     setPositionedThreadKey(null);
+    // SCIENT-FORK
+    setAbandonedPositionKey(null);
     previousLatestRunRef.current = latestRun;
     paintedExpandedRunIds = rememberedPosition?.disclosures?.runs ?? new Set();
     paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
@@ -1237,6 +1249,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
           if (cancelled) return;
           const element = list.getScrollableNode();
           if (!element || --remainingEndFrames <= 0) {
+            // SCIENT-FORK
+            setAbandonedPositionKey(listIdentityKey);
             setPositionedThreadKey(listIdentityKey);
             return;
           }
@@ -1260,6 +1274,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
       const reconcile = () => {
         if (cancelled) return;
         if (--remainingFrames <= 0) {
+          // SCIENT-FORK
+          setAbandonedPositionKey(listIdentityKey);
           setPositionedThreadKey(listIdentityKey);
           return;
         }
@@ -1317,6 +1333,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onResumeFollow,
     // SCIENT-FORK:END
   ]);
+  // SCIENT-FORK:START — report the positioned thread to a landing fork.
+  const positionedListThreadKey = settledListThreadKey({
+    listThreadKey: listIdentityKey,
+    listLoaded: readingListLoaded,
+    restoring: restoringThreadPosition,
+    abandonedThreadKey: abandonedPositionKey,
+  });
+  useLayoutEffect(() => {
+    onPositionedThreadKeyChange?.(positionedListThreadKey);
+  }, [onPositionedThreadKeyChange, positionedListThreadKey]);
+  // SCIENT-FORK:END
 
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
@@ -2531,7 +2558,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         </WorkLogBlock>
       ) : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
-      {row.kind === "fork-marker" ? <ForkMarkerTimelineRow /> : null}
+      {row.kind === "fork-marker" ? <ForkMarkerTimelineRow row={row} /> : null}
       {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
       {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
@@ -2549,18 +2576,24 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
   );
 });
 
-function ForkMarkerTimelineRow() {
+function ForkMarkerTimelineRow({
+  row,
+}: {
+  row: Extract<MessagesTimelineRow, { kind: "fork-marker" }>;
+}) {
   const ctx = use(TimelineRowCtx);
+  // SCIENT-FORK: an earlier fork point links to the conversation it came from.
+  const originThreadId = row.originThreadId ?? ctx.forkOriginThreadId;
   return (
     <div className="flex items-center gap-3 px-1 py-3 text-xs text-muted-foreground">
       <div className="h-px flex-1 bg-border/60" />
       <span className="shrink-0 rounded-full border border-border/70 bg-muted/35 px-2.5 py-1">
-        {ctx.forkOriginThreadId ? (
+        {originThreadId ? (
           <Link
             to="/$environmentId/$threadId"
             params={{
               environmentId: ctx.activeThreadEnvironmentId,
-              threadId: ctx.forkOriginThreadId,
+              threadId: originThreadId,
             }}
             className="hover:text-foreground hover:underline"
             aria-label="Open original conversation"

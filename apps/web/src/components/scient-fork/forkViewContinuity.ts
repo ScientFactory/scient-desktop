@@ -52,7 +52,9 @@ function portableSurface(
     const id = Object.hasOwn(attachmentIdMap, surface.attachment.id)
       ? attachmentIdMap[surface.attachment.id]
       : undefined;
-    if (!id || id === surface.attachment.id) return null;
+    if (!id) return null;
+    // A fork shares the retained history's files: the same id stays open.
+    if (id === surface.attachment.id) return surface;
     return { ...surface, id: `attachment:${id}`, attachment: { ...surface.attachment, id } };
   }
   if (surface.kind === "terminal") return null;

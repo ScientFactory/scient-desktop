@@ -6,6 +6,7 @@ import {
   type OrchestrationV2TurnItem,
   ThreadId,
   TurnItemId,
+  type MessageId,
 } from "@t3tools/contracts";
 import { searchableMessageSegments, searchablePlanSegments } from "@t3tools/shared/threadFindText";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
@@ -26,7 +27,15 @@ interface FindRow {
   readonly visibility: OrchestrationV2ProjectedTurnItem["visibility"];
   readonly sourceThreadId: ThreadId;
   readonly sourceItemId: TurnItemId;
+  // SCIENT-FORK:START — the immutable membership position of a reference fork row.
+  readonly forkHistoryPosition?: number;
+  // SCIENT-FORK:END
 }
+// SCIENT-FORK:START — message identity comes from the same lightweight index as history paging.
+interface FindIndexRow extends FindRow {
+  readonly item: Pick<OrchestrationV2TurnItem, "type"> & { readonly messageId?: MessageId };
+}
+// SCIENT-FORK:END
 interface FindPayload extends FindRow {
   readonly payload: string;
   readonly entryId: string;
@@ -197,12 +206,20 @@ function resultForSelection(
 
 /** Read the canonical index once per scan, including inherited fork rows, without tool bodies. */
 export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
-  readIndex: (threadId: ThreadId) => Effect.Effect<
-    readonly (Omit<FindRow, "position"> & {
-      readonly item: Pick<OrchestrationV2TurnItem, "type">;
-    })[],
-    ProjectionStoreV2Error
-  >,
+  readIndex: (
+    threadId: ThreadId,
+  ) => Effect.Effect<readonly Omit<FindIndexRow, "position">[], ProjectionStoreV2Error>,
+  // SCIENT-FORK:START — all indexed readers use the fork's frozen payload and presentation owner.
+  readPayloads: (
+    threadId: ThreadId,
+    rows: readonly FindIndexRow[],
+  ) => Effect.Effect<readonly string[], ProjectionStoreV2Error>,
+  presentItem: (
+    threadId: ThreadId,
+    row: FindRow,
+    item: OrchestrationV2TurnItem,
+  ) => OrchestrationV2TurnItem,
+  // SCIENT-FORK:END
 ) {
   const sql = yield* SqlClient.SqlClient;
   const encodeCacheKey = Schema.encodeEffect(
@@ -216,54 +233,24 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
     ),
   );
   const encodeThreadIds = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(ThreadId)));
-  const encodeSources = Schema.encodeEffect(
-    Schema.fromJsonString(Schema.Array(Schema.Struct({ threadId: ThreadId, id: TurnItemId }))),
-  );
   const decodeItem = Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2TurnItemJson));
   const isSnapshotError = Schema.is(
     Schema.Union([ProjectionStoreReadError, ProjectionStoreThreadNotFoundError]),
   );
+  // SCIENT-FORK:START — hydration stays batched inside the snapshot; decoding remains outside SQLite.
   const load = Effect.fn("ThreadFind.load")(function* (
     threadId: ThreadId,
-    rows: readonly FindRow[],
+    rows: readonly FindIndexRow[],
   ) {
-    if (rows.length === 0) return [];
-    const sources = yield* encodeSources(
-      rows.map((row) => ({ threadId: row.sourceThreadId, id: row.sourceItemId })),
-    ).pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
-    const payloads = yield* sql<{
-      thread_id: string;
-      turn_item_id: string;
-      payload_json: string;
-      entry_id: string;
-      item_type: OrchestrationV2TurnItem["type"];
-    }>`
-      SELECT item.thread_id, item.turn_item_id, item.payload_json,
-        COALESCE(json_extract(item.payload_json, '$.messageId'), item.turn_item_id) AS entry_id,
-        json_extract(item.payload_json, '$.type') AS item_type
-      FROM orchestration_v2_projection_turn_items AS item
-      JOIN json_each(${sources}) AS wanted
-        ON item.thread_id = json_extract(wanted.value, '$.threadId')
-          AND item.turn_item_id = json_extract(wanted.value, '$.id')
-    `.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
-    const byThread = new Map<string, Map<string, (typeof payloads)[number]>>();
-    for (const row of payloads) {
-      let items = byThread.get(row.thread_id);
-      if (!items) byThread.set(row.thread_id, (items = new Map()));
-      items.set(row.turn_item_id, row);
-    }
-    return yield* Effect.forEach(rows, (row) => {
-      const payload = byThread.get(row.sourceThreadId)?.get(row.sourceItemId);
-      return payload === undefined
-        ? Effect.fail(new ProjectionStoreReadError({ threadId }))
-        : Effect.succeed({
-            ...row,
-            payload: payload.payload_json,
-            entryId: payload.entry_id,
-            type: payload.item_type,
-          });
-    });
+    const payloads = yield* readPayloads(threadId, rows);
+    return rows.map((row, index): FindPayload => ({
+      ...row,
+      payload: payloads[index]!,
+      entryId: row.item.messageId ?? row.sourceItemId,
+      type: row.item.type,
+    }));
   });
+  // SCIENT-FORK:END
   // Cache rendered segments, not queries; typing and navigation reuse Markdown parsing.
   const textCache = yield* Cache.make({
     capacity: 512,
@@ -363,7 +350,9 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
         const { payloads, cwd, sequence, cacheKey, sourceThreadIds } = data;
         const decode = (row: FindPayload) =>
           decodeItem(row.payload).pipe(
-            Effect.map((item) => ({ ...row, item })),
+            // SCIENT-FORK:START — inherited runs/native handles remain inert in Find navigation.
+            Effect.map((item) => ({ ...row, item: presentItem(input.threadId, row, item) })),
+            // SCIENT-FORK:END
             Effect.mapError(
               (cause) => new ProjectionStoreReadError({ threadId: input.threadId, cause }),
             ),

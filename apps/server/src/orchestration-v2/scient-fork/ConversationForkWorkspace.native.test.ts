@@ -930,14 +930,15 @@ it.live("a paused running-worktree snapshot does not block an unrelated local fo
           })
           .pipe(Effect.forkChild);
         yield* pull.pipe(Effect.timeout("5 seconds"));
+        // A local fork needs no workspace and is ready while the worktree snapshot is paused.
+        yield* Fiber.join(fast).pipe(Effect.timeout("5 seconds"));
         assert.equal(
           (yield* (yield* ProjectionStoreV2).getThread(target)).conversationFork?.status,
-          "pending",
+          "ready",
         );
         yield* Deferred.succeed(release, undefined);
         yield* slowCreated.pipe(Effect.timeout("5 seconds"));
         yield* (yield* OrchestrationEffectWorkerV2).drain();
-        yield* Fiber.join(fast);
         yield* Fiber.join(slow);
         const store = yield* ProjectionStoreV2;
         assert.notEqual(

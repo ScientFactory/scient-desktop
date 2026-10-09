@@ -1137,7 +1137,7 @@ describe("deriveMessagesTimelineRows", () => {
   });
 
   it.each(["run", "message"] as const)(
-    "renders one Scient %s incoming fork boundary while retaining outgoing and inherited fork history",
+    "renders one Scient %s incoming fork boundary, inherited fork points as markers, outgoing as history",
     (sourceType) => {
       const threadId = ThreadId.make("fork-child");
       const sourceThreadId = ThreadId.make("fork-parent");
@@ -1201,11 +1201,12 @@ describe("deriveMessagesTimelineRows", () => {
         hasForkBaseline: true,
         forkBaselineAssistantMessageId: null,
       });
-      expect(rows.filter((row) => row.kind === "fork-marker")).toHaveLength(1);
-      expect(rows.filter((row) => row.kind === "event").map((row) => row.id)).toEqual([
-        "outgoing",
-        "ancestor",
+      // The inherited fork point reads like this fork's own marker, linking to its source.
+      expect(rows.filter((row) => row.kind === "fork-marker")).toEqual([
+        { kind: "fork-marker", id: "conversation-fork-marker" },
+        { kind: "fork-marker", id: "fork-marker:ancestor", originThreadId: sourceThreadId },
       ]);
+      expect(rows.filter((row) => row.kind === "event").map((row) => row.id)).toEqual(["outgoing"]);
       const unloadedBoundary = deriveMessagesTimelineRows({
         ...common,
         hasForkBaseline: true,
@@ -1214,7 +1215,6 @@ describe("deriveMessagesTimelineRows", () => {
       expect(unloadedBoundary.filter((row) => row.kind === "event").map((row) => row.id)).toEqual([
         "incoming",
         "outgoing",
-        "ancestor",
       ]);
     },
   );

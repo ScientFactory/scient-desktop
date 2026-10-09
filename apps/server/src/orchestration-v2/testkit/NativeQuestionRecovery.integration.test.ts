@@ -27,13 +27,16 @@ import {
   makeNativeSessionAdapterV2,
   NativeSessionOperationError,
 } from "../Adapters/NativeSessionAdapterV2.ts";
+import { OrchestrationEffectWorkerV2 } from "../EffectWorker.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import type { ProviderAdapterV2TurnInput } from "../ProviderAdapter.ts";
 import * as Registry from "../ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 import { ProjectStoreV2 } from "../ProjectStore.ts";
+import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
+import { ensureQueuedMessageBudget } from "../QueuedMessageBudget.ts";
 import { ConversationForkService } from "../scient-fork/ConversationForkService.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
@@ -205,25 +208,28 @@ it.live.each(
             workspaceMode: "local",
           });
           const child = yield* orchestrator.getThreadProjection(target);
-          const answer = child.turnItems.find((item) => item.type === "user_input_request");
+          const answer = child.visibleTurnItems.find(
+            (row) => row.visibility === "inherited" && row.item.type === "user_input_request",
+          )?.item;
           if (answer?.type !== "user_input_request")
             return assert.fail("Expected typed inherited submitted answer");
           questionId = answer.requestId;
-          const ownedId = receipt.forkAttachmentIdMap[file.id];
-          if (ownedId === undefined) return assert.fail("Expected destination-owned answer file");
-          assert.equal(answer.questionAnswer?.attachmentsByQuestionId.dataset?.[0]?.id, ownedId);
-          const ownedPath = resolveAttachmentPath({
-            attachmentsDir: config.attachmentsDir,
-            attachment: { ...file, id: ownedId },
+          // The fork shares the source's answer file rather than copying it.
+          assert.equal(receipt.forkAttachmentIdMap[file.id], file.id);
+          assert.equal(answer.questionAnswer?.attachmentsByQuestionId.dataset?.[0]?.id, file.id);
+          // A queued message in the fork may send the answer's shared file.
+          const prompt = child.messages.find((message) => message.role === "user")!;
+          yield* ensureQueuedMessageBudget({
+            projection: child,
+            message: { ...prompt, id: MessageId.make(`${name}-queued-file`), attachments: [file] },
           });
-          if (ownedPath === null) return assert.fail("Expected destination-owned file path");
           yield* orchestrator.dispatch({
             type: "thread.delete",
             commandId: CommandId.make(`${name}-delete`),
             threadId: source,
           });
-          yield* fs.remove(sourcePath, { force: true });
-          assert.equal(yield* fs.readFileString(ownedPath), "measured");
+          yield* (yield* OrchestrationEffectWorkerV2).drain();
+          assert.equal(yield* fs.readFileString(sourcePath), "measured");
           assert.deepEqual(child.runtimeRequests, []);
           assert.deepEqual(child.providerSessions, []);
         } else {
@@ -317,7 +323,18 @@ it.live.each(
                 transfer.id.includes("provider_resume_fallback"),
             ),
           );
-        } else assert.equal(resumed, 0, "Imported answers grant no native resume authority");
+        } else {
+          assert.equal(resumed, 0, "Imported answers grant no native resume authority");
+          // Deleting the last conversation that shows the answer releases its file
+          // (this harness's cleanup service only records the decision).
+          yield* orchestrator.dispatch({
+            type: "thread.delete",
+            commandId: CommandId.make(`${name}-delete-target`),
+            threadId: target,
+          });
+          yield* (yield* OrchestrationEffectWorkerV2).drain();
+          assert.deepEqual(yield* (yield* ProjectionStoreV2).getReleasableFiles(target), [file.id]);
+        }
       }).pipe(
         Effect.provide(
           makeOrchestratorV2ReplayLayerWithRegistry(
