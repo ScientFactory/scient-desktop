@@ -3,7 +3,7 @@ import type { Node } from "@tiptap/pm/model";
 import type { Selection } from "@tiptap/pm/state";
 import { algorithmLineLayout } from "./latexAlgorithm";
 
-export const algorithmBlockEnds: Readonly<Record<string, string>> = {
+const algorithmBlockEnds: Readonly<Record<string, string>> = {
   For: "EndFor",
   ForAll: "EndFor",
   If: "EndIf",

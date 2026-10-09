@@ -1,7 +1,7 @@
 import { LATEX_DIRECTION_MARKS, latexDirectionMark } from "./latexLanguage";
 
 /** Text styles understood by both the source adapter and the editable canvas. */
-export const LATEX_TEXT_SIZES = [
+const LATEX_TEXT_SIZES = [
   "tiny",
   "scriptsize",
   "footnotesize",

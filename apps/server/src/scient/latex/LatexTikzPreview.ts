@@ -37,7 +37,7 @@ const unavailable = (message: string): ScientLatexArtworkResult => ({
 });
 
 /** Compile a picture with its document preamble, without editing or publishing that document. */
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const config = yield* ServerConfig.ServerConfig;

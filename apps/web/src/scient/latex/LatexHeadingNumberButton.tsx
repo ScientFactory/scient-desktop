@@ -2,7 +2,7 @@ import { Check } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 
-export function LatexNumberedLabel({ checked }: { checked: boolean }) {
+function LatexNumberedLabel({ checked }: { checked: boolean }) {
   return (
     <>
       Numbered

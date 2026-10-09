@@ -5,7 +5,7 @@ import type { EditorView } from "@tiptap/pm/view";
 type ObjectBounds = Pick<DOMRect, "left" | "right" | "top" | "bottom">;
 type PointerPoint = Pick<PointerEvent, "clientX" | "clientY">;
 
-export const LATEX_SELECTION_OBJECT_SELECTOR =
+const LATEX_SELECTION_OBJECT_SELECTOR =
   '.scient-latex-visual-inline-math, .scient-latex-visual-display-math, [data-node-view-wrapper][contenteditable="false"]';
 
 /** These two surfaces already hand their own pointer gestures to the document. */

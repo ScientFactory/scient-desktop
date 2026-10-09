@@ -1211,7 +1211,7 @@ function mathCellPathAt(math: MathfieldElement, offset: number): readonly MathCe
   return path.reverse();
 }
 
-export function mathCellAtCoordinates(
+function mathCellAtCoordinates(
   math: MathfieldElement,
   reference: MathCellSelection,
   row: number,
@@ -1268,7 +1268,7 @@ function mathHorizontalCellBoundary(
   return cell;
 }
 
-export function mathEnvironmentBounds(
+function mathEnvironmentBounds(
   math: MathfieldElement,
   cell: MathCellSelection,
   geometry?: MathSelectionGeometry,

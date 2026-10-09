@@ -374,7 +374,7 @@ const SOURCE_ONLY_INLINE_COMMANDS = new Set([
   "read",
 ]);
 const DISPLAY_MATH_ENVIRONMENTS = /^(equation\*?|align\*?|gather\*?)$/u;
-export const STRUCTURED_MATH_ENVIRONMENTS = [
+const STRUCTURED_MATH_ENVIRONMENTS = [
   "matrix",
   "bmatrix",
   "pmatrix",
@@ -1354,7 +1354,7 @@ export function metadataText(value: string): string | null {
   return nodes.map((node) => (node.type === "hardBreak" ? "\n" : (node.text ?? ""))).join("");
 }
 
-export function titleMetadata(source: string) {
+function titleMetadata(source: string) {
   const begin = findDelimiter(source, "\\begin{document}", 0);
   const preamble = begin < 0 ? source : source.slice(0, begin);
   const declarations = latexTitleDeclarations(source);
@@ -1391,7 +1391,7 @@ export function titleMetadata(source: string) {
 }
 
 /** Restore the printed title without replacing existing document metadata. */
-export function ensureLatexTitleBlock(source: string, defaultTitle: string): string | null {
+function ensureLatexTitleBlock(source: string, defaultTitle: string): string | null {
   const marker = "\\begin{document}";
   const begin = findDelimiter(source, marker, 0);
   if (begin < 0) return null;
