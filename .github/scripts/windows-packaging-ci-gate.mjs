@@ -7,6 +7,7 @@ export function needsWindowsPackaging(paths) {
   const exact = new Set([
     ".github/workflows/ci.yml",
     ".github/workflows/windows-packaging.yml",
+    ".github/workflows/remote-server-packaging.yml",
     ".github/workflows/release.yml",
     ".github/scripts/windows-packaging-ci-gate.mjs",
     ".github/scripts/windows-packaging-ci-gate.test.mjs",
@@ -70,6 +71,8 @@ if (process.argv[1] && import.meta.url === NodeURL.pathToFileURL(process.argv[1]
       native: process.env.WINDOWS_NATIVE_RESULT,
     };
     console.log("Windows packaging gate:", results);
-    if (!testGatePasses(results)) process.exitCode = 1;
+    const remote = { ...results, native: process.env.REMOTE_SERVER_RESULT };
+    console.log("Remote server packaging gate:", remote);
+    if (!testGatePasses(results) || !testGatePasses(remote)) process.exitCode = 1;
   } else throw new Error("Expected detect or check");
 }

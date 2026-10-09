@@ -14,6 +14,10 @@ import {
   SCIENT_SERVER_PACKAGE_NAME,
   scientServerAssetName,
 } from "@t3tools/shared/scientRelease";
+import {
+  findInlinedExternalPackages,
+  selectCliRuntimeExternalDependencies,
+} from "./lib/cli-external-packages.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
 interface WorkspaceConfig {
@@ -56,14 +60,16 @@ export function createScientServerPackageJson(input: {
   readonly installedVersions: Record<string, string>;
 }): Record<string, unknown> {
   const dependencies = Object.fromEntries(
-    Object.entries(input.source.dependencies ?? {}).flatMap(([name, spec]) => {
-      if (spec.startsWith("workspace:")) return [];
-      const installedVersion = input.installedVersions[name]?.trim();
-      if (!installedVersion) {
-        throw new Error(`Installed release dependency '${name}' could not be resolved.`);
-      }
-      return [[name, installedVersion]];
-    }),
+    Object.entries(selectCliRuntimeExternalDependencies(input.source.dependencies ?? {})).flatMap(
+      ([name, spec]) => {
+        if (spec.startsWith("workspace:")) return [];
+        const installedVersion = input.installedVersions[name]?.trim();
+        if (!installedVersion) {
+          throw new Error(`Installed release dependency '${name}' could not be resolved.`);
+        }
+        return [[name, installedVersion]];
+      },
+    ),
   );
   return {
     name: SCIENT_SERVER_PACKAGE_NAME,
@@ -79,9 +85,9 @@ export function createScientServerPackageJson(input: {
     type: "module",
     engines: input.source.engines,
     dependencies: resolveCatalogDependencies(dependencies, input.catalog, "apps/server"),
-    // npm rejects overrides that target an exact direct dependency. Those
-    // dependencies are already pinned above, and the generated shrinkwrap
-    // freezes the complete transitive tree.
+    // Direct runtime roots are pinned to the installed workspace versions.
+    // Keep transitive npm-compatible policies; the shrinkwrap freezes their
+    // resolved closure. Bundled JS (including patched SDKs) stays in dist.
     overrides: resolveNpmCompatibleOverrides(
       input.overrides,
       input.catalog,
@@ -118,6 +124,21 @@ export function packageScientServer(args: ReadonlyArray<string>): string {
     if (!NodeFS.existsSync(NodePath.join(distDir, relativePath))) {
       throw new Error(`Server release asset is missing apps/server/dist/${relativePath}.`);
     }
+  }
+
+  // Check the emitted artifact as well as the bundler configuration. A change
+  // that externalizes ordinary JS would otherwise produce an incomplete npm
+  // manifest; inlining a native loader breaks its filesystem-relative lookup.
+  const scans = NodeFS.readdirSync(distDir)
+    .filter((name) => name.endsWith(".mjs"))
+    .map((name) =>
+      findInlinedExternalPackages(NodeFS.readFileSync(NodePath.join(distDir, name), "utf8")),
+    );
+  if (
+    !scans.some((scan) => scan.inlinedPackages.includes("effect")) ||
+    scans.some((scan) => scan.inlined.length > 0)
+  ) {
+    throw new Error("Server release bundle does not match the CLI runtime dependency boundary.");
   }
 
   const source = JSON.parse(
