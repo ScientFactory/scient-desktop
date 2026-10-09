@@ -74,7 +74,13 @@ const THREAD_B = scopeThreadRef(LOCAL, ThreadId.make("thread-b"));
 const THREAD_A_REMOTE = scopeThreadRef(REMOTE, ThreadId.make("thread-a"));
 
 function originFor(target: typeof THREAD_A): VoiceDraftOrigin {
-  return { key: composerTargetKey(target), target, title: "Thread", open: vi.fn() };
+  return {
+    key: composerTargetKey(target),
+    target,
+    environmentId: target.environmentId,
+    title: "Thread",
+    open: vi.fn(),
+  };
 }
 
 // Frames run only when a test says so, so it can act between insert and submit.
@@ -101,6 +107,7 @@ describe("committed composer dictation outlives navigation", () => {
       accepts: true,
       ready: true,
       acceptsDraftText: () => composer.accepts,
+      environmentId: () => target.environmentId,
       insert: vi.fn((_text: string) => true),
       canSubmit: () => composer.ready,
       submit: vi.fn(),
@@ -406,6 +413,29 @@ describe("committed composer dictation outlives navigation", () => {
     await transcribe(done);
     expect(storedPrompt(THREAD_A)).toBe("dictated words");
     expect(b.insert).not.toHaveBeenCalled();
+  });
+
+  it("the stop click fixes the job and its origin before the flush resolves", async () => {
+    const flush = deferred<{ base64: string; sampleRateHz: number; durationMs: number }>();
+    recorder.stop.mockImplementationOnce(() => flush.promise);
+    mountComposer(THREAD_A);
+    // One control whose origin changes right after the click, before the flush.
+    await act(() => root.render(<Probe key="same" origin={originFor(THREAD_A)} />));
+    await record();
+    const { done } = await stop(false);
+    expect(control.phase).toBe("transcribing");
+    const b = mountComposer(THREAD_B);
+    await act(() => root.render(<Probe key="same" origin={originFor(THREAD_B)} />));
+    expect(control.phase).toBe("idle");
+    await act(async () => {
+      flush.resolve({ base64: "synthetic", sampleRateHz: 24000, durationMs: 1000 });
+    });
+    await transcribe(done);
+    expect(storedPrompt(THREAD_B)).toBe("");
+    expect(b.insert).not.toHaveBeenCalled();
+    expect(composers.get(composerTargetKey(THREAD_A))!.insert).toHaveBeenCalledExactlyOnceWith(
+      "dictated words",
+    );
   });
 
   it("A → B during correction with Send saves to A and sends nothing", async () => {

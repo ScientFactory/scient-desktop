@@ -8,6 +8,7 @@
 
 import { useNavigate } from "@tanstack/react-router";
 import { useLayoutEffect, useMemo, useRef } from "react";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 import {
   composerTargetKey,
@@ -23,6 +24,11 @@ export interface VoiceDraftOrigin {
   /** `composerTargetKey` of the target: environment-scoped for server threads. */
   readonly key: string;
   readonly target: ComposerThreadTarget;
+  /**
+   * Environment at the stop click. A new-thread draft keeps its DraftId when
+   * its machine changes, so the key alone does not pin the environment.
+   */
+  readonly environmentId: EnvironmentId;
   readonly title: string | null;
   readonly open: () => void;
 }
@@ -31,6 +37,8 @@ export interface VoiceDraftOrigin {
 export interface VoiceDraftEndpoint {
   /** False while a question or approval occupies the composer. */
   readonly acceptsDraftText: () => boolean;
+  /** The environment the composer would send to now. */
+  readonly environmentId: () => EnvironmentId;
   /** Appends to the ordinary draft through the editor; false when it declined. */
   readonly insert: (text: string) => boolean;
   /**
@@ -150,6 +158,7 @@ export function deliverVoiceTranscriptToDraft(
     dependencies.scheduleFrame(() => {
       if (
         endpoints.get(origin.key) === endpoint &&
+        endpoint.environmentId() === origin.environmentId &&
         endpoint.acceptsDraftText() &&
         endpoint.canSubmit()
       ) {
@@ -197,6 +206,7 @@ export function reportVoiceDraftFailure(
  */
 export function useScientVoiceDraftOrigin(input: {
   readonly target: ComposerThreadTarget;
+  readonly environmentId: EnvironmentId;
   readonly title: string | null;
   readonly acceptsDraftText: boolean;
   readonly insert: (text: string) => boolean;
@@ -209,6 +219,7 @@ export function useScientVoiceDraftOrigin(input: {
   latestRef.current = input;
   const key = composerTargetKey(input.target);
   const target = input.target;
+  const environmentId = input.environmentId;
   const title = input.title;
 
   // Layout timing: a job finishing right after a remount finds the endpoint.
@@ -216,6 +227,7 @@ export function useScientVoiceDraftOrigin(input: {
     () =>
       registerVoiceDraftEndpoint(key, {
         acceptsDraftText: () => latestRef.current.acceptsDraftText,
+        environmentId: () => latestRef.current.environmentId,
         insert: (text) => latestRef.current.insert(text),
         canSubmit: () =>
           latestRef.current.sendReady() && !hasAsyncSendPreparation(latestRef.current.target),
@@ -228,6 +240,7 @@ export function useScientVoiceDraftOrigin(input: {
     () => ({
       key,
       target,
+      environmentId,
       title,
       open: () => {
         if (typeof target === "string") {
@@ -240,6 +253,6 @@ export function useScientVoiceDraftOrigin(input: {
         }
       },
     }),
-    [key, navigate, target, title],
+    [environmentId, key, navigate, target, title],
   );
 }

@@ -25,8 +25,12 @@ const LOCAL = EnvironmentId.make("environment-local");
 const REMOTE = EnvironmentId.make("environment-remote");
 const THREAD = ThreadId.make("thread-shared-id");
 
-function origin(target: ComposerThreadTarget, title: string | null = "Thread A"): VoiceDraftOrigin {
-  return { key: composerTargetKey(target), target, title, open: vi.fn() };
+function origin(
+  target: ComposerThreadTarget,
+  title: string | null = "Thread A",
+  environmentId: EnvironmentId = typeof target === "string" ? LOCAL : target.environmentId,
+): VoiceDraftOrigin {
+  return { key: composerTargetKey(target), target, environmentId, title, open: vi.fn() };
 }
 
 function harness() {
@@ -55,10 +59,17 @@ function harness() {
   };
 }
 
-function endpoint(overrides: Partial<{ accepts: boolean; inserts: boolean }> = {}) {
-  const state = { accepts: overrides.accepts ?? true, ready: true };
+function endpoint(
+  overrides: Partial<{ accepts: boolean; inserts: boolean; environmentId: EnvironmentId }> = {},
+) {
+  const state = {
+    accepts: overrides.accepts ?? true,
+    ready: true,
+    environmentId: overrides.environmentId ?? LOCAL,
+  };
   const value = {
     acceptsDraftText: vi.fn(() => state.accepts),
+    environmentId: vi.fn(() => state.environmentId),
     insert: vi.fn(() => overrides.inserts ?? true),
     canSubmit: vi.fn(() => state.ready),
     submit: vi.fn(),
@@ -134,6 +145,21 @@ describe("deliverVoiceTranscriptToDraft", () => {
     expect(run.notices).toEqual([{ kind: "not-sent", origin: from }]);
   });
 
+  it("does not send a new-thread draft whose machine changed while processing", () => {
+    const draftId = DraftId.make("draft-moving");
+    const composer = endpoint();
+    register(composerTargetKey(draftId), composer.value);
+    const run = harness();
+    const from = origin(draftId, "New thread", LOCAL);
+
+    deliverVoiceTranscriptToDraft(from, "hello", true, run.dependencies);
+    composer.state.environmentId = REMOTE;
+    run.runFrames();
+    expect(composer.value.insert).toHaveBeenCalledOnce();
+    expect(composer.value.submit).not.toHaveBeenCalled();
+    expect(run.notices).toEqual([{ kind: "not-sent", origin: from }]);
+  });
+
   it("a remounted composer for the same draft does not inherit the scheduled submit", () => {
     const target = scopeThreadRef(LOCAL, THREAD);
     const key = composerTargetKey(target);
@@ -181,7 +207,7 @@ describe("deliverVoiceTranscriptToDraft", () => {
   it("never delivers to the same thread id in another environment", () => {
     const remote = scopeThreadRef(REMOTE, THREAD);
     const local = scopeThreadRef(LOCAL, THREAD);
-    const remoteComposer = endpoint();
+    const remoteComposer = endpoint({ environmentId: REMOTE });
     register(composerTargetKey(remote), remoteComposer.value);
     const run = harness();
 

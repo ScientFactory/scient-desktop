@@ -4461,6 +4461,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const voiceDraftAccepted = !isComposerApprovalState && pendingUserInputs.length === 0;
   const voiceDraftOrigin = useScientVoiceDraftOrigin({
     target: composerDraftTarget,
+    environmentId,
     title: activeThread?.title ?? null,
     acceptsDraftText: voiceDraftAccepted,
     insert: (text) => {
