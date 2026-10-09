@@ -5,6 +5,7 @@ import type {
   NewDocumentFormat,
   NewDocumentLanguage,
 } from "./documentTemplates";
+import type { CreatedCompanion } from "./newDocumentCompanions";
 
 /**
  * Documents started from the Documents menu in this window, until they have
@@ -22,6 +23,8 @@ export interface NewDocumentState {
   readonly settled: boolean;
   /** In a template without a title, the name typed above the page, once entered. */
   readonly name?: string;
+  /** Files created beside it for its template, such as its bibliography. */
+  readonly companions: readonly CreatedCompanion[];
 }
 
 interface NewDocumentKey {

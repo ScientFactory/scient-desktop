@@ -20,10 +20,17 @@ export const NEW_DOCUMENT_LANGUAGE_STORAGE_KEY = "scient.newDocumentLanguage";
 export const DEFAULT_NEW_DOCUMENT_TEMPLATE: DocumentTemplateId = "blank";
 export const DEFAULT_NEW_DOCUMENT_LANGUAGE: NewDocumentLanguage = "english";
 
+/** Templates that were renamed, so a default chosen before still applies. */
+const RENAMED_TEMPLATES: Readonly<Record<string, DocumentTemplateId>> = {
+  assignment: "problem-set",
+  report: "lab-report",
+  proposal: "grant-proposal",
+};
+
 export function normalizeNewDocumentTemplate(value: string | null | undefined): DocumentTemplateId {
+  const id = (value && RENAMED_TEMPLATES[value]) ?? value;
   return (
-    DOCUMENT_TEMPLATES.find((template) => template.id === value)?.id ??
-    DEFAULT_NEW_DOCUMENT_TEMPLATE
+    DOCUMENT_TEMPLATES.find((template) => template.id === id)?.id ?? DEFAULT_NEW_DOCUMENT_TEMPLATE
   );
 }
 

@@ -8,7 +8,6 @@ import {
   useRightPanelStore,
 } from "~/rightPanelStore";
 import { createComputeContextId } from "~/scient/compute/computeContextStore";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   refreshProjectFiles,
   setProjectFileQueryData,
@@ -20,7 +19,9 @@ import {
   type NewDocumentFormat,
 } from "~/scient/documents/documentTemplates";
 import { focusNewDocumentWhenOpen } from "~/scient/documents/focusNewDocument";
+import { syncCompanionFiles } from "~/scient/documents/newDocumentCompanions";
 import { newDocuments, pathHasLeftoverDrafts } from "~/scient/documents/newDocuments";
+import { isPathTaken, useNewDocumentFiles } from "~/scient/documents/useNewDocumentFiles";
 import { readNewDocumentDefaults } from "~/scient/documents/documentPreferences";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -107,6 +108,7 @@ export function useScientRightPanelOpeners(input: {
   // A document started by hand: `untitled` is created and opens in its editor,
   // where it takes its title's name once the title is written.
   const writeFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
+  const documentFiles = useNewDocumentFiles();
   const addDocumentsSurface = useCallback(
     (format: NewDocumentFormat) => {
       if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
@@ -131,26 +133,39 @@ export function useScientRightPanelOpeners(input: {
               result.value.revision,
             );
             refreshProjectFiles(environmentId, cwd);
+            // Its bibliography, beside it, before the editor first reads it.
+            const target = { environmentId, cwd };
+            const companions =
+              format === "latex"
+                ? await syncCompanionFiles({
+                    folder: "",
+                    source: contents,
+                    created: [],
+                    create: (path) => documentFiles.create(target, path),
+                    remove: (file) => documentFiles.remove(target, file),
+                  })
+                : [];
             newDocuments.set(
               { environmentId, cwd, relativePath },
-              { format, template, language, seenUntouched: false, settled: format === "markdown" },
+              {
+                format,
+                template,
+                language,
+                seenUntouched: false,
+                settled: format === "markdown",
+                companions,
+              },
             );
             openFileSourceSurface(relativePath, undefined, { latexPreviewMode: "visual" });
             focusNewDocumentWhenOpen("title");
             return;
           }
-          const cause = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
-          const taken =
-            typeof cause === "object" &&
-            cause !== null &&
-            "failure" in cause &&
-            cause.failure === "path_exists";
-          if (!taken) break;
+          if (!isPathTaken(result)) break;
         }
         toastManager.add({ type: "error", title: "The document could not be created." });
       })();
     },
-    [activeThreadRef, activeWorkspaceRoot, openFileSourceSurface, writeFile],
+    [activeThreadRef, activeWorkspaceRoot, documentFiles, openFileSourceSurface, writeFile],
   );
   return {
     addAgentsSurface,

@@ -13,7 +13,6 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import {
   MORE_DOCUMENT_TEMPLATES,
@@ -31,7 +30,9 @@ import {
 } from "./documentTemplates";
 import { caretOffsetInEditor, focusNewDocumentWhenOpen } from "./focusNewDocument";
 import { NewDocumentOnPage, STRIP_ATTRIBUTE } from "./NewDocumentOnPage";
+import { syncCompanionFiles } from "./newDocumentCompanions";
 import { newDocuments } from "./newDocuments";
+import { isPathTaken, useNewDocumentFiles } from "./useNewDocumentFiles";
 import "./newDocument.css";
 
 function waitUntil(condition: () => boolean, timeoutMs: number): Promise<boolean> {
@@ -105,6 +106,7 @@ export function useNewDocument(input: {
     key ? newDocuments.get(key) : null,
   );
   const renameFile = useAtomCommand(projectEnvironment.renameFile, { reportFailure: false });
+  const documentFiles = useNewDocumentFiles();
   const inTitle = useCaretInTitle(entry !== null);
   const renaming = useRef(false);
   const switching = useRef(false);
@@ -190,13 +192,7 @@ export function useNewDocument(input: {
             if (caret !== null) focusNewDocumentWhenOpen({ offset: caret });
             return;
           }
-          const cause = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
-          const taken =
-            typeof cause === "object" &&
-            cause !== null &&
-            "failure" in cause &&
-            cause.failure === "path_exists";
-          if (!taken) break;
+          if (!isPathTaken(result)) break;
         }
         // Not renamed: the file keeps its name and stays renamable from the header.
         newDocuments.forget(key);
@@ -235,6 +231,16 @@ export function useNewDocument(input: {
         const next = switchNewLatexDocument(current.draftSource, template, language, name);
         if (next !== current.draftSource && !lease.change(next, current.editVersion)) return;
         newDocuments.update(key, { template, language, name });
+        // The files the new template reads beside it, such as its bibliography.
+        const target = { environmentId: key.environmentId, cwd: key.cwd };
+        const companions = await syncCompanionFiles({
+          folder: key.relativePath.slice(0, key.relativePath.lastIndexOf("/") + 1),
+          source: next,
+          created: newDocuments.get(key)?.companions ?? [],
+          create: (path) => documentFiles.create(target, path),
+          remove: (file) => documentFiles.remove(target, file),
+        });
+        newDocuments.update(key, { companions });
         // The page is drawn again; writing continues in the title or the name.
         focusNewDocumentWhenOpen("title");
       } finally {

@@ -1,0 +1,63 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage[numbers]{natbib}
+\usepackage[hidelinks]{hyperref}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{example}[theorem]{Example}
+\newtheorem{exercise}[theorem]{Exercise}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\title{<<SCIENT_TITLE>>}
+\author{<<SCIENT_AUTHOR_BLOCK>>}
+\date{}
+
+\begin{document}
+\maketitle
+
+\tableofcontents
+
+\section{First topic}
+
+Introduce the topic and the main question of the lecture.
+
+\begin{definition}
+Define the first concept.
+\end{definition}
+
+\begin{theorem}
+State the main result.
+\end{theorem}
+
+\begin{proof}
+Prove it.
+\end{proof}
+
+\begin{example}
+Work through an example.
+\end{example}
+
+\begin{exercise}
+Set an exercise for the reader.
+\end{exercise}
+
+\section{Second topic}
+
+Continue with the next topic.
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

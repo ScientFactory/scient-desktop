@@ -1,100 +1,38 @@
-import assignmentSource from "./templates/assignment.tex?raw";
-import reportSource from "./templates/report.tex?raw";
-import proposalSource from "./templates/proposal.tex?raw";
-import thesisSource from "./templates/thesis.tex?raw";
-import blankSource from "./templates/blank.tex?raw";
 import articleSource from "./templates/article.tex?raw";
-import letterSource from "./templates/letter.tex?raw";
+import blankSource from "./templates/blank.tex?raw";
 import cvSource from "./templates/cv.tex?raw";
+import grantProposalSource from "./templates/grant-proposal.tex?raw";
+import labReportSource from "./templates/lab-report.tex?raw";
+import lectureNotesSource from "./templates/lecture-notes.tex?raw";
+import letterSource from "./templates/letter.tex?raw";
+import problemSetSource from "./templates/problem-set.tex?raw";
+import responseToReviewersSource from "./templates/response-to-reviewers.tex?raw";
+import thesisSource from "./templates/thesis.tex?raw";
 import { updateLatexLanguageSource } from "../latex/latexLanguage";
 
+/**
+ * Scient's own LaTeX templates, in the order a new document offers them. Each
+ * builds with a standard TeX installation (pdfLaTeX, BibTeX) and opens in
+ * Visual without a source-only block.
+ */
 export const DOCUMENT_TEMPLATES = [
+  { id: "blank", name: "Blank", source: blankSource },
+  { id: "article", name: "Article", source: articleSource },
+  { id: "thesis", name: "Thesis", source: thesisSource },
+  { id: "problem-set", name: "Problem set", source: problemSetSource },
+  { id: "lab-report", name: "Lab report", source: labReportSource },
+  { id: "lecture-notes", name: "Lecture notes", source: lectureNotesSource },
+  { id: "grant-proposal", name: "Grant proposal", source: grantProposalSource },
   {
-    id: "article",
-    name: "Article",
-    description: "A paper: abstract and sections.",
-    detail: "Abstract, introduction, results, and discussion.",
+    id: "response-to-reviewers",
+    name: "Response to reviewers",
+    source: responseToReviewersSource,
   },
-  {
-    id: "assignment",
-    name: "Assignment",
-    description: "Questions, calculations, and solutions.",
-    detail: "A title and your first numbered question.",
-  },
-  {
-    id: "report",
-    name: "Report",
-    description: "Explain a topic or present your findings.",
-    detail: "Abstract, introduction, methods, results, and conclusion.",
-  },
-  {
-    id: "proposal",
-    name: "Research proposal",
-    description: "Turn a research idea into a clear plan.",
-    detail: "Research question, background, approach, and next steps.",
-  },
-  {
-    id: "thesis",
-    name: "Thesis",
-    description: "A starting structure for a longer project.",
-    detail: "A general academic template. You can also use your institution’s own LaTeX template.",
-  },
-  {
-    id: "blank",
-    name: "Blank",
-    description: "A clean page with the essentials ready.",
-    detail: "Standard article formatting with math, figures, and tables available.",
-  },
-  {
-    id: "letter",
-    name: "Letter",
-    description: "A letter, without a title.",
-    detail: "A greeting, your text, and a signature.",
-  },
-  {
-    id: "cv",
-    name: "CV",
-    description: "An academic CV, without a title.",
-    detail: "Your name, education, research, and publications.",
-  },
+  { id: "letter", name: "Letter", source: letterSource },
+  { id: "cv", name: "CV", source: cvSource },
 ] as const;
-export type DocumentTemplateId = (typeof DOCUMENT_TEMPLATES)[number]["id"];
-
-export function documentPath(value: string): string | null {
-  let path = value.trim().replaceAll("\\", "/");
-  if (!path || path.length > 480 || /^[/.]/u.test(path) || /[<>:"|?*\u0000-\u001f]/u.test(path))
-    return null;
-  if (
-    path
-      .split("/")
-      .some(
-        (part) =>
-          !part ||
-          part === "." ||
-          part === ".." ||
-          /[. ]$/u.test(part) ||
-          /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(part),
-      )
-  )
-    return null;
-  if (!/\.tex$/iu.test(path)) {
-    if (/\.[^/]+$/u.test(path)) return null;
-    path += ".tex";
-  }
-  if (path.split("/").at(-1)?.toLowerCase() === ".tex") return null;
-  return path;
-}
-
-export function documentFilename(title: string): string {
-  return (
-    (title
-      .trim()
-      .normalize("NFKC")
-      .replace(/[<>:"/\\|?*\u0000-\u001f]/gu, "-")
-      .replace(/[. ]+$/u, "")
-      .slice(0, 100) || "Untitled") + ".tex"
-  );
-}
+export type DocumentTemplate = (typeof DOCUMENT_TEMPLATES)[number];
+export type DocumentTemplateId = DocumentTemplate["id"];
 
 export function escapeDocumentText(value: string): string {
   const escapes: Record<string, string> = {
@@ -114,79 +52,38 @@ export function escapeDocumentText(value: string): string {
     .replace(/[\r\n]+/gu, " ");
 }
 
-export function createDocumentSource(input: {
-  template: DocumentTemplateId;
-  title: string;
-  author: string;
-  course: string;
-}) {
-  const title = escapeDocumentText(input.title.trim() || "Untitled");
-  const author = escapeDocumentText(input.author.trim());
-  const course = escapeDocumentText(input.course.trim());
-  const sources: Record<DocumentTemplateId, string> = {
-    assignment: assignmentSource,
-    report: reportSource,
-    proposal: proposalSource,
-    thesis: thesisSource,
-    blank: blankSource,
-    article: articleSource,
-    letter: letterSource,
-    cv: cvSource,
-  };
-  const values: Record<string, string> = {
-    TITLE: title,
-    AUTHOR_BLOCK: [author, course].filter(Boolean).join("\\\\\n"),
-  };
-  // Replace only template tokens, once. User text cannot expand further tokens.
-  return sources[input.template].replace(
-    /<<SCIENT_(TITLE|AUTHOR_BLOCK)>>/gu,
-    (_token, name: string) => values[name]!,
-  );
+function templateSource(template: DocumentTemplateId): string {
+  return DOCUMENT_TEMPLATES.find((entry) => entry.id === template)!.source;
 }
 
-/** File naming and the printed title start together and can diverge after creation. */
-export function documentTitleFromFilename(path: string): string {
-  return path
-    .replaceAll("\\", "/")
-    .split("/")
-    .at(-1)!
-    .replace(/\.tex$/iu, "");
-}
-
-export function availableDocumentPath(path: string, existing: readonly string[]): string {
-  const occupied = new Set(existing.map((entry) => entry.toLocaleLowerCase()));
-  const stem = path.replace(/\.tex$/iu, "");
-  let candidate = path;
-  for (let suffix = 2; occupied.has(candidate.toLocaleLowerCase()); suffix++) {
-    candidate = `${stem} (${suffix}).tex`;
+/**
+ * The files a LaTeX source reads beside itself that a new document creates
+ * with it: the bibliography databases it names, relative to its folder.
+ */
+export function companionFiles(source: string): readonly string[] {
+  const names = new Set<string>();
+  const pattern = /^[^%\n]*?\\(?:bibliography|addbibresource)\s*\{([^}]*)\}/gmu;
+  for (const match of source.matchAll(pattern)) {
+    for (const raw of match[1]!.split(",")) {
+      const name = raw.trim();
+      if (!/^[\p{L}\p{N}_-][\p{L}\p{N}_.-]*$/u.test(name)) continue;
+      names.add(/\.bib$/iu.test(name) ? name : `${name}.bib`);
+    }
   }
-  return candidate;
+  return [...names];
 }
 
 export type NewDocumentFormat = "markdown" | "latex";
 export type NewDocumentLanguage = "english" | "hebrew";
 
 /** The starting points shown in the row on a new LaTeX document, in order. */
-export const NEW_DOCUMENT_TEMPLATES: ReadonlyArray<{
-  readonly id: DocumentTemplateId;
-  readonly name: string;
-}> = [
-  { id: "blank", name: "Blank" },
-  { id: "article", name: "Article" },
-  { id: "report", name: "Report" },
-  { id: "thesis", name: "Thesis" },
-];
+export const NEW_DOCUMENT_TEMPLATES: ReadonlyArray<DocumentTemplate> = DOCUMENT_TEMPLATES.slice(
+  0,
+  4,
+);
 
-/** The rest, behind "More…". */
-export const MORE_DOCUMENT_TEMPLATES: ReadonlyArray<{
-  readonly id: DocumentTemplateId;
-  readonly name: string;
-}> = [
-  { id: "proposal", name: "Research proposal" },
-  { id: "assignment", name: "Assignment" },
-  { id: "letter", name: "Letter" },
-  { id: "cv", name: "CV" },
-];
+/** The rest, behind "More". */
+export const MORE_DOCUMENT_TEMPLATES: ReadonlyArray<DocumentTemplate> = DOCUMENT_TEMPLATES.slice(4);
 
 export const NEW_DOCUMENT_LANGUAGES: ReadonlyArray<{
   readonly id: NewDocumentLanguage;
@@ -289,14 +186,12 @@ export function createNewDocumentSource(input: {
   readonly language: NewDocumentLanguage;
 }): string {
   if (input.format === "markdown") return "# \n";
-  const source = withRawLatexTitle(
-    createDocumentSource({ template: input.template, title: "x", author: "", course: "" }),
-    "",
-  );
+  // The title and the author start empty, for the person to write.
+  const source = templateSource(input.template).replace(/<<SCIENT_(?:TITLE|AUTHOR_BLOCK)>>/gu, "");
   if (input.language === "english") return source;
   // Hebrew runs on XeLaTeX with fontspec, which replaces the 8-bit font setup.
   const unicode = source.replace(
-    /^\\usepackage\[(?:T1|utf8)\]\{(?:fontenc|inputenc)\}\r?\n/gmu,
+    /^\\usepackage(?:\[(?:T1|utf8)\]\{(?:fontenc|inputenc)\}|\{lmodern\})\r?\n/gmu,
     "",
   );
   return updateLatexLanguageSource(unicode, "hebrew", HEBREW_DOCUMENT_FONT) ?? source;

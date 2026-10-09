@@ -36,6 +36,12 @@ describe("new document defaults", () => {
     expect(normalizeNewDocumentLanguage(undefined)).toBe("english");
   });
 
+  it("keep a default whose template was renamed", () => {
+    expect(normalizeNewDocumentTemplate("assignment")).toBe("problem-set");
+    expect(normalizeNewDocumentTemplate("report")).toBe("lab-report");
+    expect(normalizeNewDocumentTemplate("proposal")).toBe("grant-proposal");
+  });
+
   it("can be any template the new page offers", () => {
     for (const template of [...NEW_DOCUMENT_TEMPLATES, ...MORE_DOCUMENT_TEMPLATES]) {
       expect(normalizeNewDocumentTemplate(template.id)).toBe(template.id);
