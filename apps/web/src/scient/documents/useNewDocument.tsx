@@ -16,6 +16,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { toastManager } from "~/components/ui/toast";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
+import { markdownPersistenceRegistry } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -62,6 +63,23 @@ import { useTemplateSaving } from "./useTemplateSaving";
 import { userTemplates } from "./userTemplates";
 import type { RenameOpenDocumentResult } from "~/scient/fileSurfaces/renameOpenDocument";
 import "./newDocument.css";
+
+/** Whether a file a new document made has edits, in an open view, not yet saved. */
+function companionsHaveUnsavedEdits(
+  target: { readonly environmentId: EnvironmentId; readonly cwd: string },
+  companions: readonly { readonly relativePath: string }[],
+): boolean {
+  return companions.some((file) => {
+    const session = markdownPersistenceRegistry.getTargetSnapshot({
+      ...target,
+      relativePath: file.relativePath,
+    });
+    return (
+      session !== null &&
+      (session.pending || session.inFlight || session.draftSource !== session.baselineSource)
+    );
+  });
+}
 
 function waitUntil(condition: () => boolean, timeoutMs: number): Promise<boolean> {
   const deadline = performance.now() + timeoutMs;
@@ -265,7 +283,8 @@ export function useNewDocument(input: {
     const caretBefore = caretOffsetInEditor();
     const release = lease.holdForRename();
     if (!release) return keepName();
-    const written = () => newDocuments.get(key)?.settled !== false;
+    const written = () =>
+      newDocuments.get(key)?.settled !== false || companionsHaveUnsavedEdits(key, entry.companions);
     const moved: { from: string; to: string; revision: string }[] = [];
     const giveUp = async () => {
       let whole = true;
@@ -295,10 +314,14 @@ export function useNewDocument(input: {
     if (revision === null || revision === "taken") return giveUp();
     newDocuments.forget(key);
     templateEdits.move(key, { ...key, relativePath: destination });
+    // A chapter's view opens again at its new place; its old session is done.
+    for (const file of moved)
+      markdownPersistenceRegistry.forgetClean({ ...key, relativePath: file.from });
     release();
+    // Still the document showing (the panel follows it to its new name): the caret comes back.
+    const stillShown = shown.current === key.relativePath;
     onRenamed(key.relativePath, destination);
-    if (caretBefore !== null && shown.current === destination)
-      focusNewDocumentWhenOpen({ offset: caretBefore });
+    if (caretBefore !== null && stillShown) focusNewDocumentWhenOpen({ offset: caretBefore });
   });
 
   useEffect(() => {
@@ -463,8 +486,9 @@ export function useNewDocument(input: {
     newDocuments.forget(from);
     templateEdits.move(from, to);
     release();
+    const stillShown = shown.current === from.relativePath;
     onRenamed(from.relativePath, placed.relativePath);
-    if (shown.current === placed.relativePath) focusNewDocumentWhenOpen("title");
+    if (stillShown) focusNewDocumentWhenOpen("title");
     const removed = await commands.remove(
       { relativePath: from.relativePath, revision: change.revision },
       { removeEmptyFolders: true },
@@ -525,7 +549,10 @@ export function useNewDocument(input: {
       const commands = documentFiles.commandsFor(key);
       // A file it made that was changed anywhere (a chapter, in Source or another
       // program) ends the choice: nothing it made is moved or removed.
-      if (!(await companionsUnchanged(commands, entry.companions))) {
+      if (
+        companionsHaveUnsavedEdits(key, entry.companions) ||
+        !(await companionsUnchanged(commands, entry.companions))
+      ) {
         newDocuments.update(key, { settled: true });
         return null;
       }
@@ -537,23 +564,38 @@ export function useNewDocument(input: {
           { key, entry, lease },
           { template, language, name, next, revision: current.baselineRevision },
         );
-      if (next !== current.draftSource && !lease.change(next, current.editVersion)) return null;
-      newDocuments.update(key, { template, language, name });
-      // The files the new template keeps beside it, such as its bibliography.
-      const synced = await syncCompanionFiles({
-        folder: folderOf(key.relativePath),
-        files: templateCompanions(template, next),
-        created: newDocuments.get(key)?.companions ?? [],
-        create: commands.create,
-        ...(commands.replace ? { replace: commands.replace } : {}),
-        remove: commands.remove,
-      });
-      newDocuments.update(key, { companions: synced.companions });
-      if (!synced.complete)
-        toastManager.add({
-          type: "error",
-          title: "Some of the template's files could not be written.",
+      // The files first, then the page: a switch whose files cannot all be
+      // written puts them back as they were and changes nothing.
+      const sync = (
+        files: ReturnType<typeof templateCompanions>,
+        created: typeof entry.companions,
+      ) =>
+        syncCompanionFiles({
+          folder: folderOf(key.relativePath),
+          files,
+          created,
+          create: commands.create,
+          ...(commands.replace ? { replace: commands.replace } : {}),
+          remove: commands.remove,
         });
+      const synced = await sync(templateCompanions(template, next), entry.companions);
+      const undo = async () => {
+        const restored = await sync(
+          templateCompanions(entry.template, current.draftSource),
+          synced.companions,
+        );
+        newDocuments.update(key, { companions: restored.companions });
+      };
+      if (!synced.complete) {
+        await undo();
+        toastManager.add({ type: "error", title: "The template could not be changed." });
+        return null;
+      }
+      if (next !== current.draftSource && !lease.change(next, current.editVersion)) {
+        await undo();
+        return null;
+      }
+      newDocuments.update(key, { template, language, name, companions: synced.companions });
       // The page is drawn again; writing continues in the title or the name.
       if (shown.current === key.relativePath) focusNewDocumentWhenOpen("title");
       return key;
