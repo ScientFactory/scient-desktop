@@ -2,7 +2,6 @@
 export {
   encodeAgentModelSlug,
   isValidModelSegment,
-  reasoningLevelLabel,
   splitAgentModelSlug,
   thinkingLevelCapabilities,
 } from "@t3tools/provider-core/server/agentModel";

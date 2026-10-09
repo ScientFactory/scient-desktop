@@ -174,7 +174,6 @@ const PROVIDER_CLIENT_DEFINITION_BY_VALUE: Partial<Record<ProviderDriverKind, Dr
   );
 
 export const DRIVER_OPTIONS = PROVIDER_CLIENT_DEFINITIONS;
-export const DRIVER_OPTION_BY_VALUE = PROVIDER_CLIENT_DEFINITION_BY_VALUE;
 
 /** Whether a provider search query matches its name, company, or aliases. */
 export function driverOptionMatchesQuery(definition: DriverOption, query: string): boolean {

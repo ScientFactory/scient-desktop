@@ -11,24 +11,30 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  type CustomModelConnection,
   type ServerSettings as ServerSettingsData,
   type ProviderInstanceConfigMap,
 } from "@t3tools/contracts";
 import { ProviderAdapterTurnStartError } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
-import { ChildProcessSpawner } from "effect/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import * as ManagedRuntimeCatalog from "../scient/providerLifecycle/ManagedRuntimeCatalog.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import type { ResolvedModelConnection } from "../customModels.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 import { BUILT_IN_DRIVERS } from "./builtInDrivers.ts";
 import {
@@ -61,6 +67,112 @@ const piVersionSpawner = ChildProcessSpawner.make((_command) =>
     });
   }),
 );
+
+const encodeJsonLine = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeJsonLine = Schema.decodeSync(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+const decodeOwnedModelCatalog = Schema.decodeUnknownSync(
+  Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      config: Schema.Struct({
+        models: Schema.Array(Schema.Struct({ id: Schema.String })),
+      }),
+    }),
+  ),
+);
+const encoder = new TextEncoder();
+
+function makePiCompositionDiscoverySpawner(input: {
+  readonly onRpcSpawn: (launch: {
+    readonly args: ReadonlyArray<string>;
+    readonly env: NodeJS.ProcessEnv;
+  }) => void;
+  readonly catalogs: Array<unknown>;
+}) {
+  return ChildProcessSpawner.make((command) =>
+    Effect.gen(function* () {
+      if (!ChildProcess.isStandardCommand(command))
+        return yield* Effect.die("Pi discovery should use a standard command");
+
+      const { args, options } = command;
+      if (args.includes("--version"))
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(999_999_999),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.succeed(encoder.encode("0.84.4\n")),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+
+      const env = options.env ?? {};
+      input.onRpcSpawn({ args, env });
+      const catalogUrl = env["SCIENT_PI_MODELS_URL"];
+      const catalogToken = env["SCIENT_PI_MODELS_TOKEN"];
+      if (catalogUrl === undefined || catalogToken === undefined)
+        return yield* Effect.die("Pi custom-model extension bootstrap was not configured");
+
+      // Model the one catalog request the owned Pi extension makes at startup.
+      const catalogResponse = yield* Effect.promise(async () => {
+        const response = await fetch(catalogUrl, {
+          headers: { authorization: `Bearer ${catalogToken}` },
+          redirect: "error",
+        });
+        return { status: response.status, body: await response.json() };
+      });
+      input.catalogs.push(catalogResponse.body);
+      if (catalogResponse.status !== 200)
+        return yield* Effect.die(`Pi custom-model catalog returned ${catalogResponse.status}`);
+
+      const stdout = yield* Queue.unbounded<Uint8Array>();
+      return ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(999_999_999),
+        exitCode: Effect.never,
+        isRunning: Effect.succeed(true),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.forEach((chunk: Uint8Array) => {
+          const request = decodeJsonLine(new TextDecoder().decode(chunk).trim());
+          const type = request["type"];
+          const data =
+            type === "get_state"
+              ? { thinkingLevel: "medium" }
+              : type === "get_available_models"
+                ? {
+                    models: [
+                      {
+                        provider: "scient_local-models",
+                        id: "local/assistant",
+                        name: "Local assistant",
+                      },
+                    ],
+                  }
+                : type === "get_commands"
+                  ? { commands: [{ name: "scient-models-refresh", source: "extension" }] }
+                  : {};
+          return Queue.offer(
+            stdout,
+            encoder.encode(
+              `${encodeJsonLine({ type: "response", id: request["id"], command: type, success: true, data })}\n`,
+            ),
+          ).pipe(Effect.asVoid);
+        }),
+        stdout: Stream.fromQueue(stdout),
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+    }),
+  );
+}
 
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
@@ -225,5 +337,109 @@ it.layer(testLayer)("PiDriver production composition", (it) => {
       assert.deepStrictEqual(snapshot.connection?.methods, []);
       assert.isFalse(snapshot.connection?.canDisconnect);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "strips configured user extensions during production discovery and keeps the owned model extension",
+    () =>
+      Effect.gen(function* () {
+        const settingsService = yield* ServerSettings.ServerSettingsService;
+        const host = yield* ProviderHost.ProviderHost;
+        const path = yield* Path.Path;
+        const connection: CustomModelConnection = {
+          id: "local-models",
+          name: "Local models",
+          protocol: "openai-completions",
+          baseUrl: "http://127.0.0.1:1234/v1",
+          credentialId: "synthetic-credential",
+          models: [
+            {
+              id: "local-model",
+              modelId: "local/assistant",
+              name: "Local assistant",
+              contextWindow: 8192,
+              maxOutputTokens: 2048,
+              images: false,
+              reasoning: false,
+              instanceIds: [instanceId],
+            },
+          ],
+        };
+        const resolvedConnection: ResolvedModelConnection = {
+          ...connection,
+          apiKey: Redacted.make("synthetic-custom-model-key"),
+        };
+        const composedSettings: ServerSettings.ServerSettingsService["Service"] = {
+          ...settingsService,
+          getSettings: Effect.succeed({
+            ...DEFAULT_SERVER_SETTINGS,
+            customModels: { revision: 1, connections: [connection] },
+          }),
+          resolveCustomModels: () => Effect.succeed([resolvedConnection]),
+        };
+        const launches: Array<{ args: ReadonlyArray<string>; env: NodeJS.ProcessEnv }> = [];
+        const catalogs: Array<unknown> = [];
+        const instance = yield* PiDriver.create({
+          instanceId,
+          displayName: "Pi",
+          environment: [],
+          enabled: true,
+          config: {
+            ...PiDriver.defaultConfig(),
+            enabled: true,
+            launchArgs:
+              '-e "/user/short extension.ts" --extension /user/long.ts --extension=/user/equals.ts -e=/user/short-equals.ts --provider anthropic --model "model with space" --thinking high',
+          },
+        }).pipe(
+          Effect.provideService(ServerSettings.ServerSettingsService, composedSettings),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makePiCompositionDiscoverySpawner({
+              onRpcSpawn: (launch) => launches.push(launch),
+              catalogs,
+            }),
+          ),
+          Effect.provideService(HostProcessEnvironment, {
+            PI_TOKEN: "synthetic-pi-session-token",
+          }),
+        );
+
+        yield* instance.snapshot.refresh;
+        const snapshot = yield* instance.snapshot.getSnapshot;
+        const rpcLaunches = launches.filter((launch) => launch.args.includes("--mode"));
+        assert.equal(rpcLaunches.length, 1);
+        assert.deepEqual(rpcLaunches[0]?.args, [
+          "--mode",
+          "rpc",
+          "--no-session",
+          "--provider",
+          "anthropic",
+          "--model",
+          "model with space",
+          "--thinking",
+          "high",
+          "--no-extensions",
+          "--extension",
+          path.join(host.paths.stateDir, "pi", "extensions", "scient-custom-models.mjs"),
+        ]);
+        assert.equal(rpcLaunches[0]?.env.PI_TOKEN, "synthetic-pi-session-token");
+
+        assert.equal(catalogs.length, 1);
+        const catalog = decodeOwnedModelCatalog(catalogs[0]);
+        const ownedConnection = catalog[0];
+        if (ownedConnection === undefined) throw new Error("Expected an owned Pi model catalog");
+        assert.equal(ownedConnection.id, "scient_local-models");
+        assert.deepEqual(
+          ownedConnection.config.models.map((model) => model.id),
+          ["local/assistant"],
+        );
+        assert.isTrue(
+          snapshot.models.some(
+            (model) => model.name === "Local assistant" && model.subProvider === "Local models",
+          ),
+        );
+        assert.equal(snapshot.status, "ready");
+        assert.equal(snapshot.auth.status, "authenticated");
+      }).pipe(Effect.scoped),
   );
 });

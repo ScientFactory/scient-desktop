@@ -20,6 +20,8 @@ import {
 } from "../scient-provider/CodexNativeSession.ts";
 // SCIENT-FORK: shared native start receipts and prompt acceptance.
 import { turnStartErrorKeepingReceipt } from "../scient-provider/NativeTurnReceipts.ts";
+// SCIENT-FORK: native delivery uses the same complete input composition as preflight.
+import { formatScientCurrentInput } from "../ScientCurrentInput.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import {
   mcpToolPresentation,
@@ -153,10 +155,7 @@ import {
   makeProviderRetryTurnItem,
 } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
-import {
-  isProviderNativeImageAttachment,
-  providerMessageTextWithAttachmentPaths,
-} from "@t3tools/provider-core/server/attachmentPrompt";
+import { isProviderNativeImageAttachment } from "@t3tools/provider-core/server/attachmentPrompt";
 import {
   ProviderAdapterEnsureThreadError,
   ProviderAdapterForkThreadError,
@@ -3259,11 +3258,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         ) =>
           Effect.gen(function* () {
             const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
-            const text = providerMessageTextWithAttachmentPaths({
+            // SCIENT-FORK: preserve the structural trusted suffix after captured data.
+            const text = formatScientCurrentInput({
               text: codexSkillMentionText(turnInput.message.text),
               attachments: turnInput.message.attachments,
-              resolveAttachmentPath: (attachment) =>
-                resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
+              attachmentsDir: serverConfig.attachmentsDir,
               ...(turnInput.message.runtimeInstruction === undefined
                 ? {}
                 : { runtimeInstruction: turnInput.message.runtimeInstruction }),

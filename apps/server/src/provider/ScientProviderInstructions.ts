@@ -61,11 +61,11 @@ For browser work, first call \`preview_status\`. If no automation-capable previe
 Do not switch to another browser system merely because preview is initially closed or a first call fails. Inspect an actionable error and retry with corrected arguments. Use another browser system when the Scient preview tools are absent, \`preview_open\` returns an explicit unsupported/unavailable error, the user explicitly asks for one, or a documented workflow you are following requires it. After two failed preview attempts on the same step, quote the raw error and switch without asking which browser to use. Do not act on a tab owned by the user; read it or open a separate tab instead.
 `;
 
-export const SCIENT_ACP_DEFAULT_MODE_INSTRUCTIONS = `## Scient interaction mode: Default
+const SCIENT_ACP_DEFAULT_MODE_INSTRUCTIONS = `## Scient interaction mode: Default
 
 Prefer making reasonable assumptions and carrying out the user's request. Ask a concise question only when a missing user decision would materially change the result. Treat this mode as active until Scient supplies a different interaction-mode instruction.`;
 
-export const SCIENT_ACP_PLAN_MODE_INSTRUCTIONS = `## Scient interaction mode: Plan
+const SCIENT_ACP_PLAN_MODE_INSTRUCTIONS = `## Scient interaction mode: Plan
 
 Investigate with read-only actions and do not edit files or otherwise execute the implementation. Resolve discoverable facts before asking questions. When the requirements are decision complete, return a concrete implementation plan and do not start implementing it. Treat this mode as active until Scient supplies a different interaction-mode instruction.`;
 

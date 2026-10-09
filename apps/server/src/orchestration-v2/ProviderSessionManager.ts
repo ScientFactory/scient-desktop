@@ -571,20 +571,14 @@ export const layerWithOptions = (
         Scope.Closeable,
         Fiber.Fiber<Exit.Exit<void, never>, never>
       >();
-      const timedOutOwnedScopeCloses = new WeakSet<object>();
       const parentScopeOwners = new WeakMap<
         Scope.Closeable,
         { readonly scope: Scope.Closeable; retiring: boolean; closed: boolean }
       >();
       // Scope.close marks a scope closed before its finalizers finish. All exact
       // owners must join the same physical close before releasing Pi file leases.
-      const closeOwnedScope = (
-        scope: Scope.Closeable,
-        context: { readonly providerSessionId?: ProviderSessionId; readonly reason: string } = {
-          reason: "session_scope_close",
-        },
-      ) =>
-        Effect.uninterruptibleMask(() =>
+      const closeOwnedScope = (scope: Scope.Closeable) =>
+        Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
             let closing = ownedScopeCloses.get(scope);
             if (closing === undefined) {
@@ -602,32 +596,8 @@ export const layerWithOptions = (
               );
               ownedScopeCloses.set(scope, closing);
             }
-            // An interrupted open reaches this cleanup while its caller already
-            // has an interruption exit to preserve. Treat interruption of only
-            // this bounded join as a timeout; the caller's open/close waiter
-            // still observes its original interruption, and the exact physical
-            // close remains owned until its finalizer releases leases.
-            const wait = yield* Effect.interruptible(
-              Effect.exit(
-                Fiber.join(closing).pipe(Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS)),
-              ),
-            );
-            if (Exit.isFailure(wait)) {
-              if (!Cause.hasInterruptsOnly(wait.cause)) return yield* Effect.failCause(wait.cause);
-            }
-            const result = Exit.isFailure(wait) ? Option.none() : wait.value;
-            if (Option.isNone(result)) {
-              if (!timedOutOwnedScopeCloses.has(closing)) {
-                timedOutOwnedScopeCloses.add(closing);
-                yield* Effect.logWarning("orchestration-v2.provider-session-scope-close-timeout", {
-                  ...context,
-                  timeoutMs: RELEASE_SCOPE_CLOSE_TIMEOUT_MS,
-                });
-                yield* observeLateScopeClose(closing, context);
-              }
-              return;
-            }
-            if (Exit.isFailure(result.value)) return yield* Effect.failCause(result.value.cause);
+            const result = yield* restore(Fiber.join(closing));
+            if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
           }),
         );
       // SCIENT-FORK:END
@@ -2643,12 +2613,7 @@ export const layerWithOptions = (
                                 prepared.issued,
                               ),
                         ),
-                        Effect.ensuring(
-                          closeOwnedScope(sessionScope, {
-                            providerSessionId: input.providerSessionId,
-                            reason: "open_failed",
-                          }),
-                        ),
+                        Effect.ensuring(closeOwnedScope(sessionScope)),
                         Effect.ignoreCause({ log: true }),
                       );
                       const openingOwner = {
@@ -2668,12 +2633,7 @@ export const layerWithOptions = (
                                 expectedRuntime: openedRuntime,
                                 reason: "server_shutdown",
                               }).pipe(
-                                Effect.ensuring(
-                                  closeOwnedScope(sessionScope, {
-                                    providerSessionId: input.providerSessionId,
-                                    reason: "server_shutdown",
-                                  }),
-                                ),
+                                Effect.ensuring(closeOwnedScope(sessionScope)),
                                 Effect.ignoreCause({ log: true }),
                               )
                             : cleanupOpening;
