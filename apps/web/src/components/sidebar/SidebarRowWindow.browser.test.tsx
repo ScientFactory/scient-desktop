@@ -83,9 +83,17 @@ it.each([16, 20])(
     const height = fixture.row(800).getBoundingClientRect().height;
     expect(height).toBeCloseTo(5.125 * fontSize);
     const totalHeight = fixture.viewport.scrollHeight;
+    // A pointer left over the first rows by an earlier test would keep row 0
+    // mounted; and a loaded CI runner can take more than a second to deliver
+    // the scroll's visibility changes for a 1560-row list.
+    await userEvent.hover(page.getByRole("button", { name: "Outside list", exact: true }));
     fixture.row(800).scrollIntoView({ block: "center" });
-    await expect.poll(() => fixture.row(800).dataset.sidebarRowBody).toBe("mounted");
-    await expect.poll(() => fixture.row(0).dataset.sidebarRowBody).toBe("placeholder");
+    await expect
+      .poll(() => fixture.row(800).dataset.sidebarRowBody, { timeout: 5_000 })
+      .toBe("mounted");
+    await expect
+      .poll(() => fixture.row(0).dataset.sidebarRowBody, { timeout: 5_000 })
+      .toBe("placeholder");
     expect(fixture.row(800).getBoundingClientRect().height).toBeCloseTo(height);
     expect(fixture.viewport.scrollHeight).toBe(totalHeight);
     expect(fixture.mounted()).toBeLessThan(16);
