@@ -587,7 +587,8 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
   return (
     <>
       <ScientMarkdownWorkspaceSurface
-        key={JSON.stringify([props.environmentId, props.cwd, props.relativePath])}
+        // The open document, not its path: an in-place rename keeps this editor.
+        key={props.persistence.documentId}
         persistence={props.persistence}
         citationSource={{ ...props.threadRef, cwd: props.cwd, path: props.relativePath }}
         {...(props.onCite ? { onCite: props.onCite } : {})}

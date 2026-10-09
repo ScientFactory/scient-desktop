@@ -10,6 +10,7 @@ vi.mock("./markdownPersistenceTransport", () => ({
   createMarkdownPersistenceTransport: mocks.createTransport,
 }));
 
+import type { MarkdownPersistenceLease } from "./markdownPersistenceRegistry";
 import { useMarkdownPersistenceLease } from "./useMarkdownPersistenceLease";
 
 describe("useMarkdownPersistenceLease", () => {
@@ -123,6 +124,55 @@ describe("useMarkdownPersistenceLease", () => {
     expect(container.textContent).toBe("other");
     expect(previous.change("late", 0)).toBe(false);
     expect(latest.lease?.target.relativePath).toBe("other-hook.md");
+  });
+
+  it("follows its document through an in-place rename with the same lease, never without one", async () => {
+    const seen: Array<MarkdownPersistenceLease | null> = [];
+    function Tracking(props: { path: string }) {
+      const current = useMarkdownPersistenceLease({
+        target: { environmentId, cwd, relativePath: props.path },
+        authoritativeSnapshot: props.path === initial.relativePath ? initial : null,
+      });
+      seen.push(current.lease);
+      useLayoutEffect(() => {
+        latest = current;
+      }, [current]);
+      return <span>{current.snapshot?.draftSource ?? "loading"}</span>;
+    }
+    const before = initial.relativePath;
+    const after = `moved-${before}`;
+    await act(async () =>
+      root.render(
+        <StrictMode>
+          <Tracking path={before} />
+        </StrictMode>,
+      ),
+    );
+    const lease = latest.lease!;
+    seen.length = 0;
+    await act(async () => {
+      const move = lease.beginMove({ environmentId, cwd, relativePath: after })!;
+      expect(move).not.toBeNull();
+      expect(move.commit()).toBe(true);
+      move.finish();
+      root.render(
+        <StrictMode>
+          <Tracking path={after} />
+        </StrictMode>,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((each) => each === lease)).toBe(true);
+    expect(latest.lease).toBe(lease);
+    expect(lease.target.relativePath).toBe(after);
+    // Still the live owner of the document: edits are accepted.
+    await act(async () => {
+      expect(lease.change("moved edit", lease.getSnapshot().editVersion)).toBe(true);
+    });
+    expect(container.textContent).toBe("moved edit");
   });
 
   it("exposes a failed ordered admission without enabling an editor and retries explicitly", async () => {

@@ -8,7 +8,7 @@ import {
 } from "react";
 
 import { readLocalApi } from "~/localApi";
-import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
+import { registerRenameParticipant } from "~/scient/fileSurfaces/renameOpenDocument";
 import { Button } from "~/components/ui/button";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { attachShortcutHost } from "../keyboard/host";
@@ -93,12 +93,7 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
  * controls stay collapsed until the reader opens them or starts typing.
  */
 export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSurfaceProps) {
-  return (
-    <ScientMarkdownWorkspaceSurfaceOwner
-      key={projectFileOperationKey(props.persistence.target)}
-      {...props}
-    />
-  );
+  return <ScientMarkdownWorkspaceSurfaceOwner key={props.persistence.documentId} {...props} />;
 }
 
 function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfaceProps) {
@@ -267,6 +262,17 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
       }),
     [controller, props.persistence],
   );
+
+  // An in-place rename waits while an input method is composing here.
+  useEffect(
+    () =>
+      registerRenameParticipant(props.persistence.documentId, {
+        readyToMove: () => !composingRef.current && controller.view?.composing !== true,
+      }),
+    [controller, props.persistence.documentId],
+  );
+
+  useEffect(() => controller.setAriaLabel(props.ariaLabel), [controller, props.ariaLabel]);
 
   useEffect(() => {
     if (previousThemeRef.current !== props.resolvedTheme) {
