@@ -1616,6 +1616,14 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   font-weight: 400;
   line-height: 1.2;
 }
+/* While the title is written the caret starts at the left of the hint, as in
+   any text box, and the field keeps the hint's width (2.11em of "Title") so the
+   first letters grow rightwards instead of jumping to the middle. Leaving the
+   field centres it again, as \maketitle prints it. */
+.scient-latex-title-preview textarea[aria-label="Document title"]:focus {
+  min-width: 2.15em;
+  text-align: start;
+}
 .scient-latex-title-preview textarea[aria-label="Document author"],
 .scient-latex-title-preview textarea[aria-label="Document date"] {
   font-size: var(--scient-latex-author-size, 1.2em);
