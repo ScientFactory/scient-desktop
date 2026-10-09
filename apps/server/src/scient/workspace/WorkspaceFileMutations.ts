@@ -1,7 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Scient's workspace file mutations: revision-checked saves, exclusive creates
- * and renames that never replace their destination. Each mutation resolves its
+ * Scient's workspace file mutations: revision-checked saves, exclusive creates,
+ * renames that never replace their destination and deletes that never take a
+ * changed file. Each mutation resolves its
  * canonical target, locks it, and revalidates it after waiting for the lock.
  * WorkspaceFileSystem builds these once and serves them as its write methods.
  */
@@ -9,6 +10,8 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 
 import type {
+  ProjectDeleteFileInput,
+  ProjectDeleteFileResult,
   ProjectRenameFileInput,
   ProjectRenameFileResult,
   ProjectWriteFileInput,
@@ -62,6 +65,16 @@ export interface WorkspaceFileMutationMethods {
     input: ProjectRenameFileInput,
   ) => Effect.Effect<
     ProjectRenameFileResult,
+    WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+  >;
+  /**
+   * Delete a regular file only while it is the revision the client last read,
+   * and optionally the folders it leaves empty below the workspace root.
+   */
+  readonly deleteFile: (
+    input: ProjectDeleteFileInput,
+  ) => Effect.Effect<
+    ProjectDeleteFileResult,
     WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
   >;
   /** Atomically create a binary file and fail if the destination exists. */
@@ -222,6 +235,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     const canonicalRelativePath = relativeRealPath.replaceAll("\\", "/");
     return {
       target,
+      realWorkspaceRoot,
       realTargetPath: realTargetPath.path,
       canonicalRelativePath,
       traversesSymlink:
@@ -769,5 +783,120 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     );
   });
 
-  return { createBinaryFile, inspectWriteTarget, renameFile, writeFile };
+  const deleteFile: WorkspaceFileSystem["Service"]["deleteFile"] = Effect.fn(
+    "WorkspaceFileSystem.deleteFile",
+  )(function* (input) {
+    const initial = yield* resolveRealWriteTarget(input);
+    const semaphore = yield* writeSemaphoreFor(initial.realTargetPath);
+    return yield* semaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const resolved = yield* revalidateWriteTarget(input, initial.realTargetPath);
+        const targetPath = resolved.realTargetPath;
+        // The name itself must be a file: a link is never followed to delete
+        // what it points to (folders on the way may still be aliases).
+        const named = yield* Effect.tryPromise({
+          try: () => NodeFSP.lstat(resolved.target.absolutePath),
+          catch: (cause) =>
+            new WorkspaceFileSystemOperationError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: resolved.target.absolutePath,
+              operationPath: resolved.target.absolutePath,
+              operation: "stat",
+              cause,
+            }),
+        });
+        if (!named.isFile() || named.isSymbolicLink()) {
+          return yield* new WorkspacePathNotFileError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: resolved.target.absolutePath,
+          });
+        }
+        const identity = () =>
+          Effect.tryPromise({
+            try: async () => {
+              const stat = await NodeFSP.lstat(targetPath, { bigint: true });
+              return stat.isFile() && !stat.isSymbolicLink()
+                ? { dev: stat.dev, ino: stat.ino }
+                : null;
+            },
+            catch: (cause) =>
+              new WorkspaceFileSystemOperationError({
+                workspaceRoot: input.cwd,
+                relativePath: input.relativePath,
+                resolvedPath: targetPath,
+                operationPath: targetPath,
+                operation: "stat",
+                cause,
+              }),
+          });
+        const before = yield* identity();
+        if (before === null) {
+          return yield* new WorkspacePathNotFileError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: targetPath,
+          });
+        }
+        // Only the revision the client saw is deleted, and only while the name
+        // still holds the file that was read: one replaced by another program
+        // since (an editor or a compiler writing atomically) is left alone.
+        const current = yield* readFile({ cwd: input.cwd, relativePath: input.relativePath });
+        const after = yield* identity();
+        if (
+          current.truncated ||
+          current.revision !== input.expectedRevision ||
+          after === null ||
+          after.dev !== before.dev ||
+          after.ino !== before.ino
+        ) {
+          return yield* new WorkspaceFileRevisionConflictError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: targetPath,
+            currentRevision: current.revision,
+          });
+        }
+        yield* Effect.tryPromise({
+          try: () => NodeFSP.unlink(targetPath),
+          catch: (cause) =>
+            new WorkspaceFileSystemOperationError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: targetPath,
+              operationPath: targetPath,
+              operation: "unlink",
+              cause,
+            }),
+        });
+        if (input.removeEmptyFolders) {
+          // `rmdir` removes only an empty folder, so a folder anything else
+          // still holds stays; the walk stops there and never reaches the root.
+          yield* Effect.promise(async () => {
+            const root = resolved.realWorkspaceRoot;
+            for (let folder = path.dirname(targetPath); ; folder = path.dirname(folder)) {
+              const relative = path.relative(root, folder);
+              if (
+                !relative ||
+                relative === ".." ||
+                relative.startsWith(`..${path.sep}`) ||
+                path.isAbsolute(relative)
+              )
+                return;
+              try {
+                await NodeFSP.rmdir(folder);
+              } catch {
+                return;
+              }
+            }
+          });
+        }
+        yield* workspaceEntries.refresh(input.cwd);
+        return { relativePath: resolved.target.relativePath };
+      }),
+    );
+  });
+
+  return { createBinaryFile, deleteFile, inspectWriteTarget, renameFile, writeFile };
 });

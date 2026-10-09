@@ -1491,4 +1491,97 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
   });
+  describe("deleteFile", () => {
+    it.effect("deletes only the revision the client read", () =>
+      Effect.gen(function* () {
+        const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "notes/draft.tex", "first");
+        const opened = yield* api.readFile({ cwd, relativePath: "notes/draft.tex" });
+        yield* writeTextFile(cwd, "notes/draft.tex", "edited elsewhere");
+
+        const error = yield* api
+          .deleteFile({ cwd, relativePath: "notes/draft.tex", expectedRevision: opened.revision })
+          .pipe(Effect.flip);
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileRevisionConflictError);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "notes/draft.tex"))).toBe(
+          "edited elsewhere",
+        );
+
+        const current = yield* api.readFile({ cwd, relativePath: "notes/draft.tex" });
+        const deleted = yield* api.deleteFile({
+          cwd,
+          relativePath: "notes/draft.tex",
+          expectedRevision: current.revision,
+        });
+        expect(deleted).toEqual({ relativePath: "notes/draft.tex" });
+        expect(yield* fileSystem.exists(path.join(cwd, "notes/draft.tex"))).toBe(false);
+        // Folders stay unless asked for.
+        expect(yield* fileSystem.exists(path.join(cwd, "notes"))).toBe(true);
+      }),
+    );
+
+    it.effect("removes the folders a file leaves empty, never the root or a folder in use", () =>
+      Effect.gen(function* () {
+        const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "thesis/chapters/introduction.tex", "intro");
+        yield* writeTextFile(cwd, "thesis/main.tex", "main");
+        yield* writeTextFile(cwd, "only/deep/file.tex", "alone");
+
+        const intro = yield* api.readFile({
+          cwd,
+          relativePath: "thesis/chapters/introduction.tex",
+        });
+        yield* api.deleteFile({
+          cwd,
+          relativePath: "thesis/chapters/introduction.tex",
+          expectedRevision: intro.revision,
+          removeEmptyFolders: true,
+        });
+        expect(yield* fileSystem.exists(path.join(cwd, "thesis/chapters"))).toBe(false);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "thesis/main.tex"))).toBe("main");
+
+        const alone = yield* api.readFile({ cwd, relativePath: "only/deep/file.tex" });
+        yield* api.deleteFile({
+          cwd,
+          relativePath: "only/deep/file.tex",
+          expectedRevision: alone.revision,
+          removeEmptyFolders: true,
+        });
+        expect(yield* fileSystem.exists(path.join(cwd, "only"))).toBe(false);
+        expect(yield* fileSystem.exists(cwd)).toBe(true);
+      }),
+    );
+
+    it.effect("refuses a folder or a link", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcessPlatform) === "win32") return;
+        const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "target.tex", "kept");
+        const target = yield* api.readFile({ cwd, relativePath: "target.tex" });
+        yield* fileSystem.symlink(path.join(cwd, "target.tex"), path.join(cwd, "link.tex"));
+
+        const viaLink = yield* api
+          .deleteFile({ cwd, relativePath: "link.tex", expectedRevision: target.revision })
+          .pipe(Effect.result);
+        expect(viaLink._tag).toBe("Failure");
+        expect(yield* fileSystem.readFileString(path.join(cwd, "target.tex"))).toBe("kept");
+
+        yield* fileSystem.makeDirectory(path.join(cwd, "folder"));
+        const folder = yield* api
+          .deleteFile({ cwd, relativePath: "folder", expectedRevision: target.revision })
+          .pipe(Effect.result);
+        expect(folder._tag).toBe("Failure");
+        expect(yield* fileSystem.exists(path.join(cwd, "folder"))).toBe(true);
+      }),
+    );
+  });
 });

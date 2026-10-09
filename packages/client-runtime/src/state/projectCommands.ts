@@ -207,5 +207,11 @@ export function createProjectEnvironmentAtoms<R, E>(
           ]),
       },
     }),
+    deleteFile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:delete-file",
+      tag: WS_METHODS.projectsDeleteFile,
+      scheduler: fileScheduler,
+      concurrency: fileConcurrency,
+    }),
   };
 }
