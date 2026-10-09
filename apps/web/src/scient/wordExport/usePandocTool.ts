@@ -45,11 +45,14 @@ export function usePandocTool(
   const onInstalledRef = useRef(onInstalled);
   onInstalledRef.current = onInstalled;
   const wasInstalledRef = useRef<boolean | null>(null);
-  // Every request (a status read or the install) takes a number; only the most
-  // recently started one may change what is shown. An older answer, a poll
-  // overtaken by a refresh, or a read from before an install, can never
-  // undo a newer state.
-  const latestRef = useRef(0);
+  // Status reads take a number and only the most recently started one may
+  // change what is shown. While an install request waits for its answer, that
+  // answer is in charge: reads finishing meanwhile, or started before it
+  // arrived, describe the server from before the install and are set aside.
+  const latestReadRef = useRef(0);
+  const staleUpToRef = useRef(0);
+  const installRef = useRef<number | null>(null);
+  const installsRef = useRef(0);
 
   const accept = useCallback((next: ScientPandocToolStatus) => {
     // Pandoc became installed after a state that was not: missing, or not
@@ -61,17 +64,19 @@ export function usePandocTool(
   }, []);
 
   const read = useCallback(async () => {
-    const request = ++latestRef.current;
+    const request = ++latestReadRef.current;
+    const current = () =>
+      request === latestReadRef.current &&
+      request > staleUpToRef.current &&
+      installRef.current === null;
     setChecks((count) => count + 1);
     try {
       const next = await readPandocTool(environmentId);
-      if (request !== latestRef.current) return;
+      if (!current()) return;
       accept(next);
       setError(null);
-      // A newer read stands in for an install answer it overtook.
-      setRequesting(false);
     } catch (cause) {
-      if (request !== latestRef.current) return;
+      if (!current()) return;
       if (wasInstalledRef.current !== true) wasInstalledRef.current = false;
       setError({
         message: errorMessage(cause, "Scient could not check Word export on this server."),
@@ -85,7 +90,10 @@ export function usePandocTool(
   useEffect(() => {
     void read();
     return () => {
-      latestRef.current++;
+      // Nothing this environment answers later applies.
+      staleUpToRef.current = ++latestReadRef.current;
+      installRef.current = null;
+      installsRef.current++;
       setRequesting(false);
     };
   }, [read]);
@@ -111,22 +119,29 @@ export function usePandocTool(
       !status.canInstall
     )
       return;
-    const request = ++latestRef.current;
+    const request = ++installsRef.current;
+    installRef.current = request;
     setRequesting(true);
     setError(null);
+    const current = () => installRef.current === request;
     void (async () => {
       try {
         const next = await installPandocTool(environmentId);
-        if (request !== latestRef.current) return;
+        if (!current()) return;
+        staleUpToRef.current = latestReadRef.current;
         accept(next);
       } catch (cause) {
-        if (request !== latestRef.current) return;
+        if (!current()) return;
+        staleUpToRef.current = latestReadRef.current;
         setError({
           message: errorMessage(cause, "Scient could not start installing Pandoc."),
           fromCheck: false,
         });
       } finally {
-        if (request === latestRef.current) setRequesting(false);
+        if (current()) {
+          installRef.current = null;
+          setRequesting(false);
+        }
       }
     })();
   }, [accept, checking, environmentId, error, read, requesting, status]);

@@ -30,23 +30,29 @@ export function useLatexInstallation(environmentId: EnvironmentId): LatexInstall
   const [error, setError] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  // Every request (a read or the install) takes a number; only the most
-  // recently started one may change what is shown, so an older answer can
-  // never hide an install or stop its polling.
-  const latestRef = useRef(0);
+  // Reads take a number and only the most recently started one may change
+  // what is shown. While an install request waits for its answer, that answer
+  // is in charge: reads finishing meanwhile, or started before it arrived,
+  // describe the server from before the install and are set aside.
+  const latestReadRef = useRef(0);
+  const staleUpToRef = useRef(0);
+  const installRef = useRef<number | null>(null);
+  const installsRef = useRef(0);
 
   const read = useCallback(
     async (refresh: boolean) => {
-      const request = ++latestRef.current;
+      const request = ++latestReadRef.current;
+      const current = () =>
+        request === latestReadRef.current &&
+        request > staleUpToRef.current &&
+        installRef.current === null;
       try {
         const next = await readLatexToolchain(environmentId, { refresh });
-        if (request !== latestRef.current) return;
+        if (!current()) return;
         setReport(next);
         setError(null);
-        // A newer read stands in for an install answer it overtook.
-        setRequesting(false);
       } catch (cause) {
-        if (request !== latestRef.current) return;
+        if (!current()) return;
         setError(errorMessage(cause, "Scient could not check LaTeX on this server."));
       }
     },
@@ -57,7 +63,9 @@ export function useLatexInstallation(environmentId: EnvironmentId): LatexInstall
     void read(false);
     return () => {
       // Answers for the previous environment, an install request included, are void.
-      latestRef.current++;
+      staleUpToRef.current = ++latestReadRef.current;
+      installRef.current = null;
+      installsRef.current++;
       setRequesting(false);
     };
   }, [read]);
@@ -75,19 +83,26 @@ export function useLatexInstallation(environmentId: EnvironmentId): LatexInstall
       return;
     }
     if (requesting || refreshing || active || !report.canInstallManaged) return;
-    const request = ++latestRef.current;
+    const request = ++installsRef.current;
+    installRef.current = request;
     setRequesting(true);
     setError(null);
+    const current = () => installRef.current === request;
     void (async () => {
       try {
         const managedInstall = await requestLatexToolchainInstall(environmentId);
-        if (request !== latestRef.current) return;
-        setReport((current) => (current === null ? current : { ...current, managedInstall }));
+        if (!current()) return;
+        staleUpToRef.current = latestReadRef.current;
+        setReport((report) => (report === null ? report : { ...report, managedInstall }));
       } catch (cause) {
-        if (request !== latestRef.current) return;
+        if (!current()) return;
+        staleUpToRef.current = latestReadRef.current;
         setError(errorMessage(cause, "Scient could not start installing TinyTeX."));
       } finally {
-        if (request === latestRef.current) setRequesting(false);
+        if (current()) {
+          installRef.current = null;
+          setRequesting(false);
+        }
       }
     })();
   }, [active, environmentId, error, read, refreshing, report, requesting]);
