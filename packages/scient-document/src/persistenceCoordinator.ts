@@ -343,6 +343,22 @@ export class DocumentPersistenceCoordinator<
     };
   }
 
+  /**
+   * Pending only because a rename holds the document: nothing unsaved, no
+   * deferred reconciliation, no other hold. Recovery copies have nothing to keep.
+   */
+  pendingOnlyForRename(): boolean {
+    return (
+      this.renameHold !== null &&
+      this.snapshot.draftSource === this.snapshot.baselineSource &&
+      this.snapshot.conflict === null &&
+      this.writeOperation === null &&
+      this.ambiguousIntent === null &&
+      !this.reconciliationDeferred &&
+      this.externalUpdateHolds.size === 0
+    );
+  }
+
   setConnected(connected: boolean): void {
     if (this.disposed || connected === this.connected) return;
     this.connected = connected;

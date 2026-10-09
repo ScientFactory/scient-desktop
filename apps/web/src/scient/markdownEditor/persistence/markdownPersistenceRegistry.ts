@@ -23,6 +23,7 @@ import {
 } from "./markdownPersistenceTransport";
 
 import {
+  checkpointHoldsNothing,
   indexedDbMarkdownDrafts,
   MarkdownDraftCheckpointWriter,
   type MarkdownDraftCheckpoint,
@@ -131,7 +132,7 @@ interface RegistryEntry {
  * Raised whenever a registry built from older code could not serve this code:
  * a new lease method, a new rule for which strategy or checkpoint a file gets.
  */
-const REGISTRY_GENERATION = 5;
+const REGISTRY_GENERATION = 6;
 
 export class MarkdownPersistenceRegistry {
   readonly generation = REGISTRY_GENERATION;
@@ -144,6 +145,11 @@ export class MarkdownPersistenceRegistry {
       checkpoint: MarkdownDraftCheckpoint | undefined;
     }>
   >();
+  /**
+   * A renamed document's recovery copy still being removed from its old path.
+   * Admission at that path waits, so a new file there never meets the old copy.
+   */
+  private readonly retiring = new Map<string, Promise<void>>();
   private readonly listeners = new Set<() => void>();
   private state: readonly MarkdownPersistenceRegistryState[] = [];
 
@@ -205,10 +211,21 @@ export class MarkdownPersistenceRegistry {
         const transport = (this.options.createTransport ?? createMarkdownPersistenceTransport)(
           target,
         );
+        const store = this.checkpointStoreFor(target);
         opening = Promise.all([
           transport.read(),
-          this.checkpointStoreFor(target)
-            ?.read(key)
+          (this.retiring.get(key) ?? Promise.resolve())
+            .then(() => store?.read(key))
+            .then(async (checkpoint) => {
+              if (store === undefined || checkpoint === undefined) return checkpoint;
+              if (!checkpointHoldsNothing(checkpoint)) return checkpoint;
+              // Nothing to recover: remove it rather than admit it. If removal fails it
+              // is passed on only so this file's own copies can take over its token.
+              const removed = await store
+                .replace(key, checkpoint.token, undefined)
+                .catch(() => false);
+              return removed ? undefined : checkpoint;
+            })
             .catch((error: unknown) => {
               console.error("Markdown recovery checkpoint could not be loaded:", error);
               return undefined;
@@ -243,7 +260,11 @@ export class MarkdownPersistenceRegistry {
           let baseline = initial;
           let draft: string | undefined;
           let conflict: MarkdownExternalConflict | undefined;
-          if (checkpoint && checkpoint.draftSource !== initial.contents) {
+          if (
+            checkpoint &&
+            !checkpointHoldsNothing(checkpoint) &&
+            checkpoint.draftSource !== initial.contents
+          ) {
             const combined =
               checkpoint.baselineSource === initial.contents ||
               checkpoint.publicationSource === initial.contents
@@ -556,14 +577,35 @@ export class MarkdownPersistenceRegistry {
     this.stopWatching(entry);
     entry.unsubscribe();
     this.entries.delete(key);
+    if (entry.checkpoint !== undefined) this.retireCheckpoint(key, entry.checkpoint);
     this.publish();
     return true;
+  }
+
+  private retireCheckpoint(key: string, checkpoint: MarkdownDraftCheckpointWriter): void {
+    const previous = this.retiring.get(key) ?? Promise.resolve();
+    const retired: Promise<void> = previous
+      .then(() => checkpoint.retire())
+      .finally(() => {
+        if (this.retiring.get(key) === retired) this.retiring.delete(key);
+      });
+    this.retiring.set(key, retired);
+  }
+
+  /** Removals still running in a registry this one replaces after a hot reload. */
+  adoptRetirements(retiring: ReadonlyMap<string, Promise<void>> | undefined): void {
+    for (const [key, done] of retiring ?? []) {
+      const adopted: Promise<void> = done.finally(() => {
+        if (this.retiring.get(key) === adopted) this.retiring.delete(key);
+      });
+      this.retiring.set(key, adopted);
+    }
   }
 
   private changed(entry: RegistryEntry): void {
     if (this.entries.get(projectFileOperationKey(entry.target)) !== entry) return;
     const snapshot = entry.coordinator.getSnapshot();
-    entry.checkpoint?.update(snapshot);
+    entry.checkpoint?.update(snapshot, entry.coordinator.pendingOnlyForRename());
     try {
       entry.transport.project(snapshot);
     } catch (error) {
@@ -694,14 +736,17 @@ export function adoptRendererRegistry(
 ): { readonly registry: MarkdownPersistenceRegistry; readonly current: boolean } {
   if (existing === undefined) return { registry: create(), current: true };
   if (existing.generation === REGISTRY_GENERATION) return { registry: existing, current: true };
-  // Older code may predate any public way to ask, so its two maps are read directly.
+  // Older code may predate any public way to ask, so its maps are read directly.
   const owned = existing as unknown as {
     readonly entries?: ReadonlyMap<string, unknown>;
     readonly initializing?: ReadonlyMap<string, unknown>;
+    readonly retiring?: ReadonlyMap<string, Promise<void>>;
   };
-  return owned.entries?.size === 0 && owned.initializing?.size === 0
-    ? { registry: create(), current: true }
-    : { registry: existing, current: false };
+  if (owned.entries?.size !== 0 || owned.initializing?.size !== 0)
+    return { registry: existing, current: false };
+  const registry = create();
+  registry.adoptRetirements(owned.retiring);
+  return { registry, current: true };
 }
 
 const registryKey = Symbol.for("scient.markdown-persistence-registry.v1");
