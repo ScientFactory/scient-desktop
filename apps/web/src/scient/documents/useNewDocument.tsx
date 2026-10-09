@@ -168,10 +168,17 @@ export function useNewDocument(input: {
   useLayoutEffect(() => {
     boundLease.current = input.lease;
   });
-  const busySince = useRef<number | null>(null);
+  // When the document now shown first refused as not ready; another document
+  // starts its own wait.
+  const busySince = useRef<{ readonly lease: unknown; readonly at: number } | null>(null);
   const busyRetry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [, setRetryTick] = useState(0);
   useEffect(() => () => clearTimeout(busyRetry.current), []);
+  useEffect(() => {
+    // Another document: its retry and deadline are its own.
+    clearTimeout(busyRetry.current);
+    busySince.current = null;
+  }, [input.lease]);
   // An in-place move was refused for this document: rename the ordinary way.
   const [moveRefused, setMoveRefused] = useState<string | null>(null);
   // The route is chosen before the rename starts, so the ordinary rename's
@@ -346,8 +353,9 @@ export function useNewDocument(input: {
               // Not ready yet (an editor composing, drafts settling): try again on a
               // later render, falling back to the ordinary rename after a while.
               if (outcome.reason === "busy") {
-                busySince.current ??= Date.now();
-                if (Date.now() - busySince.current < MOVE_BUSY_LIMIT_MS) {
+                if (busySince.current?.lease !== initiatingLease)
+                  busySince.current = { lease: initiatingLease, at: Date.now() };
+                if (Date.now() - busySince.current.at < MOVE_BUSY_LIMIT_MS) {
                   // Nothing else may render this view meanwhile: ask again shortly.
                   clearTimeout(busyRetry.current);
                   busyRetry.current = setTimeout(() => setRetryTick((tick) => tick + 1), 300);

@@ -1272,7 +1272,15 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   // An in-place rename waits while Visual holds unsaved input, or a build,
   // export or toolchain installation is being prepared or requested.
   const renameReady = useRef(!renameBlocked);
-  const buildBusy = build.requesting || build.installRequesting || build.managedInstall !== null;
+  // Anything on its way, or any build at all: checked again during the rename.
+  const buildBusy =
+    build.requesting ||
+    build.installRequesting ||
+    build.managedInstall !== null ||
+    !(
+      build.snapshot === null ||
+      (build.snapshot.state === "idle" && build.snapshot.descriptor === null)
+    );
   useLayoutEffect(() => {
     renameReady.current = !renameBlocked && !buildBusy;
   }, [renameBlocked, buildBusy]);
