@@ -2213,6 +2213,7 @@ export default function FilePreviewPanel({
                   onDownloadActions={setLatexDownloads}
                   onRenameContext={setLatexRename}
                   startBar={newDocument.startBar}
+                  templateActions={newDocument.templateActions}
                   environmentId={environmentId}
                   cwd={cwd}
                   relativePath={relativePath}

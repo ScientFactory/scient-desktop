@@ -20,7 +20,6 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import {
   FOLDER_DOCUMENT_MAIN,
-  DOCUMENT_TEMPLATES,
   NEW_DOCUMENT_LANGUAGES,
   type DocumentTemplateId,
   type NewDocumentLanguage,
@@ -33,6 +32,7 @@ import {
   sameTitleText,
   switchNewLatexDocument,
   templateCompanions,
+  templateContents,
   templateHasTitle,
 } from "./documentTemplates";
 import { caretOffsetInEditor, focusNewDocumentWhenOpen } from "./focusNewDocument";
@@ -51,9 +51,12 @@ import {
   placeNewDocument,
   untitledStem,
 } from "./newDocumentPlacement";
-import { newDocuments, pathHasLeftoverDrafts } from "./newDocuments";
+import { newDocuments, pathHasLeftoverDrafts, templateEdits } from "./newDocuments";
 import { TemplateRow } from "./TemplateRow";
 import { isPathTaken, useNewDocumentFiles } from "./useNewDocumentFiles";
+import { useTemplateChoices } from "./useTemplateChoices";
+import { useTemplateSaving } from "./useTemplateSaving";
+import { userTemplates } from "./userTemplates";
 import "./newDocument.css";
 
 function waitUntil(condition: () => boolean, timeoutMs: number): Promise<boolean> {
@@ -120,7 +123,7 @@ export function useNewDocument(input: {
   readonly snapshot: ReturnType<MarkdownPersistenceLease["getSnapshot"]> | null;
   readonly renameDisabled: boolean;
   readonly onRenamed: (destinationRelativePath: string) => void;
-}): { readonly startBar: ReactNode } {
+}): { readonly startBar: ReactNode; readonly templateActions: ReactNode } {
   const { environmentId, cwd, relativePath, lease, snapshot } = input;
   const key = relativePath === null ? null : { environmentId, cwd, relativePath };
   const entry = useSyncExternalStore(newDocuments.subscribe, () =>
@@ -128,6 +131,8 @@ export function useNewDocument(input: {
   );
   const renameFile = useAtomCommand(projectEnvironment.renameFile, { reportFailure: false });
   const documentFiles = useNewDocumentFiles();
+  const saving = useTemplateSaving({ environmentId, cwd, relativePath, lease });
+  const templateChoices = useTemplateChoices();
   const [storedDefault, setStoredDefault] = useLocalStorage(
     NEW_DOCUMENT_TEMPLATE_STORAGE_KEY,
     DEFAULT_NEW_DOCUMENT_TEMPLATE,
@@ -255,6 +260,7 @@ export function useNewDocument(input: {
       return keepName();
     }
     newDocuments.forget(key);
+    templateEdits.move(key, { ...key, relativePath: destination });
     release();
     onRenamed(destination);
     if (caretBefore !== null) focusNewDocumentWhenOpen({ offset: caretBefore });
@@ -297,6 +303,10 @@ export function useNewDocument(input: {
             // The editor remounts under the new name; the caret comes back where it was.
             const caret = caretBefore;
             newDocuments.forget(key);
+            templateEdits.move(key, {
+              ...key,
+              relativePath: result.value.destinationRelativePath,
+            });
             release();
             onRenamed(result.value.destinationRelativePath);
             if (caret !== null) focusNewDocumentWhenOpen({ offset: caret });
@@ -369,6 +379,7 @@ export function useNewDocument(input: {
         },
       );
       newDocuments.forget(key);
+      templateEdits.move(key, { ...key, relativePath: placed.relativePath });
       release();
       onRenamed(placed.relativePath);
       focusNewDocumentWhenOpen("title");
@@ -381,7 +392,8 @@ export function useNewDocument(input: {
     },
   );
 
-  if (!key || !entry || !lease || !snapshot) return { startBar: null };
+  if (!key || !entry || !lease || !snapshot)
+    return { startBar: saving.dialog, templateActions: saving.menuItems };
   const choose = (template: DocumentTemplateId, language: NewDocumentLanguage) => {
     if (switching.current) return;
     switching.current = true;
@@ -445,47 +457,67 @@ export function useNewDocument(input: {
   // Once written in, an unnamed document stops offering its name, and a folder
   // document stops offering to move.
   const naming = !(entry.settled && (savedTitle.length === 0 || folderDocument));
+  /** One of the person's templates, opened to edit: this document can update it. */
+  const editTemplate = (template: string) => {
+    templateEdits.set(key, template);
+    if (template !== entry.template) choose(template, entry.language);
+  };
+  /** A new template of the person's own, copied from the one chosen, opened to edit. */
+  const newTemplate = async (name: string) => {
+    const saved = await userTemplates.save({
+      ...templateContents(entry.template),
+      name,
+      preview: null,
+    });
+    editTemplate(saved.id);
+  };
   return {
+    templateActions: saving.menuItems,
     startBar: (
-      <NewDocumentOnPage
-        row={
-          untouched ? (
-            <TemplateRow
-              templates={DOCUMENT_TEMPLATES}
-              selected={entry.template}
-              defaultTemplate={defaultTemplate}
-              onSelect={(template) => {
-                if (isDocumentTemplateId(template)) choose(template, entry.language);
-              }}
-              onSetDefault={setStoredDefault}
-              strip={strip}
-              trailing={
-                <LanguageMenu
-                  language={entry.language}
-                  strip={strip}
-                  onLanguage={(language) => choose(entry.template, language)}
-                />
-              }
-            />
-          ) : null
-        }
-        name={
-          titled || !naming
-            ? null
-            : {
-                value: entry.name ?? "",
-                onCommit: (name) => newDocuments.update(key, { name }),
-              }
-        }
-        hint={titled && naming}
-        currentFileName={fileName(key.relativePath)}
-        fileNameFor={(title) =>
-          folderDocument
-            ? `${newDocumentStem(title)}/${FOLDER_DOCUMENT_MAIN}`
-            : fileName(newDocumentCandidate(newDocumentStem(title), entry.format, 1))
-        }
-        onEdit={entry.settled ? null : () => newDocuments.update(key, { settled: true })}
-      />
+      <>
+        <NewDocumentOnPage
+          row={
+            untouched ? (
+              <TemplateRow
+                templates={templateChoices}
+                selected={entry.template}
+                defaultTemplate={defaultTemplate}
+                onSelect={(template) => {
+                  if (isDocumentTemplateId(template)) choose(template, entry.language);
+                }}
+                onSetDefault={setStoredDefault}
+                onEdit={editTemplate}
+                onNewTemplate={newTemplate}
+                strip={strip}
+                trailing={
+                  <LanguageMenu
+                    language={entry.language}
+                    strip={strip}
+                    onLanguage={(language) => choose(entry.template, language)}
+                  />
+                }
+              />
+            ) : null
+          }
+          name={
+            titled || !naming
+              ? null
+              : {
+                  value: entry.name ?? "",
+                  onCommit: (name) => newDocuments.update(key, { name }),
+                }
+          }
+          hint={titled && naming}
+          currentFileName={fileName(key.relativePath)}
+          fileNameFor={(title) =>
+            folderDocument
+              ? `${newDocumentStem(title)}/${FOLDER_DOCUMENT_MAIN}`
+              : fileName(newDocumentCandidate(newDocumentStem(title), entry.format, 1))
+          }
+          onEdit={entry.settled ? null : () => newDocuments.update(key, { settled: true })}
+        />
+        {saving.dialog}
+      </>
     ),
   };
 }

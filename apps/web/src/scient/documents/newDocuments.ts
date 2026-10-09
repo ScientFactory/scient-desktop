@@ -69,6 +69,35 @@ export const newDocuments = {
 };
 
 /**
+ * Documents opened to edit one of the person's templates, by document: their
+ * menu offers to update that template. Held in memory; a document keeps its
+ * link through Scient's own renames and moves.
+ */
+const editing = new Map<string, string>();
+
+export const templateEdits = {
+  get(key: NewDocumentKey): string | null {
+    return editing.get(keyOf(key)) ?? null;
+  },
+  set(key: NewDocumentKey, templateId: string) {
+    editing.set(keyOf(key), templateId);
+    notify();
+  },
+  move(from: NewDocumentKey, to: NewDocumentKey) {
+    const templateId = editing.get(keyOf(from));
+    if (templateId === undefined) return;
+    editing.delete(keyOf(from));
+    editing.set(keyOf(to), templateId);
+    notify();
+  },
+  /** A deleted template is no longer edited anywhere. */
+  forgetTemplate(templateId: string) {
+    for (const [key, id] of editing) if (id === templateId) editing.delete(key);
+    notify();
+  },
+};
+
+/**
  * Whether the LaTeX editor still holds unfinished field text or recovered
  * work under this path, from an earlier file of the same name. A new document
  * takes another name rather than inheriting it; nothing stored is removed.

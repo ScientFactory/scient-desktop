@@ -3,8 +3,8 @@ import * as Schema from "effect/Schema";
 import { getLocalStorageItem } from "~/hooks/useLocalStorage";
 
 import {
-  DOCUMENT_TEMPLATES,
   NEW_DOCUMENT_LANGUAGES,
+  isDocumentTemplateId,
   type DocumentTemplateId,
   type NewDocumentLanguage,
 } from "./documentTemplates";
@@ -29,9 +29,7 @@ const RENAMED_TEMPLATES: Readonly<Record<string, DocumentTemplateId>> = {
 
 export function normalizeNewDocumentTemplate(value: string | null | undefined): DocumentTemplateId {
   const id = (value && RENAMED_TEMPLATES[value]) ?? value;
-  return (
-    DOCUMENT_TEMPLATES.find((template) => template.id === id)?.id ?? DEFAULT_NEW_DOCUMENT_TEMPLATE
-  );
+  return id && isDocumentTemplateId(id) ? id : DEFAULT_NEW_DOCUMENT_TEMPLATE;
 }
 
 export function normalizeNewDocumentLanguage(

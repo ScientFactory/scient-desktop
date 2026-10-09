@@ -122,29 +122,48 @@ export function reorderTemplates(
 }
 
 /** What a template's menu offers. */
-export type TemplateAction = "default" | "page" | "more" | "hide";
+export type TemplateAction = "default" | "page" | "more" | "hide" | "edit" | "rename" | "delete";
 
-/** The menu for one template: its labels, in order, for where it is now. */
+export interface TemplateMenuItem {
+  readonly id: TemplateAction;
+  readonly label: string;
+  readonly disabled?: true;
+  readonly destructive?: true;
+  /** Starts a group of its own. */
+  readonly separatorBefore?: true;
+}
+
+/**
+ * The menu for one template, for where it is now. Scient's own templates can
+ * be hidden; the person's own can be edited, renamed or deleted.
+ */
 export function templateActions(
   layout: TemplateLayout,
   id: string,
   defaultTemplate: string,
-): readonly { readonly id: TemplateAction; readonly label: string; readonly disabled?: true }[] {
-  return [
+  own = false,
+): readonly TemplateMenuItem[] {
+  const placing: TemplateMenuItem[] = [
     defaultTemplate === id
       ? { id: "default", label: "Default", disabled: true }
       : { id: "default", label: "Set as default" },
     layout.page.includes(id)
       ? { id: "more", label: "Move to More" }
       : { id: "page", label: "Move to page" },
-    { id: "hide", label: "Hide" },
+  ];
+  if (!own) return [...placing, { id: "hide", label: "Hide", separatorBefore: true }];
+  return [
+    ...placing,
+    { id: "edit", label: "Edit", separatorBefore: true },
+    { id: "rename", label: "Rename…" },
+    { id: "delete", label: "Delete", destructive: true },
   ];
 }
 
-/** A layout change a template's menu asks for; "default" changes no layout. */
+/** A layout change a template's menu asks for. */
 export function applyTemplateAction(
   layout: TemplateLayout,
-  action: Exclude<TemplateAction, "default">,
+  action: "page" | "more" | "hide",
   id: string,
 ): TemplateLayout {
   if (action === "page") return moveTemplateToPage(layout, id);

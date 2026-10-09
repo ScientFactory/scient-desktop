@@ -8,10 +8,7 @@ import {
   useRightPanelStore,
 } from "~/rightPanelStore";
 import { createComputeContextId } from "~/scient/compute/computeContextStore";
-import {
-  refreshProjectFiles,
-  setProjectFileQueryData,
-} from "~/components/files/projectFilesQueryState";
+import { setProjectFileQueryData } from "~/components/files/projectFilesQueryState";
 import { toastManager } from "~/components/ui/toast";
 import {
   createNewDocumentSource,
@@ -21,9 +18,8 @@ import { focusNewDocumentWhenOpen } from "~/scient/documents/focusNewDocument";
 import { placeNewDocument, untitledStem } from "~/scient/documents/newDocumentPlacement";
 import { newDocuments, pathHasLeftoverDrafts } from "~/scient/documents/newDocuments";
 import { useNewDocumentFiles } from "~/scient/documents/useNewDocumentFiles";
+import { userTemplates } from "~/scient/documents/userTemplates";
 import { readNewDocumentDefaults } from "~/scient/documents/documentPreferences";
-import { projectEnvironment } from "~/state/projects";
-import { useAtomCommand } from "~/state/use-atom-command";
 import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
 import { useScientFileOpening } from "~/scient/fileOpening/useScientFileOpening";
 import type { useActivePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
@@ -112,9 +108,11 @@ export function useScientRightPanelOpeners(input: {
       if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
       const environmentId = activeThreadRef.environmentId;
       const cwd = activeWorkspaceRoot;
-      const { template, language } = readNewDocumentDefaults();
-      const contents = createNewDocumentSource({ format, template, language });
       void (async () => {
+        // A default the person chose from their own templates needs those read.
+        await userTemplates.ready();
+        const { template, language } = readNewDocumentDefaults();
+        const contents = createNewDocumentSource({ format, template, language });
         const placed = await placeNewDocument({
           format,
           base: "",

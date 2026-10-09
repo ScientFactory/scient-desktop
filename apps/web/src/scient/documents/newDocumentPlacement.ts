@@ -4,7 +4,9 @@ import {
   type NewDocumentFormat,
   isFolderTemplate,
   newDocumentCandidate,
+  newDocumentStem,
   templateCompanions,
+  templateName,
 } from "./documentTemplates";
 import { type CreatedCompanion, syncCompanionFiles } from "./newDocumentCompanions";
 
@@ -91,7 +93,9 @@ export function newDocumentBase(relativePath: string, template: DocumentTemplate
 
 /** The name a new document has until it takes its title's. */
 export function untitledStem(format: NewDocumentFormat, template: DocumentTemplateId): string {
-  return format === "latex" && isFolderTemplate(template) ? template : "untitled";
+  return format === "latex" && isFolderTemplate(template)
+    ? newDocumentStem(templateName(template))
+    : "untitled";
 }
 
 /**

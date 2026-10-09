@@ -16,6 +16,7 @@ import thesisMethods from "./templates/thesis/chapters/methods.tex?raw";
 import thesisResults from "./templates/thesis/chapters/results.tex?raw";
 import thesisSource from "./templates/thesis/main.tex?raw";
 import { updateLatexLanguageSource } from "../latex/latexLanguage";
+import { userTemplates } from "./userTemplates";
 
 /**
  * Scient's own LaTeX templates, in the order a new document offers them. Each
@@ -38,18 +39,28 @@ export const DOCUMENT_TEMPLATES = [
   { id: "letter", name: "Letter", source: letterSource },
   { id: "cv", name: "CV", source: cvSource },
 ] as const;
-export type DocumentTemplate = (typeof DOCUMENT_TEMPLATES)[number];
-export type DocumentTemplateId = DocumentTemplate["id"];
+export type BuiltInTemplateId = (typeof DOCUMENT_TEMPLATES)[number]["id"];
+/** A built-in template's id, or one of the person's own (`user:…`). */
+export type DocumentTemplateId = string;
 
-export function isDocumentTemplateId(id: string): id is DocumentTemplateId {
-  return DOCUMENT_TEMPLATES.some((template) => template.id === id);
+function builtIn(id: DocumentTemplateId) {
+  return DOCUMENT_TEMPLATES.find((template) => template.id === id) ?? null;
+}
+
+/** Whether a template exists: Scient's, or the person's own still kept. */
+export function isDocumentTemplateId(id: string): boolean {
+  return builtIn(id) !== null || userTemplates.get(id) !== null;
+}
+
+export function templateName(id: DocumentTemplateId): string {
+  return builtIn(id)?.name ?? userTemplates.get(id)?.name ?? "Blank";
 }
 
 /**
  * Templates that are a folder of their own: the document is the folder's
  * `main.tex`, and these files, relative to it, are created with it.
  */
-const FOLDER_TEMPLATES: Partial<Record<DocumentTemplateId, Readonly<Record<string, string>>>> = {
+const FOLDER_TEMPLATES: Partial<Record<BuiltInTemplateId, Readonly<Record<string, string>>>> = {
   thesis: {
     "chapters/introduction.tex": thesisIntroduction,
     "chapters/background.tex": thesisBackground,
@@ -64,8 +75,16 @@ const FOLDER_TEMPLATES: Partial<Record<DocumentTemplateId, Readonly<Record<strin
 /** The main file of a template that is a folder. */
 export const FOLDER_DOCUMENT_MAIN = "main.tex";
 
+/** The files a template makes beside its main file, relative to its folder. */
+function templateFiles(template: DocumentTemplateId): Readonly<Record<string, string>> | null {
+  const own = builtIn(template);
+  if (own) return FOLDER_TEMPLATES[own.id] ?? null;
+  const files = userTemplates.get(template)?.files;
+  return files && Object.keys(files).length > 0 ? files : null;
+}
+
 export function isFolderTemplate(template: DocumentTemplateId): boolean {
-  return FOLDER_TEMPLATES[template] !== undefined;
+  return templateFiles(template) !== null;
 }
 
 /** A file created beside a new document, relative to its folder. */
@@ -82,7 +101,7 @@ export function templateCompanions(
   template: DocumentTemplateId,
   source: string,
 ): readonly CompanionFile[] {
-  const files = Object.entries(FOLDER_TEMPLATES[template] ?? {}).map(([name, contents]) => ({
+  const files = Object.entries(templateFiles(template) ?? {}).map(([name, contents]) => ({
     name,
     contents,
   }));
@@ -110,7 +129,7 @@ export function escapeDocumentText(value: string): string {
 }
 
 function templateSource(template: DocumentTemplateId): string {
-  return DOCUMENT_TEMPLATES.find((entry) => entry.id === template)!.source;
+  return builtIn(template)?.source ?? userTemplates.get(template)?.source ?? blankSource;
 }
 
 /**
@@ -220,6 +239,35 @@ export function newDocumentTitle(source: string, format: NewDocumentFormat): str
     .replace(/[{}$~^_%&#]/gu, " ")
     .replace(/\s+/gu, " ")
     .trim();
+}
+
+/** A source with its title emptied: how a template keeps a document. */
+export function withEmptyTitle(source: string): string {
+  return withRawLatexTitle(source, "");
+}
+
+/** A template's own source and files, as a new template copied from it starts. */
+export function templateContents(template: DocumentTemplateId): {
+  readonly source: string;
+  readonly files: Readonly<Record<string, string>>;
+} {
+  return { source: templateSource(template), files: templateFiles(template) ?? {} };
+}
+
+/**
+ * The project files a LaTeX source includes (`\include`, `\input`, `\subfile`),
+ * relative to its folder; none outside it.
+ */
+export function includedFiles(source: string): readonly string[] {
+  const names = new Set<string>();
+  const pattern = /^[^%\n]*?\\(?:include|input|subfile)\s*\{([^}]+)\}/gmu;
+  for (const match of source.matchAll(pattern)) {
+    const name = match[1]!.trim().replaceAll("\\", "/");
+    if (!name || name.startsWith("/") || name.split("/").some((part) => part === ".." || !part))
+      continue;
+    names.add(/\.[A-Za-z]+$/u.test(name) ? name : `${name}.tex`);
+  }
+  return [...names];
 }
 
 function withRawLatexTitle(source: string, rawTitle: string): string {

@@ -135,6 +135,8 @@ interface ScientLatexSurfaceProps {
   readonly onRenameContext: (context: LatexRenameContext | null) => void;
   /** A row shown above the editor, such as a new document's template choice. */
   readonly startBar: ReactNode;
+  /** Menu items for the document as a template, shown with Export. */
+  readonly templateActions: ReactNode;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly relativePath: string;
@@ -1245,6 +1247,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         </IfRowHidden>
       ) : null}
       {withExport ? exportItems : null}
+      {withExport ? props.templateActions : null}
     </>
   );
   // The view switch and the build status. With reader controls in the row they
@@ -1406,7 +1409,16 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     afterZoom: <div className="scient-latex-before-build" aria-hidden="true" />,
     trailing: buildButton,
     moreActions: documentMenuItems(!editor),
-    ...(editor ? { documentActions: exportMenu(true) } : {}),
+    ...(editor
+      ? {
+          documentActions: (
+            <>
+              {exportMenu(true)}
+              {props.templateActions}
+            </>
+          ),
+        }
+      : {}),
     onHosted: onReaderHosted,
   });
   return (

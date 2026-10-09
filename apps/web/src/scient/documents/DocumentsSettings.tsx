@@ -49,8 +49,9 @@ import {
   normalizeNewDocumentTemplate,
 } from "./documentPreferences";
 import { useTemplateLayout } from "./documentTemplateLayout";
-import { DOCUMENT_TEMPLATES, NEW_DOCUMENT_LANGUAGES } from "./documentTemplates";
+import { NEW_DOCUMENT_LANGUAGES } from "./documentTemplates";
 import { useLatexInstallation, type LatexInstallationController } from "./useLatexInstallation";
+import { useTemplateChoices } from "./useTemplateChoices";
 
 const SELECTED_FORMAT_STORAGE_KEY = "scient.documentsSettingsFormat";
 const DOCUMENT_FORMATS = ["latex", "markdown"] as const;
@@ -179,10 +180,12 @@ function LatexPanel(props: {
   );
   // The templates as a new document offers them: its page, then More. A hidden
   // template stays listed while it is the default.
-  const { layout } = useTemplateLayout(DOCUMENT_TEMPLATES.map((entry) => entry.id));
+  const templates = useTemplateChoices();
+  const { layout } = useTemplateLayout(templates.map((entry) => entry.id));
   const current = normalizeNewDocumentTemplate(template);
   const choices = (ids: readonly string[]) =>
-    DOCUMENT_TEMPLATES.filter((entry) => ids.includes(entry.id))
+    templates
+      .filter((entry) => ids.includes(entry.id))
       .toSorted((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id))
       .map(({ id, name }) => ({ id, name }));
   const more = layout.hidden.includes(current) ? [...layout.more, current] : layout.more;

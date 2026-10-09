@@ -75,8 +75,11 @@ describe("template layout", () => {
     expect(templateActions(initial, "cv", "cv")).toEqual([
       { id: "default", label: "Default", disabled: true },
       { id: "page", label: "Move to page" },
-      { id: "hide", label: "Hide" },
+      { id: "hide", label: "Hide", separatorBefore: true },
     ]);
+    expect(templateActions(initial, "user:notes", "blank", true).map((item) => item.label)).toEqual(
+      ["Set as default", "Move to page", "Edit", "Rename…", "Delete"],
+    );
     expect(applyTemplateAction(initial, "page", "cv").page.at(-1)).toBe("cv");
     expect(applyTemplateAction(initial, "more", "article").more[0]).toBe("article");
     expect(applyTemplateAction(initial, "hide", "letter").hidden).toEqual(["letter"]);
