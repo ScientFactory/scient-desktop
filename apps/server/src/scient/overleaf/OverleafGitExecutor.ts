@@ -547,6 +547,7 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
   return OverleafGitExecutor.of({ availability, execute });
 });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const layer = (options: OverleafGitExecutorOptions) =>
   Layer.effect(OverleafGitExecutor, make(options));
 

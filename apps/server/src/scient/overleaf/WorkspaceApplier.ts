@@ -49,19 +49,43 @@ const Plan = Schema.Struct({
   guards: Schema.Array(Schema.Array(Schema.String)),
   markerPaths: Schema.Array(Schema.String),
 });
-const State = Schema.Struct({
-  version: Schema.Literal(1),
+const Intent = Schema.Struct({
+  version: Schema.Literal(2),
   cwd: Schema.String,
   rootIdentity: Schema.Struct({ dev: Schema.String, ino: Schema.String }),
   plan: Plan,
+});
+const Progress = Schema.Struct({
+  version: Schema.Literal(2),
+  intentRevision: Schema.String,
   steps: Schema.Record(Schema.String, Schema.Literals(["done", "skipped", "attention"])),
   outcomes: Schema.Array(Schema.Literals(["pending", "done", "skipped", "interrupted"])),
   phase: Schema.Literals(["applying", "complete", "replan"]),
   nextBase: StringMap,
 });
-type State = typeof State.Type;
+type State = typeof Intent.Type & typeof Progress.Type;
+const LegacyState = Schema.Struct({
+  ...Intent.fields,
+  ...Progress.fields,
+  version: Schema.Literal(1),
+  intentRevision: Schema.optionalKey(Schema.String),
+});
 type StoredPlan = typeof Plan.Type;
-const decodeState = Schema.decodeUnknownSync(Schema.fromJsonString(State));
+const decodeIntent = Schema.decodeUnknownSync(Schema.fromJsonString(Intent));
+const encodeIntent = Schema.encodeSync(Schema.fromJsonString(Intent));
+const decodeSaved = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Union([Progress, LegacyState])),
+);
+function progress(state: State): typeof Progress.Type {
+  return {
+    version: 2,
+    intentRevision: state.intentRevision,
+    steps: state.steps,
+    outcomes: state.outcomes,
+    phase: state.phase,
+    nextBase: state.nextBase,
+  };
+}
 const encodePlan = Schema.encodeSync(Schema.fromJsonString(Plan));
 export interface WorkspaceApplyPlan {
   readonly base: ReadonlyMap<string, string>;
@@ -98,6 +122,7 @@ export class WorkspaceApplyError extends Schema.TaggedError<WorkspaceApplyError>
   "WorkspaceApplyError",
   { cause: Schema.Defect() },
 ) {}
+/** @public Context tag for the local application service. */
 export class WorkspaceApplier extends Context.Service<
   WorkspaceApplier,
   {
@@ -108,7 +133,13 @@ export class WorkspaceApplier extends Context.Service<
 >()("t3/scient/overleaf/WorkspaceApplier") {}
 export interface ApplierHooks {
   readonly at?: (
-    point: "recorded" | "before-step" | "after-step" | "step-recorded" | "base-recorded",
+    point:
+      | "plan-recorded"
+      | "recorded"
+      | "before-step"
+      | "after-step"
+      | "step-recorded"
+      | "base-recorded",
     relativePath?: string,
   ) => Promise<void>;
 }
@@ -123,7 +154,7 @@ function storePlan(input: WorkspaceApplyPlan): StoredPlan {
       {
         revision: bytesRevision(file.bytes),
         contents: Buffer.from(file.bytes).toString("base64"),
-        executable: file.executable ?? false,
+        executable: false,
       },
     ]),
   );
@@ -191,7 +222,6 @@ function validatePlan(plan: StoredPlan) {
   }
   let total = 0;
   for (const file of Object.values(plan.target)) {
-    if (file.executable) throw new Error("Executable manuscript entries are not supported.");
     const bytes = Buffer.from(file.contents, "base64");
     total += bytes.length;
     if (bytes.length > 50 * 1024 * 1024 || bytesRevision(bytes) !== file.revision)
@@ -228,7 +258,6 @@ async function revision(cwd: string, name: string) {
   try {
     const stat = await NodeFSP.lstat(NodePath.join(cwd, name));
     if (stat.isDirectory()) return null;
-    if (stat.mode & 0o111) throw new Error("Executable manuscript entries are not supported.");
     return await fileRevision(NodePath.join(cwd, name));
   } catch (e) {
     if (["ENOENT", "ENOTDIR"].includes((e as NodeJS.ErrnoException).code ?? "")) return null;
@@ -260,25 +289,72 @@ export const make = (hooks: ApplierHooks = {}) =>
               if (!stat.isDirectory() || stat.isSymbolicLink())
                 throw new Error("Unsafe apply directory.");
               const recordPath = NodePath.join(directory, "apply.json");
+              const intentPath = NodePath.join(directory, "plan.json");
               let state: State;
-              try {
-                state = decodeState(await NodeFSP.readFile(recordPath, "utf8"));
-              } catch (e) {
-                if ((e as NodeJS.ErrnoException).code !== "ENOENT" || !input.plan) throw e;
-                const plan = storePlan(input.plan);
-                validatePlan(plan);
-                state = {
-                  version: 1,
-                  cwd,
-                  rootIdentity,
-                  plan,
-                  steps: {},
-                  outcomes: plan.units.map(() => "pending"),
-                  phase: "applying",
-                  nextBase: plan.base,
+              const record = await NodeFSP.readFile(recordPath, "utf8").catch((e) => {
+                if (e.code !== "ENOENT") throw e;
+                return null;
+              });
+              let intentText = await NodeFSP.readFile(intentPath, "utf8").catch((e) => {
+                if (e.code !== "ENOENT") throw e;
+                return null;
+              });
+              const saved = record === null ? null : decodeSaved(record);
+              // Upgrade old draft records once, before any further local mutation.
+              if (saved?.version === 1) {
+                const legacy = saved;
+                validatePlan(legacy.plan);
+                const intent = {
+                  version: 2 as const,
+                  cwd: legacy.cwd,
+                  rootIdentity: legacy.rootIdentity,
+                  plan: legacy.plan,
                 };
-                await durableJson(recordPath, state);
-                await hooks.at?.("recorded");
+                const expected = encodeIntent(intent);
+                if (intentText !== null && intentText !== expected)
+                  throw new Error("Legacy apply plan identity changed.");
+                if (intentText === null) {
+                  await durableJson(intentPath, intent);
+                  await hooks.at?.("plan-recorded");
+                }
+                intentText = expected;
+                state = {
+                  ...legacy,
+                  version: 2,
+                  intentRevision: bytesRevision(Buffer.from(intentText)),
+                };
+                await durableJson(recordPath, progress(state));
+              } else {
+                if (intentText === null) {
+                  if (saved !== null) throw new Error("Missing durable apply intent.");
+                  if (!input.plan) throw new Error("Missing apply plan.");
+                  const plan = storePlan(input.plan);
+                  validatePlan(plan);
+                  const intent = { version: 2 as const, cwd, rootIdentity, plan };
+                  await durableJson(intentPath, intent);
+                  intentText = encodeIntent(intent);
+                  await hooks.at?.("plan-recorded");
+                }
+                const intent = decodeIntent(intentText);
+                const intentRevision = bytesRevision(Buffer.from(intentText));
+                if (saved !== null) {
+                  if (saved.intentRevision !== intentRevision)
+                    throw new Error("Apply plan identity changed.");
+                  state = { ...intent, ...saved };
+                } else {
+                  // A crash between the immutable intent and initial progress is safe:
+                  // no file mutation can start until both records have been synced.
+                  state = {
+                    ...intent,
+                    intentRevision,
+                    steps: {},
+                    outcomes: intent.plan.units.map(() => "pending"),
+                    phase: "applying",
+                    nextBase: intent.plan.base,
+                  };
+                  await durableJson(recordPath, progress(state));
+                  await hooks.at?.("recorded");
+                }
               }
               if (state.cwd !== cwd) throw new Error("Apply workspace binding changed.");
               await assertRootBinding(cwd, state.rootIdentity);
@@ -312,7 +388,7 @@ export const make = (hooks: ApplierHooks = {}) =>
                       (await revision(cwd, name)) !== (ownValue(state.plan.captured, name) ?? null)
                     ) {
                       state = { ...state, phase: "replan" };
-                      await durableJson(recordPath, state);
+                      await durableJson(recordPath, progress(state));
                       break;
                     }
                   }
@@ -324,7 +400,7 @@ export const make = (hooks: ApplierHooks = {}) =>
           let state = begin.state;
           const save = () =>
             Effect.tryPromise({
-              try: () => durableJson(begin.recordPath, state),
+              try: () => durableJson(begin.recordPath, progress(state)),
               catch: (cause) => new WorkspaceApplyError({ cause }),
             });
           if (state.phase === "applying")
@@ -526,7 +602,7 @@ export const make = (hooks: ApplierHooks = {}) =>
                 }
               }
               const interrupted = state.plan.guards.filter(
-                (_, i) => state.outcomes[i] === "interrupted" || state.outcomes[i] === "skipped",
+                (_, i) => state.outcomes[i] === "interrupted",
               );
               return {
                 outcome:
@@ -554,6 +630,7 @@ export const make = (hooks: ApplierHooks = {}) =>
       );
     return WorkspaceApplier.of({ apply });
   });
+/** @public Service construction is part of the canonical Effect module API. */
 export const layer = Layer.effect(WorkspaceApplier, make());
 
 async function readMarkerText(path: string): Promise<string> {

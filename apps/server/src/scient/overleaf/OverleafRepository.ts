@@ -22,8 +22,8 @@ import { type ManuscriptTreeProblem, manuscriptTreeProblem } from "./manuscriptP
 const NETWORK_TIMEOUT = "5 minutes";
 const OID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u;
 /** Labels Git writes into conflict markers; they are branch names in the private repository. */
-export const LOCAL_SIDE_LABEL = "Scient";
-export const REMOTE_SIDE_LABEL = "Overleaf";
+const LOCAL_SIDE_LABEL = "Scient";
+const REMOTE_SIDE_LABEL = "Overleaf";
 
 export interface TreeEntry {
   readonly path: string;
@@ -602,4 +602,5 @@ export const make = Effect.gen(function* () {
   });
 });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const layer = Layer.effect(OverleafRepository, make);

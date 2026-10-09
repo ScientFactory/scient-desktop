@@ -31,7 +31,7 @@ export type FileChange =
   | { readonly kind: "added" | "deleted" | "modified"; readonly path: string }
   | { readonly kind: "renamed"; readonly from: string; readonly to: string };
 
-export const changePaths = (change: FileChange): ReadonlyArray<string> =>
+const changePaths = (change: FileChange): ReadonlyArray<string> =>
   change.kind === "renamed" ? [change.from, change.to] : [change.path];
 
 /**

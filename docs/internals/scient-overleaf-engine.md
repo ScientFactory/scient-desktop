@@ -20,7 +20,10 @@ The generated table carries its upstream source hash and Unicode license.
 
 `WorkspaceApplier` receives immutable captured, desired, base and remote trees,
 conflict groups, rename identities and the paths where Scient deliberately wrote
-conflict material. It stores the apply intent before changing manuscript files.
+conflict material. It stores the apply intent and content once in `plan.json`, then durably updates
+a small, hash-bound `apply.json` progress record. Recovery validates both before
+changing manuscript files; old draft records are upgraded once without replaying
+completed steps.
 A stale capture at initial preflight yields `replan` without writing any file.
 Destinations precede source removal for renames. File/folder substitutions are
 one unit, with blocking entries removed only after durable retention and a
@@ -43,12 +46,14 @@ On macOS/Linux an explicitly supplied host-owned helper can exchange the staged
 file with the manuscript atomically. Compile the shipped C source with:
 
 ```sh
-node scripts/stage-file-exchange.ts
+pnpm run build:file-exchange
 ```
 
 The helper is not discovered from the workspace or PATH at runtime. Its current
 consumer supplies an absolute path; packaged resolution and signing remain an
-integration gate. Without a helper the primitive moves the old file aside and
+integration gate. The coordinator must supply the helper again on recovery of
+an exchange-based record; it cannot silently switch that record to the fallback.
+Without a helper the primitive moves the old file aside and
 publishes a complete file through an exclusive hard link. Unsupported link
 volumes are refused before displacement. This fallback has a missing-path window
 and recovery may be needed to restore a path after a crash.
@@ -69,8 +74,10 @@ and whether the current folder matches the desired content. `complete` alone is
 not permission to publish: the coordinator must also verify its immutable review
 and current tree. A later edit makes the result report attention. The next
 coordinator must capture and verify the exact publication tree independently.
-Executable entries and alias-only renames are explicitly refused until the
-planner and captures represent permission changes and alias moves consistently.
+Local executable permissions do not participate in content revisions and do not
+block application; unchanged files retain their permissions. Target executable
+flags are ignored. Alias-only renames remain refused until captures and the
+planner represent alias moves consistently.
 Marker detection is conservative and runs only on the recorded conflict paths;
 ordinary Markdown underline headings are not publication failures.
 
