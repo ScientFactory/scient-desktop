@@ -28,6 +28,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Redacted from "effect/Redacted";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -1026,6 +1027,108 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }),
     ),
   );
+
+  for (const failureDuringAcquisition of [true, false]) {
+    it.effect(
+      `closes parent handles and keeps settings available when a watch stream fails ${failureDuringAcquisition ? "during destination acquisition" : "after ready"}`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const native = yield* SettingsDirectoryWatch;
+            const entered = yield* Deferred.make<void>();
+            const neverRegister = yield* Deferred.make<void>();
+            const allClosed = yield* Deferred.make<void>();
+            const streamErrors = yield* Queue.make<string, PlatformError.PlatformError>();
+            yield* Effect.addFinalizer(() => Queue.shutdown(streamErrors));
+            const closed = vi.fn();
+            const config = yield* ServerConfig.ServerConfig;
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const dotfiles = yield* fs.makeTempDirectoryScoped({
+              prefix: "t3-settings-stream-failure-",
+            });
+            const destination = path.join(dotfiles, "target", "settings.json");
+            yield* writeFileStringAtomically({
+              filePath: destination,
+              contents: `{ "responseStreamingMode": "turn" }`,
+            });
+            yield* fs.remove(config.settingsPath, { force: true });
+            yield* fs.symlink(destination, config.settingsPath);
+            let parentCount = 0;
+            const watch = {
+              acquire: Effect.fnUntraced(function* (directory: string) {
+                if (directory === path.dirname(destination) && failureDuringAcquisition) {
+                  yield* Deferred.succeed(entered, undefined);
+                  yield* Deferred.await(neverRegister);
+                }
+                const events = yield* native.acquire(directory);
+                yield* Effect.addFinalizer(() =>
+                  Effect.gen(function* () {
+                    closed(directory);
+                    if (closed.mock.calls.length === (failureDuringAcquisition ? 2 : 3)) {
+                      yield* Deferred.succeed(allClosed, undefined);
+                    }
+                  }),
+                );
+                if (directory === path.dirname(config.settingsPath) && ++parentCount === 1) {
+                  return Stream.merge(events, Stream.fromQueue(streamErrors));
+                }
+                return events;
+              }),
+            };
+            yield* Effect.gen(function* () {
+              const service = yield* ServerSettingsModule.ServerSettingsService;
+              const startup = yield* service.start.pipe(Effect.forkChild);
+              if (failureDuringAcquisition) yield* Deferred.await(entered);
+              else yield* Fiber.join(startup);
+              yield* Queue.fail(
+                streamErrors,
+                PlatformError.systemError({
+                  _tag: "Unknown",
+                  module: "FileSystem",
+                  method: "watch",
+                  description: "controlled parent stream failure",
+                }),
+              );
+              yield* Fiber.join(startup).pipe(Effect.timeout("2 seconds"));
+              yield* service.ready.pipe(Effect.timeout("2 seconds"));
+              yield* Deferred.await(allClosed).pipe(Effect.timeout("2 seconds"));
+              assert.equal(
+                closed.mock.calls.filter(
+                  ([directory]) => directory === path.dirname(config.settingsPath),
+                ).length,
+                2,
+              );
+              assert.equal(
+                closed.mock.calls.filter(([directory]) => directory === path.dirname(destination))
+                  .length,
+                failureDuringAcquisition ? 0 : 1,
+              );
+              assert.equal((yield* service.getSettings).responseStreamingMode, "turn");
+              assert.equal(
+                (yield* service.updateSettings({ responseStreamingMode: "paragraph" }))
+                  .responseStreamingMode,
+                "paragraph",
+              );
+            }).pipe(
+              Effect.provide(
+                makeServerSettingsLayer(
+                  ServerSecretStore.layer,
+                  Layer.succeed(ServerConfig.ServerConfig, config),
+                ),
+              ),
+              Effect.provideService(SettingsDirectoryWatch, watch),
+            );
+            assert.equal(closed.mock.calls.length, failureDuringAcquisition ? 2 : 3);
+          }),
+        ).pipe(
+          TestClock.withLive,
+          Effect.provide(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3code-server-settings-ready-test-" }),
+          ),
+        ),
+    );
+  }
 
   it.effect(
     "closes acquired link watches when startup is interrupted during destination registration",

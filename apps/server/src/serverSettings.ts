@@ -1440,8 +1440,12 @@ const make = Effect.gen(function* () {
     }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
 
     // SCIENT-FORK:START — resolve the initial link only after parent registration.
-    const settingsFileEvents = yield* Scope.provide(acquireFileChanges(settingsPath), watcherScope);
-    const linkEvents = yield* Scope.provide(acquireFileChanges(settingsPath), watcherScope);
+    const parentWatchScope = yield* Scope.fork(watcherScope, "sequential");
+    const settingsFileEvents = yield* Scope.provide(
+      acquireFileChanges(settingsPath),
+      parentWatchScope,
+    );
+    const linkEvents = yield* Scope.provide(acquireFileChanges(settingsPath), parentWatchScope);
     const targetWatchReady = yield* Deferred.make<void>();
     // SCIENT-FORK:END
     const initialLinkTarget = yield* watchLinkTarget;
@@ -1468,6 +1472,13 @@ const make = Effect.gen(function* () {
     );
 
     yield* Stream.runForEach(debouncedSettingsEvents, () => revalidateAndEmitSafely).pipe(
+      // SCIENT-FORK:START — a failed consumer cannot orphan parent handles or startup readiness.
+      Effect.ensuring(
+        Scope.close(parentWatchScope, Exit.void).pipe(
+          Effect.andThen(Deferred.succeed(targetWatchReady, undefined)),
+        ),
+      ),
+      // SCIENT-FORK:END
       Effect.ignoreCause({ log: true }),
       Effect.forkIn(watcherScope),
       Effect.asVoid,
