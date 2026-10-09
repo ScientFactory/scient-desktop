@@ -1,14 +1,26 @@
-/* The template and language row over a new LaTeX document, until its first edit. */
+/*
+ * The template and language row of a new LaTeX document, until its first edit. It sits
+ * in the first page's top margin and takes its colour from the paper's ink, so it reads
+ * as faint print rather than as part of the app.
+ */
 .scient-new-document-bar {
+  position: absolute;
+  top: 0;
+  right: var(--scient-latex-margin-right, 1in);
+  left: var(--scient-latex-margin-left, 1in);
+  z-index: 2;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 2px 14px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--border);
+  gap: 0 0.9em;
+  height: var(--scient-latex-margin-top, 1in);
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: 0;
+  text-align: center;
+  user-select: none;
 }
 
 .scient-new-document-bar [role="radiogroup"] {
@@ -20,29 +32,33 @@
 .scient-new-document-bar button {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  height: 24px;
-  padding: 0 7px;
+  gap: 0.25em;
+  height: 2em;
+  padding: 0 0.55em;
   border: 0;
-  border-radius: 4px;
+  border-radius: 0.33em;
   background: transparent;
-  color: var(--muted-foreground);
+  color: color-mix(in srgb, currentColor 42%, transparent);
+  font: inherit;
   cursor: pointer;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease;
 }
 
 .scient-new-document-bar button:hover {
-  background: var(--accent);
-  color: var(--foreground);
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  color: color-mix(in srgb, currentColor 80%, transparent);
 }
 
 .scient-new-document-bar button[aria-checked="true"] {
-  color: var(--foreground);
+  color: color-mix(in srgb, currentColor 85%, transparent);
   font-weight: 500;
 }
 
 .scient-new-document-bar button svg {
-  width: 12px;
-  height: 12px;
+  width: 1em;
+  height: 1em;
 }
 
 .scient-new-document-bar button:focus-visible {
