@@ -55,10 +55,22 @@ file with the manuscript atomically. Compile the shipped C source with:
 pnpm run build:file-exchange
 ```
 
-The helper is not discovered from the workspace or PATH at runtime. Its current
-consumer supplies an absolute path; packaged resolution and signing remain an
-integration gate. The coordinator must supply the helper again on recovery of
-an exchange-based record; it cannot silently switch that record to the fallback.
+The macOS artifact pipeline compiles the requested arm64, x64 or universal slices
+from source and stages the protocol-1 helper outside ASAR at
+`Contents/Resources/file-exchange/scient-file-exchange`. The existing signing hook
+signs it with hardened runtime and empty helper entitlements, and verifies its
+signature and team against the app. Final bundle validation checks its receipt,
+executable permissions, architecture and protocol on a compatible host.
+
+Desktop supplies that absolute server-host path through its private bootstrap.
+The helper is never discovered from the workspace or PATH at runtime. Development
+uses the explicit `build:file-exchange` output. A separately launched server may
+set the absolute host-owned `SCIENT_FILE_EXCHANGE_PATH`; a client path cannot
+select the remote server's helper. A packaged macOS installation preserves the
+required path even when damaged, so a missing or incompatible helper fails
+visibly instead of silently falling back. Recovery resolves the current app's
+resource path rather than persisting an obsolete installation path; it preserves
+the journaled mechanism and refuses to downgrade an exchange-based record.
 Without a helper the primitive moves the old file aside and
 publishes a complete file through an exclusive hard link. Unsupported link
 volumes are refused before displacement. This fallback has a missing-path window
@@ -86,6 +98,36 @@ flags are ignored. Alias-only renames remain refused until captures and the
 planner represent alias moves consistently.
 Marker detection is conservative and runs only on the recorded conflict paths;
 ordinary Markdown underline headings are not publication failures.
+
+## Disposable Git protocol qualification
+
+`pnpm overleaf:qualify:git` rehearses the actual Git executor and bare repository
+against a local disposable remote, without Cloud traffic. It exercises publication,
+fresh independent reads, stale-push rejection, file/folder renames and positive
+acceptance evidence after a simulated discarded acknowledgement and later edits.
+It never automatically retries publication. Missing history remains unknown;
+simulating an acknowledgement loss does not prove behavior under real network loss.
+
+For Cloud qualification, create a fresh disposable project with Git access and
+no collaborators, then run this in your own interactive terminal:
+
+```sh
+pnpm overleaf:qualify:git --cloud --project https://www.overleaf.com/project/PROJECT_ID --output /absolute/new-report.json
+```
+
+Enter the token only at the hidden prompt. The script accepts only credential-free
+official Cloud URLs, asks for disposable-project confirmation, uses private
+operation-scoped askpass files and removes its local repositories/runtime afterward.
+The new report is private, redacts push output and contains no project URL,
+token or manuscript content. The project retains the probe files and history for
+inspection. Never use a working manuscript or put credentials in command arguments.
+
+The script pauses for browser edits, History labels/revert, displayed-author
+inspection, and comments/tracked-change inspection across a content-preserving
+rename. Features not exercised are unverified rather than reported as lost. A
+completed run is an observation report, not an automatic qualification verdict.
+Review failed, unknown and unverified observations before proceeding to the
+coordinator; local rehearsal does not qualify Overleaf's Git bridge.
 
 ## Remaining integration gates
 

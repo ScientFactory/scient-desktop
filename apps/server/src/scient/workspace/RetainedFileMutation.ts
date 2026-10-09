@@ -48,13 +48,13 @@ export interface RetainedMutationInput {
   readonly id: string;
   readonly expectedRevision: string | null;
   /** undefined on recovery; null means deletion. */
-  readonly bytes?: Uint8Array | null;
+  readonly bytes?: Uint8Array | null | undefined;
   readonly executable?: boolean;
   readonly expectedRootIdentity?: Identity;
   /** Host-generated in-folder staging path for a blocking structural removal. */
   readonly visibleRetentionPath?: string;
   /** Absolute host-owned helper NodePath. Undefined selects the move-aside fallback. */
-  readonly exchangeHelper?: string;
+  readonly exchangeHelper?: string | undefined;
 }
 export interface RetainedMutationResult {
   readonly outcome: "done" | "skipped" | "attention";
@@ -162,17 +162,21 @@ export async function durableJson(file: string, value: unknown) {
   await NodeFSP.rename(temporary, file);
   await syncDirectory(NodePath.dirname(file));
 }
-function exchange(helper: string, left: string, right: string): Promise<void> {
+async function exchange(helper: string, left: string, right: string): Promise<void> {
   if (!NodePath.isAbsolute(helper))
-    return Promise.reject(new Error("Exchange helper must be an absolute host NodePath."));
-  return new Promise((resolve, reject) =>
-    NodeChildProcess.execFile(
-      helper,
-      [left, right],
-      { timeout: 10_000, maxBuffer: 4096, env: { PATH: "/usr/bin:/bin" } },
-      (error) => (error ? reject(error) : resolve()),
-    ),
-  );
+    throw new Error("Exchange helper must be an absolute host path.");
+  const run = (args: string[]) =>
+    new Promise<string>((resolve, reject) =>
+      NodeChildProcess.execFile(
+        helper,
+        args,
+        { timeout: 10_000, maxBuffer: 4096, env: { PATH: "/usr/bin:/bin" } },
+        (error, stdout) => (error ? reject(error) : resolve(stdout.trim())),
+      ),
+    );
+  if ((await run(["--version"])) !== "scient-file-exchange/1")
+    throw new Error("File exchange helper has an incompatible protocol.");
+  await run([left, right]);
 }
 async function exclusiveLink(source: string, destination: string) {
   try {
@@ -191,6 +195,8 @@ export async function mutateRetainedFile(
   target: string,
   hooks: RetainedMutationHooks = {},
 ): Promise<RetainedMutationResult> {
+  if (input.exchangeHelper !== undefined && !NodePath.isAbsolute(input.exchangeHelper))
+    throw new Error("Exchange helper must be an absolute host path.");
   if (!/^[a-zA-Z0-9_-]{1,100}$/u.test(input.id)) throw new Error("Invalid retained mutation id.");
   const retention = await NodeFSP.realpath(input.retentionDirectory);
   const rootStat = await NodeFSP.stat(retention);

@@ -51,6 +51,34 @@ export const resolveSyncTexNavigatorPath = Effect.fn(
   return Option.none<string>();
 });
 
+/** Return only a server-host resource. An absent packaged file keeps its required path,
+ * so a damaged installation fails visibly rather than degrading to move-aside. */
+export const resolveFileExchangePath = Effect.fn("desktop.resolveFileExchangePath")(function* () {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  if (environment.platform !== "darwin") return Option.none<string>();
+  if (environment.isPackaged && !environment.isDevelopment) {
+    return Option.some(
+      environment.path.join(environment.resourcesPath, "file-exchange/scient-file-exchange"),
+    );
+  }
+  const fs = yield* FileSystem.FileSystem;
+  const candidates = environment.isDevelopment
+    ? [
+        environment.path.join(
+          environment.rootDir,
+          "native/file-exchange",
+          `${environment.platform}-${environment.processArch}`,
+          "scient-file-exchange",
+        ),
+      ]
+    : environment.resolveResourcePathCandidates("file-exchange/scient-file-exchange");
+  for (const candidate of candidates) {
+    if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false)))
+      return Option.some(candidate);
+  }
+  return Option.none<string>();
+});
+
 interface ScientBackendEnvInput {
   readonly baseDir: string;
   readonly isDevelopment: boolean;

@@ -93,6 +93,10 @@ export const traceMaxFilesConfig = Config.Int("T3CODE_TRACE_MAX_FILES").pipe(
 );
 
 const EnvServerConfig = Config.all({
+  fileExchangePath: Config.String("SCIENT_FILE_EXCHANGE_PATH").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   developmentScratchRoot: Config.String("SCIENT_DEV_SCRATCH_ROOT").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -416,6 +420,7 @@ export const resolveServerConfig = (
     const desktopBrowserControlFd = bootstrap?.desktopBrowserControlFd;
     const resourceMonitorPath = bootstrap?.resourceMonitorPath;
     const syncTexNavigatorPath = bootstrap?.syncTexNavigatorPath;
+    const fileExchangePath = bootstrap?.fileExchangePath ?? env.fileExchangePath;
     const autoBootstrapProjectFromCwd = Option.getOrElse(
       resolveOptionPrecedence(
         Option.fromUndefinedOr(options?.forceAutoBootstrapProjectFromCwd),
@@ -541,6 +546,7 @@ export const resolveServerConfig = (
       desktopBrowserControlFd,
       resourceMonitorPath,
       syncTexNavigatorPath,
+      fileExchangePath,
       autoBootstrapProjectFromCwd,
       logWebSocketEvents,
       tailscaleServeEnabled,
