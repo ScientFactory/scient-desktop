@@ -62,10 +62,10 @@ describe("small template page framing", () => {
     const bottom = parseFloat(image.style.top) + (content.bottom / 226) * pageHeight;
     expect((left + right) / 2).toBeCloseTo(82);
     expect((top + bottom) / 2).toBeCloseTo((164 * Math.SQRT2) / 2);
-    expect(left).toBeGreaterThanOrEqual(12 - 0.001);
-    expect(right).toBeLessThanOrEqual(164 - 12 + 0.001);
-    expect(top).toBeGreaterThanOrEqual(12 - 0.001);
-    expect(bottom).toBeLessThanOrEqual(164 * Math.SQRT2 - 12 + 0.001);
+    expect(left).toBeGreaterThanOrEqual(8 - 0.001);
+    expect(right).toBeLessThanOrEqual(164 - 8 + 0.001);
+    expect(top).toBeGreaterThanOrEqual(8 - 0.001);
+    expect(bottom).toBeLessThanOrEqual(164 * Math.SQRT2 - 8 + 0.001);
   });
 
   it("restores the original full page and skips thumbnail measurements when expanded", async () => {

@@ -93,14 +93,11 @@ export function TemplatePage(props: {
   const { picture, width, cropped = false } = props;
   const capturedPage = useRef<HTMLDivElement | null>(null);
   const html = picture.kind === "page" ? picture.html : null;
-  const magnification = cropped
-    ? picture.kind === "image"
-      ? (picture.cropScale ?? 1.25)
-      : 1.25
-    : 1;
+  const cropScale = picture.kind === "image" ? (picture.cropScale ?? 1.25) : 1.25;
+  const magnification = cropped ? cropScale * 1.1 : 1;
   const source =
     picture.kind === "image"
-      ? cropped && magnification <= 1.25
+      ? cropped && cropScale <= 1.25
         ? picture.src
         : picture.expandedSrc
       : html!;
@@ -121,8 +118,8 @@ export function TemplatePage(props: {
     cropped && bounds
       ? Math.min(
           (width * magnification) / sourceWidth,
-          Math.max(1, width - 24) / (sourceWidth * (bounds.right - bounds.left)),
-          Math.max(1, height - 24) / (sourceHeight * (bounds.bottom - bounds.top)),
+          Math.max(1, width - 16) / (sourceWidth * (bounds.right - bounds.left)),
+          Math.max(1, height - 16) / (sourceHeight * (bounds.bottom - bounds.top)),
         )
       : (width * magnification) / sourceWidth;
   const pageWidth = sourceWidth * scale;
