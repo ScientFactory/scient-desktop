@@ -500,6 +500,7 @@ export function useNewDocument(input: {
           files: templateCompanions(template, next),
           created: newDocuments.get(key)?.companions ?? [],
           create: commands.create,
+          ...(commands.replace ? { replace: commands.replace } : {}),
           remove: commands.remove,
         });
         newDocuments.update(key, { companions });

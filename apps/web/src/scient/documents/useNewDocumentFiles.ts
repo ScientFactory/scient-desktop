@@ -54,6 +54,25 @@ export function useNewDocumentFiles() {
     },
     [writeFile],
   );
+  const replace = useCallback(
+    async (
+      target: { readonly environmentId: EnvironmentId; readonly cwd: string },
+      file: CreatedCompanion,
+      contents: string,
+    ) => {
+      const result = await writeFile({
+        environmentId: target.environmentId,
+        input: {
+          cwd: target.cwd,
+          relativePath: file.relativePath,
+          contents,
+          expectedRevision: file.revision,
+        },
+      });
+      return result._tag === "Success" ? { revision: result.value.revision } : null;
+    },
+    [writeFile],
+  );
   const remove = useCallback(
     async (
       target: { readonly environmentId: EnvironmentId; readonly cwd: string },
@@ -103,10 +122,11 @@ export function useNewDocumentFiles() {
       readonly cwd: string;
     }): NewDocumentFileCommands => ({
       create: (relativePath, contents) => create(target, relativePath, contents),
+      replace: (file, contents) => replace(target, file, contents),
       remove: (file, options) => remove(target, file, options),
       list: (relativeDirectory) => list(target, relativeDirectory),
     }),
-    [create, list, remove],
+    [create, list, remove, replace],
   );
   return { commandsFor };
 }

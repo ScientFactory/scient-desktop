@@ -54,7 +54,52 @@ describe("companion files", () => {
     expect(existing.stored.get("references.bib")).toBe("theirs");
   });
 
-  it("removes only its own unchanged file when a template no longer needs it", async () => {
+  it("retains a bibliography another document may already share", async () => {
+    const files = disk();
+    const created = await syncCompanionFiles({
+      folder: "",
+      files: bibliography,
+      created: [],
+      ...files,
+    });
+    await syncCompanionFiles({ folder: "", files: [], created, ...files });
+    expect(files.stored.has("references.bib")).toBe(true);
+  });
+
+  it("refreshes same-name private companions only while their revision is unchanged", async () => {
+    const files = disk();
+    const created = await syncCompanionFiles({
+      folder: "",
+      files: [{ name: "chapter.tex", contents: "old" }],
+      created: [],
+      ...files,
+    });
+    const replace = async (file: CreatedCompanion, contents: string) => {
+      if (files.stored.get(file.relativePath) !== file.revision) return null;
+      files.stored.set(file.relativePath, contents);
+      return { revision: contents };
+    };
+    const changed = await syncCompanionFiles({
+      folder: "",
+      files: [{ name: "chapter.tex", contents: "new" }],
+      created,
+      ...files,
+      replace,
+    });
+    expect(files.stored.get("chapter.tex")).toBe("new");
+    files.stored.set("chapter.tex", "user work");
+    await syncCompanionFiles({
+      folder: "",
+      files: [{ name: "chapter.tex", contents: "other" }],
+      created: changed,
+      ...files,
+      replace,
+    });
+    expect(files.stored.get("chapter.tex")).toBe("user work");
+  });
+
+  it("removes only its own unchanged private file when a template no longer needs it", async () => {
+    const bibliography = [{ name: "chapter.tex", contents: "chapter" }];
     const files = disk();
     const created = await syncCompanionFiles({
       folder: "",
@@ -63,7 +108,7 @@ describe("companion files", () => {
       ...files,
     });
     expect(await syncCompanionFiles({ folder: "", files: [], created, ...files })).toEqual([]);
-    expect(files.stored.has("references.bib")).toBe(false);
+    expect(files.stored.has("chapter.tex")).toBe(false);
 
     const again = await syncCompanionFiles({
       folder: "",
@@ -71,10 +116,10 @@ describe("companion files", () => {
       created: [],
       ...files,
     });
-    files.stored.set("references.bib", "edited");
+    files.stored.set("chapter.tex", "edited");
     expect(await syncCompanionFiles({ folder: "", files: [], created: again, ...files })).toEqual(
       [],
     );
-    expect(files.stored.get("references.bib")).toBe("edited");
+    expect(files.stored.get("chapter.tex")).toBe("edited");
   });
 });

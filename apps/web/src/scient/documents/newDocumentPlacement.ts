@@ -17,6 +17,10 @@ export interface NewDocumentFileCommands {
     relativePath: string,
     contents: string,
   ) => Promise<{ readonly revision: string } | "exists" | null>;
+  readonly replace?: (
+    file: CreatedCompanion,
+    contents: string,
+  ) => Promise<{ readonly revision: string } | null>;
   readonly remove: (
     file: CreatedCompanion,
     options?: { readonly removeEmptyFolders?: boolean },
