@@ -51,7 +51,7 @@ describe("Compute CI suite selection", () => {
         },
         test: {
           name: "Test",
-          needs: ["test_workspaces", "compute_changes", "compute_native"],
+          needs: expect.arrayContaining(["test_workspaces", "compute_changes", "compute_native"]),
           if: "${{ always() }}",
         },
       },

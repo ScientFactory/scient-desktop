@@ -30,6 +30,20 @@ separate states and must be reported separately.
   monitor, omit unused Claude SDK platform executables, and package only the
   target Windows `node-pty` architecture. These optimizations do not relax the
   exact-source CI, signing, assembly, or publication gates.
+- CI calls Windows Packaging for changes affecting packaged code on pull
+  requests, merge groups, and main. Successful qualification is part of the
+  existing required `Test` check; an unresolved diff runs qualification, and
+  a failed detector or an unqualified skip fails the gate. It runs the release
+  payload validator, packaged terminal/Cursor native probes, and an install/upgrade
+  from the checksum-pinned 0.6.21 installer without signing
+  secrets or publication authority. Release Smoke uses synthetic artifacts and
+  remains a separate workflow/manifest check.
+- Windows loose-file validation retains an 80-file core budget. Pinned voice
+  and Windows/WSL Cursor inventories are admitted separately only after their
+  exact file sets pass validation; missing or extra component files fail even
+  below the total cap. Foreign native targets fail independently of the budget.
+  Dependency updates that change these inventories require reviewing the runtime
+  loaders and updating the inventories and regression fixtures together.
 
 Release versions follow the current stable line. A version does not imply
 proximity to `v1.0.0`; semantic versions permit any number of patch and minor
