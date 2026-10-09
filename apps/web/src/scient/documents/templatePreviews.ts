@@ -183,7 +183,12 @@ export async function captureVisualPage(): Promise<string | null> {
     if (field) {
       // The field's own look comes from rules that name the field; keep it inline.
       const look = getComputedStyle(field);
-      text.style.font = look.font;
+      // Each part: the browser leaves the `font` shorthand empty when it cannot spell it.
+      text.style.fontFamily = look.fontFamily;
+      text.style.fontSize = look.fontSize;
+      text.style.fontWeight = look.fontWeight;
+      text.style.fontStyle = look.fontStyle;
+      text.style.lineHeight = look.lineHeight;
       text.style.textAlign = look.textAlign;
       text.style.letterSpacing = look.letterSpacing;
       text.style.color = look.color;
