@@ -70,6 +70,81 @@ afterEach(async () => {
 });
 
 describe("fork lifecycle across navigation and remounts", () => {
+  it("submits from the checked menu without checking again, but rechecks the latest response", async () => {
+    await render();
+    await act(() => hook.prepareFork(source));
+    expect(commands.options).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace");
+    });
+    expect(commands.options).toHaveBeenCalledTimes(1);
+    expect(commands.dispatch).toHaveBeenCalledTimes(1);
+    // The menu's check is used once: another fork from the same point checks again.
+    await act(async () => {
+      await hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace");
+    });
+    expect(commands.options).toHaveBeenCalledTimes(2);
+    const latest = { kind: "assistant-response" as const, messageId: null, latest: true };
+    await act(() => hook.prepareFork(latest));
+    await act(async () => {
+      await hook.forkFromMessage(latest, { workspaceMode: "local" }, "/workspace");
+    });
+    expect(commands.options).toHaveBeenCalledTimes(4);
+  });
+
+  it("reuses the options of the menu shown, not a stale earlier check", async () => {
+    const other = { kind: "assistant-response" as const, messageId: MessageId.make("other") };
+    const resolved = (messageId: MessageId) =>
+      AsyncResult.success({
+        available: true,
+        localAvailable: true,
+        reason: null,
+        newWorktree: false,
+        sourceAssistantMessageId: messageId,
+        sourceUserMessageId: null,
+      });
+    let finishSlow!: () => void;
+    commands.options
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishSlow = () => resolve(resolved(other.messageId));
+          }),
+      )
+      .mockImplementationOnce(async () => resolved(source.messageId));
+    await render();
+    let slow!: Promise<void>;
+    await act(async () => {
+      slow = hook.prepareFork(other);
+      await hook.prepareFork(source);
+    });
+    await act(async () => {
+      finishSlow();
+      await slow;
+    });
+    await act(async () => {
+      await hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace");
+    });
+    expect(commands.options).toHaveBeenCalledTimes(2);
+    expect(commands.dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks again when the menu's options are older than 30 seconds", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    try {
+      await render();
+      await act(() => hook.prepareFork(source));
+      now.mockReturnValue(1_000_000 + 30_001);
+      await act(async () => {
+        await hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace");
+      });
+      expect(commands.options).toHaveBeenCalledTimes(2);
+      expect(commands.dispatch).toHaveBeenCalledTimes(1);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it.each([true, false])(
     "dispatches a missing-image fork only after confirmation (%s)",
     async (proceed) => {

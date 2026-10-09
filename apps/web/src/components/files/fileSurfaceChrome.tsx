@@ -164,7 +164,7 @@ export function FileSurfaceMessage(props: {
   return (
     <div
       role={props.role ?? "status"}
-      className="flex min-h-0 flex-1 flex-col items-center justify-center-safe overflow-y-auto px-6 py-8"
+      className="scrollbar-gutter-both flex min-h-0 flex-1 flex-col items-center justify-center-safe overflow-y-auto px-6 py-8"
     >
       <div className="flex w-full max-w-80 flex-col items-center gap-3 text-center scient-reading-ui">
         <Icon className="size-6 shrink-0 text-muted-foreground/70" aria-hidden="true" />

@@ -13,7 +13,7 @@ import { beforeAll } from "vite-plus/test";
 
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { droidCustomModelId, makeDroidCustomModelsRuntimeFactory } from "./DroidCustomModels.ts";
-import { qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
+import { factoryFixtureBody, qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
 
 const binary = process.env.SCIENT_DROID_TEST_BINARY;
 beforeAll(() => qualifyDroidTestBinary(binary), 10_000);
@@ -127,7 +127,7 @@ it.effect.skipIf(!binary)(
       const origin = yield* listen(async (request, response) => {
         if (!request.url?.endsWith("/chat/completions")) {
           response.writeHead(200, { "content-type": "application/json" });
-          response.end("{}");
+          response.end(factoryFixtureBody(request.url));
           return;
         }
         let body = "";
@@ -178,9 +178,9 @@ it.effect.skipIf(!binary)(
   "real Droid ends the turn at once, with the cause, when the model endpoint cannot be reached",
   () =>
     Effect.gen(function* () {
-      const origin = yield* listen((_request, response) => {
+      const origin = yield* listen((request, response) => {
         response.writeHead(200, { "content-type": "application/json" });
-        response.end("{}");
+        response.end(factoryFixtureBody(request.url));
       });
       // A local model server that is not running: nothing listens on its port.
       const stopped = yield* Effect.scoped(listen(() => undefined));

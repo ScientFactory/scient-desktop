@@ -48,6 +48,7 @@ import {
   subscribeForkOrigins,
   isForkOriginBusy,
 } from "./forkAttempt";
+import { markForkLanding } from "./forkLanding";
 
 const memory = new Map<string, string>();
 const attemptStore = createForkAttemptStore(
@@ -78,6 +79,7 @@ export type ForkSource =
     }
   // The running turn, including the work it has done so far.
   | { readonly kind: "running-turn"; readonly runId: RunId };
+const CHECKED_FORK_OPTIONS_REUSE_MS = 30_000;
 const sourceKey = (source: ForkSource) =>
   source.kind === "running-turn"
     ? `running-turn:${source.runId}`
@@ -325,6 +327,9 @@ export function useScientThreadFork({
     };
   }, []);
   const previewSequence = useRef(0);
+  // The options the open fork menu just checked. Submitting from it uses them
+  // once instead of checking again; the server checks the fork itself anyway.
+  const checkedOptions = useRef<{ key: string; options: ForkOptions; at: number } | null>(null);
 
   const resolveOptions = useCallback(
     async (source: ForkSource): Promise<ForkOptions> => {
@@ -388,6 +393,8 @@ export function useScientThreadFork({
           mounted.current &&
           activeOrigin.current === originKey
         ) {
+          // Only the menu being shown publishes its options for reuse.
+          if (!pending) checkedOptions.current = { key, options, at: Date.now() };
           setPreview({
             key,
             options,
@@ -440,7 +447,19 @@ export function useScientThreadFork({
           try {
             let attempt = attemptStore.get(key);
             if (!attempt) {
-              const eligibility = await resolveOptions(source);
+              const checked = checkedOptions.current;
+              checkedOptions.current = null;
+              // "Latest" names whatever response is newest now, so check it again.
+              const eligibility =
+                checked !== null &&
+                checked.key === key &&
+                !(
+                  source.kind === "assistant-response" &&
+                  (source.latest || source.messageId === null)
+                ) &&
+                Date.now() - checked.at < CHECKED_FORK_OPTIONS_REUSE_MS
+                  ? checked.options
+                  : await resolveOptions(source);
               if (!eligibility.available)
                 throw new Error(eligibility.reason ?? "This fork point is unavailable.");
               // A server that does not know running-turn forks answers for the
@@ -559,6 +578,8 @@ export function useScientThreadFork({
               attempt = { ...attempt, handoffDone: true };
               attemptStore.set(key, attempt);
             }
+            // The fork's messages show once they are in place (forkLanding.ts).
+            markForkLanding(scopedThreadKey(destinationRef));
             await navigate({
               to: "/$environmentId/$threadId",
               params: { environmentId, threadId: attempt.command.newThreadId },

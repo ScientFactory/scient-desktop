@@ -42,6 +42,7 @@ import { expandHomePath } from "../../pathExpansion.ts";
 import {
   buildInitialPiProviderSnapshot,
   checkPiProviderStatus,
+  discoverPiCommandsForCwd,
   enrichPiSnapshot,
 } from "../PiProvider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -267,10 +268,25 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         textGeneration,
         // SCIENT-FORK:START — workspace probes and managed runtime actions belong to this instance.
         snapshotForCwd: (cwd) =>
-          checkPiProviderStatus(effectiveConfig, processEnv, cwd, makeRpcClient).pipe(
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            Effect.map(stampIdentity),
-          ),
+          !effectiveConfig.enabled
+            ? snapshot.getSnapshot
+            : Effect.all([
+                snapshot.getSnapshot,
+                discoverPiCommandsForCwd(effectiveConfig, processEnv, cwd, makeRpcClient).pipe(
+                  Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderDriverError({
+                        driver: DRIVER_KIND,
+                        instanceId,
+                        detail: "Failed to discover Pi workspace commands.",
+                        cause,
+                      }),
+                  ),
+                ),
+              ]).pipe(
+                Effect.map(([machineSnapshot, commands]) => ({ ...machineSnapshot, ...commands })),
+              ),
         managedRuntimeActions: managedRuntime.actions,
         // SCIENT-FORK:END
       } satisfies ProviderInstance;

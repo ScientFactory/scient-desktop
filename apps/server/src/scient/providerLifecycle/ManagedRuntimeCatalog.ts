@@ -5,10 +5,16 @@
  * extraction, launch, environment, host, and support decision stays compiled
  * into the app and is re-applied by `hydrateManagedRuntimeArtifact`.
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Pure plan identity needs a synchronous digest; Effect Crypto is asynchronous.
+import * as NodeCrypto from "node:crypto";
+
 import {
   MANAGED_RUNTIME_CATALOG_PROVIDERS as managedProviders,
   MANAGED_RUNTIME_POLICY,
-  compareManagedRuntimeVersions,
+  compareManagedRuntimeReleases,
+  isSameCursorReleaseDate,
+  isValidManagedRuntimeSupersedes,
+  MAX_CURSOR_SUPERSEDES,
   hydrateManagedRuntimeArtifact,
   managedRuntimeTargetKey,
   resolveScientAgentArtifactPolicy,
@@ -26,6 +32,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -41,7 +48,6 @@ import {
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import { ServerConfig } from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import { isManagedRuntimeUpdate } from "./managedRuntimeVersion.ts";
 import bundledCatalogJson from "./bundled-managed-runtime-catalog.json" with { type: "json" };
 
 const MANAGED_RUNTIME_CATALOG_URL =
@@ -85,6 +91,9 @@ const CatalogProviderSchema = Schema.Struct({
   contractRevision: Schema.Int.check(Schema.isGreaterThan(0)),
   channel: Schema.Literal("stable"),
   version: NonEmptyString(128),
+  supersedes: Schema.optionalKey(
+    Schema.Array(NonEmptyString(128)).check(Schema.isMaxLength(MAX_CURSOR_SUPERSEDES)),
+  ),
   artifacts: Schema.Record(Schema.String, CatalogArtifactSchema),
 });
 
@@ -100,16 +109,48 @@ const CatalogCacheSchema = Schema.Struct({
   catalog: ManagedRuntimeCatalogDataSchema,
 });
 
-const decodeCatalogJson = Schema.decodeUnknownEffect(
+const CatalogEnvelopeSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  providers: Schema.Record(Schema.String, Schema.Unknown),
+});
+
+const decodeCatalogProvider = Schema.decodeUnknownOption(CatalogProviderSchema);
+const decodeCatalogEnvelopeJson = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(CatalogEnvelopeSchema),
+);
+const decodeCatalogCacheEnvelopeJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
-    ManagedRuntimeCatalogDataSchema as unknown as Schema.Codec<ManagedRuntimeCatalogData>,
+    Schema.Struct({
+      fetchedAtMs: Schema.Number,
+      etag: Schema.optional(Schema.String),
+      catalog: CatalogEnvelopeSchema,
+    }),
   ),
 );
-const decodeCatalogCacheJson = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(
-    CatalogCacheSchema as unknown as Schema.Codec<typeof CatalogCacheSchema.Type>,
-  ),
-);
+
+function decodeCatalogEntries(
+  envelope: typeof CatalogEnvelopeSchema.Type,
+): ManagedRuntimeCatalogData {
+  const entries = Object.entries(envelope.providers).flatMap(([name, value]) => {
+    const provider = managedProviders.find((provider) => provider === name);
+    if (!provider) return [];
+    const decoded = decodeCatalogProvider(value);
+    if (
+      Option.isNone(decoded) ||
+      !isValidManagedRuntimeSupersedes(provider, decoded.value.version, decoded.value.supersedes)
+    )
+      return [];
+    return [[provider, decoded.value] as const];
+  });
+  return { schemaVersion: 1, providers: Object.fromEntries(entries) };
+}
+
+const decodeCatalogJson = (raw: string) =>
+  decodeCatalogEnvelopeJson(raw).pipe(Effect.map(decodeCatalogEntries));
+const decodeCatalogCacheJson = (raw: string) =>
+  decodeCatalogCacheEnvelopeJson(raw).pipe(
+    Effect.map((cached) => ({ ...cached, catalog: decodeCatalogEntries(cached.catalog) })),
+  );
 const encodeCatalogCacheJson = Schema.encodeEffect(
   Schema.fromJsonString(
     CatalogCacheSchema as unknown as Schema.Codec<typeof CatalogCacheSchema.Type>,
@@ -174,10 +215,10 @@ export function mergeManagedRuntimeCatalogs(
     }
     if (!existing || next.contractRevision !== existing.contractRevision) continue;
     if (
-      compareManagedRuntimeVersions({
+      compareManagedRuntimeReleases({
         provider,
-        current: existing.version,
-        candidate: next.version,
+        current: existing,
+        candidate: next,
       }) === "newer"
     ) {
       providers[provider] = next;
@@ -194,6 +235,7 @@ function normalizedProviderRelease(
     contractRevision: release.contractRevision,
     channel: release.channel,
     version: release.version,
+    ...(release.supersedes ? { supersedes: release.supersedes.toSorted() } : {}),
     artifacts: Object.fromEntries(
       Object.entries(release.artifacts)
         .sort(([left], [right]) => left.localeCompare(right))
@@ -230,6 +272,7 @@ function extendsProviderRelease(
     next.contractRevision === base.contractRevision &&
     next.channel === base.channel &&
     next.version === base.version &&
+    JSON.stringify(next.supersedes) === JSON.stringify(base.supersedes) &&
     Object.entries(base.artifacts).every(
       ([target, artifact]) => JSON.stringify(next.artifacts[target]) === JSON.stringify(artifact),
     )
@@ -274,10 +317,10 @@ export function resolveFetchedManagedRuntimeCatalog(
         candidate &&
         isApprovedUnbundledRelease(provider, candidate) &&
         (!existing ||
-          compareManagedRuntimeVersions({
+          compareManagedRuntimeReleases({
             provider,
-            current: existing.version,
-            candidate: candidate.version,
+            current: existing,
+            candidate,
           }) === "newer" ||
           extendsProviderRelease(candidate, existing))
       ) {
@@ -294,27 +337,33 @@ export function resolveFetchedManagedRuntimeCatalog(
       continue;
     }
 
-    const floorComparison = compareManagedRuntimeVersions({
+    const floorComparison = compareManagedRuntimeReleases({
       provider,
-      current: bundled.version,
-      candidate: candidate.version,
+      current: bundled,
+      candidate,
     });
     if (floorComparison === "older" || floorComparison === "unknown") continue;
     if (floorComparison === "equal" && !extendsProviderRelease(candidate, bundled)) continue;
 
-    const currentComparison = compareManagedRuntimeVersions({
+    const currentComparison = compareManagedRuntimeReleases({
       provider,
-      current: existing.version,
-      candidate: candidate.version,
+      current: existing,
+      candidate,
     });
-    if (currentComparison === "unknown") continue;
+    if (
+      currentComparison === "unknown" ||
+      (provider === "cursor" &&
+        currentComparison === "older" &&
+        isSameCursorReleaseDate(existing.version, candidate.version))
+    )
+      continue;
     if (currentComparison === "equal" && !extendsProviderRelease(candidate, existing)) continue;
     providers[provider] = candidate;
   }
   return { schemaVersion: 1, providers };
 }
 
-function decodeBoundedCatalogJson(raw: string) {
+export function decodeBoundedCatalogJson(raw: string) {
   return decodeBoundedJsonText(raw).pipe(Effect.flatMap(decodeCatalogJson));
 }
 
@@ -327,7 +376,7 @@ function catalogRevision(input: {
   readonly contractRevision: number;
 }): string {
   const { receipt } = input;
-  return [
+  const revision = [
     "managed-runtime",
     receipt.provider,
     `contract-${input.contractRevision}`,
@@ -336,6 +385,9 @@ function catalogRevision(input: {
     receipt.checksum.algorithm,
     receipt.checksum.digest,
   ].join(":");
+  return receipt.supersedes?.length
+    ? `${revision}:order-${NodeCrypto.createHash("sha256").update(JSON.stringify(receipt.supersedes.toSorted())).digest("hex")}`
+    : revision;
 }
 
 /**
@@ -361,6 +413,7 @@ export function resolveManagedRuntimeCatalogArtifact(input: {
   const receiptWithoutRevision = {
     provider: input.policy.provider,
     version: provider.version,
+    ...(provider.supersedes ? { supersedes: provider.supersedes } : {}),
     target: input.policy.target,
     artifactName: release.artifactName,
     url: release.url,
@@ -386,7 +439,8 @@ function isSameManagedRuntimeRelease(
     left.url === right.url &&
     left.checksum.algorithm === right.checksum.algorithm &&
     left.checksum.digest === right.checksum.digest &&
-    left.size === right.size
+    left.size === right.size &&
+    JSON.stringify(left.supersedes?.toSorted()) === JSON.stringify(right.supersedes?.toSorted())
   );
 }
 
@@ -408,11 +462,11 @@ export function resolveManagedRuntimeCatalogCandidate(input: {
   if (!bundledArtifact) return remote;
   if (!remote) return bundledArtifact;
   if (isSameManagedRuntimeRelease(remote, bundledArtifact)) return remote;
-  return isManagedRuntimeUpdate({
+  return compareManagedRuntimeReleases({
     provider: bundledArtifact.provider,
-    current: bundledArtifact.version,
-    candidate: remote.version,
-  })
+    current: bundledArtifact,
+    candidate: remote,
+  }) === "newer"
     ? remote
     : bundledArtifact;
 }
@@ -430,13 +484,17 @@ export function resolveManagedRuntimeRepairArtifact(input: {
     policy && input.activeArtifact
       ? hydrateManagedRuntimeArtifact(policy, input.activeArtifact)
       : undefined;
-  return installed &&
-    (!candidate ||
-      isManagedRuntimeUpdate({
-        provider: installed.provider,
-        current: candidate.version,
-        candidate: installed.version,
-      }))
+  if (!installed) return candidate;
+  if (!candidate) return installed;
+  const comparison = compareManagedRuntimeReleases({
+    provider: installed.provider,
+    current: candidate,
+    candidate: installed,
+  });
+  return comparison === "newer" ||
+    (installed.provider === "cursor" &&
+      comparison === "unknown" &&
+      isSameCursorReleaseDate(installed.version, candidate.version))
     ? installed
     : candidate;
 }

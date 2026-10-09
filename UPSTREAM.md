@@ -21,8 +21,12 @@ Send motion (Scient): the draft hero composer's move to the thread always animat
 (260ms, decelerating curve; `useDraftHeroMotion` in `chat/timelineEntranceMotion.ts`), not only
 with the opt-in panel animation setting; reduced motion skips it. A first prompt being placed is revealed top-down
 and fades in on the same curve (clip and opacity only, never a transform, so the reveal's
-measurements hold), and the "Working for" label carries the thinking traces' live shine (ActivityShimmerOverlay)
-for as long as the turn works; its line just appears
+measurements hold), and the "Working for" header carries a small breathing dot (`chat/liveActivity.tsx`); its line just
+appears. Live activity (Scient): only the current activity row sweeps (`currentLiveActivityRowId`:
+Thinking, the running-tool bar, an active compaction, a running setup stage), with a wider light looping continuously
+at one pace per label (`--live-activity-duration`) over text resting at 55%
+(`scient/presentation/scient-live-activity.css` refines the upstream live-activity utilities); the
+upstream stepped `live-tool-shine` is no longer applied, and other live rows stay still
 (`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount). While an
 answer streams it is revealed as one flow (`chat/useStreamingBlockEntrance.ts`, `.streamed-reveal`):
 after a 1s buffer, lines appear top-down at ~4 lines/s (faster when >8 lines wait), at 65%, with
@@ -236,9 +240,9 @@ policy, workspace and scientific owners. The receipt distinguishes complete loca
 qualification, independent reviews, actual-app approval and hosted delivery,
 including retained publication holds and measured enforcement debt.
 
-The current qualified alignment is recorded in
+The preceding qualified alignment is recorded in
 [the b24f0fbba0 receipt](docs/internals/t3-upstream-sync-20261008-b24f0fbba0.md)
-and `upstream-state.json` ([Scient PR #473](https://github.com/ScientFactory/scient-desktop/pull/473)).
+([Scient PR #473](https://github.com/ScientFactory/scient-desktop/pull/473)).
 It receives all 27 subsequent first-parent official
 commits through `b24f0fbba09d8623c896081b4ff70aa7190c8fda` onto owned base
 `3498143f7221634d9dd6b38e95f84839dc4d2bfe`. Literal merge
@@ -249,6 +253,25 @@ Snapshot indexes append as migration 064; existing migration identities, the
 Approvability guard and privacy-link withholding remain. The receipt records
 two independent source reviews, complete local qualification, actual-app visual
 evidence and the remaining hosted/platform boundaries.
+
+The current locally qualified alignment is recorded in
+[the 2a93885bac receipt](docs/internals/t3-upstream-sync-20261008-2a93885bac.md)
+and `upstream-state.json` ([Scient PR #487](https://github.com/ScientFactory/scient-desktop/pull/487)).
+It receives all 63 subsequent first-parent official commits through
+`2a93885bac5798a79d55069a0b5dc3e53c6176bc` onto owned base
+`565b3bd15cbb7660250e53b2421915d2f6bdebc5`. Literal merge
+`e0a46f2d5ace0b33fa4a8f714917f029f577db23` retains both as exact parents;
+`ae3f8171fc548a9cb28d43dafba227279f6ddc52` and
+`458b041da22fb1985b461196f78530e8dc30c153` preserve the earlier owned-main catch-ups.
+`b75327a4359cfdb999ab6e0430bdf7af2c984363` additionally retains main
+`91b9b7cb3f2ca0e777436fdca5a913addcb21ab0`: fork-by-reference history composes
+with Find, paging, source deletion, inert inherited authority and truthful fork landing.
+Conversation Find, compact-before-send, quotations, native Pi continuations,
+bounded snapshots, Usage and client performance compose with Scient ownership.
+Optional Muse remains disabled by default and system-installed; Scient lifecycle,
+frozen history, managed runtime, privacy and publication boundaries remain.
+The receipt separates complete local qualification with exact affected-scope reuse,
+independent review and bounded stress from hosted CI and the user's visual acceptance.
 
 ## Receiving T3 updates
 
@@ -889,6 +912,13 @@ mark in both web `Icons.tsx` (`PiIcon`) and mobile `ProviderIcon.tsx`, replacing
 T3's monochrome glyph. When T3 changes these spots, keep its surrounding layout and
 reapply only the marked lines.
 
+Scient's model picker gives assisted provider setup an intrinsic, scrollable body independent
+of T3's model-row content sizing. Preserve that branch when integrating picker sizing changes:
+providers with no models still need install and sign-in actions. Setup eligibility is shared by
+mouse and keyboard navigation, and returning to models reattaches list measurement. Provider
+views keep their own lifecycle policy; Scient Agent reuses its existing account view in the
+composer connection dialog. See [provider lifecycle architecture](docs/internals/provider-lifecycle.md).
+
 Scient keeps ordinary browser interaction visually quiet: `PreviewView` shows
 the control badge only during agent control. Preserve the underlying human-input
 interruption and cursor behavior. The desktop preview editing-shortcut gate also
@@ -1024,3 +1054,28 @@ Production identity is a conscious Scient divergence: the package uses the
 canonical Scient bundle ID and protocol while retaining the established
 `scient-next` user-data location for compatibility. Future upstream merges must
 not restore T3 publication authority or a dependency on `t3@<Scient version>`.
+
+The unmounted Overleaf engine owns `apps/server/src/scient/overleaf` and its
+retained mutation implementation in `apps/server/src/scient/workspace`. Its two
+additive `WorkspaceFileSystem` methods reuse the existing file mutation lock map;
+retain that shared ownership with editor saves. No Overleaf routes or UI are
+mounted yet. See [Overleaf engine](docs/internals/scient-overleaf-engine.md).
+
+## File-tree bidirectional labels
+
+The locked `@pierre/trees` dependency carries a narrow rendering patch at
+`patches/@pierre__trees@1.0.0-beta.6.patch`. Its normal middle truncation splits
+a name into separately laid-out halves, which changes the reading order of
+Hebrew and mixed-direction names even without overflow. Tree labels containing
+Hebrew, Arabic and the supported RTL Unicode ranges instead keep one isolated
+text run with automatic base direction and native ellipsis. The tree's icons,
+indentation, row actions and raw paths retain their existing layout and identity;
+LTR names retain extension-preserving middle truncation. Flattened directory
+segments use the same label policy.
+
+Preserve this correction for Files and the diff tree when updating the library,
+or remove the patch only after its replacement passes the real-browser geometry,
+truncation and selection checks in
+`apps/web/src/scient/files/fileTreeBidi.browser.test.ts`. Reversing filenames or
+setting the whole tree RTL is not a substitute for preserving each name's bidi
+paragraph.

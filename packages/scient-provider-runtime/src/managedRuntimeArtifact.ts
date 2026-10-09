@@ -1,4 +1,5 @@
 import { compareSemverVersions } from "@t3tools/shared/semver";
+import { isValidManagedRuntimeSupersedes } from "./managedRuntimeVersion.ts";
 
 import type { ManagedRuntimeTarget } from "./target.ts";
 import { managedRuntimeTargetKey } from "./target.ts";
@@ -65,6 +66,8 @@ export interface ManagedRuntimeArtifactPolicy {
   /** Optional payload-relative working directory for the smoke test. */
   readonly smokeWorkingDirectory?: string | undefined;
   readonly smokeArgs: ReadonlyArray<string>;
+  /** App-owned version parser; catalog metadata cannot change qualification. */
+  readonly smokeVersionFormat?: "cursor" | undefined;
   readonly smokeEnvironment?: Readonly<Record<string, string>>;
   readonly supportTier: ManagedRuntimeSupportTier;
   readonly supportMessage: string;
@@ -73,6 +76,7 @@ export interface ManagedRuntimeArtifactPolicy {
 /** Packaging policy plus immutable facts from a real, qualified release. */
 export interface ManagedRuntimeArtifact extends ManagedRuntimeArtifactPolicy {
   readonly version: string;
+  readonly supersedes?: ReadonlyArray<string> | undefined;
   readonly url: string;
   readonly checksum: ManagedRuntimeChecksum;
   readonly size: number;
@@ -100,6 +104,7 @@ export function isSupportedManagedRuntimeStableVersion(
 export interface ManagedRuntimeArtifactReceipt {
   readonly provider: ManagedRuntimeProvider;
   readonly version: string;
+  readonly supersedes?: ReadonlyArray<string> | undefined;
   readonly target: ManagedRuntimeTarget;
   readonly artifactName: string;
   readonly url: string;
@@ -114,6 +119,7 @@ export function managedRuntimeArtifactReceipt(
   return {
     provider: artifact.provider,
     version: artifact.version,
+    ...(artifact.supersedes ? { supersedes: artifact.supersedes } : {}),
     target: artifact.target,
     artifactName: artifact.artifactName,
     url: artifact.url,
@@ -187,6 +193,13 @@ export function hydrateManagedRuntimeArtifact(
   return {
     ...policy,
     version: receipt.version,
+    supersedes: isValidManagedRuntimeSupersedes(
+      receipt.provider,
+      receipt.version,
+      receipt.supersedes,
+    )
+      ? receipt.supersedes
+      : undefined,
     artifactName: receipt.artifactName,
     url: receipt.url,
     checksum: receipt.checksum,

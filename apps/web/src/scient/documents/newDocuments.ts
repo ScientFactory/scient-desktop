@@ -103,11 +103,15 @@ export const templateEdits = {
  * takes another name rather than inheriting it; nothing stored is removed.
  */
 export function pathHasLeftoverDrafts(key: NewDocumentKey, unreadable = false): boolean {
-  const marker = `${key.environmentId}\0${key.cwd}\0${key.relativePath}`;
+  // The file's own drafts, and Visual's project drafts for it as a root.
+  const markers = [
+    `${key.environmentId}\0${key.cwd}\0${key.relativePath}`,
+    `${key.environmentId}\0${key.cwd}\0project-visual:${key.relativePath}`,
+  ];
   try {
     for (let index = 0; index < localStorage.length; index++) {
       const name = localStorage.key(index);
-      if (name?.includes(marker)) return true;
+      if (name !== null && markers.some((marker) => name.includes(marker))) return true;
     }
   } catch {
     /* Storage unavailable: nothing to inherit, or, for a move, nothing proven free. */

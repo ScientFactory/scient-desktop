@@ -24,6 +24,7 @@ import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 // SCIENT-FORK:START — managed runtime and assisted sign-in for this instance.
 import { makeCursorInstanceRuntime } from "../../scient/providerLifecycle/CursorManagedRuntimeActions.ts";
+import { makeCursorSdkConnectionActions } from "../../scient/providerLifecycle/CursorSdkConnectionActions.ts";
 export { assistedCursorConnectionMethods } from "../../scient/providerLifecycle/CursorConnectionActions.ts";
 // SCIENT-FORK:END
 import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
@@ -174,6 +175,10 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
             canLogout: !auth.usesApiKey,
           },
         });
+
+      const connectionActions = auth.usesApiKey
+        ? undefined
+        : yield* makeCursorSdkConnectionActions(auth.controller);
 
       const orchestrationAdapter = yield* CursorAdapterV2Driver.create({
         instanceId,
@@ -332,6 +337,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
               ),
         orchestrationAdapter,
         textGeneration,
+        connectionActions,
         managedRuntimeActions: managedRuntime.actions,
       } satisfies ProviderInstance;
     }),

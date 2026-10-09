@@ -11,6 +11,7 @@ import {
   OmpSettings,
   ScientAgentSettings,
   compareProviderDriverKinds,
+  MuseSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
@@ -21,6 +22,7 @@ import {
   CursorIcon,
   DroidIcon,
   GrokIcon,
+  MuseIcon,
   type Icon,
   OpenAI,
   OpenCodeIcon,
@@ -64,7 +66,7 @@ export interface ProviderClientDefinition {
    * specific instance), so every instance of that driver — built-in default
    * or custom — advertises the same marker.
    *
-   * SCIENT-FORK:START — no driver sets this. Upstream badges Pi and ACP
+   * SCIENT-FORK:START — only Muse retains its incoming Beta marker. Upstream badges Pi and ACP
    * Registry "Early Access"; the fork moved that signal to the model picker's
    * `pickerSidebarBadge` instead (see `providerOrdering.test.ts`).
    * SCIENT-FORK:END
@@ -168,6 +170,13 @@ const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[]
     icon: AntigravityIcon,
     settingsSchema: AntigravitySettings,
     supportsCustomModels: false,
+  },
+  {
+    value: ProviderDriverKind.make("muse"),
+    label: "Muse Code",
+    icon: MuseIcon,
+    settingsSchema: MuseSettings,
+    badgeLabel: "Beta",
   },
   {
     value: ProviderDriverKind.make("acpRegistry"),

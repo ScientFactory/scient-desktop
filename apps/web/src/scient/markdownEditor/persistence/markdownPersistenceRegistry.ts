@@ -109,6 +109,12 @@ export interface MarkdownPersistenceLease {
   readonly restoreRecovery: () => boolean;
   readonly holdForRename: () => (() => void) | null;
   /**
+   * Before any rename: removes this document's recovery copy, which must not
+   * outlive its name. False if a copy with unsaved work is due or removal
+   * failed; the rename must then wait. Absent in leases from older code.
+   */
+  readonly settleRecoveryCopy?: () => Promise<boolean>;
+  /**
    * Starts an in-place rename to `destination`, or null when this document
    * cannot move in place (the caller then renames the ordinary way).
    */
@@ -616,6 +622,8 @@ export class MarkdownPersistenceRegistry {
         isActive() && ownedEntry.pendingInput === null
           ? ownedEntry.coordinator.holdForRename()
           : null,
+      settleRecoveryCopy: () =>
+        guarded(() => ownedEntry.checkpoint?.settle() ?? Promise.resolve(true)),
       beginMove: (destination) =>
         isActive() ? this.beginMove(ownedEntry, owner, destination) : null,
       registerExternalProjection: (prepare) => {

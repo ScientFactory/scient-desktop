@@ -1,10 +1,10 @@
+import { fileBasename } from "@t3tools/shared/path";
+import { formatFilePathPosition } from "@t3tools/shared/fileLinks";
 import {
-  fileBasename,
-  formatFilePathPosition,
   inlineCodeFilePathCandidate,
   normalizeMarkdownLinkDestination,
   parseMarkdownFileLink,
-} from "@t3tools/client-runtime/markdown-links";
+} from "@t3tools/shared/markdownLinks";
 import {
   parseEnvironmentQualifiedThreadLinkHref,
   parseThreadLinkHref,

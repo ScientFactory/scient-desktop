@@ -110,7 +110,9 @@ function useFetchedTurnItem(
     fetches
       ? {
           environmentId,
-          threadId: projectedItem.sourceThreadId,
+          // SCIENT-FORK: the item's own thread, which for a fork's shared history is
+          // the fork: it serves the version the fork shows.
+          threadId: wireItem.threadId,
           itemId: projectedItem.sourceItemId,
           revision: turnItemDetailRevision(wireItem),
         }
@@ -225,7 +227,8 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   const outputState = fetched.output;
   const support = useV2ItemSupport({
     environmentId: props.environmentId,
-    sourceThreadId: props.projectedItem.sourceThreadId,
+    // SCIENT-FORK: the item's own thread: a fork's shared rows act in the fork.
+    sourceThreadId: props.projectedItem.item.threadId,
     sourceItemId: props.projectedItem.sourceItemId,
   });
   return (
@@ -237,7 +240,8 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
             cwd={props.cwd}
             threadRef={{
               environmentId: props.environmentId,
-              threadId: props.projectedItem.sourceThreadId,
+              // SCIENT-FORK: links open in the item's own thread (the fork for shared rows).
+              threadId: props.projectedItem.item.threadId,
             }}
             lineBreaks
           />

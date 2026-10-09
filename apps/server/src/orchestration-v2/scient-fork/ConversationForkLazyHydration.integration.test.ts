@@ -121,13 +121,18 @@ const seedUnopenedHistory = Effect.fn("LazyHydration.seedUnopenedHistory")(funct
   };
 });
 
+function shownItems(child: OrchestrationV2ThreadProjection) {
+  return child.visibleTurnItems.map((row) => row.item);
+}
+
 function assertFrozenHistory(child: OrchestrationV2ThreadProjection) {
   const source = child.thread.conversationFork?.sourceThreadId;
   assert.ok(source);
-  const prefix = child.turnItems.filter((item) => item.inheritedFrom?.threadId === source);
+  const shown = shownItems(child);
+  const prefix = shown.filter((item) => item.inheritedFrom?.threadId === source);
   assert.equal(prefix.length, 7);
   assert.isTrue(prefix.every((item) => item.historyTurnId === TurnId.make("same-turn")));
-  const boundaries = child.turnItems.filter((item) => item.inheritedFrom === undefined);
+  const boundaries = shown.filter((item) => item.inheritedFrom === undefined);
   assert.lengthOf(boundaries, 1);
   if (boundaries[0]?.type !== "fork") return assert.fail("Expected hydrated exact boundary");
   assert.equal(boundaries[0].id, TurnItemId.make(`turn-item:fork:${child.thread.id}`));
@@ -145,20 +150,18 @@ function assertFrozenHistory(child: OrchestrationV2ThreadProjection) {
   assert.isNull(boundaries[0].nativeItemRef);
   assert.isUndefined(boundaries[0].providerThreadId);
   assert.isFalse(
-    child.turnItems.some(
-      (item) => item.type === "user_message" && item.text === "Excluded next turn",
-    ),
+    shown.some((item) => item.type === "user_message" && item.text === "Excluded next turn"),
   );
   assert.isTrue(
-    child.turnItems.some((item) => item.type === "reasoning" && item.text === "Trailing thought"),
+    shown.some((item) => item.type === "reasoning" && item.text === "Trailing thought"),
   );
-  const system = child.turnItems.find(
+  const system = shown.find(
     (item) => item.type === "dynamic_tool" && item.toolName === "historical_system_message",
   );
   if (system?.type !== "dynamic_tool") return assert.fail("Expected frozen system history");
   assert.equal(decodeHistoricalSystem(system.input).text, "Trailing system history");
   assert.isTrue(
-    child.turnItems.some(
+    shown.some(
       (item) =>
         item.type === "dynamic_tool" &&
         item.toolName === "read_file" &&
@@ -166,12 +169,10 @@ function assertFrozenHistory(child: OrchestrationV2ThreadProjection) {
     ),
   );
   assert.isTrue(
-    child.turnItems.some(
-      (item) => item.type === "proposed_plan" && item.markdown === "# Trailing plan",
-    ),
+    shown.some((item) => item.type === "proposed_plan" && item.markdown === "# Trailing plan"),
   );
   assert.isTrue(
-    child.turnItems.some(
+    shown.some(
       (item) =>
         item.type === "dynamic_tool" &&
         item.toolName === "historical_approval" &&
@@ -300,7 +301,7 @@ it.live.each(["undecodable", "unbound"] as const)(
         }
         yield* forks.dispatch(command);
         const child = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadProjection(target);
-        const typed = child.turnItems.find((item) => item.type === "user_input_request");
+        const typed = shownItems(child).find((item) => item.type === "user_input_request");
         assert.ok(typed?.type === "user_input_request");
         assert.deepEqual(typed.questionAnswer?.answers, { dataset: "Measured" });
         assert.equal(typed.historyTurnId, "same-turn");

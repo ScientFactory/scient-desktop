@@ -101,7 +101,8 @@ import type {
 } from "~/rightPanelStore";
 import { workspaceFileHostPath } from "./filePath";
 import type { ChatFileAttachment } from "~/types";
-import { isAbsolutePath } from "~/terminal-links";
+import { isAbsolutePath } from "@t3tools/shared/path";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -300,6 +301,7 @@ function WorkspaceImagePreview(props: {
   }
 
   return assetUrl._tag === "Success" && imageUrl !== null ? (
+    // oxlint-disable-next-line t3code/require-centered-scroll-gutter -- The image is capped at max-h-full max-w-full, so this never scrolls.
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
       <MediaActions source={actionsSource}>
         <img
@@ -1743,6 +1745,7 @@ export default function FilePreviewPanel({
   );
   // SCIENT-FORK:START — an open Markdown document renames in place, keeping its editor
   const { moveInPlace, surfaceGeneration } = useInPlaceRename({
+    threadRef,
     environmentId,
     cwd,
     relativePath,
@@ -1755,10 +1758,17 @@ export default function FilePreviewPanel({
       (isLatexPreviewFile(from) &&
         /\.tex$/iu.test(to) &&
         latexRename?.movable === true &&
-        newDocuments.get({ environmentId, cwd, relativePath: from }) !== null &&
-        // Drafts left at the new name by an earlier file would be offered as
-        // this document's recovery; unreadable storage counts as occupied.
-        !pathHasLeftoverDrafts({ environmentId, cwd, relativePath: to }, true)),
+        newDocuments.get({ environmentId, cwd, relativePath: from }) !== null),
+    // Visual drafts still stored under the old name (being confirmed, or parked
+    // recovery) would be left behind; wait for them. Unreadable counts as busy.
+    sourceBusy: (from) =>
+      isLatexPreviewFile(from) &&
+      pathHasLeftoverDrafts({ environmentId, cwd, relativePath: from }, true),
+    // Drafts left at the new name by an earlier file would be offered as this
+    // document's recovery, or overwritten. Unreadable counts as occupied.
+    destinationStorageFree: (to) =>
+      !isLatexPreviewFile(to) ||
+      !pathHasLeftoverDrafts({ environmentId, cwd, relativePath: to }, true),
     reopen: (from, to) =>
       applyScientFileRename({
         environmentId,
@@ -1989,7 +1999,17 @@ export default function FilePreviewPanel({
                             ),
                           }
                         : {})}
-                      {...(moveInPlace ? { moveInPlace } : {})}
+                      {
+                        // The header moves Markdown in place; a LaTeX document moves only
+                        // through its automatic rename from its title.
+                        ...(moveInPlace && isRichMarkdown ? { moveInPlace } : {})
+                      }
+                      {...(markdownLease
+                        ? {
+                            prepareRename: () =>
+                              markdownLease.settleRecoveryCopy?.() ?? Promise.resolve(true),
+                          }
+                        : {})}
                       environmentId={environmentId}
                       cwd={cwd}
                       relativePath={relativePath}

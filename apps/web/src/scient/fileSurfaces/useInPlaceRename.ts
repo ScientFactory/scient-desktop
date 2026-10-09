@@ -6,12 +6,17 @@ import {
   clearProjectFileQueryData,
   refreshProjectEntriesQuery,
 } from "~/components/files/projectFilesQueryState";
-import { useRightPanelStore } from "~/rightPanelStore";
+import type { ScopedThreadRef } from "@t3tools/contracts";
+
+import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { renameOpenDocument, type RenameOpenDocumentResult } from "./renameOpenDocument";
+import {
+  renameOpenDocument,
+  type RenameOpenDocumentResult,
+} from "~/scient/markdownEditor/persistence/renameOpenDocument";
 
 /** How long the views may take to follow a moved document before they are remounted. */
 const FOLLOW_TIMEOUT_MS = 3_000;
@@ -21,18 +26,15 @@ function folderOf(path: string): string {
 }
 
 /**
- * No tab shows the destination, and this document is open in one tab only:
- * another tab would take over, or keep showing the old name.
+ * No tab of this thread already shows the destination: it would take over.
+ * Other threads' tabs hold no lease on this document (the registry checks
+ * leases) and follow the file as they do after any rename.
  */
-function tabsAllowMove(from: string, to: string): boolean {
-  let sourceTabs = 0;
-  for (const thread of Object.values(useRightPanelStore.getState().byThreadKey)) {
-    for (const surface of thread.surfaces) {
-      if (surface.id === `file:${to}`) return false;
-      if (surface.id === `file:${from}`) sourceTabs += 1;
-    }
-  }
-  return sourceTabs <= 1;
+function destinationTabFree(threadRef: ScopedThreadRef, to: string): boolean {
+  return !selectThreadRightPanelState(
+    useRightPanelStore.getState().byThreadKey,
+    threadRef,
+  ).surfaces.some((surface) => surface.id === `file:${to}`);
 }
 
 /**
@@ -41,12 +43,17 @@ function tabsAllowMove(from: string, to: string): boolean {
  * rendered the document at its new path.
  */
 export function useInPlaceRename(input: {
+  readonly threadRef: ScopedThreadRef;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly relativePath: string | null;
   readonly lease: MarkdownPersistenceLease | null;
   /** Whether this kind of document may move in place (same kind at both paths). */
   readonly canMove: (from: string, to: string) => boolean;
+  /** Something of this document is still settling under its old name; retry shortly. */
+  readonly sourceBusy?: (from: string) => boolean;
+  /** No stored drafts wait at the new name. Checked before starting and before moving. */
+  readonly destinationStorageFree?: (to: string) => boolean;
   /** The ordinary rename's follow-up, for a file renamed on disk that did not move. */
   readonly reopen: (from: string, to: string, revision: string) => void;
   /** Moves the tab to the new path, keeping its state. */
@@ -92,6 +99,7 @@ export function useInPlaceRename(input: {
     const from = relativePath;
     if (folderOf(from) !== folderOf(destination) || !input.canMove(from, destination))
       return { kind: "legacy-required" };
+    if (input.sourceBusy?.(from)) return { kind: "legacy-required", reason: "busy" };
     const outcome = await renameOpenDocument({
       lease,
       destination: {
@@ -120,7 +128,9 @@ export function useInPlaceRename(input: {
           cause: result._tag === "Failure" ? squashAtomCommandFailure(result) : null,
         };
       },
-      destinationFree: () => tabsAllowMove(from, destination),
+      destinationFree: () =>
+        destinationTabFree(input.threadRef, destination) &&
+        (input.destinationStorageFree?.(destination) ?? true),
       reopen: (to, revision) => input.reopen(from, to, revision),
       follow: (to) => {
         input.moveViewState(from, to);

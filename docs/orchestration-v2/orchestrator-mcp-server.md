@@ -34,8 +34,9 @@ The orchestration tools share the existing authenticated HTTP MCP endpoint:
 http://127.0.0.1:<server-port>/mcp
 ```
 
-Codex and Claude use the provider-visible server key `scient`; OpenCode and
-the native Pi bridge retain their `t3-code` transport namespace. Server keys,
+Codex and Claude use the provider-visible server key `scient`; OpenCode retains
+its `t3-code` transport namespace. Pi exposes canonical Scient tool names and
+retains historical transport aliases for saved selectors. Server keys,
 wire tool names and the `T3_MCP_BEARER_TOKEN` environment variable are separate
 compatibility boundaries. The endpoint registers orchestration and the
 Scient operation catalog, including preview and scientific tools.
@@ -156,8 +157,13 @@ provider-specific extensions; those remain in flavors such as Grok.
 
 ### Pi V2
 
-Pi core has no MCP client. When a provider session credential exists, the
-adapter writes a Scient-owned extension into the server cache and spawns
+Scient keeps a provider-session HTTP bridge even when Pi supports native MCP.
+`mcp.json` entries override native registrations, and native MCP's default
+60-second request timeout can interrupt long-running Scient tools. The bridge owns
+the injected endpoint and credential and forwards Pi's cancellation signal.
+
+When a provider session credential exists, the adapter writes a Scient-owned
+extension into the server cache and spawns
 `pi --mode rpc --extension <cache>/pi-t3-mcp-extension.ts` with:
 
 ```text
@@ -165,9 +171,11 @@ T3_MCP_URL=http://127.0.0.1:<port>/mcp
 T3_MCP_BEARER_TOKEN=<provider-session-token>
 ```
 
-The extension connects to that HTTP endpoint, lists tools, and registers each
-one with `pi.registerTool` under a `mcp__t3-code__` namespace
-(`mcp__t3-code__delegate_task`, `mcp__t3-code__scient_thread_launch`, and the rest).
+The extension uses Scient’s canonical tool names. Its provider-session HTTP bridge
+owns the endpoint and credential; configured MCP servers do not replace that authority. On Pi 0.99+,
+`orchestrator_capabilities`, `delegate_task`, and `task_status` remain directly
+available; optional tools are discovered through Pi's builtin `tool_search`.
+On older Pi or without builtin search, all tools remain directly available.
 The bridge calls the original MCP tool name over HTTP. Follow-up requests send
 `mcp-protocol-version: 2025-06-18`; Effect's MCP transport returns 400
 without it. The first turn of a session also receives the shared Scient

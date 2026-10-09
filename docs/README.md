@@ -34,6 +34,7 @@ require a cosmetic folder migration.
   - [Droid](./user/providers-droid.md)
   - [Cursor](./user/providers-cursor.md)
   - [OpenCode](./user/providers-opencode.md)
+  - [Muse Code](./user/providers-muse.md)
   - [Pi](./user/providers-pi.md)
   - [Oh My Pi](./user/providers-omp.md)
   - [ACP registry](./user/providers-acp.md)
@@ -96,6 +97,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Provider lifecycle architecture](./internals/provider-lifecycle.md)
 - [Provider lifecycle capability audit](./internals/provider-lifecycle-capability-audit.md)
 - [Codex runtime and authentication](./internals/scient-codex-runtime-auth.md)
+- [Adding a provider](./internals/adding-a-provider.md)
 - [Pull request file revisions](./internals/pull-request-file-revisions.md)
 - [Model classification](./internals/model-manifest.md)
 - [Remote environments](./internals/remote.md)
@@ -183,3 +185,7 @@ Follow their linked successors for current behavior.
 - [Relay observability](./operations/relay-observability.md)
 - [Mobile app store screenshots](./operations/mobile-app-store-screenshots.md)
 - [Inherited mobile source](../apps/mobile/README.md)
+
+## Manuscript integration foundation
+
+- [Overleaf manuscript engine](./internals/scient-overleaf-engine.md) — unmounted foundation and local application invariants.

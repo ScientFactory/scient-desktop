@@ -61,7 +61,7 @@ import { isPathTaken, useNewDocumentFiles } from "./useNewDocumentFiles";
 import { useTemplateChoices } from "./useTemplateChoices";
 import { useTemplateSaving } from "./useTemplateSaving";
 import { userTemplates } from "./userTemplates";
-import type { RenameOpenDocumentResult } from "~/scient/fileSurfaces/renameOpenDocument";
+import type { RenameOpenDocumentResult } from "~/scient/markdownEditor/persistence/renameOpenDocument";
 import "./newDocument.css";
 
 /** Whether a file a new document made has edits, in an open view, not yet saved. */
@@ -137,6 +137,9 @@ function useCaretInTitle(enabled: boolean): boolean {
  * its template and language; once its title is saved and the person has moved
  * on from it, one rename from `untitled` to the title's name.
  */
+/** How long a document may stay not-ready-to-move before it is renamed the ordinary way. */
+const MOVE_BUSY_LIMIT_MS = 3_000;
+
 export function useNewDocument(input: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
@@ -178,7 +181,22 @@ export function useNewDocument(input: {
     shown.current = relativePath;
   }, [relativePath]);
   const onRenamed = useEffectEvent(input.onRenamed);
-  const moveInPlace = useEffectEvent((destination: string) => input.moveInPlace!(destination));
+  // The lease this view shows now, for a rename that started on another one.
+  const boundLease = useRef(input.lease);
+  useLayoutEffect(() => {
+    boundLease.current = input.lease;
+  });
+  // When the document now shown first refused as not ready; another document
+  // starts its own wait.
+  const busySince = useRef<{ readonly lease: unknown; readonly at: number } | null>(null);
+  const busyRetry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [, setRetryTick] = useState(0);
+  useEffect(() => () => clearTimeout(busyRetry.current), []);
+  useEffect(() => {
+    // Another document: its retry and deadline are its own.
+    clearTimeout(busyRetry.current);
+    busySince.current = null;
+  }, [input.lease]);
   // An in-place move was refused for this document: rename the ordinary way.
   const [moveRefused, setMoveRefused] = useState<string | null>(null);
   // The route is chosen before the rename starts, so the ordinary rename's
@@ -338,21 +356,37 @@ export function useNewDocument(input: {
     }
     // Read before the hold: holding the document for its rename can drop the selection.
     const caretBefore = caretOffsetInEditor();
-    if (moves) {
+    if (moves && input.moveInPlace) {
       renaming.current = true;
       const from = key.relativePath;
+      // This render's document: a later render may show another one.
+      const move = input.moveInPlace;
+      const initiatingLease = lease;
       void (async () => {
         try {
           for (let attempt = 1; attempt <= 20; attempt++) {
-            const outcome = await moveInPlace(
-              newDocumentCandidate(stem, entry.format, attempt, folder),
-            );
+            if (boundLease.current !== initiatingLease) return;
+            const outcome = await move(newDocumentCandidate(stem, entry.format, attempt, folder));
             if (outcome.kind === "legacy-required") {
               // Another view holds this name: the next name may be free.
               if (outcome.reason === "destination") continue;
+              // Not ready yet (an editor composing, drafts settling): try again on a
+              // later render, falling back to the ordinary rename after a while.
+              if (outcome.reason === "busy") {
+                if (busySince.current?.lease !== initiatingLease)
+                  busySince.current = { lease: initiatingLease, at: Date.now() };
+                if (Date.now() - busySince.current.at < MOVE_BUSY_LIMIT_MS) {
+                  // Nothing else may render this view meanwhile: ask again shortly.
+                  clearTimeout(busyRetry.current);
+                  busyRetry.current = setTimeout(() => setRetryTick((tick) => tick + 1), 300);
+                  return;
+                }
+              }
+              busySince.current = null;
               setMoveRefused(from);
               return;
             }
+            busySince.current = null;
             if (outcome.kind === "failed") {
               const cause = outcome.cause;
               const taken =

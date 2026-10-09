@@ -22,6 +22,7 @@ import {
   OPENCODE2_HTTP_PROTOCOL,
   OpenCode2OrchestratorReplayHarness,
 } from "../Adapters/OpenCode2AdapterV2.testkit.ts";
+import { MuseOrchestratorReplayHarness } from "../Adapters/MuseAdapterV2.testkit.ts";
 import { PiOrchestratorReplayHarness } from "../Adapters/PiAdapterV2.testkit.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
@@ -128,7 +129,15 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
   const transcript = yield* input.harness.decodeTranscript(
     input.driver.driver === "codex"
       ? materializeReplayTranscriptWorkspace(ownerReloadTranscript, workspace)
-      : permissionTranscript,
+      : input.driver.driver === "muse"
+        ? materializeReplayTranscriptWorkspace(
+            replayTranscript,
+            yield* FileSystem.FileSystem.pipe(
+              Effect.flatMap((fs) => fs.realPath(workspace)),
+              Effect.provide(NodeServices.layer),
+            ),
+          )
+        : permissionTranscript,
   );
   const materialized = yield* materializeFixtureInput({
     scenario: input.fixtureName,
@@ -239,6 +248,11 @@ function runFixtureProviderWithRegisteredHarness(input: {
       return runFixtureProvider({
         ...input,
         harness: PiOrchestratorReplayHarness,
+      }).pipe(Effect.mapError(normalizeTestError), Effect.scoped);
+    case "muse":
+      return runFixtureProvider({
+        ...input,
+        harness: MuseOrchestratorReplayHarness,
       }).pipe(Effect.mapError(normalizeTestError), Effect.scoped);
     default:
       return Effect.die(

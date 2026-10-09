@@ -1,4 +1,10 @@
-import { createDelayedStatus, type ShownStatus } from "@t3tools/client-runtime/delayed-status";
+import {
+  createDelayedStatus,
+  type ShownStatus,
+  // SCIENT-FORK:START delayed-status-show-delay
+  type DelayedStatusOptions,
+  // SCIENT-FORK:END delayed-status-show-delay
+} from "@t3tools/client-runtime/delayed-status";
 import { useEffect, useState } from "react";
 
 /**
@@ -7,9 +13,17 @@ import { useEffect, useState } from "react";
  * status belongs to (for example a thread). A new key drops it at once.
  * Mobile has the same hook.
  */
-export function useDelayedStatus<A>(key: string, value: A | null): A | null {
+export function useDelayedStatus<A>(
+  key: string,
+  value: A | null,
+  // SCIENT-FORK:START delayed-status-show-delay — read once, when the hook mounts.
+  options?: DelayedStatusOptions,
+  // SCIENT-FORK:END delayed-status-show-delay
+): A | null {
   const [shown, setShown] = useState<ShownStatus<A> | null>(null);
-  const [status] = useState(() => createDelayedStatus<A>(setShown));
+  // SCIENT-FORK:START delayed-status-show-delay
+  const [status] = useState(() => createDelayedStatus<A>(setShown, options));
+  // SCIENT-FORK:END delayed-status-show-delay
   useEffect(() => () => status.dispose(), [status]);
   useEffect(() => {
     status.update(key, value);

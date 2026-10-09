@@ -142,7 +142,8 @@ export class LegacyV1ThreadImporter extends Context.Service<
 >()("t3/orchestration-v2/legacy/LegacyV1ThreadImporter") {}
 
 const decodeModelSelection = Schema.decodeUnknownOption(ModelSelection);
-const decodeAttachments = Schema.decodeUnknownOption(Schema.Array(ChatAttachment));
+const decodeAttachmentEntries = Schema.decodeUnknownOption(Schema.Array(Schema.Unknown));
+const decodeAttachment = Schema.decodeUnknownOption(ChatAttachment);
 const decodePullRequests = Schema.decodeUnknownOption(Schema.Array(ThreadPullRequestLink));
 const decodeLinkedPullRequest = Schema.decodeUnknownOption(ThreadLinkedPullRequest);
 const decodeStoredThread = Schema.decodeUnknownOption(
@@ -169,8 +170,17 @@ function modelSelectionFor(row: LegacyThreadRow) {
 }
 
 function attachmentsFor(row: LegacyMessageRow) {
-  if (row.attachments_json === null) return [];
-  return Option.getOrElse(decodeAttachments(parseJson(row.attachments_json)), () => []);
+  const attachments: Array<ChatAttachment> = [];
+  if (row.attachments_json === null) return { attachments, invalid: false };
+  const entries = decodeAttachmentEntries(parseJson(row.attachments_json));
+  if (Option.isNone(entries)) return { attachments, invalid: true };
+  let invalid = false;
+  for (const entry of entries.value) {
+    const attachment = decodeAttachment(entry);
+    if (Option.isSome(attachment)) attachments.push(attachment.value);
+    else invalid = true;
+  }
+  return { attachments, invalid };
 }
 
 function linkedPullRequestFor(row: LegacyThreadRow) {
@@ -291,7 +301,7 @@ function messageEvents(row: LegacyMessageRow): ReadonlyArray<OrchestrationV2Doma
   const messageId = MessageId.make(row.message_id);
   const createdAt = dateTime(row.created_at);
   const updatedAt = dateTime(row.updated_at);
-  const attachments = attachmentsFor(row);
+  const { attachments } = attachmentsFor(row);
   const context = row.context_json ? decodeMessageContext(parseJson(row.context_json)) : undefined;
   const message: OrchestrationV2ConversationMessage = {
     createdBy: row.role === "user" ? "user" : "agent",
@@ -846,6 +856,18 @@ const make = Effect.gen(function* () {
           );
           yield* eventSink.write({ events: batch.flatMap(messageEvents) });
           yield* Effect.yieldNow;
+        }
+        // Retain valid siblings and the raw source, but never acknowledge or
+        // continue a transcript whose attachment conversion is incomplete.
+        const invalidMessage = messages.find((message) => attachmentsFor(message).invalid);
+        if (invalidMessage !== undefined) {
+          return yield* new LegacyV1ThreadImportError({
+            operation: "restore message attachments for",
+            threadId,
+            cause: new Error(
+              `Malformed attachments in legacy message ${invalidMessage.message_id}; original data is preserved.`,
+            ),
+          });
         }
         yield* repairLegacyCitations(threadId);
         const now = DateTime.formatIso(yield* DateTime.now);

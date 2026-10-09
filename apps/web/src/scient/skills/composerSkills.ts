@@ -1,3 +1,4 @@
+import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import type {
   EnvironmentId,
   ProjectId,
@@ -5,10 +6,7 @@ import type {
   ServerProviderSkill,
   ThreadId,
 } from "@t3tools/contracts";
-import {
-  formatProviderSkillDisplayName,
-  scientManagedSkillReleaseKey,
-} from "@t3tools/client-runtime/providerSkills";
+import { scientManagedSkillReleaseKey } from "@t3tools/client-runtime/providerSkills";
 
 import { useRightPanelStore } from "~/rightPanelStore";
 import { scientSkillSurface } from "~/scient/rightPanel/surfaces";

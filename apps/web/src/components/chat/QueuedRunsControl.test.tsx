@@ -1,4 +1,12 @@
-import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  NodeId,
+  RunId,
+  TurnItemId,
+  type OrchestrationV2Run,
+  type OrchestrationV2ThreadProjection,
+} from "@t3tools/contracts";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -6,6 +14,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 const state = vi.hoisted(() => ({
   projection: null as unknown,
   workflow: null as unknown,
+  shell: null as unknown,
 }));
 
 vi.mock("@t3tools/client-runtime/environment", () => ({
@@ -18,6 +27,7 @@ vi.mock("@t3tools/client-runtime/state/thread-workflows", () => ({
 
 vi.mock("../../state/entities", () => ({
   useThreadProjection: () => state.projection,
+  useThreadShell: () => state.shell,
 }));
 
 vi.mock("../../state/threads", () => ({
@@ -223,14 +233,58 @@ it("retains ordinary admission previews until receipt/projection while exposing 
     />,
   );
   expect(html).toContain("Pending admission");
-  expect(html).toContain("Queuing…");
-  expect(html).toContain(">Queued</span>");
+  expect(html).toContain("Accepted queue admission");
+  expect(html).not.toContain("Queuing…");
+  expect(html).not.toContain("Queued<");
   expect(html).not.toContain('aria-label="Edit queued message"');
+});
+
+it("reserves the grip on both rows while a pending follow-up is about to become the second", () => {
+  state.projection = { projection: { messages: [] } };
+  state.workflow = {
+    queuedRuns: [
+      { run: { id: "queued-one", userMessageId: "queued-message" }, text: "One", attachments: [] },
+    ],
+    activeRun: { id: "busy" },
+    canPromoteToSteer: true,
+    canReorder: false,
+  };
+  const html = renderToStaticMarkup(
+    <QueuedRunsControl
+      environmentId={"env" as never}
+      threadId={"thread" as never}
+      editingRunId={null}
+      onEditQueuedRun={() => undefined}
+      onCancelEdit={() => undefined}
+      optimisticMessages={[
+        {
+          id: "follow-up" as never,
+          text: "Follow-up",
+          attachments: [],
+          queueAdmission: { accepted: true },
+        },
+      ]}
+    />,
+  );
+  expect(html).not.toContain('aria-label="Reorder queued message"');
+  expect(html.match(/<span aria-hidden="true" class="invisible shrink-0">/g)).toHaveLength(2);
 });
 
 it("shows a held failed-start recovery notice and Retry without dropping the native row", () => {
   state.projection = {
     projection: {
+      thread: { providerInstanceId: "codex" },
+      runs: [
+        {
+          id: "held-failed",
+          userMessageId: "held-message",
+          status: "queued",
+          queueHeld: true,
+          ordinal: 1,
+          queuePosition: 1,
+        },
+      ],
+      providerSessions: [],
       messages: [],
       turnItems: [
         { type: "error", runId: "held-failed", failure: { code: "queued_start_failed" } },
@@ -266,7 +320,7 @@ it("shows a held failed-start recovery notice and Retry without dropping the nat
   expect(html).toContain(">Send</button>");
 });
 
-it("renders actual held native workflow reorder and head-only Send before any provider session exists", async () => {
+it("renders actual held native workflow reorder and Send on every row before any provider session exists", async () => {
   const { deriveThreadQueueWorkflowState } = await vi.importActual<
     typeof import("@t3tools/client-runtime/state/thread-workflows")
   >("@t3tools/client-runtime/state/thread-workflows");
@@ -320,8 +374,8 @@ it("renders actual held native workflow reorder and head-only Send before any pr
     />,
   );
   expect(html.match(/aria-label="Reorder queued message"/g)).toHaveLength(2);
-  expect(html.match(/>Send<\/button>/g)).toHaveLength(1);
-  expect(html).toContain("Resume queue");
+  expect(html.match(/>Send<\/button>/g)).toHaveLength(2);
+  expect(html).not.toContain("Resume queue");
   expect(html).not.toContain(">Steer<");
 });
 
@@ -413,9 +467,167 @@ it.each([false, true])(
     expect(after).not.toContain("Retained payload 1");
     expect(after.match(/data-testid="thread-queue-row-/g) ?? []).toHaveLength(hasTail ? 1 : 0);
     expect(after.match(/>Send<\/button>/g) ?? []).toHaveLength(hasTail ? 1 : 0);
-    expect(after.match(/>Resume queue<\/button>/g) ?? []).toHaveLength(hasTail ? 1 : 0);
+    expect(after).not.toContain("Resume queue");
     expect(JSON.stringify(extracted.messages)).toBe(retainedMessages);
     expect(extracted.runs[0]?.status).toBe("cancelled");
     expect(extracted.runs[0]?.queuePosition).toBeNull();
   },
 );
+
+describe("held queue Send follows the server's queue.resume rule", () => {
+  const heldProjection = async (input: {
+    readonly before?: ReadonlyArray<OrchestrationV2Run>;
+    readonly automaticCompletion?: boolean;
+    readonly turnItems?: OrchestrationV2ThreadProjection["turnItems"];
+  }) => {
+    const { deriveThreadQueueWorkflowState } = await vi.importActual<
+      typeof import("@t3tools/client-runtime/state/thread-workflows")
+    >("@t3tools/client-runtime/state/thread-workflows");
+    const base = makeThreadProjectionFixture();
+    const queuedRun = (ordinal: number, held: boolean): OrchestrationV2Run => ({
+      id: RunId.make(`rule-${ordinal}`),
+      threadId: base.thread.id,
+      ordinal,
+      providerInstanceId: base.thread.providerInstanceId,
+      modelSelection: base.thread.modelSelection,
+      providerThreadId: null,
+      userMessageId: MessageId.make(`rule-message-${ordinal}`),
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: "queued",
+      queueHeld: held,
+      queuePosition: ordinal,
+      requestedAt: base.updatedAt,
+      startedAt: null,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+    });
+    const queuedRuns = [
+      queuedRun(2, true),
+      queuedRun(3, true),
+      ...(input.automaticCompletion ? [queuedRun(4, false)] : []),
+    ];
+    const projection: OrchestrationV2ThreadProjection = {
+      ...base,
+      runs: [...(input.before ?? []), ...queuedRuns],
+      messages: queuedRuns.map((run) => ({
+        id: run.userMessageId,
+        threadId: base.thread.id,
+        runId: run.id,
+        nodeId: null,
+        role: "user" as const,
+        text: `Rule ${run.ordinal}`,
+        attachments: [],
+        streaming: false,
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        createdAt: base.updatedAt,
+        updatedAt: base.updatedAt,
+        ...(run.queueHeld
+          ? {}
+          : {
+              delegatedCompletion: {
+                parentRunId: RunId.make("rule-parent"),
+                generation: 1,
+                taskIds: [NodeId.make("rule-task")],
+              },
+            }),
+      })),
+      turnItems: input.turnItems ?? [],
+    };
+    state.projection = { projection };
+    state.workflow = deriveThreadQueueWorkflowState(projection);
+    return renderToStaticMarkup(
+      <QueuedRunsControl
+        environmentId={EnvironmentId.make("rule")}
+        threadId={base.thread.id}
+        optimisticMessages={[]}
+        editingRunId={null}
+        onEditQueuedRun={() => undefined}
+        onCancelEdit={() => undefined}
+      />,
+    );
+  };
+
+  it("offers Send on every held row of an idle thread, with no held header", async () => {
+    const html = await heldProjection({});
+    expect(html.match(/>Send<\/button>/g)).toHaveLength(2);
+    expect(html).not.toContain("Queue held");
+    expect(html).not.toContain("Resume queue");
+  });
+
+  // The client's snapshot of a thread whose last root run hit the usage limit.
+  // A newer session error that lifts the limit may be missing from a windowed
+  // snapshot, so only the server-computed shell can confirm the limit.
+  const limitedSnapshot = () => {
+    const base = makeThreadProjectionFixture();
+    const limited: OrchestrationV2Run = {
+      id: RunId.make("rule-limited"),
+      threadId: base.thread.id,
+      ordinal: 1,
+      providerInstanceId: base.thread.providerInstanceId,
+      modelSelection: base.thread.modelSelection,
+      providerThreadId: null,
+      userMessageId: MessageId.make("rule-limited-message"),
+      rootNodeId: NodeId.make("rule-limited-root"),
+      activeAttemptId: null,
+      status: "failed",
+      requestedAt: base.updatedAt,
+      startedAt: base.updatedAt,
+      completedAt: base.updatedAt,
+      checkpointId: null,
+      contextHandoffId: null,
+    };
+    return heldProjection({
+      before: [limited],
+      turnItems: [
+        {
+          id: TurnItemId.make("rule-limit-error"),
+          type: "error",
+          threadId: base.thread.id,
+          runId: limited.id,
+          nodeId: limited.rootNodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "failed",
+          title: "Usage limit",
+          startedAt: base.updatedAt,
+          completedAt: base.updatedAt,
+          updatedAt: base.updatedAt,
+          failure: {
+            class: "usage_limit",
+            message: "Usage limit reached.",
+            code: "usage_limit",
+            retryable: null,
+          },
+        },
+      ],
+    });
+  };
+
+  it("offers no Send when the server's shell confirms the usage limit", async () => {
+    state.shell = { runtime: { lastErrorClass: "usage_limit" } };
+    const html = await limitedSnapshot();
+    expect(html.match(/data-testid="thread-queue-row-/g)).toHaveLength(2);
+    expect(html).not.toContain(">Send</button>");
+  });
+
+  it.each([
+    ["a newer session error lifted it", { runtime: { lastErrorClass: null } }],
+    ["no shell has arrived", null],
+  ])("keeps Send on a limited-looking snapshot when %s", async (_case, shell) => {
+    state.shell = shell;
+    const html = await limitedSnapshot();
+    expect(html.match(/>Send<\/button>/g)).toHaveLength(2);
+  });
+
+  it("keeps Send on user rows while a hidden delegated completion waits to go first", async () => {
+    const html = await heldProjection({ automaticCompletion: true });
+    expect(html.match(/data-testid="thread-queue-row-/g)).toHaveLength(2);
+    expect(html.match(/>Send<\/button>/g)).toHaveLength(2);
+  });
+});

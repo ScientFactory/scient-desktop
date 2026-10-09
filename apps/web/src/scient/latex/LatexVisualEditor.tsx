@@ -6216,18 +6216,58 @@ function LatexVisualEditorReady(
   );
 
   // Briefly read-only (an in-place rename holds the document): give the caret
-  // back where it was once editing resumes, as the Markdown editor does.
-  const focusedWhenLocked = useRef(false);
+  // back where it was once editing resumes, in the editor or in one of its
+  // fields (title, author, captions), as the Markdown editor does.
+  const focusedWhenLocked = useRef<{
+    readonly element: HTMLElement;
+    readonly selection: readonly [number, number] | null;
+  } | null>(null);
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
-    if (readOnly && editor.isEditable) focusedWhenLocked.current = editor.isFocused;
-    editor.setEditable(!readOnly);
-    if (!readOnly && focusedWhenLocked.current) {
-      focusedWhenLocked.current = false;
-      // Only if focus has gone nowhere else meanwhile (a dialog, a field).
+    if (readOnly && editor.isEditable) {
       const active = document.activeElement;
-      if (active === null || active === document.body || editor.view.dom.contains(active))
+      focusedWhenLocked.current =
+        active instanceof HTMLElement && editor.view.dom.contains(active)
+          ? {
+              element: active,
+              selection:
+                active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement
+                  ? [active.selectionStart ?? 0, active.selectionEnd ?? 0]
+                  : null,
+            }
+          : null;
+    }
+    editor.setEditable(!readOnly);
+    const locked = focusedWhenLocked.current;
+    if (!readOnly && locked) {
+      focusedWhenLocked.current = null;
+      // Only if focus has gone nowhere else meanwhile (a dialog, another field).
+      const active = document.activeElement;
+      if (active !== null && active !== document.body && !editor.view.dom.contains(active)) return;
+      if (locked.element === editor.view.dom || !locked.element.isConnected) {
         editor.commands.focus(undefined, { scrollIntoView: false });
+        return;
+      }
+      // The field's node view re-enables it in its own render: try for a few
+      // frames, and only while focus is still nowhere else.
+      const field = locked.element;
+      let frames = 0;
+      const restore = () => {
+        const active = document.activeElement;
+        if (active !== null && active !== document.body && active !== field) return;
+        const disabled = "disabled" in field && (field as { disabled?: boolean }).disabled === true;
+        if (disabled) {
+          if (++frames < 10) requestAnimationFrame(restore);
+          return;
+        }
+        field.focus({ preventScroll: true });
+        if (
+          locked.selection &&
+          (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement)
+        )
+          field.setSelectionRange(locked.selection[0], locked.selection[1]);
+      };
+      restore();
     }
   }, [editor, readOnly]);
 

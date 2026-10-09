@@ -1,0 +1,57 @@
+diff --git a/dist/render/FileTreeView.js b/dist/render/FileTreeView.js
+index 7d3b818c43a7621ab9170da32b180232ed3c9472..da05d2683a747b954ee1ab04de2a115f03bf1088 100644
+--- a/dist/render/FileTreeView.js
++++ b/dist/render/FileTreeView.js
+@@ -17,6 +17,30 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
+ import { jsx, jsxs } from "preact/jsx-runtime";
+ //#region src/render/FileTreeView.tsx
+ /** @jsxImportSource preact */
++// SCIENT-FORK: A filename is one bidi paragraph. Splitting an RTL run into
++// separately laid-out truncation halves changes its visible reading order.
++function renderFileTreeLabel(name, flattened = false) {
++	if (/[\u0590-\u08ff\uFB1D-\uFDFF\uFE70-\uFEFC\u{1E900}-\u{1E95F}]/u.test(name)) return /* @__PURE__ */ jsx("span", {
++		"data-file-tree-bidi-label": true,
++		dir: "auto",
++		title: name,
++		style: {
++			display: "block",
++			minWidth: 0,
++			overflow: "hidden",
++			textOverflow: "ellipsis",
++			whiteSpace: "nowrap",
++			textAlign: "left",
++			unicodeBidi: "isolate"
++		},
++		children: name
++	});
++	return flattened ? /* @__PURE__ */ jsx(Truncate, { children: name }) : /* @__PURE__ */ jsx(MiddleTruncate, {
++		minimumLength: 5,
++		split: "extension",
++		children: name
++	});
++}
+ function formatFlattenedSegments(row, renameInput = null, dragTargetFlattenedSegmentPath = null) {
+ 	"use no memo";
+ 	const segments = row.flattenedSegments;
+@@ -28,7 +52,7 @@ function formatFlattenedSegments(row, renameInput = null, dragTargetFlattenedSeg
+ 			return /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx("span", {
+ 				"data-item-flattened-subitem": segment.path,
+ 				"data-item-flattened-subitem-drag-target": dragTargetFlattenedSegmentPath === segment.path ? "true" : void 0,
+-				children: isLast && renameInput != null ? renameInput : /* @__PURE__ */ jsx(Truncate, { children: segment.name })
++				children: isLast && renameInput != null ? renameInput : renderFileTreeLabel(segment.name, true)
+ 			}), index < segments.length - 1 ? " / " : ""] }, segment.path);
+ 		})
+ 	});
+@@ -376,11 +400,7 @@ function renderFileTreeRowContent(row, resolveIcon, { actionLaneEnabled = false,
+ 		}),
+ 		/* @__PURE__ */ jsx("div", {
+ 			"data-item-section": "content",
+-			children: row.isFlattened ? formatFlattenedSegments(row, renameInput, dragTargetFlattenedSegmentPath) : renameInput ?? /* @__PURE__ */ jsx(MiddleTruncate, {
+-				minimumLength: 5,
+-				split: "extension",
+-				children: row.name
+-			})
++			children: row.isFlattened ? formatFlattenedSegments(row, renameInput, dragTargetFlattenedSegmentPath) : renameInput ?? renderFileTreeLabel(row.name)
+ 		}),
+ 		decorationLaneEnabled ? /* @__PURE__ */ jsx("div", {
+ 			"data-item-section": "decoration",

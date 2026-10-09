@@ -539,6 +539,7 @@ it.effect.skipIf(!binary)(
         yield* fs.writeFileString(
           extension,
           `
+import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 export default function(pi) {

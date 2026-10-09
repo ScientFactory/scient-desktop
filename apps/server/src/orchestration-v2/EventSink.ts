@@ -8,6 +8,8 @@ import {
   recordNativeModelContextWindow,
   type NativeModelCapacityOwner,
 } from "./scient-fork/NativeModelContextWindow.ts";
+import { writeForkHistory, type ForkHistoryEntry } from "./scient-fork/ForkHistory.ts";
+import { freezeShownHistory } from "./scient-fork/ForkHistoryFreeze.ts";
 import {
   pendingStartOwnerIsCurrent,
   type PendingStartOwner,
@@ -188,6 +190,8 @@ export interface EventSinkV2Shape {
     };
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
+    /** SCIENT-FORK: a new fork's inherited history, recorded with its creation. */
+    readonly forkHistory?: ReadonlyArray<ForkHistoryEntry>;
     readonly cancelUnsettledEffects?: {
       readonly effectTypes: ReadonlyArray<EffectOutbox.OrchestrationEffectRequestV2["type"]>;
       readonly reason: string;
@@ -353,6 +357,8 @@ const layerBase: Layer.Layer<
       return Effect.gen(function* () {
         const normalized: OrchestrationV2DomainEvent[] = [];
         for (const event of events) {
+          // SCIENT-FORK: forks showing what this event rewrites keep the stored version.
+          yield* freezeShownHistory(sql, event);
           const positioned = yield* event.type === "turn-item.updated"
             ? turnItemPositions
                 .normalize(
@@ -630,7 +636,9 @@ const layerBase: Layer.Layer<
           const normalized = yield* normalizeEvents(input.events);
           const storedEvents = yield* eventStore.append({ events: normalized });
           yield* applyStoredEvents(storedEvents);
-          const projection = yield* readRunningForkOwner(input.owner);
+          yield* readRunningForkOwner(input.owner);
+          // The fork's one full read of its source, at the captured frame.
+          const projection = yield* projectionStore.getThreadProjection(input.owner.threadId);
           const sourceSequence = yield* eventStore.latestSequence({
             threadId: input.owner.threadId,
           });
@@ -732,6 +740,19 @@ const layerBase: Layer.Layer<
             );
           }
           yield* applyStoredEvents(storedEvents);
+          // SCIENT-FORK:START
+          if (input.forkHistory !== undefined)
+            yield* writeForkHistory(sql, input.threadId, input.forkHistory).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new EventSinkWriteError({
+                    commandId: input.commandId,
+                    eventCount: input.events.length,
+                    cause,
+                  }),
+              ),
+            );
+          // SCIENT-FORK:END
           yield* effectOutbox.enqueue(input.effects);
           const receipt: CommandReceiptStore.CommandReceiptV2 = {
             commandId: input.commandId,

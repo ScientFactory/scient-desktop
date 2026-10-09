@@ -390,6 +390,8 @@ export function projectWorkLog(
           if (key !== null) toolIndex.set(key, entries.length);
           entries.push(entry);
         }
+        // A finished call is closed: a later row reusing its id is another call.
+        if (key !== null && activity.kind !== "tool.updated") toolIndex.delete(key);
         break;
       }
       case "task.started":

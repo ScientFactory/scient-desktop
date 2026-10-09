@@ -3183,6 +3183,7 @@ it.layer(
               "cursor",
               "droid",
               "grok",
+              "muse",
               "omp",
               "opencode",
               "pi",
@@ -3191,6 +3192,9 @@ it.layer(
             assert.strictEqual(cursorProvider?.enabled, false);
             assert.strictEqual(cursorProvider?.status, "disabled");
             assert.strictEqual(cursorProvider?.message, "Cursor is disabled in Scient settings.");
+            const museProvider = providers.find((provider) => provider.driver === "muse");
+            assert.strictEqual(museProvider?.enabled, false);
+            assert.strictEqual(museProvider?.status, "disabled");
             assert.strictEqual(cursorSpawned, false);
           }).pipe(Effect.provide(runtimeServices));
         }),
