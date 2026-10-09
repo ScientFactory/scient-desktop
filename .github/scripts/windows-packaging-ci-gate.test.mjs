@@ -23,6 +23,7 @@ NodeTest.test(
       "pnpm-lock.yaml",
       ".github/workflows/release.yml",
       ".github/workflows/ci.yml",
+      ".github/workflows/remote-server-packaging.yml",
       ".github/scripts/windows-packaging-ci-gate.test.mjs",
     ])
       NodeAssert.equal(needsWindowsPackaging([path]), true, path);
@@ -71,6 +72,7 @@ NodeTest.test(
           WINDOWS_DETECTION_RESULT: detection,
           WINDOWS_CHANGED: changed,
           WINDOWS_NATIVE_RESULT: native,
+          REMOTE_SERVER_RESULT: native,
         },
         encoding: "utf8",
       });
@@ -128,3 +130,20 @@ NodeTest.test(
     }
   },
 );
+
+NodeTest.test("remote qualification failure blocks otherwise green Windows packaging", () => {
+  for (const remote of ["failure", "cancelled", "skipped", ""]) {
+    const result = NodeChildProcess.spawnSync(process.execPath, [script, "check"], {
+      env: {
+        ...process.env,
+        WORKSPACE_RESULT: "success",
+        WINDOWS_DETECTION_RESULT: "success",
+        WINDOWS_CHANGED: "true",
+        WINDOWS_NATIVE_RESULT: "success",
+        REMOTE_SERVER_RESULT: remote,
+      },
+      encoding: "utf8",
+    });
+    NodeAssert.equal(result.status, 1, remote);
+  }
+});
