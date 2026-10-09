@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { FileTextIcon, RefreshCwIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { Fragment, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { cn } from "~/lib/utils";
@@ -20,7 +20,9 @@ import {
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
+  useSettingsSearchTargetId,
 } from "~/components/settings/settingsLayout";
+import { useOptionalSettingsScope } from "~/components/settings/SettingsScopeContext";
 import {
   SettingsSourceGroup,
   SettingsSourcePanel,
@@ -58,6 +60,15 @@ import { useLatexInstallation, type LatexInstallationController } from "./useLat
 const SELECTED_FORMAT_STORAGE_KEY = "scient.documentsSettingsFormat";
 const DOCUMENT_FORMATS = ["latex", "markdown"] as const;
 type DocumentFormat = (typeof DOCUMENT_FORMATS)[number];
+
+/** Rows settings search can jump to, and the tab each lives under. */
+const SEARCH_TARGET_FORMATS: Readonly<Record<string, DocumentFormat>> = {
+  "latex-installation": "latex",
+  "new-document-template": "latex",
+  "new-document-language": "latex",
+  "latex-open-in": "latex",
+  "markdown-open-in": "markdown",
+};
 
 const MARKDOWN_VIEWS = [
   { id: "rich", label: "Rich" },
@@ -162,7 +173,13 @@ function LatexInstallationRow({
       serverScoped
       control={
         view.actionLabel === null ? null : (
-          <Button type="button" size="sm" variant="outline" disabled={view.busy} onClick={act}>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={view.busy || installation.refreshing}
+            onClick={act}
+          >
             {view.actionLabel}
           </Button>
         )
@@ -277,8 +294,17 @@ function DocumentsSection(props: {
   readonly headerAction?: ReactNode;
 }) {
   const [stored, setStored] = useLocalStorage(SELECTED_FORMAT_STORAGE_KEY, "latex", Schema.String);
-  const selected: DocumentFormat = stored === "markdown" ? "markdown" : "latex";
   const [collapsed, setCollapsed] = useState(false);
+  // A settings-search jump to a row opens that row's tab, and keeps it open after.
+  const target = useSettingsSearchTargetId();
+  const targetFormat = target === null ? null : (SEARCH_TARGET_FORMATS[target] ?? null);
+  useEffect(() => {
+    if (targetFormat === null) return;
+    setStored(targetFormat);
+    setCollapsed(false);
+  }, [setStored, targetFormat]);
+  const selected: DocumentFormat = targetFormat ?? (stored === "markdown" ? "markdown" : "latex");
+  const isCollapsed = targetFormat === null && collapsed;
   const items: ReadonlyArray<{
     readonly id: DocumentFormat;
     readonly label: string;
@@ -307,14 +333,14 @@ function DocumentsSection(props: {
       headerAction={props.headerAction}
     >
       <div className="px-3 sm:px-4">
-        <SettingsSourceGroup activePanelId={collapsed ? null : `documents-${selected}`}>
+        <SettingsSourceGroup activePanelId={isCollapsed ? null : `documents-${selected}`}>
           <SettingsSourceStrip label="Document formats">
             {items.map((item, index) => (
               <SettingsSourceStripItem
                 key={item.id}
                 id={`documents-${item.id}-trigger`}
                 controls={`documents-${item.id}`}
-                expanded={!collapsed && item.id === selected}
+                expanded={!isCollapsed && item.id === selected}
                 separated={index > 0}
                 label={item.label}
                 detail={item.detail || undefined}
@@ -331,9 +357,9 @@ function DocumentsSection(props: {
             ))}
           </SettingsSourceStrip>
           {selected === "latex" ? (
-            <LatexPanel hidden={collapsed} installation={props.installation} />
+            <LatexPanel hidden={isCollapsed} installation={props.installation} />
           ) : (
-            <MarkdownPanel hidden={collapsed} />
+            <MarkdownPanel hidden={isCollapsed} />
           )}
         </SettingsSourceGroup>
       </div>
@@ -385,7 +411,9 @@ function EnvironmentDocumentsSettings(props: {
  */
 export function DocumentsSettings(props: { readonly environmentId?: EnvironmentId | undefined }) {
   const primaryId = usePrimaryEnvironmentId();
-  const environmentId = props.environmentId ?? primaryId;
+  // The environment chosen in the settings scope, unless an older link names one.
+  const scopeEnvironmentId = useOptionalSettingsScope()?.environment?.environmentId ?? null;
+  const environmentId = props.environmentId ?? scopeEnvironmentId ?? primaryId;
   const environment = useEnvironment(environmentId);
   if (environmentId === null || environment === null) {
     return (

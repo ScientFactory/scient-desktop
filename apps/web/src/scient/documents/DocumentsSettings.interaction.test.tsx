@@ -6,6 +6,8 @@ import { EnvironmentId, type ScientLatexToolchainReport } from "@t3tools/contrac
 
 const mocks = vi.hoisted(() => ({
   report: null as ScientLatexToolchainReport | null,
+  target: null as string | null,
+  scopeEnvironmentId: null as string | null,
   readToolchain: vi.fn(),
   install: vi.fn(),
 }));
@@ -16,6 +18,19 @@ vi.mock("~/state/environments", () => ({
 vi.mock("~/components/settings/settingsLayout", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/components/settings/settingsLayout")>()),
   SettingsPageContainer: ({ children }: { children: ReactNode }) => <main>{children}</main>,
+  useSettingsSearchTargetId: () => mocks.target,
+}));
+vi.mock("~/components/settings/SettingsScopeContext", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/components/settings/SettingsScopeContext")>()),
+  useOptionalSettingsScope: () =>
+    mocks.scopeEnvironmentId === null
+      ? null
+      : {
+          environment: { environmentId: mocks.scopeEnvironmentId },
+          connectedEnvironments: [{ environmentId: mocks.scopeEnvironmentId }],
+          scope: { kind: "environment" },
+          targets: [],
+        },
 }));
 vi.mock("~/hooks/useSettings", () => ({ usePrimarySettingsAvailable: () => true }));
 vi.mock("../latex/client", () => ({
@@ -46,6 +61,8 @@ describe("Settings ▸ Documents", () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     localStorage.clear();
     mocks.report = report();
+    mocks.target = null;
+    mocks.scopeEnvironmentId = null;
     mocks.readToolchain.mockReset().mockImplementation(async () => mocks.report);
     mocks.install.mockReset().mockResolvedValue({
       state: "downloading",
@@ -64,11 +81,23 @@ describe("Settings ▸ Documents", () => {
     container.remove();
     vi.unstubAllGlobals();
   });
-  const render = async () => {
+  const render = async (environmentId: string | null = "remote") => {
     await act(async () => {
-      root.render(<DocumentsSettings environmentId={EnvironmentId.make("remote")} />);
+      root.render(
+        <DocumentsSettings
+          environmentId={environmentId === null ? undefined : EnvironmentId.make(environmentId)}
+        />,
+      );
       await Promise.resolve();
     });
+  };
+  const installButton = () =>
+    [...container.querySelectorAll<HTMLButtonElement>("#latex-installation button")].find(
+      (node) => node.textContent === "Install TinyTeX",
+    );
+  const missing = () => {
+    const { source: _source, ...found } = report();
+    return { ...found, kind: null, executable: null, version: null };
   };
   const select = (label: string) =>
     container.querySelector<HTMLElement>(`[data-slot="select-trigger"][aria-label="${label}"]`)!;
@@ -130,8 +159,7 @@ describe("Settings ▸ Documents", () => {
   });
 
   it("offers TinyTeX when no engine is found, and shows the install starting", async () => {
-    const { source: _source, ...found } = report();
-    mocks.report = { ...found, kind: null, executable: null, version: null };
+    mocks.report = missing();
     await render();
     const row = container.querySelector("#latex-installation")!;
     expect(row.textContent).toContain("Not found");
@@ -146,5 +174,52 @@ describe("Settings ▸ Documents", () => {
     expect(container.querySelector("#latex-installation")?.textContent).toContain(
       "Downloading TinyTeX",
     );
+  });
+
+  it("does not stay busy when the install cannot even be asked for", async () => {
+    mocks.report = missing();
+    mocks.install.mockImplementation(() => {
+      throw new Error("This server is not connected.");
+    });
+    await render();
+    await act(async () => {
+      installButton()!.click();
+      await Promise.resolve();
+    });
+    const row = container.querySelector("#latex-installation")!;
+    expect(row.textContent).toContain("This server is not connected.");
+    expect(row.textContent).toContain("Check again");
+  });
+
+  it("holds Install while a search for LaTeX is still answering", async () => {
+    mocks.report = missing();
+    await render();
+    let answer!: (value: ScientLatexToolchainReport) => void;
+    mocks.readToolchain.mockImplementationOnce(
+      () => new Promise<ScientLatexToolchainReport>((resolve) => (answer = resolve)),
+    );
+    await act(() =>
+      container.querySelector<HTMLElement>('[aria-label="Find LaTeX again"]')!.click(),
+    );
+    expect(installButton()!.disabled).toBe(true);
+    await act(async () => {
+      answer(missing());
+      await Promise.resolve();
+    });
+    expect(installButton()!.disabled).toBe(false);
+  });
+
+  it("reads LaTeX on the environment chosen in the settings scope", async () => {
+    mocks.scopeEnvironmentId = "scoped";
+    await render(null);
+    expect(mocks.readToolchain).toHaveBeenCalledWith("scoped", { refresh: false });
+  });
+
+  it("opens the LaTeX tab when search jumps to one of its rows", async () => {
+    localStorage.setItem("scient.documentsSettingsFormat", JSON.stringify("markdown"));
+    mocks.target = "new-document-template";
+    await render();
+    expect(container.querySelector("#new-document-template")).not.toBeNull();
+    expect(stored("scient.documentsSettingsFormat")).toBe("latex");
   });
 });

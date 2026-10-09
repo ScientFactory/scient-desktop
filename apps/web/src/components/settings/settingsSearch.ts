@@ -174,14 +174,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "latex-installation",
     title: "LaTeX installation",
     to: "/settings/documents",
-    targetId: "documents",
+    targetId: "latex-installation",
     searchTerms: ["tinytex", "tex live", "miktex", "tectonic", "latexmk", "pdf build", "engine"],
   },
   {
     id: "new-document-template",
     title: "Template and language for new documents",
     to: "/settings/documents",
-    targetId: "documents",
+    targetId: "new-document-template",
     searchTerms: ["template", "new document", "article", "report", "thesis", "hebrew"],
   },
   {
