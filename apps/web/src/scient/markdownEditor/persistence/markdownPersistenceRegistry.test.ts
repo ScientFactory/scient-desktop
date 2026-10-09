@@ -1352,6 +1352,71 @@ describe("moving an open document in place", () => {
     lease.release();
   });
 
+  it("does not move while the old name's recovery copy cannot be removed", async () => {
+    const fs = files();
+    const records = new Map<string, MarkdownDraftCheckpoint>();
+    let refuseRemoval = false;
+    const store: MarkdownDraftCheckpointStore = {
+      read: vi.fn(async (key) => records.get(key)),
+      replace: vi.fn(async (key, expected, next) => {
+        if (next === undefined && refuseRemoval) throw new Error("storage busy");
+        if (records.get(key)?.token !== expected) return false;
+        if (next) records.set(key, next);
+        else records.delete(key);
+        return true;
+      }),
+    };
+    const registry = new MarkdownPersistenceRegistry({
+      createTransport: fs.createTransport,
+      checkpointStore: store,
+      debounceMs: 60_000,
+    });
+    const lease = await registry.open(target, {});
+    // Unsaved work is copied, then saved; the copy's removal is still due.
+    expect(lease.change("B", 0)).toBe(true);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(records.size).toBe(1);
+    expect(await lease.flushNow()).toBe(true);
+    refuseRemoval = true;
+    const move = lease.beginMove(renamed)!;
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await move.preflight()).toBe("unknown");
+    logged.mockRestore();
+    move.finish();
+    // Removal works again: the copy goes first, then the move may proceed.
+    refuseRemoval = false;
+    const again = lease.beginMove(renamed)!;
+    expect(await again.preflight()).toBe("empty");
+    expect(records.size).toBe(0);
+    again.finish();
+    lease.release();
+  });
+
+  it("keeps a file's document id when it is reopened, and gives the old name a new one after a move", async () => {
+    const fs = files();
+    const registry = new MarkdownPersistenceRegistry({
+      createTransport: fs.createTransport,
+      cleanTtlMs: 10,
+    });
+    const first = await registry.open(target, {});
+    const id = first.documentId;
+    first.release();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(registry.has(target)).toBe(false);
+    const reopened = await registry.open(target, {});
+    expect(reopened.documentId).toBe(id);
+    const move = reopened.beginMove(renamed)!;
+    fs.renameOnDisk();
+    expect(move.commit()).toBe(true);
+    move.finish();
+    expect(reopened.documentId).toBe(id);
+    fs.disk.set(target.relativePath, { source: "new file", revision: "rnew" });
+    const other = await registry.open(target, {});
+    expect(other.documentId).not.toBe(id);
+    other.release();
+    reopened.release();
+  });
+
   it("moves the recovery copy's home: the old writer retires, the new one writes at the new path", async () => {
     const fs = files();
     const records = new Map<string, MarkdownDraftCheckpoint>();

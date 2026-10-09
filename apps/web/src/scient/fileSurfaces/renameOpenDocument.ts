@@ -1,6 +1,8 @@
-import type {
-  MarkdownPersistenceLease,
-  MarkdownPersistenceTarget,
+import {
+  canMoveInPlace,
+  documentIdentity,
+  type MarkdownPersistenceLease,
+  type MarkdownPersistenceTarget,
 } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 
 /**
@@ -93,16 +95,24 @@ export async function renameOpenDocument(input: {
    * Called synchronously right after the session moved.
    */
   readonly follow: (destinationRelativePath: string) => void;
+  /**
+   * Whether no other view already shows the destination (or the document under
+   * its old name elsewhere). Checked before starting and again before moving.
+   */
+  readonly destinationFree?: () => boolean;
   /** Resolves true once every view of the document has committed at the destination. */
   readonly followed: (destinationRelativePath: string) => Promise<boolean>;
 }): Promise<RenameOpenDocumentResult> {
   const { lease, destination } = input;
-  if (!participantsReady(lease.documentId)) return { kind: "legacy-required" };
+  if (!canMoveInPlace(lease)) return { kind: "legacy-required" };
+  const documentId = documentIdentity(lease);
+  if (!participantsReady(documentId) || !(input.destinationFree?.() ?? true))
+    return { kind: "legacy-required" };
   const move = lease.beginMove(destination);
   if (move === null) return { kind: "legacy-required" };
   try {
     // An editor may have started composing between the check and the hold.
-    if (!participantsReady(lease.documentId)) return { kind: "legacy-required" };
+    if (!participantsReady(documentId)) return { kind: "legacy-required" };
     if ((await move.preflight()) !== "empty") return { kind: "legacy-required" };
     const result = await input.rename(lease.getSnapshot().baselineRevision);
     if (!result.ok) return { kind: "failed", cause: result.cause };
@@ -113,6 +123,8 @@ export async function renameOpenDocument(input: {
     if (
       result.destinationRelativePath !== destination.relativePath ||
       result.revision !== lease.getSnapshot().baselineRevision ||
+      // A view opened the destination meanwhile: it would take over the tab.
+      !(input.destinationFree?.() ?? true) ||
       !move.commit()
     ) {
       input.reopen(renamed.destinationRelativePath, renamed.revision);

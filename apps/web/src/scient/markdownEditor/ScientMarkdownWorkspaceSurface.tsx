@@ -42,7 +42,10 @@ import { showScientMarkdownTableContextMenu } from "./tableContextMenu";
 import { ScientMarkdownControls } from "./ui/ScientMarkdownControls";
 import { ScientMarkdownFooter } from "./ui/ScientMarkdownFooter";
 import { useFinalUnmount } from "./useFinalUnmount";
-import type { MarkdownPersistenceLease } from "./persistence/markdownPersistenceRegistry";
+import {
+  documentIdentity,
+  type MarkdownPersistenceLease,
+} from "./persistence/markdownPersistenceRegistry";
 import type { ScientMarkdownWikiLinkCandidate } from "./wikiLinkPicker";
 
 const CHROME_BLOCK_SHORTCUTS = [
@@ -93,7 +96,9 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
  * controls stay collapsed until the reader opens them or starts typing.
  */
 export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSurfaceProps) {
-  return <ScientMarkdownWorkspaceSurfaceOwner key={props.persistence.documentId} {...props} />;
+  return (
+    <ScientMarkdownWorkspaceSurfaceOwner key={documentIdentity(props.persistence)} {...props} />
+  );
 }
 
 function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfaceProps) {
@@ -266,10 +271,10 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
   // An in-place rename waits while an input method is composing here.
   useEffect(
     () =>
-      registerRenameParticipant(props.persistence.documentId, {
+      registerRenameParticipant(documentIdentity(props.persistence), {
         readyToMove: () => !composingRef.current && controller.view?.composing !== true,
       }),
-    [controller, props.persistence.documentId],
+    [controller, props.persistence],
   );
 
   useEffect(() => controller.setAriaLabel(props.ariaLabel), [controller, props.ariaLabel]);

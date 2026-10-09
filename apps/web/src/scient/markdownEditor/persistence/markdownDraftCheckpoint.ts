@@ -219,6 +219,31 @@ export class MarkdownDraftCheckpointWriter {
   }
 
   /**
+   * Before an in-place rename: waits for a copy being written, then removes
+   * this writer's copy, which must not outlive the old name. True once no copy
+   * of this writer remains; false if one with unsaved work is due, or removal
+   * failed (the caller then renames the ordinary way).
+   */
+  async settle(): Promise<boolean> {
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    while (this.writing !== undefined) await this.writing;
+    if (this.latest?.keep) return false;
+    this.latest = undefined;
+    if (this.token === undefined) return true;
+    if (this.disabled) return false;
+    try {
+      if (await this.store.replace(this.key, this.token, undefined)) {
+        this.token = undefined;
+        return true;
+      }
+    } catch (error) {
+      console.error("Markdown recovery checkpoint could not be removed before a rename:", error);
+    }
+    return false;
+  }
+
+  /**
    * The document left this path (a rename). Stops further copies, waits for one
    * already being written, then removes only the copy this writer owns.
    */

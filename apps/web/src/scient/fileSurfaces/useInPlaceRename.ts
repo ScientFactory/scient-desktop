@@ -6,6 +6,7 @@ import {
   clearProjectFileQueryData,
   refreshProjectEntriesQuery,
 } from "~/components/files/projectFilesQueryState";
+import { useRightPanelStore } from "~/rightPanelStore";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -17,6 +18,21 @@ const FOLLOW_TIMEOUT_MS = 3_000;
 
 function folderOf(path: string): string {
   return path.slice(0, path.lastIndexOf("/") + 1);
+}
+
+/**
+ * No tab shows the destination, and this document is open in one tab only:
+ * another tab would take over, or keep showing the old name.
+ */
+function tabsAllowMove(from: string, to: string): boolean {
+  let sourceTabs = 0;
+  for (const thread of Object.values(useRightPanelStore.getState().byThreadKey)) {
+    for (const surface of thread.surfaces) {
+      if (surface.id === `file:${to}`) return false;
+      if (surface.id === `file:${from}`) sourceTabs += 1;
+    }
+  }
+  return sourceTabs <= 1;
 }
 
 /**
@@ -104,6 +120,7 @@ export function useInPlaceRename(input: {
           cause: result._tag === "Failure" ? squashAtomCommandFailure(result) : null,
         };
       },
+      destinationFree: () => tabsAllowMove(from, destination),
       reopen: (to, revision) => input.reopen(from, to, revision),
       follow: (to) => {
         input.moveViewState(from, to);

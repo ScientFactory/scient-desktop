@@ -174,10 +174,26 @@ export interface MarkdownPersistenceMoveTransaction {
 let nextDocumentId = 1;
 
 /**
+ * The open document's identity for keys that must survive an in-place rename.
+ * A registry from older code (kept after a hot reload) has no document ids;
+ * its documents are known by path, as before.
+ */
+export function documentIdentity(lease: MarkdownPersistenceLease): string {
+  return typeof lease.documentId === "string"
+    ? lease.documentId
+    : projectFileOperationKey(lease.target);
+}
+
+/** Whether this lease can move its document in place (not from older code). */
+export function canMoveInPlace(lease: MarkdownPersistenceLease): boolean {
+  return typeof lease.beginMove === "function" && typeof lease.documentId === "string";
+}
+
+/**
  * Raised whenever a registry built from older code could not serve this code:
  * a new lease method, a new rule for which strategy or checkpoint a file gets.
  */
-const REGISTRY_GENERATION = 7;
+const REGISTRY_GENERATION = 8;
 
 export class MarkdownPersistenceRegistry {
   readonly generation = REGISTRY_GENERATION;
@@ -195,6 +211,12 @@ export class MarkdownPersistenceRegistry {
    * Admission at that path waits, so a new file there never meets the old copy.
    */
   private readonly retiring = new Map<string, Promise<void>>();
+  /**
+   * Each path's document id. It outlives eviction, so a file reopened later is
+   * the same document to its views (Source keeps its undo, as it did by path),
+   * and it moves with an in-place rename.
+   */
+  private readonly documentIds = new Map<string, string>();
   /** Paths an in-place rename is using; admission there waits for it to end. */
   private readonly reserved = new Map<string, Promise<void>>();
   private readonly moveListeners = new Set<(move: MarkdownPersistenceMove) => void>();
@@ -387,8 +409,11 @@ export class MarkdownPersistenceRegistry {
       ...(this.options.debounceMs === undefined ? {} : { debounceMs: this.options.debounceMs }),
     });
     const checkpointStore = this.checkpointStoreFor(target);
+    const entryKey = projectFileOperationKey(target);
+    let id = this.documentIds.get(entryKey);
+    if (id === undefined) this.documentIds.set(entryKey, (id = `document-${nextDocumentId++}`));
     const entry: RegistryEntry = {
-      id: `document-${nextDocumentId++}`,
+      id,
       target,
       coordinator,
       reconcile,
@@ -651,6 +676,7 @@ export class MarkdownPersistenceRegistry {
       entry.pendingInput !== null ||
       // Same kind of document: same merge rule at both paths.
       this.strategyFor(destination) !== entry.reconcile ||
+      this.checkpointStoreFor(destination) !== this.checkpointStoreFor(from) ||
       this.entries.has(toKey) ||
       this.initializing.has(toKey) ||
       this.reserved.has(fromKey) ||
@@ -666,10 +692,13 @@ export class MarkdownPersistenceRegistry {
     this.reserved.set(toKey, reservation);
     let committed = false;
     let finished = false;
-    const store = this.options.checkpointStore;
+    const store = this.checkpointStoreFor(from);
     return {
       documentId: entry.id,
       preflight: async () => {
+        // The old name's copy goes first: if it cannot, a file later created
+        // under the old name could take its text.
+        if (entry.checkpoint !== undefined && !(await entry.checkpoint.settle())) return "unknown";
         if (store === undefined) return "empty";
         try {
           return (await store.read(toKey)) === undefined ? "empty" : "occupied";
@@ -702,6 +731,9 @@ export class MarkdownPersistenceRegistry {
         this.stopWatching(entry);
         this.entries.delete(fromKey);
         this.entries.set(toKey, entry);
+        // The old path's next file is another document.
+        this.documentIds.delete(fromKey);
+        this.documentIds.set(toKey, entry.id);
         entry.target = destination;
         entry.transport = transport;
         const previousCheckpoint = entry.checkpoint;
@@ -735,13 +767,17 @@ export class MarkdownPersistenceRegistry {
   forgetClean(target: MarkdownPersistenceTarget): boolean {
     const key = projectFileOperationKey(target);
     const entry = this.entries.get(key);
-    if (entry === undefined) return true;
+    if (entry === undefined) {
+      this.documentIds.delete(key);
+      return true;
+    }
     if (entry.pendingInput !== null) return false;
     if (!entry.coordinator.retireClean()) return false;
     if (entry.evictionTimer !== undefined) clearTimeout(entry.evictionTimer);
     this.stopWatching(entry);
     entry.unsubscribe();
     this.entries.delete(key);
+    this.documentIds.delete(key);
     if (entry.checkpoint !== undefined) this.retireCheckpoint(key, entry.checkpoint);
     this.publish();
     return true;

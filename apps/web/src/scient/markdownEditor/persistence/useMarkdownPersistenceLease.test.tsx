@@ -175,6 +175,23 @@ describe("useMarkdownPersistenceLease", () => {
     expect(container.textContent).toBe("moved edit");
   });
 
+  it("releases a moved lease when the view goes away before following it", async () => {
+    await act(async () => root.render(<Surface />));
+    const lease = latest.lease!;
+    await act(async () => {
+      const move = lease.beginMove({
+        environmentId,
+        cwd,
+        relativePath: `gone-${initial.relativePath}`,
+      })!;
+      expect(move.commit()).toBe(true);
+      move.finish();
+    });
+    await act(async () => root.render(<span />));
+    // Released: the lease no longer acts for the document.
+    expect(lease.change("late", lease.getSnapshot().editVersion)).toBe(false);
+  });
+
   it("exposes a failed ordered admission without enabling an editor and retries explicitly", async () => {
     const failure = new Error("Unavailable");
     vi.mocked(transport.read).mockRejectedValueOnce(failure);
