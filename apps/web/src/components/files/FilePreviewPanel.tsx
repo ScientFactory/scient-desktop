@@ -115,6 +115,7 @@ import { useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import {
+  RENDER_MARKDOWN_STORAGE_KEY,
   SCIENT_DEFAULT_RENDER_MARKDOWN,
   resolveHtmlRenderedState,
   resolveMarkdownRenderedState,
@@ -229,7 +230,6 @@ interface FilePreviewPanelProps {
 }
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
-const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
 const RENDER_TABLE_STORAGE_KEY = "t3code.renderTable";
 // SCIENT-FORK:START — the Markdown surface loads on first use

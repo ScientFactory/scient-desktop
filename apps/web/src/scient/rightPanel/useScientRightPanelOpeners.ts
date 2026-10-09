@@ -21,6 +21,7 @@ import {
 } from "~/scient/documents/documentTemplates";
 import { focusNewDocumentWhenOpen } from "~/scient/documents/focusNewDocument";
 import { newDocuments, pathHasLeftoverDrafts } from "~/scient/documents/newDocuments";
+import { readNewDocumentDefaults } from "~/scient/documents/documentPreferences";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
@@ -111,8 +112,7 @@ export function useScientRightPanelOpeners(input: {
       if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
       const environmentId = activeThreadRef.environmentId;
       const cwd = activeWorkspaceRoot;
-      const template = "blank" as const;
-      const language = "english" as const;
+      const { template, language } = readNewDocumentDefaults();
       const contents = createNewDocumentSource({ format, template, language });
       void (async () => {
         for (let attempt = 1; attempt <= 50; attempt++) {

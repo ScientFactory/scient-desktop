@@ -8,7 +8,7 @@ import { pandocReleaseNotice } from "./pandocToolModel";
 import { usePandocTool } from "./usePandocTool";
 
 /**
- * Settings ▸ Scientific Computing ▸ Word export: whether this server can
+ * Settings ▸ Documents ▸ Word export: whether this server can
  * export Word files, the install or reinstall of the managed Pandoc it needs,
  * and that release's licence and source. Settings search and the page's
  * section list lead here for "Word", "export", and "Pandoc".

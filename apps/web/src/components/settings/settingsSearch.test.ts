@@ -46,13 +46,14 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("settings sidebar order", () => {
-  it("keeps integrations prominent and keybindings below scientific computing", () => {
+  it("keeps integrations prominent, Documents after Scientific Computing, then keybindings", () => {
     const paths = Object.keys(SETTINGS_SECTION_LABELS);
 
     expect(paths.indexOf("/settings/integrations")).toBe(paths.indexOf("/settings/projects") + 1);
-    expect(paths.indexOf("/settings/keybindings")).toBe(
+    expect(paths.indexOf("/settings/documents")).toBe(
       paths.indexOf("/settings/scientific-computing") + 1,
     );
+    expect(paths.indexOf("/settings/keybindings")).toBe(paths.indexOf("/settings/documents") + 1);
   });
 
   it("shows Shortcuts without changing the existing route", () => {
@@ -357,10 +358,23 @@ describe("searchSettings", () => {
     for (const query of ["word export", "pandoc", "docx", "export"]) {
       expect(searchSettings(query)[0], query).toMatchObject({
         id: "word-export",
-        to: "/settings/scientific-computing",
+        to: "/settings/documents",
       });
     }
     expect(searchSettings("word wrap")[0]?.id).toBe("word-wrap");
+  });
+
+  it("finds the Documents page by format, engine, and template", () => {
+    for (const [query, id] of [
+      ["documents", "documents"],
+      ["latex", "latex-installation"],
+      ["tinytex", "latex-installation"],
+      ["template", "new-document-template"],
+    ] as const) {
+      expect(searchSettings(query)[0], query).toMatchObject({ id, to: "/settings/documents" });
+    }
+    // Markdown shortcuts lead; the Documents page still answers.
+    expect(searchSettings("markdown").some((item) => item.id === "documents")).toBe(true);
   });
 
   it("routes conditional window capture settings to the stable toggle row", () => {
