@@ -3,6 +3,7 @@ import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  AuthSettingsWriteScope,
   ComputeLanguageId,
   ComputeToolkitId,
   EnvironmentId,
@@ -37,7 +38,27 @@ vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
 }));
 vi.mock("~/state/environments", () => ({
   usePrimaryEnvironmentId: () => "local",
+  usePrimaryEnvironment: () => ({ environmentId: "local", label: "local" }),
   useEnvironment: (id: string) => ({ environmentId: id, label: id }),
+}));
+vi.mock("~/state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/session")>()),
+  // These interactions exercise a connected machine with settings-write permission.
+  useEnvironmentScope: (id: EnvironmentId, scope: string) =>
+    id === "local" && scope === AuthSettingsWriteScope,
+  useEnvironmentsWithScope: (
+    environments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
+    scope: string,
+  ) =>
+    new Set(
+      environments
+        .filter(
+          ({ environmentId }) => environmentId === "local" && scope === AuthSettingsWriteScope,
+        )
+        .map(({ environmentId }) => environmentId),
+    ),
+  readEnvironmentScope: (id: EnvironmentId, scope: string) =>
+    id === "local" && scope === AuthSettingsWriteScope,
 }));
 vi.mock("~/components/settings/settingsLayout", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/components/settings/settingsLayout")>()),

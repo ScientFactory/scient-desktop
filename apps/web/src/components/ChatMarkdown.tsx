@@ -1530,9 +1530,10 @@ const CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS = [
   rehypeHeadingIds,
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
-const CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS = [rehypeHeadingIds] satisfies NonNullable<
-  ReactMarkdownOptions["rehypePlugins"]
->;
+const CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS = [
+  ...CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW,
+  rehypeHeadingIds,
+] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
 function MarkdownExternalLinkContent({
   host,
