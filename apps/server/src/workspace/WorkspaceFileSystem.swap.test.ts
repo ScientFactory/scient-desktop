@@ -215,6 +215,40 @@ describe("WorkspaceFileSystem.deleteFile", () => {
     }).pipe(Effect.provide(TestLayer)),
   );
 
+  it.effect("puts the file back when it cannot be checked once set aside", () =>
+    Effect.gen(function* () {
+      const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const { workspace } = yield* workspaceOf;
+      const file = NodePath.join(workspace, "chapter.tex");
+      yield* Effect.promise(() => native.writeFile(file, "as made\n"));
+      const read = yield* workspaceFileSystem.readFile({
+        cwd: workspace,
+        relativePath: "chapter.tex",
+      });
+      let armed = true;
+      vi.mocked(NodeFSP.lstat).mockImplementation((async (target: string, options?: object) => {
+        if (armed && String(target).includes("scient-deleted-files")) {
+          armed = false;
+          throw Object.assign(new Error("I/O error"), { code: "EIO" });
+        }
+        return native.lstat(target, options as never);
+      }) as typeof NodeFSP.lstat);
+
+      const result = yield* workspaceFileSystem
+        .deleteFile({
+          cwd: workspace,
+          relativePath: "chapter.tex",
+          expectedRevision: read.revision,
+        })
+        .pipe(Effect.result);
+
+      expect(armed).toBe(false);
+      expect(result._tag).toBe("Failure");
+      expect(yield* Effect.promise(() => native.readFile(file, "utf8"))).toBe("as made\n");
+      expect(yield* Effect.promise(() => native.readdir(workspace))).toEqual(["chapter.tex"]);
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
   it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
     "stops removing empty folders at one swapped for a link out of the workspace",
     () =>
