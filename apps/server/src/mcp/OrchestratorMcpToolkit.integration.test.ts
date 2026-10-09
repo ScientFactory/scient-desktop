@@ -4277,9 +4277,9 @@ describe("orchestrator MCP toolkit", () => {
                 instanceId: codexInstanceId,
                 modelSelection: codexSelection,
                 runtimePolicy: { cwd, runtimeMode: "full-access", interactionMode: "default" },
-                // This fixture uses the inert default skill planner; MCP authority alone
-                // does not imply that a skill catalog marker is delivered.
-                includeEmptySkillCatalogMarker: false,
+                // The supported MCP transport publishes a complete-empty scope
+                // even when the default planner has no skill releases.
+                includeEmptySkillCatalogMarker: true,
               };
         });
         const credentialRegistryLayer = makeCredentialRegistryLayer(

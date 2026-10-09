@@ -142,7 +142,8 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "    });",
           "  }",
           "});",
-          "setInterval(() => {}, 1_000);",
+          "const keepAlive = setInterval(() => {}, 1_000);",
+          'lines.on("close", () => clearInterval(keepAlive));',
           "",
         ].join("\n"),
       );

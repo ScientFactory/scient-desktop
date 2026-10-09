@@ -904,10 +904,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             "t3_code_runtime",
             "scient_awareness",
           ]);
-          assert.include(
-            params.additionalContext?.t3_code_workspace?.value ?? "",
-            "Choose the workspace",
-          );
+          for (const entry of Object.values(params.additionalContext ?? {})) {
+            assert.isAtMost(Buffer.byteLength(entry.value, "utf8"), 4_000);
+          }
           const modeInstructions = params.collaborationMode?.settings.developer_instructions ?? "";
           assert.match(modeInstructions, /^<collaboration_mode>[\s\S]*<\/collaboration_mode>$/);
           assert.notMatch(

@@ -344,7 +344,7 @@ function makeProviderAdapter(
     /** Receives one event each time a hanging scope close reaches its wedged finalizer. */
     readonly scopeCloseReached?: Queue.Queue<void, Cause.Done>;
     /** Releases hanging scope finalizers after the timeout assertions have run. */
-    readonly scopeCloseRelease?: Deferred.Deferred<void>;
+    readonly scopeCloseRelease?: Effect.Effect<void>;
     /** Receives one event each time a hanging scope close completes after release. */
     readonly scopeCloseFinished?: Queue.Queue<void, Cause.Done>;
   } = {},
@@ -368,13 +368,7 @@ function makeProviderAdapter(
     (options.scopeCloseReached === undefined
       ? Effect.void
       : Queue.offer(options.scopeCloseReached, undefined).pipe(Effect.asVoid)
-    ).pipe(
-      Effect.andThen(
-        options.scopeCloseRelease === undefined
-          ? Effect.never
-          : Deferred.await(options.scopeCloseRelease),
-      ),
-    ),
+    ).pipe(Effect.andThen(options.scopeCloseRelease ?? Effect.never)),
   );
   return {
     instanceId: ProviderInstanceId.make("codex"),
@@ -519,7 +513,7 @@ function layerTest(input: {
   readonly beforeUnload?: Effect.Effect<void>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Queue.Queue<void, Cause.Done>;
-  readonly scopeCloseRelease?: Deferred.Deferred<void>;
+  readonly scopeCloseRelease?: Effect.Effect<void>;
   readonly scopeCloseFinished?: Queue.Queue<void, Cause.Done>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
@@ -1249,7 +1243,7 @@ it.effect("ProviderSessionManagerV2 cleans up an interrupted open whose scope cl
     >([]);
     const handshakeStarted = yield* Deferred.make<void>();
     const scopeCloseReached = yield* Queue.unbounded<void, Cause.Done>();
-    const scopeCloseRelease = yield* Deferred.make<void>();
+    const scopeCloseRelease = yield* Queue.unbounded<void, Cause.Done>();
     const scopeCloseFinished = yield* Queue.unbounded<void, Cause.Done>();
     const releaseRetry = yield* Deferred.make<void>();
     yield* Effect.gen(function* () {
@@ -1284,29 +1278,41 @@ it.effect("ProviderSessionManagerV2 cleans up an interrupted open whose scope cl
       assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
       assert.equal((yield* Ref.get(state)).closeCount, 0);
 
-      // The close is time-boxed, so the interrupter returns and the session's
-      // open lock is free for the next open.
+      // SCIENT-FORK: interruption retires credentials immediately, but the
+      // exact physical owner keeps the open lock until its scope closes.
+      yield* Deferred.succeed(releaseRetry, undefined);
+      const retry = yield* manager
+        .open({ threadId, providerSessionId, modelSelection, runtimePolicy })
+        .pipe(Effect.forkChild);
       yield* TestClock.adjust("30 seconds");
+      assert.isUndefined(interrupter.pollUnsafe());
+      assert.isUndefined(retry.pollUnsafe());
+      assert.equal((yield* Ref.get(state)).openCount, 0);
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+      yield* Queue.offer(scopeCloseRelease, undefined);
+      yield* Queue.take(scopeCloseFinished);
       yield* Fiber.join(interrupter);
       const openingExit = yield* Fiber.await(opening);
       assert.isTrue(Exit.isFailure(openingExit));
       if (Exit.isFailure(openingExit)) assert.isTrue(Cause.hasInterruptsOnly(openingExit.cause));
-      yield* Deferred.succeed(releaseRetry, undefined);
-      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      yield* Fiber.join(retry);
       assert.equal((yield* Ref.get(state)).openCount, 1);
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
 
-      // Its close hangs as well; release it while the test clock can still move.
+      // The replacement owns a separate close permit. Public shutdown stays
+      // bounded even while this second physical close is still pending.
       const stopping = yield* manager.shutdown.pipe(Effect.forkChild);
+      yield* Queue.take(scopeCloseReached);
       yield* TestClock.adjust("30 seconds");
       yield* Fiber.join(stopping);
-      yield* Queue.take(scopeCloseReached);
-      assert.equal((yield* Ref.get(state)).closeCount, 0);
-      yield* Deferred.succeed(scopeCloseRelease, undefined);
-      yield* Queue.take(scopeCloseFinished);
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+      yield* Queue.offer(scopeCloseRelease, undefined);
       yield* Queue.take(scopeCloseFinished);
       assert.equal((yield* Ref.get(state)).closeCount, 2);
     }).pipe(
-      Effect.ensuring(Deferred.succeed(scopeCloseRelease, undefined)),
+      Effect.ensuring(
+        Queue.offerAll(scopeCloseRelease, [undefined, undefined]).pipe(Effect.asVoid, Effect.orDie),
+      ),
       Effect.provide(
         layerTest({
           state,
@@ -1327,7 +1333,7 @@ it.effect("ProviderSessionManagerV2 cleans up an interrupted open whose scope cl
           spawnBeforeOpen: true,
           hangSessionScopeClose: true,
           scopeCloseReached,
-          scopeCloseRelease,
+          scopeCloseRelease: Queue.take(scopeCloseRelease).pipe(Effect.asVoid, Effect.orDie),
           scopeCloseFinished,
         }),
       ),
@@ -2859,7 +2865,7 @@ it.effect("ProviderSessionManagerV2 persists release when session scope close ha
           idleTimeoutMs: 1000,
           hangSessionScopeClose: true,
           scopeCloseReached,
-          scopeCloseRelease,
+          scopeCloseRelease: Deferred.await(scopeCloseRelease),
           scopeCloseFinished,
         }),
       ),
