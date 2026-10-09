@@ -8,6 +8,7 @@ import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import type { CreatedCompanion } from "./newDocumentCompanions";
+import type { FolderEntry, NewDocumentFileCommands } from "./newDocumentPlacement";
 
 /** Whether a project-file command failed because its path is taken. */
 export function isPathTaken(result: {
@@ -32,6 +33,9 @@ export function isPathTaken(result: {
 export function useNewDocumentFiles() {
   const writeFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
   const deleteFile = useAtomCommand(projectEnvironment.deleteFile, { reportFailure: false });
+  const listDirectory = useAtomCommand(projectEnvironment.listDirectory, {
+    reportFailure: false,
+  });
   const create = useCallback(
     async (
       target: { readonly environmentId: EnvironmentId; readonly cwd: string },
@@ -71,5 +75,38 @@ export function useNewDocumentFiles() {
     },
     [deleteFile],
   );
-  return { create, remove };
+  const list = useCallback(
+    async (
+      target: { readonly environmentId: EnvironmentId; readonly cwd: string },
+      relativeDirectory: string,
+    ): Promise<readonly FolderEntry[] | null> => {
+      const result = await listDirectory({
+        environmentId: target.environmentId,
+        input: {
+          cwd: target.cwd,
+          relativeDirectory: relativeDirectory.replace(/\/+$/u, ""),
+          view: "with-internals",
+        },
+      });
+      if (result._tag !== "Success" || !result.value.complete) return null;
+      return result.value.entries.map((entry) => ({
+        name: entry.name,
+        folder: entry.kind === "directory",
+      }));
+    },
+    [listDirectory],
+  );
+  /** The commands bound to one project, for placing and tidying a new document. */
+  const commandsFor = useCallback(
+    (target: {
+      readonly environmentId: EnvironmentId;
+      readonly cwd: string;
+    }): NewDocumentFileCommands => ({
+      create: (relativePath, contents) => create(target, relativePath, contents),
+      remove: (file, options) => remove(target, file, options),
+      list: (relativeDirectory) => list(target, relativeDirectory),
+    }),
+    [create, list, remove],
+  );
+  return { commandsFor };
 }

@@ -9,29 +9,42 @@ import {
   useSyncExternalStore,
 } from "react";
 
+import { setProjectFileQueryData } from "~/components/files/projectFilesQueryState";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { toastManager } from "~/components/ui/toast";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import {
+  FOLDER_DOCUMENT_MAIN,
   MORE_DOCUMENT_TEMPLATES,
   NEW_DOCUMENT_LANGUAGES,
   NEW_DOCUMENT_TEMPLATES,
   type DocumentTemplateId,
   type NewDocumentLanguage,
+  isFolderTemplate,
   isUntouchedNewLatexDocument,
   newDocumentCandidate,
   newDocumentStem,
   newDocumentTitle,
   sameTitleText,
   switchNewLatexDocument,
+  templateCompanions,
   templateHasTitle,
 } from "./documentTemplates";
 import { caretOffsetInEditor, focusNewDocumentWhenOpen } from "./focusNewDocument";
 import { NewDocumentOnPage, STRIP_ATTRIBUTE } from "./NewDocumentOnPage";
 import { syncCompanionFiles } from "./newDocumentCompanions";
-import { newDocuments } from "./newDocuments";
+import {
+  filesUnder,
+  folderOf,
+  freeFolderName,
+  newDocumentBase,
+  placeNewDocument,
+  untitledStem,
+} from "./newDocumentPlacement";
+import { newDocuments, pathHasLeftoverDrafts } from "./newDocuments";
 import { isPathTaken, useNewDocumentFiles } from "./useNewDocumentFiles";
 import "./newDocument.css";
 
@@ -130,6 +143,9 @@ export function useNewDocument(input: {
   });
 
   const titled = entry?.format !== "latex" || templateHasTitle(entry.template);
+  // A template that is a folder moves with its title only before anything in it
+  // is written: its other files are then still exactly as Scient made them.
+  const folderDocument = entry?.format === "latex" && isFolderTemplate(entry.template);
   // The name comes from the title, or, in a template without one, from the name line.
   const savedTitle =
     entry && snapshot && snapshot.draftSource === snapshot.baselineSource
@@ -155,12 +171,92 @@ export function useNewDocument(input: {
     !input.renameDisabled &&
     savedTitle.length > 0 &&
     !inTitle &&
-    !markdownWaits;
+    !markdownWaits &&
+    !(folderDocument && entry.settled);
+
+  /** Moves a project file only as last read: its revision after, "taken", or null. */
+  const move = async (
+    from: string,
+    to: string,
+    revision: string,
+  ): Promise<string | "taken" | null> => {
+    if (!key) return null;
+    const result = await renameFile({
+      environmentId: key.environmentId,
+      input: {
+        cwd: key.cwd,
+        relativePath: from,
+        destinationRelativePath: to,
+        expectedRevision: revision,
+        removeEmptyFolders: true,
+      },
+    });
+    if (result._tag === "Success") return result.value.revision;
+    return isPathTaken(result) ? "taken" : null;
+  };
+
+  /**
+   * A new document that is a folder takes its title's name: the files Scient
+   * made move first, the open document last. If anything fails, what moved
+   * moves back and the folder keeps its name. A folder holding anything else
+   * keeps its name too.
+   */
+  const moveFolderToTitle = useEffectEvent(async (stem: string) => {
+    if (!key || !entry || !lease || !snapshot) return;
+    const commands = documentFiles.commandsFor(key);
+    const base = newDocumentBase(key.relativePath, entry.template);
+    const oldFolder = folderOf(key.relativePath);
+    const keepName = () => newDocuments.forget(key);
+    if (`${base}${stem}/` === oldFolder) return keepName();
+    const ours = new Set([key.relativePath, ...entry.companions.map((file) => file.relativePath)]);
+    const present = await filesUnder(commands, oldFolder);
+    if (present === null || present.some((path) => !ours.has(path))) return keepName();
+    const name = await freeFolderName(commands, base, stem);
+    if (name === null) return keepName();
+    const newFolder = `${base}${name}/`;
+    const moved: { from: string; to: string; revision: string }[] = [];
+    const moveBack = async () => {
+      for (const file of moved.toReversed()) await move(file.to, file.from, file.revision);
+    };
+    for (const file of entry.companions) {
+      const to = newFolder + file.relativePath.slice(oldFolder.length);
+      const revision = await move(file.relativePath, to, file.revision);
+      if (revision === null || revision === "taken") {
+        await moveBack();
+        return keepName();
+      }
+      moved.push({ from: file.relativePath, to, revision });
+    }
+    const caretBefore = caretOffsetInEditor();
+    const release = lease.holdForRename();
+    if (!release) {
+      await moveBack();
+      return keepName();
+    }
+    const destination = `${newFolder}${FOLDER_DOCUMENT_MAIN}`;
+    const revision = await move(key.relativePath, destination, snapshot.baselineRevision);
+    if (revision === null || revision === "taken") {
+      release();
+      await moveBack();
+      return keepName();
+    }
+    newDocuments.forget(key);
+    release();
+    onRenamed(destination);
+    if (caretBefore !== null) focusNewDocumentWhenOpen({ offset: caretBefore });
+  });
 
   useEffect(() => {
     if (!ready || renaming.current || !key || !entry || !lease || !snapshot) return;
     const stem = newDocumentStem(savedTitle);
-    const folder = key.relativePath.slice(0, key.relativePath.lastIndexOf("/") + 1);
+    if (folderDocument) {
+      renaming.current = true;
+      void moveFolderToTitle(stem).finally(() => {
+        renaming.current = false;
+      });
+      return;
+    }
+    const folder = folderOf(key.relativePath);
     if (newDocumentCandidate(stem, entry.format, 1, folder) === key.relativePath) {
       newDocuments.forget(key);
       return;
@@ -203,6 +299,74 @@ export function useNewDocument(input: {
     })();
   });
 
+  /**
+   * Into or out of a template that is a folder: the document is made again in
+   * its new place, the tab follows it there, and its old place, with every file
+   * it made, is removed while still exactly as made.
+   */
+  const relocate = useEffectEvent(
+    async (change: {
+      readonly template: DocumentTemplateId;
+      readonly language: NewDocumentLanguage;
+      readonly name: string;
+      readonly next: string;
+      readonly revision: string;
+    }) => {
+      if (!key || !entry || !lease) return;
+      const commands = documentFiles.commandsFor(key);
+      const title = newDocumentTitle(change.next, "latex") || change.name.trim();
+      const placed = await placeNewDocument({
+        format: "latex",
+        base: newDocumentBase(key.relativePath, entry.template),
+        stem: title ? newDocumentStem(title) : untitledStem("latex", change.template),
+        template: change.template,
+        source: change.next,
+        commands,
+        skip: (relativePath) =>
+          pathHasLeftoverDrafts({ environmentId: key.environmentId, cwd: key.cwd, relativePath }),
+      });
+      if (!placed) {
+        toastManager.add({ type: "error", title: "The template could not be changed." });
+        return;
+      }
+      const undo = async () => {
+        for (const file of placed.companions)
+          await commands.remove(file, { removeEmptyFolders: true });
+        await commands.remove(placed, { removeEmptyFolders: true });
+      };
+      const release = lease.holdForRename();
+      if (!release) return undo();
+      setProjectFileQueryData(
+        key.environmentId,
+        key.cwd,
+        placed.relativePath,
+        change.next,
+        placed.revision,
+      );
+      newDocuments.set(
+        { ...key, relativePath: placed.relativePath },
+        {
+          ...entry,
+          template: change.template,
+          language: change.language,
+          name: change.name,
+          companions: placed.companions,
+          seenUntouched: false,
+        },
+      );
+      newDocuments.forget(key);
+      release();
+      onRenamed(placed.relativePath);
+      focusNewDocumentWhenOpen("title");
+      await commands.remove(
+        { relativePath: key.relativePath, revision: change.revision },
+        { removeEmptyFolders: true },
+      );
+      for (const file of entry.companions)
+        await commands.remove(file, { removeEmptyFolders: true });
+    },
+  );
+
   if (!key || !entry || !lease || !snapshot) return { startBar: null };
   const choose = (template: DocumentTemplateId, language: NewDocumentLanguage) => {
     if (switching.current) return;
@@ -215,11 +379,19 @@ export function useNewDocument(input: {
           'textarea[aria-label="Document title"]',
         );
         const typed = field?.value ?? "";
+        const fromFolder = isFolderTemplate(entry.template);
+        const toFolder = isFolderTemplate(template);
+        const relocates = fromFolder !== toFolder;
         const settledAt = await waitUntil(() => {
           const current = lease.getSnapshot();
           return (
             lease.getPendingInput() === null &&
-            sameTitleText(newDocumentTitle(current.draftSource, "latex"), typed)
+            sameTitleText(newDocumentTitle(current.draftSource, "latex"), typed) &&
+            // A document that moves is copied as saved, so it must be saved.
+            (!relocates ||
+              (!current.pending &&
+                !current.inFlight &&
+                current.draftSource === current.baselineSource))
           );
         }, 2_000);
         if (!settledAt) return;
@@ -229,16 +401,20 @@ export function useNewDocument(input: {
         // A title and a name stand for each other across templates with and without one.
         const name = templateHasTitle(entry.template) ? typed.trim() : (entry.name ?? "");
         const next = switchNewLatexDocument(current.draftSource, template, language, name);
+        const commands = documentFiles.commandsFor(key);
+        if (relocates) {
+          await relocate({ template, language, name, next, revision: current.baselineRevision });
+          return;
+        }
         if (next !== current.draftSource && !lease.change(next, current.editVersion)) return;
         newDocuments.update(key, { template, language, name });
-        // The files the new template reads beside it, such as its bibliography.
-        const target = { environmentId: key.environmentId, cwd: key.cwd };
+        // The files the new template keeps beside it, such as its bibliography.
         const companions = await syncCompanionFiles({
-          folder: key.relativePath.slice(0, key.relativePath.lastIndexOf("/") + 1),
-          source: next,
+          folder: folderOf(key.relativePath),
+          files: templateCompanions(template, next),
           created: newDocuments.get(key)?.companions ?? [],
-          create: (path) => documentFiles.create(target, path),
-          remove: (file) => documentFiles.remove(target, file),
+          create: commands.create,
+          remove: commands.remove,
         });
         newDocuments.update(key, { companions });
         // The page is drawn again; writing continues in the title or the name.
@@ -248,9 +424,13 @@ export function useNewDocument(input: {
       }
     })();
   };
-  const fileName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
-  // Once written in, an unnamed document stops offering its name.
-  const naming = !(entry.settled && savedTitle.length === 0);
+  // A folder document is named by its folder: `thesis/main.tex`.
+  const base = newDocumentBase(key.relativePath, entry.template);
+  const fileName = (path: string) =>
+    folderDocument ? path.slice(base.length) : path.slice(path.lastIndexOf("/") + 1);
+  // Once written in, an unnamed document stops offering its name, and a folder
+  // document stops offering to move.
+  const naming = !(entry.settled && (savedTitle.length === 0 || folderDocument));
   return {
     startBar: (
       <NewDocumentOnPage
@@ -275,8 +455,11 @@ export function useNewDocument(input: {
         hint={titled && naming}
         currentFileName={fileName(key.relativePath)}
         fileNameFor={(title) =>
-          fileName(newDocumentCandidate(newDocumentStem(title), entry.format, 1))
+          folderDocument
+            ? `${newDocumentStem(title)}/${FOLDER_DOCUMENT_MAIN}`
+            : fileName(newDocumentCandidate(newDocumentStem(title), entry.format, 1))
         }
+        onEdit={entry.settled ? null : () => newDocuments.update(key, { settled: true })}
       />
     ),
   };

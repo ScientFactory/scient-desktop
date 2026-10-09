@@ -15,13 +15,12 @@ import {
 import { toastManager } from "~/components/ui/toast";
 import {
   createNewDocumentSource,
-  newDocumentCandidate,
   type NewDocumentFormat,
 } from "~/scient/documents/documentTemplates";
 import { focusNewDocumentWhenOpen } from "~/scient/documents/focusNewDocument";
-import { syncCompanionFiles } from "~/scient/documents/newDocumentCompanions";
+import { placeNewDocument, untitledStem } from "~/scient/documents/newDocumentPlacement";
 import { newDocuments, pathHasLeftoverDrafts } from "~/scient/documents/newDocuments";
-import { isPathTaken, useNewDocumentFiles } from "~/scient/documents/useNewDocumentFiles";
+import { useNewDocumentFiles } from "~/scient/documents/useNewDocumentFiles";
 import { readNewDocumentDefaults } from "~/scient/documents/documentPreferences";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -107,7 +106,6 @@ export function useScientRightPanelOpeners(input: {
   );
   // A document started by hand: `untitled` is created and opens in its editor,
   // where it takes its title's name once the title is written.
-  const writeFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
   const documentFiles = useNewDocumentFiles();
   const addDocumentsSurface = useCallback(
     (format: NewDocumentFormat) => {
@@ -117,55 +115,38 @@ export function useScientRightPanelOpeners(input: {
       const { template, language } = readNewDocumentDefaults();
       const contents = createNewDocumentSource({ format, template, language });
       void (async () => {
-        for (let attempt = 1; attempt <= 50; attempt++) {
-          const relativePath = newDocumentCandidate("untitled", format, attempt);
-          if (pathHasLeftoverDrafts({ environmentId, cwd, relativePath })) continue;
-          const result = await writeFile({
-            environmentId,
-            input: { cwd, relativePath, contents, createOnly: true },
-          });
-          if (result._tag === "Success") {
-            setProjectFileQueryData(
-              environmentId,
-              cwd,
-              relativePath,
-              contents,
-              result.value.revision,
-            );
-            refreshProjectFiles(environmentId, cwd);
-            // Its bibliography, beside it, before the editor first reads it.
-            const target = { environmentId, cwd };
-            const companions =
-              format === "latex"
-                ? await syncCompanionFiles({
-                    folder: "",
-                    source: contents,
-                    created: [],
-                    create: (path) => documentFiles.create(target, path),
-                    remove: (file) => documentFiles.remove(target, file),
-                  })
-                : [];
-            newDocuments.set(
-              { environmentId, cwd, relativePath },
-              {
-                format,
-                template,
-                language,
-                seenUntouched: false,
-                settled: format === "markdown",
-                companions,
-              },
-            );
-            openFileSourceSurface(relativePath, undefined, { latexPreviewMode: "visual" });
-            focusNewDocumentWhenOpen("title");
-            return;
-          }
-          if (!isPathTaken(result)) break;
+        const placed = await placeNewDocument({
+          format,
+          base: "",
+          stem: untitledStem(format, template),
+          template,
+          source: contents,
+          commands: documentFiles.commandsFor({ environmentId, cwd }),
+          // A name still holding an earlier document's unsaved work is passed over.
+          skip: (relativePath) => pathHasLeftoverDrafts({ environmentId, cwd, relativePath }),
+        });
+        if (!placed) {
+          toastManager.add({ type: "error", title: "The document could not be created." });
+          return;
         }
-        toastManager.add({ type: "error", title: "The document could not be created." });
+        const { relativePath } = placed;
+        setProjectFileQueryData(environmentId, cwd, relativePath, contents, placed.revision);
+        newDocuments.set(
+          { environmentId, cwd, relativePath },
+          {
+            format,
+            template,
+            language,
+            seenUntouched: false,
+            settled: format === "markdown",
+            companions: placed.companions,
+          },
+        );
+        openFileSourceSurface(relativePath, undefined, { latexPreviewMode: "visual" });
+        focusNewDocumentWhenOpen("title");
       })();
     },
-    [activeThreadRef, activeWorkspaceRoot, documentFiles, openFileSourceSurface, writeFile],
+    [activeThreadRef, activeWorkspaceRoot, documentFiles, openFileSourceSurface],
   );
   return {
     addAgentsSurface,

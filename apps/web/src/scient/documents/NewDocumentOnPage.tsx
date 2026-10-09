@@ -31,9 +31,25 @@ export function NewDocumentOnPage(props: {
   readonly hint: boolean;
   readonly currentFileName: string;
   readonly fileNameFor: (title: string) => string;
+  /** The first edit on the page beyond the title or name; null once that has happened. */
+  readonly onEdit: (() => void) | null;
 }) {
   const anchor = useRef<HTMLSpanElement>(null);
   const page = usePage(anchor);
+  const onEdit = useEffectEvent(() => props.onEdit?.());
+  const watching = props.onEdit !== null;
+  const surface = page ? (page.kind === "latex" ? page.paper : page.host) : null;
+  useEffect(() => {
+    if (!surface || !watching) return;
+    // An included file is edited on the same page, so the page is where to listen.
+    const input = (event: Event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target || target.closest(`[${STRIP_ATTRIBUTE}], ${LATEX_TITLE}`)) return;
+      onEdit();
+    };
+    surface.addEventListener("beforeinput", input, true);
+    return () => surface.removeEventListener("beforeinput", input, true);
+  }, [surface, watching]);
   const fileName = (typed: string) =>
     typed.trim() ? props.fileNameFor(typed) : props.currentFileName;
   let content: ReactNode = null;
@@ -197,8 +213,14 @@ function LatexTitleHint(props: {
       const title = field?.closest<HTMLElement>(".scient-latex-title-preview");
       if (!field || !title) return null;
       const scale = props.paper.getBoundingClientRect().width / (props.paper.offsetWidth || 1);
-      const top =
-        (title.getBoundingClientRect().bottom - props.paper.getBoundingClientRect().top) / scale;
+      // Under the title's own lines (title, author, date), not its whole block: on a
+      // title page the block fills the page.
+      const bottom = Math.max(
+        ...[...title.querySelectorAll("textarea, input")].map(
+          (line) => line.getBoundingClientRect().bottom,
+        ),
+      );
+      const top = (bottom - props.paper.getBoundingClientRect().top) / scale;
       return {
         top: Math.round(top),
         left: null,

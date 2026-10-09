@@ -7,7 +7,14 @@ import lectureNotesSource from "./templates/lecture-notes.tex?raw";
 import letterSource from "./templates/letter.tex?raw";
 import problemSetSource from "./templates/problem-set.tex?raw";
 import responseToReviewersSource from "./templates/response-to-reviewers.tex?raw";
-import thesisSource from "./templates/thesis.tex?raw";
+import thesisAppendix from "./templates/thesis/chapters/appendix.tex?raw";
+import thesisBackground from "./templates/thesis/chapters/background.tex?raw";
+import thesisConclusion from "./templates/thesis/chapters/conclusion.tex?raw";
+import thesisDiscussion from "./templates/thesis/chapters/discussion.tex?raw";
+import thesisIntroduction from "./templates/thesis/chapters/introduction.tex?raw";
+import thesisMethods from "./templates/thesis/chapters/methods.tex?raw";
+import thesisResults from "./templates/thesis/chapters/results.tex?raw";
+import thesisSource from "./templates/thesis/main.tex?raw";
 import { updateLatexLanguageSource } from "../latex/latexLanguage";
 
 /**
@@ -33,6 +40,52 @@ export const DOCUMENT_TEMPLATES = [
 ] as const;
 export type DocumentTemplate = (typeof DOCUMENT_TEMPLATES)[number];
 export type DocumentTemplateId = DocumentTemplate["id"];
+
+/**
+ * Templates that are a folder of their own: the document is the folder's
+ * `main.tex`, and these files, relative to it, are created with it.
+ */
+const FOLDER_TEMPLATES: Partial<Record<DocumentTemplateId, Readonly<Record<string, string>>>> = {
+  thesis: {
+    "chapters/introduction.tex": thesisIntroduction,
+    "chapters/background.tex": thesisBackground,
+    "chapters/methods.tex": thesisMethods,
+    "chapters/results.tex": thesisResults,
+    "chapters/discussion.tex": thesisDiscussion,
+    "chapters/conclusion.tex": thesisConclusion,
+    "chapters/appendix.tex": thesisAppendix,
+  },
+};
+
+/** The main file of a template that is a folder. */
+export const FOLDER_DOCUMENT_MAIN = "main.tex";
+
+export function isFolderTemplate(template: DocumentTemplateId): boolean {
+  return FOLDER_TEMPLATES[template] !== undefined;
+}
+
+/** A file created beside a new document, relative to its folder. */
+export interface CompanionFile {
+  readonly name: string;
+  readonly contents: string;
+}
+
+/**
+ * Everything a new document creates beside its main file: a folder template's
+ * own files, and the (empty) bibliography databases its source names.
+ */
+export function templateCompanions(
+  template: DocumentTemplateId,
+  source: string,
+): readonly CompanionFile[] {
+  const files = Object.entries(FOLDER_TEMPLATES[template] ?? {}).map(([name, contents]) => ({
+    name,
+    contents,
+  }));
+  for (const name of companionFiles(source))
+    if (!files.some((file) => file.name === name)) files.push({ name, contents: "" });
+  return files;
+}
 
 export function escapeDocumentText(value: string): string {
   const escapes: Record<string, string> = {

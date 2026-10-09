@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { latexDocumentLanguage } from "../latex/latexLanguage";
+import { assembleVisualProject, type VisualProjectFile } from "../latex/latexProjectVisual";
 import { projectLatexVisualDocument } from "../latex/latexVisualDocument";
 import {
   DOCUMENT_TEMPLATES,
@@ -12,6 +13,7 @@ import {
   newDocumentTitle,
   sameTitleText,
   switchNewLatexDocument,
+  templateCompanions,
   templateHasTitle,
 } from "./documentTemplates";
 
@@ -130,7 +132,17 @@ describe("new documents", () => {
           template: template.id,
           language,
         });
-        const projection = projectLatexVisualDocument(source);
+        // Visual reads a document with the files it includes, as the editor assembles them.
+        const files = new Map<string, VisualProjectFile>([
+          ["main.tex", { contents: source, revision: "r", truncated: false }],
+          ...templateCompanions(template.id, source).map(
+            (file) =>
+              [file.name, { contents: file.contents, revision: "r", truncated: false }] as const,
+          ),
+        ]);
+        const assembled = assembleVisualProject("main.tex", files);
+        expect([...assembled.missing, ...assembled.errors]).toEqual([]);
+        const projection = projectLatexVisualDocument(assembled.source);
         expect(
           projection.blocks
             .filter((block) => block.node.type === "latexRawBlock")
@@ -144,7 +156,7 @@ describe("new documents", () => {
     const cites = DOCUMENT_TEMPLATES.filter(
       (template) => companionFiles(template.source).length > 0,
     ).map((template) => template.id);
-    expect(cites).toEqual(["article", "lab-report", "lecture-notes", "grant-proposal"]);
+    expect(cites).toEqual(["article", "thesis", "lab-report", "lecture-notes", "grant-proposal"]);
     for (const id of cites)
       expect(
         companionFiles(
