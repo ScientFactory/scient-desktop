@@ -18,7 +18,7 @@ export function TemplatePage(props: {
   const scale = pageWidth / sourceWidth;
   const height = (width * sourceHeight) / sourceWidth;
   const top = cropped
-    ? -sourceHeight * scale * (picture.kind === "image" ? picture.cropTop : 0.1)
+    ? 12 - sourceHeight * scale * (picture.kind === "image" ? picture.cropTop : 0.1)
     : 0;
   return (
     <div
