@@ -653,6 +653,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   width: calc(100% - var(--live-activity-focus-width) - var(--live-activity-focus-width));
   margin-left: var(--live-activity-focus-width);
 }
+/* SCIENT-FORK:START — one readable live sweep, on the current activity only. */
+@import "./scient/presentation/scient-live-activity.css";
+/* SCIENT-FORK:END */
 /* SCIENT-FORK:START — the line-by-line reveal of a streaming answer. */
 /* A streaming answer while it is revealed (chat/useStreamingBlockEntrance.ts):
    lines appear at the front, a little lighter, and the full tone follows one
