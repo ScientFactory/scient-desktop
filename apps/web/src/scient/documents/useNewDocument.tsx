@@ -314,9 +314,6 @@ export function useNewDocument(input: {
     if (revision === null || revision === "taken") return giveUp();
     newDocuments.forget(key);
     templateEdits.move(key, { ...key, relativePath: destination });
-    // A chapter's view opens again at its new place; its old session is done.
-    for (const file of moved)
-      markdownPersistenceRegistry.forgetClean({ ...key, relativePath: file.from });
     release();
     // Still the document showing (the panel follows it to its new name): the caret comes back.
     const stillShown = shown.current === key.relativePath;
@@ -584,7 +581,17 @@ export function useNewDocument(input: {
           templateCompanions(entry.template, current.draftSource),
           synced.companions,
         );
-        newDocuments.update(key, { companions: restored.companions });
+        // Files that could not all go back: the template choice ends here, so
+        // nothing switches over a document whose files no longer match it.
+        newDocuments.update(key, {
+          companions: restored.companions,
+          ...(restored.complete ? {} : { settled: true }),
+        });
+        if (!restored.complete)
+          toastManager.add({
+            type: "error",
+            title: "Some of the document's files could not be put back.",
+          });
       };
       if (!synced.complete) {
         await undo();
