@@ -12,7 +12,21 @@ export function classifyDroidRuntimeTestRequest(
       })
     : [];
   system.push(request.system, request.instructions);
-  return system.some(
+  const text = system.flatMap((content: unknown) => {
+    if (typeof content === "string") return [content];
+    if (!Array.isArray(content)) return [];
+    return content.flatMap((block: unknown) =>
+      typeof block === "object" &&
+      block !== null &&
+      "type" in block &&
+      (block.type === "text" || block.type === "input_text") &&
+      "text" in block &&
+      typeof block.text === "string"
+        ? [block.text]
+        : [],
+    );
+  });
+  return text.some(
     (content) =>
       typeof content === "string" &&
       content.includes(

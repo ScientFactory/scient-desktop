@@ -8,7 +8,9 @@ describe("Droid runtime fixture request ownership", () => {
     for (const request of [
       { messages: [{ role: "system", content: title }] },
       { instructions: title, input: [{ role: "user", content: "Task" }], tools: [] },
+      { system: [{ type: "text", text: title }] },
       { system: title },
+      { input: [{ role: "system", content: [{ type: "input_text", text: title }] }] },
     ]) {
       expect(classifyDroidRuntimeTestRequest(request)).toBe("title");
     }
