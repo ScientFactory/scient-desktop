@@ -58,7 +58,7 @@ import { isPathTaken, useNewDocumentFiles } from "./useNewDocumentFiles";
 import { useTemplateChoices } from "./useTemplateChoices";
 import { useTemplateSaving } from "./useTemplateSaving";
 import { userTemplates } from "./userTemplates";
-import type { RenameOpenDocumentResult } from "~/scient/fileSurfaces/renameOpenDocument";
+import type { RenameOpenDocumentResult } from "~/scient/markdownEditor/persistence/renameOpenDocument";
 import "./newDocument.css";
 
 function waitUntil(condition: () => boolean, timeoutMs: number): Promise<boolean> {

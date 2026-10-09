@@ -80,6 +80,16 @@ describe("renameOpenDocument", () => {
     expect(h.reopen).toHaveBeenCalledOnce();
   });
 
+  it("refuses to rename at all while the old name's recovery copy cannot be cleared", async () => {
+    const h = fixture();
+    (h.lease as unknown as { settleRecoveryCopy: () => Promise<boolean> }).settleRecoveryCopy =
+      vi.fn(async () => false);
+    const outcome = await h.run();
+    expect(outcome.kind).toBe("failed");
+    expect(h.lease.beginMove).not.toHaveBeenCalled();
+    expect(h.rename).not.toHaveBeenCalled();
+  });
+
   it("leaves a lease from older code to the ordinary rename", async () => {
     const h = fixture();
     const older = { ...h.lease, beginMove: undefined, documentId: undefined };

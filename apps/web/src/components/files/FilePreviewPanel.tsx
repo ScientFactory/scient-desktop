@@ -1743,6 +1743,7 @@ export default function FilePreviewPanel({
   );
   // SCIENT-FORK:START — an open Markdown document renames in place, keeping its editor
   const { moveInPlace, surfaceGeneration } = useInPlaceRename({
+    threadRef,
     environmentId,
     cwd,
     relativePath,
@@ -1990,6 +1991,12 @@ export default function FilePreviewPanel({
                           }
                         : {})}
                       {...(moveInPlace ? { moveInPlace } : {})}
+                      {...(markdownLease
+                        ? {
+                            prepareRename: () =>
+                              markdownLease.settleRecoveryCopy?.() ?? Promise.resolve(true),
+                          }
+                        : {})}
                       environmentId={environmentId}
                       cwd={cwd}
                       relativePath={relativePath}

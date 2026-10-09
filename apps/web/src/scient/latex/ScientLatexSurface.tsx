@@ -50,7 +50,7 @@ import {
   markdownPersistenceRegistry,
   type MarkdownPersistenceLease,
 } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
-import { registerRenameParticipant } from "~/scient/fileSurfaces/renameOpenDocument";
+import { registerRenameParticipant } from "~/scient/markdownEditor/persistence/renameOpenDocument";
 import { ResizeSeparator } from "~/scient/layout/ResizeSeparator";
 import type {
   PdfForwardSyncTarget,

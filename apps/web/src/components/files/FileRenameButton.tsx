@@ -9,7 +9,10 @@ import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/component
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import type { RenameOpenDocumentResult } from "~/scient/markdownEditor/persistence/renameOpenDocument";
+import {
+  RECOVERY_COPY_UNSETTLED,
+  type RenameOpenDocumentResult,
+} from "~/scient/markdownEditor/persistence/renameOpenDocument";
 
 function renameFailureMessage(cause: unknown): string {
   const failure = failureCode(cause);
@@ -72,6 +75,11 @@ interface FileRenameButtonProps {
   readonly invalidMessage?: string;
   /** A note under the field, for example what else refers to this file. */
   readonly notice?: ReactNode;
+  /**
+   * Before the ordinary rename: clears the file's recovery copy so it cannot
+   * outlive the old name. A false result refuses the rename.
+   */
+  readonly prepareRename?: () => Promise<boolean>;
   readonly label: string;
   readonly onRenamed: (destinationRelativePath: string, revision: string) => void;
   /**
@@ -142,6 +150,10 @@ export function FileRenameButton(props: FileRenameButtonProps) {
         setOpen(false);
         return;
       }
+    }
+    if (props.prepareRename && !(await props.prepareRename())) {
+      setError(RECOVERY_COPY_UNSETTLED);
+      return;
     }
     const release = props.beforeRename?.();
     if (props.beforeRename && !release) {
