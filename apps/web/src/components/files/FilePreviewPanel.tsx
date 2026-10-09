@@ -194,7 +194,7 @@ import {
 } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import { useInPlaceRename } from "~/scient/fileSurfaces/useInPlaceRename";
-import { newDocuments } from "~/scient/documents/newDocuments";
+import { newDocuments, pathHasLeftoverDrafts } from "~/scient/documents/newDocuments";
 import {
   getOptimisticProjectFileQueryData,
   setProjectFileQueryData,
@@ -1748,7 +1748,10 @@ export default function FilePreviewPanel({
       (isLatexPreviewFile(from) &&
         /\.tex$/iu.test(to) &&
         latexRename?.movable === true &&
-        newDocuments.get({ environmentId, cwd, relativePath: from }) !== null),
+        newDocuments.get({ environmentId, cwd, relativePath: from }) !== null &&
+        // Drafts left at the new name by an earlier file would be offered as
+        // this document's recovery; unreadable storage counts as occupied.
+        !pathHasLeftoverDrafts({ environmentId, cwd, relativePath: to }, true)),
     reopen: (from, to) =>
       applyScientFileRename({
         environmentId,

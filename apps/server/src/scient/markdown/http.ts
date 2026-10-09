@@ -27,9 +27,10 @@ export const scientMarkdownHttpApiLayer = HttpApiBuilder.group(
               ? {}
               : { assetDirectory: args.payload.assetDirectory }),
           }).pipe(
-            Effect.catchTag("WorkspaceImageOperationError", (cause) =>
-              failEnvironmentInternal("scient_markdown_operation_failed", cause.cause),
-            ),
+            Effect.catchTags({
+              WorkspaceImageOperationError: (cause) =>
+                failEnvironmentInternal("scient_markdown_operation_failed", cause.cause),
+            }),
           );
         }),
       ),

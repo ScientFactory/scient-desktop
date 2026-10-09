@@ -102,7 +102,7 @@ export const templateEdits = {
  * work under this path, from an earlier file of the same name. A new document
  * takes another name rather than inheriting it; nothing stored is removed.
  */
-export function pathHasLeftoverDrafts(key: NewDocumentKey): boolean {
+export function pathHasLeftoverDrafts(key: NewDocumentKey, unreadable = false): boolean {
   const marker = `${key.environmentId}\0${key.cwd}\0${key.relativePath}`;
   try {
     for (let index = 0; index < localStorage.length; index++) {
@@ -110,7 +110,8 @@ export function pathHasLeftoverDrafts(key: NewDocumentKey): boolean {
       if (name?.includes(marker)) return true;
     }
   } catch {
-    /* Storage unavailable: nothing to inherit. */
+    /* Storage unavailable: nothing to inherit, or, for a move, nothing proven free. */
+    return unreadable;
   }
   return false;
 }
