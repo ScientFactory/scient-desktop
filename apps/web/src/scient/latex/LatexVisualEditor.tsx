@@ -76,6 +76,7 @@ import { LatexTitleStep } from "./LatexTitleStep";
 import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "~/components/ui/dialog";
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
+import { LatexReferenceLabelPopover } from "./LatexReferenceLabelPopover";
 import type { EditorView } from "@tiptap/pm/view";
 import { LatexInsertMenu, LatexInsertMenuContent, type LatexInsertAction } from "./LatexInsertMenu";
 import { LatexDocumentSettings, type LatexDocumentSettingsSection } from "./LatexDocumentSettings";
@@ -208,7 +209,6 @@ import { relativeLatexImagePath } from "./figureSource";
 import { latexProseCaretOffset } from "./latexProseCaret";
 import { LatexFooterLabel } from "./LatexFooterLabel";
 import { LatexLinkAddress } from "./LatexLinkAddress";
-import { LatexReferenceLabelField } from "./LatexReferenceLabelField";
 import { LatexCitationControls } from "./LatexCitationControls";
 import { LatexCrossReferenceControl } from "./LatexCrossReferenceControl";
 import { LatexStatementToolbar } from "./LatexStatementToolbar";
@@ -1256,7 +1256,7 @@ function LatexMathView({
                 >
                   <Switch
                     id={`${activationId}-numbering`}
-                    size="default"
+                    size="sm"
                     data-latex-number-toggle=""
                     aria-label="Numbered"
                     checked={numbered}
@@ -1271,28 +1271,27 @@ function LatexMathView({
               </div>
             )}
             {display && numbered && referenceLabel !== null && (
-              <label className="scient-latex-math-reference">
-                Label
-                <LatexReferenceLabelField
-                  label="Equation reference label"
-                  value={referenceLabel}
-                  disabled={!editable || Boolean(sourceError)}
-                  allowEmpty
-                  commitOn="blur"
-                  isAvailable={(value) =>
-                    !value ||
-                    value === referenceLabel ||
-                    !latexEquationReferencesKey.getState(editor.state)?.labels.has(value)
-                  }
-                  draftKey={`${activeMath.draftKey}:math:${getPos() ?? activationId}:label`}
-                  onCommit={changeReferenceLabel}
-                />
-              </label>
+              <LatexReferenceLabelPopover
+                label="Equation reference label"
+                value={referenceLabel}
+                disabled={!editable || Boolean(sourceError)}
+                allowEmpty
+                commitOn="blur"
+                isAvailable={(value) =>
+                  !value ||
+                  value === referenceLabel ||
+                  !latexEquationReferencesKey.getState(editor.state)?.labels.has(value)
+                }
+                draftKey={`${activeMath.draftKey}:math:${getPos() ?? activationId}:label`}
+                onCommit={changeReferenceLabel}
+                onOpen={() => setSourceOpen(false)}
+              />
             )}
             {mathContext && !sourceOpen && (
               <DockMenu
                 commandScope="latex"
                 label="Rows & columns"
+                side="top"
                 icon={<span>Rows &amp; columns</span>}
               >
                 {structureActions.map(({ command, label, reason, run }) => (

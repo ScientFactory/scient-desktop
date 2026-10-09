@@ -115,7 +115,7 @@ export function LatexTableToolbar(props: Props) {
       aria-label="Table tools"
       onClick={(event) => event.stopPropagation()}
     >
-      <DockMenu label="Rows & columns" icon="Rows & columns" commandScope="latex">
+      <DockMenu label="Rows & columns" icon="Rows & columns" commandScope="latex" side="top">
         <MenuSub>
           <MenuSubTrigger id={`${id}-rows`}>Rows</MenuSubTrigger>
           <MenuSubPopup
@@ -192,7 +192,7 @@ export function LatexTableToolbar(props: Props) {
         <MenuSeparator />
         {action("Delete table", props.onDelete, readOnly, true)}
       </DockMenu>
-      <DockMenu label="Cells" icon="Cells" commandScope="latex">
+      <DockMenu label="Cells" icon="Cells" commandScope="latex" side="top">
         {action(
           "Merge cells",
           () => props.onProperties({ kind: "merge" }),
@@ -204,7 +204,7 @@ export function LatexTableToolbar(props: Props) {
           contentReason ?? (!props.canSplitCell ? "Choose a merged cell to split." : null),
         )}
       </DockMenu>
-      <DockMenu label="Appearance" icon="Appearance" commandScope="latex">
+      <DockMenu label="Appearance" icon="Appearance" commandScope="latex" side="top">
         <LatexTableProperties
           key={props.column}
           source={props.source}

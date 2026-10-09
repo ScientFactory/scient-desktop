@@ -177,6 +177,7 @@ export function DockMenu(props: {
   readonly icon: ReactNode;
   readonly active?: boolean | undefined;
   readonly chevron?: boolean;
+  readonly side?: "top" | "bottom";
   readonly align?: "start" | "end";
   readonly popupClassName?: string;
   readonly groupLabel?: string;
@@ -184,6 +185,7 @@ export function DockMenu(props: {
 }) {
   const ownerId = useId();
   const [open, setOpen] = useState(false);
+  const Chevron = (props.side === "top") !== open ? ChevronUp : ChevronDown;
   const closedByCommand = useRef(false);
   const closedByEscape = useRef(false);
   const cancelled = useRef(false);
@@ -244,7 +246,7 @@ export function DockMenu(props: {
                   >
                     {props.icon}
                     {(props.chevron ?? true) ? (
-                      <ChevronDown className="size-3 shrink-0 opacity-60" />
+                      <Chevron className="size-3 shrink-0 opacity-60" />
                     ) : null}
                   </button>
                 }
@@ -254,6 +256,7 @@ export function DockMenu(props: {
           <TooltipPopup side="top">{props.label}</TooltipPopup>
         </Tooltip>
         <MenuPopup
+          side={props.side ?? "bottom"}
           align={props.align ?? "start"}
           className={cn("w-44", props.popupClassName)}
           data-keybinding-capture=""

@@ -1088,7 +1088,7 @@ describe("writing editor source transactions", () => {
     const equation = container.querySelector(".scient-latex-visual-inline-math") as HTMLElement;
     await act(async () => equation.click());
     const sourceButton = document.body.querySelector<HTMLButtonElement>(
-      ".scient-latex-math-bar-source",
+      "[aria-label='Edit formula as LaTeX']",
     )!;
     await act(async () => sourceButton.click());
     const source = container.querySelector(
@@ -1098,6 +1098,75 @@ describe("writing editor source transactions", () => {
     expect(container.textContent).toContain("x^2");
     expect(document.body.querySelector("[aria-label='Math tools']")).not.toBeNull();
     expect(document.body.querySelector("[aria-label='Edit formula as LaTeX']")).not.toBeNull();
+    await setField(source, "y^3");
+    expect(current).toContain("$y^3$");
+    await act(() =>
+      source.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+    );
+    expect(container.querySelector("textarea[aria-label='LaTeX formula code']")).toBeNull();
+  });
+
+  it("adds an equation label in its footer popup without losing the selected equation", async () => {
+    await mount("\\begin{equation}\nx^2\n\\end{equation}");
+    await selectKind("latexDisplayMath");
+    await act(() =>
+      container.querySelector<HTMLElement>(".scient-latex-visual-display-math")!.click(),
+    );
+    const trigger = () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Edit equation reference label"]')!;
+    expect(container.querySelector('textarea[aria-label="Equation reference label"]')).toBeNull();
+    await act(() =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Edit formula as LaTeX"]')!.click(),
+    );
+    expect(container.querySelector('textarea[aria-label="LaTeX formula code"]')).not.toBeNull();
+    await act(() => trigger().click());
+    expect(container.querySelector('textarea[aria-label="LaTeX formula code"]')).toBeNull();
+    const field = document.body.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Equation reference label"]',
+    )!;
+    expect(document.activeElement).toBe(field);
+    expect(field.value).toBe("");
+    await setField(field, "eq:new");
+    expect(current).toContain("\\label{eq:new}");
+    expect(editor().state.selection.$from.nodeAfter?.type.name).toBe("latexDisplayMath");
+    expect(container.querySelector('[aria-label="Math tools"]')).not.toBeNull();
+    await act(() => editor().commands.undo());
+    expect(current).not.toContain("\\label{eq:new}");
+    expect(field.value).toBe("");
+  });
+
+  it("retains an invalid equation label after closing and reopening the footer popup", async () => {
+    await mount(
+      "\\begin{equation}\nx^2\\label{eq:first}\n\\end{equation}\n\n\\begin{equation}\ny^2\\label{eq:second}\n\\end{equation}",
+    );
+    await selectKind("latexDisplayMath");
+    await act(() =>
+      container.querySelector<HTMLElement>(".scient-latex-visual-display-math")!.click(),
+    );
+    const trigger = () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Edit equation reference label"]')!;
+    await act(() => trigger().click());
+    const field = () =>
+      document.body.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="Equation reference label"]',
+      )!;
+    const saved = current;
+    await setField(field(), "eq:second");
+    expect(field().getAttribute("aria-invalid")).toBe("true");
+    expect(current).toBe(saved);
+    await act(() => {
+      field().focus();
+      field().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(trigger().getAttribute("aria-expanded")).toBe("false");
+    await act(() => trigger().click());
+    expect(field().value).toBe("eq:second");
+    expect(field().getAttribute("aria-invalid")).toBe("true");
+    await setField(field(), "bad label");
+    expect(current).toBe(saved);
+    await setField(field(), "eq:summary");
+    expect(current).toContain("\\label{eq:summary}");
+    expect(field().getAttribute("aria-invalid")).toBe("false");
   });
 
   it("changes a display wrapper from the compact source popover", async () => {
