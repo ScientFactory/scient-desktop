@@ -448,7 +448,8 @@ export function useNewDocument(input: {
         { removeEmptyFolders: true },
       );
       for (const file of entry.companions)
-        await commands.remove(file, { removeEmptyFolders: true });
+        if (!/\.bib$/iu.test(file.relativePath))
+          await commands.remove(file, { removeEmptyFolders: true });
     },
   );
 
