@@ -175,16 +175,10 @@ describe("writing editor source transactions", () => {
     expect(option, optionLabel).toBeDefined();
     await act(() => option!.click());
   }
-  async function openReferenceLabel(label: string) {
-    const trigger = container.querySelector<HTMLButtonElement>(
-      `button[aria-label="Edit ${label.toLowerCase()}"]`,
-    )!;
-    expect(trigger).not.toBeNull();
-    await act(() => trigger.click());
-    const field = document.body.querySelector<HTMLTextAreaElement>(
-      `textarea[aria-label="${label}"]`,
-    )!;
+  async function focusReferenceLabel(label: string) {
+    const field = container.querySelector<HTMLTextAreaElement>(`textarea[aria-label="${label}"]`)!;
     expect(field).not.toBeNull();
+    await act(() => field.focus());
     return field;
   }
   async function selectKind(kind: string) {
@@ -236,15 +230,14 @@ describe("writing editor source transactions", () => {
     });
   }
 
-  it("opens a heading label from the footer and adds/removes it through source and undo", async () => {
+  it("edits a visible heading label in the footer and adds/removes it through source and undo", async () => {
     await mount("\\section{Introduction}\n\nSee Section~\\ref{sec:intro}.");
     await act(() => editor().commands.setTextSelection(3));
     const field = () =>
       document.body.querySelector<HTMLTextAreaElement>(
         'textarea[aria-label="Heading reference label"]',
       )!;
-    expect(container.querySelector('textarea[aria-label="Heading reference label"]')).toBeNull();
-    await openReferenceLabel("Heading reference label");
+    await focusReferenceLabel("Heading reference label");
     expect(field()).not.toBeNull();
     expect(container.querySelector(".scient-latex-context-tools[data-inline]")).not.toBeNull();
     expect(container.querySelector(".scient-latex-context-inspector")?.hasAttribute("inert")).toBe(
@@ -274,7 +267,7 @@ describe("writing editor source transactions", () => {
       "\\usepackage{hyperref}\n",
     );
     await act(() => editor().commands.setTextSelection(3));
-    const field = await openReferenceLabel("Heading reference label");
+    const field = await focusReferenceLabel("Heading reference label");
     await act(() => {
       field.focus();
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
@@ -308,7 +301,7 @@ describe("writing editor source transactions", () => {
       "\\section{Introduction}\\label{sec:intro}\n\n\\section{Results}\\label{sec:results}",
     );
     await act(() => editor().commands.setTextSelection(3));
-    await openReferenceLabel("Heading reference label");
+    await focusReferenceLabel("Heading reference label");
     const field = () =>
       document.body.querySelector<HTMLTextAreaElement>(
         'textarea[aria-label="Heading reference label"]',
@@ -325,7 +318,7 @@ describe("writing editor source transactions", () => {
     expect(current).toContain("\\label{sec:summary}");
   });
 
-  it("keeps table label editing attached to its object through the footer popup", async () => {
+  it("keeps table label editing attached to its object through the inline footer field", async () => {
     await mount(`\\begin{table}
 \\caption{Results}
 \\label{tab:old}
@@ -335,8 +328,7 @@ Control & 1 \\\\
 \\end{tabular}
 \\end{table}`);
     await selectKind("table");
-    expect(container.querySelector('textarea[aria-label="Table reference label"]')).toBeNull();
-    const field = await openReferenceLabel("Table reference label");
+    const field = await focusReferenceLabel("Table reference label");
     expect(field.value).toBe("tab:old");
     await setField(field, "tab:new");
     expect(current).toContain("\\label{tab:new}");
@@ -1146,24 +1138,23 @@ Control & 1 \\\\
     expect(sourceButton.getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("adds an equation label in its footer popup without losing the selected equation", async () => {
+  it("adds an equation label in its visible footer field without losing the selected equation", async () => {
     await mount("\\begin{equation}\nx^2\n\\end{equation}");
     await selectKind("latexDisplayMath");
     await act(() =>
       container.querySelector<HTMLElement>(".scient-latex-visual-display-math")!.click(),
     );
-    const trigger = () =>
-      container.querySelector<HTMLButtonElement>('[aria-label="Edit equation reference label"]')!;
-    expect(container.querySelector('textarea[aria-label="Equation reference label"]')).toBeNull();
+    const field = container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Equation reference label"]',
+    )!;
+    expect(field).not.toBeNull();
+    expect(field.placeholder).toBe("Add label");
     await act(() =>
       container.querySelector<HTMLButtonElement>('[aria-label="Edit formula as LaTeX"]')!.click(),
     );
     expect(container.querySelector('textarea[aria-label="LaTeX formula code"]')).not.toBeNull();
-    await act(() => trigger().click());
+    await act(() => field.focus());
     expect(container.querySelector('textarea[aria-label="LaTeX formula code"]')).toBeNull();
-    const field = document.body.querySelector<HTMLTextAreaElement>(
-      'textarea[aria-label="Equation reference label"]',
-    )!;
     expect(document.activeElement).toBe(field);
     expect(field.value).toBe("");
     await setField(field, "eq:new");
@@ -1175,7 +1166,7 @@ Control & 1 \\\\
     expect(field.value).toBe("");
   });
 
-  it("retains an invalid equation label after closing and reopening the footer popup", async () => {
+  it("retains invalid equation label edits on blur and cancels them with Escape", async () => {
     await mount(
       "\\begin{equation}\nx^2\\label{eq:first}\n\\end{equation}\n\n\\begin{equation}\ny^2\\label{eq:second}\n\\end{equation}",
     );
@@ -1183,28 +1174,36 @@ Control & 1 \\\\
     await act(() =>
       container.querySelector<HTMLElement>(".scient-latex-visual-display-math")!.click(),
     );
-    const trigger = () =>
-      container.querySelector<HTMLButtonElement>('[aria-label="Edit equation reference label"]')!;
-    await act(() => trigger().click());
     const field = () =>
-      document.body.querySelector<HTMLTextAreaElement>(
+      container.querySelector<HTMLTextAreaElement>(
         'textarea[aria-label="Equation reference label"]',
       )!;
     const saved = current;
     await setField(field(), "eq:second");
     expect(field().getAttribute("aria-invalid")).toBe("true");
+    expect(field().value).toBe("eq:second");
     expect(current).toBe(saved);
     await act(() => {
       field().focus();
       field().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
-    expect(trigger().getAttribute("aria-expanded")).toBe("false");
-    await act(() => trigger().click());
-    expect(field().value).toBe("eq:second");
-    expect(field().getAttribute("aria-invalid")).toBe("true");
+    expect(field().value).toBe("eq:first");
+    expect(field().getAttribute("aria-invalid")).toBe("false");
+    expect(field().hasAttribute("data-local-draft")).toBe(false);
+    expect(current).toBe(saved);
     await setField(field(), "bad label");
     expect(current).toBe(saved);
-    await setField(field(), "eq:summary");
+    await act(() => {
+      field().focus();
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+        field(),
+        "eq:summary",
+      );
+      field().dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(() =>
+      field().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+    );
     expect(current).toContain("\\label{eq:summary}");
     expect(field().getAttribute("aria-invalid")).toBe("false");
   });
@@ -1566,7 +1565,7 @@ Theory & Proofs \\\\
     ).not.toBeNull();
     await selectOption("Table style", "Full grid");
     expect(current).toContain("\\hline");
-    const reference = await openReferenceLabel("Table reference label");
+    const reference = await focusReferenceLabel("Table reference label");
     await setField(reference, "tab:research");
     expect(current).toContain("\\label{tab:research}");
   });

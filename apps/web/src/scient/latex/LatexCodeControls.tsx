@@ -27,7 +27,7 @@ import {
   type LatexListingPresentation,
 } from "./latexLiteral";
 import { LatexContextMenuForm } from "./LatexContextMenuForm";
-import { LatexReferenceLabelPopover } from "./LatexReferenceLabelPopover";
+import { LatexReferenceLabelControl } from "./LatexReferenceLabelControl";
 import { latexLabelInventory } from "./latexLabelAuthoring";
 
 function CodeSubmenu(props: { label: string; disabled?: boolean; children: ReactNode }) {
@@ -319,7 +319,7 @@ export function LatexCodeControls({
         Caption
       </button>
       {captioned && (
-        <LatexReferenceLabelPopover
+        <LatexReferenceLabelControl
           label="Code reference label"
           value={label}
           allowEmpty

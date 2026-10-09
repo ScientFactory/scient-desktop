@@ -15,7 +15,7 @@ import {
   DockMenu,
   dockButtonClass,
 } from "../writing/dockChrome";
-import { LatexReferenceLabelPopover } from "./LatexReferenceLabelPopover";
+import { LatexReferenceLabelControl } from "./LatexReferenceLabelControl";
 import { useLatexObjectContext } from "./useLatexObjectContext";
 import { LatexTableProperties } from "./LatexTableProperties";
 import { latexEquationReferencesKey } from "./latexEquationReferences";
@@ -296,7 +296,7 @@ export function LatexTableToolbar(props: Props) {
         Caption
       </button>
       {props.hasCaption && (
-        <LatexReferenceLabelPopover
+        <LatexReferenceLabelControl
           label="Table reference label"
           value={props.label}
           allowEmpty

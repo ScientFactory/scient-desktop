@@ -14,7 +14,7 @@ import {
   DockMenu,
   dockButtonClass,
 } from "../writing/dockChrome";
-import { LatexReferenceLabelPopover } from "./LatexReferenceLabelPopover";
+import { LatexReferenceLabelControl } from "./LatexReferenceLabelControl";
 import { LatexAuthoringContext, useLatexActionNotice } from "./latexObjectAuthoring";
 import { latexLabelInventory } from "./latexLabelAuthoring";
 import { algorithmStepSelection, type AlgorithmStepOperation } from "./latexAlgorithmEditing";
@@ -206,7 +206,7 @@ export function LatexAlgorithmControls({
         </button>
       )}
       {floating && captioned && (
-        <LatexReferenceLabelPopover
+        <LatexReferenceLabelControl
           label="Algorithm reference label"
           allowEmpty
           value={label}

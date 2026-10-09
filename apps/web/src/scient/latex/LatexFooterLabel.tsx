@@ -1,5 +1,5 @@
 import { useContext, useMemo } from "react";
-import { LatexReferenceLabelPopover } from "./LatexReferenceLabelPopover";
+import { LatexReferenceLabelControl } from "./LatexReferenceLabelControl";
 import { LatexAuthoringContext } from "./latexObjectAuthoring";
 import { latexLabelInventory } from "./latexLabelAuthoring";
 
@@ -15,7 +15,7 @@ export function LatexFooterLabel(props: {
   const { source, renameLabel } = useContext(LatexAuthoringContext);
   const inventory = useMemo(() => latexLabelInventory(source), [source]);
   return (
-    <LatexReferenceLabelPopover
+    <LatexReferenceLabelControl
       label={props.label ?? "Reference label"}
       allowEmpty={props.allowEmpty ?? true}
       value={props.value}

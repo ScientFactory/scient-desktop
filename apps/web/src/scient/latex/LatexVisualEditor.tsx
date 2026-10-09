@@ -76,7 +76,7 @@ import { LatexTitleStep } from "./LatexTitleStep";
 import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "~/components/ui/dialog";
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
-import { LatexReferenceLabelPopover } from "./LatexReferenceLabelPopover";
+import { LatexReferenceLabelControl } from "./LatexReferenceLabelControl";
 import { LatexSourceResizeHandle } from "./LatexSourceResizeHandle";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import type { EditorView } from "@tiptap/pm/view";
@@ -1251,68 +1251,77 @@ function LatexMathView({
               )}
             </button>
             {display && (
-              <div className="flex h-6 shrink-0 items-center gap-1.5">
-                <label htmlFor={`${activationId}-numbering`}>Numbered</label>
-                <ScientTooltip
-                  content={
-                    numberingProtected
-                      ? "Edit imported row numbering and tags in Source."
-                      : numbered
-                        ? "Numbering is on. Click to turn it off."
-                        : "Numbering is off. Click to turn it on."
-                  }
-                >
-                  <Switch
-                    id={`${activationId}-numbering`}
-                    size="sm"
-                    data-latex-number-toggle=""
-                    aria-label="Numbered"
-                    checked={numbered}
-                    disabled={numberingProtected || Boolean(sourceError)}
-                    onMouseDown={(event) => {
-                      if (mathRoot.current?.contains(document.activeElement))
-                        event.preventDefault();
-                    }}
-                    onCheckedChange={changeNumbering}
-                  />
-                </ScientTooltip>
-              </div>
+              <>
+                <DockDivider />
+                <div className="flex h-6 shrink-0 items-center gap-1.5">
+                  <label htmlFor={`${activationId}-numbering`}>Numbered</label>
+                  <ScientTooltip
+                    content={
+                      numberingProtected
+                        ? "Edit imported row numbering and tags in Source."
+                        : numbered
+                          ? "Numbering is on. Click to turn it off."
+                          : "Numbering is off. Click to turn it on."
+                    }
+                  >
+                    <Switch
+                      id={`${activationId}-numbering`}
+                      size="xs"
+                      data-latex-number-toggle=""
+                      aria-label="Numbered"
+                      checked={numbered}
+                      disabled={numberingProtected || Boolean(sourceError)}
+                      onMouseDown={(event) => {
+                        if (mathRoot.current?.contains(document.activeElement))
+                          event.preventDefault();
+                      }}
+                      onCheckedChange={changeNumbering}
+                    />
+                  </ScientTooltip>
+                </div>
+              </>
             )}
             {display && numbered && referenceLabel !== null && (
-              <LatexReferenceLabelPopover
-                label="Equation reference label"
-                value={referenceLabel}
-                disabled={!editable || Boolean(sourceError)}
-                allowEmpty
-                commitOn="blur"
-                isAvailable={(value) =>
-                  !value ||
-                  value === referenceLabel ||
-                  !latexEquationReferencesKey.getState(editor.state)?.labels.has(value)
-                }
-                draftKey={`${activeMath.draftKey}:math:${getPos() ?? activationId}:label`}
-                onCommit={changeReferenceLabel}
-                onOpen={() => setSourceOpen(false)}
-              />
+              <>
+                <DockDivider />
+                <LatexReferenceLabelControl
+                  label="Equation reference label"
+                  value={referenceLabel}
+                  disabled={!editable || Boolean(sourceError)}
+                  allowEmpty
+                  commitOn="blur"
+                  isAvailable={(value) =>
+                    !value ||
+                    value === referenceLabel ||
+                    !latexEquationReferencesKey.getState(editor.state)?.labels.has(value)
+                  }
+                  draftKey={`${activeMath.draftKey}:math:${getPos() ?? activationId}:label`}
+                  onCommit={changeReferenceLabel}
+                  onEdit={() => setSourceOpen(false)}
+                />
+              </>
             )}
             {mathContext && !sourceOpen && (
-              <DockMenu
-                commandScope="latex"
-                label="Rows & columns"
-                side="top"
-                icon={<span>Rows &amp; columns</span>}
-              >
-                {structureActions.map(({ command, label, reason, run }) => (
-                  <DockCommandItem
-                    key={command}
-                    disabled={Boolean(reason)}
-                    title={reason ?? undefined}
-                    onClick={run}
-                  >
-                    {label}
-                  </DockCommandItem>
-                ))}
-              </DockMenu>
+              <>
+                <DockDivider />
+                <DockMenu
+                  commandScope="latex"
+                  label="Rows & columns"
+                  side="top"
+                  icon={<span>Rows &amp; columns</span>}
+                >
+                  {structureActions.map(({ command, label, reason, run }) => (
+                    <DockCommandItem
+                      key={command}
+                      disabled={Boolean(reason)}
+                      title={reason ?? undefined}
+                      onClick={run}
+                    >
+                      {label}
+                    </DockCommandItem>
+                  ))}
+                </DockMenu>
+              </>
             )}
             <LatexMathPalette
               showTrigger={false}

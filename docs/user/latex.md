@@ -138,11 +138,12 @@ inside figures, tables and other objects is not searched.
 A thin footer stays under the document. On the left, one control opens the
 current object's options. Extra structural choices are grouped inside that panel.
 Click outside or press Escape to close it; closing keeps unfinished fields intact.
-Headings show a compact **Label** field directly in the footer instead of an
-options panel. Enter a unique reference key and press Enter or leave the field
-to apply it. Invalid or duplicate keys stay as drafts. Renaming a key in a
-single-file document updates its recognized cross-references in one undoable
-change; included files require a coordinated rename. Clearing the field removes
+Available labels show their reference key in gray directly in the footer.
+Click the key, or **Add label** when empty, to edit it; a thin border appears
+while focused. Press Enter or leave the field to apply a valid change. Invalid
+or duplicate keys stay as drafts; Escape cancels unfinished input.
+For headings, renaming a key in a single-file document updates its recognized
+cross-references in one undoable change; included files require a coordinated rename. Clearing the field removes
 the heading's label. Heading numbering stays in **Text > Paragraph style**.
 On the right it shows where the caret is, for example "Section" or "Table · row 3, column 2",
 and the word count:

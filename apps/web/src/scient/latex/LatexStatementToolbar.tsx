@@ -2,7 +2,7 @@ import { useContext, useMemo, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/core";
 import { dockButtonClass } from "../writing/dockChrome";
-import { LatexReferenceLabelPopover } from "./LatexReferenceLabelPopover";
+import { LatexReferenceLabelControl } from "./LatexReferenceLabelControl";
 import { LatexStatementTypeControl } from "./LatexStatementTypeControl";
 import { LatexAuthoringContext } from "./latexObjectAuthoring";
 import { latexLabelInventory } from "./latexLabelAuthoring";
@@ -60,7 +60,7 @@ export function LatexStatementToolbar(props: {
       </button>
       {!props.proof &&
         props.labels.map((label) => (
-          <LatexReferenceLabelPopover
+          <LatexReferenceLabelControl
             key={label.id}
             label="Statement reference label"
             allowEmpty

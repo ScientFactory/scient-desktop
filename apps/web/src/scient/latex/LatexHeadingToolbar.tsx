@@ -1,6 +1,6 @@
 import type { Editor } from "@tiptap/core";
 import { useEditorState } from "@tiptap/react";
-import { LatexReferenceLabelPopover } from "./LatexReferenceLabelPopover";
+import { LatexReferenceLabelControl } from "./LatexReferenceLabelControl";
 import { useContext, useMemo } from "react";
 import { LatexAuthoringContext } from "./latexObjectAuthoring";
 import { latexLabelInventory } from "./latexLabelAuthoring";
@@ -50,7 +50,7 @@ export function LatexHeadingToolbar({
       data-context-presentation="inline"
       className="scient-latex-context-toolbar scient-latex-heading-bar"
     >
-      <LatexReferenceLabelPopover
+      <LatexReferenceLabelControl
         key={heading.sourceId}
         label="Heading reference label"
         allowEmpty

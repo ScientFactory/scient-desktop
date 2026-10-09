@@ -267,32 +267,75 @@
   padding: 0 10px 8px;
   white-space: normal;
 }
-.scient-latex-reference-label-popover {
-  width: 208px;
-  max-width: calc(100vw - 40px);
-  padding: 8px;
-  font: 12px/1.5 var(--font-sans);
-}
-.scient-latex-reference-label-popover textarea {
-  display: block;
-  width: 100%;
-  height: 28px;
-  min-height: 28px;
-  padding: 4px 6px;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background: var(--background);
+.scient-latex-reference-label-control {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   color: var(--foreground);
-  font: 12px/18px var(--font-mono);
+}
+.scient-latex-reference-label-control > label {
+  flex: none;
+  cursor: text;
+}
+.scient-latex-reference-label-control .scient-latex-reference-label-field {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+.scient-latex-context-tools[data-inspector]
+  .scient-latex-context-toolbar
+  .scient-latex-reference-label-control
+  textarea {
+  display: block;
+  field-sizing: content;
+  width: auto;
+  min-width: 8ch;
+  max-width: min(24ch, 30vw);
+  height: var(--scient-document-footer-field-height, 24px);
+  min-height: var(--scient-document-footer-field-height, 24px);
+  max-height: var(--scient-document-footer-field-height, 24px);
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: var(--scient-document-footer-font-size, 12px)/16px var(--font-mono);
   white-space: pre;
+  overflow: hidden;
   resize: none;
 }
-.scient-latex-reference-label-popover textarea:focus-visible {
-  outline: 1px solid var(--ring);
+.scient-latex-context-tools[data-inspector]
+  .scient-latex-context-toolbar
+  .scient-latex-reference-label-control
+  textarea:focus {
+  border-color: var(--ring);
+  outline: none;
   outline-offset: -1px;
+  color: var(--foreground);
 }
-.scient-latex-reference-label-popover p {
-  margin: 6px 0 0;
+.scient-latex-context-tools[data-inspector]
+  .scient-latex-context-toolbar
+  .scient-latex-reference-label-control
+  textarea::placeholder {
+  color: color-mix(in srgb, var(--muted-foreground) 65%, transparent);
+}
+.scient-latex-context-tools[data-inspector]
+  .scient-latex-context-toolbar
+  .scient-latex-reference-label-control
+  p {
+  position: absolute;
+  z-index: 60;
+  bottom: calc(100% + 6px);
+  inset-inline-start: 0;
+  width: max-content;
+  max-width: min(260px, 70vw);
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--popover);
   color: var(--destructive);
   white-space: normal;
 }
