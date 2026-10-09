@@ -41,7 +41,9 @@ export function ChatCanvas({
   const [measurements, setMeasurements] = useState({
     width: 0,
     height: 0,
-    padding: 48,
+    // SCIENT-FORK:START — preserve the shared compact chat lane.
+    padding: 20,
+    // SCIENT-FORK:END
     maxChatWidth: 768,
     minChatWidth: 640,
     composerHeight: 0,
@@ -136,11 +138,13 @@ export function ChatCanvas({
           } as CSSProperties
         }
       >
+        {/* SCIENT-FORK:START — measure the same desktop gutter used by the lane CSS. */}
         <div
           ref={widthProbeRef}
           aria-hidden
-          className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) min-w-[40rem] box-content ps-3 sm:ps-12"
+          className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) min-w-[40rem] box-content ps-3 sm:ps-5"
         />
+        {/* SCIENT-FORK:END */}
         {children}
       </div>
     </ChatCanvasContext>

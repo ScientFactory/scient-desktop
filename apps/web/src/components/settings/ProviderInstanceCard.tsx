@@ -862,15 +862,6 @@ export function ProviderInstanceCard({
       ) : null}
     </>
   );
-  const listHealthStatusNode =
-    (statusKey === "warning" || statusKey === "error") &&
-    connectionPresentation.kind !== "sign-in-required" &&
-    liveProvider?.auth.status !== "unauthenticated" ? (
-      <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-        {statusDotNode}
-        <span>{statusHeadline}</span>
-      </span>
-    ) : null;
   const versionAdvisoryNode = versionAdvisory ? (
     <Popover>
       <Tooltip>
@@ -1026,7 +1017,6 @@ export function ProviderInstanceCard({
                 {vendorLabel}
               </span>
             ) : null}
-            {listHealthStatusNode}
             {/* SCIENT-FORK:START — keep vendor identity; report update progress separately. */}
             {updateProgress || updateProblem ? (
               <span

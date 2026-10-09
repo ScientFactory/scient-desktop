@@ -149,7 +149,9 @@ export class DesktopWindow extends Context.Service<
     // Reload and DevTools for the main window's own webContents, for the same
     // reason as zoomMain: the Electron roles act on the focused webContents,
     // which is a preview guest whenever a browser page has focus.
-    readonly runMainContentsCommand: (command: MainWindowContentsCommand) => Effect.Effect<void>;
+    readonly runMainContentsCommand: (
+      command: MainWindowContentsCommand,
+    ) => Effect.Effect<void, DesktopWindowError>;
     readonly syncAppearance: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/window/DesktopWindow") {}
@@ -1088,14 +1090,22 @@ export const make = Effect.gen(function* () {
     }),
     runMainContentsCommand: Effect.fn("desktop.window.runMainContentsCommand")(function* (command) {
       yield* Effect.annotateCurrentSpan({ command });
+      // SCIENT-FORK:START — reload callers share the renderer's pending-save barrier.
+      if (command === "reload" || command === "forceReload") {
+        yield* dispatchRendererEvent(
+          MENU_ACTION_CHANNEL,
+          command === "reload" ? "reload-main" : "force-reload-main",
+          { reveal: false },
+        );
+        return;
+      }
+      // SCIENT-FORK:END
       // The registered main window, never the focused one: with an OAuth popup
       // focused, Reload would otherwise reload the popup mid sign-in.
       const window = yield* electronWindow.main;
       if (Option.isNone(window) || window.value.isDestroyed()) return;
       const webContents = window.value.webContents;
-      if (command === "reload") webContents.reload();
-      else if (command === "forceReload") webContents.reloadIgnoringCache();
-      else webContents.toggleDevTools();
+      webContents.toggleDevTools();
     }),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;

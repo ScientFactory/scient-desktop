@@ -1003,7 +1003,7 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect("reloads and inspects the main window even when a popup has focus", () =>
+  it.effect("guards reload and inspects the main window even when a popup has focus", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
       const popup = makeFakeBrowserWindow();
@@ -1024,14 +1024,58 @@ describe("DesktopWindow", () => {
         yield* desktopWindow.runMainContentsCommand("forceReload");
         yield* desktopWindow.runMainContentsCommand("toggleDevTools");
 
-        assert.equal(fakeWindow.reload.mock.calls.length, 1);
-        assert.equal(fakeWindow.reloadIgnoringCache.mock.calls.length, 1);
+        assert.deepEqual(fakeWindow.send.mock.calls, [
+          [MENU_ACTION_CHANNEL, "reload-main"],
+          [MENU_ACTION_CHANNEL, "force-reload-main"],
+        ]);
+        assert.equal(fakeWindow.reload.mock.calls.length, 0);
+        assert.equal(fakeWindow.reloadIgnoringCache.mock.calls.length, 0);
         assert.equal(fakeWindow.toggleDevTools.mock.calls.length, 1);
         assert.equal(popup.reload.mock.calls.length, 0);
         assert.equal(popup.reloadIgnoringCache.mock.calls.length, 0);
         assert.equal(popup.toggleDevTools.mock.calls.length, 0);
+        assert.equal(popup.send.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
+  );
+
+  it.effect(
+    "dispatches guarded reload to main rather than a focused popup without revealing it",
+    () =>
+      Effect.gen(function* () {
+        const main = makeFakeBrowserWindow();
+        const popup = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(
+          Option.some(main.window),
+        );
+        const onReveal = vi.fn();
+        const layer = layerTest({
+          window: main.window,
+          createCount,
+          mainWindow,
+          focusedWindow: popup.window,
+          onReveal,
+        });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.runMainContentsCommand("reload");
+          yield* desktopWindow.runMainContentsCommand("forceReload");
+
+          assert.deepEqual(main.send.mock.calls, [
+            [MENU_ACTION_CHANNEL, "reload-main"],
+            [MENU_ACTION_CHANNEL, "force-reload-main"],
+          ]);
+          assert.equal(popup.send.mock.calls.length, 0);
+          assert.equal(main.reload.mock.calls.length, 0);
+          assert.equal(main.reloadIgnoringCache.mock.calls.length, 0);
+          assert.equal(popup.reload.mock.calls.length, 0);
+          assert.equal(popup.reloadIgnoringCache.mock.calls.length, 0);
+          assert.equal(onReveal.mock.calls.length, 0);
+          assert.equal(yield* Ref.get(createCount), 0);
+        }).pipe(Effect.provide(layer));
+      }),
   );
 
   it.effect("keeps macOS window buttons centered when zooming and leaving fullscreen", () =>

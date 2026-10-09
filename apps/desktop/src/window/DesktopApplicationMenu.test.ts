@@ -290,11 +290,12 @@ describe("DesktopApplicationMenu", () => {
     }),
   );
 
-  it.effect("routes reload commands to the main window contents", () =>
+  it.effect("routes reload and developer tools through the main window command service", () =>
     Effect.gen(function* () {
-      for (const [label, command, accelerator, action] of [
-        ["Reload", "reload", "CmdOrCtrl+R", "main-reload"],
-        ["Force Reload", "forceReload", "Shift+CmdOrCtrl+R", "main-forceReload"],
+      for (const [label, accelerator, action] of [
+        ["Reload", "CmdOrCtrl+R", "main-reload"],
+        ["Force Reload", "Shift+CmdOrCtrl+R", "main-forceReload"],
+        ["Toggle Developer Tools", "Ctrl+Shift+I", "main-toggleDevTools"],
       ] as const) {
         const selectedAction = yield* Deferred.make<string>();
         const applicationMenuTemplate =

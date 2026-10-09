@@ -35,7 +35,9 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "Server URL",
-        description: "Leave blank to let T3 Code spawn the server when needed.",
+        // SCIENT-FORK:START — portable help copy must not expose upstream product branding.
+        description: "Leave blank to start the server when needed.",
+        // SCIENT-FORK:END
         providerSettingsForm: {
           placeholder: "http://127.0.0.1:4096",
           clearWhenEmpty: "omit",

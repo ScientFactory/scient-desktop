@@ -60,7 +60,7 @@ const zoomMainWindow = Effect.fn("desktop.menu.zoomMainWindow")(function* (
 
 const runMainContentsCommand = Effect.fn("desktop.menu.runMainContentsCommand")(function* (
   command: DesktopWindow.MainWindowContentsCommand,
-): Effect.fn.Return<void, never, DesktopWindow.DesktopWindow> {
+): Effect.fn.Return<void, DesktopWindow.DesktopWindowError, DesktopWindow.DesktopWindow> {
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   yield* desktopWindow.runMainContentsCommand(command);
 });

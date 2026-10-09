@@ -80,6 +80,30 @@ describe("Pi status copy", () => {
     else expect(markup).not.toContain("Pi RPC timed out.");
   });
 
+  it.each([
+    { status: "error" as const, installed: true, message: "Pi RPC timed out." },
+    { status: "error" as const, installed: false, message: "Pi is not installed." },
+  ])("keeps $message on the right rather than adding left-column health copy", (snapshot) => {
+    const provider = { ...liveProvider, ...snapshot };
+    const list = render("list", provider);
+    const editor = render("editor", provider);
+    expect(list).not.toContain("Not installed");
+    expect(list).not.toContain("Needs attention");
+    expect(list).not.toContain("Unavailable");
+    expect(list).not.toContain(snapshot.message);
+    expect(editor).toContain(snapshot.installed ? snapshot.message : "Not installed");
+  });
+
+  it("keeps warning headlines out of the compact provider list", () => {
+    const list = render("list", {
+      ...liveProvider,
+      status: "warning",
+      message: "Pi needs attention.",
+    });
+    expect(list).not.toContain("Needs attention");
+    expect(list).not.toContain("Pi needs attention.");
+  });
+
   it.each(["list", "editor"] as const)(
     "keeps the disabled %s explicit despite a stale ready snapshot",
     (mode) => {
@@ -400,7 +424,7 @@ describe("deriveProviderModelsForDisplay", () => {
         expect(markup).toContain("Unavailable");
         expect(markup).toContain("is not a symlink");
       } else {
-        expect(markup).toContain("Unavailable");
+        expect(markup).not.toContain("Unavailable");
         expect(markup).not.toContain("is not a symlink");
       }
     }
