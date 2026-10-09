@@ -14,4 +14,7 @@ export {
   type PiRpcRecord,
   type PiRpcSpawnOptions,
 } from "./server/rpc.ts";
-export { PI_T3_MCP_EXTENSION_SOURCE } from "./server/mcpExtensionSource.ts";
+export {
+  makePiMcpExtensionSource,
+  PI_T3_MCP_EXTENSION_SOURCE,
+} from "./server/mcpExtensionSource.ts";
