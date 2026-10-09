@@ -111,7 +111,7 @@ export function useScientRightPanelOpeners(input: {
       if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
       const environmentId = activeThreadRef.environmentId;
       const cwd = activeWorkspaceRoot;
-      const template = "article" as const;
+      const template = "blank" as const;
       const language = "english" as const;
       const contents = createNewDocumentSource({ format, template, language });
       void (async () => {
