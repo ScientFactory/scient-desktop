@@ -9,7 +9,7 @@ import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/component
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import type { RenameOpenDocumentResult } from "~/scient/fileSurfaces/renameOpenDocument";
+import type { RenameOpenDocumentResult } from "~/scient/markdownEditor/persistence/renameOpenDocument";
 
 function renameFailureMessage(cause: unknown): string {
   const failure = failureCode(cause);
