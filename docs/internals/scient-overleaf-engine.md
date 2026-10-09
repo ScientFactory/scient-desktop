@@ -35,7 +35,10 @@ across every path of their file identity, and partly completed units are returne
 as forced conflicts for the next review. Untouched skips return no forced
 conflict. Recovery consults the per-file journal and staged/displaced identities
 before classifying a failed unit: a completed syscall may precede the outer
-progress write. Staging alone does not count as an applied change.
+progress write. Staging alone does not count as an applied change. A durable
+fallback installation boundary that cannot be confirmed requires forced review,
+including older fallback records where installation may have completed. Recovery never repeats
+an uncertain installation over a later save or deletion.
 
 The two retained mutation methods on `WorkspaceFileSystem` use the same
 canonical-path locks as saves, creates and renames. Their filesystem critical

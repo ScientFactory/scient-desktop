@@ -323,34 +323,161 @@ describe("WorkspaceApplier review regressions", () => {
       );
     },
   );
-  it.live("recognizes a fallback addition installed before its phase write", () => {
-    let crash = true;
-    return fixture(
-      async (h) => {
-        await put(h.cwd, { "guard.tex": "guard" });
-        const p = {
-          ...plan({ "guard.tex": "guard" }, { "a.tex": "remote", "guard.tex": "guard" }),
-          conflicts: [
-            { paths: ["a.tex", "guard.tex"], types: ["content"], origins: ["merge" as const] },
-          ],
-        };
-        await expect(h.apply("hidden-addition", p)).rejects.toBeTruthy();
-        await put(h.cwd, { "guard.tex": "later" });
-        await h.restart();
-        const result = await h.apply("hidden-addition");
-        expect(result.interrupted).toEqual([["a.tex", "guard.tex"]]);
-        expect(result.base).toEqual(p.base);
-        expect(await NodeFSP.readFile(NodePath.join(h.cwd, "guard.tex"), "utf8")).toBe("later");
-      },
-      {},
-      {
-        at: async (point) => {
-          if (point === "installed" && crash) {
-            crash = false;
-            throw new Error("crash");
-          }
+  it.live.each(["none", "replace", "delete"] as const)(
+    "recognizes a fallback addition after later target $0",
+    (change) => {
+      let crash = true;
+      return fixture(
+        async (h) => {
+          await put(h.cwd, { "guard.tex": "guard" });
+          const p = {
+            ...plan({ "guard.tex": "guard" }, { "a.tex": "remote", "guard.tex": "guard" }),
+            conflicts: [
+              { paths: ["a.tex", "guard.tex"], types: ["content"], origins: ["merge" as const] },
+            ],
+          };
+          await expect(h.apply("hidden-addition", p)).rejects.toBeTruthy();
+          if (change === "replace") {
+            await NodeFSP.writeFile(NodePath.join(h.cwd, "replacement"), "later target");
+            await NodeFSP.rename(
+              NodePath.join(h.cwd, "replacement"),
+              NodePath.join(h.cwd, "a.tex"),
+            );
+          } else if (change === "delete") await NodeFSP.unlink(NodePath.join(h.cwd, "a.tex"));
+          await put(h.cwd, { "guard.tex": "later" });
+          await h.restart();
+          const result = await h.apply("hidden-addition");
+          expect(result.interrupted).toEqual([["a.tex", "guard.tex"]]);
+          expect(result.base).toEqual(p.base);
+          expect(await NodeFSP.readFile(NodePath.join(h.cwd, "guard.tex"), "utf8")).toBe("later");
         },
-      },
-    );
-  });
+        {},
+        {
+          at: async (point) => {
+            if (point === "installed" && crash) {
+              crash = false;
+              throw new Error("crash");
+            }
+          },
+        },
+      );
+    },
+  );
+  it.live.each(["replace", "delete"] as const)(
+    "does not replay a fallback addition after a later $0",
+    (change) => {
+      let crash = true;
+      return fixture(
+        async (h) => {
+          await expect(h.apply("add-replay", plan({}, { "a.tex": "remote" }))).rejects.toBeTruthy();
+          if (change === "replace") {
+            await NodeFSP.writeFile(NodePath.join(h.cwd, "replacement"), "later target");
+            await NodeFSP.rename(
+              NodePath.join(h.cwd, "replacement"),
+              NodePath.join(h.cwd, "a.tex"),
+            );
+          } else await NodeFSP.unlink(NodePath.join(h.cwd, "a.tex"));
+          await h.restart();
+          expect((await h.apply("add-replay")).outcome).toBe("attention");
+          if (change === "replace")
+            expect(await NodeFSP.readFile(NodePath.join(h.cwd, "a.tex"), "utf8")).toBe(
+              "later target",
+            );
+          else
+            await expect(NodeFSP.stat(NodePath.join(h.cwd, "a.tex"))).rejects.toMatchObject({
+              code: "ENOENT",
+            });
+        },
+        {},
+        {
+          at: async (point) => {
+            if (point === "installed" && crash) {
+              crash = false;
+              throw new Error("crash");
+            }
+          },
+        },
+      );
+    },
+  );
+  it.live.each(["new-intent", "legacy-prepared"] as const)(
+    "holds an ambiguous fallback publication boundary ($0)",
+    (caseName) => {
+      let crash = true;
+      return fixture(
+        async (h) => {
+          await expect(
+            h.apply("uncertain-add", plan({}, { "a.tex": "remote" })),
+          ).rejects.toBeTruthy();
+          if (caseName === "legacy-prepared") {
+            const file = NodePath.join(h.owner, "uncertain-add/files/step-0/record.json");
+            const record = JSON.parse(await NodeFSP.readFile(file, "utf8"));
+            delete record.installBoundary;
+            await NodeFSP.writeFile(file, JSON.stringify(record));
+          }
+          await h.restart();
+          const result = await h.apply("uncertain-add");
+          expect(result).toMatchObject({ outcome: "attention", interrupted: [["a.tex"]] });
+          expect([...result.base]).toEqual([]);
+          await expect(NodeFSP.stat(NodePath.join(h.cwd, "a.tex"))).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+        },
+        {},
+        {
+          at: async (point) => {
+            if (point === (caseName === "new-intent" ? "install-intent" : "prepared") && crash) {
+              crash = false;
+              throw new Error("crash");
+            }
+          },
+        },
+      );
+    },
+  );
+  it.live.each(["replace", "delete"] as const)(
+    "does not replay a legacy fallback replacement after a later $0",
+    (change) => {
+      let crash = true;
+      return fixture(
+        async (h) => {
+          await put(h.cwd, { "a.tex": "base" });
+          await expect(
+            h.apply("legacy-replay", plan({ "a.tex": "base" }, { "a.tex": "remote" })),
+          ).rejects.toBeTruthy();
+          const file = NodePath.join(h.owner, "legacy-replay/files/step-0/record.json");
+          const record = JSON.parse(await NodeFSP.readFile(file, "utf8"));
+          delete record.installBoundary;
+          record.phase = "displaced";
+          await NodeFSP.writeFile(file, JSON.stringify(record));
+          if (change === "replace") {
+            await NodeFSP.writeFile(NodePath.join(h.cwd, "replacement"), "later target");
+            await NodeFSP.rename(
+              NodePath.join(h.cwd, "replacement"),
+              NodePath.join(h.cwd, "a.tex"),
+            );
+          } else await NodeFSP.unlink(NodePath.join(h.cwd, "a.tex"));
+          await h.restart();
+          expect((await h.apply("legacy-replay")).outcome).toBe("attention");
+          if (change === "replace")
+            expect(await NodeFSP.readFile(NodePath.join(h.cwd, "a.tex"), "utf8")).toBe(
+              "later target",
+            );
+          else
+            await expect(NodeFSP.stat(NodePath.join(h.cwd, "a.tex"))).rejects.toMatchObject({
+              code: "ENOENT",
+            });
+        },
+        {},
+        {
+          at: async (point) => {
+            if (point === "installed" && crash) {
+              crash = false;
+              throw new Error("crash");
+            }
+          },
+        },
+      );
+    },
+  );
 });

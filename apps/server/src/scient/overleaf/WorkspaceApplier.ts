@@ -295,6 +295,9 @@ async function unitHasDurableMutation(
     }
     if (record.phase === "preparing") continue;
     if (record.phase !== "prepared") return true;
+    // Older additive records have no durable pre-publication boundary. Their
+    // absence of evidence cannot establish that publication never happened.
+    if (record.expected === null && record.desired !== null && !record.installBoundary) return true;
     // The syscall may have completed before the primitive's phase write. The
     // displaced file or changed staging identity is evidence even if outer
     // progress is empty. Merely staging a file is not a manuscript mutation.

@@ -18,11 +18,14 @@ const Journal = Schema.Struct({
     "preparing",
     "prepared",
     "displaced",
+    "installing",
     "installed",
     "restoring",
     "returning-newer",
     "done",
   ]),
+  /** New records persist a boundary before fallback publication. */
+  installBoundary: Schema.optionalKey(Schema.Literal(true)),
   stagedIdentity: Schema.NullOr(Identity),
   restoreSlot: Schema.NullOr(Identity),
   restoreTarget: Schema.NullOr(Identity),
@@ -66,6 +69,7 @@ export type MutationPoint =
   | "prepared"
   | "checked"
   | "displaced"
+  | "install-intent"
   | "installed"
   | "restore-intent"
   | "restored"
@@ -231,6 +235,7 @@ async function run(
       desired: input.bytes === null ? null : bytesRevision(input.bytes),
       mechanism: input.exchangeHelper ? "exchange" : "move-aside",
       phase: "preparing",
+      installBoundary: true,
       stagedIdentity: null,
       restoreSlot: null,
       restoreTarget: null,
@@ -276,6 +281,19 @@ async function run(
     };
   };
   if (record.phase === "done") return result(record.outcome!);
+  if (
+    record.desired !== null &&
+    (record.phase === "installing" ||
+      record.phase === "installed" ||
+      (record.phase === "prepared" && record.expected === null && !record.installBoundary) ||
+      (record.phase === "displaced" &&
+        record.mechanism === "move-aside" &&
+        !record.installBoundary))
+  ) {
+    // Publication may already have happened. Missing/replaced target identity
+    // can be a later user's deletion/save, so never repeat that installation.
+    return finish(same(await fileIdentity(target), record.stagedIdentity) ? "done" : "attention");
+  }
   await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
   // Persist each newly-created parent entry, not only the deepest file directory.
   let parent = NodePath.dirname(target);
@@ -462,6 +480,8 @@ async function run(
   } catch (e) {
     if (!absent(e)) return finish("attention");
   }
+  await save({ phase: "installing" });
+  await point("install-intent");
   if (!(await exclusiveLink(slot, target))) return finish("attention");
   await point("installed");
   await save({ phase: "installed" });
