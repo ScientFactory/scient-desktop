@@ -1031,9 +1031,9 @@ export const ScientSkillsToolkitRegistrationLive = registerScientToolkit(ScientS
   Layer.provide(ScientSkillsToolkitHandlersLive),
 );
 
-export const ScientDocumentsToolkitRegistrationLive = registerScientToolkit(
-  ScientDocumentsToolkit,
-).pipe(Layer.provide(ScientDocumentsToolkitHandlersLive));
+const ScientDocumentsToolkitRegistrationLive = registerScientToolkit(ScientDocumentsToolkit).pipe(
+  Layer.provide(ScientDocumentsToolkitHandlersLive),
+);
 
 export const ScientComputeToolkitRegistrationLive = registerScientToolkit(
   ScientComputeToolkit,

@@ -14,11 +14,6 @@ export {
 } from "./server/driver.ts";
 export { PI_PROVIDER, PiAdapterV2Driver, type PiAdapterV2DriverEnv } from "./server/adapter.ts";
 export {
-  buildPiRpcLaunch,
-  resolvePiLaunchArgs,
-  type PiLaunchArgsResolution,
-} from "./server/mcpInjection.ts";
-export {
   makePiRpcConnection,
   piRecordString,
   PiRpcError,

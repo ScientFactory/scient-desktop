@@ -9,7 +9,6 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as HttpClient from "effect/http/HttpClient";
-import * as Layer from "effect/Layer";
 
 import type { CursorCredentialSource } from "./accountCache.ts";
 import { readCursorAccountUsage, type CursorAccountUsageReadResult } from "./accountUsage.ts";
@@ -47,5 +46,3 @@ export const make = Effect.fn("CursorAccountReader.make")(function* (
       ).pipe(Effect.provideContext(context)),
   });
 });
-
-export const layer = Layer.effect(CursorAccountReader, make());

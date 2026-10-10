@@ -75,7 +75,7 @@ export type OpenPreviewMutation<E = unknown> = (input: {
   readonly input: PreviewOpenInput;
 }) => Promise<AtomCommandResult<PreviewSessionSnapshot, E>>;
 
-export function workspaceFilePreviewAssetResource(input: {
+function workspaceFilePreviewAssetResource(input: {
   readonly workspaceRoot: string;
   readonly relativePath: string;
   readonly threadRef: ScopedThreadRef;

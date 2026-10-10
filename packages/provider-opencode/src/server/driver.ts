@@ -188,7 +188,7 @@ export type OpenCodeDriverEnv =
 
 export type OpenCodeDriverOptions = OpenCodeAdapterV2.OpenCodeAdapterV2DriverOptions;
 
-export const openCodeAdapterOptions = (options: OpenCodeDriverOptions) => ({
+const openCodeAdapterOptions = (options: OpenCodeDriverOptions) => ({
   v1: options,
   v2: {
     ...(options.runtimeGuidance === undefined ? {} : { runtimeGuidance: options.runtimeGuidance }),

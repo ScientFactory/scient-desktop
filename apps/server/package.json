@@ -70,7 +70,6 @@
     "@t3tools/source-control-github": "workspace:*",
     "@t3tools/source-control-gitlab": "workspace:*",
     "@unified-latex/unified-latex-util-parse": "1.8.4",
-    "diff": "8.0.3",
     "effect": "catalog:",
     "fast-xml-parser": "5.8.0",
     "jose": "catalog:",

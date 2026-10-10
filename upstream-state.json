@@ -6,8 +6,8 @@
   "officialDefaultBranch": "main",
   "updateMode": "thin-fork-merge",
   "candidateStatus": "active-public-desktop",
-  "integrationBase": "ec80933ac8cd02fec5c97b342462ccc9567cdb1e",
-  "reviewedThrough": "ec80933ac8cd02fec5c97b342462ccc9567cdb1e",
+  "integrationBase": "bd2346eda2e2c380d1844869c7fd16c279d2190f",
+  "reviewedThrough": "bd2346eda2e2c380d1844869c7fd16c279d2190f",
   "reviewedAt": "2026-10-10",
   "reviewRecord": "docs/internals/t3-upstream-sync-20261009-ec80933ac8.md",
   "verifiedBaseline": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
@@ -18,12 +18,11 @@
   "bootstrapRecord": "docs/internals/scient-next-d4-bootstrap.md",
   "lastRefreshBase": "0cf6e0bd85c3d6be221b70164d2601e0b8e83e15",
   "lastRefreshPreviousOfficialTip": "2a93885bac5798a79d55069a0b5dc3e53c6176bc",
-  "lastRefreshOfficialTip": "ec80933ac8cd02fec5c97b342462ccc9567cdb1e",
+  "lastRefreshOfficialTip": "bd2346eda2e2c380d1844869c7fd16c279d2190f",
   "lastRefreshOfficialTag": null,
-  "lastRefreshRangeCount": 43,
-  "lastRefreshMerge": "eaa42295c2271f7b92acd7857615391dd54e783c",
+  "lastRefreshRangeCount": 160,
+  "lastRefreshMerge": "de4f75bb7267e9bb0cbfcc5cc8ce8b2c8675222c",
   "lastRefreshBranch": "codex/t3-sync-101f8b2f55-20261009",
-  "lastRefreshVerifiedAt": "2026-10-09T23:36:05.760777Z",
   "historicalExceptions": [
     {
       "id": "t3-pr-5822-projectless-threads",
@@ -44,6 +43,7 @@
       "replacementMerge": null
     }
   ],
-  "lastRefreshOwnedMain": "c414ac935b49fccb026b5a6e01f4714246375d73",
-  "lastRefreshOwnedMainMerge": "873892c106e83f2a58ef502fa83aaaa2068fa1b1"
+  "lastRefreshOwnedMain": "397befbdaab86d5798c840168a398d653e96f081",
+  "lastRefreshOwnedMainMerge": "71b1799a9db1feb1a8f102b5f528314e32230ca2",
+  "lastRefreshVerifiedAt": "2026-10-10T19:09:16.933990Z"
 }

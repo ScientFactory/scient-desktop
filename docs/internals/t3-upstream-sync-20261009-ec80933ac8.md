@@ -824,3 +824,252 @@ terminal metadata subscriber, causing 241 startup failures. The fixture now
 delivers its initial empty-terminal snapshot before returning an unsubscribe
 function. Production cleanup subscription behavior is unchanged; the
 fixture no longer bypasses or throws on that startup contract.
+
+The settings fixture also supplies the canonical scoped `subscribeChanges`
+effect for its unchanged settings model, matching the existing test-service
+pattern. The complete router/recovery/config qualification now passes
+**11 files / 382 tests**, including real HTTP/WebSocket ingress, startup,
+attachment-preserving recovery, batched baseline reads and development-source
+isolation.
+
+Catch-up merge `71b1799a9db1feb1a8f102b5f528314e32230ca2` has exact parents
+`32c01ab2ed9d97e62b54ee7a6a8390dca32a9232` and
+`397befbdaab86d5798c840168a398d653e96f081`. Fixture-complete source commit
+`b05b2050b37db544cbba686fbb33b5eb1e3921f5` has tree
+`bbfff82654c5aa6726ad70be513773b0001294ed`. The latter adds only the settings
+subscriber fixture; the product build and native observations are from the
+same runtime source in the preceding merge.
+
+Whole-repository formatting, lint, all 49 typecheck tasks, branding across
+3,143 product-surface files, all five default seam checks and literal
+merge-parent provenance pass for that fixture-complete source. Existing lint
+warnings and native compiler suggestions remain visible; no enforcement rule
+was disabled. Product build and Electron smoke pass after the latest-main
+composition. Optional native-module/CJS build warnings remain unsuppressed.
+
+`node apps/desktop/scripts/qualify-update-channels.cjs` passes **17 synthetic
+cases** using the locked `electron-updater` 6.8.9 implementation. This includes
+platform-specific feed/manifests, exclusion of unrelated prereleases,
+non-downgrade decisions, matching Stable promotion, real loopback discovery
+and downloads, distinct Beta/Stable bytes, verified cache reuse, checksum
+corruption rejection and retry. It performs no native installation or
+publication; simulated platform selection is not native Windows/Linux proof.
+
+The rebuilt isolated native backend applied Scient migration
+`24_legacy-source-reconciliation`. Its state directory and database resolve
+to this worktree's nonsymlinked private profile; the selected sibling V1
+source remains absent. The actual native General page displays **Stable**
+as the update track, with Stable selected and Beta unselected in its menu.
+The menu was closed without changing the value; update actions remain
+disabled in the dev app. The clean native candidate remains open for
+inspection, with browser automation released.
+
+### Complete-matrix regression closure
+
+The first completed post-catch-up matrix reported eight failures in three
+server files; the other package groups passed. No failed run is counted as
+qualification. The four startup-memory scenarios lacked the canonical
+`McpProviderSessions` layer in their real Node fixture. Supplying that owner
+preserves the existing garbage-collection checks across regular, handoff,
+compaction and failure paths.
+
+The Codex fixture now distinguishes a catalogue-listed current family from
+an unknown discovered model. The current family loses its legacy flag, the
+catalogue's retired family remains legacy, and the unknown family's existing
+classification and every wire ID remain unchanged. Production classification
+is not special-cased for the fixture.
+
+The three queue timeouts came from delaying terminal reactions with a parent
+command lock. Canonical child follow-up intake now serializes on that same
+parent lock, making direct sends and new admissions block the fixture itself.
+The fixture instead fences the committed terminal fact at the reactor's
+filtered event tail, with an observed entry barrier and unconditional release.
+It leaves projection reads, real user commands, native lifecycle frames,
+checkpoint capture and durable command receipts intact. No timeout increased,
+queue scenario removed, production lock order reversed or failure suppressed.
+The focused native queue runtime passes **47 scenarios**; the memory/catalogue
+checks pass **six scenarios**. The complete matrix is rerun after these fixes.
+
+The next complete run at source `91540d3dcd2b6ad90da07e043903294c606d920c`
+(tree `6fe812f176cb9b73bf216279259b5f0e1974b2c8`) passed every package group
+except one router scenario. Its server result was 895 passed files, 54 skipped
+files and one failed file: 11,278 passed tests, 180 skipped tests and one failure.
+Project-clone setup received HTTP 426/plain text during session bootstrap.
+The response matches a standalone WebSocket listener's default, not the
+expected authentication API. Cross-fixture pooled-socket reuse is an
+**inference**, not a demonstrated cause; this run is not a complete pass.
+
+Router fixtures now request `Connection: close` on every real loopback HTTP
+connection, including manual redirects, while retaining canonical fetch
+compression, streaming and cancellation semantics. No retry or response
+exception is introduced. Raw Node HTTP and cross-version Undici experiments
+were rejected because they broke compression or dispatcher/Web API contracts;
+all experimental adapters and dependencies were removed. Production transport
+is unchanged.
+
+Independent bounded source reviews by `ContractFixtureReview` and
+`HttpFixtureReview` found no consumer-visible blocker in the final fixture
+contracts and connection policy. These reviews did not run commands and do not
+claim causal reproduction of the original 426.
+
+Final fixture source `350ee4b6473c3ceee72688f01f89709abd8a13cd` has tree
+`602f773266aedae02da4e6da3073d5874eb157f8`. Its router qualification passes
+all **246 scenarios** and the server typecheck. Whole-repository formatting,
+lint, all 49 typecheck tasks, branding, all five seam checks, literal merge
+provenance and both whitespace checks pass for that source. The complete
+repository matrix is executed again on this revision.
+
+The exact path comparison from catch-up merge `71b1799a9d` to this source
+contains only four server test/fixture paths. No runtime input changed:
+`server.test.ts`, `NativeQueueHoldPolicy.integration.test.ts`,
+`ProviderTurnStartMemory.fixture.mjs` and `codexModelCatalog.test.ts`.
+The qualified product build, Electron smoke and isolated native observations
+therefore remain evidence for the same runtime source, not for an older product
+implementation.
+
+A throwaway network smoke also observes two real accepted sockets closing after
+their responses, with the canonical fetch layer and the default/manual-redirect
+policies. Both requests carry `Connection: close`; their JSON bodies are intact.
+The smoke file was removed after execution.
+
+The first complete-matrix attempt at `350ee4b647` stopped on the web suite's
+100 KiB table typing budget: observed p95 **126.330167 ms**, required below
+**64 ms**. The web summary was 950 passed files and one failed file. Static
+qualification ran concurrently with that matrix; resource contention is a
+possible confound, not an established cause. No performance assertion, budget,
+production editor code or scenario is changed. The failed command is retained
+as failed evidence, not counted as qualification. The isolated strict lane and
+the complete matrix with sequential package scheduling are qualified next.
+
+The isolated `SCIENT_MARKDOWN_PERF_STRICT=1` lane passes all **five scenarios**,
+including the tighter 16 ms table typing budget. Its source and assertions are
+unchanged. The subsequent sequential package run stops in the web suite on
+missing runner-generated temporary module files: 279 failed files, 672 passed
+files, two failed tests and 8,228 passed tests. The missing paths are under the
+runner's random temporary `ssr`/`client` directories, not project source files.
+This command is also failed evidence; it does not qualify the unexecuted server
+group.
+
+Installed Vitest 5.0.1's fork worker sets `cacheFs=true` and transfers generated
+module paths to workers; its thread worker supports inline transport instead.
+The full web assertions are qualified with the supported thread pool and one
+worker, without changing project files, skipping tests or relaxing budgets.
+The full server group is qualified separately; successful unaffected package
+groups from the sequential run are retained only as explicit aggregate evidence.
+The agent does not claim to know what removed the temporary module files.
+
+The complete web thread-pool run passes **951 files / 11,758 tests** at the same
+source, including all Markdown performance scenarios. The sequential matrix
+provides passing evidence for **45 unaffected package groups** before web;
+server had not started when that command failed. The complete server group runs
+separately and must pass before final aggregate qualification. Neither failed
+root command is retroactively claimed as passing.
+
+### Recovered final qualification — 2026-10-10
+
+Continuation resumes from qualification source
+`350ee4b6473c3ceee72688f01f89709abd8a13cd`
+(tree `602f773266aedae02da4e6da3073d5874eb157f8`) and preserves both literal
+merge boundaries. The bounded final follow-ups are qualified below. The remote PR previously remained at `96b6560e09e`; the recovered
+continuation is published to that same PR only after qualification below.
+Owned main refreshed to `397befbdaab86d5798c840168a398d653e96f081` remains
+an ancestor. Later official-main advancements are outside this frozen pass.
+
+The complete standard server command passes **896 files / 11,279 tests**,
+with 54 files and 180 tests skipped. Its command is
+`pnpm --dir apps/server exec vp test run --pool forks --maxWorkers 1 --reporter dot`.
+A preceding thread-pool attempt was interrupted and is not a complete pass:
+its CLI fixture requires `process.chdir`, unavailable in thread workers, and
+it observed a provider-registry fixture directory-cleanup error. The focused
+standard-pool pair passes 89 tests, and the directory-cleanup error does not
+reproduce in the subsequent complete standard-pool run. No causal claim about
+that cleanup error, skipped production scenario or relaxed assertion is made.
+The invalid task invocation combining recursive selection and filters never
+ran tests and is retained separately from successful qualification.
+
+The remaining fresh lanes pass at source `350ee4b647`. Documentation edits
+are present throughout; the scoped consumer/packaging lane and subsequent
+server typecheck, Knip and build include the dependency cleanup described
+below. The workspace task glob `*` selects
+only unscoped names; its four passing groups are complemented by the scoped
+`@t3tools/*` and `@scientfactory/*` lane, excluding the separately qualified
+web and root. Together they cover all 45 other test-bearing workspace groups.
+No successful partial lane is presented as complete workspace coverage.
+
+| Fresh lane             | Result                                                  |
+| ---------------------- | ------------------------------------------------------- |
+| `other-packages-full`  | 53 passed files; 633 passed tests; 0 skipped tests      |
+| `scoped-packages-full` | 985 passed files; 12,712 passed tests; 53 skipped tests |
+| `web-full`             | 951 passed files; 11,758 passed tests; 0 skipped tests  |
+| `web-layout`           | 41 passed files; 326 passed tests; 0 skipped tests      |
+
+The web unit lane uses `--project unit --pool threads --maxWorkers 1` without
+changing any assertions or performance budget. Other workspace tests retain
+the default pool and use `--maxWorkers 1`; task scheduling uses
+`--concurrency-limit 1 --no-cache`. Browser layout is the declared `test:layout`
+project. All lanes run serially.
+
+Fresh update-channel qualification, whole-repository format/lint, all 49
+typecheck tasks, Knip, the product build, branding, all five seam checks,
+literal merge-parent provenance and whitespace checks pass. Existing build
+warnings and compiler suggestions remain visible. The build is not an app
+launch. Aggregate test coverage does not turn either earlier failed root
+command or the interrupted server attempt into a successful command.
+
+An independent native Codex reviewer checked the 117-commit extension and
+principal Effect, provider/MCP, request-authority, lifecycle, fork/queue,
+import-recovery, scientific-document and publication seams at this immutable
+source. No runtime blocker was found. Two stale release-policy explanations
+were corrected in `UPSTREAM.md`: Stable/Beta ownership and the version-aware
+owned release-repository resolver. These are maintainer documentation edits.
+
+Fresh Knip initially reported the unused direct `diff@8.0.3` server dependency
+left after upstream provider/source-control extraction. Removed that declaration
+and only its three-line lockfile importer entry. All four actual consumers keep
+their own dependency declarations and the resolved `diff` 8/9 entries; no server
+source/script directly imports it. A frozen offline install passes without new
+resolutions. Independent review confirms that `diff` is bundled through its
+consuming packages, outside the server runtime-external allowlist: sidecar and
+remote-server external roots remain unchanged. Fresh affected consumer/packaging
+tests, server typecheck, Knip and the product build qualify this manifest-only
+cleanup. Complete server/web results are reused for their unchanged runtime
+code; the failed Knip attempt remains failed evidence. Prior native observations
+predate the manifest cleanup and are supplemented by the new packaging/build
+checks, not relabeled as a fresh native launch.
+
+The subsequent Knip export audit found eight unconsumed exports. Five live
+helper/tool-registration definitions become module-local with identical bodies
+and local callers; two Pi helpers remain defined and internally consumed but
+leave the unused server barrel, along with its unconsumed type reexport. The
+unused default Cursor layer constructor is removed; the live Scient reader
+still uses `make({ productName: "Scient" })` through its owned service layer.
+No tool schema, handler, registration, preview result, adapter option or
+provider operation is deleted. The cleanup changes six private implementation
+modules and introduces no Knip exception. Focused MCP/usage and preview checks,
+the complete affected Cursor/Pi/OpenCode package suites, all 49 typechecks,
+lint, Knip and the product build qualify this follow-up. Full prior matrices
+are reused for unaffected behavior; focused repeats are not added to their
+aggregate counts. Independent review accepted all six paths, confirming the
+remaining local consumers, unchanged provider factories and managed-runtime
+paths, and no consumer requiring these private exports. Both failed Knip phases
+remain failed evidence. The provenance wrapper invocation with a literal `--`
+separator also failed; the direct Node invocation passes without a source edit.
+
+The development candidate remains stopped at the user's explicit request.
+Fresh Electron smoke and visual interaction are deferred because they launch
+the app. The saved post-owned-main product build, Electron smoke and native
+observations above qualify the baseline product implementation before the
+bounded follow-ups: the path comparison from `71b1799a9d` to `350ee4b647`
+contains only four server fixture/test paths. This continuation adds maintainer
+documentation, alignment metadata and the unused dependency/export cleanup
+qualified above with fresh affected checks and a build. Prior native observations
+are historical evidence, not a fresh launch or renewed visual acceptance. Native Windows/Linux, mobile-device
+interaction, live-provider/audio behavior and publication remain outside that
+local proof. SwiftLint, ktlint and detekt are absent locally; the hosted mobile
+static job installs its declared tools and must qualify the pushed revision.
+
+The cursor advances to the literal frozen official target only after the
+successful aggregate and static/build gates. This receipt qualifies local
+source; hosted CI must separately qualify the final pushed head. No merge,
+queue, updater activation, release, publication or app launch is authorized
+by this record.
