@@ -14,7 +14,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
-import type { IdAllocatorV2DeriveShape } from "../IdAllocator.ts";
+import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { queuedRunsInDeliveryOrder } from "../QueuedRunOrder.ts";
 
 /** Why a held legacy entry cannot be admitted, or undefined when it can. Its source stays intact. */
@@ -39,7 +39,7 @@ export function legacyQueueImportRefusal(input: {
 export function planHeldQueueAdmission(input: {
   readonly command: Extract<OrchestrationV2InternalCommand, { type: "legacy-queue.import" }>;
   readonly projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">;
-  readonly ids: IdAllocatorV2DeriveShape;
+  readonly ids: IdAllocator.IdAllocatorV2["Service"]["derive"];
 }) {
   const { command, projection, ids } = input;
   const modelSelection = command.modelSelection ?? projection.thread.modelSelection;

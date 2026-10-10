@@ -5,7 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 
 import {
@@ -743,7 +743,7 @@ describe("the file an OS-opened upload sends", () => {
 
   it.effect("refuses a FIFO put at the path without waiting on it", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) === "win32") return;
+      if ((yield* HostProcess.Platform) === "win32") return;
       const { file, path } = yield* Effect.promise(() => openedAt());
       NodeFS.rmSync(path);
       expect(NodeChildProcess.spawnSync("mkfifo", [path]).status).toBe(0);

@@ -29,7 +29,7 @@ import * as Schema from "effect/Schema";
 
 import { checkpointRefForScopeOrdinal } from "../CheckpointService.ts";
 import type * as EventSink from "../EventSink.ts";
-import type * as IdAllocator from "../IdAllocator.ts";
+import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProjectionStore from "../ProjectionStore.ts";
 
 /** True while the effect worker runs a capture's last attempt. */
@@ -68,10 +68,10 @@ interface CaptureTarget {
 
 interface SettlementDependencies {
   readonly eventSink: EventSink.EventSinkV2Shape;
-  readonly ids: IdAllocator.IdAllocatorV2Shape;
+  readonly ids: IdAllocator.IdAllocatorV2["Service"];
   readonly projections: ProjectionStore.ProjectionStoreV2Shape;
   readonly makeCheckpointTurnItem: (input: {
-    readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+    readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
     readonly run: OrchestrationV2Run;
     readonly rootNode: OrchestrationV2ExecutionNode;
     readonly providerThread: OrchestrationV2ProviderThread;

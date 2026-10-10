@@ -17,7 +17,7 @@ import {
   type ProviderConnectionMethod,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -29,31 +29,32 @@ import { ChildProcessSpawner } from "effect/process";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import { makeAntigravityTextGeneration } from "../../textGeneration/LegacyAntigravityTextGeneration.ts";
 import { makeLegacyAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/LegacyAntigravityAdapterV2.ts";
-import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
-import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
-import { ProviderDriverError } from "../Errors.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import {
   buildInitialAntigravityProviderSnapshot,
   checkAntigravityProviderStatus,
   enrichAntigravitySnapshot,
 } from "../LegacyAntigravityProvider.ts";
-import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { makeNativeSessionShutdown } from "../NativeSessionShutdown.ts";
 import {
   defaultProviderContinuationIdentity,
-  type ProviderDriver,
   type ProviderInstance,
-} from "../ProviderDriver.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
-import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+} from "@t3tools/provider-core/server/driver";
+import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   haveProviderSnapshotSettingsChanged,
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
-} from "../providerUpdateSettings.ts";
+} from "@t3tools/provider-core/server/snapshotSettings";
 import {
   makeAntigravityConnectionActions,
   makeAntigravityLocalCredentialStore,
@@ -62,7 +63,8 @@ import {
 } from "../../scient/providerLifecycle/AntigravityConnectionActions.ts";
 import { makeAntigravityManagedRuntimeResolution } from "../../scient/providerLifecycle/AntigravityManagedRuntimeActions.ts";
 import { makeAntigravityVoiceTranscriptCorrection } from "../../scient/voice/AntigravityVoiceTranscriptCorrection.ts";
-import { PtyAdapter } from "../../terminal/PtyAdapter.ts";
+import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
+import { PtyAdapter } from "@t3tools/shared/PtyAdapter";
 import { discoverAntigravitySkills } from "./LegacyAntigravitySkills.ts";
 
 const decodeAntigravitySettings = Schema.decodeSync(AntigravitySettings);
@@ -74,12 +76,14 @@ const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
 });
 
 export type LegacyAntigravityDriverEnv =
+  | ProviderHost
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
-  | IdAllocatorV2
+  | IdAllocator.IdAllocatorV2
+  | ProviderLatestVersions.ProviderLatestVersions
   | Path.Path
   | PtyAdapter
   | ServerConfig
@@ -126,16 +130,17 @@ export const LegacyAntigravityDriver = {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const platform = yield* HostProcessPlatform;
+      const platform = yield* HostProcess.Platform;
       const ptyAdapter = yield* PtyAdapter;
       const serverConfig = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
+      const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
       const serverSettings = yield* ServerSettingsService;
       // Antigravity is intentionally the Google-account/subscription provider.
       // Do not let ambient Gemini/API-key variables silently change billing or
       // make an unauthenticated account appear connected.
       const processEnv = officialAntigravityAccountEnvironment(
-        mergeProviderInstanceEnvironment(environment),
+        yield* mergeProviderInstanceEnvironment(environment),
       );
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -187,8 +192,8 @@ export const LegacyAntigravityDriver = {
           fileSystem,
           path,
           serverConfig,
-          idAllocator: yield* IdAllocatorV2,
-          continuations: yield* ProviderContinuationRequests,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          continuations: yield* ProviderContinuationRequests.ProviderContinuationRequests,
         }),
       );
       const orchestrationAdapter = nativeSessions.adapter;
@@ -226,7 +231,7 @@ export const LegacyAntigravityDriver = {
         Effect.provideService(Path.Path, path),
       );
 
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
+      const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
       const snapshot = yield* makeManagedServerProvider<
         ProviderSnapshotSettings<AntigravitySettings>
       >({
@@ -247,6 +252,7 @@ export const LegacyAntigravityDriver = {
             publishSnapshot,
             stampIdentity,
             httpClient,
+            latestVersions,
           }),
       }).pipe(
         Effect.mapError(
@@ -283,6 +289,6 @@ export const LegacyAntigravityDriver = {
         voiceTranscriptCorrection,
         connectionActions,
         managedRuntimeActions: managedRuntime.actions,
-      } satisfies ProviderInstance;
+      } satisfies ScientProviderInstance;
     }),
-} satisfies ProviderDriver<AntigravitySettings, LegacyAntigravityDriverEnv>;
+} satisfies ScientProviderDriver<AntigravitySettings, LegacyAntigravityDriverEnv>;

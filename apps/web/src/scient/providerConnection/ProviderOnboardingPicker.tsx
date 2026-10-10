@@ -340,7 +340,7 @@ export function ProviderOnboardingPicker(props: {
                       return (
                         <button
                           key={definition.value}
-                          className="group flex min-h-10 w-full items-center gap-2.5 rounded-md px-2 text-left transition-colors hover:bg-foreground/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          className="group flex min-h-10 w-full items-center gap-2.5 rounded-md px-2 text-left transition-colors hover:bg-foreground/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                           onClick={() => {
                             setSelectedDriver(definition.value);
                             setQuery("");
@@ -465,7 +465,7 @@ function RailButton(props: {
         aria-current={props.active ? "page" : undefined}
         aria-label={props.label}
         className={cn(
-          "relative flex aspect-square w-full items-center justify-center rounded-md transition-colors hover:bg-foreground/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "relative flex aspect-square w-full items-center justify-center rounded-md transition-colors hover:bg-foreground/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           props.active && "bg-background/75",
         )}
         onClick={props.onClick}

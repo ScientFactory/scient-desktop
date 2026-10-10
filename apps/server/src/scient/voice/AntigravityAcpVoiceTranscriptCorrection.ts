@@ -2,7 +2,7 @@ import { VoiceTranscriptCorrectionError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import type { ProviderVoiceTranscriptCorrection } from "../../provider/ProviderDriver.ts";
+import type { ProviderVoiceTranscriptCorrection } from "../../provider/ScientProviderInstanceSeams.ts";
 import type { AntigravityStructuredGeneration } from "../../textGeneration/AntigravityTextGeneration.ts";
 import {
   buildVoiceTranscriptCorrectionPrompt,

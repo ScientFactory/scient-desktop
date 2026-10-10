@@ -9,7 +9,7 @@ import {
   ScientDocumentPageInput,
   type ScientDocumentPdfPrepared,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -300,7 +300,7 @@ describe("Markdown source read", () => {
   // revision is what proves the bytes read are the file the editor saved.
   describe("where the open file cannot be bound to the project", () => {
     const onWindows = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      effect.pipe(Effect.provideService(HostProcessPlatform, "win32"));
+      effect.pipe(Effect.provideService(HostProcess.Platform, "win32"));
 
     it.effect("exports and publishes the file when its bytes are the saved revision", () =>
       Effect.gen(function* () {
@@ -383,7 +383,7 @@ describe("Markdown source read", () => {
       () =>
         Effect.gen(function* () {
           // mkfifo exists only on the POSIX hosts that run this test.
-          if ((yield* HostProcessPlatform) === "win32") return;
+          if ((yield* HostProcess.Platform) === "win32") return;
           const contents = "# Report\n\nSaved text.\n";
           const root = yield* Effect.promise(() =>
             makeFixtureDirectory(fixtures, "scient-document-pdf-windows-fifo-"),
@@ -490,7 +490,7 @@ describe("Markdown image budget", () => {
       const build = buildMarkdownFileBundle({ workspaceRoot: root, file, budget });
       return yield* platform === undefined
         ? build
-        : build.pipe(Effect.provideService(HostProcessPlatform, platform));
+        : build.pipe(Effect.provideService(HostProcess.Platform, platform));
     });
 
   it.effect("reads one file once, however many destinations name it", () =>

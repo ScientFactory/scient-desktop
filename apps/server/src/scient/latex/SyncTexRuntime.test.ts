@@ -2,7 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -23,8 +23,8 @@ const runtimeLayer = (command: string, cwd: string) => {
   ).pipe(Layer.provide(ServerConfig.layerTest(cwd, { prefix: "synctex-runtime" })));
   return layer.pipe(
     Layer.provide(configured),
-    Layer.provideMerge(Layer.succeed(HostProcessPlatform, "darwin")),
-    Layer.provideMerge(Layer.succeed(HostProcessArchitecture, "arm64")),
+    Layer.provideMerge(Layer.succeed(HostProcess.Platform, "darwin")),
+    Layer.provideMerge(Layer.succeed(HostProcess.Architecture, "arm64")),
     Layer.provideMerge(NodeServices.layer),
   );
 };

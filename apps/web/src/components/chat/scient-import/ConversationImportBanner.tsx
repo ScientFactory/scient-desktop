@@ -94,7 +94,7 @@ export function ConversationImportProvenanceBadge({
           <span
             tabIndex={0}
             data-conversation-import-provenance={document ? "document" : "unverified"}
-            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-2xs text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-2xs text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           />
         }
       >

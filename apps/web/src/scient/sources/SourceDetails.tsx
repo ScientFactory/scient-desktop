@@ -41,6 +41,7 @@ import { toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { readLocalApi } from "../../localApi";
+import { observeResize } from "../../lib/observeResize";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { scientSourcesErrorMessage } from "./errorMessage";
 import { SourceReference } from "./SourceReference";
@@ -333,10 +334,7 @@ function AbstractPreview(props: {
     if (!node || mode !== "compact") return;
     const measure = () => setCanExpand(node.scrollHeight > node.clientHeight + 1);
     measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(node);
-    return () => observer.disconnect();
+    return observeResize(node, measure);
   }, [mode, props.sections, props.text]);
 
   const normalizedSections = props.sections?.length
@@ -471,10 +469,7 @@ function SourceTags(props: { readonly tags: ReadonlyArray<string> }) {
     if (!row) return;
     const measure = () => setOverflows(row.scrollHeight > row.clientHeight + 1);
     measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(row);
-    return () => observer.disconnect();
+    return observeResize(row, measure);
   }, [expanded, identity]);
 
   return (

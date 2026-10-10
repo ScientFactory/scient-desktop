@@ -32,15 +32,16 @@ import {
   CodexSettings,
   EnvironmentId,
   type ClaudeSettings,
-  type CursorSettings,
   type DroidSettings,
-  type GrokSettings,
-  type OpenCodeSettings,
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import { HostProcessPlatform, isHostWindows } from "@t3tools/shared/hostProcess";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import type { GrokSettings } from "@t3tools/provider-grok/settings";
+import type { CursorSettings } from "@t3tools/provider-cursor/settings";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -53,31 +54,32 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ServerConfig from "../config.ts";
-import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
-import { CursorDriver, type CursorDriverEnv } from "./Drivers/CursorDriver.ts";
-import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
-import { OpenCodeDriver, type OpenCodeDriverEnv } from "./Drivers/OpenCodeDriver.ts";
+import { CursorDriver, type CursorDriverEnv } from "@t3tools/provider-cursor/server";
+import type { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
+import { GrokDriver, type GrokCompositionRequirements } from "./AppProviderDriverComposition.ts";
+import { OpenCodeDriver, type OpenCodeCompositionEnv } from "./OpenCodeDriverComposition.ts";
 import * as ModelManifest from "./ModelManifest.ts";
-import * as OpenCodeRuntime from "./opencodeRuntime.ts";
-import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
-import * as PtyAdapter from "../terminal/PtyAdapter.ts";
+import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
+import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
+import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import type { BuiltInDriversEnv } from "./builtInDrivers.ts";
 import { DroidDriver } from "./Drivers/DroidDriver.ts";
-import { layer as AcpRegistryCatalogLive } from "./AcpRegistryCatalog.ts";
 import * as OmpExecutableGate from "./omp/OmpExecutableGate.ts";
 import {
   defaultProviderContinuationIdentity,
   type AnyProviderDriver,
   type ProviderDriverCreateInput,
   type ProviderInstance,
-} from "./ProviderDriver.ts";
+} from "@t3tools/provider-core/server/driver";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
-import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
+import * as ProviderHostLive from "./ProviderHostLive.ts";
+import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 
 const decodeAntigravitySettingsForTest = Schema.decodeSync(AntigravitySettings);
 
@@ -181,7 +183,7 @@ const makeTildeProviderFixtures = Effect.fn(
 )(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const homePath = expandHomePath("~");
+  const homePath = yield* HostProcess.HomeDirectory;
   const fixtureDir = yield* fileSystem.makeTempDirectoryScoped({
     directory: homePath,
     prefix: ".t3-provider-path-test-",
@@ -231,7 +233,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
   // `NodeServices.layer` through `Layer.provideMerge` to satisfy that
   // dependency while still surfacing NodeServices to the test body (the
   // codex driver's `create` yields `ChildProcessSpawner` directly).
-  const layerBase = ServerConfig.layerTest(process.cwd(), {
+  const layerBaseDeps = ServerConfig.layerTest(process.cwd(), {
     prefix: "provider-instance-registry-test",
   }).pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -251,21 +253,22 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
     Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(TestHttpClientLive),
-    Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(
       Layer.succeed(
         ProviderEventLoggers.ProviderEventLoggers,
         ProviderEventLoggers.NoOpProviderEventLoggers,
       ),
     ),
+    Layer.provideMerge(ProviderLatestVersions.layer),
+    Layer.provideMerge(McpProviderSessions.layer),
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(OmpExecutableGate.layer),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
-  const testLayer = Layer.merge(
-    ProviderOrchestrationAdapterInfrastructure.layer,
-    AcpRegistryCatalogLive,
-  ).pipe(Layer.provideMerge(layerBase));
+  const layerBase = ProviderHostLive.layer.pipe(Layer.provideMerge(layerBaseDeps));
+  const testLayer = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
+    Layer.provideMerge(layerBase),
+  );
 
   it.live("boots two independent codex instances from a ProviderInstanceConfigMap", () =>
     Effect.gen(function* () {
@@ -384,7 +387,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
 
   it.live("reports Codex's answer when a redemption changed nothing", () =>
     Effect.gen(function* () {
-      if (yield* isHostWindows) return;
+      if (yield* HostProcess.isWindows) return;
       const fileSystem = yield* FileSystem.FileSystem;
       const fixtures = yield* makeTildeProviderFixtures();
       yield* fileSystem.writeFileString(
@@ -421,7 +424,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
 
   it.live("runs Codex and Claude readiness probes from configured tilde paths", () =>
     Effect.gen(function* () {
-      if (yield* isHostWindows) return;
+      if (yield* HostProcess.isWindows) return;
 
       const fixtures = yield* makeTildeProviderFixtures();
 
@@ -538,7 +541,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       return { outcome, after: yield* instance!.snapshot.getSnapshot };
     }).pipe(
       // macOS logins live in the Keychain, where resets are never read.
-      Effect.provideService(HostProcessPlatform, "linux"),
+      Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provide(testLayer),
     );
 
@@ -633,7 +636,7 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
       }),
     ),
   );
-  const layerBase = AntigravityInstallation.AntigravityInstallation.layer.pipe(
+  const layerBaseDeps = AntigravityInstallation.AntigravityInstallation.layer.pipe(
     Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), {
@@ -651,14 +654,17 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
         ProviderEventLoggers.NoOpProviderEventLoggers,
       ),
     ),
+    Layer.provideMerge(ProviderLatestVersions.layer),
+    Layer.provideMerge(McpProviderSessions.layer),
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(OmpExecutableGate.layer),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
-  const testLayer = Layer.merge(
-    ProviderOrchestrationAdapterInfrastructure.layer,
-    AcpRegistryCatalogLive,
-  ).pipe(Layer.provideMerge(layerBase));
+  const layerBase = ProviderHostLive.layer.pipe(Layer.provideMerge(layerBaseDeps));
+  const layerWithAcpRegistry = AcpRegistrySupport.layerFromHost.pipe(Layer.provideMerge(layerBase));
+  const testLayer = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
+    Layer.provideMerge(layerWithAcpRegistry),
+  );
 
   it.live("boots one instance of every shipped driver from a single config map", () =>
     Effect.gen(function* () {
@@ -723,8 +729,8 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
         | CodexDriverEnv
         | ClaudeDriverEnv
         | CursorDriverEnv
-        | GrokDriverEnv
-        | OpenCodeDriverEnv
+        | GrokCompositionRequirements
+        | OpenCodeCompositionEnv
       >({
         drivers: [CodexDriver, ClaudeDriver, CursorDriver, DroidDriver, GrokDriver, OpenCodeDriver],
         configMap,

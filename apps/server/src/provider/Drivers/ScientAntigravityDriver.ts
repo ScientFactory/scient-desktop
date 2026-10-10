@@ -26,7 +26,7 @@ import type { AntigravityAuth } from "../AntigravityAuth.ts";
 import type { AntigravityInstallation } from "../AntigravityInstallation.ts";
 import { ANTIGRAVITY_ACP_TARGETS } from "@scientfactory/provider-runtime";
 import { deriveProviderInstanceConfigMap } from "../ProviderInstanceRegistryHydration.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
+import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 
 export function usesLegacyAntigravityBackend(input: {
   readonly binaryPath: string;

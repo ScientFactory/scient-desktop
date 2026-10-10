@@ -4,18 +4,17 @@ import {
   parseDroidReleaseVersion,
 } from "@scientfactory/provider-runtime";
 import * as Effect from "effect/Effect";
-import * as DateTime from "effect/DateTime";
 import { HttpClient } from "effect/http";
-import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
   makePackageManagedProviderMaintenanceResolver,
   makeProviderMaintenanceCapabilities,
-  ProviderVersionCache,
   resolvePackageManagedProviderMaintenance,
   type ProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
-} from "./providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
 
 const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 // The legacy package cannot reach Scient's minimum supported Pi version.
@@ -70,23 +69,24 @@ export const withDroidReleaseVersion = Effect.fn("withDroidReleaseVersion")(func
   enabled: boolean,
 ) {
   if (!enabled || !capabilities.update?.lockKey.startsWith("droid-native:")) return capabilities;
-  const cache = yield* ProviderVersionCache;
+  const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
   const key = DROID_LATEST_VERSION_URL;
-  const now = DateTime.toEpochMillis(yield* DateTime.now);
-  const cached = cache.get(key);
-  if (cached && cached.expiresAt > now) return { ...capabilities, latestVersion: cached.version };
-  const client = yield* HttpClient.HttpClient;
-  const version = yield* client.get(key).pipe(
-    Effect.flatMap((response) =>
-      response.status === 200
-        ? collectUint8StreamText({ stream: response.stream, maxBytes: 1024 * 1024 }).pipe(
-            Effect.map((body) => (body.truncated ? null : parseDroidReleaseVersion(body.text))),
-          )
-        : Effect.succeed(null),
-    ),
-    Effect.timeout("4 seconds"),
-    Effect.orElseSucceed(() => null),
+  const version = yield* latestVersions.cached(
+    key,
+    Effect.gen(function* () {
+      const client = yield* HttpClient.HttpClient;
+      return yield* client.get(key).pipe(
+        Effect.flatMap((response) =>
+          response.status === 200
+            ? collectUint8StreamText({ stream: response.stream, maxBytes: 1024 * 1024 }).pipe(
+                Effect.map((body) => (body.truncated ? null : parseDroidReleaseVersion(body.text))),
+              )
+            : Effect.succeed(null),
+        ),
+        Effect.timeout("4 seconds"),
+        Effect.orElseSucceed(() => null),
+      );
+    }),
   );
-  cache.set(key, { version, expiresAt: now + 60 * 60 * 1000 });
   return { ...capabilities, latestVersion: version };
 });

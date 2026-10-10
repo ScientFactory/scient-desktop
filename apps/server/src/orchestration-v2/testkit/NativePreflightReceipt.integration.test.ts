@@ -29,20 +29,21 @@ import { ServerConfig } from "../../config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { scriptedOmpRpc } from "../../provider/testUtils/scriptedOmpRpc.ts";
 import { makeOmpAdapterV2 } from "../Adapters/OmpAdapterV2.ts";
-import { validateProviderCurrentInput } from "../AttachmentPrompt.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { validateProviderCurrentInput } from "../ScientCurrentInput.ts";
 import { NativeSessionOperationError } from "../Adapters/NativeSessionAdapterV2.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import { EventStoreV2 } from "../EventStore.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
+import {
+  IdAllocatorV2,
+  layer as idAllocatorLayer,
+} from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
-import type { ProviderAdapterV2Error } from "../ProviderAdapter.ts";
+import type { ProviderAdapterV2Error } from "@t3tools/provider-core/server/ProviderAdapter";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
-import {
-  layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
-  makeReplayServerConfig,
-} from "./ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const waitFor = Effect.fnUntraced(function* (
   threadId: ThreadId,
@@ -72,7 +73,7 @@ it.live.each(
     Effect.gen(function* () {
       const name = `native-preflight-${scenario}`;
       const cwd = yield* checkpointWorkspace(name);
-      const config = yield* makeReplayServerConfig(name);
+      const config = yield* ProviderReplayHarness.makeReplayServerConfig(name);
       const instanceId = ProviderInstanceId.make(name);
       const threadId = ThreadId.make(name);
       const modelSelection = { instanceId, model: "test/selected" };
@@ -82,7 +83,8 @@ it.live.each(
         initial: { provider: "test", id: "selected" },
         maxFrameBytes: 1024,
       });
-      const adapter = makeOmpAdapterV2({
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const adapter = yield* makeOmpAdapterV2({
         instanceId,
         settings: { binaryPath: "controlled-omp-peer" },
         environment: {},
@@ -294,15 +296,25 @@ it.live.each(
         Effect.provide(
           ProjectionMaintenance.layer.pipe(
             Layer.provideMerge(
-              makeOrchestratorV2ReplayLayerWithRegistry(
+              ProviderReplayHarness.layerWithRegistry(
                 { name, runtimePolicyOverride: { cwd } },
                 makeLayer([observedAdapter]),
-                { layerServerConfig: Layer.succeed(ServerConfig, config) },
+                {
+                  layerServerConfig: Layer.succeed(ServerConfig, config),
+                  mcpProviderSessionsLayer: Layer.succeed(
+                    McpProviderSessions.McpProviderSessions,
+                    mcpSessions,
+                  ),
+                },
               ).pipe(Layer.provideMerge(SqlitePersistenceMemory)),
             ),
           ),
         ),
       );
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, idAllocatorLayer, McpProviderSessions.layer),
+      ),
+    ),
   ),
 );

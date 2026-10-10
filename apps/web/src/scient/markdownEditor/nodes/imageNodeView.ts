@@ -5,6 +5,8 @@ import type { EditorView, NodeView } from "prosemirror-view";
 import { createElement, Fragment } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
+import { observeResize } from "~/lib/observeResize";
+
 import {
   SCIENT_IMAGE_CAPTION_CLASS_NAME,
   ScientImageControls,
@@ -90,7 +92,7 @@ class ScientImageNodeView implements NodeView {
   private readonly chrome = document.createElement("span");
   private readonly fileInput = document.createElement("input");
   private readonly root: Root;
-  private readonly captionSizeObserver: ResizeObserver | null;
+  private readonly stopCaptionResize: () => void;
   private captionWidth = -1;
   private node: ProseMirrorNode;
   private selected = false;
@@ -158,16 +160,12 @@ class ScientImageNodeView implements NodeView {
     this.dom.addEventListener("mousedown", this.handleMouseDown);
     this.dom.addEventListener("scient-edit-image-caption", this.editCaption);
     this.root = createRoot(this.chrome);
-    this.captionSizeObserver =
-      typeof ResizeObserver === "undefined"
-        ? null
-        : new ResizeObserver((entries) => {
-            const width = entries[0]?.contentRect.width;
-            if (width === undefined || width === this.captionWidth) return;
-            this.captionWidth = width;
-            this.fitCaption();
-          });
-    this.captionSizeObserver?.observe(this.dom);
+    this.stopCaptionResize = observeResize(this.dom, (entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width === undefined || width === this.captionWidth) return;
+      this.captionWidth = width;
+      this.fitCaption();
+    });
     this.unregisterExternalPresentation = registerExternalPresentation?.((change) => {
       if (change === "workspace" && this.loadState === "failed") this.retry();
       else this.renderChrome();
@@ -233,7 +231,7 @@ class ScientImageNodeView implements NodeView {
     this.resolveVersion += 1;
     this.unregisterExternalPresentation?.();
     this.unregisterImage?.();
-    this.captionSizeObserver?.disconnect();
+    this.stopCaptionResize();
     this.root.unmount();
     this.dom.removeEventListener("mousedown", this.handleMouseDown);
     this.dom.removeEventListener("scient-edit-image-caption", this.editCaption);

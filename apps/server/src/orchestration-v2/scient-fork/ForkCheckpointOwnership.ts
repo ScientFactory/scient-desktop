@@ -13,7 +13,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { ScientForkCheckpointBaseline } from "./ForkCheckpointBaseline.ts";
-import { randomUuidV4 } from "../RandomUuid.ts";
+import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { VcsProcess } from "../../vcs/VcsProcess.ts";
 
 export const FORK_CHECKPOINT_OWNERSHIP_OPERATION = "ScientForkCheckpointOwnership";

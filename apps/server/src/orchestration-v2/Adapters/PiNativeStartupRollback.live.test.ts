@@ -8,8 +8,8 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Scope from "effect/Scope";
 import { piInstanceStateRoot } from "../../provider/pi/PiSessionFile.ts";
-import { makePiAdapterV2 } from "./PiAdapterV2.ts";
-import { makePiRpcConnection, PiRpcError } from "./PiRpc.ts";
+import { makePiAdapterV2 } from "@t3tools/provider-pi/testing";
+import { makePiRpcConnection, PiRpcError } from "@t3tools/provider-pi/testing";
 import { binary, ensure, fixture, json, layer } from "./PiNativeTestHarness.ts";
 
 it.layer(layer, { excludeTestServices: true })("native Pi unpublished startup ownership", (it) => {
@@ -28,7 +28,7 @@ it.layer(layer, { excludeTestServices: true })("native Pi unpublished startup ow
             const h = yield* fixture(`rollback-${leg}`);
             yield* h.models("http://127.0.0.1:9/v1");
             const stateRoot = yield* piInstanceStateRoot({
-              stateDir: h.adapterOptions.serverConfig.stateDir,
+              stateDir: h.serverConfig.stateDir,
               instanceId: h.instanceId,
             });
             yield* h.fs.makeDirectory(stateRoot, { recursive: true });
@@ -71,9 +71,8 @@ it.layer(layer, { excludeTestServices: true })("native Pi unpublished startup ow
                   yield* h.fs.remove(target, options);
                 }),
             });
-            const adapter = makePiAdapterV2({
+            const adapter = yield* makePiAdapterV2({
               ...h.adapterOptions,
-              fileSystem: checkedFs,
               settings: {
                 ...h.adapterOptions.settings,
                 binaryPath: leg === "spawn" ? `${h.root}/missing-pi-binary` : binary!,
@@ -135,10 +134,10 @@ it.layer(layer, { excludeTestServices: true })("native Pi unpublished startup ow
                         }),
                   ),
                 ),
-            });
+            }).pipe(Effect.provideService(FileSystem.FileSystem, checkedFs));
             const open = adapter.openSession({
               threadId: h.threadId,
-              providerSessionId: h.adapterOptions.idAllocator.derive.providerSession({
+              providerSessionId: h.idAllocator.derive.providerSession({
                 providerInstanceId: h.instanceId,
               }),
               modelSelection: h.modelSelection,
@@ -204,7 +203,7 @@ it.layer(layer, { excludeTestServices: true })("native Pi unpublished startup ow
             const before = yield* h.fs.readFileString(nativeFile);
             assert.include(before, '"type":"session"');
             const entered = yield* Deferred.make<string>();
-            const adapter = makePiAdapterV2({
+            const adapter = yield* makePiAdapterV2({
               ...h.adapterOptions,
               settings: {
                 ...h.adapterOptions.settings,

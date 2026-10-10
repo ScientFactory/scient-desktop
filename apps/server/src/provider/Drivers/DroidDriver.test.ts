@@ -28,14 +28,18 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { vi } from "vite-plus/test";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
-import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ModelManifest from "../ModelManifest.ts";
 import { ServerConfig } from "../../config.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { DroidDriver } from "./DroidDriver.ts";
 
 const decodeDroidSettings = Schema.decodeSync(DroidSettings);
@@ -46,52 +50,65 @@ const mockAgentPath = NodePath.join(
 const EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
 const makeTestLayer = (settings: Parameters<typeof ServerSettingsService.layerTest>[0] = {}) =>
-  ServerConfig.layerTest(process.cwd(), {
-    prefix: "scient-droid-driver-test-",
-  }).pipe(
-    Layer.provideMerge(NodeServices.layer),
-    Layer.provideMerge(IdAllocator.layer),
-    Layer.provideMerge(ProviderContinuationRequests.layer),
-    Layer.provideMerge(
-      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-        reportClientActivity: () => Effect.void,
-        removeRpcClient: () => Effect.void,
-        reportHostPowerState: () => Effect.void,
-        snapshot: Effect.succeed({
-          hostPower: {
-            source: "unknown",
-            idle: "unknown",
-            idleSeconds: null,
-            locked: "unknown",
-            suspended: false,
-            onBattery: "unknown",
-            lowPowerMode: "unknown",
-            thermalState: "unknown",
-            stale: true,
+  Layer.mergeAll(
+    ServerConfig.layerTest(process.cwd(), {
+      prefix: "scient-droid-driver-test-",
+    }).pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(IdAllocator.layer),
+      Layer.provideMerge(ProviderContinuationRequests.layer),
+      Layer.provideMerge(ModelManifest.layerTest),
+      Layer.provideMerge(ProviderLatestVersions.layer),
+      Layer.provideMerge(McpProviderSessions.layer),
+      Layer.provideMerge(
+        Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+          reportClientActivity: () => Effect.void,
+          removeRpcClient: () => Effect.void,
+          reportHostPowerState: () => Effect.void,
+          snapshot: Effect.succeed({
+            hostPower: {
+              source: "unknown",
+              idle: "unknown",
+              idleSeconds: null,
+              locked: "unknown",
+              suspended: false,
+              onBattery: "unknown",
+              lowPowerMode: "unknown",
+              thermalState: "unknown",
+              stale: true,
+              updatedAt: EPOCH,
+            },
+            leases: [],
+            activeForegroundLeaseCount: 0,
+            activeScopeKeys: [],
+            shouldRunOpportunisticWork: true,
             updatedAt: EPOCH,
-          },
-          leases: [],
-          activeForegroundLeaseCount: 0,
-          activeScopeKeys: [],
-          shouldRunOpportunisticWork: true,
-          updatedAt: EPOCH,
+          }),
+          streamChanges: Stream.empty,
+          hasDemand: () => Effect.succeed(true),
+          shouldRunScopeWork: () => Effect.succeed(true),
+          shouldRunOpportunisticWork: Effect.succeed(true),
         }),
-        streamChanges: Stream.empty,
-        hasDemand: () => Effect.succeed(true),
-        shouldRunScopeWork: () => Effect.succeed(true),
-        shouldRunOpportunisticWork: Effect.succeed(true),
-      }),
-    ),
-    Layer.provideMerge(ServerSettingsService.layerTest(settings)),
-    Layer.provideMerge(
-      Layer.succeed(
-        HttpClient.HttpClient,
-        HttpClient.make((request) =>
-          Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }))),
+      ),
+      Layer.provideMerge(ServerSettingsService.layerTest(settings)),
+      Layer.provideMerge(
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" })),
+            ),
+          ),
+        ),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
         ),
       ),
     ),
-    Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+    TestProviderHost.layer({ runBackgroundWork: false }).pipe(Layer.provide(NodeServices.layer)),
   );
 const testLayer = makeTestLayer();
 

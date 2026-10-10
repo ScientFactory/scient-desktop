@@ -29,7 +29,7 @@ import * as ProjectStore from "../ProjectStore.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as Registry from "../ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { ConversationForkService } from "./ConversationForkService.ts";
 
 const instanceId = ProviderInstanceId.make("codex");

@@ -11,7 +11,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, EnvironmentHttpApi, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { assert, it } from "@effect/vitest";
@@ -65,7 +65,7 @@ const CliRuntimeLayer = Layer.mergeAll(
   ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
 );
 const DisconnectedLauncherChildLayer = Layer.mergeAll(
-  Layer.succeed(HostProcessEnvironment, {
+  Layer.succeed(HostProcess.Environment, {
     ...process.env,
     [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify({
       protocol: SERVICE_LAUNCHER_PROTOCOL,
@@ -144,7 +144,7 @@ const makeProjectPersistenceLayer = (config: ServerConfig.ServerConfig["Service"
   const replay = makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "project-cli" },
     ProviderAdapterRegistryV2.layerFromAdapters([]),
-    { layerDatabase: database, runEffectWorker: false },
+    { databaseLayer: database, runEffectWorker: false },
   );
   return Layer.mergeAll(
     ProjectServiceLayerLive,

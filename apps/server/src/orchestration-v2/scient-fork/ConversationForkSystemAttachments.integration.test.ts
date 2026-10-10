@@ -41,7 +41,7 @@ import {
 } from "../legacy/HistoricalSystemMessage.ts";
 import * as LegacyImporter from "../legacy/LegacyV1ThreadImporter.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { ConversationForkService } from "./ConversationForkService.ts";
 
 const instanceId = ProviderInstanceId.make("codex");

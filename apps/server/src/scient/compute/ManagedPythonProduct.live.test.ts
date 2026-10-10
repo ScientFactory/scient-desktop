@@ -2,7 +2,7 @@
 import * as NodeProcess from "node:process";
 
 import { initializeScientProject } from "@scientfactory/project-init";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   ComputeExecutionId,
   ComputeLanguageId,
@@ -364,7 +364,7 @@ describe.runIf(ENABLED)("Scient-managed Python product", () => {
         Effect.provide(NodeServices.layer),
         // One base kernel, one retained all-Toolkit kernel, and one current
         // verification kernel. Runner RAM must not choose this test's budget.
-        Effect.provideService(HostProcessEnvironment, {
+        Effect.provideService(HostProcess.Environment, {
           ...NodeProcess.env,
           SCIENT_COMPUTE_MAX_LIVE_SESSIONS: "3",
         }),

@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -33,8 +33,8 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 /** Stands in for the 40 MB archive; nothing here downloads the real one. */
 const ARCHIVE = new TextEncoder().encode("pretend this is the Pandoc release archive");
 const ARCHIVE_DIGEST = NodeCrypto.createHash("sha256").update(ARCHIVE).digest("hex");
-const HOST_PLATFORM = HostProcessPlatform.defaultValue();
-const HOST_ARCH = HostProcessArchitecture.defaultValue();
+const HOST_PLATFORM = HostProcess.Platform.defaultValue();
+const HOST_ARCH = HostProcess.Architecture.defaultValue();
 const HOST_PAIR = `${HOST_PLATFORM}-${HOST_ARCH}` as PandocPlatformArch;
 
 interface ArtifactServer {
@@ -175,8 +175,8 @@ const makeHarness = (input: {
       ),
       Layer.provideMerge(ServerConfig.layerTest(baseDir, baseDir)),
       Layer.provideMerge(NodeServices.layer),
-      Layer.provide(Layer.succeed(HostProcessPlatform, input.platform ?? HOST_PLATFORM)),
-      Layer.provide(Layer.succeed(HostProcessArchitecture, input.arch ?? HOST_ARCH)),
+      Layer.provide(Layer.succeed(HostProcess.Platform, input.platform ?? HOST_PLATFORM)),
+      Layer.provide(Layer.succeed(HostProcess.Architecture, input.arch ?? HOST_ARCH)),
       Layer.provide(Layer.succeed(PandocManifestRef, input.manifest)),
     );
     return { serviceLayer, paths, seen, baseDir };

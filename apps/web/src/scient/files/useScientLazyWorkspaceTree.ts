@@ -1,4 +1,4 @@
-import type { FileTree } from "@pierre/trees";
+import type { FileTree, FileTreeRowDecorationRenderer } from "@pierre/trees";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
@@ -26,6 +26,7 @@ export const SCIENT_FILE_BROWSER_TREE_UNSAFE_CSS = `${PIERRE_TREE_UNSAFE_CSS}
 const INITIAL_TREE_SNAPSHOT: LazyWorkspaceTreeSnapshot = {
   entries: new Map(),
   failures: [],
+  loadingDirectories: new Set(),
   isPending: true,
   rootError: null,
 };
@@ -33,9 +34,17 @@ const INITIAL_TREE_SNAPSHOT: LazyWorkspaceTreeSnapshot = {
 /** Marks rows of files that are read-only in Files with a lock. */
 export function scientReadOnlyRowDecoration(
   treeEntriesRef: RefObject<ReadonlyMap<string, ProjectDirectoryEntry>>,
-) {
-  return ({ item }: { readonly item: { readonly path: string } }) => {
+  loadingDirectoriesRef: RefObject<ReadonlySet<string>>,
+): FileTreeRowDecorationRenderer {
+  return ({ item, row }) => {
     const relativePath = item.path.replace(/\/$/, "");
+    if (
+      row.kind === "directory" &&
+      row.isExpanded &&
+      loadingDirectoriesRef.current.has(relativePath)
+    ) {
+      return { icon: "t3-tree-icon-loading", title: "Loading…" };
+    }
     return treeEntriesRef.current.get(relativePath)?.readOnly
       ? { icon: "file-tree-icon-lock", title: "Read-only in Files" }
       : null;

@@ -30,7 +30,8 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import type { ProviderAdapterV2SessionRuntime } from "./ProviderAdapter.ts";
+import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 const threadId = ThreadId.make("thread:control-reads");
 const providerThreadId = ProviderThreadId.make("provider-thread:control-reads");
@@ -383,5 +384,9 @@ it.effect.each(storageCases)(
           ),
         ),
       );
-    }).pipe(Effect.provide(Layer.merge(storeLayer, SqlitePersistence.layerMemory))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(storeLayer, SqlitePersistence.layerMemory, McpProviderSessions.layer),
+      ),
+    ),
 );

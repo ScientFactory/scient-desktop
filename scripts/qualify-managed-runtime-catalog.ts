@@ -36,7 +36,7 @@ import {
   type ManagedRuntimeProvider,
   type ManagedProviderRuntimeQualificationInput,
 } from "@scientfactory/provider-runtime";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 
 import {
@@ -176,7 +176,7 @@ function isRunning(pid: number): boolean {
  * the supervisor dies. A tree that could not be read is not known to have ended.
  */
 async function terminateProcessTree(root: number): Promise<boolean> {
-  if (HostProcessPlatform.defaultValue() === "win32") {
+  if (HostProcess.Platform.defaultValue() === "win32") {
     const result = NodeChildProcess.spawnSync("taskkill", ["/pid", String(root), "/T", "/F"], {
       windowsHide: true,
     });
@@ -365,8 +365,8 @@ const providerFactories: Readonly<
 const target = await Effect.runPromise(
   Effect.gen(function* () {
     return detectManagedRuntimeTarget({
-      platform: yield* HostProcessPlatform,
-      arch: yield* HostProcessArchitecture,
+      platform: yield* HostProcess.Platform,
+      arch: yield* HostProcess.Architecture,
     });
   }),
 );

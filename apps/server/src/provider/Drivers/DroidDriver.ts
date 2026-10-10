@@ -12,7 +12,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -23,10 +23,12 @@ import { customModelDiscoverySnapshot } from "../../customModelCapabilities.ts";
 import { makeDroidTextGeneration } from "../../textGeneration/DroidTextGeneration.ts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import { makeDroidAdapterV2 } from "../../orchestration-v2/Adapters/DroidAdapterV2.ts";
-import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
-import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
-import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
-import { ProviderDriverError } from "../Errors.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeNativeSessionShutdown } from "../NativeSessionShutdown.ts";
 import {
   buildInitialDroidProviderSnapshot,
@@ -34,14 +36,13 @@ import {
   enrichDroidSnapshot,
   probeDroidCliVersion,
 } from "../DroidProvider.ts";
-import { ProviderEventLoggers } from "../ProviderEventLoggers.ts";
-import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import {
   defaultProviderContinuationIdentity,
-  type ProviderDriver,
   type ProviderInstance,
-} from "../ProviderDriver.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
+} from "@t3tools/provider-core/server/driver";
+import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   agentProcessEnvironment,
   withoutInheritedEnvironment,
@@ -50,12 +51,12 @@ import {
   makeCachedProviderMaintenanceResolution,
   makeManualOnlyProviderMaintenanceCapabilities,
   resolveProviderMaintenanceCapabilitiesEffect,
-} from "../providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import { droidMaintenance, withDroidReleaseVersion } from "../piDroidMaintenance.ts";
 import {
   haveProviderSnapshotSettingsChanged,
   type ProviderSnapshotSettings,
-} from "../providerUpdateSettings.ts";
+} from "@t3tools/provider-core/server/snapshotSettings";
 import {
   hasDroidApiKeyEnvironment,
   type DroidAccountCapabilities,
@@ -66,6 +67,8 @@ import {
   withDroidSessionShutdown,
 } from "../../scient/providerLifecycle/DroidConnectionActions.ts";
 import { makeDroidManagedRuntimeResolution } from "../../scient/providerLifecycle/DroidManagedRuntimeActions.ts";
+import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
+import type { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import { makeDroidCustomModelsRuntimeFactory } from "../droid/DroidCustomModels.ts";
 import { makeDroidProviderStatus } from "../droid/DroidProviderStatus.ts";
 import { discoverDroidSkills, setDroidSkillEnabled } from "./DroidSkills.ts";
@@ -87,14 +90,17 @@ function canDiscoverDroidSkills(
 }
 
 export type DroidDriverEnv =
+  | ProviderHost
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
-  | IdAllocatorV2
+  | IdAllocator.IdAllocatorV2
+  | McpProviderSessions.McpProviderSessions
+  | ProviderLatestVersions.ProviderLatestVersions
   | HttpClient.HttpClient
   | Path.Path
-  | ProviderEventLoggers
+  | ProviderEventLoggers.ProviderEventLoggers
   | ServerConfig
   | ServerSettingsService;
 
@@ -137,7 +143,7 @@ const withInstanceIdentity =
     };
   };
 
-export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
+export const DroidDriver: ScientProviderDriver<DroidSettings, DroidDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: {
     displayName: "Droid",
@@ -152,11 +158,12 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
+      const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
       const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
-      const eventLoggers = yield* ProviderEventLoggers;
-      const platform = yield* HostProcessPlatform;
+      const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
+      const platform = yield* HostProcess.Platform;
       // Every Droid process, including those started by spawners that merge the
       // server's own environment, gets the agent environment contract.
       const installationEnv = withoutInheritedEnvironment(
@@ -209,6 +216,7 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
             withDroidReleaseVersion(capabilities, options?.fresh === true),
           ),
           Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
         );
       const assistedAccountActionsAllowed = !hasDroidApiKeyEnvironment(processEnv);
       const stampIdentity = withInstanceIdentity({
@@ -245,17 +253,13 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
       let status: Effect.Success<ReturnType<typeof makeDroidProviderStatus>> | undefined;
       const nativeLogger = yield* makeAcpNativeLoggerFactory();
       const nativeSessions = yield* makeNativeSessionShutdown(
-        makeDroidAdapterV2({
+        yield* makeDroidAdapterV2({
           instanceId,
           settings: effectiveConfig,
           environment: processEnv,
           sensitiveEnvironmentValues,
           makeRuntime: makeAcpRuntime,
           childProcessSpawner: spawner,
-          crypto,
-          fileSystem,
-          serverConfig,
-          idAllocator: yield* IdAllocatorV2,
           selfInvocation: yield* resolveSelfInvocation().pipe(
             Effect.mapError(
               (cause) =>
@@ -267,7 +271,7 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
                 }),
             ),
           ),
-          continuationRequests: yield* ProviderContinuationRequests,
+          continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
           nativeLogging: (threadId) =>
             nativeLogger({
               provider: DRIVER_KIND,
@@ -356,6 +360,7 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
               ),
             ),
             Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
             Effect.flatMap((maintenanceCapabilities) =>
               enrichDroidSnapshot({
                 snapshot: currentSnapshot,
@@ -363,6 +368,7 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
                 enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
                 publishSnapshot,
                 httpClient,
+                latestVersions,
               }),
             ),
           ),
@@ -441,6 +447,6 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
         skillActions,
         ...(connectionActions ? { connectionActions } : {}),
         managedRuntimeActions: managedRuntime.actions,
-      } satisfies ProviderInstance;
+      } satisfies ScientProviderInstance;
     }),
 };

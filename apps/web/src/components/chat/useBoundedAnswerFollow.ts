@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, type RefObject } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
+import { observeResize } from "~/lib/observeResize";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 import { CHAT_TIMELINE_ANCHOR_OFFSET } from "./timelineScrollAnchoring";
 import { isTimelineScrollTarget } from "./timelineScrollTarget";
@@ -157,6 +158,7 @@ export function useBoundedAnswerFollow({
       onFinished?.(promptMessageId);
     };
     let observedAnswer: Element | null = null;
+    let stopAnswerResize: (() => void) | null = null;
     let mountAttempts = 12;
     let frame: number | null = null;
     let previousFrameTime = motionClock.now();
@@ -214,9 +216,9 @@ export function useBoundedAnswerFollow({
         return;
       }
       const answer = answerBox.element;
-      if (answer && observedAnswer !== answer) {
-        if (observedAnswer) observer.unobserve(observedAnswer);
-        observer.observe(answer);
+      if (observedAnswer !== answer) {
+        stopAnswerResize?.();
+        stopAnswerResize = answer ? observeResize(answer, schedule) : null;
         observedAnswer = answer;
       }
       const promptBox = rowRect(promptRow.id);
@@ -356,18 +358,20 @@ export function useBoundedAnswerFollow({
     viewport.addEventListener("pointerdown", onPointerDown);
     viewport.ownerDocument.addEventListener("pointerup", onPointerUp);
     viewport.ownerDocument.addEventListener("keydown", onKey);
-    const observer = new ResizeObserver(schedule);
-    observer.observe(viewport);
     // A followed response can grow anywhere (a tool's output expanding in place).
     const content = viewport.firstElementChild;
-    if (followResponse && content) observer.observe(content);
+    const stopResize = observeResize(
+      followResponse && content ? [viewport, content] : viewport,
+      schedule,
+    );
     // An answer appearing line by line moves the end without resizing the
     // list, and the follow can end only once its reveal has.
     const unsubscribeReveal = subscribeStreamingReveal(schedule);
     schedule();
     return () => {
       if (frame !== null) cancelAnimationFrame(frame);
-      observer.disconnect();
+      stopResize();
+      stopAnswerResize?.();
       unsubscribeReveal();
       viewport.removeEventListener("wheel", onWheel);
       viewport.removeEventListener("scroll", onScroll);

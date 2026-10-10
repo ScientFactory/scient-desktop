@@ -2,7 +2,7 @@ import type { ScientAnalyticsConsent, ScientAnalyticsUiEvent } from "@t3tools/co
 import * as Effect from "effect/Effect";
 
 import type { PreparedConnection } from "../connection/model.ts";
-import { environmentEndpointUrl } from "../environment/endpoint.ts";
+
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
@@ -19,7 +19,7 @@ export const getEnvironmentScientAnalyticsStatus = Effect.fn(
     signer,
     remoteAuthorization,
     method: "GET",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/analytics/status"),
+    url: (urls) => urls.status(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientAnalytics",
     request: ({ client, headers }) => client.status({ headers }),
@@ -39,7 +39,7 @@ export const updateEnvironmentScientAnalyticsPreference = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/analytics/preferences"),
+    url: (urls) => urls.preferences(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientAnalytics",
     request: ({ client, headers }) =>
@@ -60,7 +60,7 @@ export const recordEnvironmentScientAnalyticsEvent = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/analytics/events"),
+    url: (urls) => urls.record(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientAnalytics",
     request: ({ client, headers }) => client.record({ headers, payload: input.event }),
@@ -77,7 +77,7 @@ export const deleteEnvironmentScientAnalyticsData = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/analytics/delete"),
+    url: (urls) => urls.deleteData(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientAnalytics",
     request: ({ client, headers }) => client.deleteData({ headers }),

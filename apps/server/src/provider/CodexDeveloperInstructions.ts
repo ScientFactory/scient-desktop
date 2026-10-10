@@ -1,46 +1,14 @@
 import type { ProviderInteractionMode } from "@t3tools/contracts";
 import type { V2TurnStartParams__AdditionalContextEntry } from "effect-codex-app-server/schema";
-import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
-
 import type { McpCapability } from "../mcp/McpInvocationContext.ts";
 import { buildScientAwareness } from "./ScientAwareness.ts";
-
+// SCIENT-FORK:START Scient instruction owners
 import {
-  T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
-  T3_CODE_ORCHESTRATION_SCOPE_INSTRUCTIONS,
-  T3_CODE_ORCHESTRATION_WORKSPACE_INSTRUCTIONS,
-} from "./T3OrchestrationInstructions.ts";
-
-const T3_CODE_DEVICE_TOOL_INSTRUCTIONS = `## Scient devices
-
-The \`t3-code\` MCP server also exposes \`device_*\` tools for iOS Simulators and Android Emulators on this environment. For mobile verification, call \`device_list\`, then \`device_open\` so the user can watch the device in their Device panel; its result explains how to drive the device. Driving happens through the \`agent-device\` CLI, using the exact launcher path returned by \`device_open\`. Keep the host config and session flags returned by \`device_open\` on every command so concurrent devices stay independent: prefer \`agent-device snapshot -i\` refs over coordinates, and use \`device_screenshot\` when you need to see the screen. Prefer these tools and \`agent-device\` for opening and driving devices. Platform tools such as \`xcrun simctl\` and \`adb\` remain available for anything they do not cover, such as builds, logs, or port forwarding. If \`device_list\` reports a platform as unavailable, say so.`;
-
-export interface T3CodeToolAvailability {
-  readonly browser: boolean;
-  readonly device: boolean;
-}
-
-const normalizeAvailability = (
-  availability: boolean | T3CodeToolAvailability,
-): T3CodeToolAvailability =>
-  typeof availability === "boolean" ? { browser: availability, device: false } : availability;
-
-/**
- * Each block is omitted entirely when its tools aren't attached. Describing
- * `preview_*` or `device_*` tools that aren't in the turn's tool list would be
- * worse than saying nothing: the instructions actively steer the model away
- * from Playwright, agent-browser, and raw simctl/adb, so leaving them in would
- * talk it out of the only automation it still has.
- */
-const toolInstructions = (availability: boolean | T3CodeToolAvailability): string => {
-  const tools = normalizeAvailability(availability);
-  return [
-    tools.browser ? T3_CODE_BROWSER_TOOL_INSTRUCTIONS : "",
-    tools.device ? T3_CODE_DEVICE_TOOL_INSTRUCTIONS : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-};
+  SCIENT_ORCHESTRATION_SCOPE_INSTRUCTIONS,
+  SCIENT_ORCHESTRATION_WORKSPACE_INSTRUCTIONS,
+} from "./ScientProviderInstructions.ts";
+import { buildScientRuntimeInstructions } from "./ScientRuntimeInstructions.ts";
+// SCIENT-FORK:END Scient instruction owners
 
 const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
 
@@ -217,12 +185,14 @@ export function buildCodexAdditionalContext(
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   // Separate keys keep each value under Codex's per-entry token cap.
   return {
-    t3_code_orchestration: { kind: "application", value: T3_CODE_ORCHESTRATION_SCOPE_INSTRUCTIONS },
-    t3_code_workspace: { kind: "application", value: T3_CODE_ORCHESTRATION_WORKSPACE_INSTRUCTIONS },
+    // SCIENT-FORK:START Scient additional context entries
+    t3_code_orchestration: { kind: "application", value: SCIENT_ORCHESTRATION_SCOPE_INSTRUCTIONS },
+    t3_code_workspace: { kind: "application", value: SCIENT_ORCHESTRATION_WORKSPACE_INSTRUCTIONS },
     t3_code_runtime: {
       kind: "application",
-      value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),
+      value: buildScientRuntimeInstructions({ harness: "Codex", ...runtime }),
     },
     scient_awareness: { kind: "application", value: buildScientAwareness(capabilities) },
+    // SCIENT-FORK:END Scient additional context entries
   };
 }

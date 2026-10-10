@@ -10,31 +10,33 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
+import * as ScientTestProviderHost from "../testkit/ScientTestProviderHost.ts";
 import { makeDroidAcpRuntime } from "../../provider/acp/DroidAcpSupport.ts";
 import { scriptedDroid } from "../../provider/testUtils/scriptedDroid.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
+import { layer as idAllocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { makeDroidAdapterV2 } from "./DroidAdapterV2.ts";
 const decodeSettings = Schema.decodeEffect(DroidSettings);
-const layer = Layer.mergeAll(
+const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
   idAllocatorLayer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-droid-interactions-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
 );
+const layer = ScientTestProviderHost.layer.pipe(Layer.provideMerge(fixtureServices));
 it.layer(layer, { excludeTestServices: true })("Droid native persisted interactions", (it) => {
   it.effect(
     "persists the selected native form answer and resolves its own question exactly once",
@@ -53,17 +55,13 @@ it.layer(layer, { excludeTestServices: true })("Droid native persisted interacti
           const instanceId = ProviderInstanceId.make("droid-form-instance");
           const threadId = ThreadId.make("droid-form-thread");
           const modelSelection = { instanceId, model: "droid-native" };
-          const adapter = makeDroidAdapterV2({
+          const adapter = yield* makeDroidAdapterV2({
             instanceId,
             settings: yield* decodeSettings({ enabled: true, binaryPath: peer.binaryPath }),
             environment: { PATH: process.env.PATH },
             sensitiveEnvironmentValues: [],
             makeRuntime: makeDroidAcpRuntime,
             childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-            fileSystem: yield* FileSystem.FileSystem,
-            crypto: yield* Crypto.Crypto,
-            serverConfig: config,
-            idAllocator: yield* IdAllocatorV2,
             selfInvocation: yield* resolveSelfInvocation(),
             onAuthenticationRejected: () => Effect.die("No account in this native fixture"),
           });

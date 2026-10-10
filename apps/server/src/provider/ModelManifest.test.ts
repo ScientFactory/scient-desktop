@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderDriverKind, type ServerProviderModel } from "@t3tools/contracts";
+import { ProviderDriverKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -11,6 +11,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ModelManifest from "./ModelManifest.ts";
+import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 
 /**
  * Test policy: this file covers manifest machinery, not manifest contents.
@@ -20,161 +21,26 @@ import * as ModelManifest from "./ModelManifest.ts";
  * synthetic models for resolver coverage.
  */
 
-const CODEX = ProviderDriverKind.make("codex");
-const model = (overrides: Partial<ServerProviderModel>): ServerProviderModel => ({
-  slug: "gpt-test",
-  name: "GPT Test",
-  isCustom: false,
-  capabilities: null,
-  ...overrides,
-});
-
-describe("classifyModels", () => {
-  it("applies explicit Codex family statuses without changing their wire ids", () => {
-    const manifest: ModelManifest.ModelManifestData = {
-      version: 1,
-      currentModels: { codex: ["gpt-test"] },
-      providers: {
-        codex: {
-          profiles: {},
-          models: [{ slug: "gpt-old", name: "GPT Old", status: "legacy" }],
-        },
-      },
-    };
-    const models = [
-      model({ slug: "openai.gpt-test", isLegacy: true }),
-      model({ slug: "openai.gpt-old" }),
-      model({ slug: "openai.gpt-new" }),
-    ];
-    assert.deepStrictEqual(
-      ModelManifest.classifyModels(models, manifest, CODEX).map((entry) => [
-        entry.slug,
-        entry.isLegacy ?? false,
-      ]),
-      [
-        ["openai.gpt-test", false],
-        ["openai.gpt-old", true],
-        ["openai.gpt-new", false],
-      ],
-    );
-  });
-  it("shows unknown discoveries by default and preserves provider-native legacy status", () => {
-    const manifest: ModelManifest.ModelManifestData = {
-      version: 1,
-      currentModels: { codex: ["current-a", "current-b"] },
-      providers: {
-        codex: {
-          profiles: {},
-          models: [{ slug: "catalog-current", name: "Catalog Current", status: "current" }],
-        },
-      },
-    };
-    const models = [
-      model({ slug: "current-a" }),
-      model({ slug: "current-b", isLegacy: true }),
-      model({ slug: "catalog-current", isLegacy: true }),
-      model({ slug: "new-discovery" }),
-      model({ slug: "provider-legacy", isLegacy: true }),
-      model({ slug: "my-own-model", isCustom: true }),
-    ];
-    assert.deepStrictEqual(
-      ModelManifest.classifyModels(models, manifest, CODEX).map((entry) => [
-        entry.slug,
-        entry.isLegacy ?? false,
-      ]),
-      [
-        ["current-a", false],
-        ["current-b", false],
-        ["catalog-current", false],
-        ["new-discovery", false],
-        ["provider-legacy", true],
-        ["my-own-model", false],
-      ],
-    );
-  });
-  it("classifies Antigravity effort variants from their explicit family status", () => {
-    const antigravity = ProviderDriverKind.make("antigravity");
-    const manifest: ModelManifest.ModelManifestData = {
-      version: 1,
-      currentModels: { antigravity: ["gemini-3.8-flash-high"] },
-      providers: {
-        antigravity: {
-          profiles: {},
-          models: [{ slug: "gemini-3.7-flash", name: "Gemini 3.7 Flash", status: "legacy" }],
-        },
-      },
-    };
-    const models = [
-      model({ slug: "gemini-3.7-flash-low" }),
-      model({ slug: "gemini-3.7-flash-medium" }),
-      model({ slug: "gemini-3.7-flash-high" }),
-      model({ slug: "gemini-3.8-flash-high", isLegacy: true }),
-      model({ slug: "gemini-4.0-flash-high" }),
-    ];
-
-    assert.deepStrictEqual(
-      ModelManifest.classifyModels(models, manifest, antigravity).map((entry) => [
-        entry.slug,
-        entry.isLegacy ?? false,
-      ]),
-      [
-        ["gemini-3.7-flash-low", true],
-        ["gemini-3.7-flash-medium", true],
-        ["gemini-3.7-flash-high", true],
-        ["gemini-3.8-flash-high", false],
-        ["gemini-4.0-flash-high", false],
-      ],
-    );
-  });
-});
-
-describe("applyManifestDefault", () => {
-  it("resolves the manifest default to the qualified live model", () => {
-    const manifest: ModelManifest.ModelManifestData = {
-      version: 1,
-      currentModels: {},
-      providers: { codex: { models: [], profiles: {}, defaults: { chat: "gpt-test" } } },
-    };
-    const models = [
-      model({ slug: "openai.gpt-old", isDefault: true }),
-      model({ slug: "openai.gpt-test" }),
-    ];
-    assert.strictEqual(
-      ModelManifest.applyManifestDefault(models, manifest, CODEX).find((entry) => entry.isDefault)
-        ?.slug,
-      "openai.gpt-test",
-    );
-  });
-  it("moves the default flag and its aliases to the manifest's chat default", () => {
-    const driver = ProviderDriverKind.make("antigravity");
-    const manifest: ModelManifest.ModelManifestData = {
-      version: 1,
-      currentModels: {},
-      providers: {
-        antigravity: {
-          defaults: { chat: "gemini-new" },
-          profiles: {},
-          models: [{ slug: "gemini-new", name: "New", status: "current" }],
-        },
-      },
-    };
-    const models = [
-      model({ slug: "gemini-old", isDefault: true, aliases: ["antigravity-default"] }),
-      model({ slug: "gemini-new" }),
-    ];
-    assert.deepStrictEqual(ModelManifest.applyManifestDefault(models, manifest, driver), [
-      model({ slug: "gemini-old" }),
-      model({ slug: "gemini-new", isDefault: true, aliases: ["antigravity-default"] }),
-    ]);
-    // The account does not offer the manifest default: keep the runtime's choice.
-    assert.deepStrictEqual(
-      ModelManifest.applyManifestDefault(models.slice(0, 1), manifest, driver),
-      models.slice(0, 1),
-    );
-  });
-});
-
 describe("resolveProviderCatalog", () => {
+  it("uses legacy-only remote metadata without erasing unknown native legacy models", () => {
+    const catalog = ModelManifest.resolveProviderCatalog(
+      { version: 1, currentModels: { synthetic: ["native-current"] } },
+      ProviderDriverKind.make("synthetic"),
+    );
+    const models = ModelCatalog.classifyCatalogModels(
+      ["native-current", "native-unknown"].map((slug) => ({
+        slug,
+        name: slug,
+        isCustom: false,
+        isLegacy: true,
+        capabilities: null,
+      })),
+      catalog ?? undefined,
+    );
+    assert.isUndefined(models[0]?.isLegacy);
+    assert.isTrue(models[1]?.isLegacy);
+  });
+
   it("resolves generic model presentation through a reusable profile", () => {
     const manifest: ModelManifest.ModelManifestData = {
       version: 1,
@@ -216,18 +82,16 @@ describe("resolveProviderCatalog", () => {
       ProviderDriverKind.make("synthetic"),
     );
     assert.deepStrictEqual(catalog?.models[0], {
-      model: {
-        slug: "model-next",
-        name: "Model Next",
-        aliases: ["next"],
-        badge: "new",
-        isCustom: false,
-        isDefault: true,
-        capabilities: manifest.providers!.synthetic!.profiles.standard!.capabilities!,
-      },
+      slug: "model-next",
+      name: "Model Next",
+      aliases: ["next"],
+      badge: "new",
+      status: "current",
+      capabilities: manifest.providers!.synthetic!.profiles.standard!.capabilities!,
       adapter: undefined,
       profileAdapter: { opaque: true },
     });
+    assert.strictEqual(catalog?.defaultChatModel, "model-next");
   });
 
   it("rejects invalid catalog references", () => {

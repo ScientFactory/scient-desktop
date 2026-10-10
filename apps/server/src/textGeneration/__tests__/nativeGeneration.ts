@@ -7,8 +7,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { ProviderInstanceRegistry } from "../../provider/ProviderInstanceRegistry.ts";
+import { deriveProviderInstanceConfigMap } from "../../provider/ProviderInstanceRegistryHydration.ts";
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
 import * as TextGeneration from "../TextGeneration.ts";
 
@@ -82,11 +83,16 @@ export const makeNativeTextGeneration = (
 };
 
 /** No explicit metadata selection: only this native instance is enabled. */
-export const nativeOnlySettings = (driver: "pi" | "omp", instanceId: ProviderInstanceId) => ({
-  providers: Object.fromEntries(
-    Object.keys(DEFAULT_SERVER_SETTINGS.providers).map((key) => [key, { enabled: false }]),
-  ),
-  providerInstances: {
-    [instanceId]: { driver: ProviderDriverKind.make(driver), enabled: true },
-  },
-});
+export const nativeOnlySettings = (driver: "pi" | "omp", instanceId: ProviderInstanceId) => {
+  const disabledDefaults = Object.fromEntries(
+    Object.entries(deriveProviderInstanceConfigMap(DEFAULT_SERVER_SETTINGS)).map(
+      ([defaultId, instance]) => [defaultId, { ...instance, enabled: false }],
+    ),
+  );
+  return {
+    providerInstances: {
+      ...disabledDefaults,
+      [instanceId]: { driver: ProviderDriverKind.make(driver), enabled: true },
+    },
+  };
+};

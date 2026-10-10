@@ -173,11 +173,11 @@ export function nativeImportRuntimeTestLayer(
   registryLayer: Layer.Layer<ProviderAdapterRegistryV2>,
   options: Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2] = {},
 ) {
-  const database = options.layerDatabase ?? SqlitePersistence.layerMemory;
+  const database = options.databaseLayer ?? SqlitePersistence.layerMemory;
   const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "scient-import-continuation" },
     registryLayer,
-    { layerDatabase: database, configureMcp: false, ...options },
+    { databaseLayer: database, configureMcp: false, ...options },
   ).pipe(
     Layer.provideMerge(database),
     Layer.provideMerge(NodeServices.layer),

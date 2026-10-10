@@ -5,21 +5,18 @@ import {
   managedRuntimeTargetKey,
   resolveReviewedCursorArtifact,
 } from "@scientfactory/provider-runtime";
-import { type CursorSettings, ProviderDriverKind } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { ProviderDriverKind } from "@t3tools/contracts";
+import type { CursorSettings } from "@t3tools/provider-cursor/settings";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { cursorRuntimeEnvironment } from "../../provider/CursorCli.ts";
 import {
-  makeCachedProviderMaintenanceResolution,
   makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
-  type ProviderMaintenanceCapabilitiesResolver,
-  resolveProviderMaintenanceCapabilitiesEffect,
-} from "../../provider/providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
+import type { ProviderMaintenanceCapabilitiesResolver } from "@t3tools/provider-core/server/maintenanceResolver";
 import { assistedCursorConnectionMethods } from "./CursorConnectionActions.ts";
 import {
   makeManagedProviderRuntimeResolution,
@@ -49,8 +46,8 @@ export const makeCursorManagedRuntimeResolution = Effect.fn("CursorManagedRuntim
     readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
     readonly managedInstallationAllowed: boolean;
   }): Effect.fn.Return<CursorManagedRuntimeResolution, never> {
-    const platform = yield* HostProcessPlatform;
-    const arch = yield* HostProcessArchitecture;
+    const platform = yield* HostProcess.Platform;
+    const arch = yield* HostProcess.Architecture;
     const target = detectTargetSafely({ platform, arch });
     const artifact = target ? resolveReviewedCursorArtifact(target) : undefined;
     const targetLabel = target ? managedRuntimeTargetKey(target) : `${platform}-${arch}`;
@@ -112,10 +109,8 @@ export const makeCursorInstanceRuntime = Effect.fnUntraced(function* (input: {
   readonly managedInstallationAllowed: boolean;
   readonly processEnv: NodeJS.ProcessEnv;
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly path: Path.Path;
 }) {
-  const { config, enabled, processEnv, spawner, fileSystem, path } = input;
+  const { config, enabled, processEnv, spawner } = input;
   const managedRuntime = yield* makeCursorManagedRuntimeResolution({
     settings: config,
     enabled,
@@ -133,29 +128,23 @@ export const makeCursorInstanceRuntime = Effect.fnUntraced(function* (input: {
   const connectionMethods = assistedCursorConnectionMethods(processEnv);
   // The bundled SDK has no CLI update target. Explicit CLI targets retain
   // their maintenance controls; managed installs are replaced by Scient.
-  const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-    (!config.binaryPath?.trim() || managedRuntime.usesManagedPath
-      ? Effect.succeed(
-          makeManualOnlyProviderMaintenanceCapabilities({
-            provider: DRIVER_KIND,
-            packageName: null,
-          }),
-        )
-      : resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
-          binaryPath: effectiveConfig.binaryPath,
-          env: effectiveProcessEnv,
-        })
-    ).pipe(
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
-    ),
-  );
+  const maintenanceResolver: ProviderMaintenanceCapabilitiesResolver =
+    !config.binaryPath?.trim() || managedRuntime.usesManagedPath
+      ? {
+          resolve: () =>
+            Effect.succeed(
+              makeManualOnlyProviderMaintenanceCapabilities({
+                provider: DRIVER_KIND,
+                packageName: null,
+              }),
+            ),
+        }
+      : UPDATE;
   return {
     managedRuntime,
     effectiveConfig,
     effectiveProcessEnv,
     connectionMethods,
-    resolveMaintenance,
+    maintenanceResolver,
   };
 });

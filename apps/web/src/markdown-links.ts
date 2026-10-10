@@ -6,6 +6,7 @@ import {
 import {
   parseMarkdownFileLink,
   inlineCodeFilePathCandidate,
+  isRelativeFilePath,
   normalizeMarkdownLinkDestination,
   safeDecodeURIComponent,
   resolveMarkdownFileLinkTarget,
@@ -62,24 +63,61 @@ export function rewriteMarkdownFileUriHref(href: string | undefined): string | n
 export function resolveInlineCodeFileLinkMeta(
   codeText: string,
   cwd?: string,
-  workspaceRoot: string | null | undefined = cwd,
   baseDir: string | undefined = cwd,
+  workspaceRoot: string | null | undefined = cwd,
 ): MarkdownFileLinkMeta | null {
   const candidate = inlineCodeFilePathCandidate(codeText);
   if (candidate === null) return null;
 
-  return resolveMarkdownFileLinkMeta(candidate, cwd, workspaceRoot, baseDir);
+  const candidateBase = inlineCodePathNamesFromWorkspaceRoot(candidate, cwd, baseDir)
+    ? cwd
+    : baseDir;
+  const targetPath = resolveMarkdownFileLinkTarget(candidate, cwd, candidateBase);
+  if (!targetPath) return null;
+
+  const candidatePath = splitFilePathPosition(candidate).path;
+  const preserveRelativeSegments = /^(?:\.{1,2})[\\/]/.test(candidatePath);
+  const meta = buildFileLinkMetaFromTarget(
+    targetPath,
+    cwd,
+    workspaceRoot,
+    preserveRelativeSegments,
+  );
+  return withAuthoredHomeRelativePath(candidate, meta);
+}
+
+/**
+ * Prose in a workspace file names other files from the repo root (`docs/ai/design.md`),
+ * unlike an explicit link. Single-segment names (`design.md:12`) and `./`, `../`
+ * paths still read as siblings, and files outside the workspace keep their own base.
+ */
+function inlineCodePathNamesFromWorkspaceRoot(
+  candidate: string,
+  cwd: string | undefined,
+  baseDir: string | undefined,
+): boolean {
+  if (!cwd || !baseDir || !isRelativeFilePath(candidate)) return false;
+  if (/^(?:~|\.{1,2})\//.test(candidate)) return false;
+  if (!splitFilePathPosition(candidate).path.includes("/")) return false;
+  return workspaceRelativeFilePath(baseDir, cwd) !== null;
 }
 
 export function resolveMarkdownFileLinkMeta(
   href: string | undefined,
   cwd?: string,
-  workspaceRoot: string | null | undefined = cwd,
   baseDir: string | undefined = cwd,
+  workspaceRoot: string | null | undefined = cwd,
 ): MarkdownFileLinkMeta | null {
   const targetPath = resolveMarkdownFileLinkTarget(href, cwd, baseDir);
   if (!targetPath) return null;
   const meta = buildFileLinkMetaFromTarget(targetPath, cwd, workspaceRoot);
+  return withAuthoredHomeRelativePath(href, meta);
+}
+
+function withAuthoredHomeRelativePath(
+  href: string | undefined,
+  meta: MarkdownFileLinkMeta,
+): MarkdownFileLinkMeta {
   const authoredPath = href ? parseMarkdownFileLink(href)?.path : undefined;
   return authoredPath !== undefined && /^~[\\/]/.test(authoredPath)
     ? { ...meta, homeRelativePath: authoredPath }
@@ -104,12 +142,17 @@ function buildFileLinkMetaFromTarget(
   targetPath: string,
   cwd?: string,
   workspaceRoot: string | null | undefined = cwd,
+  preserveRelativeSegments = false,
 ): MarkdownFileLinkMeta {
   const split = splitFilePathPosition(targetPath);
-  // Resolve `..` once, here, so every consumer agrees on which file this is
-  // and whether it is inside the workspace. A link that climbs out of the
-  // workspace becomes the absolute host path it names.
-  const path = collapseAbsoluteFilePath(split.path);
+  // Keep explicit inline-code paths as authored when they resolve inside the
+  // workspace. This preserves upstream's file-link contract for `./` and
+  // `../` references while still canonicalizing any path that escapes it.
+  const canonicalPath = collapseAbsoluteFilePath(split.path);
+  const path =
+    preserveRelativeSegments && workspaceRelativeFilePath(canonicalPath, workspaceRoot) !== null
+      ? split.path
+      : canonicalPath;
   const { line, column } = split;
   const resolvedTargetPath = formatFilePathPosition({
     path,
@@ -119,8 +162,15 @@ function buildFileLinkMetaFromTarget(
   return {
     filePath: path,
     targetPath: resolvedTargetPath,
-    displayPath: formatWorkspaceRelativePath(resolvedTargetPath, cwd),
-    workspaceRelativePath: workspaceRelativeFilePath(path, workspaceRoot),
+    displayPath: formatWorkspaceRelativePath(
+      formatFilePathPosition({
+        path: canonicalPath,
+        ...(line !== undefined ? { line } : {}),
+        ...(column !== undefined ? { column } : {}),
+      }),
+      cwd,
+    ),
+    workspaceRelativePath: workspaceRelativeFilePath(canonicalPath, workspaceRoot),
     basename: fileBasename(path),
     ...(line !== undefined ? { line } : {}),
     ...(column !== undefined ? { column } : {}),

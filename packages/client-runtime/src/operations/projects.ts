@@ -27,7 +27,7 @@ import type { EnvironmentProject } from "../state/models.ts";
 
 export type AddProjectRemoteProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops"
+  "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops" | "gitcafe"
 >;
 export type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
 
@@ -77,6 +77,7 @@ const ADD_PROJECT_REMOTE_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
   "forgejo",
   "bitbucket",
   "azure-devops",
+  "gitcafe",
 ];
 
 const ADD_PROJECT_REMOTE_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKind> = [
@@ -85,6 +86,7 @@ const ADD_PROJECT_REMOTE_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProvide
   "forgejo",
   "bitbucket",
   "azure-devops",
+  "gitcafe",
 ];
 
 export function addProjectRemoteSourceLabel(source: AddProjectRemoteSource): string {
@@ -99,6 +101,8 @@ export function addProjectRemoteSourceLabel(source: AddProjectRemoteSource): str
       return "Bitbucket";
     case "azure-devops":
       return "Azure DevOps";
+    case "gitcafe":
+      return "GitCafe";
     case "url":
       return "Git URL";
   }
@@ -108,6 +112,7 @@ export function addProjectRemoteSourcePathHint(source: AddProjectRemoteSource): 
   switch (source) {
     case "forgejo":
     case "github":
+    case "gitcafe":
       return "owner/repo";
     case "gitlab":
       return "group/project";
@@ -137,11 +142,13 @@ export function normalizePastedCloneUrl(input: string): string {
   return `https://github.com/${repository}`;
 }
 
-/** GitHub and Forgejo default to HTTPS; other providers retain their existing SSH default. */
+/** GitHub, Forgejo and GitCafe default to HTTPS; other providers retain their existing SSH default. */
 export function getDefaultCloneUrl(
   repository: Pick<SourceControlRepositoryInfo, "provider" | "url" | "sshUrl">,
 ): string {
-  return repository.provider === "github" || repository.provider === "forgejo"
+  return repository.provider === "github" ||
+    repository.provider === "forgejo" ||
+    repository.provider === "gitcafe"
     ? repository.url
     : repository.sshUrl;
 }
@@ -178,6 +185,7 @@ export function buildAddProjectRemoteSourceReadiness(
     forgejo: unavailable,
     bitbucket: unavailable,
     "azure-devops": unavailable,
+    gitcafe: unavailable,
   };
 
   if (!discovery) {
@@ -199,6 +207,7 @@ export function buildAddProjectRemoteSourceReadiness(
       forgejo: missingGit,
       bitbucket: missingGit,
       "azure-devops": missingGit,
+      gitcafe: missingGit,
     };
   }
 

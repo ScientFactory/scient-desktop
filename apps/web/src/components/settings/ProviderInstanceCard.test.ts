@@ -80,6 +80,30 @@ describe("Pi status copy", () => {
     else expect(markup).not.toContain("Pi RPC timed out.");
   });
 
+  it.each([
+    { status: "error" as const, installed: true, message: "Pi RPC timed out." },
+    { status: "error" as const, installed: false, message: "Pi is not installed." },
+  ])("keeps $message on the right rather than adding left-column health copy", (snapshot) => {
+    const provider = { ...liveProvider, ...snapshot };
+    const list = render("list", provider);
+    const editor = render("editor", provider);
+    expect(list).not.toContain("Not installed");
+    expect(list).not.toContain("Needs attention");
+    expect(list).not.toContain("Unavailable");
+    expect(list).not.toContain(snapshot.message);
+    expect(editor).toContain(snapshot.installed ? snapshot.message : "Not installed");
+  });
+
+  it("keeps warning headlines out of the compact provider list", () => {
+    const list = render("list", {
+      ...liveProvider,
+      status: "warning",
+      message: "Pi needs attention.",
+    });
+    expect(list).not.toContain("Needs attention");
+    expect(list).not.toContain("Pi needs attention.");
+  });
+
   it.each(["list", "editor"] as const)(
     "keeps the disabled %s explicit despite a stale ready snapshot",
     (mode) => {
@@ -404,6 +428,50 @@ describe("deriveProviderModelsForDisplay", () => {
         expect(markup).not.toContain("is not a symlink");
       }
     }
+  });
+
+  it("keeps sign-in required out of an unselected left list row", () => {
+    const instanceId = ProviderInstanceId.make("codex_work");
+    const driver = ProviderDriverKind.make("codex");
+    const liveProvider: ServerProvider = {
+      instanceId,
+      driver,
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "unauthenticated", required: true },
+      checkedAt: "2026-08-28T12:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+      connection: { methods: ["codex_browser"], canDisconnect: false, operation: null },
+    };
+    const props = {
+      environmentId,
+      instanceId,
+      instance: { driver },
+      driverOption: getDriverOption(driver),
+      liveProvider,
+      onUpdate: () => undefined,
+      hiddenModels: [],
+      favoriteModels: [],
+      modelOrder: [],
+      onHiddenModelsChange: () => undefined,
+      onFavoriteModelsChange: () => undefined,
+      onModelOrderChange: () => undefined,
+    } as const;
+
+    const list = renderToStaticMarkup(
+      createElement(ProviderInstanceCard, { ...props, mode: "list" }),
+    );
+    const editor = renderToStaticMarkup(
+      createElement(ProviderInstanceCard, { ...props, mode: "editor" }),
+    );
+
+    expect(list).toContain('aria-pressed="false"');
+    expect(list).not.toContain("Sign-in required");
+    expect(editor).toContain("Sign-in required");
   });
 });
 

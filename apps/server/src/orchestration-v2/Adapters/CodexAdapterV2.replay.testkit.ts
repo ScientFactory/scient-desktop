@@ -23,16 +23,16 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import packageJson from "../../../package.json" with { type: "json" };
-import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2TurnInput,
   type ProviderAdapterV2Event,
   ProviderAdapterOpenSessionError,
-} from "../ProviderAdapter.ts";
-import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
+import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { makeReplayServerConfig, withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
 
@@ -248,7 +248,7 @@ export function codexReplayPreamble(input: {
           additionalContext: {
             t3_code_runtime: {
               kind: "application",
-              value: buildRuntimeInstructions({
+              value: buildScientRuntimeInstructions({
                 harness: "Codex",
                 model: "gpt-5.4",
                 reasoningEffort: "medium",
@@ -309,7 +309,7 @@ export const makeCodexReplayHarness = (
   transcript: CodexReplay.CodexAppServerReplayTranscript,
   onEvent: (event: ProviderAdapterV2Event) => Effect.Effect<unknown> = () => Effect.void,
   onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
-  readChildMetadata?: (threadId: string) => Effect.Effect<unknown>,
+  readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
   configureMcp?: boolean,
   settings?: CodexSettings,
   options: {
@@ -326,7 +326,7 @@ export const makeCodexReplayHarness = (
     const continuationRequests: Array<ProviderContinuationRequest> = [];
     const transcripts = [transcript, ...(options.additionalSessions ?? [])];
     let sessionOrdinal = 0;
-    const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
+    const clientFactory: CodexAdapterV2.CodexAppServerClientFactory["Service"] = {
       open: (openInput) => {
         const sessionTranscript = transcripts[sessionOrdinal++];
         if (!sessionTranscript) return Effect.die("Unexpected native Codex session open");
@@ -366,7 +366,7 @@ export const makeCodexReplayHarness = (
         );
       },
     };
-    const adapter = CodexAdapterV2.makeCodexAdapterV2({
+    const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
       crypto: yield* Crypto.Crypto,
       instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
       settings: settings ?? DEFAULT_CODEX_SETTINGS,

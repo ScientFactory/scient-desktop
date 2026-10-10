@@ -75,6 +75,35 @@ describe("CDP relay", () => {
     });
   });
 
+  it("completes agent-input tracking when debugger dispatch throws synchronously", async () => {
+    const written: Array<Record<string, unknown>> = [];
+    const relay = createCdpRelayConnection(
+      makeTarget(() => {
+        throw new Error("Debugger is not attached");
+      }),
+      (raw) => written.push(JSON.parse(raw)),
+    );
+    let completions = 0;
+
+    relay.receive(
+      JSON.stringify({ id: 7, method: "Input.dispatchMouseEvent", sessionId: "t3-preview-page" }),
+      () => completions++,
+    );
+    await settle();
+
+    expect(written).toEqual([
+      {
+        id: 7,
+        error: { code: -32000, message: "Debugger is not attached" },
+        sessionId: "t3-preview-page",
+      },
+    ]);
+    expect(completions).toBe(1);
+
+    relay.receive("not-json", () => completions++);
+    expect(completions).toBe(2);
+  });
+
   it("resumes paused child frames, so cross-site iframes run", async () => {
     const send = vi.fn(async () => ({}));
     const relay = createCdpRelayConnection(makeTarget(send), () => {});

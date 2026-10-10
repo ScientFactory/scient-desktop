@@ -29,19 +29,22 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as ScientTestProviderHost from "../testkit/ScientTestProviderHost.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import * as ProviderAdapter from "../ProviderAdapter.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeAntigravityAdapterV2 } from "./AntigravityAdapterV2.ts";
 
-const layer = Layer.mergeAll(
+const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-antigravity-native-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
 );
+const layer = ScientTestProviderHost.layer.pipe(Layer.provideMerge(fixtureServices));
 const decodeRequest = Schema.decodeUnknownSync(
   Schema.fromJsonString(
     Schema.Struct({
@@ -212,18 +215,13 @@ await import(${encodeString(mockAgentPath)});`,
   });
   const commands: string[] = [];
   const selections: string[] = [];
-  const adapter = makeAntigravityAdapterV2({
+  const adapter = yield* makeAntigravityAdapterV2({
     testHooks: {
       afterPromptSettledWithBackgroundWork: () =>
         Deferred.succeed(heldSettlement, undefined).pipe(Effect.asVoid),
     },
     instanceId,
-    crypto,
-    fileSystem,
-    path,
     selfInvocation: yield* resolveSelfInvocation(),
-    idAllocator: yield* IdAllocator.IdAllocatorV2,
-    serverConfig: yield* ServerConfig.ServerConfig,
     withProcess: (_stop, task) => task,
     defaultModel: Effect.succeed(undefined),
     makeRuntime: (input) =>
@@ -359,6 +357,7 @@ it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (
       Effect.scoped(
         Effect.gen(function* () {
           const h = yield* harness();
+          const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
           const mcp = {
             environmentId: EnvironmentId.make("antigravity-native-mcp"),
             threadId: h.threadId,
@@ -368,10 +367,7 @@ it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (
             authorizationHeader: "Bearer synthetic-first-session",
             capabilities: new Set<never>(),
           };
-          yield* Effect.acquireRelease(
-            Effect.sync(() => McpProviderSession.setMcpProviderSession(mcp)),
-            () => Effect.sync(() => McpProviderSession.clearMcpProviderSession(h.threadId)),
-          );
+          yield* Effect.acquireRelease(mcpSessions.set(mcp), () => mcpSessions.clear(h.threadId));
           const firstScope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(firstScope, Exit.void));
           const originalSession = yield* h.open().pipe(Scope.provide(firstScope));
@@ -381,7 +377,7 @@ it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (
             runtimePolicy: h.policy,
           });
           yield* Scope.close(firstScope, Exit.void);
-          McpProviderSession.setMcpProviderSession({
+          yield* mcpSessions.set({
             ...mcp,
             authorizationHeader: "Bearer synthetic-resumed-session",
           });
@@ -475,19 +471,18 @@ it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (
     Effect.scoped(
       Effect.gen(function* () {
         const h = yield* harness({ configureMcp: false });
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         yield* Effect.acquireRelease(
-          Effect.sync(() =>
-            McpProviderSession.setMcpProviderSession({
-              environmentId: EnvironmentId.make("antigravity-disabled-mcp"),
-              threadId: h.threadId,
-              providerSessionId: "antigravity-disabled-mcp-session",
-              providerInstanceId: h.instanceId,
-              endpoint: "http://127.0.0.1:12345/mcp",
-              authorizationHeader: "Bearer synthetic-disabled-session",
-              capabilities: new Set<never>(),
-            }),
-          ),
-          () => Effect.sync(() => McpProviderSession.clearMcpProviderSession(h.threadId)),
+          mcpSessions.set({
+            environmentId: EnvironmentId.make("antigravity-disabled-mcp"),
+            threadId: h.threadId,
+            providerSessionId: "antigravity-disabled-mcp-session",
+            providerInstanceId: h.instanceId,
+            endpoint: "http://127.0.0.1:12345/mcp",
+            authorizationHeader: "Bearer synthetic-disabled-session",
+            capabilities: new Set<never>(),
+          }),
+          () => mcpSessions.clear(h.threadId),
         );
         const firstScope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(firstScope, Exit.void));

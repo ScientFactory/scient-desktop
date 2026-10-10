@@ -2,12 +2,13 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { ompProcessEnvironment as buildEnvironment } from "./OmpEnvironment.ts";
 
-/** POSIX unless a test says otherwise. */
+/** Explicit synthetic home and POSIX platform unless a test says otherwise. */
 const ompProcessEnvironment = (
-  input: Omit<Parameters<typeof buildEnvironment>[0], "platform"> & {
+  input: Omit<Parameters<typeof buildEnvironment>[0], "platform" | "homeDirectory"> & {
     readonly platform?: NodeJS.Platform;
+    readonly homeDirectory?: string;
   },
-) => buildEnvironment({ platform: "darwin", ...input });
+) => buildEnvironment({ platform: "darwin", homeDirectory: "/home/u", ...input });
 
 const LOGIN = {
   HOME: "/home/u",
@@ -161,6 +162,20 @@ describe("Oh My Pi process environment", () => {
     });
     expect(environment.PI_CODING_AGENT_DIR).toBe("/srv/omp-home");
     // A named profile would otherwise win over the agent directory.
+    expect(environment).not.toHaveProperty("OMP_PROFILE");
+    expect(environment).not.toHaveProperty("PI_PROFILE");
+  });
+
+  it("expands an instance home against the caller's home, not the child environment", () => {
+    const environment = ompProcessEnvironment({
+      homeDirectory: "/host/home",
+      baseEnv: { ...LOGIN, OMP_PROFILE: "inherited", PI_PROFILE: "legacy" },
+      instanceEnvironment: [{ name: "HOME", value: "/instance/home", sensitive: false }],
+      homePath: "~/.omp-work",
+      profile: "ignored",
+    });
+    expect(environment.HOME).toBe("/instance/home");
+    expect(environment.PI_CODING_AGENT_DIR).toBe("/host/home/.omp-work");
     expect(environment).not.toHaveProperty("OMP_PROFILE");
     expect(environment).not.toHaveProperty("PI_PROFILE");
   });

@@ -5,7 +5,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
-import { randomUuidV4 } from "../RandomUuid.ts";
+import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import {
   ClaudeAgentSdkReplayTranscript,
   CLAUDE_AGENT_SDK_REPLAY_PROTOCOL,

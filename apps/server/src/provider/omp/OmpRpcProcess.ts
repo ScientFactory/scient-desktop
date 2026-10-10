@@ -18,7 +18,7 @@ import type { OmpRpcModel } from "effect-omp-rpc/schema";
 import { makeOmpRpcClient, type OmpRpcClient, type OmpRpcFrameTrace } from "effect-omp-rpc/client";
 import { OmpRpcProtocolError, type OmpRpcError } from "effect-omp-rpc/errors";
 
-import { spawnAndCollect } from "../providerSnapshot.ts";
+import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import type { OmpModelRefreshError } from "./OmpModel.ts";
 import {
   canonicalOmpExecutablePath,

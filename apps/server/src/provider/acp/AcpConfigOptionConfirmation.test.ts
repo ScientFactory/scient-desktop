@@ -15,7 +15,7 @@ import * as Schema from "effect/Schema";
 import * as EffectAcpErrors from "effect-acp/errors";
 import { describe, expect } from "vite-plus/test";
 
-import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 /**
  * A raw JSON-RPC agent whose answer to each `session/set_config_option` is

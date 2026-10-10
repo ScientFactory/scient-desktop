@@ -34,7 +34,7 @@
  * what it is for.
  */
 import { ExecutionRunId } from "@scientfactory/execution";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import type * as Duration from "effect/Duration";
@@ -317,8 +317,8 @@ export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
-  const hostEnvironment = yield* HostProcessEnvironment;
+  const platform = yield* HostProcess.Platform;
+  const hostEnvironment = yield* HostProcess.Environment;
   const pathDelimiter = platform === "win32" ? ";" : ":";
   // `tlmgr` writes the distribution's own package database, so two runs
   // against one tree are a lock error at best. Every run below takes this.

@@ -20,21 +20,32 @@
  *
  * @module provider/builtInDrivers
  */
-import { compareProviderDriverKinds } from "@t3tools/contracts";
-
-import { AcpRegistryDriver, type AcpRegistryDriverEnv } from "./Drivers/AcpRegistryDriver.ts";
 import { AntigravityDriver, type AntigravityDriverEnv } from "./Drivers/AntigravityDriver.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
-import { CursorDriver, type CursorDriverEnv } from "./Drivers/CursorDriver.ts";
+import type { CursorDriverEnv } from "@t3tools/provider-cursor/server";
+import { type MuseDriverEnv } from "@t3tools/provider-muse/server";
+import type { AnyProviderDriver } from "@t3tools/provider-core/server/driver";
+import { compareProviderDriverKinds } from "@t3tools/contracts";
 import { DroidDriver, type DroidDriverEnv } from "./Drivers/DroidDriver.ts";
-import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
-import { OpenCodeDriver, type OpenCodeDriverEnv } from "./Drivers/OpenCodeDriver.ts";
 import { OmpDriver, type OmpDriverEnv } from "./Drivers/OmpDriver.ts";
-import { MuseDriver, type MuseDriverEnv } from "./Drivers/MuseDriver.ts";
-import { PiDriver, type PiDriverEnv } from "./Drivers/PiDriver.ts";
 import { ScientAgentDriver, type ScientAgentDriverEnv } from "./Drivers/ScientAgentDriver.ts";
-import type { AnyProviderDriver } from "./ProviderDriver.ts";
+import {
+  CursorDriver,
+  type CursorDriverCompositionEnv,
+} from "./Drivers/CursorDriverComposition.ts";
+import {
+  AcpRegistryDriver,
+  GrokDriver,
+  type AcpRegistryCompositionEnv,
+  type GrokCompositionRequirements,
+} from "./AppProviderDriverComposition.ts";
+import { OpenCodeDriver, type OpenCodeCompositionEnv } from "./OpenCodeDriverComposition.ts";
+import { PiDriver, type PiCompositionRequirements } from "./PiDriverComposition.ts";
+// SCIENT-FORK:START Scient Muse application composition
+import { MuseDriver } from "./MuseDriverComposition.ts";
+// SCIENT-FORK:END Scient Muse application composition
+import type { ProviderUsageReaderEnv } from "@t3tools/provider-core/server/driver";
 
 /**
  * Union of infrastructure services required to construct any built-in
@@ -42,16 +53,17 @@ import type { AnyProviderDriver } from "./ProviderDriver.ts";
  * layer must provide every service in this union.
  */
 export type BuiltInDriversEnv =
-  | AcpRegistryDriverEnv
+  | AcpRegistryCompositionEnv
   | AntigravityDriverEnv
   | ClaudeDriverEnv
   | CodexDriverEnv
   | CursorDriverEnv
+  | CursorDriverCompositionEnv
   | DroidDriverEnv
-  | GrokDriverEnv
-  | OpenCodeDriverEnv
+  | GrokCompositionRequirements
+  | OpenCodeCompositionEnv
   | OmpDriverEnv
-  | PiDriverEnv
+  | PiCompositionRequirements
   | MuseDriverEnv
   | ScientAgentDriverEnv;
 
@@ -74,3 +86,17 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   ScientAgentDriver,
   MuseDriver,
 ].toSorted((left, right) => compareProviderDriverKinds(left.driverKind, right.driverKind));
+
+/** Services the built-in usage readers need. */
+export type BuiltInUsageReadersEnv =
+  | ProviderUsageReaderEnv<typeof ClaudeDriver>
+  | ProviderUsageReaderEnv<typeof CodexDriver>
+  | ProviderUsageReaderEnv<typeof GrokDriver>
+  | ProviderUsageReaderEnv<typeof OpenCodeDriver>
+  | ProviderUsageReaderEnv<typeof AntigravityDriver>
+  | ProviderUsageReaderEnv<typeof CursorDriver>;
+
+/** Transcript readers precede scan readers; first duplicates win aggregation. */
+export const BUILT_IN_USAGE_DRIVERS: ReadonlyArray<
+  AnyProviderDriver<BuiltInDriversEnv, BuiltInUsageReadersEnv>
+> = [ClaudeDriver, CodexDriver, GrokDriver, OpenCodeDriver, AntigravityDriver, CursorDriver];

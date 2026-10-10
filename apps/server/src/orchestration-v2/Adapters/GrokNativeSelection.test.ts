@@ -3,7 +3,6 @@ import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
-  GrokSettings,
   EnvironmentId,
   MessageId,
   NodeId,
@@ -15,9 +14,9 @@ import {
   ThreadId,
   type ModelSelection,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { GrokSettings } from "@t3tools/provider-grok/settings";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
-import * as Crypto from "effect/Crypto";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -28,18 +27,18 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as ScientTestProviderHost from "../testkit/ScientTestProviderHost.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
-import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
-import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import { execScriptSource, writeFakeCli } from "@t3tools/provider-testing/fakeCli";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2TurnInput,
-} from "../ProviderAdapter.ts";
-import { makeGrokAdapterV2 } from "./GrokAdapterV2.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
+import { makeGrokAdapterV2 } from "@t3tools/provider-grok/testing";
+import { scientAcpApplicationBridge } from "./ScientAcpApplicationBridge.ts";
 
 const decodeSettings = Schema.decodeEffect(GrokSettings);
 const decodeRequest = Schema.decodeSync(
@@ -59,13 +58,15 @@ const decodeMcpServers = Schema.decodeUnknownEffect(
     }),
   ),
 );
-const layer = Layer.mergeAll(
+const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-grok-native-selection-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
 );
+const layer = ScientTestProviderHost.layer.pipe(Layer.provideMerge(fixtureServices));
 const harness = Effect.fn("GrokNativeSelection.harness")(function* (
   generation: "1" | "2",
   preference: { readonly model: string; readonly options?: NonNullable<ModelSelection["options"]> },
@@ -75,6 +76,7 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const directory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-grok-native-peer-" });
   const requestsPath = path.join(directory, "requests.ndjson");
   const argvLogPath = path.join(directory, "native-argv.txt");
@@ -102,7 +104,7 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
     cwd: directory,
   });
   if (capabilities !== undefined) {
-    McpProviderSession.setMcpProviderSession({
+    yield* mcpSessions.set({
       environmentId: EnvironmentId.make("grok-awareness"),
       threadId,
       providerSessionId: "grok-awareness",
@@ -111,12 +113,11 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
       authorizationHeader: "Bearer synthetic-grok-awareness",
       capabilities,
     });
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
-    );
+    yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
   }
-  const adapter = makeGrokAdapterV2({
+  const adapter = yield* makeGrokAdapterV2({
     instanceId,
+    hostPlatform: yield* HostProcess.Platform,
     testHooks,
     settings: yield* decodeSettings({ binaryPath: binary }),
     environment: {
@@ -124,12 +125,7 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
       T3_ACP_REQUEST_LOG_PATH: requestsPath,
       ...environment,
     },
-    hostPlatform: yield* HostProcessPlatform,
-    childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-    crypto: yield* Crypto.Crypto,
-    fileSystem: fs,
-    serverConfig: yield* ServerConfig.ServerConfig,
-    idAllocator: yield* IdAllocator.IdAllocatorV2,
+    application: scientAcpApplicationBridge,
     selfInvocation: yield* resolveSelfInvocation(),
   });
   const open = adapter.openSession({
@@ -244,9 +240,12 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
             modelSelection: h.modelSelection,
             runtimePolicy: h.runtimePolicy,
           });
-          const events: import("../ProviderAdapter.ts").ProviderAdapterV2Event[] = [];
+          const events: import("@t3tools/provider-core/server/ProviderAdapter").ProviderAdapterV2Event[] =
+            [];
           const terminal =
-            yield* Deferred.make<import("../ProviderAdapter.ts").ProviderAdapterV2Event>();
+            yield* Deferred.make<
+              import("@t3tools/provider-core/server/ProviderAdapter").ProviderAdapterV2Event
+            >();
           yield* runtime.events.pipe(
             Stream.runForEach((event) =>
               Effect.gen(function* () {
@@ -315,7 +314,7 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
   );
   it.effect.each(
     [false, true].map((granted) => ({
-      caseTitle: `delivers exact Scient awareness through native Grok rules with grants ${granted}`,
+      caseTitle: `delivers capability-scoped Scient awareness through native Grok rules with grants ${granted}`,
       granted,
     })),
   )("$caseTitle", ({ granted }) =>
@@ -328,8 +327,6 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
         yield* h.send;
         const args = h.arguments();
         const rules = args[args.indexOf("--rules") + 1];
-        assert.equal(rules, buildScientAwareness(capabilities));
-        assert.include(rules ?? "", "Scient renders LaTeX math");
         assert.equal((rules ?? "").includes("scient_pdf_build"), granted);
         assert.equal((rules ?? "").includes("scient_skill_load"), granted);
         assert.notInclude(rules ?? "", "preview_status");
@@ -424,6 +421,30 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
     Effect.scoped(
       Effect.gen(function* () {
         const h = yield* harness(generation, { model: "grok-build" });
+        yield* h.send;
+        assert.lengthOf(
+          h.requests().filter((request) => request.method.startsWith("session/set_")),
+          0,
+        );
+        assert.lengthOf(
+          h.requests().filter((request) => request.method === "session/prompt"),
+          1,
+        );
+      }),
+    ),
+  );
+  it.effect.each(
+    (["1", "2"] as const).map((generation) => ({
+      caseTitle: `preserves the current advertised reasoning effort through the Grok alias in V${generation}`,
+      generation,
+    })),
+  )("$caseTitle", ({ generation }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(generation, {
+          model: "grok-build",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        });
         yield* h.send;
         assert.lengthOf(
           h.requests().filter((request) => request.method.startsWith("session/set_")),

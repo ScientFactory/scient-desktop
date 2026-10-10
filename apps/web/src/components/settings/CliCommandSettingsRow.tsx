@@ -51,11 +51,13 @@ export function CliCommandSettingsRow() {
 
   if (!bridge || !state?.supported) return null;
   const installed = state.installedPath !== null;
-  const description = !installed
-    ? "Run Scient's CLI as `scient` from any terminal."
-    : state.onPath
-      ? `Installed at ${state.installedPath}. Open a new terminal to use it.`
-      : `Installed at ${state.installedPath}, which is not on your PATH yet. Add its folder to your PATH to run \`scient\`.`;
+  const description = state.shadowedBy
+    ? `Another CLI at ${state.shadowedBy} runs first in a new terminal. Remove it to use Scient's.`
+    : !installed
+      ? "Run Scient's CLI as `scient` from any terminal."
+      : state.onPath
+        ? "Installed at " + state.installedPath + ". Open a new terminal to use it."
+        : `Installed at ${state.installedPath}, which is not on your PATH yet. Add its folder to your PATH to run \`scient\`.`;
 
   return (
     <SettingsRow

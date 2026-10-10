@@ -31,7 +31,8 @@ import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import type * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
@@ -39,7 +40,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import {
   ProviderAdapterEventStreamError,
@@ -47,8 +48,8 @@ import {
   ProviderAdapterProtocolError,
   type ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2SessionRuntime,
-  type ProviderAdapterV2Shape,
-} from "../ProviderAdapter.ts";
+  type ProviderAdapterV2,
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
 import * as ProviderSessionManager from "../ProviderSessionManager.ts";
@@ -167,7 +168,7 @@ function makeProviderSession(input: {
 }
 
 function makeThreadCreatedEvent(input: {
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly threadId: ThreadId;
   readonly now: DateTime.Utc;
   readonly projectId?: ProjectId;
@@ -220,7 +221,7 @@ function makeThreadCreatedEvent(input: {
 }
 
 function makeProviderThread(input: {
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly threadId: ThreadId;
   readonly providerSessionId: ProviderSessionId;
   readonly now: DateTime.Utc;
@@ -261,7 +262,7 @@ function unimplemented(detail: string) {
   );
 }
 
-function makeProviderAdapter(
+const makeProviderAdapter = Effect.fn("makeProviderAdapter")(function* (
   state: Ref.Ref<TestProviderRuntimeState>,
   options: {
     readonly instanceId?: ProviderInstanceId;
@@ -279,7 +280,7 @@ function makeProviderAdapter(
       readonly initialProviderItemIdentityVersion?: 2;
       readonly threadId: ThreadId;
       readonly configureMcp?: boolean;
-    }) => Effect.Effect<void>;
+    }) => Effect.Effect<void, never, McpProviderSessions.McpProviderSessions>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
     readonly closeSession?: (id: ProviderSessionId) => Effect.Effect<void>;
@@ -293,7 +294,8 @@ function makeProviderAdapter(
     readonly steerTurn?: ProviderAdapterV2SessionRuntime["steerTurn"];
     readonly invalidateInitiatedWork?: ProviderAdapterV2SessionRuntime["invalidateInitiatedWork"];
   } = {},
-): ProviderAdapterV2Shape {
+): Effect.fn.Return<ProviderAdapterV2["Service"], never, McpProviderSessions.McpProviderSessions> {
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const driver = options.driver ?? CODEX_DRIVER;
   const instanceId = options.instanceId ?? modelSelection.instanceId;
   return {
@@ -307,15 +309,14 @@ function makeProviderAdapter(
     openSession: (input) =>
       Effect.gen(function* () {
         if (options.spawnBeforeOpen !== true && options.beforeOpen !== undefined) {
-          yield* options.beforeOpen(input);
+          yield* options
+            .beforeOpen(input)
+            .pipe(Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions));
         }
         if (options.mcpConfigs !== undefined) {
-          yield* Ref.update(options.mcpConfigs, (configs) => [
-            ...configs,
-            input.configureMcp === false
-              ? undefined
-              : McpProviderSession.readMcpProviderSession(input.threadId),
-          ]);
+          const config =
+            input.configureMcp === false ? undefined : yield* mcpSessions.read(input.threadId);
+          yield* Ref.update(options.mcpConfigs, (configs) => [...configs, config]);
         }
         const now = yield* DateTime.now;
         const openOrdinal = (yield* Ref.get(state)).openCount + 1;
@@ -350,7 +351,9 @@ function makeProviderAdapter(
         }
 
         if (options.spawnBeforeOpen === true && options.beforeOpen !== undefined) {
-          yield* options.beforeOpen(input);
+          yield* options
+            .beforeOpen(input)
+            .pipe(Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions));
         }
 
         return {
@@ -429,11 +432,16 @@ function makeProviderAdapter(
         } satisfies ProviderAdapterV2SessionRuntime;
       }),
   };
-}
+});
 
 function makeTestLayer(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
-  readonly adapterRegistryLayer?: Layer.Layer<ProviderAdapterRegistry.ProviderAdapterRegistryV2>;
+  readonly adapterRegistryLayer?: Layer.Layer<
+    ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+    never,
+    McpProviderSessions.McpProviderSessions
+  >;
+  readonly mcpProviderSessionsLayer?: Layer.Layer<McpProviderSessions.McpProviderSessions>;
   readonly idleTimeoutMs: number;
   readonly driver?: ProviderDriverKind;
   readonly maxIdlePinMs?: number;
@@ -452,7 +460,7 @@ function makeTestLayer(input: {
     readonly initialProviderItemIdentityVersion?: 2;
     readonly threadId: ThreadId;
     readonly configureMcp?: boolean;
-  }) => Effect.Effect<void>;
+  }) => Effect.Effect<void, never, McpProviderSessions.McpProviderSessions>;
   readonly releaseWriteFailure?: ReleaseWriteFailureControl;
   readonly onAuthenticationFailure?: ProviderRegistry.ProviderRegistry["Service"]["setProviderAuthenticationFailure"];
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
@@ -506,18 +514,21 @@ function makeTestLayer(input: {
   const injectionEnabled = input.mcpInjectionEnabled;
   const registryLayer =
     input.adapterRegistryLayer ??
-    (injectionEnabled === undefined
-      ? ProviderAdapterRegistry.layerSingle(configuredAdapter)
-      : Layer.succeed(
-          ProviderAdapterRegistry.ProviderAdapterRegistryV2,
-          ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
-            get: () =>
-              Ref.get(injectionEnabled).pipe(
-                Effect.map((enabled) => ({ ...configuredAdapter, mcpSessionInjection: enabled })),
-              ),
-            list: () => Effect.succeed([configuredAdapter.instanceId]),
-          }),
-        ));
+    Layer.effect(
+      ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+      Effect.gen(function* () {
+        const adapter = yield* configuredAdapter;
+        return ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
+          get: () =>
+            injectionEnabled === undefined
+              ? Effect.succeed(adapter)
+              : Ref.get(injectionEnabled).pipe(
+                  Effect.map((enabled) => ({ ...adapter, mcpSessionInjection: enabled })),
+                ),
+          list: () => Effect.succeed([adapter.instanceId]),
+        });
+      }),
+    );
   const providerEventIngestorTestLayer = ProviderEventIngestor.layer.pipe(
     Layer.provide(Layer.mergeAll(configuredEventSinkLayer, IdAllocator.layer, TestStoresLayer)),
   );
@@ -551,7 +562,11 @@ function makeTestLayer(input: {
         ),
       ),
     ),
-  ).pipe(Layer.provide(ThreadCommandExecutor.layer), Layer.provide(NodeServices.layer));
+  ).pipe(
+    Layer.provide(ThreadCommandExecutor.layer),
+    Layer.provide(NodeServices.layer),
+    Layer.provideMerge(input.mcpProviderSessionsLayer ?? McpProviderSessions.layer),
+  );
 }
 
 const fakeHttpServer = HttpServer.HttpServer.of({
@@ -627,6 +642,7 @@ function runBrowserAccessScenario(input: {
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const now = yield* DateTime.now;
       const providerSessionId = yield* idAllocator.allocate.providerSession({
         providerInstanceId: modelSelection.instanceId,
@@ -644,7 +660,7 @@ function runBrowserAccessScenario(input: {
             // absent for that capture, then becomes durable for native retirement.
             const absent = yield* projections.getThreadProjection(threadId).pipe(Effect.flip);
             assert.equal(absent._tag, "ProjectionStoreThreadNotFoundError");
-            const captured = McpProviderSession.readMcpProviderSession(threadId);
+            const captured = yield* mcpSessions.read(threadId);
             assert.isDefined(captured);
             assert.isFalse(captured!.capabilities.has("preview"));
             yield* eventSink.write({ events: [created] });
@@ -701,7 +717,7 @@ function runBrowserAccessScenario(input: {
 }
 
 function makePendingRuntimeRequestEvents(input: {
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly threadId: ThreadId;
   readonly providerSessionId: ProviderSessionId;
   readonly providerThread: OrchestrationV2ProviderThread;

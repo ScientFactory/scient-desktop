@@ -9,7 +9,7 @@ import {
   ProviderTextSnapshotError,
   type CapturedProviderText,
   type ProviderTextSnapshotOwner,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   EventId,
   ContextTransferId,
@@ -43,7 +43,7 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { ProjectStoreV2 } from "../ProjectStore.ts";
 import { ThreadCommandExecutor } from "../ThreadCommandExecutor.ts";
-import { randomUuidV4 } from "../RandomUuid.ts";
+import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
 import { ScientForkCheckpointBaseline } from "./ForkCheckpointBaseline.ts";
 import {

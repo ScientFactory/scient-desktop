@@ -48,7 +48,7 @@ import {
 } from "../../attachmentStore.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import type { McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import { scientInvocationForMcp } from "../../mcp/ScientMcpInvocation.ts";
 import {
@@ -64,7 +64,10 @@ import * as ThreadManagement from "../ThreadManagementService.ts";
 import * as ThreadMessageIntake from "../ThreadMessageIntake.ts";
 import * as ProjectCloneTracker from "../../project/ProjectCloneTracker.ts";
 import { makeCodexAdapterV2 } from "../Adapters/CodexAdapterV2.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
+import {
+  IdAllocatorV2,
+  layer as idAllocatorLayer,
+} from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import {
   ProviderTurnControlServiceV2,
@@ -75,11 +78,8 @@ import { OrchestrationEffectWorkerV2 } from "../EffectWorker.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import { ProjectStoreV2 } from "../ProjectStore.ts";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
-import {
-  layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
-  makeReplayServerConfig,
-} from "./ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const jsonSchema = Schema.fromJsonString(Schema.Unknown);
 const encodeJson = Schema.encodeSync(jsonSchema);
@@ -144,7 +144,7 @@ const runConjunction = (refusal = false) =>
         path.join(skillPath, "SKILL.md"),
         "---\nname: project-method\ndescription: Controlled conjunction evidence.\n---\n\n# Method\n\nRetain exact inputs.\n",
       );
-      const config = yield* makeReplayServerConfig(name);
+      const config = yield* ProviderReplayHarness.makeReplayServerConfig(name);
       const configLayer = Layer.succeed(ServerConfig.ServerConfig, config);
       yield* Effect.addFinalizer(() =>
         fs.remove(config.stateDir, { recursive: true }).pipe(Effect.ignore),
@@ -157,6 +157,7 @@ const runConjunction = (refusal = false) =>
       const threadId = ThreadId.make(name);
       const selection = { instanceId, model: "gpt-5.4" };
       const allocator = yield* IdAllocatorV2;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       let offeredScope: McpInvocationScope | undefined;
       const offered = yield* Deferred.make<typeof CodexSchema.V2TurnStartParams.Type>();
       const peerInput = yield* Queue.unbounded<Uint8Array, Cause.Done<void>>();
@@ -235,7 +236,7 @@ const runConjunction = (refusal = false) =>
             case "turn/start": {
               const params = yield* decodeTurnStart(frame.params);
               nativeOffers.push(params);
-              const session = McpProviderSession.readMcpProviderSession(threadId);
+              const session = yield* mcpSessions.read(threadId);
               assert.ok(session);
               offeredScope = yield* registry.resolve(
                 session.authorizationHeader.replace(/^Bearer\s+/, ""),
@@ -266,7 +267,7 @@ const runConjunction = (refusal = false) =>
       const settings = yield* decodeSettings({
         binaryPath: process.execPath,
       });
-      const adapter = makeCodexAdapterV2({
+      const adapter = yield* makeCodexAdapterV2({
         crypto: yield* Crypto.Crypto,
         instanceId,
         settings,
@@ -374,12 +375,16 @@ const runConjunction = (refusal = false) =>
       const uploaded = yield* uploadFiles();
       const runtimeLayer = ThreadManagement.layer.pipe(
         Layer.provideMerge(
-          makeOrchestratorV2ReplayLayerWithRegistry(
+          ProviderReplayHarness.layerWithRegistry(
             { name, runtimePolicyOverride: { cwd } },
             makeLayer([adapter]),
             {
               layerServerConfig: configLayer,
               configureMcp: true,
+              mcpProviderSessionsLayer: Layer.succeed(
+                McpProviderSessions.McpProviderSessions,
+                mcpSessions,
+              ),
               mcpSessionRegistryLayer: Layer.succeed(
                 McpSessionRegistry.McpSessionRegistry,
                 registry,
@@ -524,7 +529,7 @@ const runConjunction = (refusal = false) =>
           type: "image",
           url: `data:image/png;base64,${Buffer.from(imageBytes).toString("base64")}`,
         });
-        const session = McpProviderSession.readMcpProviderSession(threadId);
+        const session = yield* mcpSessions.read(threadId);
         assert.ok(session);
         const scope = yield* registry.resolve(
           session.authorizationHeader.replace(/^Bearer\s+/, ""),
@@ -868,7 +873,11 @@ const runConjunction = (refusal = false) =>
           beforeEndedSteer,
         );
       }).pipe(Effect.provide(controlLayer.pipe(Layer.provideMerge(runtimeLayer))));
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, idAllocatorLayer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
 it.live(

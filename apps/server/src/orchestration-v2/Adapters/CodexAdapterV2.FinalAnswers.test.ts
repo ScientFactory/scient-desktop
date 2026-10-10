@@ -6,7 +6,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   makeCodexReplayTranscript,
   codexReplayPreamble,
@@ -144,7 +145,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assistantMessages(harness.events).map((event) => event.message.text),
           ["CODEX_RECOVERY_OK"],
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -188,7 +193,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assistantMessages(harness.events).map((event) => event.message.text),
           ["CODEX_RECOVERY_OK"],
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -325,7 +334,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           new Set(assistantMessages(harness.events).map((event) => event.message.id)).size,
           1,
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -353,7 +366,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assistantMessages(harness.events).map((event) => event.message.text),
           [""],
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -382,7 +399,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assistantMessages(harness.events).map((event) => event.message.text),
           [""],
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -411,7 +432,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assistantMessages(harness.events).map((event) => event.message.text),
           ["Working on it.", ""],
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -440,7 +465,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assistantMessages(harness.events).map((event) => event.message.text),
           ["CODEX_RECOVERY_OK"],
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -469,7 +498,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assistantMessages(harness.events).map((event) => event.message.text),
           ["CODEX_RECOVERY_OK"],
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -498,7 +531,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assistantMessages(harness.events).map((event) => event.message.text),
           ["", "CODEX_RECOVERY_OK"],
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 });

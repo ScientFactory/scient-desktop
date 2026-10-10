@@ -14,8 +14,8 @@ import {
 import { describe, it, assert } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
-import { ProviderAdapterForkThreadError } from "../ProviderAdapter.ts";
+import type { EventNdjsonLogger } from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { ProviderAdapterForkThreadError } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { encodeUnknownJson } from "./CodexAdapterV2.replay.testkit.ts";
 

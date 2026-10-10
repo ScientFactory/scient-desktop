@@ -1,7 +1,6 @@
-import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { ProviderDriverKind, type DroidSettings } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -26,15 +25,26 @@ import {
 } from "../../provider/droid/DroidSubagents.ts";
 import { makeDroidToolPresentation } from "./DroidToolPresentation.ts";
 import { confirmDroidTurnAdmission } from "./DroidTurnAdmission.ts";
-import { acpPermissionDisposition } from "../../provider/acp/AcpClientPolicy.ts";
+import {
+  DroidSteerDeferred,
+  makeAcpDroidSteerSupervision,
+  makeDroidSteerSafety,
+} from "./DroidSteerSafety.ts";
+import {
+  isPreAcceptanceRejectionCode,
+  nativeTurnAcceptance,
+} from "../scient-provider/NativeTurnReceipts.ts";
+import { scientAcpApplicationBridge } from "./ScientAcpApplicationBridge.ts";
+import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
 import { isDroidAuthenticationRequiredError } from "../../provider/DroidProvider.ts";
-import { makeProviderFailure } from "../ProviderFailure.ts";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
   type AcpAdapterV2Flavor,
   type AcpAdapterV2Options,
-} from "./AcpAdapterV2.ts";
+} from "@t3tools/provider-acp/server/adapter";
 
 export interface DroidAdapterV2Options extends Omit<AcpAdapterV2Options, "flavor"> {
   readonly settings: DroidSettings;
@@ -163,8 +173,16 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
       );
     },
     outputTruncationMessage: (runtime) => runtimes.get(runtime)?.requestLimitBreach?.()?.message,
-    // SCIENT-FORK:START — held intent requires a final live native reservation.
-    droidHeldSteering: true,
+    application: {
+      ...scientAcpApplicationBridge,
+      droidSteering: {
+        enabled: true,
+        makeSafety: makeDroidSteerSafety,
+        makeSupervision: makeAcpDroidSteerSupervision,
+        deferredError: () => new DroidSteerDeferred(),
+      },
+    },
+    // SCIENT-FORK:START — settled interrupt carryover preserves native subagents.
     preserveRuntimeOnSettledInterrupt: true,
     // SCIENT-FORK:END
     terminalizeRunOwnedItemsOnFailure: true,
@@ -191,7 +209,7 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
         : acpPermissionDisposition(policy, request),
     makeRuntime: (input) =>
       Effect.gen(function* () {
-        const platform = yield* HostProcessPlatform;
+        const platform = yield* HostProcess.Platform;
         const runtime = yield* options.makeRuntime({
           ...input,
           droidSettings: options.settings,

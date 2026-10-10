@@ -188,6 +188,13 @@ export interface ThreadPanelVisibility {
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
   restoreThreadState: (ref: ScopedThreadRef, state: ThreadRightPanelState) => void;
+  /**
+   * A thread whose right panel should open maximized the next time it shows,
+   * such as one started for a link the OS opened. Its view consumes it once.
+   */
+  pendingMaximizeThreadKey: string | null;
+  requestMaximize: (ref: ScopedThreadRef) => void;
+  consumeMaximizeRequest: (ref: ScopedThreadRef) => boolean;
   threadPanelVisibilityByThreadKey: Record<string, ThreadPanelVisibility>;
   /** Session-only count of user panel choices per thread. Automatic updates do not advance it. */
   userActionRevisionByThreadKey: Record<string, number>;
@@ -273,6 +280,7 @@ interface RightPanelStoreState {
   closeOtherSurfaces: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeSurfacesToRight: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeAllSurfaces: (ref: ScopedThreadRef) => void;
+  moveSurface: (ref: ScopedThreadRef, surfaceId: string, toIndex: number) => void;
   reconcileBrowserSurfaces: (
     ref: ScopedThreadRef,
     tabIds: readonly string[],
@@ -402,14 +410,26 @@ const upsertSurface = (
   current: ThreadRightPanelState,
   surface: RightPanelSurface,
   activate = true,
-): ThreadRightPanelState => ({
-  ...current,
-  isOpen: true,
-  surfaces: current.surfaces.some((entry) => entry.id === surface.id)
-    ? current.surfaces
-    : [...current.surfaces, surface],
-  activeSurfaceId: activate ? surface.id : current.activeSurfaceId,
-});
+  replacePlaceholderId?: string,
+): ThreadRightPanelState => {
+  const exists = current.surfaces.some((entry) => entry.id === surface.id);
+  const placeholderIndex = replacePlaceholderId
+    ? current.surfaces.findIndex((entry) => entry.id === replacePlaceholderId)
+    : -1;
+  let surfaces = current.surfaces;
+  if (placeholderIndex !== -1) {
+    surfaces = current.surfaces.filter((entry) => entry.id !== replacePlaceholderId);
+    if (!exists) surfaces.splice(placeholderIndex, 0, surface);
+  } else if (!exists) {
+    surfaces = [...current.surfaces, surface];
+  }
+  return {
+    ...current,
+    isOpen: true,
+    surfaces,
+    activeSurfaceId: activate ? surface.id : current.activeSurfaceId,
+  };
+};
 
 const updateThreadStateMap = (
   byThreadKey: Record<string, ThreadRightPanelState>,
@@ -732,6 +752,13 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         set((state) => ({
           ...updateThread(state, scopedThreadKey(ref), () => restored),
         })),
+      pendingMaximizeThreadKey: null,
+      requestMaximize: (ref) => set({ pendingMaximizeThreadKey: scopedThreadKey(ref) }),
+      consumeMaximizeRequest: (ref) => {
+        if (get().pendingMaximizeThreadKey !== scopedThreadKey(ref)) return false;
+        set({ pendingMaximizeThreadKey: null });
+        return true;
+      },
       threadPanelVisibilityByThreadKey: {},
       userActionRevisionByThreadKey: {},
       closeRevisionByThreadKey: {},
@@ -807,11 +834,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       openBrowser: (ref, tabId) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
-            const surface = browserSurface(tabId);
-            const withoutPlaceholder = tabId
-              ? current.surfaces.filter((entry) => entry.id !== "browser:new")
-              : current.surfaces;
-            return upsertSurface({ ...current, surfaces: withoutPlaceholder }, surface);
+            return upsertSurface(
+              current,
+              browserSurface(tabId),
+              true,
+              tabId ? "browser:new" : undefined,
+            );
           }),
         ),
       openPullRequest: (ref, target) =>
@@ -872,11 +900,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const relativePath = /^[A-Za-z]:\/+$/.test(requestedPath)
               ? requestedPath
               : requestedPath.replace(/\/+$/, "") || requestedPath;
-            const withoutStandaloneExplorer = current.surfaces.filter(
-              (surface) => surface.kind !== "files",
-            );
             const surfaceId = `file:${relativePath}` as const;
-            const existing = withoutStandaloneExplorer.find(
+            const existing = current.surfaces.find(
               (surface): surface is Extract<RightPanelSurface, { kind: "file" }> =>
                 surface.id === surfaceId && surface.kind === "file",
             );
@@ -887,28 +912,25 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               revealRequestId,
               options,
             );
-            return {
-              ...current,
-              isOpen: true,
-              activeSurfaceId: surface.id,
-              surfaces: existing
-                ? withoutStandaloneExplorer.map((entry) =>
-                    entry.id === surface.id ? surface : entry,
-                  )
-                : [...withoutStandaloneExplorer, surface],
-            };
+            return upsertSurface(
+              existing
+                ? {
+                    ...current,
+                    surfaces: current.surfaces.map((entry) =>
+                      entry.id === surface.id ? surface : entry,
+                    ),
+                  }
+                : current,
+              surface,
+              true,
+              "files",
+            );
           }),
         ),
       openAttachment: (ref, attachment) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
-            const withoutStandaloneExplorer = current.surfaces.filter(
-              (surface) => surface.kind !== "files",
-            );
-            return upsertSurface(
-              { ...current, surfaces: withoutStandaloneExplorer },
-              attachmentSurface(attachment),
-            );
+            return upsertSurface(current, attachmentSurface(attachment), true, "files");
           }),
         ),
       openTerminal: (ref, terminalId) =>
@@ -1056,40 +1078,59 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               : { ...current, isOpen: false, surfaces: [], activeSurfaceId: null },
           ),
         ),
+      // Reordering is not a choice about what the panel shows, so it leaves the
+      // user-action revision alone and proactive opens still apply.
+      moveSurface: (ref, surfaceId, toIndex) =>
+        set((state) =>
+          updateThread(state, scopedThreadKey(ref), (current) => {
+            const fromIndex = current.surfaces.findIndex((surface) => surface.id === surfaceId);
+            if (fromIndex < 0 || fromIndex === toIndex) return current;
+            const surfaces = [...current.surfaces];
+            surfaces.splice(toIndex, 0, ...surfaces.splice(fromIndex, 1));
+            return { ...current, surfaces };
+          }),
+        ),
       reconcileBrowserSurfaces: (ref, tabIds, hiddenTabIds) =>
         set((state) =>
           automaticUpdate(state, scopedThreadKey(ref), (current) => {
             const validIds = new Set(tabIds.map((tabId) => `browser:${tabId}`));
-            const nonBrowser = current.surfaces.filter((surface) => surface.kind !== "preview");
-            const existingBrowser = current.surfaces.filter(
-              (surface): surface is Extract<RightPanelSurface, { kind: "preview" }> =>
-                surface.kind === "preview" &&
-                surface.id !== "browser:new" &&
-                validIds.has(surface.id),
-            );
-            const placeholder =
-              tabIds.length === 0
-                ? current.surfaces.find((surface) => surface.id === "browser:new")
-                : undefined;
-            const knownIds = new Set(existingBrowser.map((surface) => surface.id));
+            const knownIds = new Set(current.surfaces.map((surface) => surface.id));
             const added = tabIds
               .filter((tabId) => !knownIds.has(`browser:${tabId}`) && !hiddenTabIds?.has(tabId))
               .map((tabId) => browserSurface(tabId));
-            const surfaces = [
-              ...nonBrowser,
-              ...(placeholder === undefined ? [] : [placeholder]),
-              ...existingBrowser,
-              ...added,
-            ];
+            const replacement = added[0];
+            const surfaces: RightPanelSurface[] = [];
+            let replacedPlaceholder = false;
+            // A snapshot may arrive before openBrowser. Replace the placeholder in
+            // its current slot so either delivery order preserves the user's drag.
+            for (const surface of current.surfaces) {
+              if (surface.kind !== "preview" || validIds.has(surface.id)) {
+                surfaces.push(surface);
+              } else if (surface.id === "browser:new") {
+                if (replacement) {
+                  surfaces.push(replacement);
+                  replacedPlaceholder = true;
+                } else if (tabIds.length === 0) {
+                  surfaces.push(surface);
+                }
+              }
+            }
+            for (let index = replacedPlaceholder ? 1 : 0; index < added.length; index++) {
+              surfaces.push(added[index]!);
+            }
+            const nextActiveSurfaceId =
+              current.activeSurfaceId === "browser:new" && replacedPlaceholder && replacement
+                ? replacement.id
+                : current.activeSurfaceId;
             const activeStillExists = surfaces.some(
-              (surface) => surface.id === current.activeSurfaceId,
+              (surface) => surface.id === nextActiveSurfaceId,
             );
             const fallbackBrowser = surfaces.find((surface) => surface.kind === "preview");
             return {
               ...current,
               surfaces,
               activeSurfaceId: activeStillExists
-                ? current.activeSurfaceId
+                ? nextActiveSurfaceId
                 : (fallbackBrowser?.id ?? surfaces[0]?.id ?? null),
             };
           }),

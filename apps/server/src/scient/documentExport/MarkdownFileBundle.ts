@@ -12,7 +12,7 @@ import {
   type DocumentWarning,
   type Sha256Digest,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -150,7 +150,7 @@ export const readProjectMarkdownFile = Effect.fn("MarkdownFileBundle.readProject
     const verified = yield* readVerifiedWorkspaceFile(
       checked,
       canonicalRoot,
-      yield* HostProcessPlatform,
+      yield* HostProcess.Platform,
       SCIENT_DOCUMENT_MAX_MARKDOWN_LENGTH,
     );
     let read: VerifiedRead = verified;
@@ -287,7 +287,7 @@ export const buildMarkdownFileBundle = Effect.fn("MarkdownFileBundle.build")(fun
   readonly budget?: MarkdownImageBudget;
 }) {
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
   const markdown = yield* Effect.try({
     try: () => source.decode(input.file.bytes),

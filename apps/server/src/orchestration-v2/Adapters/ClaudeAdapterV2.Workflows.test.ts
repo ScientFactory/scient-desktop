@@ -6,7 +6,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   makeWakeHarness,
   claudeSdkFrame,
@@ -130,7 +131,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           final.findLast((agent) => agent.id === coordinator?.id)?.presentation?.kind,
           "workflow",
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -265,7 +270,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(reopened?.presentation?.activationCount, 2);
         assert.isNull(reopened?.completedAt);
         assert.equal(reopened?.presentation?.firstSeenAt, before[0]?.presentation?.firstSeenAt);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -374,7 +383,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal(reopened?.presentation?.firstSeenAt, firstSeen);
           assert.deepEqual(reopened?.presentation?.usage, { totalTokens: 60, toolUses: 7 });
           assert.lengthOf(h.offeredMessages, 1);
-        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          ),
+        ),
       ),
   );
 
@@ -451,7 +464,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal(members.at(-1)?.status, status);
           assert.isNotNull(members.at(-1)?.completedAt);
           assert.isFalse(yield* h.hasPendingBackgroundWork);
-        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          ),
+        ),
       ),
   );
 });

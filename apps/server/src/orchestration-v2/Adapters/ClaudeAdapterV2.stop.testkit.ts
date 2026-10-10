@@ -14,9 +14,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
-import { type ProviderAdapterV2Event } from "../ProviderAdapter.ts";
+import { type ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   DEFAULT_CLAUDE_SETTINGS,
   CLAUDE_TEST_MODEL_SELECTION,
@@ -62,7 +62,7 @@ const makeCapturedStopHarness = (name: string, closeFails = false) =>
         wire.push({ phase: `${phase}.released` });
       });
     let allocated = 0;
-    const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+    const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
       crypto: yield* Crypto.Crypto,
       instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
       settings: DEFAULT_CLAUDE_SETTINGS,

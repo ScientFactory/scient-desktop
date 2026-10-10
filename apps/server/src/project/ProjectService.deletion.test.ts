@@ -26,7 +26,7 @@ import * as ServerConfig from "../config.ts";
 import { OrchestrationEffectRequestV2 } from "../orchestration-v2/EffectOutbox.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
-import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -222,6 +222,7 @@ it.effect("retries a partial project deletion without repeating child events or 
       assert.deepEqual(
         partialCleanup.map((effect) => [effect.thread_id, effect.effect_type]),
         [
+          [firstThreadId, "preview.cleanup"],
           [firstThreadId, "scient.release-thread-files"],
           [firstThreadId, "terminal.cleanup"],
         ],
@@ -246,7 +247,7 @@ it.effect("retries a partial project deletion without repeating child events or 
       assert.deepEqual(finalEvents[0], partialEvents[0]);
       assert.equal(finalEvents[2]?.command_id, commandId);
       const finalCleanup = yield* readCleanup;
-      assert.lengthOf(finalCleanup, 4);
+      assert.lengthOf(finalCleanup, 6);
       assert.deepEqual(
         finalCleanup.filter((effect) => effect.thread_id === firstThreadId),
         partialCleanup,
@@ -255,12 +256,26 @@ it.effect("retries a partial project deletion without repeating child events or 
         const expectedCommandId = `${commandId}:delete-thread:${threadId}`;
         assert.deepEqual(
           finalCleanup.filter((effect) => effect.thread_id === threadId),
-          ["scient.release-thread-files", "terminal.cleanup"].map((effectType) => ({
-            effect_id: `effect:${expectedCommandId}:${effectType}`,
-            thread_id: threadId,
-            command_id: expectedCommandId,
-            effect_type: effectType,
-          })),
+          [
+            {
+              effect_id: `effect:${expectedCommandId}:preview.cleanup`,
+              thread_id: threadId,
+              command_id: expectedCommandId,
+              effect_type: "preview.cleanup",
+            },
+            {
+              effect_id: `effect:${expectedCommandId}:scient.release-thread-files`,
+              thread_id: threadId,
+              command_id: expectedCommandId,
+              effect_type: "scient.release-thread-files",
+            },
+            {
+              effect_id: `effect:${expectedCommandId}:terminal.cleanup`,
+              thread_id: threadId,
+              command_id: expectedCommandId,
+              effect_type: "terminal.cleanup",
+            },
+          ],
         );
       }
     }).pipe(Effect.provide(layerServices));

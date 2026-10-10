@@ -45,7 +45,7 @@ import * as ServerConfig from "../config.ts";
 import { resolveAttachmentPath, parseThreadSegmentFromAttachmentId } from "../attachmentStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { requireThreadScope, type McpInvocationScope } from "../mcp/McpInvocationContext.ts";
-import * as McpProviderSession from "../mcp/McpProviderSession.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { scientInvocationForMcp } from "../mcp/ScientMcpInvocation.ts";
 import {
@@ -61,7 +61,10 @@ import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import { makeCodexAdapterV2 } from "./Adapters/CodexAdapterV2.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
+import {
+  IdAllocatorV2,
+  layer as idAllocatorLayer,
+} from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { ProjectStoreV2 } from "./ProjectStore.ts";
 import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
@@ -69,7 +72,7 @@ import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const jsonSchema = Schema.fromJsonString(Schema.Unknown);
 const encodeJson = Schema.encodeSync(jsonSchema);
@@ -147,6 +150,10 @@ const runConjunction = () =>
       const registry = Context.get(
         yield* Layer.build(skillRegistryLayer),
         McpSessionRegistry.McpSessionRegistry,
+      );
+      const mcpSessions = Context.get(
+        yield* Layer.build(McpProviderSessions.layer),
+        McpProviderSessions.McpProviderSessions,
       );
       const instanceId = ProviderInstanceId.make("codex");
       const threadId = ThreadId.make(name);
@@ -238,7 +245,7 @@ const runConjunction = () =>
             case "turn/start": {
               const params = yield* decodeTurnStart(frame.params);
               nativeOffers.push(params);
-              const session = McpProviderSession.readMcpProviderSession(threadId);
+              const session = yield* mcpSessions.read(threadId);
               assert.ok(session);
               const token = session.authorizationHeader.replace(/^Bearer\s+/, "");
               const scope = yield* registry.resolve(token);
@@ -268,7 +275,7 @@ const runConjunction = () =>
       const settings = yield* decodeSettings({
         binaryPath: process.execPath,
       });
-      const adapter = makeCodexAdapterV2({
+      const adapter = yield* makeCodexAdapterV2({
         instanceId,
         settings,
         environment: {},
@@ -288,7 +295,7 @@ const runConjunction = () =>
               }),
             ),
         },
-      });
+      }).pipe(Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions));
       const citationData = {
         version: 1 as const,
         environmentId: EnvironmentId.make("source-env"),
@@ -382,6 +389,10 @@ const runConjunction = () =>
             {
               layerServerConfig: configLayer,
               configureMcp: true,
+              mcpProviderSessionsLayer: Layer.succeed(
+                McpProviderSessions.McpProviderSessions,
+                mcpSessions,
+              ),
               mcpSessionRegistryLayer: Layer.succeed(
                 McpSessionRegistry.McpSessionRegistry,
                 registry,
@@ -634,7 +645,7 @@ const runConjunction = () =>
           type: "image",
           url: `data:image/png;base64,${Buffer.from(imageBytes).toString("base64")}`,
         });
-        const session = McpProviderSession.readMcpProviderSession(threadId);
+        const session = yield* mcpSessions.read(threadId);
         assert.ok(session);
         const scope = yield* registry.resolve(
           session.authorizationHeader.replace(/^Bearer\s+/, ""),

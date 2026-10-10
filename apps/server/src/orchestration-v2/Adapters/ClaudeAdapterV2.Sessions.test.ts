@@ -1,5 +1,5 @@
 import * as Crypto from "effect/Crypto";
-import * as NodeOS from "node:os";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { Query as ClaudeQuery, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderSessionId, RunAttemptId, ThreadId } from "@t3tools/contracts";
@@ -17,7 +17,8 @@ import * as Stream from "effect/Stream";
 import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
 import * as ServerConfig from "../../config.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   DEFAULT_CLAUDE_SETTINGS,
   CLAUDE_TEST_MODEL_SELECTION,
@@ -30,6 +31,7 @@ describe("ClaudeAdapterV2 executable path", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const path = yield* Path.Path;
+        const homeDirectory = yield* HostProcess.HomeDirectory;
         const executablePaths: Array<string | undefined> = [];
         const adapter = yield* ClaudeAdapterV2.createClaudeAdapterV2(
           {
@@ -42,7 +44,7 @@ describe("ClaudeAdapterV2 executable path", () => {
           {},
         ).pipe(
           Effect.provide(
-            ServerConfig.layerTest(process.cwd(), {
+            ServerConfig.layerTest(yield* HostProcess.WorkingDirectory, {
               prefix: "t3-claude-binary-home-",
             }),
           ),
@@ -89,9 +91,13 @@ describe("ClaudeAdapterV2 executable path", () => {
           }),
         );
 
-        assert.deepEqual(executablePaths, [path.join(NodeOS.homedir(), "bin", "claude")]);
+        assert.deepEqual(executablePaths, [path.join(homeDirectory, "bin", "claude")]);
       }),
-    ).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 });
 
@@ -105,7 +111,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
           prefix: "t3-claude-resume-",
         });
         let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
-        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           crypto: yield* Crypto.Crypto,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
@@ -310,7 +316,11 @@ describe("ClaudeAdapterV2 resume compaction", () => {
           ),
           { behavior: "cancelled" },
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 });
@@ -325,7 +335,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
           prefix: "t3-claude-v2-session-identity-",
         });
         const openedQueries: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOpenInput> = [];
-        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           crypto: yield* Crypto.Crypto,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
@@ -380,7 +390,11 @@ describe("ClaudeAdapterV2 native session identity", () => {
           }),
         );
         return openedQueries;
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     );
 
   it.effect("creates the native session on the first provider turn", () =>

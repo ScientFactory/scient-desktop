@@ -13,7 +13,7 @@ import {
   ThreadId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -29,12 +29,16 @@ import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import { ServerConfig } from "../../config.ts";
 import { makeCodexAdapterV2 } from "../Adapters/CodexAdapterV2.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { EventStoreV2 } from "../EventStore.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
+import {
+  IdAllocatorV2,
+  layer as idAllocatorLayer,
+} from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
-import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const instanceId = ProviderInstanceId.make("codex");
 const selection = { instanceId, model: "gpt-5.4" };
@@ -200,8 +204,9 @@ it.live("keeps a fresh Codex session through startup that outlasts the idle wind
             );
           }),
       };
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const registry = makeLayer([
-        makeCodexAdapterV2({
+        yield* makeCodexAdapterV2({
           crypto: yield* Crypto.Crypto,
           instanceId,
           settings,
@@ -218,11 +223,15 @@ it.live("keeps a fresh Codex session through startup that outlasts the idle wind
           }),
         }),
       ]);
-      const layer = makeOrchestratorV2ReplayLayerWithRegistry(
+      const layer = ProviderReplayHarness.layerWithRegistry(
         { name: "codex-startup-idle-hold", runtimePolicyOverride: { cwd } },
         registry,
         {
           providerSessionIdleTimeoutMs: IDLE_TIMEOUT_MS,
+          mcpProviderSessionsLayer: Layer.succeed(
+            McpProviderSessions.McpProviderSessions,
+            mcpSessions,
+          ),
           layerServerConfig: Layer.succeed(ServerConfig, config),
         },
       );
@@ -299,7 +308,8 @@ it.live("keeps a fresh Codex session through startup that outlasts the idle wind
           ServerConfig.layerTest(process.cwd(), { prefix: "codex-startup-idle-hold-" }).pipe(
             Layer.provide(NodeServices.layer),
           ),
-          Layer.succeed(HostProcessEnvironment, {}),
+          Layer.succeed(HostProcess.Environment, {}),
+          McpProviderSessions.layer,
         ),
       ),
       Effect.timeout("60 seconds"),

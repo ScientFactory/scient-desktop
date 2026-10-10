@@ -7,7 +7,7 @@ import * as Scope from "effect/Scope";
 import {
   ProviderAdapterProtocolError,
   type ProviderAdapterV2SessionRuntime,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 
 /**
  * Pi session files admit only one native writer, including during startup.

@@ -17,7 +17,7 @@ import {
 } from "./ui/dialog";
 
 const choiceClassName =
-  "flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-[var(--color-background-elevated-primary-opaque)] p-3 text-left outline-none transition-colors hover:border-border hover:bg-[var(--color-background-elevated-secondary)] focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50";
+  "flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-[var(--color-background-elevated-primary-opaque)] p-3 text-left outline-none transition-colors hover:border-border hover:bg-[var(--color-background-elevated-secondary)] focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50";
 
 export function ScientProjectInitializationDialog(props: {
   readonly inspection: ScientProjectInspection | null;

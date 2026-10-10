@@ -27,20 +27,15 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { GrokProviderCapabilitiesV2 } from "./Adapters/GrokAdapterV2.ts";
+import { GrokProviderCapabilitiesV2 } from "@t3tools/provider-grok/testing";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import {
-  ProviderAdapterOpenSessionError,
-  type ProviderAdapterV2Event,
-  type ProviderAdapterV2Shape,
-  type ProviderAdapterV2TurnInput,
-  type ProviderAdapterV2RuntimePolicy,
-} from "./ProviderAdapter.ts";
+
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
-import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = ProviderInstanceId.make("codex-restart-test");
@@ -73,17 +68,17 @@ const exclusiveCapabilities: OrchestrationV2ProviderCapabilities = {
 };
 
 interface ActiveTurn {
-  readonly input: ProviderAdapterV2TurnInput;
+  readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly providerTurnId: ProviderTurnId;
 }
 
 interface RestartAdapterState {
-  readonly offeredPolicies?: ReadonlyArray<ProviderAdapterV2RuntimePolicy>;
+  readonly offeredPolicies?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2RuntimePolicy>;
   readonly activeTurn: ActiveTurn | null;
   readonly opened: ReadonlyArray<{
     readonly model: string | null;
     readonly cwd: string | null;
-    readonly runtimeMode: ProviderAdapterV2RuntimePolicy["runtimeMode"];
+    readonly runtimeMode: ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"];
   }>;
   readonly started: ReadonlyArray<{
     readonly model: string;
@@ -99,7 +94,7 @@ function makeRestartAdapter(
   sessionCapabilities: OrchestrationV2ProviderCapabilities = pooledCapabilities,
   providerInstanceId = initialSelection.instanceId,
   driver = ProviderDriverKind.make("codex"),
-): ProviderAdapterV2Shape {
+): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: providerInstanceId,
     driver,
@@ -133,14 +128,14 @@ function makeRestartAdapter(
           ] as const;
         });
         if (failThisOpen) {
-          return yield* new ProviderAdapterOpenSessionError({
+          return yield* new ProviderAdapter.ProviderAdapterOpenSessionError({
             driver,
             providerSessionId: sessionInput.providerSessionId,
             cause: "simulated replacement open failure",
           });
         }
 
-        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const now = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: sessionInput.providerSessionId,
@@ -299,7 +294,9 @@ function makeRestartAdapter(
   };
 }
 
-function makeCompletingHandoffAdapter(startCount: Ref.Ref<number>): ProviderAdapterV2Shape {
+function makeCompletingHandoffAdapter(
+  startCount: Ref.Ref<number>,
+): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: handoffProviderInstanceId,
     driver: handoffDriver,
@@ -307,7 +304,7 @@ function makeCompletingHandoffAdapter(startCount: Ref.Ref<number>): ProviderAdap
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
-        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const now = yield* DateTime.now;
         return {
           instanceId: handoffProviderInstanceId,
@@ -489,7 +486,7 @@ it.live("restarts selection as a new attempt and retries after old-session clean
         return yield* Effect.die("selection restart did not complete");
       }).pipe(
         Effect.provide(
-          makeOrchestratorV2ReplayLayerWithRegistry(
+          ProviderReplayHarness.layerWithRegistry(
             { name: "selection-restart-lifecycle" },
             registry,
           ),
@@ -689,7 +686,7 @@ it.live.each(
           liveSessionId: liveSession.id,
           detachedSessionIds,
         };
-      }).pipe(Effect.provide(makeOrchestratorV2ReplayLayerWithRegistry({ name }, registry)));
+      }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, registry)));
 
       const { projection, captured } = result;
       assert.lengthOf(projection.runs, 2);
@@ -815,7 +812,7 @@ it.live("detaches the old provider session after an active provider handoff", ()
         return yield* Effect.die("active provider handoff did not complete");
       }).pipe(
         Effect.provide(
-          makeOrchestratorV2ReplayLayerWithRegistry(
+          ProviderReplayHarness.layerWithRegistry(
             { name: "selection-provider-handoff-lifecycle" },
             registry,
           ),
@@ -880,7 +877,7 @@ it.live.each(
                   }),
               })),
             ),
-        } satisfies ProviderAdapterV2Shape;
+        } satisfies ProviderAdapter.ProviderAdapterV2["Service"];
       });
       const registry = Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistryV2, {
         get: (instanceId) =>
@@ -1005,7 +1002,7 @@ it.live.each(
         assert.equal(returnedThread.providerInstanceId, providerInstanceId);
         assert.isEmpty(third.contextHandoffs);
         assert.deepEqual(messages, ["first", "second", "third"]);
-      }).pipe(Effect.provide(makeOrchestratorV2ReplayLayerWithRegistry({ name }, registry)));
+      }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, registry)));
     }),
   ),
 );
@@ -1190,7 +1187,7 @@ it.live("captures ordinary and queued execution modes before worker delivery", (
         assert.equal(projected.thread.interactionMode, "plan");
       }).pipe(
         Effect.provide(
-          makeOrchestratorV2ReplayLayerWithRegistry(
+          ProviderReplayHarness.layerWithRegistry(
             { name },
             ProviderAdapterRegistry.layerSingle(makeRestartAdapter(state)),
             {
@@ -1377,7 +1374,7 @@ it.live.each(
         }
       }).pipe(
         Effect.provide(
-          makeOrchestratorV2ReplayLayerWithRegistry(
+          ProviderReplayHarness.layerWithRegistry(
             { name },
             ProviderAdapterRegistry.layerSingle(makeRestartAdapter(state)),
             { runEffectWorker: false },
@@ -1499,7 +1496,7 @@ it.live("replaces an idle Grok session before a direct send changes its access m
           captured.offeredPolicies?.map((p) => p.runtimeMode),
           ["full-access", "approval-required"],
         );
-      }).pipe(Effect.provide(makeOrchestratorV2ReplayLayerWithRegistry({ name }, registry)));
+      }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, registry)));
     }),
   ),
 );

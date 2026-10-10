@@ -22,7 +22,7 @@ import {
   type OrchestrationV2ProviderThread,
   type ChatAttachment,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -38,37 +38,40 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as NetAddress from "effect/net/NetAddress";
 import { HttpClient, HttpServer } from "effect/http";
-import { PtyAdapter, PtySpawnError, type PtyExitEvent } from "../../terminal/PtyAdapter.ts";
+import { PtyAdapter, PtySpawnError, type PtyExitEvent } from "@t3tools/shared/PtyAdapter";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as ModelManifest from "../ModelManifest.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as EventStore from "../../orchestration-v2/EventStore.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
-import type { ProviderAdapterV2SessionRuntime } from "../../orchestration-v2/ProviderAdapter.ts";
+import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
-import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderEventIngestor from "../../orchestration-v2/ProviderEventIngestor.ts";
 import * as ProviderSessionManager from "../../orchestration-v2/ProviderSessionManager.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeProviderInstanceRegistry } from "../ProviderInstanceRegistry.ts";
 import { ProviderInstanceRegistry } from "../ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../ProviderRegistry.ts";
 import { LegacyAntigravityDriver } from "./LegacyAntigravityDriver.ts";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../../orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { layerConfigConsistentTestProviderHost } from "../testUtils/providerHost.ts";
 
 const first = ProviderInstanceId.make("legacy-agy-shutdown-target");
 const second = ProviderInstanceId.make("legacy-agy-shutdown-peer");
-const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 const mockAgentPath = NodePath.join(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
   "../../../scripts/agy-stream-mock.ts",
@@ -106,13 +109,16 @@ const mcp = Layer.effect(
   ),
   Layer.provide(NodeServices.layer),
 );
-const testLayer = ServerConfig.layerTest(process.cwd(), {
+const providerDependenciesLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "legacy-agy-native-shutdown-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(ThreadCommandExecutor.layer),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(ProviderContinuationRequests.layer),
+  Layer.provideMerge(ModelManifest.layerTest),
+  Layer.provideMerge(ProviderLatestVersions.layer),
+  Layer.provideMerge(McpProviderSessions.layer),
   Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(
     Layer.mock(BackgroundPolicy.BackgroundPolicy)({
@@ -126,6 +132,9 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
     ),
   ),
   Layer.provideMerge(Layer.mergeAll(stores, sink, mcp)),
+);
+const testLayer = layerConfigConsistentTestProviderHost.pipe(
+  Layer.provideMerge(providerDependenciesLayer),
 );
 
 const harness = Effect.fn("LegacyShutdown.harness")(function* () {
@@ -280,7 +289,7 @@ const harness = Effect.fn("LegacyShutdown.harness")(function* () {
         command.command !== path.join(home, "agy")
       )
         return yield* Effect.die(
-          "Only this fixture's configured agy may spawn; Keychain/vendor calls forbidden",
+          `Only this fixture's configured agy may spawn; received ${command.command} with HOME=${home ?? "<unset>"}`,
         );
       if (!command.args.includes("stream-json")) return yield* spawner.spawn(command);
       const scope = yield* Effect.scope;
@@ -393,7 +402,10 @@ const harness = Effect.fn("LegacyShutdown.harness")(function* () {
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observedSpawner),
     Effect.provideService(FileSystem.FileSystem, observedFs),
     Effect.provideService(PtyAdapter, pty),
-    Effect.provideService(ProviderEventLoggers, NoOpProviderEventLoggers),
+    Effect.provideService(
+      ProviderEventLoggers.ProviderEventLoggers,
+      ProviderEventLoggers.NoOpProviderEventLoggers,
+    ),
   );
   const target = yield* registered.registry.getInstance(first);
   const peer = yield* registered.registry.getInstance(second);
@@ -643,14 +655,15 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
         } as const;
         yield* Effect.gen(function* () {
           const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const sessions = yield* McpProviderSessions.McpProviderSessions;
           configured.observations.isReleased = (id) =>
             manager.get(id).pipe(Effect.map(Option.isNone), Effect.orDie);
           const old = yield* manager.open(target.input);
           const other = yield* manager.open(peer.input);
           expect(old.mcpSessionInjection).toBe(false);
           expect(other.mcpSessionInjection).toBe(false);
-          expect(McpProviderSession.readMcpProviderSession(target.input.threadId)).toBeUndefined();
-          expect(McpProviderSession.readMcpProviderSession(peer.input.threadId)).toBeUndefined();
+          expect(yield* sessions.read(target.input.threadId)).toBeUndefined();
+          expect(yield* sessions.read(peer.input.threadId)).toBeUndefined();
           yield* turn(old, target, 1, [attachment]);
           yield* turn(other, peer, 1, [attachment]);
           const oldThread = yield* old.ensureThread(target.input);
@@ -751,11 +764,12 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
         );
         yield* Effect.gen(function* () {
           const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const sessions = yield* McpProviderSessions.McpProviderSessions;
           const opening = yield* manager.open(target.input).pipe(Effect.exit, Effect.forkChild);
           yield* Deferred.await(entered);
           expect(h.staging.filter((item) => item.instanceId === first)).toHaveLength(1);
           expect(h.launches).toHaveLength(0);
-          expect(McpProviderSession.readMcpProviderSession(target.input.threadId)).toBeUndefined();
+          expect(yield* sessions.read(target.input.threadId)).toBeUndefined();
           yield* h.target.connectionActions!.disconnect.pipe(Effect.scoped);
           yield* Deferred.succeed(gate, undefined);
           expect(Exit.isFailure(yield* Fiber.join(opening))).toBe(true);
@@ -763,7 +777,7 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
           expect(h.launches).toHaveLength(0);
           expect(yield* h.readRequests(first)).toEqual([]);
           expect(Option.isNone(yield* manager.get(target.input.providerSessionId))).toBe(true);
-          expect(McpProviderSession.readMcpProviderSession(target.input.threadId)).toBeUndefined();
+          expect(yield* sessions.read(target.input.threadId)).toBeUndefined();
           expect(yield* h.fs.exists(h.accounts.get(first)!)).toBe(false);
         }).pipe(Effect.provide(configured.layer), Effect.scoped);
       }).pipe(Effect.scoped),
@@ -959,6 +973,7 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
           },
         });
         const config = yield* ServerConfig;
+        const providerSessions = yield* McpProviderSessions.McpProviderSessions;
         const cwd = yield* checkpointWorkspace("legacy-idle-recovery");
         const threadId = ThreadId.make("legacy-agy-idle-recovery");
         const modelSelection = h.input(first).modelSelection;
@@ -968,9 +983,13 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
             Layer.provide(Layer.succeed(ProviderInstanceRegistry, h.registry)),
           ),
           {
-            layerDatabase: SqlitePersistenceMemory,
+            databaseLayer: SqlitePersistenceMemory,
             configureMcp: false,
             layerServerConfig: Layer.succeed(ServerConfig, config),
+            mcpProviderSessionsLayer: Layer.succeed(
+              McpProviderSessions.McpProviderSessions,
+              providerSessions,
+            ),
           },
         );
         yield* Effect.gen(function* () {

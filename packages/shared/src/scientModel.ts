@@ -132,6 +132,21 @@ function preferredAccountModel<T extends SelectableModelOption>(
   return undefined;
 }
 
+function defaultReasoningLevel(
+  driver: ProviderDriverKind,
+  model: ServerProviderModel,
+): string | undefined {
+  if (driver === "codex" || driver === "claudeAgent") return "medium";
+  if (driver === "antigravity") return "high";
+  if (driver === "scient") {
+    const account = model.slug.split("/")[0];
+    if (account === "openai-codex" || account === "anthropic") return "medium";
+    if (account === "cursor" || account === "google-antigravity") return "high";
+    return undefined;
+  }
+  return preferredAccountModel(driver, [model]) === undefined ? undefined : "high";
+}
+
 /** Resolve only implicit selections; explicit and persisted picks never pass through here. */
 export function resolveAutomaticModel(
   driver: ProviderDriverKind,
@@ -198,12 +213,9 @@ export function applyAutomaticModelDefaults(
   );
   return models.map((model) => {
     // Built-in capability defaults affect new selections, not saved selection options.
+    const reasoningDefault = !model.isCustom ? defaultReasoningLevel(driver, model) : undefined;
     const capabilities =
-      !model.isCustom &&
-      (driver === "codex" ||
-        driver === "claudeAgent" ||
-        preferredAccountModel(driver, [model]) !== undefined) &&
-      model.capabilities
+      reasoningDefault !== undefined && model.capabilities
         ? {
             ...model.capabilities,
             optionDescriptors: (model.capabilities.optionDescriptors ?? []).map((descriptor) => {
@@ -212,16 +224,16 @@ export function applyAutomaticModelDefaults(
                 !["reasoningEffort", "effort", "thinkingLevel", "reasoning"].includes(
                   descriptor.id,
                 ) ||
-                !descriptor.options.some((option) => option.id === "high")
+                !descriptor.options.some((option) => option.id === reasoningDefault)
               )
                 return descriptor;
               return {
                 ...descriptor,
                 concreteReasoning: true,
-                currentValue: "high",
+                currentValue: reasoningDefault,
                 options: descriptor.options.map((option) => ({
                   ...option,
-                  isDefault: option.id === "high",
+                  isDefault: option.id === reasoningDefault,
                 })),
               };
             }),

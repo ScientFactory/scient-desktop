@@ -23,16 +23,28 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import * as Config from "../config.ts";
-import { makePiAdapterV2 } from "./Adapters/PiAdapterV2.ts";
+import { makePiAdapterV2 } from "@t3tools/provider-pi/testing";
 import { EventStoreV2 } from "./EventStore.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
+import { layer as idAllocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { layerSingle as makeSingleLayer } from "./ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProjectStoreV2 } from "./ProjectStore.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import * as ScientTestProviderHost from "./testkit/ScientTestProviderHost.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+
+const fixtureServices = Layer.mergeAll(
+  NodeServices.layer,
+  idAllocatorLayer,
+  McpProviderSessions.layer,
+  Config.layerTest(process.cwd(), { prefix: "pi-close-native-" }).pipe(
+    Layer.provide(NodeServices.layer),
+  ),
+);
+const adapterLayer = ScientTestProviderHost.layer.pipe(Layer.provideMerge(fixtureServices));
 
 const artifacts = process.env.SCIENT_TEST_PI_CLOSE_ARTIFACTS;
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -189,26 +201,25 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
         ),
       );
       const config = yield* Config.ServerConfig;
-      const allocator = yield* IdAllocatorV2;
-      const registry = makeSingleLayer(
-        makePiAdapterV2({
-          instanceId,
-          settings: { enabled: true, binaryPath, launchArgs: "", customModels: [] },
-          environment: {
-            PI_CLOSE_WIRE: wirePath,
-            PI_CLOSE_LATE_ACK: scenario.lateAck ? "positive" : "rejected",
-          },
-          spawner,
-          fileSystem: fs,
-          serverConfig: config,
-          idAllocator: allocator,
-        }),
-      );
+      const adapter = yield* makePiAdapterV2({
+        instanceId,
+        settings: { enabled: true, binaryPath, launchArgs: "", customModels: [] },
+        environment: {
+          PI_CLOSE_WIRE: wirePath,
+          PI_CLOSE_LATE_ACK: scenario.lateAck ? "positive" : "rejected",
+        },
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      const registry = makeSingleLayer(adapter);
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
         { name: "pi-close-native-conjunction" },
         registry,
         {
           configureMcp: false,
+          mcpProviderSessionsLayer: Layer.succeed(
+            McpProviderSessions.McpProviderSessions,
+            mcpSessions,
+          ),
           runEffectWorker: false,
           providerSessionIdleTimeoutMs: 60_000,
           layerServerConfig: Layer.succeed(Config.ServerConfig, config),
@@ -624,15 +635,5 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
         );
       }).pipe(Effect.provide(runtime));
     }),
-  ).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        NodeServices.layer,
-        idAllocatorLayer,
-        Config.layerTest(process.cwd(), { prefix: "pi-close-native-" }).pipe(
-          Layer.provide(NodeServices.layer),
-        ),
-      ),
-    ),
-  ),
+  ).pipe(Effect.provide(adapterLayer)),
 );

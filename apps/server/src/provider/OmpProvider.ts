@@ -30,7 +30,7 @@ import {
   isCommandMissingCause,
   buildServerProvider,
   type ServerProviderDraft,
-} from "./providerSnapshot.ts";
+} from "@t3tools/provider-core/server/snapshotProbe";
 
 const presentation = (target: OmpTarget) =>
   ({

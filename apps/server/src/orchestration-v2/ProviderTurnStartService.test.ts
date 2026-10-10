@@ -33,13 +33,10 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import {
-  ProviderAdapterEventStreamError,
-  type ProviderAdapterV2SessionRuntime,
-  type ProviderAdapterV2RuntimePolicy,
-} from "./ProviderAdapter.ts";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
@@ -115,6 +112,7 @@ it("keeps inherited background routing failure retryable without committing runn
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        McpProviderSessions.layer,
         ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
           Layer.provide(NodeServices.layer),
         ),
@@ -406,7 +404,7 @@ function makeLocalCommandHarness(input: {
     runtimeMode: "approval-required",
     interactionMode: "default",
     cwd: "/tmp/native-account-command",
-  } satisfies ProviderAdapterV2RuntimePolicy;
+  } satisfies ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   const nativeStartTurn = vi.fn(() =>
     Effect.die("A failed deciding read must not offer a native turn."),
   );
@@ -414,7 +412,7 @@ function makeLocalCommandHarness(input: {
   const subscribeEvents = vi.fn(() =>
     Effect.succeed({ events: Stream.never, close: closeSubscription() }),
   );
-  const normalSession: ProviderAdapterV2SessionRuntime = {
+  const normalSession: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
     instanceId: newInstanceId,
     driver: providerThread.driver,
     providerSessionId,
@@ -458,7 +456,7 @@ function makeLocalCommandHarness(input: {
     }).pipe(
       Effect.andThen(
         Effect.fail(
-          new ProviderAdapterEventStreamError({
+          new ProviderAdapter.ProviderAdapterEventStreamError({
             driver: providerThread.driver,
             providerSessionId,
             cause: input.ensureThreadFailure,
@@ -471,7 +469,7 @@ function makeLocalCommandHarness(input: {
     driver: providerThread.driver,
     resumeThread: () =>
       Effect.fail(
-        new ProviderAdapterEventStreamError({
+        new ProviderAdapter.ProviderAdapterEventStreamError({
           driver: providerThread.driver,
           providerSessionId,
           cause: "native thread is gone",
@@ -559,6 +557,7 @@ function makeLocalCommandHarness(input: {
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        McpProviderSessions.layer,
         ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
           Layer.provide(NodeServices.layer),
         ),

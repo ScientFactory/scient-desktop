@@ -6,7 +6,7 @@ import {
   resolveReviewedAntigravityArtifact,
 } from "@scientfactory/provider-runtime";
 import type { AntigravitySettings } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -37,8 +37,8 @@ export const makeAntigravityManagedRuntimeResolution = Effect.fn(
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly managedInstallationAllowed: boolean;
 }): Effect.fn.Return<AntigravityManagedRuntimeResolution, never> {
-  const platform = yield* HostProcessPlatform;
-  const arch = yield* HostProcessArchitecture;
+  const platform = yield* HostProcess.Platform;
+  const arch = yield* HostProcess.Architecture;
   const target = detectTargetSafely({ platform, arch });
   const artifact = target ? resolveReviewedAntigravityArtifact(target) : undefined;
   const targetLabel = target ? managedRuntimeTargetKey(target) : `${platform}-${arch}`;

@@ -8,11 +8,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import type { DesktopAppActivationRequest } from "@t3tools/contracts";
 import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppControl";
-import {
-  HostProcessPlatform,
-  HostProcessUserId,
-  HostProcessWorkingDirectory,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -28,28 +24,17 @@ import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecuto
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import * as AzureDevOpsCli from "../sourceControl/AzureDevOpsCli.ts";
-import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
-import * as ForgejoCli from "../sourceControl/ForgejoCli.ts";
-import * as GitHubApi from "../sourceControl/GitHubApi.ts";
-import * as GitLabCli from "../sourceControl/GitLabCli.ts";
+import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
-import { afterEach, describe, expect, vi } from "vite-plus/test";
+import { describe, expect } from "vite-plus/test";
 
 import { makeCli } from "../binCli.ts";
 import { PersistedServerRuntimeState } from "../serverRuntimeState.ts";
-
-vi.mock("node:os", async (importOriginal) => {
-  const os = await importOriginal<typeof import("node:os")>();
-  return { ...os, homedir: vi.fn(os.homedir) };
-});
-
-afterEach(() => vi.mocked(NodeOS.homedir).mockReset());
 
 const encodeRuntimeState = Schema.encodeEffect(Schema.fromJsonString(PersistedServerRuntimeState));
 
@@ -63,15 +48,7 @@ const layerCliAuthority = Layer.mergeAll(
         Layer.provide(GitVcsDriver.layer),
         Layer.provide(
           SourceControlProviderRegistry.layer.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                AzureDevOpsCli.layer,
-                BitbucketApi.layer,
-                GitHubApi.layerWithDependencies,
-                GitLabCli.layer,
-                ForgejoCli.layer,
-              ),
-            ),
+            Layer.provide(BuiltInDrivers.layer),
             Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
           ),
         ),
@@ -175,8 +152,8 @@ async function startFakeDesktop(input: {
 const fakeDesktop = Effect.fn(function* (
   input: Omit<Parameters<typeof startFakeDesktop>[0], "platform" | "userId">,
 ) {
-  const platform = yield* HostProcessPlatform;
-  const userId = yield* HostProcessUserId;
+  const platform = yield* HostProcess.Platform;
+  const userId = yield* HostProcess.UserId;
   return yield* Effect.acquireRelease(
     Effect.promise(() => startFakeDesktop({ ...input, platform, userId })),
     (server) => Effect.promise(() => server.close()),
@@ -207,7 +184,7 @@ describe("t3 server command safety", () => {
           "C:new-project",
         ]) {
           const error = yield* runCli([word, "--base-dir", baseDir]).pipe(
-            Effect.provideService(HostProcessPlatform, "linux"),
+            Effect.provideService(HostProcess.Platform, "linux"),
             Effect.flip,
           );
           expect(String(error)).toContain(`Unknown command "${word}"`);
@@ -246,7 +223,7 @@ describe("t3 server command safety", () => {
         yield* Effect.promise(() => NodeFSP.mkdir(stateDir, { recursive: true }));
         yield* Effect.promise(() => NodeFSP.writeFile(statePath, record));
         const newDirectory = NodePath.join(root, "new-project");
-        const platform = yield* HostProcessPlatform;
+        const platform = yield* HostProcess.Platform;
         for (const args of [
           [],
           ["start"],
@@ -258,7 +235,7 @@ describe("t3 server command safety", () => {
         ]) {
           const error = yield* runCli(args, { SCIENT_NEXT_HOME: baseDir }).pipe(
             Effect.provideService(
-              HostProcessPlatform,
+              HostProcess.Platform,
               args[0] === "C:new-project" ? "win32" : platform,
             ),
             Effect.flip,
@@ -301,7 +278,7 @@ describe("t3 app", () => {
       Effect.gen(function* () {
         const baseDir = NodePath.join(root, "missing-t3-home");
         const error = yield* runCli(["app", "--base-dir", baseDir]).pipe(
-          Effect.provideService(HostProcessPlatform, "freebsd"),
+          Effect.provideService(HostProcess.Platform, "freebsd"),
           Effect.flip,
         );
 
@@ -324,7 +301,7 @@ describe("t3 app", () => {
         expect(error).toMatchObject({
           _tag: "DesktopAppUnreachableError",
           candidateAddresses: [expect.any(String)],
-          workspaceRoot: yield* HostProcessWorkingDirectory,
+          workspaceRoot: yield* HostProcess.WorkingDirectory,
           message: expect.stringContaining("Could not reach the Scient desktop app."),
           cause: { code: "ENOENT" },
         });
@@ -338,8 +315,8 @@ describe("t3 app", () => {
       Effect.gen(function* () {
         const baseDir = NodePath.join(root, "t3-home");
         const explicitPath = NodePath.join(root, "project");
-        const platform = yield* HostProcessPlatform;
-        const workingDirectory = yield* HostProcessWorkingDirectory;
+        const platform = yield* HostProcess.Platform;
+        const workingDirectory = yield* HostProcess.WorkingDirectory;
         const desktop = yield* fakeDesktop({ baseDir });
 
         yield* runCli(["app"], { SCIENT_NEXT_HOME: baseDir });
@@ -357,7 +334,6 @@ describe("t3 app", () => {
   it.effect("prefers the installed desktop app when a dev desktop is also running", () =>
     withTempDirectory("t3-app-preferred-test-", (root) =>
       Effect.gen(function* () {
-        vi.mocked(NodeOS.homedir).mockReturnValue(root);
         const baseDir = NodePath.join(root, SCIENT_DESKTOP_IDENTITY.baseDirName);
         const desktop = yield* fakeDesktop({ baseDir });
         const development = yield* fakeDesktop({
@@ -369,14 +345,13 @@ describe("t3 app", () => {
 
         expect(desktop.received).toHaveLength(1);
         expect(development.received).toHaveLength(0);
-      }).pipe(Effect.scoped),
+      }).pipe(Effect.provideService(HostProcess.HomeDirectory, root), Effect.scoped),
     ),
   );
 
   it.effect("finds the dev desktop when the default desktop socket is absent", () =>
     withTempDirectory("t3-app-dev-test-", (root) =>
       Effect.gen(function* () {
-        vi.mocked(NodeOS.homedir).mockReturnValue(root);
         const baseDir = NodePath.join(root, SCIENT_DESKTOP_IDENTITY.baseDirName);
         const development = yield* fakeDesktop({
           baseDir,
@@ -388,14 +363,13 @@ describe("t3 app", () => {
 
         expect(development.received).toHaveLength(2);
         expect(yield* pathExists(baseDir)).toBe(false);
-      }).pipe(Effect.scoped),
+      }).pipe(Effect.provideService(HostProcess.HomeDirectory, root), Effect.scoped),
     ),
   );
 
   it.effect("ignores ambient T3 state inside the Scient safety envelope", () =>
     withTempDirectory("t3-app-safety-envelope-test-", (root) =>
       Effect.gen(function* () {
-        vi.mocked(NodeOS.homedir).mockReturnValue(root);
         const scientBaseDir = NodePath.join(root, SCIENT_DESKTOP_IDENTITY.baseDirName);
         const legacyBaseDir = NodePath.join(root, ".t3");
         const development = yield* fakeDesktop({
@@ -408,14 +382,13 @@ describe("t3 app", () => {
 
         expect(development.received).toHaveLength(1);
         expect(legacy.received).toHaveLength(0);
-      }).pipe(Effect.scoped),
+      }).pipe(Effect.provideService(HostProcess.HomeDirectory, root), Effect.scoped),
     ),
   );
 
   it.effect("never searches a dev state directory for an explicit Scient home", () =>
     withTempDirectory("t3-app-explicit-test-", (root) =>
       Effect.gen(function* () {
-        vi.mocked(NodeOS.homedir).mockReturnValue(root);
         const baseDir = NodePath.join(root, SCIENT_DESKTOP_IDENTITY.baseDirName);
         const development = yield* fakeDesktop({
           baseDir,
@@ -428,7 +401,7 @@ describe("t3 app", () => {
         expect(flagError).toMatchObject({ _tag: "DesktopAppUnreachableError" });
         expect(envError).toMatchObject({ _tag: "DesktopAppUnreachableError" });
         expect(development.received).toHaveLength(0);
-      }).pipe(Effect.scoped),
+      }).pipe(Effect.provideService(HostProcess.HomeDirectory, root), Effect.scoped),
     ),
   );
 
@@ -437,7 +410,6 @@ describe("t3 app", () => {
     (responseKind) =>
       withTempDirectory("t3-app-response-test-", (root) =>
         Effect.gen(function* () {
-          vi.mocked(NodeOS.homedir).mockReturnValue(root);
           const baseDir = NodePath.join(root, SCIENT_DESKTOP_IDENTITY.baseDirName);
           const desktop = yield* fakeDesktop({
             baseDir,
@@ -466,7 +438,7 @@ describe("t3 app", () => {
               _tag: "DesktopAppRequestFailedError",
               code: "project-create-failed",
               requestId: desktop.received[0]?.requestId,
-              workspaceRoot: yield* HostProcessWorkingDirectory,
+              workspaceRoot: yield* HostProcess.WorkingDirectory,
               message: expect.stringContaining("project-create-failed"),
               cause: {
                 ok: false,
@@ -480,7 +452,7 @@ describe("t3 app", () => {
               cause: { message: "The desktop app response is invalid." },
             });
           }
-        }).pipe(Effect.scoped),
+        }).pipe(Effect.provideService(HostProcess.HomeDirectory, root), Effect.scoped),
       ),
   );
 });

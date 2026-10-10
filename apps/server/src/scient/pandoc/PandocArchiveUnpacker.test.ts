@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -34,8 +34,8 @@ const unpackOn = (platform: NodeJS.Platform, present: ReadonlySet<string>) =>
           }),
         ),
       ),
-      Layer.provide(Layer.succeed(HostProcessPlatform, platform)),
-      Layer.provide(Layer.succeed(HostProcessEnvironment, { SystemRoot: "C:\\Windows" })),
+      Layer.provide(Layer.succeed(HostProcess.Platform, platform)),
+      Layer.provide(Layer.succeed(HostProcess.Environment, { SystemRoot: "C:\\Windows" })),
       Layer.provide(FileSystem.layerNoop({ exists: (path) => Effect.succeed(present.has(path)) })),
     );
     const result = yield* Effect.gen(function* () {

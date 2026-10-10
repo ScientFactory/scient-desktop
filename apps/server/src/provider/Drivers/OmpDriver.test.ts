@@ -9,45 +9,60 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
-import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
 import { OmpDriver } from "./OmpDriver.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ModelManifest from "../ModelManifest.ts";
 
-const testLayer = ServerConfig.layerTest(process.cwd(), {
-  prefix: "t3-omp-driver-managed-actions-",
-}).pipe(
-  Layer.provideMerge(NodeServices.layer),
-  Layer.provideMerge(IdAllocator.layer),
-  Layer.provideMerge(ProviderContinuationRequests.layer),
-  Layer.provideMerge(OmpExecutableGate.layer),
-  Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
-  Layer.provideMerge(ServerSettingsService.layerTest()),
-  Layer.provideMerge(
-    Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-      shouldRunScopeWork: () => Effect.succeed(false),
-    }),
-  ),
-  Layer.provideMerge(
-    Layer.succeed(
-      HttpClient.HttpClient,
-      HttpClient.make((request) =>
-        Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            new Response('{"tag_name":"v18.3.1"}\n', {
-              headers: { "content-type": "application/json" },
-            }),
+const testLayer = Layer.mergeAll(
+  ServerConfig.layerTest(process.cwd(), {
+    prefix: "t3-omp-driver-managed-actions-",
+  }).pipe(
+    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(IdAllocator.layer),
+    Layer.provideMerge(ProviderContinuationRequests.layer),
+    Layer.provideMerge(ModelManifest.layerTest),
+    Layer.provideMerge(ProviderLatestVersions.layer),
+    Layer.provideMerge(McpProviderSessions.layer),
+    Layer.provideMerge(OmpExecutableGate.layer),
+    Layer.provideMerge(
+      Layer.succeed(
+        ProviderEventLoggers.ProviderEventLoggers,
+        ProviderEventLoggers.NoOpProviderEventLoggers,
+      ),
+    ),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response('{"tag_name":"v18.3.1"}\n', {
+                headers: { "content-type": "application/json" },
+              }),
+            ),
           ),
         ),
       ),
     ),
   ),
+  TestProviderHost.layer({ runBackgroundWork: false }).pipe(Layer.provide(NodeServices.layer)),
 );
 
 const noSpawn = ChildProcessSpawner.make(() =>

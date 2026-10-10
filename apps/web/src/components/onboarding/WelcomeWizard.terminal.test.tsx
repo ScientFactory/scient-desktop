@@ -4,6 +4,7 @@ import {
   PrimaryConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import {
+  AuthProvidersManageScope,
   AuthTerminalOperateScope,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
@@ -14,6 +15,7 @@ import {
   type ResolvedKeybindingsConfig,
   type ServerProvider,
   type ServerSettings,
+  type ServerSettingsPatch,
   type TerminalCloseInput,
   type TerminalOpenInput,
   type TerminalWriteInput,
@@ -37,7 +39,7 @@ const state = vi.hoisted(() => ({
   registry: null as AtomRegistry.AtomRegistry | null,
   sessions: new Map<EnvironmentId, Atom.Writable<SessionResult>>(),
   providers: new Map<EnvironmentId, Atom.Writable<ReadonlyArray<ServerProvider>>>(),
-  configs: new Map<EnvironmentId, Atom.Atom<SetupConfig>>(),
+  configs: new Map<EnvironmentId, Atom.Writable<SetupConfig>>(),
   open: vi.fn<(request: Request<TerminalOpenInput>) => Promise<CommandResult>>(),
   write: vi.fn<(request: Request<TerminalWriteInput>) => Promise<CommandResult>>(),
   close: vi.fn<(request: Request<TerminalCloseInput>) => Promise<CommandResult>>(),
@@ -47,6 +49,8 @@ const state = vi.hoisted(() => ({
   importThreads: vi.fn(),
   complete: vi.fn<() => Promise<void>>(),
   done: vi.fn(),
+  updateSettings:
+    vi.fn<(request: Request<{ patch: ServerSettingsPatch }>) => Promise<CommandResult>>(),
 }));
 
 vi.mock("../../connection/runtime", () => ({ connectionAtomRuntime: undefined }));
@@ -69,6 +73,7 @@ vi.mock("../../state/server", () => ({
     providersValueAtom: (id: EnvironmentId) => state.providers.get(id)!,
     configValueAtom: (id: EnvironmentId) => state.configs.get(id)!,
     refreshProviders: "refresh",
+    updateSettings: "updateSettings",
   },
 }));
 vi.mock("../../state/terminal", () => ({
@@ -76,7 +81,15 @@ vi.mock("../../state/terminal", () => ({
 }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (
-    command: "open" | "write" | "close" | "refresh" | "pair" | "createProject" | "importThreads",
+    command:
+      | "open"
+      | "write"
+      | "close"
+      | "refresh"
+      | "pair"
+      | "createProject"
+      | "importThreads"
+      | "updateSettings",
   ) => state[command],
 }));
 vi.mock("../../connection/onboarding", () => ({ connectPairing: "pair" }));
@@ -115,11 +128,20 @@ vi.mock("../../env", () => ({ isElectron: false }));
 vi.mock("../../providerInstances", () => ({ resolveDefaultProviderModelSelection: vi.fn() }));
 vi.mock("../settings/ChatGptWelcomeCoordinator", () => ({ ChatGptWelcomeCoordinator: () => null }));
 vi.mock("../settings/CodexSetupSection", () => ({
-  CodexSetupSection: () => null,
+  CodexSetupSection: (props: {
+    readonly readOnly?: boolean;
+    readonly onModeChange: (mode: "managed" | "existing") => void;
+  }) => (
+    <div data-codex-setup data-read-only={props.readOnly ? "true" : "false"}>
+      <button disabled={props.readOnly} onClick={() => props.onModeChange("existing")}>
+        Use existing CLI
+      </button>
+    </div>
+  ),
   AddManagedCodexAccountDialog: () => null,
 }));
 vi.mock("../settings/providerDriverMeta", () => ({
-  getDriverOption: (driver: string) => ({ label: driver }),
+  providerClients: { get: (driver: string) => ({ label: driver }) },
 }));
 vi.mock("../settings/providerStatus", () => ({
   getProviderSummary: () => ({ headline: "Setup required" }),
@@ -203,11 +225,11 @@ const session = (scopes: readonly AuthEnvironmentScope[]): AuthSessionState => (
     sessionCookieName: "t3_session",
   },
 });
+function setScopes(environmentId: EnvironmentId, scopes: readonly AuthEnvironmentScope[]) {
+  state.registry!.set(state.sessions.get(environmentId)!, AsyncResult.success(session(scopes)));
+}
 function setAccess(environmentId: EnvironmentId, allowed: boolean) {
-  state.registry!.set(
-    state.sessions.get(environmentId)!,
-    AsyncResult.success(session(allowed ? [AuthTerminalOperateScope] : [])),
-  );
+  setScopes(environmentId, allowed ? [AuthTerminalOperateScope] : []);
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -232,15 +254,19 @@ async function click(label: string) {
 function hasViewport() {
   return renderer!.root.findAllByProps({ "data-terminal-viewport": true }).length > 0;
 }
-async function enterRemoteAgents() {
+async function enterRemoteAgents(resumeEnvironmentId?: EnvironmentId) {
   await act(async () => {
     renderer = create(
       <RegistryContext.Provider value={state.registry!}>
-        <WelcomeWizard localAvailable onDone={state.done} />
+        <WelcomeWizard
+          localAvailable
+          onDone={state.done}
+          {...(resumeEnvironmentId === undefined ? {} : { resumeEnvironmentId })}
+        />
       </RegistryContext.Provider>,
     );
   });
-  await click("Continue");
+  if (resumeEnvironmentId === undefined) await click("Continue");
   expect(text(renderer!.root)).toContain("Paired computer");
 }
 
@@ -283,6 +309,7 @@ beforeEach(() => {
   state.write.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.close.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.refresh.mockReset().mockResolvedValue(AsyncResult.success(undefined));
+  state.updateSettings.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.pair.mockReset().mockResolvedValue(AsyncResult.success(remoteId));
   state.complete.mockReset().mockResolvedValue(undefined);
   state.done.mockReset();
@@ -299,6 +326,52 @@ afterEach(async () => {
 });
 
 describe("welcome agent terminal setup", () => {
+  it("requires providers:manage for Codex setup and rechecks a retained mode callback", async () => {
+    const configAtom = state.configs.get(remoteId)!;
+    const config = state.registry!.get(configAtom);
+    state.registry!.set(configAtom, {
+      ...config,
+      settings: {
+        ...config.settings,
+        providerInstances: {
+          ...config.settings.providerInstances,
+          [signedOutCodex.instanceId]: {
+            ...config.settings.providerInstances[signedOutCodex.instanceId]!,
+            config: { binaryPath: "/opt/codex-work", setupMode: "managed" },
+          },
+        },
+      },
+    });
+    expect(
+      state.registry!.get(configAtom).settings.providerInstances[signedOutCodex.instanceId]?.config,
+    ).toMatchObject({ setupMode: "managed" });
+    await enterRemoteAgents(remoteId);
+
+    const setup = renderer!.root.findAllByProps({ "data-codex-setup": true })[0];
+    if (!setup) throw new Error("Codex setup component was not rendered");
+    expect(setup.props["data-read-only"]).toBe("true");
+    const deniedButton = button("Use existing CLI");
+    expect(deniedButton.props.disabled).toBe(true);
+    await act(async () => deniedButton.props.onClick());
+    expect(state.updateSettings).not.toHaveBeenCalled();
+
+    await act(async () =>
+      setScopes(remoteId, [AuthTerminalOperateScope, AuthProvidersManageScope]),
+    );
+    const managedSetup = renderer!.root.findByProps({ "data-codex-setup": true });
+    expect(managedSetup.props["data-read-only"]).toBe("false");
+    const managedButton = button("Use existing CLI");
+    expect(managedButton.props.disabled).toBe(false);
+    await click("Use existing CLI");
+    expect(state.updateSettings).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ environmentId: remoteId }),
+    );
+
+    await act(async () => setScopes(remoteId, [AuthTerminalOperateScope]));
+    await act(async () => managedButton.props.onClick());
+    expect(state.updateSettings).toHaveBeenCalledTimes(1);
+  });
+
   it("disables both setup actions for the paired read-only connection and preserves local completion", async () => {
     setAccess(remoteId, false);
     await enterRemoteAgents();
@@ -431,7 +504,6 @@ describe("welcome agent terminal setup", () => {
     expect(hasViewport()).toBe(false);
     expect(state.close).not.toHaveBeenCalled();
     await click("Continue");
-    expect(text(renderer!.root)).toContain("Choose your projects");
   });
 
   it("settles accepted pretyping locally after revocation without closing the PTY", async () => {

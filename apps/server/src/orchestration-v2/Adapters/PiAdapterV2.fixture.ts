@@ -17,25 +17,27 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { buildPiRuntimeGuidance, mapPiTurnStartError } from "../../provider/PiDriverComposition.ts";
+import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "../../provider/ScientProviderInstructions.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
   ProviderAdapterTurnStartError,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2SessionRuntime,
   type ProviderAdapterV2TurnInput,
-} from "../ProviderAdapter.ts";
-import { makePiAdapterV2, type PiAdapterV2Options } from "./PiAdapterV2.ts";
-import { makePiRpcConnection, type PiRpcRecord } from "./PiRpc.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
+import { makePiAdapterV2, type PiAdapterV2Options } from "@t3tools/provider-pi/testing";
+import { makePiRpcConnection, type PiRpcRecord } from "@t3tools/provider-pi/testing";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 const isNativeStartReceiptError = Schema.is(ProviderAdapterTurnStartError);
 
@@ -43,7 +45,13 @@ const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-pi-v2-adapter-",
 }).pipe(Layer.provide(NodeServices.layer));
 
-const testLayer = Layer.mergeAll(NodeServices.layer, IdAllocator.layer, serverConfigLayer);
+const testLayer = Layer.mergeAll(
+  NodeServices.layer,
+  IdAllocator.layer,
+  serverConfigLayer,
+  TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+  McpProviderSessions.layer,
+);
 
 const decodeJsonLine = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -389,28 +397,24 @@ const makeAdapter = Effect.fnUntraced(function* (
   makeConnection?: typeof makePiRpcConnection,
   continuationRequests?: PiAdapterV2Options["continuationRequests"],
 ) {
-  const idAllocator = yield* IdAllocator.IdAllocatorV2;
-  const serverConfig = yield* ServerConfig.ServerConfig;
-  const fileSystem = yield* FileSystem.FileSystem;
-  return makePiAdapterV2({
+  const childProcessSpawner =
+    forkFake === undefined
+      ? fake.spawner
+      : ChildProcessSpawner.make((command) =>
+          ChildProcess.isStandardCommand(command) && command.args.includes("--fork")
+            ? forkFake.spawner.spawn(command)
+            : fake.spawner.spawn(command),
+        );
+  return yield* makePiAdapterV2({
     instanceId: PI_INSTANCE_ID,
     ...(makeConnection === undefined ? {} : { makeConnection }),
     ...(continuationRequests === undefined ? {} : { continuationRequests }),
+    orchestrationInstructions: SCIENT_ORCHESTRATION_INSTRUCTIONS,
+    runtimeGuidance: buildPiRuntimeGuidance,
+    mapTurnStartError: mapPiTurnStartError,
     settings: { enabled: true, binaryPath: "pi", launchArgs, customModels: [] },
     environment: {},
-    spawner:
-      forkFake === undefined
-        ? fake.spawner
-        : ChildProcessSpawner.make((command) =>
-            ChildProcess.isStandardCommand(command) && command.args.includes("--fork")
-              ? forkFake.spawner.spawn(command)
-              : fake.spawner.spawn(command),
-          ),
-    fileSystem,
-    path: yield* Path.Path,
-    idAllocator,
-    serverConfig,
-  });
+  }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner));
 });
 
 const openRuntime = Effect.fnUntraced(function* (

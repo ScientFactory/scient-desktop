@@ -1,5 +1,4 @@
 import {
-  AcpRegistrySettings,
   ProviderRegistryInstallation,
   type ProviderInstanceId,
   type ProviderInstanceEnvironment,
@@ -8,12 +7,13 @@ import {
   type ServerSettings as SettingsSnapshot,
   resolveProviderInstanceEnabled,
 } from "@t3tools/contracts";
+import { AcpRegistrySettings } from "@t3tools/provider-acp-registry/settings";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 
-import type { ProviderManagedRuntimeActions } from "../../provider/ProviderDriver.ts";
-import * as AcpRegistrySupport from "../../provider/acp/AcpRegistrySupport.ts";
+import type { ProviderManagedRuntimeActions } from "../../provider/ScientProviderInstanceSeams.ts";
+import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as ServerSettings from "../../serverSettings.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 

@@ -32,7 +32,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { ServerConfig } from "../../config.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
-import { handoffBudget } from "../../orchestration-v2/ContextHandoffBudget.ts";
+import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
 import { makeScientContextHandoffPolicy } from "../../orchestration-v2/ScientContextHandoffPolicy.ts";
 import { deliverContextHandoffs } from "../../orchestration-v2/ContextHandoffDelivery.ts";
 import { ConversationForkService } from "../../orchestration-v2/scient-fork/ConversationForkService.ts";

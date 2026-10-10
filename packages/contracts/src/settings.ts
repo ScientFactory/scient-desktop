@@ -1,9 +1,8 @@
 // SCIENT-FORK:START
 import {
-  DroidSettingsPatch,
   makeScientProviderSettings,
-  OmpSettingsPatch,
-  ScientAgentSettingsPatch,
+  scientProviderDefaultEnabled,
+  SCIENT_PROVIDER_ENABLED_DEFAULTS,
 } from "./scient/providerSettings.ts";
 import {
   ScientificComputingSettings,
@@ -33,12 +32,14 @@ import {
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
+import * as SchemaGetter from "effect/SchemaGetter";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
   ForwardCompatibleNullable,
   ForwardCompatibleOptional,
   OmittedWhenNull,
   ProjectId,
+  ThreadId,
   // SCIENT-FORK:START
   NonNegativeInt,
   // SCIENT-FORK:END
@@ -70,7 +71,7 @@ import {
 import {
   ProviderInstanceConfig,
   ProviderInstanceId,
-  type ProviderDriverKind,
+  ProviderDriverKind,
 } from "./providerInstance.ts";
 import { VoiceLanguagePreference } from "./voice.ts";
 import { CustomModelsSettings } from "./customModels.ts";
@@ -583,7 +584,8 @@ export const UsageModelPriceOverride = Schema.Struct({
 });
 export type UsageModelPriceOverride = typeof UsageModelPriceOverride.Type;
 
-const makeBinaryPathSetting = (fallback: string) =>
+/** A binary path setting that decodes empty input to the provider's default executable. */
+export const makeBinaryPathSetting = (fallback: string) =>
   TrimmedString.pipe(
     Schema.decodeTo(
       Schema.String,
@@ -629,7 +631,8 @@ export type ProviderSettingsOrder<Fields extends Schema.Struct.Fields> = readonl
   string
 >[];
 
-function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fields>(
+/** A provider settings struct whose fields the settings form renders in `order`. */
+export function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fields>(
   fields: Fields,
   options?: {
     readonly order?: ProviderSettingsOrder<Fields> | undefined;
@@ -763,59 +766,6 @@ export const ClaudeSettings = makeProviderSettingsSchema(
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
 
-export const CursorSettings = makeProviderSettingsSchema(
-  {
-    // Off by default like Grok and OpenCode. Users opt in from Settings.
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(false)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    // Keep V1's CLI configuration when V2 rewrites the shared settings file.
-    // V2's Cursor SDK does not use these fields.
-    binaryPath: Schema.optionalKey(TrimmedString).pipe(
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    apiEndpoint: Schema.optionalKey(TrimmedString).pipe(
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    customModels: Schema.Array(CustomModelSetting).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-  },
-  {
-    order: [],
-  },
-);
-export type CursorSettings = typeof CursorSettings.Type;
-
-export const GrokSettings = makeProviderSettingsSchema(
-  {
-    // Off by default (like Cursor and OpenCode): the binding is not yet
-    // stable enough to probe on every install. Users opt in from Settings.
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(false)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    binaryPath: makeBinaryPathSetting("grok").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the Grok CLI binary.",
-        providerSettingsForm: { placeholder: "grok", clearWhenEmpty: "omit" },
-      }),
-    ),
-    customModels: Schema.Array(CustomModelSetting).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-  },
-  {
-    order: ["binaryPath"],
-  },
-);
-export type GrokSettings = typeof GrokSettings.Type;
-
-// SCIENT-FORK:START
 export const { OmpSettings, ScientAgentSettings, DroidSettings } = makeScientProviderSettings({
   makeProviderSettingsSchema,
   makeBinaryPathSetting,
@@ -824,8 +774,6 @@ export const { OmpSettings, ScientAgentSettings, DroidSettings } = makeScientPro
 export type OmpSettings = typeof OmpSettings.Type;
 export type ScientAgentSettings = typeof ScientAgentSettings.Type;
 export type DroidSettings = typeof DroidSettings.Type;
-// SCIENT-FORK:END
-
 /**
  * Antigravity ACP auth methods. Personal and Enterprise open a Google sign-in
  * in the browser. The API key and Agent Platform methods take credentials from
@@ -845,7 +793,9 @@ export type AntigravityAuthMethod = typeof AntigravityAuthMethod.Type;
 export const AntigravitySettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
+      // SCIENT-FORK:START — preserve the Scient driver's enabled default.
+      Schema.withDecodingDefault(Effect.succeed(SCIENT_PROVIDER_ENABLED_DEFAULTS.antigravity)),
+      // SCIENT-FORK:END
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     authMethod: AntigravityAuthMethod.pipe(
@@ -907,181 +857,6 @@ export const AntigravitySettings = makeProviderSettingsSchema(
   { order: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"] },
 );
 export type AntigravitySettings = typeof AntigravitySettings.Type;
-
-export const MuseSettings = makeProviderSettingsSchema(
-  {
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(false)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    binaryPath: makeBinaryPathSetting("muse").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description:
-          "Path to the Muse Code binary on this environment. Sign in with muse login on that host.",
-        providerSettingsForm: { placeholder: "muse", clearWhenEmpty: "omit" },
-      }),
-    ),
-    customModels: Schema.Array(CustomModelSetting).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-  },
-  { order: ["binaryPath"] },
-);
-export type MuseSettings = typeof MuseSettings.Type;
-
-export const PiSettings = makeProviderSettingsSchema(
-  {
-    // Off by default like Cursor and Grok. Users opt in from Settings.
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(false)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    binaryPath: makeBinaryPathSetting("pi").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the Pi coding agent binary.",
-        providerSettingsForm: { placeholder: "pi", clearWhenEmpty: "omit" },
-      }),
-    ),
-    launchArgs: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Launch arguments",
-        description: "Additional CLI arguments passed to pi --mode rpc on session start.",
-        providerSettingsForm: { clearWhenEmpty: "omit" },
-      }),
-    ),
-    customModels: Schema.Array(CustomModelSetting).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-  },
-  {
-    order: ["binaryPath", "launchArgs"],
-  },
-);
-export type PiSettings = typeof PiSettings.Type;
-
-export const AcpRegistryDistributionPreference = Schema.Literals(["auto", "binary", "npx", "uvx"]);
-export type AcpRegistryDistributionPreference = typeof AcpRegistryDistributionPreference.Type;
-
-export const AcpRegistrySettings = makeProviderSettingsSchema(
-  {
-    source: Schema.Literals(["registry", "local"]).pipe(
-      Schema.withDecodingDefault(Effect.succeed("registry")),
-      Schema.annotateKey({
-        title: "ACP source",
-        providerSettingsForm: {
-          control: "select",
-          options: [
-            { value: "registry", label: "ACP Registry" },
-            { value: "local", label: "Local command" },
-          ],
-        },
-      }),
-    ),
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    agentId: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Registry agent ID",
-        description: "Agent identifier from the official ACP Registry, for example 'devin'.",
-        providerSettingsForm: { placeholder: "devin", clearWhenEmpty: "persist" },
-      }),
-    ),
-    commandPath: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Executable override",
-        description:
-          "Executable on this environment. For registry agents, this overrides the distribution executable while keeping its arguments and environment.",
-        providerSettingsForm: { placeholder: "Registry default", clearWhenEmpty: "omit" },
-      }),
-    ),
-    commandArgs: Schema.Array(Schema.String).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    authMethodId: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Authentication method",
-        description:
-          "Optional ACP authentication method ID. By default, the first agent-managed method is selected.",
-        providerSettingsForm: { placeholder: "auto", clearWhenEmpty: "omit" },
-      }),
-    ),
-    distribution: AcpRegistryDistributionPreference.pipe(
-      Schema.withDecodingDefault(Effect.succeed("auto")),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    customModels: Schema.Array(Schema.String).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-  },
-  {
-    order: ["source", "agentId", "commandPath", "authMethodId"],
-  },
-);
-export type AcpRegistrySettings = typeof AcpRegistrySettings.Type;
-
-export const OpenCodeSettings = makeProviderSettingsSchema(
-  {
-    // Off by default (like Cursor and Grok): the binding is not yet stable
-    // enough to probe on every install. Users opt in from Settings.
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(false)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    binaryPath: makeBinaryPathSetting("opencode").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the OpenCode binary.",
-        providerSettingsForm: {
-          placeholder: "opencode",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
-    serverUrl: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Server URL",
-        description: "Leave blank to let Scient spawn the server when needed.",
-        providerSettingsForm: {
-          placeholder: "http://127.0.0.1:4096",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
-    serverPassword: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Server password",
-        description: "Stored in plain text on disk.",
-        providerSettingsForm: {
-          control: "password",
-          placeholder: "Optional",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
-    customModels: Schema.Array(CustomModelSetting).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-  },
-  {
-    order: ["binaryPath", "serverUrl", "serverPassword"],
-  },
-);
-export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
 /**
  * A read-only quota source outside this environment's provider CLIs. The
@@ -1256,7 +1031,17 @@ const StorageRetentionDays = Schema.NullOr(
   Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3650 })),
 );
 
+export const WorktreeKeepWhen = Schema.Literals([
+  "any-local-files",
+  "uncommitted-changes",
+  "tracked-changes",
+]);
+export type WorktreeKeepWhen = typeof WorktreeKeepWhen.Type;
+
 export const WorktreeCleanupRules = Schema.Struct({
+  worktreeKeepWhen: WorktreeKeepWhen.pipe(
+    Schema.withDecodingDefault(Effect.succeed("any-local-files")),
+  ),
   worktreeAfterDays: StorageRetentionDays,
   worktreeOnMerge: Schema.Boolean,
   worktreeOnDelete: Schema.Boolean,
@@ -1349,7 +1134,32 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
   "sidebarAutoSettleAfterDays",
 ]);
 
+export const StorageCleanupReportEntry = Schema.Struct({
+  kind: Schema.Literals(["worktree", "browser-artifacts", "logs"]),
+  outcome: Schema.Literals(["removed", "kept", "failed"]),
+  reason: Schema.String,
+  path: Schema.NullOr(Schema.String),
+  threadId: Schema.NullOr(ThreadId),
+  threadTitle: Schema.NullOr(Schema.String),
+  bytes: Schema.NullOr(Schema.Number).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  files: Schema.NullOr(Schema.Number).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+});
+export type StorageCleanupReportEntry = typeof StorageCleanupReportEntry.Type;
+export const StorageCleanupReport = Schema.Struct({
+  trigger: Schema.Literals(["automatic", "manual"]),
+  startedAt: Schema.String,
+  finishedAt: Schema.String,
+  entries: Schema.Array(StorageCleanupReportEntry),
+  counts: Schema.Struct({ removed: Schema.Number, kept: Schema.Number, failed: Schema.Number }),
+  omittedCount: Schema.Number,
+  bytesFreed: Schema.Number.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+});
+export type StorageCleanupReport = typeof StorageCleanupReport.Type;
+
 export const StorageCleanupSettings = Schema.Struct({
+  worktreeKeepWhen: WorktreeKeepWhen.pipe(
+    Schema.withDecodingDefault(Effect.succeed("any-local-files")),
+  ),
   worktreeAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   worktreeOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeOnDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -1565,25 +1375,6 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
 
-  // Legacy single-instance-per-driver settings. Continues to be the source
-  // of truth until `providerInstances` (below) lands per-driver migration
-  // shims and the server starts hydrating instances from it. Driver-specific
-  // schemas live here for the duration of the migration; once each driver
-  // owns its config in its own package, this struct shrinks to nothing and
-  // is removed entirely.
-  providers: Schema.Struct({
-    codex: CodexSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    muse: MuseSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    pi: PiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    droid: DroidSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    omp: OmpSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    scient: ScientAgentSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    antigravity: AntigravitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
   // is `Schema.Unknown` at this layer so envelopes with unknown drivers
@@ -1626,8 +1417,8 @@ export const DEFAULT_SERVER_SETTINGS: ServerSettings = Schema.decodeSync(ServerS
 /**
  * Read the legacy `enabled` flag embedded in a provider instance config
  * blob. The envelope-level `ProviderInstanceConfig.enabled` is the single
- * flag going forward; this reader exists for legacy `providers.<kind>`
- * blobs and old settings files that still carry the flag in-config.
+ * flag going forward; this reader exists for old settings files that still
+ * carry the flag in-config.
  */
 export const providerInstanceConfigEnabledFlag = (config: unknown): boolean | undefined => {
   if (config === null || typeof config !== "object" || Array.isArray(config)) {
@@ -1638,18 +1429,39 @@ export const providerInstanceConfigEnabledFlag = (config: unknown): boolean | un
 };
 
 /**
- * Default enabled state for a built-in driver when neither the envelope nor
- * the config blob carries a flag. Derived from the driver's settings schema
- * through `DEFAULT_SERVER_SETTINGS`, so the schema's decoding default stays
- * the single source of truth. Unknown (fork) drivers default to enabled.
+ * Upstream built-in defaults. Scient-owned schema defaults override this list
+ * through `scientProviderDefaultEnabled`.
  */
-const defaultEnabledForDriver = (driver: ProviderDriverKind): boolean => {
-  const legacyDefaults = DEFAULT_SERVER_SETTINGS.providers as Record<
-    string,
-    { readonly enabled?: boolean } | undefined
-  >;
-  return legacyDefaults[driver]?.enabled ?? true;
-};
+const DEFAULT_DISABLED_PROVIDER_DRIVERS: ReadonlySet<ProviderDriverKind> = new Set(
+  ["cursor", "grok", "muse", "pi", "opencode", "antigravity"].map((driver) =>
+    ProviderDriverKind.make(driver),
+  ),
+);
+
+/** Built-in drivers whose default instance runs before the user configures it. */
+const DEFAULT_ENABLED_DEFAULT_INSTANCES: ReadonlySet<ProviderInstanceId> = new Set(
+  ["codex", "claudeAgent"].map((instanceId) => ProviderInstanceId.make(instanceId)),
+);
+
+/**
+ * Whether the built-in default instance at `instanceId` is enabled while
+ * settings have no `providerInstances` entry for it. Scient-owned defaults
+ * extend the upstream built-ins; named instances require a settings entry.
+ */
+export const isUnconfiguredDefaultInstanceEnabled = (instanceId: ProviderInstanceId): boolean =>
+  // SCIENT-FORK:START — include Scient-owned implicit default instances.
+  DEFAULT_ENABLED_DEFAULT_INSTANCES.has(instanceId) ||
+  scientProviderDefaultEnabled(instanceId) === true;
+// SCIENT-FORK:END
+
+/**
+ * Default enabled state for a driver when neither the envelope nor the config
+ * blob carries a flag. Unknown (fork) drivers default to enabled.
+ */
+const defaultEnabledForDriver = (driver: ProviderDriverKind): boolean =>
+  // SCIENT-FORK:START — reuse the Scient schemas' default authority.
+  scientProviderDefaultEnabled(driver) ?? !DEFAULT_DISABLED_PROVIDER_DRIVERS.has(driver);
+// SCIENT-FORK:END
 
 /**
  * Resolve whether a configured provider instance is enabled. An explicit
@@ -1722,71 +1534,6 @@ const ModelSelectionPatch = Schema.Struct({
   options: Schema.optionalKey(ProviderOptionSelections),
 });
 
-const CodexSettingsPatch = Schema.Struct({
-  setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])),
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  homePath: Schema.optionalKey(TrimmedString),
-  shadowHomePath: Schema.optionalKey(TrimmedString),
-  launchArgs: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
-});
-
-const ClaudeSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  homePath: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
-  launchArgs: Schema.optionalKey(TrimmedString),
-  // Validated at the patch boundary so a typo fails the one update with a
-  // schema error instead of a generic whole-settings failure.
-  autoCompactWindow: Schema.optionalKey(
-    TrimmedString.check(Schema.isPattern(CLAUDE_AUTO_COMPACT_WINDOW_PATTERN)),
-  ),
-});
-
-const CursorSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
-});
-
-const GrokSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
-});
-
-const AntigravitySettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  authMethod: Schema.optionalKey(AntigravityAuthMethod),
-  apiKey: Schema.optionalKey(TrimmedString),
-  gcpProject: Schema.optionalKey(TrimmedString),
-  gcpLocation: Schema.optionalKey(TrimmedString),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
-});
-
-const MuseSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
-});
-
-const PiSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  launchArgs: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
-});
-
-const OpenCodeSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  serverUrl: Schema.optionalKey(TrimmedString),
-  serverPassword: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
-});
-
 export const ServerSettingsPatch = Schema.Struct({
   // SCIENT-FORK:START — replaces the whole catalog; omitted leaves it alone.
   threadSections: Schema.optionalKey(ThreadSections),
@@ -1801,6 +1548,7 @@ export const ServerSettingsPatch = Schema.Struct({
         Schema.Struct({
           mode: Schema.Literal("custom"),
           rules: Schema.Struct({
+            worktreeKeepWhen: Schema.optionalKey(WorktreeKeepWhen),
             worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
             worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
             worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
@@ -1812,6 +1560,7 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   storageCleanup: Schema.optionalKey(
     Schema.Struct({
+      worktreeKeepWhen: Schema.optionalKey(WorktreeKeepWhen),
       worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
       worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
       worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
@@ -1915,21 +1664,24 @@ export const ServerSettingsPatch = Schema.Struct({
       tokens: Schema.optionalKey(Schema.Record(GitHubHost, TrimmedString)),
     }),
   ),
+
+  // Old clients still send provider changes under `providers.<driver>`. Keep
+  // that key readable at the RPC boundary, but never emit it from this
+  // version: the server translates it into the default `providerInstances`
+  // slots before applying the patch.
   providers: Schema.optionalKey(
-    Schema.Struct({
-      codex: Schema.optionalKey(CodexSettingsPatch),
-      claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
-      cursor: Schema.optionalKey(CursorSettingsPatch),
-      grok: Schema.optionalKey(GrokSettingsPatch),
-      muse: Schema.optionalKey(MuseSettingsPatch),
-      pi: Schema.optionalKey(PiSettingsPatch),
-      opencode: Schema.optionalKey(OpenCodeSettingsPatch),
-      droid: Schema.optionalKey(DroidSettingsPatch),
-      omp: Schema.optionalKey(OmpSettingsPatch),
-      scient: Schema.optionalKey(ScientAgentSettingsPatch),
-      antigravity: Schema.optionalKey(AntigravitySettingsPatch),
-    }),
+    Schema.Unknown.pipe(
+      Schema.decodeTo(Schema.UndefinedOr(Schema.Record(ProviderDriverKind, Schema.Unknown)), {
+        decode: SchemaGetter.transform(
+          (raw: unknown) => raw as Readonly<Record<ProviderDriverKind, unknown>> | undefined,
+        ),
+        encode: SchemaGetter.forbidden(
+          () => "The legacy providers patch is accepted from older clients only.",
+        ),
+      }),
+    ),
   ),
+
   // Whole-map replacement for the new instance config. Patching individual
   // entries is intentionally out of scope: the map is small, and partial
   // patches risk leaving driver-specific config in a half-merged state.
@@ -1964,7 +1716,7 @@ export function requiredScopesForServerSettingsPatch(
   let changesSettings = false;
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
-    if (key === "providers" || key === "providerInstances" || key === "usageLimitSources") {
+    if (key === "providerInstances" || key === "usageLimitSources" || key === "providers") {
       changesProviders = true;
     } else {
       changesSettings = true;

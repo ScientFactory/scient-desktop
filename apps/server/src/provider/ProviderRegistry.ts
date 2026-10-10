@@ -9,8 +9,8 @@
  *
  * Historically this Layer composed four per-kind Live Layers
  * (`CodexProviderLive`, `ClaudeProviderLive`, …) that each exposed a
- * `ServerProviderShape`. Those Lives were deleted during the driver /
- * instance refactor — every driver now carries its `snapshot: ServerProviderShape`
+ * `ManagedServerProvider`. Those Lives were deleted during the driver /
+ * instance refactor — every driver now carries its `snapshot: ManagedServerProvider`
  * bundled onto the `ProviderInstance` the registry produces.
  *
  * Each configured instance (including multi-instance setups like
@@ -65,11 +65,15 @@ import {
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
 } from "./providerStatusCache.ts";
-import type { ProviderInstance, ProviderWorkspaceSnapshot } from "./ProviderDriver.ts";
+import type {
+  ProviderInstance,
+  ProviderWorkspaceSnapshot,
+} from "@t3tools/provider-core/server/driver";
+import type { ScientProviderInstance } from "./ScientProviderInstance.ts";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
-} from "./providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import type { ProviderSnapshotSource } from "./builtInProviderCatalog.ts";
 
 // SCIENT-FORK:START — model merge, transient state, reload and instance actions.
@@ -94,7 +98,7 @@ import type {
   ProviderManagedRuntimeActions,
   ProviderSkillActions,
   ProviderVoiceTranscriptCorrection,
-} from "./ProviderDriver.ts";
+} from "./ScientProviderInstanceSeams.ts";
 
 export type ProviderMaintenanceActionKind = "update";
 
@@ -380,7 +384,13 @@ const mergeProviderModels = (
   // Custom rows are derived from settings and every snapshot carries the full
   // current list, so a custom model missing from `nextModels` was removed by
   // the user and must not be resurrected from the previous snapshot.
-  const retainablePreviousModels = previousModels.filter((model) => !model.isCustom);
+  // A model the installed CLI is too old to run was offered by the pending
+  // snapshot, before the version was known; retaining it would make it
+  // selectable again.
+  const updateRequiredSlugs = new Set(provider.updateRequiredModels?.map((model) => model.slug));
+  const retainablePreviousModels = previousModels.filter(
+    (model) => !model.isCustom && !updateRequiredSlugs.has(model.slug),
+  );
 
   if (shouldRetainMissingModels && nextModels.length === 0 && retainablePreviousModels.length > 0) {
     return retainablePreviousModels;
@@ -656,7 +666,7 @@ export const layer = Layer.effect(
     // `bootSources`. Keyed by `instanceId`; the stored `ProviderInstance`
     // reference is used for identity equality so "no-op" reconciles
     // (settings unchanged) skip re-subscribing + re-probing.
-    const liveSubsRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ProviderInstance>>(
+    const liveSubsRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ScientProviderInstance>>(
       new Map(),
     );
     // Serialize `syncLiveSources` so a rapid burst of reconciles doesn't
@@ -986,7 +996,7 @@ export const layer = Layer.effect(
       Effect.gen(function* () {
         const instances = yield* instanceRegistry.listInstances;
         const unavailableProviders = yield* instanceRegistry.listUnavailable;
-        const nextByInstance = new Map<ProviderInstanceId, ProviderInstance>(
+        const nextByInstance = new Map<ProviderInstanceId, ScientProviderInstance>(
           instances.map((instance) => [instance.instanceId, instance] as const),
         );
         const knownInstanceIds = new Set<ProviderInstanceId>(nextByInstance.keys());
@@ -999,7 +1009,7 @@ export const layer = Layer.effect(
         // unchanged (reconcile treated them as no-op). Instances that
         // disappeared, or were rebuilt with a different reference,
         // fall through to the "newly-added" branch below.
-        const carriedOver = new Map<ProviderInstanceId, ProviderInstance>();
+        const carriedOver = new Map<ProviderInstanceId, ScientProviderInstance>();
         for (const [instanceId, previousInstance] of previousSubs) {
           const nextInstance = nextByInstance.get(instanceId);
           if (nextInstance !== undefined && nextInstance === previousInstance) {
@@ -1009,7 +1019,7 @@ export const layer = Layer.effect(
 
         // Collect new/rebuilt instances in `nextByInstance` insertion
         // order (which preserves settings-author order).
-        const newlyAdded: Array<readonly [ProviderInstanceId, ProviderInstance]> = [];
+        const newlyAdded: Array<readonly [ProviderInstanceId, ScientProviderInstance]> = [];
         for (const [instanceId, instance] of nextByInstance) {
           if (carriedOver.has(instanceId)) {
             continue;

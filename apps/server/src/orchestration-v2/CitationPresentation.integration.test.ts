@@ -32,12 +32,12 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
-import { makeProviderReplayGate } from "./testkit/ProviderReplayGate.testkit.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import {
   materializeReplayTranscriptWorkspace,
   readProviderReplayTranscript,
-} from "./testkit/ReplayTranscriptNdjson.ts";
+} from "@t3tools/provider-testing/replayTranscript";
 import { WEB_SEARCH_PROMPT } from "./testkit/fixtures/shared.ts";
 import { projectThreadProjectionForWire } from "./WireProjection.ts";
 import * as Snapshot from "../scient/conversationExport/ConversationSnapshotService.ts";
@@ -198,7 +198,7 @@ it.live(
           }),
           {
             layerServerConfig: Layer.succeed(ServerConfig, config),
-            layerDatabase: database,
+            databaseLayer: database,
             configureMcp: false,
             runEffectWorker: true,
           },

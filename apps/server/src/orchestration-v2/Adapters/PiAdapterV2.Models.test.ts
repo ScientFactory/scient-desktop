@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as ServerConfig from "../../config.ts";
-import { parsePiModelSlug } from "./PiRpc.ts";
+import { parsePiModelSlug } from "@t3tools/provider-pi/testing";
 import { encodePiModelSlug } from "../../provider/pi/PiModel.ts";
 import { makePiCustomModelsConnectionFactory } from "../../provider/pi/PiCustomModelsConnection.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";

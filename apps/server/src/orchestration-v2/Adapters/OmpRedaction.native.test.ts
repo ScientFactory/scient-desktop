@@ -5,8 +5,10 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -15,7 +17,7 @@ import { makeOmpScriptedWire } from "../../provider/omp/OmpCaptureReplay.testFix
 import { makeOmpRedaction } from "../../provider/omp/OmpRpcProcess.ts";
 import { ompTarget } from "../../provider/omp/OmpTarget.ts";
 import { nativeOmpSession } from "../../provider/testUtils/nativeOmpSession.ts";
-import type { ProviderAdapterV2Event } from "../ProviderAdapter.ts";
+import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 const toJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 /** A custom-model key only the process knows: the adapter never sees it. */
 const KEY = "customlivekey-0123456789abcdef";
@@ -249,6 +251,6 @@ describe("native OMP process redaction", () => {
           expect(encodedLog).toContain('"method":"message_end"');
           yield* session.close;
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, McpProviderSessions.layer))),
   );
 });

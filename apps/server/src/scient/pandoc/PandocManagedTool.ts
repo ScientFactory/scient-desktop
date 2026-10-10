@@ -29,11 +29,7 @@ import * as NodeCrypto from "node:crypto";
 
 import type { ScientPandocInstallState, ScientPandocToolStatus } from "@t3tools/contracts";
 import { ScientPandocInstallFailureReason } from "@t3tools/contracts";
-import {
-  HostProcessArchitecture,
-  HostProcessEnvironment,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -49,7 +45,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { writeFileStringAtomically } from "../../atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../../config.ts";
 import { artifactUrlRejection } from "../latex/LatexManagedToolchain.ts";
 import {
@@ -129,9 +125,9 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const config = yield* ServerConfig.ServerConfig;
   const unpacker = yield* PandocArchiveUnpacker.PandocArchiveUnpacker;
-  const platform = yield* HostProcessPlatform;
-  const architecture = yield* HostProcessArchitecture;
-  const hostEnvironment = yield* HostProcessEnvironment;
+  const platform = yield* HostProcess.Platform;
+  const architecture = yield* HostProcess.Architecture;
+  const hostEnvironment = yield* HostProcess.Environment;
   const lookup = resolvePandocAsset(platform, architecture, manifest);
   const asset = lookup.supported ? lookup.asset : null;
   const paths = managedPandocPaths({ stateDir: config.stateDir, join: path.join });

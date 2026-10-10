@@ -38,7 +38,7 @@ describe("shouldBundleCliDependency", () => {
       "effect",
       "@effect/platform",
       "hono",
-      "@t3tools/shared/hostProcess",
+      "@t3tools/shared/HostProcess",
       "zod",
       "zod/v3",
       "zod/v4",

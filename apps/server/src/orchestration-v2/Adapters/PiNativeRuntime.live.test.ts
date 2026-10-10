@@ -4,7 +4,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   binary,
   json,
@@ -109,19 +109,18 @@ it.layer(layer, { excludeTestServices: true })("real Pi native V2", (it) => {
 
           const h = yield* fixture("bridge");
           yield* h.models(`${baseUrl}/v1`);
+          const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
           yield* Effect.acquireRelease(
-            Effect.sync(() =>
-              McpProviderSession.setMcpProviderSession({
-                threadId: h.threadId,
-                providerInstanceId: h.instanceId,
-                environmentId: EnvironmentId.make("pi-real-mcp"),
-                providerSessionId: "synthetic",
-                endpoint: `${baseUrl}/mcp`,
-                authorizationHeader: "Bearer synthetic-only",
-                capabilities: new Set(),
-              }),
-            ),
-            () => Effect.sync(() => McpProviderSession.clearMcpProviderSession(h.threadId)),
+            mcpSessions.set({
+              threadId: h.threadId,
+              providerInstanceId: h.instanceId,
+              environmentId: EnvironmentId.make("pi-real-mcp"),
+              providerSessionId: "synthetic",
+              endpoint: `${baseUrl}/mcp`,
+              authorizationHeader: "Bearer synthetic-only",
+              capabilities: new Set<never>(),
+            }),
+            () => mcpSessions.clear(h.threadId),
           );
           const runtime = yield* h.open();
           const thread = yield* ensure(h, runtime);

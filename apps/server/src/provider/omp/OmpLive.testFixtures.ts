@@ -15,7 +15,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { scientAgentProcessEnvironment, scientAgentTarget } from "../scient/ScientAgentTarget.ts";
 import { ompProcessEnvironment } from "./OmpEnvironment.ts";
 import { ompTarget, type OmpTarget } from "./OmpTarget.ts";
@@ -53,6 +53,7 @@ export const ompQualifyLogsDir = qualifiesScientAgent
  * takes the agent directory, Scient Agent the config root that contains it.
  */
 export const ompQualifyEnvironment = (input: {
+  readonly homeDirectory: string;
   readonly baseEnv: NodeJS.ProcessEnv;
   readonly agent: string;
   readonly platform: NodeJS.Platform;
@@ -65,6 +66,7 @@ export const ompQualifyEnvironment = (input: {
       })
     : ompProcessEnvironment({
         baseEnv: input.baseEnv,
+        homeDirectory: input.homeDirectory,
         homePath: input.agent,
         platform: input.platform,
       });
@@ -91,6 +93,7 @@ export const ompLiveInstance = (
     );
   }
   const environment = ompQualifyEnvironment({
+    homeDirectory: home,
     baseEnv: {
       ...(options.baseEnv ?? process.env),
       HOME: home,
@@ -103,7 +106,7 @@ export const ompLiveInstance = (
         : {}),
     },
     agent,
-    platform: HostProcessPlatform.defaultValue(),
+    platform: HostProcess.Platform.defaultValue(),
   });
   return { environment, homePath: agent };
 };

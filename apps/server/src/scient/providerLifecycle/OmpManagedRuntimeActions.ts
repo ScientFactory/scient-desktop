@@ -12,7 +12,7 @@ import {
   resolveReviewedOmpArtifact,
 } from "@scientfactory/provider-runtime";
 import type { OmpSettings } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -229,8 +229,8 @@ export const makeOmpManagedRuntimeResolution = Effect.fn("OmpManagedRuntime.make
     readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
     readonly managedInstallationAllowed: boolean;
   }): Effect.fn.Return<ManagedProviderRuntimeResolution, never, OmpExecutableGate> {
-    const platform = yield* HostProcessPlatform;
-    const arch = yield* HostProcessArchitecture;
+    const platform = yield* HostProcess.Platform;
+    const arch = yield* HostProcess.Architecture;
     const target = detectTargetSafely({ platform, arch });
     const artifact = target ? resolveReviewedOmpArtifact(target) : undefined;
     const targetLabel = target ? managedRuntimeTargetKey(target) : `${platform}-${arch}`;

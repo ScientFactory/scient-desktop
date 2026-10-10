@@ -14,9 +14,8 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2StoredEvent,
 } from "@t3tools/contracts";
-import type { ProviderAdapterV2Event } from "./ProviderAdapter.ts";
+import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
-import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
@@ -30,17 +29,19 @@ import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { AcpProtocolLogEvent } from "effect-acp/protocol";
-import type { AcpSessionRequestLogEvent } from "../provider/acp/AcpSessionRuntime.ts";
+import type { AcpSessionRequestLogEvent } from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import * as Config from "../config.ts";
+import * as ScientTestProviderHost from "./testkit/ScientTestProviderHost.ts";
 import { makeDroidAcpRuntime } from "../provider/acp/DroidAcpSupport.ts";
 import { scriptedDroid } from "../provider/testUtils/scriptedDroid.ts";
 import { makeDroidAdapterV2 } from "./Adapters/DroidAdapterV2.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
+import { layer as idAllocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { OrchestratorV2, type OrchestratorV2Error } from "./Orchestrator.ts";
 import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 import { EventSinkV2 } from "./EventSink.ts";
 import { EventStoreV2 } from "./EventStore.ts";
@@ -67,13 +68,15 @@ export const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.
 const instanceId = ProviderInstanceId.make("droid-native-scheduling");
 const threadId = ThreadId.make("thread:droid-native-scheduling");
 export const selection = { instanceId, model: "droid-native" };
-const outer = Layer.mergeAll(
+const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
   idAllocatorLayer,
+  McpProviderSessions.layer,
   Config.layerTest(process.cwd(), { prefix: "droid-native-scheduling-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
 );
+const outer = ScientTestProviderHost.layer.pipe(Layer.provideMerge(fixtureServices));
 export const withDroid = <A, E, R>(
   body: string,
   run: (h: {
@@ -132,9 +135,8 @@ export const withDroid = <A, E, R>(
       const injected = yield* Queue.unbounded<ProviderAdapterV2Event>();
       const peer = yield* scriptedDroid(body);
       const config = yield* Config.ServerConfig;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const fs = yield* FileSystem.FileSystem;
-      const crypto = yield* Crypto.Crypto;
-      const allocator = yield* IdAllocatorV2;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const receiptDirectory = process.env.DROID_SCHED_RECEIPTS;
       const record = (phase: string, value: unknown) =>
@@ -180,7 +182,7 @@ export const withDroid = <A, E, R>(
       const teardownEntered = yield* Deferred.make<void>(),
         teardownReleased = yield* Deferred.make<void>();
       let admissionGuard = () => Effect.succeed(false);
-      const nativeAdapter = makeDroidAdapterV2({
+      const nativeAdapter = yield* makeDroidAdapterV2({
         testHooks: {
           afterHardTeardownTransportDrained: () =>
             options.holdTeardown
@@ -224,10 +226,6 @@ export const withDroid = <A, E, R>(
             })),
           ),
         childProcessSpawner: trackedSpawner,
-        fileSystem: fs,
-        crypto,
-        serverConfig: config,
-        idAllocator: allocator,
         selfInvocation: yield* resolveSelfInvocation(),
         onAuthenticationRejected: () => Effect.die("No authentication in scheduling peer"),
       });
@@ -261,7 +259,11 @@ export const withDroid = <A, E, R>(
         makeLayer([adapter]),
         {
           configureMcp: false,
-          layerDatabase: SqlitePersistenceMemory,
+          mcpProviderSessionsLayer: Layer.succeed(
+            McpProviderSessions.McpProviderSessions,
+            mcpSessions,
+          ),
+          databaseLayer: SqlitePersistenceMemory,
           runEffectWorker: !options.manualWorker,
           layerServerConfig: Layer.succeed(Config.ServerConfig, config),
           responseStreamingMode: options.injectEvents ? "paragraph" : "turn",

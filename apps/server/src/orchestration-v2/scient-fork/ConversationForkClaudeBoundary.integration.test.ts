@@ -20,12 +20,12 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Claude from "../Adapters/ClaudeAdapterV2.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { EventSinkV2 } from "../EventSink.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import * as Registry from "../ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { CLAUDE_MODEL_SELECTION } from "../testkit/fixtures/shared.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
 import { freezeConversationForkNativeSource } from "./ConversationForkNativeSource.ts";
@@ -74,15 +74,18 @@ it.live(
         });
         const forks: Claude.ClaudeAgentSdkSessionForkInput[] = [];
         const offers: SDKUserMessage[] = [];
+        const crypto = yield* Crypto.Crypto;
+        const path = yield* Path.Path;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const adapter = Claude.makeClaudeAdapterV2({
-          crypto: yield* Crypto.Crypto,
+          crypto,
           instanceId: Claude.CLAUDE_DEFAULT_INSTANCE_ID,
           settings,
           environment: {},
           attachmentsDir,
           fileSystem,
-          path: yield* Path.Path,
-          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          path,
+          idAllocator,
           queryRunner: {
             allocateSessionId: Effect.succeed(sourceSession),
             open: (input) =>
@@ -292,7 +295,7 @@ it.live(
           Effect.provide(
             makeOrchestratorV2ReplayLayerWithRegistry(
               { name: "claude-root-boundary", runtimePolicyOverride: { cwd } },
-              Registry.layerSingle(adapter),
+              Registry.layerFromAdaptersEffect(adapter.pipe(Effect.map((created) => [created]))),
               { configureMcp: false },
             ),
           ),

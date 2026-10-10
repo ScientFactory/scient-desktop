@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 import { DroidSettings } from "@t3tools/contracts";
 import { checkDroidProviderStatusWithCapabilities } from "../DroidProvider.ts";
-import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { DroidAcpRuntimeFactory, DroidAcpRuntimeInput } from "../acp/DroidAcpSupport.ts";
 
 import type { ResolvedModelConnection } from "../../customModels.ts";

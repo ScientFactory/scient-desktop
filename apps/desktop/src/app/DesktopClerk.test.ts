@@ -3,7 +3,7 @@ import * as NodeHttp from "node:http";
 import * as NodePath from "@effect/platform-node/NodePath";
 import { codexAuthHandoffUrl, readCodexAuthDelivery } from "@t3tools/shared/codexAuthHandoff";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
-import { HostProcessArguments } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -35,8 +35,15 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
+import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
+
+/** Clerk forwards web links; tests that are not about links ignore them. */
+const ignoreWebLinks = DesktopWebLinks.DesktopWebLinks.of({
+  receive: () => Effect.void,
+  setRendererReady: () => Effect.void,
+});
 
 const layerDesktopClerk = (
   isDevelopment = true,
@@ -230,11 +237,12 @@ describe("DesktopClerk", () => {
 
       assert.isTrue(Exit.isSuccess(exit));
       assert.equal(quit.mock.calls.length, 0);
-      assert.deepEqual(registeredEvents, ["open-url", "second-instance"]);
+      assert.deepEqual(registeredEvents, ["open-url", "open-file", "second-instance"]);
     }).pipe(
       Effect.provide(layerDesktopClerk()),
       Effect.provideService(ElectronApp.ElectronApp, electronApp),
       Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
+      Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
     );
   });
 
@@ -263,6 +271,7 @@ describe("DesktopClerk", () => {
       Effect.provide(layerDesktopClerk()),
       Effect.provideService(ElectronApp.ElectronApp, electronApp),
       Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
+      Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
     );
   });
 
@@ -330,10 +339,13 @@ it.effect("deferred provider auth deep links do not navigate or start authentica
     yield* Effect.promise(() => revealed.promise);
     assert.deepEqual(loadURL.mock.calls, []);
     listeners.get("open-url")!(event, "t3code-dev://app/welcome#agents:machine-id");
+    listeners.get("open-url")!(event, "https://example.com");
+    listeners.get("open-file")!(event, "/tmp/report.html");
     assert.equal(event.preventDefault.mock.calls.length, 0);
   }).pipe(
     Effect.scoped,
     Effect.provide(layerDesktopClerk()),
+    Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
     Effect.provideService(ElectronApp.ElectronApp, electronApp),
     Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
   );
@@ -390,12 +402,13 @@ it.effect.each(["startup", "open-url"] as const)(
         assert.equal(openExternal.mock.calls.length, 0);
       }).pipe(
         Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, shell)),
-        Effect.provideService(HostProcessArguments, entry === "startup" ? ["t3", link] : ["t3"]),
+        Effect.provideService(HostProcess.Arguments, entry === "startup" ? ["t3", link] : ["t3"]),
         Effect.provideService(ElectronApp.ElectronApp, electronApp),
         Effect.provideService(
           ElectronWindow.ElectronWindow,
           {} as ElectronWindow.ElectronWindow["Service"],
         ),
+        Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
       );
     }).pipe(Effect.scoped),
 );

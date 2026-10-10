@@ -20,8 +20,11 @@ logs include the snapshot-refresh duration, and the refresh has its own tracing 
 
 Reconciliation rechecks current V2 content inside the EventSink transaction. Untouched imported
 content receives newer V1 text or historical outcomes. If V2 content has changed, its identity and
-content remain intact and a labelled **Recovered V1 version** is added as inert history. Thread
-metadata is merged field by field against the copied baseline; conflicting V2 values are retained.
+content remain intact and a labelled **Recovered V1 version** is added as inert history.
+Attachments participate in that same ownership check for both messages and user turn items.
+The earlier missing-attachment retry repair runs only when no source revision is being reconciled;
+it must not replace attachments after the transactional reconciliation retained a V2 edit.
+Thread metadata is merged field by field against the copied baseline; conflicting V2 values are retained.
 Threads already continued in V2 retain their metadata, execution settings, and workspace binding
 even if those fields subsequently changed in V1. A V1 archive or snooze cannot hide continued V2
 work.

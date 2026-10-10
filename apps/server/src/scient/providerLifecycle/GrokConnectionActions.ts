@@ -1,8 +1,8 @@
 import {
-  type GrokSettings,
   type ProviderConnectionMethod,
   type ProviderAuthorizationUrlKind,
 } from "@t3tools/contracts";
+import type { GrokSettings } from "@t3tools/provider-grok/settings";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -10,13 +10,13 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import type {
   ProviderConnectionActions,
   ProviderConnectionActionFailure,
-} from "../../provider/ProviderDriver.ts";
+} from "../../provider/ScientProviderInstanceSeams.ts";
 import {
   GROK_AUTH_METHOD_ACCOUNT,
   GROK_AUTH_METHOD_CACHED_TOKEN,
@@ -24,7 +24,7 @@ import {
   GROK_AUTH_METHOD_OIDC,
   GROK_DEVICE_FLOW_ENV,
   makeGrokAcpRuntime,
-} from "../../provider/acp/GrokAcpSupport.ts";
+} from "@t3tools/provider-grok/server";
 import {
   ProviderConnectionActionError,
   withProviderSessionShutdown,
@@ -320,11 +320,11 @@ export const makeGrokConnectionActions = Effect.fn("GrokConnectionActions.make")
           ...environment,
           [GROK_DEVICE_FLOW_ENV]: deviceFlow ? "true" : "false",
         },
-        childProcessSpawner: spawner,
         cwd: process.cwd(),
         clientInfo: { name: "scient-provider-connection", version: "0.0.0" },
       }).pipe(
         Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.mapError((cause) => actionError("Grok could not start its local agent.", cause)),
         Effect.map((acp): GrokAcpConnection => ({
           initialize: () =>

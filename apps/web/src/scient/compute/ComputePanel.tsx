@@ -153,7 +153,7 @@ function ComputePanelTabs(props: {
           tabIndex={props.value === tab.value ? 0 : -1}
           aria-selected={props.value === tab.value}
           className={cn(
-            "cursor-pointer rounded-[4px] px-1.5 py-0.5 text-sm font-medium text-muted-foreground outline-none transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring",
+            "cursor-pointer rounded-[4px] px-1.5 py-0.5 text-sm font-medium text-muted-foreground outline-none transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
             props.value === tab.value && "text-foreground",
           )}
           onClick={() => props.onChange(tab.value)}

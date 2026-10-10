@@ -34,6 +34,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { Spinner } from "~/components/ui/spinner";
 import {
   AuthPreviewOperateScope,
+  type AssetResource,
   type EditorId,
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
@@ -182,6 +183,7 @@ import {
   resolveMarkdownTaskPreviewUpdate,
   resolveFilePreviewPath,
   shouldShowFileExplorer,
+  workspaceAssetResource,
 } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import { useInPlaceRename } from "~/scient/fileSurfaces/useInPlaceRename";
@@ -228,6 +230,33 @@ const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
 const RENDER_TABLE_STORAGE_KEY = "t3code.renderTable";
+
+function useWorkspaceViewerAssetResource(
+  input: {
+    readonly threadRef: ScopedThreadRef;
+    readonly draft: boolean;
+    readonly absolutePath: string;
+    readonly workspaceRoot: string;
+    readonly relativePath: string;
+  },
+  kind: "workspace-file" | "media-file",
+  htmlDocument?: boolean,
+): AssetResource {
+  const threadResource = useScientViewerResource(input, htmlDocument);
+  return useMemo(
+    () =>
+      input.draft
+        ? workspaceAssetResource({
+            kind,
+            threadRef: input.threadRef,
+            draft: true,
+            workspaceRoot: input.workspaceRoot,
+            absolutePath: input.absolutePath,
+          })
+        : threadResource,
+    [input.draft, input.threadRef, input.workspaceRoot, input.absolutePath, threadResource, kind],
+  );
+}
 // SCIENT-FORK:START — the Markdown surface loads on first use
 const ScientMarkdownFileSurface = lazy(() =>
   import("~/scient/markdownEditor/ScientMarkdownFileSurface").then((module) => ({
@@ -239,14 +268,16 @@ const ScientMarkdownFileSurface = lazy(() =>
 function WorkspaceImagePreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
+  /** The thread is a draft the server does not know yet. */
+  readonly draft: boolean;
   readonly workspaceRoot: string;
   readonly relativePath: string;
   readonly absolutePath: string;
   readonly alt: string;
   readonly refreshKey: number;
 }) {
-  // SCIENT-FORK:START — the asset is named by the tab's own path
-  const resource = useScientViewerResource(props);
+  // SCIENT-FORK:START — persisted threads use the rooted tab-path locator; drafts use the upstream draft resource.
+  const resource = useWorkspaceViewerAssetResource(props, "workspace-file");
   // SCIENT-FORK:END
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
@@ -312,14 +343,22 @@ function WorkspaceImagePreview(props: {
 function WorkspaceBrowserPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
+  /** The thread is a draft the server does not know yet. */
+  readonly draft: boolean;
   readonly absolutePath: string;
   readonly workspaceRoot: string;
   readonly relativePath: string;
   readonly title: string;
   readonly refreshKey: number;
 }) {
-  // SCIENT-FORK:START — the asset is named by the tab's own path
-  const resource = useScientViewerResource(props, !isPdfPreviewFile(props.absolutePath));
+  // SCIENT-FORK:START — preserve rooted file and HTML document semantics for persisted threads.
+  const insideWorkspace =
+    mediaFileReference(props.absolutePath, props.workspaceRoot).relativePath !== undefined;
+  const resource = useWorkspaceViewerAssetResource(
+    props,
+    insideWorkspace ? "workspace-file" : "media-file",
+    !isPdfPreviewFile(props.absolutePath),
+  );
   // SCIENT-FORK:END
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   // SCIENT-FORK:START — reload when the file's watcher reports a change
@@ -355,6 +394,8 @@ function WorkspaceBrowserPreview(props: {
 function WorkspaceVideoPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
+  /** The thread is a draft the server does not know yet. */
+  readonly draft: boolean;
   readonly absolutePath: string;
   readonly workspaceRoot: string;
   readonly relativePath: string;
@@ -362,8 +403,8 @@ function WorkspaceVideoPreview(props: {
   readonly refreshKey: number;
 }) {
   const reference = mediaFileReference(props.absolutePath, props.workspaceRoot);
-  // SCIENT-FORK:START — the asset is named by the tab's own path
-  const resource = useScientViewerResource(props);
+  // SCIENT-FORK:START — persisted threads use rooted locators; drafts use the upstream draft resource.
+  const resource = useWorkspaceViewerAssetResource(props, "media-file");
   // SCIENT-FORK:END
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
@@ -398,19 +439,25 @@ function WorkspaceVideoPreview(props: {
 function WorkspaceAudioPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
+  /** The thread is a draft the server does not know yet. */
+  readonly draft: boolean;
   readonly absolutePath: string;
+  readonly workspaceRoot: string;
   readonly name: string;
   readonly workspaceMutationId: string | null;
   /** Advances when the file's native watcher reports a change. */
   readonly refreshKey: number;
 }) {
   const resource = useMemo(
-    () => ({
-      _tag: "media-file" as const,
-      threadId: props.threadRef.threadId,
-      path: props.absolutePath,
-    }),
-    [props.threadRef.threadId, props.absolutePath],
+    () =>
+      workspaceAssetResource({
+        kind: "media-file",
+        threadRef: props.threadRef,
+        draft: props.draft,
+        workspaceRoot: props.workspaceRoot,
+        absolutePath: props.absolutePath,
+      }),
+    [props.threadRef, props.draft, props.workspaceRoot, props.absolutePath],
   );
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
@@ -1395,6 +1442,8 @@ export default function FilePreviewPanel({
 }: FilePreviewPanelProps) {
   const relativePath =
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
+  // A draft's composer target is its draft id; a thread the server knows is a ref.
+  const draft = typeof composerDraftTarget === "string";
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const updateClientSettings = useUpdateClientSettings();
@@ -1783,7 +1832,6 @@ export default function FilePreviewPanel({
       const result = await openFileInPreview({
         threadRef,
         workspaceRoot: cwd,
-        relativePath,
         filePath: absolutePath,
         httpBaseUrl: environmentHttpBaseUrl,
         createAssetUrl,
@@ -2046,6 +2094,7 @@ export default function FilePreviewPanel({
               key={`${environmentId}:${threadRef.threadId}:${absolutePath}`}
               environmentId={environmentId}
               threadRef={threadRef}
+              draft={draft}
               absolutePath={absolutePath}
               workspaceRoot={cwd}
               relativePath={relativePath}
@@ -2057,7 +2106,9 @@ export default function FilePreviewPanel({
               key={`${environmentId}:${threadRef.threadId}:${absolutePath}`}
               environmentId={environmentId}
               threadRef={threadRef}
+              draft={draft}
               absolutePath={absolutePath}
+              workspaceRoot={cwd}
               name={relativePath}
               workspaceMutationId={workspaceMutationId}
               refreshKey={viewerRefreshKey}
@@ -2067,6 +2118,7 @@ export default function FilePreviewPanel({
               key={absolutePath}
               environmentId={environmentId}
               threadRef={threadRef}
+              draft={draft}
               workspaceRoot={cwd}
               relativePath={relativePath}
               absolutePath={absolutePath}
@@ -2087,6 +2139,7 @@ export default function FilePreviewPanel({
               key={absolutePath}
               environmentId={environmentId}
               threadRef={threadRef}
+              draft={draft}
               absolutePath={absolutePath}
               workspaceRoot={cwd}
               relativePath={relativePath}

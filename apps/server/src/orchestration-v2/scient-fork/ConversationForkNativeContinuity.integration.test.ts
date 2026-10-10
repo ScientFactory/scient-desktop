@@ -33,17 +33,17 @@ import {
   historicalMessage,
   historyResponseItems,
   selectHistory,
-} from "../ContextHandoffBudget.ts";
+} from "../ScientHistoricalContext.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { conversationSnapshotProjection } from "../../scient/conversationExport/conversationSnapshotProjection.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { materializeCodexOwnerReload } from "../testkit/CodexReplayOwnerReload.ts";
 import {
   materializeReplayTranscriptWorkspace,
   readProviderReplayTranscript,
-} from "../testkit/ReplayTranscriptNdjson.ts";
+} from "@t3tools/provider-testing/replayTranscript";
 import {
   THREAD_FORK_NATIVE_SOURCE_PROMPT,
   THREAD_FORK_NATIVE_TARGET_PROMPT,
@@ -52,7 +52,7 @@ import { ConversationForkService } from "./ConversationForkService.ts";
 import { CheckpointStore } from "../../checkpointing/CheckpointStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { createAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
-import { makeProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
+import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sqlite.ts";
 
 const encodeFrame = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -918,7 +918,7 @@ it.live(
         const beforeLayer = makeOrchestratorV2ReplayLayerWithRegistry(
           { name, runtimePolicyOverride: { cwd } },
           CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(before),
-          { layerDatabase: databaseLayer, configureMcp: false },
+          { databaseLayer, configureMcp: false },
         );
         const accepted = yield* Effect.scoped(
           Effect.gen(function* () {
@@ -966,7 +966,7 @@ it.live(
         const afterLayer = makeOrchestratorV2ReplayLayerWithRegistry(
           { name, runtimePolicyOverride: { cwd } },
           CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(after),
-          { layerDatabase: databaseLayer, configureMcp: false, recoverOnStartup: true },
+          { databaseLayer, configureMcp: false, recoverOnStartup: true },
         );
         yield* Effect.scoped(
           Effect.gen(function* () {

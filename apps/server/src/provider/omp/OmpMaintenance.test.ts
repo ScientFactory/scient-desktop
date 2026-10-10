@@ -1,12 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 
-import {
-  ProviderVersionCache,
-  type ProviderMaintenanceResolutionContext,
-} from "../providerMaintenance.ts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import type { ProviderMaintenanceResolutionContext } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   classifyOmpInstallation,
   OMP_HOMEBREW_FORMULA_URL,
@@ -52,11 +51,11 @@ const lookup = (
   target: OmpInstallation,
   responses: Readonly<Record<string, () => Response>>,
   requests: string[],
-  cache: Map<string, { readonly expiresAt: number; readonly version: string | null }>,
+  latestVersions: ProviderLatestVersions.ProviderLatestVersions["Service"],
 ) =>
   resolveOmpLatestVersion(target).pipe(
     Effect.provideService(HttpClient.HttpClient, httpClient(responses, requests)),
-    Effect.provideService(ProviderVersionCache, cache),
+    Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
   );
 
 describe("Oh My Pi installation channels", () => {
@@ -132,7 +131,7 @@ describe("Oh My Pi latest release lookup", () => {
         installation("/usr/local/bin/omp"),
         { [OMP_NPM_LATEST_URL]: () => Response.json({ version: "18.3.2" }) },
         requests,
-        new Map(),
+        yield* ProviderLatestVersions.make(),
       );
       expect(version).toBe("18.3.2");
       expect(requests).toEqual([OMP_NPM_LATEST_URL]);
@@ -146,7 +145,7 @@ describe("Oh My Pi latest release lookup", () => {
         installation("/opt/homebrew/Cellar/omp/18.2.8/bin/omp"),
         { [OMP_HOMEBREW_FORMULA_URL]: () => new Response('  version "18.3.1"\n') },
         requests,
-        new Map(),
+        yield* ProviderLatestVersions.make(),
       );
       expect(version).toBe("18.3.1");
       expect(requests).toEqual([OMP_HOMEBREW_FORMULA_URL]);
@@ -157,9 +156,14 @@ describe("Oh My Pi latest release lookup", () => {
     Effect.gen(function* () {
       const requests: string[] = [];
       const github = { [OMP_LATEST_RELEASE_URL]: () => Response.json({ tag_name: "v18.3.1" }) };
-      expect(yield* lookup(installation("/usr/local/bin/omp"), github, requests, new Map())).toBe(
-        "18.3.1",
-      );
+      expect(
+        yield* lookup(
+          installation("/usr/local/bin/omp"),
+          github,
+          requests,
+          yield* ProviderLatestVersions.make(),
+        ),
+      ).toBe("18.3.1");
       expect(requests).toEqual([OMP_NPM_LATEST_URL, OMP_LATEST_RELEASE_URL]);
       requests.length = 0;
       expect(
@@ -167,57 +171,73 @@ describe("Oh My Pi latest release lookup", () => {
           installation("/home/test/.local/share/mise/installs/github-can1357-oh-my-pi/18.2.8/omp"),
           github,
           requests,
-          new Map(),
+          yield* ProviderLatestVersions.make(),
         ),
       ).toBe("18.3.1");
       expect(requests).toEqual([OMP_LATEST_RELEASE_URL]);
       requests.length = 0;
       expect(
-        yield* lookup(installation("/nix/store/abc-omp/bin/omp"), github, requests, new Map()),
+        yield* lookup(
+          installation("/nix/store/abc-omp/bin/omp"),
+          github,
+          requests,
+          yield* ProviderLatestVersions.make(),
+        ),
       ).toBeNull();
       expect(
         yield* lookup(
           installation("/home/test/.scient-next/provider-runtimes/omp/versions/18.2.8/x/omp"),
           github,
           requests,
-          new Map(),
+          yield* ProviderLatestVersions.make(),
         ),
       ).toBeNull();
       expect(requests).toEqual([]);
     }),
   );
 
-  it.effect("caches a successful answer but never a failed lookup", () =>
+  it.effect(
+    "retries missing versions after one minute and successful versions after one hour",
+    () =>
+      Effect.gen(function* () {
+        const latestVersions = yield* ProviderLatestVersions.make();
+        const requests: string[] = [];
+        const target = installation("/usr/local/bin/omp");
+        const online = { [OMP_NPM_LATEST_URL]: () => Response.json({ version: "18.3.2" }) };
+        expect(yield* lookup(target, {}, requests, latestVersions)).toBeNull();
+        expect(requests).toEqual([OMP_NPM_LATEST_URL, OMP_LATEST_RELEASE_URL]);
+        requests.length = 0;
+        yield* TestClock.adjust("59 seconds");
+        expect(yield* lookup(target, online, requests, latestVersions)).toBeNull();
+        expect(requests).toEqual([]);
+        yield* TestClock.adjust("1 second");
+        expect(yield* lookup(target, online, requests, latestVersions)).toBe("18.3.2");
+        expect(requests).toEqual([OMP_NPM_LATEST_URL]);
+        requests.length = 0;
+        yield* TestClock.adjust("3599 seconds");
+        const newer = { [OMP_NPM_LATEST_URL]: () => Response.json({ version: "18.3.3" }) };
+        expect(yield* lookup(target, newer, requests, latestVersions)).toBe("18.3.2");
+        expect(requests).toEqual([]);
+        yield* TestClock.adjust("1 second");
+        expect(yield* lookup(target, newer, requests, latestVersions)).toBe("18.3.3");
+        expect(requests).toEqual([OMP_NPM_LATEST_URL]);
+      }),
+  );
+
+  it.effect("uses a seeded latest-version port without contacting the release channel", () =>
     Effect.gen(function* () {
-      const cache = new Map<
-        string,
-        { readonly expiresAt: number; readonly version: string | null }
-      >();
+      const latestVersions = yield* ProviderLatestVersions.make([[OMP_NPM_LATEST_URL, "18.3.2"]]);
       const requests: string[] = [];
-      const target = installation("/usr/local/bin/omp");
-      expect(yield* lookup(target, {}, requests, cache)).toBeNull();
-      expect(yield* lookup(target, {}, requests, cache)).toBeNull();
-      // Both failed attempts reached the network: nothing was cached.
-      expect(requests).toEqual([
-        OMP_NPM_LATEST_URL,
-        OMP_LATEST_RELEASE_URL,
-        OMP_NPM_LATEST_URL,
-        OMP_LATEST_RELEASE_URL,
-      ]);
-      requests.length = 0;
-      const online = { [OMP_NPM_LATEST_URL]: () => Response.json({ version: "18.3.2" }) };
-      expect(yield* lookup(target, online, requests, cache)).toBe("18.3.2");
-      expect(yield* lookup(target, {}, requests, cache)).toBe("18.3.2");
-      expect(requests).toEqual([OMP_NPM_LATEST_URL]);
+      expect(yield* lookup(installation("/usr/local/bin/omp"), {}, requests, latestVersions)).toBe(
+        "18.3.2",
+      );
+      expect(requests).toEqual([]);
     }),
   );
 
   it.effect("treats an error status or a malformed body as a failed lookup", () =>
     Effect.gen(function* () {
-      const cache = new Map<
-        string,
-        { readonly expiresAt: number; readonly version: string | null }
-      >();
+      const latestVersions = yield* ProviderLatestVersions.make();
       const requests: string[] = [];
       const version = yield* lookup(
         installation("/usr/local/bin/omp"),
@@ -226,10 +246,10 @@ describe("Oh My Pi latest release lookup", () => {
           [OMP_LATEST_RELEASE_URL]: () => Response.json({ tag_name: "nightly" }),
         },
         requests,
-        cache,
+        latestVersions,
       );
       expect(version).toBeNull();
-      expect(cache.size).toBe(0);
+      expect(requests).toEqual([OMP_NPM_LATEST_URL, OMP_LATEST_RELEASE_URL]);
     }),
   );
 });

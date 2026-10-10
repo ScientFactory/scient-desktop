@@ -20,21 +20,24 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
-import { AcpProviderCapabilitiesV2 } from "../Adapters/AcpAdapterV2.ts";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
   makeNativeSessionAdapterV2,
   type NativeSession,
   type NativeSessionUpdate,
 } from "../Adapters/NativeSessionAdapterV2.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
+import {
+  IdAllocatorV2,
+  layer as idAllocatorLayer,
+} from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ProjectStoreV2 } from "../ProjectStore.ts";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
-import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const instanceId = ProviderInstanceId.make("acp");
 const modelSelection = { instanceId, model: "approval-fixture" };
@@ -407,7 +410,7 @@ it.live.each(
         );
       }).pipe(
         Effect.provide(
-          makeOrchestratorV2ReplayLayerWithRegistry(
+          ProviderReplayHarness.layerWithRegistry(
             { name, runtimePolicyOverride: { cwd } },
             makeLayer([adapter]),
             { configureMcp: false },

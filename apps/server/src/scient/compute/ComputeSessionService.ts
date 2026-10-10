@@ -73,7 +73,7 @@ import {
   type ComputeRuntimeInstallation,
   type ComputeRuntimeVerification,
 } from "@scientfactory/compute";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -492,7 +492,7 @@ const make = Effect.gen(function* () {
   const observeComputeOutputs = yield* makeComputeOutputAnalytics;
   const bindings = yield* ComputeRuntimeBindings;
   const options = yield* ComputeSessionServiceConfig;
-  const hostEnvironment = yield* HostProcessEnvironment;
+  const hostEnvironment = yield* HostProcess.Environment;
   const startupSlots = yield* Semaphore.make(
     positiveHostLimit(
       hostEnvironment.SCIENT_COMPUTE_MAX_CONCURRENT_STARTS,

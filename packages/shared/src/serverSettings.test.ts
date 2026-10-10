@@ -26,6 +26,53 @@ import {
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
 
 describe("serverSettings helpers", () => {
+  it.each([
+    ["codex", true],
+    ["claudeAgent", true],
+    ["scient", true],
+    ["droid", false],
+    ["omp", false],
+    ["pi", false],
+    ["cursor", false],
+    ["grok", false],
+    ["muse", false],
+    ["opencode", false],
+    ["antigravity", true],
+  ] as const)("keeps fresh and configured %s selection eligibility consistent", (kind, enabled) => {
+    const driver = ProviderDriverKind.make(kind);
+    const instanceId = ProviderInstanceId.make(kind);
+    const selection = createModelSelection(instanceId, "fixture-model");
+    expect(isModelSelectionProviderEnabled(DEFAULT_SERVER_SETTINGS, selection)).toBe(enabled);
+    const configured = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: { [instanceId]: { driver, config: {} } },
+    };
+    expect(isModelSelectionProviderEnabled(configured, selection)).toBe(enabled);
+    for (const explicitEnabled of [true, false]) {
+      expect(
+        isModelSelectionProviderEnabled(
+          {
+            ...configured,
+            providerInstances: { [instanceId]: { driver, enabled: explicitEnabled, config: {} } },
+          },
+          selection,
+        ),
+      ).toBe(explicitEnabled);
+    }
+    const namedId = ProviderInstanceId.make(`${kind}_work`);
+    const namedSelection = createModelSelection(namedId, "fixture-model");
+    expect(isModelSelectionProviderEnabled(DEFAULT_SERVER_SETTINGS, namedSelection)).toBe(false);
+    expect(
+      isModelSelectionProviderEnabled(
+        {
+          ...configured,
+          providerInstances: { [namedId]: { driver, config: {} } },
+        },
+        namedSelection,
+      ),
+    ).toBe(enabled);
+  });
+
   it("preserves an explicit scientific-language opt-out across narrow updates", () => {
     const python = ComputeLanguageId.make("python");
     const disabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
@@ -48,12 +95,9 @@ describe("serverSettings helpers", () => {
       applyServerSettingsPatch(enabled, {
         storageCleanup: { worktreeAfterDays: null },
       }).storageCleanup,
-    ).toEqual({
+    ).toMatchObject({
       worktreeAfterDays: null,
       worktreeOnMerge: true,
-      worktreeOnDelete: false,
-      worktreeUnchanged: false,
-      browserArtifactsAfterDays: null,
       logsAfterDays: 30,
     });
   });

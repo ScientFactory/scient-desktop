@@ -5,7 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import {
   AuthOrchestrationOperateScope,
@@ -500,7 +500,7 @@ describe("ConversationImportStaging", () => {
       }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
-  if (HostProcessPlatform.defaultValue() !== "win32") {
+  if (HostProcess.Platform.defaultValue() !== "win32") {
     it.effect("keeps an area it cannot remove yet, and its reservation, until a sweep can", () =>
       Effect.gen(function* () {
         resetImporter();
@@ -704,7 +704,7 @@ describe("ConversationImportStaging", () => {
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
-  if (HostProcessPlatform.defaultValue() !== "win32" && process.getuid?.() !== 0) {
+  if (HostProcess.Platform.defaultValue() !== "win32" && process.getuid?.() !== 0) {
     it.effect(
       "keeps the upload when the package cannot be opened, and validates it again later",
       () =>
@@ -1402,7 +1402,7 @@ describe("ConversationImportStaging", () => {
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
-  if (HostProcessPlatform.defaultValue() !== "win32") {
+  if (HostProcess.Platform.defaultValue() !== "win32") {
     it.effect("waits for an interrupted attachment copy before rollback removes its journal", () =>
       Effect.gen(function* () {
         const copies = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-copy-cancel-"));

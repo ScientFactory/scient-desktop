@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   ConversationImportRejection,
   SCIC_MEDIA_TYPE,
@@ -180,7 +180,7 @@ const decodeRejection = Schema.decodeExit(ConversationImportRejection);
 
 const packageZip = (pkg = makePackage()) => zipBytes(pkg.files);
 
-if (HostProcessPlatform.defaultValue() !== "win32" && process.getuid?.() !== 0) {
+if (HostProcess.Platform.defaultValue() !== "win32" && process.getuid?.() !== 0) {
   it.effect("reports a package it cannot open as a read error, not a damaged file", () =>
     Effect.gen(function* () {
       const bytes = yield* packageZip();

@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 
 import type { PreparedConnection } from "../connection/model.ts";
-import { environmentEndpointUrl } from "../environment/endpoint.ts";
+
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
@@ -36,7 +36,7 @@ export const getEnvironmentWordExportTool = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/word-export/v1/tool"),
+    url: (urls) => urls.tool(),
     timeoutMs: TOOL_TIMEOUT_MS,
     group: "scientWordExport",
     request: ({ client, headers }) => client.tool({ headers }),
@@ -53,8 +53,7 @@ export const installEnvironmentWordExportTool = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/word-export/v1/tool/install"),
+    url: (urls) => urls.installTool(),
     timeoutMs: TOOL_TIMEOUT_MS,
     group: "scientWordExport",
     // The server starts the install and answers with the state it left; the
@@ -75,7 +74,7 @@ export const exportEnvironmentWordFile = Effect.fn("clientRuntime.state.exportEn
       signer,
       remoteAuthorization,
       method: "POST",
-      url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/word-export/v1/file"),
+      url: (urls) => urls.exportFile(),
       timeoutMs: WORD_EXPORT_TIMEOUT_MS,
       group: "scientWordExport",
       request: ({ client, headers }) => client.exportFile({ headers, payload: input.request }),
@@ -96,8 +95,7 @@ export const prepareEnvironmentWordFileDiagrams = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/word-export/v1/file-diagrams"),
+    url: (urls) => urls.prepareFileDiagrams(),
     timeoutMs: TOOL_TIMEOUT_MS,
     group: "scientWordExport",
     request: ({ client, headers }) =>
@@ -118,7 +116,7 @@ export const exportEnvironmentWordLatex = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/word-export/v1/latex"),
+    url: (urls) => urls.exportLatex(),
     timeoutMs: WORD_EXPORT_TIMEOUT_MS,
     group: "scientWordExport",
     request: ({ client, headers }) => client.exportLatex({ headers, payload: input.request }),

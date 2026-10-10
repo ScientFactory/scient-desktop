@@ -1,5 +1,5 @@
 import { vi } from "vite-plus/test";
-import { historyResponseItems } from "../ContextHandoffBudget.ts";
+import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
@@ -40,8 +40,8 @@ import {
   CodexProviderCapabilitiesV2,
   canReuseCodexContextUsage,
 } from "../Adapters/CodexAdapterV2.ts";
-import { AcpProviderCapabilitiesV2 } from "../Adapters/AcpAdapterV2.ts";
-import { CursorProviderCapabilitiesV2 } from "../Adapters/CursorAdapterV2.ts";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
+import { CursorProviderCapabilitiesV2 } from "@t3tools/provider-cursor/testing";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
 import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
@@ -51,24 +51,18 @@ import * as EffectOutbox from "../EffectOutbox.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
-import {
-  type ProviderAdapterV2Event,
-  type ProviderAdapterV2HistoricalContext,
-  ProviderAdapterProtocolError,
-  type ProviderAdapterV2Shape,
-  type ProviderAdapterV2SessionRuntime,
-} from "../ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
-import { makeProviderFailure } from "../ProviderFailure.ts";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
   CLAUDE_MODEL_SELECTION,
   CODEX_MODEL_SELECTION,
   CURSOR_MODEL_SELECTION,
   GROK_MODEL_SELECTION,
 } from "./fixtures/shared.ts";
-import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { nativeSettlementTrace } from "./OmpNativeConjunctions.ts";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -91,7 +85,7 @@ interface CapturedTurn {
 }
 
 function unimplemented(driver: ProviderDriverKind, detail: string) {
-  return Effect.fail(new ProviderAdapterProtocolError({ driver, detail }));
+  return Effect.fail(new ProviderAdapter.ProviderAdapterProtocolError({ driver, detail }));
 }
 
 function makeTestAdapter(input: {
@@ -110,7 +104,7 @@ function makeTestAdapter(input: {
   readonly failResumeOnce?: Ref.Ref<boolean>;
   readonly initialContextUsage?: OrchestrationV2ProviderThread["contextUsage"];
   readonly getModelContextWindow?: (selection: ModelSelection) => number | undefined;
-  readonly canReuseContextUsage?: ProviderAdapterV2SessionRuntime["canReuseContextUsage"];
+  readonly canReuseContextUsage?: ProviderAdapter.ProviderAdapterV2SessionRuntime["canReuseContextUsage"];
   readonly tokenUsageByRunOrdinal?: Readonly<
     Record<number, Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">>
   >;
@@ -119,7 +113,7 @@ function makeTestAdapter(input: {
   readonly holdRunOrdinal?: number;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
-}): ProviderAdapterV2Shape {
+}): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
     driver: input.driver,
@@ -127,7 +121,7 @@ function makeTestAdapter(input: {
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
-        const events = yield* PubSub.unbounded<ProviderAdapterV2Event>();
+        const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const now = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: sessionInput.providerSessionId,
@@ -142,7 +136,7 @@ function makeTestAdapter(input: {
           lastError: null,
         };
 
-        const runtime: ProviderAdapterV2SessionRuntime = {
+        const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: input.instanceId,
           driver: input.driver,
           providerSessionId: sessionInput.providerSessionId,
@@ -198,7 +192,7 @@ function makeTestAdapter(input: {
           ...(input.injectedHistory === undefined
             ? {}
             : {
-                injectHistory: (history: ProviderAdapterV2HistoricalContext) =>
+                injectHistory: (history: ProviderAdapter.ProviderAdapterV2HistoricalContext) =>
                   Ref.update(input.injectedHistory!, (current) => [
                     ...current,
                     ...historyResponseItems(history.messages, history.context),
@@ -258,7 +252,7 @@ function makeTestAdapter(input: {
                 input.responseByThreadId?.[turnInput.threadId]?.[turnInput.runOrdinal] ??
                 input.responseByRunOrdinal[turnInput.runOrdinal] ??
                 `${input.driver} response for run ${turnInput.runOrdinal}`;
-              const providerEvents: ReadonlyArray<ProviderAdapterV2Event> = [
+              const providerEvents: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> = [
                 {
                   type: "provider_turn.updated",
                   driver: input.driver,
@@ -1021,7 +1015,7 @@ describe("orchestration v2 provider switching", () => {
               : Effect.void,
           ),
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: `handoff-${scenario}`,
                 runtimePolicyOverride: {
@@ -1188,7 +1182,7 @@ describe("orchestration v2 provider switching", () => {
           );
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: `handoff-retry-${failure}`,
                 runtimePolicyOverride: {
@@ -1393,7 +1387,7 @@ describe("orchestration v2 provider switching", () => {
                 assert.notInclude(back.text, partialResponse);
               }).pipe(
                 Effect.provide(
-                  makeOrchestratorV2ReplayLayerWithRegistry(
+                  ProviderReplayHarness.layerWithRegistry(
                     {
                       name: `handoff-${status}-${queued}-${returning}`,
                       runtimePolicyOverride: {
@@ -1519,7 +1513,7 @@ describe("orchestration v2 provider switching", () => {
             assert.deepEqual(projection.thread.modelSelection, CODEX_MODEL_SELECTION);
           }).pipe(
             Effect.provide(
-              makeOrchestratorV2ReplayLayerWithRegistry(
+              ProviderReplayHarness.layerWithRegistry(
                 {
                   name: `queued-capability-${key}`,
                   runtimePolicyOverride: {
@@ -1712,7 +1706,7 @@ describe("orchestration v2 provider switching", () => {
           return yield* orchestrator.getThreadProjection(queuedThreadId);
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: "queued-steer-provider-switch",
                 runtimePolicyOverride: {
@@ -1903,7 +1897,7 @@ describe("orchestration v2 provider switching", () => {
           return delivered;
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: "queued-account-switch",
                 runtimePolicyOverride: {
@@ -2117,7 +2111,7 @@ describe("orchestration v2 provider switching", () => {
         }).pipe(
           Effect.provide(
             Layer.merge(
-              makeOrchestratorV2ReplayLayerWithRegistry(
+              ProviderReplayHarness.layerWithRegistry(
                 {
                   name: "queued-provider-switch",
                   runtimePolicyOverride: {
@@ -2131,7 +2125,7 @@ describe("orchestration v2 provider switching", () => {
                   },
                 },
                 registryLayer,
-                { layerDatabase: databaseLayer },
+                { databaseLayer },
               ),
               outboxProvided,
             ),
@@ -2390,7 +2384,7 @@ describe("orchestration v2 provider switching", () => {
             return yield* orchestrator.getThreadProjection(rejectedThreadId);
           }).pipe(
             Effect.provide(
-              makeOrchestratorV2ReplayLayerWithRegistry(
+              ProviderReplayHarness.layerWithRegistry(
                 {
                   name: "queued-handoff-rejection",
                   runtimePolicyOverride: {
@@ -2496,7 +2490,7 @@ describe("orchestration v2 provider switching", () => {
           Layer.provide(Layer.mergeAll(storesProvided, eventSinkProvided)),
         );
         const maintenanceProvided = ProjectionMaintenance.layer.pipe(Layer.provide(storesProvided));
-        const orchestratorProvided = makeOrchestratorV2ReplayLayerWithRegistry(
+        const orchestratorProvided = ProviderReplayHarness.layerWithRegistry(
           {
             name: "provider-switch-legacy-import",
             runtimePolicyOverride: {
@@ -2510,7 +2504,7 @@ describe("orchestration v2 provider switching", () => {
             },
           },
           registryLayer,
-          { layerDatabase: databaseLayer },
+          { databaseLayer },
         );
         const testLayer = Layer.mergeAll(
           storesProvided,
@@ -2875,7 +2869,7 @@ describe("orchestration v2 provider switching", () => {
           return yield* waitForIdle(threadId);
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: "provider-switch",
                 runtimePolicyOverride: {
@@ -3057,7 +3051,7 @@ describe("orchestration v2 provider switching", () => {
           return yield* waitForIdle(targetThreadId);
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: "cross-provider-fork",
                 runtimePolicyOverride: {
@@ -3193,7 +3187,7 @@ describe("orchestration v2 provider switching", () => {
           return yield* waitForIdle(targetThreadId);
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: "cursor-portable-fork",
                 runtimePolicyOverride: {
@@ -3408,7 +3402,7 @@ describe("orchestration v2 provider switching", () => {
           return yield* waitForIdle(sourceThreadId);
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: "cross-provider-merge",
                 runtimePolicyOverride: {
@@ -3538,7 +3532,7 @@ describe("orchestration v2 provider switching", () => {
           ]);
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: "custom-codex-instances",
                 runtimePolicyOverride: {

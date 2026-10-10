@@ -5,10 +5,11 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { expandHomePath } from "../../pathExpansion.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { codexExecLaunchArgs, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
-import { toJsonSchemaObject } from "../../textGeneration/TextGenerationUtils.ts";
-import type { ProviderVoiceTranscriptCorrection } from "../../provider/ProviderDriver.ts";
+import { toJsonSchemaObject } from "@t3tools/provider-core/server/textGenerationUtils";
+import type { ProviderVoiceTranscriptCorrection } from "../../provider/ScientProviderInstanceSeams.ts";
 import {
   buildVoiceTranscriptCorrectionPrompt,
   validateVoiceTranscriptCorrectionOutput,
@@ -73,9 +74,12 @@ export function makeCodexVoiceTranscriptCorrection(
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const homeDirectory = yield* HostProcess.HomeDirectory;
     const providerEnvironment = {
       ...environment,
-      ...(settings.homePath ? { CODEX_HOME: expandHomePath(settings.homePath) } : {}),
+      ...(settings.homePath
+        ? { CODEX_HOME: expandHomePath(settings.homePath, homeDirectory) }
+        : {}),
     };
 
     const correct: ProviderVoiceTranscriptCorrection["correct"] = (input) =>

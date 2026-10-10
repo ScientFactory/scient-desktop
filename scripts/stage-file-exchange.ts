@@ -1,13 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Standalone host compiler invocation, no server runtime.
-import { HostProcessPlatform, HostProcessArchitecture } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 if (
-  HostProcessPlatform.defaultValue() !== "darwin" &&
-  HostProcessPlatform.defaultValue() !== "linux"
+  HostProcess.Platform.defaultValue() !== "darwin" &&
+  HostProcess.Platform.defaultValue() !== "linux"
 ) {
   throw new Error("File exchange is available on macOS and Linux only.");
 }
@@ -15,7 +15,7 @@ const root = NodeURL.fileURLToPath(new URL("..", import.meta.url));
 const destination = NodePath.join(
   root,
   "native/file-exchange",
-  `${HostProcessPlatform.defaultValue()}-${HostProcessArchitecture.defaultValue()}`,
+  `${HostProcess.Platform.defaultValue()}-${HostProcess.Architecture.defaultValue()}`,
 );
 await NodeFSP.mkdir(destination, { recursive: true });
 NodeChildProcess.execFileSync(

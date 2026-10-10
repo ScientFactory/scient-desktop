@@ -22,11 +22,10 @@ import { droidCustomModelId } from "../../provider/droid/DroidCustomModels.ts";
 import type {
   ProviderAdapterV2Event,
   ProviderAdapterV2SessionRuntime,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import { decodeRunRow } from "./projectionRowJson.ts";
 
 const RuntimeConfiguration = Schema.Struct({
-  providers: ServerSettings.fields.providers,
   providerInstances: ServerSettings.fields.providerInstances,
 });
 const encodeRuntimeConfiguration = Schema.encodeEffect(Schema.fromJsonString(RuntimeConfiguration));
@@ -41,7 +40,6 @@ export const forkModelWindowKey = Effect.fn("forkModelWindowKey")(function* (
   settings: ServerSettings,
 ) {
   const configuration = yield* encodeRuntimeConfiguration({
-    providers: settings.providers,
     providerInstances: settings.providerInstances,
   });
   return yield* encodeModelWindowKey({

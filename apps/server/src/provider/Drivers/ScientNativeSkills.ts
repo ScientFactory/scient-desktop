@@ -114,11 +114,7 @@ function replaceTomlArrayAssignment(
 }
 
 /** Update only `[skills].disabled`, preserving every unrelated TOML byte. */
-export function updateGrokDisabledSkills(
-  contents: string,
-  skillName: string,
-  enabled: boolean,
-): string {
+function updateGrokDisabledSkills(contents: string, skillName: string, enabled: boolean): string {
   const parsed = parseToml(contents) as { readonly skills?: unknown };
   const skillsTable = parsed.skills;
   if (

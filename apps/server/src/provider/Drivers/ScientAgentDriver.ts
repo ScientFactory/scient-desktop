@@ -1,5 +1,6 @@
 import { ScientAgentSettings, type ServerProvider, type ServerSettings } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import type { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -19,47 +20,47 @@ import {
 } from "../../scient/providerLifecycle/ScientAgentConnectionActions.ts";
 import { makeScientAgentManagedRuntimeResolution } from "../../scient/providerLifecycle/ScientAgentManagedRuntimeActions.ts";
 import { makeOmpTextGeneration } from "../../textGeneration/OmpTextGeneration.ts";
-import { ProviderDriverError } from "../Errors.ts";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeOmpAdapterV2 } from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
-import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
-import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   checkOmpProviderStatus,
   makePendingOmpProvider,
   type OmpProviderStatus,
 } from "../OmpProvider.ts";
-import { ProviderEventLoggers } from "../ProviderEventLoggers.ts";
-import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { makeOmpCustomModelsClientFactory } from "../omp/OmpCustomModels.ts";
 import type { OmpExecutableGate } from "../omp/OmpExecutableGate.ts";
 import { sweepStaleOmpExtensionFiles } from "../omp/OmpExtensionBootstrap.ts";
 import { OMP_ISOLATED_ARGS } from "../omp/OmpRpcProcess.ts";
-import {
-  defaultProviderContinuationIdentity,
-  type ProviderDriver,
-  type ProviderInstance,
-} from "../ProviderDriver.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
+import { defaultProviderContinuationIdentity } from "@t3tools/provider-core/server/driver";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   haveProviderSnapshotSettingsChanged,
   type ProviderSnapshotSettings,
-} from "../providerUpdateSettings.ts";
+} from "@t3tools/provider-core/server/snapshotSettings";
 import { scientAgentProcessEnvironment, scientAgentTarget } from "../scient/ScientAgentTarget.ts";
-import { withInstanceIdentity } from "./instanceIdentity.ts";
+import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
+import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 
 const DRIVER_KIND = scientAgentTarget.driverKind;
 const decodeSettings = Schema.decodeSync(ScientAgentSettings);
 
 export type ScientAgentDriverEnv =
+  | ProviderHost
   | BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
-  | IdAllocatorV2
+  | IdAllocator.IdAllocatorV2
+  | McpProviderSessions.McpProviderSessions
   | OmpExecutableGate
   | Path.Path
-  | ProviderEventLoggers
+  | ProviderEventLoggers.ProviderEventLoggers
   | ServerConfig
   | ServerSettingsService;
 
@@ -73,7 +74,7 @@ export type ScientAgentDriverEnv =
  * One instance for now. Managed installation uses qualified ScientFactory
  * releases; a configured executable remains usable before the first release.
  */
-export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentDriverEnv> = {
+export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, ScientAgentDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: scientAgentTarget.displayName, supportsMultipleInstances: false },
   configSchema: ScientAgentSettings,
@@ -81,12 +82,12 @@ export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentD
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig;
-      const eventLoggers = yield* ProviderEventLoggers;
+      const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
       const serverSettings = yield* ServerSettingsService;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const platform = yield* HostProcessPlatform;
+      const platform = yield* HostProcess.Platform;
       const failure = (detail: string) => (cause: { readonly message?: string }) =>
         new ProviderDriverError({ driver: DRIVER_KIND, instanceId, detail, cause });
       const effectiveConfig = { ...config, enabled } satisfies ScientAgentSettings;
@@ -163,7 +164,7 @@ export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentD
           },
         };
       };
-      const orchestrationAdapter = makeOmpAdapterV2({
+      const orchestrationAdapter = yield* makeOmpAdapterV2({
         target: scientAgentTarget,
         instanceId,
         settings: launchConfig,
@@ -176,8 +177,8 @@ export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentD
         serverConfig,
         makeProcess: makeRpcClient,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-        idAllocator: yield* IdAllocatorV2,
-        continuations: yield* ProviderContinuationRequests,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        continuations: yield* ProviderContinuationRequests.ProviderContinuationRequests,
       });
       const textGeneration = yield* makeOmpTextGeneration(
         scientAgentTarget,
@@ -271,6 +272,6 @@ export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentD
         textGeneration,
         connectionActions,
         managedRuntimeActions: managedRuntime.actions,
-      } satisfies ProviderInstance;
+      } satisfies ScientProviderInstance;
     }),
 };

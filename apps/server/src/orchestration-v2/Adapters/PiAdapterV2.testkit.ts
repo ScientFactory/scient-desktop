@@ -34,15 +34,17 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../../config.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
   makeReplayServerConfig,
   type OrchestratorV2ProviderReplayHarness,
 } from "../testkit/ProviderReplayHarness.ts";
-import { PI_PROVIDER, PiAdapterV2Driver } from "./PiAdapterV2.ts";
-import { piInstanceStateRoot } from "../../provider/pi/PiSessionFile.ts";
+import { PI_PROVIDER, PiAdapterV2Driver } from "@t3tools/provider-pi/server";
+import { piInstanceStateRoot } from "@t3tools/provider-pi/testing";
 import {
   PiReplaySessionBinding,
   reconcilePiBoundLaunchProtocol,
@@ -472,7 +474,7 @@ export function layer<E, R>(input: {
 }) {
   const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
-    makeReplayServerConfig(`pi-${input.scenario}`).pipe(Effect.orDie),
+    makeReplayServerConfig(input.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
   return ProviderAdapterRegistry.layerFromDrivers({
     drivers: [PiAdapterV2Driver],
@@ -486,7 +488,14 @@ export function layer<E, R>(input: {
     },
   }).pipe(
     Layer.provide(input.spawner),
-    Layer.provide(Layer.mergeAll(layerServerConfig, NodeServices.layer, IdAllocator.layer)),
+    Layer.provide(
+      Layer.mergeAll(
+        TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+        layerServerConfig,
+        NodeServices.layer,
+        IdAllocator.layer,
+      ),
+    ),
   );
 }
 
@@ -567,9 +576,9 @@ export const PiOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
         ChildProcessSpawner.ChildProcessSpawner,
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
-          const config = yield* ServerConfig.ServerConfig;
+          const host = yield* ProviderHost.ProviderHost;
           const declaredRoot = yield* piInstanceStateRoot({
-            stateDir: config.stateDir,
+            stateDir: host.paths.stateDir,
             instanceId: PI_PROVIDER,
           });
           yield* fs.makeDirectory(declaredRoot, { recursive: true, mode: 0o700 });

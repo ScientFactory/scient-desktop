@@ -223,7 +223,7 @@ function WarningTooltipIcon({
             tabIndex={focusable ? 0 : undefined}
             aria-label={label}
             className={cn(
-              "inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-warning outline-none transition-colors hover:bg-warning/10 focus-visible:ring-3 focus-visible:ring-warning/25",
+              "inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-warning outline-none transition-colors hover:bg-warning/10 focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-warning/25",
               className,
             )}
           />

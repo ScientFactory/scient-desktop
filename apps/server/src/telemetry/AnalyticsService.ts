@@ -7,9 +7,9 @@
  *
  * @module AnalyticsService
  */
+
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
 // SCIENT-FORK:START — Scient first-party analytics replaces the PostHog client

@@ -11,7 +11,7 @@ import * as Exit from "effect/Exit";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import {
   emptyState,

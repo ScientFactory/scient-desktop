@@ -22,7 +22,7 @@ import {
 } from "@t3tools/contracts";
 import { exportFileName } from "@scientfactory/conversation";
 import { inspectMarkdownDocument } from "@scientfactory/scient-markdown";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -132,7 +132,7 @@ const make = Effect.gen(function* () {
     const read = yield* readVerifiedWorkspaceFile(
       checkedFileIdentity(canonical.value, info.value),
       canonicalRoot.value,
-      yield* HostProcessPlatform,
+      yield* HostProcess.Platform,
       BIBLIOGRAPHY_MAX_BYTES,
     );
     return read._tag === "bytes"

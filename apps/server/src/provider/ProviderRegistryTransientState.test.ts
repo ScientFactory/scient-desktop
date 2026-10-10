@@ -20,8 +20,8 @@ import * as Stream from "effect/Stream";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
 import * as ModelManifest from "./ModelManifest.ts";
-import type { ProviderInstance } from "./ProviderDriver.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "./providerStatusCache.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
@@ -241,7 +241,7 @@ const makeHarness = Effect.fn("ProviderRegistryTransientState.makeHarness")(func
 });
 
 const nextRegistryEmission = Effect.fn("ProviderRegistryTransientState.nextEmission")(function* (
-  registry: ProviderRegistry.ProviderRegistryShape,
+  registry: ProviderRegistry.ProviderRegistry["Service"],
 ) {
   const fiber = yield* registry.streamChanges.pipe(Stream.runHead, Effect.forkChild);
   yield* Effect.yieldNow;

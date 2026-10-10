@@ -3,6 +3,26 @@ import * as Schema from "effect/Schema";
 import { TrimmedString } from "../baseSchemas.ts";
 import type { CustomModelSetting as CustomModelSchema } from "../model.ts";
 
+export const SCIENT_PROVIDER_ENABLED_DEFAULTS = {
+  omp: false,
+  droid: false,
+  scient: true,
+  antigravity: true,
+} as const;
+
+/** Scient driver defaults shared by config schemas and instance eligibility. */
+export function scientProviderDefaultEnabled(driver: string): boolean | undefined {
+  switch (driver) {
+    case "omp":
+    case "droid":
+    case "scient":
+    case "antigravity":
+      return SCIENT_PROVIDER_ENABLED_DEFAULTS[driver];
+    default:
+      return undefined;
+  }
+}
+
 export function makeScientProviderSettings<BinaryPath extends Schema.Top>({
   makeProviderSettingsSchema,
   makeBinaryPathSetting,
@@ -18,7 +38,7 @@ export function makeScientProviderSettings<BinaryPath extends Schema.Top>({
   const OmpSettings = makeProviderSettingsSchema(
     {
       enabled: Schema.Boolean.pipe(
-        Schema.withDecodingDefault(Effect.succeed(false)),
+        Schema.withDecodingDefault(Effect.succeed(SCIENT_PROVIDER_ENABLED_DEFAULTS.omp)),
         Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
       ),
       binaryPath: makeBinaryPathSetting("omp").pipe(
@@ -61,7 +81,7 @@ export function makeScientProviderSettings<BinaryPath extends Schema.Top>({
   const ScientAgentSettings = makeProviderSettingsSchema(
     {
       enabled: Schema.Boolean.pipe(
-        Schema.withDecodingDefault(Effect.succeed(true)),
+        Schema.withDecodingDefault(Effect.succeed(SCIENT_PROVIDER_ENABLED_DEFAULTS.scient)),
         Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
       ),
       binaryPath: makeBinaryPathSetting("scient-agent").pipe(
@@ -84,7 +104,7 @@ export function makeScientProviderSettings<BinaryPath extends Schema.Top>({
       // Off by default (like Cursor, Grok, and OpenCode): the binding is not
       // yet stable enough to probe on every install. Users opt in from Settings.
       enabled: Schema.Boolean.pipe(
-        Schema.withDecodingDefault(Effect.succeed(false)),
+        Schema.withDecodingDefault(Effect.succeed(SCIENT_PROVIDER_ENABLED_DEFAULTS.droid)),
         Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
       ),
       binaryPath: makeBinaryPathSetting("droid").pipe(

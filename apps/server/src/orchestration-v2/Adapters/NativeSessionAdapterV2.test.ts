@@ -21,9 +21,9 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import * as IdAllocator from "../IdAllocator.ts";
-import * as ProviderAdapter from "../ProviderAdapter.ts";
-import { AcpProviderCapabilitiesV2 } from "./AcpAdapterV2.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
   makeNativeSessionAdapterV2,
   NativeSessionOperationError,

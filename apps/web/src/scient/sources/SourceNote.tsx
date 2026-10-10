@@ -368,7 +368,7 @@ function NotePreview(props: { readonly value: string; readonly onEdit: () => voi
   return (
     <button
       type="button"
-      className="w-full cursor-text rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="w-full cursor-text rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       aria-label="Edit source note"
       dir="auto"
       onClick={props.onEdit}

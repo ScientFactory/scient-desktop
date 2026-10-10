@@ -6,7 +6,7 @@ import {
   ManagedScientAgentRuntime,
   resolveScientAgentArtifactPolicy,
 } from "@scientfactory/provider-runtime";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
@@ -21,21 +21,33 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
 import { ScientAgentDriver } from "./ScientAgentDriver.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { layerConfigConsistentTestProviderHost } from "../testUtils/providerHost.ts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ModelManifest from "../ModelManifest.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeJsonPath = Schema.decodeSync(Schema.fromJsonString(Schema.String));
 
-const testLayer = ServerConfig.layerTest(process.cwd(), {
+const providerDependenciesLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-scient-driver-managed-actions-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(IdAllocator.layer),
-  Layer.provideMerge(Layer.succeed(HostProcessPlatform, "darwin")),
-  Layer.provideMerge(Layer.succeed(HostProcessArchitecture, "arm64")),
+  Layer.provideMerge(ModelManifest.layerTest),
+  Layer.provideMerge(ProviderLatestVersions.layer),
+  Layer.provideMerge(McpProviderSessions.layer),
+  Layer.provideMerge(Layer.succeed(HostProcess.Platform, "darwin")),
+  Layer.provideMerge(Layer.succeed(HostProcess.Architecture, "arm64")),
   Layer.provideMerge(OmpExecutableGate.layer),
-  Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+  Layer.provideMerge(
+    Layer.succeed(
+      ProviderEventLoggers.ProviderEventLoggers,
+      ProviderEventLoggers.NoOpProviderEventLoggers,
+    ),
+  ),
   Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(
     Layer.mock(BackgroundPolicy.BackgroundPolicy)({
@@ -57,6 +69,9 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
       ),
     ),
   ),
+);
+const testLayer = layerConfigConsistentTestProviderHost.pipe(
+  Layer.provideMerge(providerDependenciesLayer),
 );
 
 const noSpawn = ChildProcessSpawner.make(() =>
@@ -82,7 +97,7 @@ it.layer(testLayer)("ScientAgentDriver", (it) => {
       expect(snapshot.connection?.methods).toEqual([]);
     }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn), Effect.scoped),
   );
-  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "launches a durably selected managed binary without a current catalog release",
     () =>
       Effect.gen(function* () {

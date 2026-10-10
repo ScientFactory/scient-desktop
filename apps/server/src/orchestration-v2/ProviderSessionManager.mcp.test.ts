@@ -8,10 +8,11 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
-import * as McpProviderSession from "../mcp/McpProviderSession.ts";
+import type * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import {
@@ -102,6 +103,7 @@ it.effect("ProviderSessionManagerV2 revokes MCP credentials when release persist
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread-provider-session-manager-mcp-release-failure");
       const providerSessionId = yield* idAllocator.allocate.providerSession({
@@ -130,7 +132,7 @@ it.effect("ProviderSessionManagerV2 revokes MCP credentials when release persist
       // credential retirement, before advancing the public close's native bound.
       yield* Deferred.await(releaseWriteFailure.attempted);
       assert.equal((yield* Ref.get(state)).closeCount, 1);
-      assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+      assert.isUndefined(yield* mcpSessions.read(threadId));
       assert.isUndefined(yield* registry.resolve(token!));
       assert.isUndefined(closing.pollUnsafe());
       yield* TestClock.adjust("30 seconds");
@@ -159,7 +161,7 @@ it.effect("ProviderSessionManagerV2 revokes MCP credentials when release persist
       );
       assert.equal((yield* Ref.get(state)).closeCount, 1);
       assert.equal((yield* Ref.get(state)).openCount, 1);
-      assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+      assert.isUndefined(yield* mcpSessions.read(threadId));
       assert.isUndefined(yield* registry.resolve(token!));
     });
 
@@ -187,6 +189,7 @@ it.effect("ProviderSessionManagerV2 duplicate detach preserves replacement MCP c
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread-provider-session-manager-replacement-mcp");
       const oldSessionId = yield* idAllocator.allocate.providerSession({
@@ -220,14 +223,14 @@ it.effect("ProviderSessionManagerV2 duplicate detach preserves replacement MCP c
       const replacementToken = replacement?.authorizationHeader.replace(/^Bearer\s+/, "");
       assert.isDefined(replacementToken);
       assert.equal(
-        McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId,
+        (yield* mcpSessions.read(threadId))?.providerSessionId,
         replacement?.providerSessionId,
       );
 
       yield* manager.detach({ providerSessionId: oldSessionId, threadId });
 
       assert.equal(
-        McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId,
+        (yield* mcpSessions.read(threadId))?.providerSessionId,
         replacement?.providerSessionId,
       );
       assert.equal((yield* registry.resolve(replacementToken!))?.thread.threadId, threadId);
@@ -259,6 +262,7 @@ it.effect(
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         const now = yield* DateTime.now;
         const threadId = ThreadId.make("thread-provider-session-manager-superseded-mcp");
         const oldSessionId = yield* idAllocator.allocate.providerSession({
@@ -294,7 +298,7 @@ it.effect(
         const replacementToken = replacement?.authorizationHeader.replace(/^Bearer\s+/, "");
         assert.isDefined(replacementToken);
         assert.equal(
-          McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId,
+          (yield* mcpSessions.read(threadId))?.providerSessionId,
           replacement?.providerSessionId,
         );
 
@@ -303,7 +307,7 @@ it.effect(
         yield* manager.detach({ providerSessionId: oldSessionId, threadId });
 
         assert.equal(
-          McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId,
+          (yield* mcpSessions.read(threadId))?.providerSessionId,
           replacement?.providerSessionId,
         );
         assert.equal((yield* registry.resolve(replacementToken!))?.thread.threadId, threadId);
@@ -335,6 +339,7 @@ it.effect(
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         const now = yield* DateTime.now;
         const threadId = ThreadId.make("thread-provider-session-manager-stable-mcp");
         const providerSessionId = yield* idAllocator.allocate.providerSession({
@@ -377,7 +382,7 @@ it.effect(
           runtimePolicy,
         });
         assert.equal(
-          McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId,
+          (yield* mcpSessions.read(threadId))?.providerSessionId,
           original?.providerSessionId,
           "re-attach must reuse the existing credential, not rotate it",
         );
@@ -413,6 +418,7 @@ it.effect(
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         const now = yield* DateTime.now;
         const threadId = ThreadId.make("thread-provider-session-manager-stale-record");
         const s1 = yield* idAllocator.allocate.providerSession({
@@ -435,7 +441,7 @@ it.effect(
         // The credential dies externally, so S2's attach must rotate to C2.
         yield* registry.revokeThread(threadId);
         yield* manager.open({ threadId, providerSessionId: s2, modelSelection, runtimePolicy });
-        const rotated = McpProviderSession.readMcpProviderSession(threadId);
+        const rotated = yield* mcpSessions.read(threadId);
         assert.isDefined(rotated);
         const rotatedToken = rotated?.authorizationHeader.replace(/^Bearer\s+/, "");
         assert.isDefined(yield* registry.resolve(rotatedToken!));
@@ -470,6 +476,7 @@ it.effect(
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         const now = yield* DateTime.now;
         const threadId = ThreadId.make("thread-provider-session-manager-open-race");
         const s1 = yield* idAllocator.allocate.providerSession({
@@ -498,7 +505,7 @@ it.effect(
         yield* Ref.set(duringOpen, manager.close(s1).pipe(Effect.orDie));
         yield* manager.open({ threadId, providerSessionId: s2, modelSelection, runtimePolicy });
 
-        const slot = McpProviderSession.readMcpProviderSession(threadId);
+        const slot = yield* mcpSessions.read(threadId);
         assert.equal(
           slot?.providerSessionId,
           original?.providerSessionId,
@@ -542,6 +549,7 @@ it.effect("ProviderSessionManagerV2 terminal detach revokes the thread's MCP cre
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread-provider-session-manager-terminal-detach");
       const providerSessionId = yield* idAllocator.allocate.providerSession({
@@ -566,7 +574,7 @@ it.effect("ProviderSessionManagerV2 terminal detach revokes the thread's MCP cre
         revokeMcpCredential: true,
       });
       assert.isUndefined(yield* registry.resolve(token!));
-      assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+      assert.isUndefined(yield* mcpSessions.read(threadId));
     });
 
     yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1_000, mcpConfigs })));

@@ -5,7 +5,7 @@ import type * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 
-import type { ProviderAdapterV2SessionRuntime } from "../ProviderAdapter.ts";
+import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
 
 type IdleEntry = {
   readonly runtime: ProviderAdapterV2SessionRuntime;

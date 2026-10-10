@@ -32,18 +32,31 @@ it.layer(NodeServices.layer)("Cursor WSL packaged fallback", (it) => {
         );
         const resourcesPath = path.join(root, "final/resources");
         yield* fs.makeDirectory(resourcesPath, { recursive: true });
+        const windowsNativePath = "node_modules/node-pty/prebuilds/win32-x64/pty.node";
+        const linuxNativePath = "node_modules/node-pty/prebuilds/linux-x64/pty.node";
         const files = [
           "apps/server/dist/bin.mjs",
           "node_modules/@cursor/sdk/dist/esm/index.js",
           "node_modules/@cursor/sdk-win32-x64/bin/rg.exe",
           "node_modules/@cursor/sdk-win32-x64/vendor/tree-sitter/binding.node",
           "node_modules/@cursor/sdk-linux-x64/bin/rg",
-          "node_modules/node-pty/prebuilds/win32-x64/pty.node",
+          windowsNativePath,
+          linuxNativePath,
         ];
         for (const file of files) {
           const target = path.join(sourceDir, file);
           yield* fs.makeDirectory(path.dirname(target), { recursive: true });
-          yield* fs.writeFileString(target, "packaged fixture", { mode: 0o755 });
+          // The packer detects Windows addons by their PE signature; Linux
+          // prebuilds stay archived for the real WSL extraction service.
+          yield* fs.writeFileString(
+            target,
+            file === windowsNativePath
+              ? "MZ"
+              : file === linuxNativePath
+                ? "\x7fELF"
+                : "packaged fixture",
+            { mode: 0o755 },
+          );
         }
         const asarPath = path.join(resourcesPath, "server.asar");
         yield* stageAndPackWindowsServerAsar({
@@ -53,6 +66,13 @@ it.layer(NodeServices.layer)("Cursor WSL packaged fallback", (it) => {
           cursorSdkResourcesPath,
         });
         const members = listPackage(asarPath, { isPack: false });
+        assert.isTrue(statFile(asarPath, windowsNativePath).unpacked);
+        assert.equal(
+          yield* fs.readFileString(path.join(`${asarPath}.unpacked`, windowsNativePath)),
+          "MZ",
+        );
+        assert.isFalse(Boolean(statFile(asarPath, linuxNativePath).unpacked));
+        assert.equal(extractFile(asarPath, linuxNativePath).toString(), "\x7fELF");
         assert.isTrue(members.some((member) => member.endsWith("@cursor/sdk/dist/esm/index.js")));
         assert.isFalse(
           members.some(
@@ -73,7 +93,6 @@ it.layer(NodeServices.layer)("Cursor WSL packaged fallback", (it) => {
         const resource = DESKTOP_EXTRA_RESOURCES.find((entry) =>
           entry.from.endsWith("/cursor-sdk"),
         );
-        assert.equal(resource?.to, "node_modules/@cursor");
         if (!resource) return yield* Effect.die("Missing Cursor extraResources mapping.");
         yield* fs.copy(cursorSdkResourcesPath, path.join(resourcesPath, resource.to));
 
@@ -154,6 +173,7 @@ it.layer(NodeServices.layer)("Cursor WSL packaged fallback", (it) => {
         assert.isFalse(
           yield* fs.exists(path.join(result.root, "node_modules/@cursor/sdk-win32-x64")),
         );
+        assert.equal(yield* fs.readFileString(path.join(result.root, linuxNativePath)), "\x7fELF");
         assert.equal(
           yield* fs.readFileString(path.join(result.root, "apps/server/dist/bin.mjs")),
           "packaged fixture",

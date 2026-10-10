@@ -183,6 +183,157 @@ export class PiReplaySessionBinding {
   }
 }
 
+/**
+ * Upstream made Pi's skill-command discovery lazy: ordinary recordings without
+ * a $skill reference no longer contain these startup RPCs. Archive the removed
+ * correlated lines here so the current fixtures can prove byte-for-byte
+ * provenance against the original recordings without relying on git history.
+ */
+export const piReplayFixtureProvenance = {
+  simple: {
+    liveDigest: "94c02b2a4c160960e802ce7a60500ede4f2bcdf1acda015ecd2b807d09f629c8",
+    originalDigest: "e22ab72047abe327745e481bf6290fe381f6bd990f51e47228869fb50bb0b8c0",
+    reopened: false,
+  },
+  multi_turn: {
+    liveDigest: "a1d513eff3be6c55eab7e9c9b8411531a3f8d710bcad87442f651512d3483097",
+    originalDigest: "71b8237c9be726330faa7a9d8e7ae1888966bbe8f16ffd0096593459b3afb1a7",
+    reopened: false,
+  },
+  pi_compaction: {
+    liveDigest: "86650a95ce59c17a924babd523664d95c1fa066b3fb362dffabf99f487aff8b9",
+    originalDigest: "26226612d6558dbb6a3bcc5ae696859a5106e1e2b3ab1b52a2138f2dae043a67",
+    reopened: false,
+  },
+  provider_thread_resume: {
+    liveDigest: "185d652abd58478516a218bed51abc36205c4da869d29fc2689c3b175c1f7133",
+    originalDigest: "9b54ec08420f59e0fa94786f91baebd7e0ae045343e7f568324163fb12fdcf38",
+    reopened: true,
+  },
+  message_steering: {
+    liveDigest: "697bc09d2f06e2ad39b52e1c73b83f0e84b34458ab3e743faf9d9afac135cfa8",
+    originalDigest: "57eed804122a202e5804019400e576fdf337221f23c9b7231b0e8b19b2cf20ab",
+    reopened: false,
+  },
+  thread_rollback: {
+    liveDigest: "5c188585e6a18349a9da7513837428f4c063f471fe969765d68adeaea60dda90",
+    originalDigest: "bd1ddccb72e23676b8c22fda18e9b456457ff18df82354b829b113c4b87edac5",
+    reopened: false,
+    initialResponseAfterModelsRequest: true,
+  },
+  thread_rollback_after_stop: {
+    liveDigest: "4501b147a9cca12db9992c85b6ef76deed7e46a55235e1be641d5f9e14780d07",
+    originalDigest: "e66dc46f638aa02af9d14817ece8cf4c8cd245613695ef596237b75a938f8f25",
+    reopened: true,
+  },
+  turn_interrupt_mid_tool: {
+    liveDigest: "fda7e49b3ee7b86d1a8b04fe864c1a56623c3a180a3c7b1c3203a0a57cb900f7",
+    originalDigest: "b50659656021ebc140cfe82ca309bff241a6dcb6853360ed13c1af709e0ab373",
+    reopened: false,
+  },
+} as const;
+
+/** Restore only the official lazy-discovery delta and verify both full-byte receipts. */
+export function restorePiOriginalSkillDiscoveryRecording(input: {
+  readonly scenario: string;
+  readonly liveBytes: string;
+}): string {
+  const provenance = Object.entries(piReplayFixtureProvenance).find(
+    ([scenario]) => scenario === input.scenario,
+  )?.[1];
+  if (provenance === undefined) throw new Error("Unknown Pi replay fixture provenance.");
+  if (
+    NodeCrypto.createHash("sha256").update(input.liveBytes).digest("hex") !== provenance.liveDigest
+  )
+    throw new Error(`Pi ${input.scenario} live fixture bytes differ from the reviewed recording.`);
+  if (!input.liveBytes.endsWith("\n"))
+    throw new Error(`Pi ${input.scenario} live fixture is missing its final newline.`);
+
+  const lines = input.liveBytes.slice(0, -1).split("\n");
+  const decodeLine = (line: string): unknown => {
+    try {
+      return JSON.parse(line);
+    } catch {
+      throw new Error(`Pi ${input.scenario} fixture contains an invalid JSONL row.`);
+    }
+  };
+  const locate = (
+    predicate: (record: Record<string, unknown>, frame: Record<string, unknown>) => boolean,
+  ) => {
+    const matches: Array<number> = [];
+    for (const [index, line] of lines.entries()) {
+      const record = decodeLine(line);
+      if (!Predicate.isObject(record) || !Predicate.isObject(record.frame)) continue;
+      if (predicate(record, record.frame)) matches.push(index);
+    }
+    if (matches.length !== 1)
+      throw new Error(`Pi ${input.scenario} fixture lacks a unique skill-discovery anchor.`);
+    return matches[0]!;
+  };
+  const hasSkillDiscoveryFrame = (record: unknown) => {
+    if (!Predicate.isObject(record) || !Predicate.isObject(record.frame)) return false;
+    return (
+      record.frame.type === "get_commands" ||
+      (record.frame.type === "response" && record.frame.command === "get_commands")
+    );
+  };
+  if (lines.some((line) => hasSkillDiscoveryFrame(decodeLine(line))))
+    throw new Error(`Pi ${input.scenario} live fixture already contains skill-discovery frames.`);
+  const insertAfter = (
+    predicate: (record: Record<string, unknown>, frame: Record<string, unknown>) => boolean,
+    line: string,
+  ) => lines.splice(locate(predicate) + 1, 0, line);
+  const outbound =
+    (label: string, type: string, id: string) =>
+    (record: Record<string, unknown>, frame: Record<string, unknown>) =>
+      record.type === "expect_outbound" &&
+      record.label === label &&
+      frame.type === type &&
+      frame.id === id;
+  const inbound =
+    (label: string, command: string, id: string) =>
+    (record: Record<string, unknown>, frame: Record<string, unknown>) =>
+      record.type === "emit_inbound" &&
+      record.label === label &&
+      frame.type === "response" &&
+      frame.command === command &&
+      frame.id === id;
+  const request =
+    '{"type":"expect_outbound","label":"get_commands","frame":{"type":"get_commands","id":"t3-1"}}';
+  const response =
+    '{"type":"emit_inbound","label":"response:get_commands","frame":{"id":"t3-1","type":"response","command":"get_commands","success":true,"data":{"commands":[]}}}';
+  insertAfter(outbound("get_state", "get_state", "t3-0"), request);
+  insertAfter(
+    "initialResponseAfterModelsRequest" in provenance &&
+      provenance.initialResponseAfterModelsRequest === true
+      ? outbound("get_available_models", "get_available_models", "t3-2")
+      : inbound("response:get_state", "get_state", "t3-0"),
+    response,
+  );
+  if (provenance.reopened) {
+    insertAfter(
+      outbound("switch_session@p2", "switch_session", "t3-0"),
+      '{"type":"expect_outbound","label":"get_commands@p2","frame":{"type":"get_commands","id":"t3-1"}}',
+    );
+    insertAfter(
+      (record, frame) =>
+        record.type === "emit_inbound" &&
+        record.label === "extension_ui_request@p2" &&
+        frame.type === "extension_ui_request" &&
+        frame.id === "00000000-0000-4000-8000-000000000003",
+      '{"type":"emit_inbound","label":"response:get_commands@p2","frame":{"id":"t3-1","type":"response","command":"get_commands","success":true,"data":{"commands":[]}}}',
+    );
+  }
+
+  const restoredBytes = `${lines.join("\n")}\n`;
+  if (
+    NodeCrypto.createHash("sha256").update(restoredBytes).digest("hex") !==
+    provenance.originalDigest
+  )
+    throw new Error(`Pi ${input.scenario} fixture differs beyond the lazy-discovery edit.`);
+  return restoredBytes;
+}
+
 /** Adapt only the pinned simple recording's read-only settle schedule, never native activity. */
 export function reconcilePiSimpleSettleTail(input: {
   readonly scenario: string;
@@ -193,14 +344,14 @@ export function reconcilePiSimpleSettleTail(input: {
   const fail = () => {
     throw new Error("Pi simple replay settle tail differs from its pinned recording.");
   };
-  if (entries.length !== 49) return fail();
-  const settled = entries[42]!;
-  const stateRequest = entries[43]!;
-  const stateResponse = entries[44]!;
-  const entriesRequest = entries[45]!;
-  const entriesResponse = entries[46]!;
-  const statsRequest = entries[47]!;
-  const statsResponse = entries[48]!;
+  if (entries.length !== 47) return fail();
+  const settled = entries[40]!;
+  const stateRequest = entries[41]!;
+  const stateResponse = entries[42]!;
+  const entriesRequest = entries[43]!;
+  const entriesResponse = entries[44]!;
+  const statsRequest = entries[45]!;
+  const statsResponse = entries[46]!;
   if (
     settled.type !== "emit_inbound" ||
     settled.label !== "agent_settled" ||
@@ -278,11 +429,11 @@ export function reconcilePiSimpleSettleTail(input: {
   // Pin every deciding native frame and original order, including all five tree entries.
   if (
     NodeCrypto.createHash("sha256").update(JSON.stringify(entries)).digest("hex") !==
-    "fa7609d0f9d35787b3817d8e82c301f33b7d5395dd9be1dbb11c76fa4a1f54f5"
+    "5e8019ee5d21344a897e59d31a09233ea72738fd82c5933435538d87fd987ac8"
   )
     return fail();
   return [
-    ...entries.slice(0, 45),
+    ...entries.slice(0, 43),
     statsRequest,
     statsResponse,
     entriesRequest,
@@ -306,28 +457,32 @@ const recordedPiSchedules: Readonly<
   Record<string, { readonly digest: string; readonly states: ReadonlyArray<number> }>
 > = {
   multi_turn: {
-    digest: "ae2b62f17365f0b8e07633a1efe2e2977d48ecd03a6c8cf01b54e0748b2883d5",
-    states: [43, 76],
+    digest: "84da8d5ab3b9b500dcbc2681b1d0c575401965553881c6bbe764cc27780b702b",
+    states: [41, 74],
   },
   pi_compaction: {
-    digest: "1ef8e13b9d6e641309e731396401ef0c9d8817665b059033d202892cd2c0a994",
-    states: [46, 64, 96, 128, 146, 188],
+    digest: "de6c27e1fadb538654e93d5d65882a81fc6a461f4a9d7011b458bcbfae4f2e83",
+    states: [44, 62, 94, 126, 144, 186],
   },
   provider_thread_resume: {
-    digest: "b97af5c924913990c50f0ee0230a1e4f7a6cec5deb9920eb143121cead6c0617",
-    states: [59, 126],
+    digest: "6ec26787a941b714f1867d0a175ede364d6d312dace70e0333c51e9c15c398ac",
+    states: [57, 122],
   },
   message_steering: {
-    digest: "d5529d72f19e7d4bacdda5b39974e330007293b904ede4c7efdb46673b447531",
-    states: [63],
+    digest: "5bffbb8e116e6d7f228726e3f5f226f1a86230e3692ca6cf0a263028a37076cf",
+    states: [61],
   },
   thread_rollback: {
-    digest: "64ddcf990c4b3d3e6114e9220e5eee54cfbb8920ab533ea65496e1872b1cd889",
-    states: [54, 87, 171],
+    digest: "3519b99523e0b61a69c30b7c577bc95e1cdead26e681bf9a66f9f429bf3263fe",
+    states: [52, 85, 169],
   },
   thread_rollback_after_stop: {
-    digest: "ed2599685fb3d50f07fe020885c506b43ab3ab32b67cd46d71ba4e495192b207",
-    states: [44, 216, 286],
+    digest: "7cdf647104f7123086ada95f77d37da0fb9e171a19cd3e70df0811f19c50b66b",
+    states: [42, 212, 282],
+  },
+  turn_interrupt_mid_tool: {
+    digest: "c6e5325118f4fad39a0ece6eabeb5eb28793243d5703ae670550cf958cb4b83a",
+    states: [],
   },
 };
 
@@ -407,7 +562,7 @@ export function reconcilePiRecordedSchedules(input: {
     )
       refuse();
     const confirmation = syntheticState(state, `t3-${910000 + ordinal}`, "settle-confirmation");
-    if (input.scenario === "pi_compaction" && (index === 64 || index === 146)) {
+    if (input.scenario === "pi_compaction" && (index === 62 || index === 144)) {
       // compaction_end and the compact ACK independently probe idle state.
       // Gate both reads before replying so both tree cursors retain the same
       // pinned boundary. These extra replies are static fixture observations.
@@ -468,8 +623,8 @@ export function reconcilePiRecordedSchedules(input: {
   }
   const result: Array<ProviderReplayEntry> = [];
   for (let index = 0; index < entries.length; index += 1) {
-    if (input.scenario === "message_steering" && index === 27) {
-      const selected = response(15, "get_state");
+    if (input.scenario === "message_steering" && index === 25) {
+      const selected = response(13, "get_state");
       // The pinned agent_start/message prefix establishes active streaming;
       // only identity and selection are copied from the earlier observation.
       result.push(
@@ -700,16 +855,16 @@ export function reconcilePiBoundLaunchProtocol(input: {
   const prepared = reconcilePiRecordedSchedules(input);
   const start =
     input.scenario === "provider_thread_resume"
-      ? 64
+      ? 62
       : input.scenario === "thread_rollback_after_stop"
-        ? 160
+        ? 158
         : undefined;
   const historicalRPCFrames: Array<ProviderReplayEntry> = [];
   if (start === undefined) return { entries: prepared, historicalRPCFrames };
-  // reconcilePiRecordedSchedules pins the complete original recording first.
+  // reconcilePiRecordedSchedules pins the complete current recording first.
   const request = input.entries[start + 1]!;
-  const reply = input.entries[start + 7]!;
-  const confirmation = input.entries[start + 9]!;
+  const reply = input.entries[start + 5]!;
+  const confirmation = input.entries[start + 7]!;
   const initial = input.entries.find((entry) => recordedState(entry) !== undefined);
   const initialIdentity = initial === undefined ? undefined : recordedState(initial);
   const reopened = recordedState(confirmation);

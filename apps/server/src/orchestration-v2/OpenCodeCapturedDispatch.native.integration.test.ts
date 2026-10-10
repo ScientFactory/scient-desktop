@@ -10,7 +10,6 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
-  OpenCodeSettings,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -30,26 +29,43 @@ import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as McpProviderSession from "../mcp/McpProviderSession.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import { buildScientAwareness } from "../provider/ScientAwareness.ts";
-import { buildRuntimeInstructions } from "../provider/RuntimeInstructions.ts";
-import type { OpenCodeRuntimeShape } from "../provider/opencodeRuntime.ts";
+import { buildScientRuntimeInstructions } from "../provider/ScientRuntimeInstructions.ts";
+import { buildScientOrchestrationSystemPrompt } from "../provider/ScientProviderInstructions.ts";
+import { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
+import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
+import {
+  ProviderEventLoggers,
+  NoOpProviderEventLoggers,
+} from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ScientTestProviderHost from "./testkit/ScientTestProviderHost.ts";
+import {
+  buildOpenCodeRuntimeGuidance,
+  mapOpenCodeTurnStartError,
+} from "../provider/OpenCodeDriverComposition.ts";
 import * as ScientSkillSession from "../scient/skills/ScientSkillSession.ts";
 import * as ScientSkillRegistry from "../scient/skills/ScientSkillRegistry.ts";
 import * as ScientSkillPolicy from "../scient/skills/ScientSkillPolicy.ts";
-import { makeOpenCodeAdapterV2, openCodePermissionRules } from "./Adapters/OpenCodeAdapterV2.ts";
-import { layer as idAllocatorLayer, IdAllocatorV2 } from "./IdAllocator.ts";
+import {
+  makeOpenCodeAdapterV2Driver,
+  openCodePermissionRules,
+} from "@t3tools/provider-opencode/server";
+import {
+  layer as idAllocatorLayer,
+  IdAllocatorV2,
+} from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { ProjectStoreV2 } from "./ProjectStore.ts";
 import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
-import { ProviderAdapterV2RuntimePolicy } from "./ProviderAdapter.ts";
+import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const Prompt = Schema.Struct({
   messageID: Schema.String,
@@ -159,6 +175,10 @@ it.live(
           yield* Layer.build(registryLayer),
           McpSessionRegistry.McpSessionRegistry,
         );
+        const mcpSessions = Context.get(
+          yield* Layer.build(McpProviderSessions.layer),
+          McpProviderSessions.McpProviderSessions,
+        );
         const threadId = ThreadId.make(name);
         const instanceId = ProviderInstanceId.make("opencode-custom-captured");
         const selection = {
@@ -261,7 +281,7 @@ it.live(
         });
         yield* Effect.gen(function* () {
           const { prompt, response } = yield* Queue.take(wireRequests);
-          const credential = McpProviderSession.readMcpProviderSession(threadId);
+          const credential = yield* mcpSessions.read(threadId);
           assert.ok(credential);
           const registeredMcp = yield* decodeRegisteredMcp(installedMcp);
           assert.equal(registeredMcp.config.url, credential.endpoint);
@@ -297,44 +317,67 @@ it.live(
             ),
         );
         const allocator = yield* IdAllocatorV2;
-        const runtime = {
+        const runtime = yield* Effect.service(OpenCodeRuntime.OpenCodeRuntime).pipe(
+          Effect.provide(
+            Layer.mock(OpenCodeRuntime.OpenCodeRuntime)({
+              connectToOpenCodeServer: () =>
+                Effect.sync(() => {
+                  connectCount++;
+                  return {
+                    url,
+                    version: OpenCodeRuntime.MINIMUM_OPENCODE_VERSION,
+                    external: false,
+                    exitCode: null,
+                  };
+                }),
+              createOpenCodeSdkClient: (input: { baseUrl: string; directory: string }) => {
+                sdkDirectory = input.directory;
+                return createOpencodeClient({
+                  baseUrl: input.baseUrl,
+                  directory: input.directory,
+                  throwOnError: true,
+                });
+              },
+            }),
+          ),
+        );
+        const settings = yield* decodeSettings({});
+        const adapterDriver = makeOpenCodeAdapterV2Driver({
+          runtimeGuidance: buildOpenCodeRuntimeGuidance,
+          orchestrationSystemPrompt: buildScientOrchestrationSystemPrompt,
+          runtimeInstructions: buildScientRuntimeInstructions,
+          mapTurnStartError: mapOpenCodeTurnStartError,
+        });
+        const createAdapter = (
+          id: ProviderInstanceId,
+          ownedRuntime: OpenCodeRuntime.OpenCodeRuntime["Service"],
+        ) =>
+          adapterDriver
+            .create({
+              instanceId: id,
+              displayName: undefined,
+              config: settings,
+              enabled: settings.enabled,
+              environment: [],
+            })
+            .pipe(
+              Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, ownedRuntime),
+              Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions),
+              Effect.provideService(ProviderEventLoggers, NoOpProviderEventLoggers),
+              Effect.provide(
+                ScientTestProviderHost.layer.pipe(
+                  Layer.provide(Layer.succeed(ServerConfig.ServerConfig, config)),
+                ),
+              ),
+            );
+        const adapter = yield* createAdapter(instanceId, runtime);
+        const foreign = yield* createAdapter(ProviderInstanceId.make("opencode"), {
+          ...runtime,
           connectToOpenCodeServer: () =>
             Effect.sync(() => {
-              connectCount++;
-              return { url, external: false, exitCode: null };
+              foreignConnectCount++;
+              throw new Error("The default OpenCode instance must not be selected");
             }),
-          createOpenCodeSdkClient: (input: { baseUrl: string; directory: string }) => {
-            sdkDirectory = input.directory;
-            return createOpencodeClient({
-              baseUrl: input.baseUrl,
-              directory: input.directory,
-              throwOnError: true,
-            });
-          },
-        } as unknown as OpenCodeRuntimeShape;
-        const settings = yield* decodeSettings({});
-        const adapter = makeOpenCodeAdapterV2({
-          instanceId,
-          settings,
-          environment: {},
-          runtime,
-          idAllocator: allocator,
-          serverConfig: config,
-        });
-        const foreign = makeOpenCodeAdapterV2({
-          instanceId: ProviderInstanceId.make("opencode"),
-          settings,
-          environment: {},
-          runtime: {
-            ...runtime,
-            connectToOpenCodeServer: () =>
-              Effect.sync(() => {
-                foreignConnectCount++;
-                throw new Error("The default OpenCode instance must not be selected");
-              }),
-          },
-          idAllocator: allocator,
-          serverConfig: config,
         });
         const layer = makeOrchestratorV2ReplayLayerWithRegistry(
           { name, runtimePolicyOverride: { cwd } },
@@ -342,6 +385,10 @@ it.live(
           {
             layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
             configureMcp: true,
+            mcpProviderSessionsLayer: Layer.succeed(
+              McpProviderSessions.McpProviderSessions,
+              mcpSessions,
+            ),
             mcpSessionRegistryLayer: Layer.succeed(McpSessionRegistry.McpSessionRegistry, registry),
           },
         ).pipe(Layer.provideMerge(skillLayer));
@@ -408,7 +455,7 @@ it.live(
           assert.include(prompt.system, buildScientAwareness());
           assert.include(
             prompt.system,
-            buildRuntimeInstructions({ harness: "OpenCode", model: selection.model }),
+            buildScientRuntimeInstructions({ harness: "OpenCode", model: selection.model }),
           );
           assert.lengthOf(prompt.parts, 1);
           assert.include(prompt.parts[0]!.text, currentText);

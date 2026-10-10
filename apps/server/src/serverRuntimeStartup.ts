@@ -99,7 +99,7 @@ export const importLegacyTranscriptsWithStatus = Effect.fn("importLegacyTranscri
     yield* importer.pendingThreadCount.pipe(
       Effect.flatMap((pendingThreadCount) =>
         Effect.gen(function* () {
-          const sourceFailed = yield* importer.reconciliationFailure ?? Effect.succeed(false);
+          const sourceFailed = yield* importer.reconciliationFailure;
           yield* lifecycleEvents.publish({
             version: 1,
             type: "legacyThreadMigration",
@@ -534,9 +534,7 @@ const make = (options?: StartupOptions) =>
       const welcomeBase = yield* resolveWelcomeBase;
       const environment = yield* serverEnvironment.getDescriptor;
       const legacyMigrationThreadCount = yield* legacyV1ThreadImporter.pendingThreadCount;
-      const legacySourceFailed = yield* (
-        legacyV1ThreadImporter.reconciliationFailure ?? Effect.succeed(false)
-      );
+      const legacySourceFailed = yield* legacyV1ThreadImporter.reconciliationFailure;
       if (legacyMigrationThreadCount > 0 || legacySourceFailed) {
         yield* lifecycleEvents.publish({
           version: 1,

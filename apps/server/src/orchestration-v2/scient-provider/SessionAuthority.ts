@@ -7,7 +7,7 @@ import type * as Scope from "effect/Scope";
 import type {
   ProviderAdapterV2InitiatedWorkIdentity,
   ProviderAdapterV2SessionRuntime,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProjectionRecords } from "../ProjectionStore.ts";
 import type { McpThreadCaller } from "../../mcp/McpInvocationContext.ts";
 

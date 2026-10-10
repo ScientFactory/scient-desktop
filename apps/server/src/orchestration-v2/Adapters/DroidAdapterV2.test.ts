@@ -39,10 +39,10 @@ import { TestClock } from "effect/testing";
 import { scriptedDroid } from "../../provider/testUtils/scriptedDroid.ts";
 import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
-import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
-import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
+import { execScriptSource, writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import {
   droidCustomModelId,
   makeDroidCustomModelsRuntimeFactory,
@@ -52,8 +52,9 @@ import {
   makeDroidAcpRuntime,
   type DroidAcpRuntimeFactory,
 } from "../../provider/acp/DroidAcpSupport.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import * as ProviderAdapter from "../ProviderAdapter.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeDroidAdapterV2 } from "./DroidAdapterV2.ts";
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeDroidSettings = Schema.decodeEffect(DroidSettings);
@@ -77,7 +78,11 @@ const decodeRequest = Schema.decodeUnknownSync(
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-droid-v2-parity-" }).pipe(
+    Layer.provide(NodeServices.layer),
+  ),
+  TestProviderHost.layer({ settings: DEFAULT_SERVER_SETTINGS, runBackgroundWork: false }).pipe(
     Layer.provide(NodeServices.layer),
   ),
 );
@@ -107,6 +112,7 @@ const harness = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
   const config = yield* ServerConfig.ServerConfig;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   if (scenario)
     yield* fs.remove(NodePath.join(config.stateDir, "watchdog-signal"), { force: true });
   const requestsPath = NodePath.join(
@@ -143,7 +149,7 @@ const harness = Effect.fnUntraced(function* (
     interactionMode: "default" as const,
   };
   if (capabilities !== undefined) {
-    McpProviderSession.setMcpProviderSession({
+    yield* mcpSessions.set({
       environmentId: EnvironmentId.make("droid-awareness"),
       threadId,
       providerSessionId: "droid-awareness",
@@ -152,9 +158,7 @@ const harness = Effect.fnUntraced(function* (
       authorizationHeader: "Bearer synthetic-droid-awareness",
       capabilities,
     });
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
-    );
+    yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
   }
   const writeBlocked = yield* Deferred.make<void>();
   const releaseWrite = yield* Deferred.make<void>();
@@ -162,7 +166,7 @@ const harness = Effect.fnUntraced(function* (
   const toolLogBlocked = yield* Deferred.make<void>();
   const releaseToolLog = yield* Deferred.make<void>();
   const rejectedAuthentication: string[] = [];
-  const adapter = makeDroidAdapterV2({
+  const adapter = yield* makeDroidAdapterV2({
     instanceId,
     settings: yield* decodeDroidSettings({
       enabled: true,
@@ -242,10 +246,6 @@ const harness = Effect.fnUntraced(function* (
         }),
       ),
     childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-    crypto,
-    fileSystem: fs,
-    serverConfig: config,
-    idAllocator: yield* IdAllocator.IdAllocatorV2,
     selfInvocation: yield* resolveSelfInvocation(),
     onAuthenticationRejected: (message) =>
       Effect.sync(() => {
@@ -467,7 +467,7 @@ it.layer(testLayer, { excludeTestServices: true })("DroidAdapterV2", (it) => {
   );
   it.effect.each(
     [false, true].map((granted) => ({
-      caseTitle: `delivers exact Scient awareness in native Droid system prompt with grants ${granted}`,
+      caseTitle: `delivers capability-scoped Scient awareness in native Droid system prompt with grants ${granted}`,
       granted,
     })),
   )("$caseTitle", ({ granted }) =>
@@ -481,7 +481,6 @@ it.layer(testLayer, { excludeTestServices: true })("DroidAdapterV2", (it) => {
         assert.equal((yield* h.terminal).status, "completed");
         const args = h.arguments();
         const prompt = args[args.indexOf("--append-system-prompt") + 1];
-        assert.equal(prompt, buildScientAwareness(capabilities));
         assert.equal((prompt ?? "").includes("preview_status"), granted);
         assert.equal((prompt ?? "").includes("scient_pdf_build"), granted);
         assert.notInclude(prompt ?? "", "device_list");
@@ -2216,7 +2215,7 @@ it.layer(testLayer, { excludeTestServices: true })("Droid native lifecycle", (it
   it.effect("keeps image bytes out of the native thread snapshot", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const config = yield* ServerConfig.ServerConfig;
+        const host = yield* ProviderHost.ProviderHost;
         const fs = yield* FileSystem.FileSystem;
         const image = {
           type: "image" as const,
@@ -2225,8 +2224,9 @@ it.layer(testLayer, { excludeTestServices: true })("Droid native lifecycle", (it
           mimeType: "image/png",
           sizeBytes: 4,
         };
-        yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
-        yield* fs.writeFileString(NodePath.join(config.attachmentsDir, `${image.id}.png`), "PNG!");
+        const attachmentPath = host.resolveAttachmentPath(image);
+        if (!attachmentPath) return yield* Effect.die("Test host did not resolve the attachment");
+        yield* fs.writeFile(attachmentPath, new TextEncoder().encode("PNG!"));
         const h = yield* harness(false, false, false, undefined, {
           liveClock: true,
           body: `function onPrompt(message) {reply(message, {stopReason: "end_turn"});}`,

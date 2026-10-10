@@ -11,7 +11,7 @@ import {
   ProjectId,
   MessageId,
 } from "@t3tools/contracts";
-import { HostProcessPlatform, HostProcessArchitecture } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -25,23 +25,28 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
-import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as CodexInstallation from "../CodexInstallation.ts";
 import * as CodexAdapterV2 from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as ClaudeAdapterV2 from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
-import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
-import { ProviderAdapterV2RuntimePolicy } from "../../orchestration-v2/ProviderAdapter.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import { CodexDriver } from "./CodexDriver.ts";
 import { ClaudeDriver } from "./ClaudeDriver.ts";
-import { GrokDriver } from "./GrokDriver.ts";
+import { GrokDriver } from "../AppProviderDriverComposition.ts";
+import { layerConfigConsistentTestProviderHost } from "../testUtils/providerHost.ts";
 
-const testLayer = ServerConfig.layerTest(process.cwd(), {
+const providerDependenciesLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-managed-native-execution-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(ProviderContinuationRequests.layer),
+  Layer.provideMerge(ProviderLatestVersions.layer),
+  Layer.provideMerge(McpProviderSessions.layer),
   Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provideMerge(ModelManifest.layerTest),
   Layer.provideMerge(ResetCreditCoordinator.layerTest),
@@ -72,6 +77,9 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
     ),
   ),
 );
+const testLayer = layerConfigConsistentTestProviderHost.pipe(
+  Layer.provideMerge(providerDependenciesLayer),
+);
 
 it.layer(testLayer)("Resolved driver native execution", (it) => {
   it.effect.each(
@@ -86,7 +94,7 @@ it.layer(testLayer)("Resolved driver native execution", (it) => {
                 const fs = yield* FileSystem.FileSystem;
                 const root = yield* fs.makeTempDirectoryScoped();
                 const launches: Array<
-                  Parameters<CodexAdapterV2.CodexAppServerClientFactoryShape["open"]>[0]
+                  Parameters<CodexAdapterV2.CodexAppServerClientFactory["Service"]["open"]>[0]
                 > = [];
                 const instance = yield* CodexDriver.create({
                   instanceId: ProviderInstanceId.make(`codex-native-${mode}`),
@@ -100,8 +108,8 @@ it.layer(testLayer)("Resolved driver native execution", (it) => {
                   config: { ...CodexDriver.defaultConfig(), homePath: `${root}/codex-home` },
                 }).pipe(
                   Effect.provideService(ServerConfig.ServerConfig, { ...cfg, mode }),
-                  Effect.provideService(HostProcessPlatform, "darwin"),
-                  Effect.provideService(HostProcessArchitecture, "arm64"),
+                  Effect.provideService(HostProcess.Platform, "darwin"),
+                  Effect.provideService(HostProcess.Architecture, "arm64"),
                   Effect.provideService(
                     ChildProcessSpawner.ChildProcessSpawner,
                     ChildProcessSpawner.make(() => Effect.die("Synthetic missing CLI")),
@@ -151,7 +159,7 @@ it.layer(testLayer)("Resolved driver native execution", (it) => {
                 const fs = yield* FileSystem.FileSystem;
                 const root = yield* fs.makeTempDirectoryScoped();
                 const launches: Array<
-                  Parameters<ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["open"]>[0]
+                  Parameters<ClaudeAdapterV2.ClaudeAgentSdkQueryRunner["Service"]["open"]>[0]
                 > = [];
                 const instance = yield* ClaudeDriver.create({
                   instanceId: ProviderInstanceId.make(`claude-native-${mode}`),
@@ -164,8 +172,8 @@ it.layer(testLayer)("Resolved driver native execution", (it) => {
                   config: { ...ClaudeDriver.defaultConfig(), homePath: `${root}/claude-config` },
                 }).pipe(
                   Effect.provideService(ServerConfig.ServerConfig, { ...cfg, mode }),
-                  Effect.provideService(HostProcessPlatform, "darwin"),
-                  Effect.provideService(HostProcessArchitecture, "arm64"),
+                  Effect.provideService(HostProcess.Platform, "darwin"),
+                  Effect.provideService(HostProcess.Architecture, "arm64"),
                   Effect.provideService(
                     ChildProcessSpawner.ChildProcessSpawner,
                     ChildProcessSpawner.make(() => Effect.die("Synthetic missing CLI")),
@@ -303,8 +311,8 @@ it.layer(testLayer)("Resolved driver native execution", (it) => {
                   config: GrokDriver.defaultConfig(),
                 }).pipe(
                   Effect.provideService(ServerConfig.ServerConfig, { ...cfg, mode }),
-                  Effect.provideService(HostProcessPlatform, "darwin"),
-                  Effect.provideService(HostProcessArchitecture, "arm64"),
+                  Effect.provideService(HostProcess.Platform, "darwin"),
+                  Effect.provideService(HostProcess.Architecture, "arm64"),
                   Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                 );
                 launches.length = 0;

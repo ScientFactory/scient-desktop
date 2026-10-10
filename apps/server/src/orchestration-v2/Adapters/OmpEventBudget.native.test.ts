@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -17,8 +18,8 @@ import { nativeOmpSession } from "../../provider/testUtils/nativeOmpSession.ts";
 import { nativeOmpOrchestration } from "../../provider/testUtils/nativeOmpOrchestration.ts";
 import { scriptedOmpRpc } from "../../provider/testUtils/scriptedOmpRpc.ts";
 import { ompTarget } from "../../provider/omp/OmpTarget.ts";
-import { layer as allocatorLayer } from "../IdAllocator.ts";
-import type { ProviderAdapterV2Event } from "../ProviderAdapter.ts";
+import { layer as allocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
+import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 
 const encodeEventJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -188,7 +189,10 @@ const observe = Effect.fnUntraced(function* (
 
 const settle = Effect.forEach(Array.from({ length: 30 }), () => Effect.yieldNow, { discard: true });
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  effect.pipe(
+    Effect.scoped,
+    Effect.provide(Layer.mergeAll(NodeServices.layer, McpProviderSessions.layer)),
+  );
 
 const start = Effect.fnUntraced(function* (
   session: Effect.Success<ReturnType<Effect.Success<ReturnType<typeof fixture>>["open"]>>,
@@ -672,6 +676,7 @@ describe("native OMP event ingress budgets", () => {
 const workers = Layer.mergeAll(
   NodeServices.layer,
   allocatorLayer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-omp-budget-worker-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),

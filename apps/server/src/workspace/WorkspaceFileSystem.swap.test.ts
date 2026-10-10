@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
@@ -46,7 +46,7 @@ afterEach(async () => {
 
 describe("WorkspaceFileSystem.readFile", () => {
   // Windows has neither symlink-on-open semantics nor O_NOFOLLOW.
-  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "does not read a file swapped for a symlink after it was resolved",
     () =>
       Effect.gen(function* () {
@@ -97,7 +97,7 @@ describe("WorkspaceFileSystem.readFile", () => {
 });
 
 describe("WorkspaceFileSystem.renameFile", () => {
-  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "fails and keeps the source when its destination folder is swapped for a link out of the workspace",
     () =>
       Effect.gen(function* () {

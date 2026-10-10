@@ -1,20 +1,22 @@
-import type { SdkLoginOptions, StoredSdkCredentials } from "@cursor/sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
+import {
+  InMemoryCredentialStore,
+  makeCursorAuth,
+  type CursorAuthOptions,
+} from "@t3tools/provider-cursor/testing";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 
-import { makeCursorAuth } from "../../provider/CursorAuth.ts";
-import { InMemoryCredentialStore } from "../../provider/cursorSdk.ts";
 import { makeCursorSdkConnectionActions } from "./CursorSdkConnectionActions.ts";
 
 const authorizationUrl = "https://cursor.com/loginDeepControl?challenge=test-only";
-const credentials: StoredSdkCredentials = {
-  version: 1,
+const credentials = {
+  version: 1 as const,
   backendUrl: "https://api2.cursor.sh",
   apiKey: "synthetic-browser-key",
   createdAtMs: 0,
@@ -24,7 +26,7 @@ const credentials: StoredSdkCredentials = {
 
 const makeHarness = Effect.fn("makeCursorConnectionHarness")(function* (showUrl = true) {
   const store = new InMemoryCredentialStore();
-  const started = Promise.withResolvers<SdkLoginOptions>();
+  const started = Promise.withResolvers<Parameters<NonNullable<CursorAuthOptions["login"]>>[0]>();
   const finish = Promise.withResolvers<void>();
   const returned = Promise.withResolvers<void>();
   const changes: boolean[] = [];

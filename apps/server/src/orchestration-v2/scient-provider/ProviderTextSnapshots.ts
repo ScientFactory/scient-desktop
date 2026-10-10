@@ -32,7 +32,7 @@ import {
   type ProviderTextSnapshotConsumer,
   type ProviderTextSnapshotConsumerOwner,
   type ProviderTextSnapshotOwner,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderTextDeltaCoalescer } from "../Adapters/ProviderTextDeltaCoalescer.ts";
 
 const isProviderTextSnapshotError = Schema.is(ProviderTextSnapshotError);

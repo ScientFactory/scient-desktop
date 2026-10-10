@@ -24,7 +24,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as ServerConfig from "../config.ts";
-import type * as AcpSessionRuntime from "../provider/acp/AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { DroidAcpRuntime, DroidAcpRuntimeInput } from "../provider/acp/DroidAcpSupport.ts";
 import { makeDroidCustomModelsRuntimeFactory } from "../provider/droid/DroidCustomModels.ts";
 import * as TextGeneration from "./TextGeneration.ts";

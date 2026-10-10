@@ -16,15 +16,15 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
-import { AcpProviderCapabilitiesV2 } from "../Adapters/AcpAdapterV2.ts";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import { makeNativeSessionAdapterV2 } from "../Adapters/NativeSessionAdapterV2.ts";
 import { EventSinkV2 } from "../EventSink.ts";
-import { IdAllocatorV2, layer as allocatorLayer } from "../IdAllocator.ts";
+import { IdAllocatorV2, layer as allocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { ConversationForkService } from "./ConversationForkService.ts";
 
 it.live.each(

@@ -11,7 +11,8 @@ import * as CodexReplay from "effect-codex-app-server/replay";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import {
   makeCodexReplayTranscript,
@@ -82,7 +83,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           text: "then £ship it",
         },
       });
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it.effect(
@@ -264,6 +270,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             }),
           );
         }
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
   );
 });

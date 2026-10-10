@@ -12,8 +12,8 @@ import {
   ProviderAdapterOpenSessionError,
   ProviderAdapterProtocolError,
   type ProviderAdapterV2SessionRuntime,
-} from "../orchestration-v2/ProviderAdapter.ts";
-import type { ProviderInstance } from "./ProviderDriver.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 
 /** A retired instance must never reach its old native transport again. */
 const guardSessionLifetime = (

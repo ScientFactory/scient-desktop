@@ -22,15 +22,15 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { createDeterministicAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { ServerConfig } from "../../config.ts";
-import { AcpProviderCapabilitiesV2 } from "../Adapters/AcpAdapterV2.ts";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
   makeNativeSessionAdapterV2,
   NativeSessionOperationError,
 } from "../Adapters/NativeSessionAdapterV2.ts";
 import { OrchestrationEffectWorkerV2 } from "../EffectWorker.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "../Orchestrator.ts";
-import type { ProviderAdapterV2TurnInput } from "../ProviderAdapter.ts";
+import type { ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Registry from "../ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 import { ProjectStoreV2 } from "../ProjectStore.ts";
@@ -38,8 +38,8 @@ import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
 import { ensureQueuedMessageBudget } from "../QueuedMessageBudget.ts";
 import { ConversationForkService } from "../scient-fork/ConversationForkService.ts";
-import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const instanceId = ProviderInstanceId.make("acp");
 const modelSelection = { instanceId, model: "fixture" };
@@ -337,7 +337,7 @@ it.live.each(
         }
       }).pipe(
         Effect.provide(
-          makeOrchestratorV2ReplayLayerWithRegistry(
+          ProviderReplayHarness.layerWithRegistry(
             { name, runtimePolicyOverride: { cwd } },
             Registry.layerSingle(adapter),
             { configureMcp: false },
