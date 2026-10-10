@@ -31,6 +31,8 @@ import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipel
 import { MarkdownFindContext, useFindRevealRef } from "./markdownFindContext";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } from "./WorkLog";
+import { TracePathLabel } from "./TracePathLabel";
+import { TracePathTooltipEnabled } from "./TracePathLabel.context";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -265,6 +267,7 @@ import {
   threadReadTargetTitle,
   toolGroupAction,
   workEntryDisplayLabel,
+  workEntryPathPresentation,
   workEntryReadOutput,
   workEntryIsVisibleInGroup,
   worktreeSetupAgentStarted,
@@ -4281,14 +4284,16 @@ const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 
 function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
   return (
-    <span
-      aria-hidden
-      className="live-activity-focus pointer-events-none absolute inset-y-0 select-none"
-    >
-      <span className="live-activity-focus-counter block">
-        <span className="live-activity-focus-aligned block text-foreground">{children}</span>
+    <TracePathTooltipEnabled value={false}>
+      <span
+        aria-hidden
+        className="live-activity-focus pointer-events-none absolute inset-y-0 select-none"
+      >
+        <span className="live-activity-focus-counter block">
+          <span className="live-activity-focus-aligned block text-foreground">{children}</span>
+        </span>
       </span>
-    </span>
+    </TracePathTooltipEnabled>
   );
 }
 
@@ -4611,6 +4616,9 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
     ? getQuestionTextPreview(row.entry.questionAnswer)
     : "";
   const label = questionHeading || liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
+  const pathLabel = (
+    <TracePathLabel text={label} path={workEntryPathPresentation(row.entry, ctx.workspaceRoot)} />
+  );
   const threadLabel = threadReadLabel(label, threadTarget);
 
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
@@ -4678,7 +4686,7 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
             </ReactMarkdown>
           ) : row.active && row.entry.toolLifecycleStatus === "inProgress" ? (
             <span className="flex min-w-0">
-              <span className="min-w-0 truncate">{label}</span>
+              <span className="min-w-0 truncate">{pathLabel}</span>
               <LiveStepElapsed startedAt={row.entry.createdAt} />
             </span>
           ) : threadLabel ? (
@@ -4688,7 +4696,7 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
               linked={false}
             />
           ) : (
-            label
+            pathLabel
           )
         }
         iconName={workEntryIconName(row.entry)}
@@ -6318,7 +6326,10 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   linked
                 />
               ) : (
-                previewText
+                <TracePathLabel
+                  text={previewText}
+                  path={workEntryPathPresentation(workEntry, workspaceRoot)}
+                />
               )}
             </span>
             {answerPreview ? (

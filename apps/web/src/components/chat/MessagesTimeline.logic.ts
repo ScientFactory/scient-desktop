@@ -70,18 +70,16 @@ import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { mcpAppReferencesEqual, type McpAppReference } from "@t3tools/shared/mcpApp";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
-import { formatWorkspaceRelativePath } from "../../filePathDisplay";
-import { compactPathLabel } from "../../scient/presentation/compactPathLabel";
+import {
+  compactPathLabel,
+  compactPathPresentation,
+  tracePathPresentation,
+} from "../../scient/presentation/compactPathLabel";
 import {
   groupTraceIconOverride,
   type TraceIconOverride,
 } from "../../scient/presentation/traceIcons";
-import {
-  collectToolFilePaths,
-  formatReadToolLabel,
-  formatSearchToolLabel,
-} from "@t3tools/shared/toolActivity";
-import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { collectToolFilePaths, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import { computeElapsedMs } from "@scientfactory/conversation/work-log-grouping";
 // SCIENT-FORK:START — historical turns group inert presentation.
 import { timelineEntryHistoryKey } from "../../scient/fork/historicalTimelineTurns";
@@ -178,10 +176,37 @@ function workEntryReadRawPaths(entry: WorkLogEntry): readonly string[] {
   return collectToolFilePaths(workEntryToolDataRecord(entry));
 }
 
-function workEntryReadPaths(entry: WorkLogEntry, workspaceRoot: string | undefined): string[] {
-  return workEntryReadRawPaths(entry).map((filePath) =>
-    formatWorkspaceRelativePath(filePath, workspaceRoot),
-  );
+/** The path that owns a trace heading, with its surrounding action text. */
+export function workEntryPathPresentation(entry: WorkLogEntry, workspaceRoot: string | undefined) {
+  if (entry.itemType === "reasoning" || entry.tone === "thinking" || entry.command?.trim()) {
+    return undefined;
+  }
+  const action = toolGroupAction(entry);
+  const paths = action === "read" ? workEntryReadRawPaths(entry) : (entry.changedFiles ?? []);
+  const detail = entry.detail?.trim();
+  const providerRetry =
+    entry.projectedItem?.item.type === "error" && entry.projectedItem.item.retry !== undefined;
+  const item = entry.structuredPayload;
+  if (
+    action !== "read" &&
+    item?.type === "dynamic_tool" &&
+    dynamicToolTitle(item.toolName, item.input)
+  ) {
+    return undefined;
+  }
+  const path =
+    action !== "read" && detail && !providerRetry
+      ? compactPathPresentation(detail, workspaceRoot)
+      : paths[0]
+        ? tracePathPresentation(paths[0], workspaceRoot)
+        : undefined;
+  if (!path) return undefined;
+  const prefix = action === "read" ? "Read " : "";
+  const suffix =
+    paths.length > 1 && (action === "read" || !detail || providerRetry)
+      ? ` +${paths.length - 1} more`
+      : "";
+  return { ...path, prefix, suffix, text: `${prefix}${path.label}${suffix}` };
 }
 
 export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string | undefined) {
@@ -206,10 +231,8 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
         : formatSearchToolLabel(workEntryToolDataRecord(entry));
     if (searchLabel) return searchLabel;
   }
-  const readPaths = action === "read" ? workEntryReadPaths(entry, workspaceRoot) : [];
-  if (action === "read" && readPaths[0]) {
-    return formatReadToolLabel(readPaths[0], readPaths.length - 1);
-  }
+  const path = workEntryPathPresentation(entry, workspaceRoot);
+  if (path) return path.text;
   // Retrying providers keep their progress label; other diagnostics expose
   // the retained message instead of a generic error heading. File bodies
   // are never a compact read label.
@@ -223,13 +246,6 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
     (action === "code-search" || action === "search") && /[\r\n]/.test(compactDetail ?? "");
   if (compactDetail && !providerRetry && action !== "read" && !detailIsSearchOutput) {
     return compactPathLabel(compactDetail, workspaceRoot);
-  }
-  const [firstPath] = entry.changedFiles ?? [];
-  if (firstPath) {
-    const path = compactPathLabel(firstPath, workspaceRoot);
-    return entry.changedFiles!.length === 1
-      ? path
-      : `${path} +${entry.changedFiles!.length - 1} more`;
   }
   if (action === "read" && !entry.viewedImagePath) {
     return "Read file";
@@ -278,15 +294,7 @@ export function workEntryReadOutput(
   const paths = [
     ...new Set(
       workEntryReadRawPaths(entry as WorkLogEntry)
-        .map((path) => {
-          const trimmed = path.trim().replaceAll("\\", "/");
-          if (!workspaceRoot || trimmed.startsWith("/") || isWindowsAbsolutePath(trimmed)) {
-            return trimmed;
-          }
-          const root = workspaceRoot.replaceAll("\\", "/").replace(/\/+$/, "");
-          const relative = trimmed.replace(/^\.\//, "").replace(/^\/+/, "");
-          return `${root}/${relative}`;
-        })
+        .map((path) => tracePathPresentation(path, workspaceRoot).fullPath)
         .filter((path) => path.length > 0),
     ),
   ];

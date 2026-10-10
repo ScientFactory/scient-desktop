@@ -46,6 +46,7 @@ import {
   type MessagesTimelineRow,
   resolveTimelineToolPresentation,
   workEntryDisplayLabel,
+  workEntryPathPresentation,
   workEntryReadOutput,
   workEntryIsVisibleInGroup,
   WORKTREE_SETUP_ROW_ID,
@@ -527,6 +528,80 @@ describe("work entry labels", () => {
       ),
     ).toBe("/workspace/ohseearr/src/from-location.ts");
     expect(workEntryReadOutput({ detail: "---", toolData: {} }, undefined)).toBeNull();
+  });
+
+  it.each([
+    [
+      "~/REPOs/ScientFactory-worktrees/sync/apps/server/build.ts",
+      "server/build.ts",
+      "~/REPOs/ScientFactory-worktrees/sync/apps/server/build.ts",
+    ],
+    [
+      "/outside/project/apps/server/build.ts",
+      "server/build.ts",
+      "/outside/project/apps/server/build.ts",
+    ],
+    ["apps/server/build.ts", "server/build.ts", "/work/project/apps/server/build.ts"],
+    [
+      "C:\\outside\\apps\\server\\build.ts",
+      "server/build.ts",
+      "C:\\outside\\apps\\server\\build.ts",
+    ],
+  ])(
+    "shortens live and settled reads while retaining %s for hover and inspection",
+    (filePath, label, fullPath) => {
+      const read = {
+        ...entry,
+        itemType: "dynamic_tool" as const,
+        toolTitle: "Read",
+        label: "Read",
+        detail: "file body with /unrelated/path.ts",
+        toolData: { input: { file_path: filePath } },
+      };
+      expect(workEntryDisplayLabel(read, "/work/project")).toBe(`Read ${label}`);
+      expect(liveWorkEntryLabel(read, "/work/project", true)).toBe(`Read ${label}`);
+      expect(workEntryReadOutput(read, "/work/project")).toBe(fullPath);
+      expect(workEntryPathPresentation(read, "/work/project")).toMatchObject({
+        label,
+        fullPath,
+        prefix: "Read ",
+        suffix: "",
+      });
+    },
+  );
+
+  it("keeps the additional-file count beside the first shortened read path", () => {
+    const read = {
+      ...entry,
+      toolTitle: "Read",
+      itemType: "dynamic_tool" as const,
+      changedFiles: ["/work/project/deep/first.ts", "/work/project/deep/second.ts"],
+    };
+    expect(workEntryDisplayLabel(read, "/work/project")).toBe("Read deep/first.ts +1 more");
+    expect(workEntryPathPresentation(read, "/work/project")?.fullPath).toBe(
+      "/work/project/deep/first.ts",
+    );
+    expect(workEntryReadOutput(read, "/work/project")).toBe(
+      "/work/project/deep/first.ts\n/work/project/deep/second.ts",
+    );
+  });
+
+  it("retains the original target for other shortened path headings without mining prose", () => {
+    const edit = {
+      ...entry,
+      itemType: "file_change" as const,
+      changedFiles: ["src/deep/view.tsx"],
+    };
+    expect(workEntryDisplayLabel(edit, "/work/project")).toBe("deep/view.tsx");
+    expect(workEntryPathPresentation(edit, "/work/project")?.fullPath).toBe(
+      "/work/project/src/deep/view.tsx",
+    );
+    expect(
+      workEntryPathPresentation(
+        { ...entry, detail: "Found errors in /unrelated/path.ts" },
+        "/work/project",
+      ),
+    ).toBeUndefined();
   });
 
   it("labels Claude Grep from structured input instead of a generic tool heading", () => {
