@@ -1159,3 +1159,31 @@ lint completes with warnings. This UI correction is not covered by the hosted
 checks that passed on `42cc6ac3cf`; hosted checks must qualify its new commit.
 At the user's request, stopped the owning candidate and verified all four
 recorded processes had exited and ports 6009/14049 had no listeners.
+
+### Owned-main realignment after user review
+
+Merged owned `main` at `643ad4e15740a97cef29c978d2a73473069a894a` into
+the alignment branch with merge commit
+`8e3b293648572b8f979708da3c1a40d35a2c5d5c`. Auto-merge was disabled before
+the update. The only conflict was in `scripts/scient-release-machinery.test.ts`:
+preserved this PR's removal of release-workflow source-text assertions rather
+than reintroducing them. Main's release implementation and behavioral tests,
+subscription-completion handling, pending-state fixes and document-host
+stream fixes remain in the composition. The selected stacked-folders icon
+and prior Codex approval repair remain unchanged.
+
+Fresh local verification on the merged composition:
+
+- 54 client-runtime and release tests across five files.
+- 21 web query, resource telemetry and document-host tests across four files.
+- 10 mobile query and terminal-session tests across two files.
+- Client-runtime, web, mobile and scripts typechecks.
+- All six product build tasks.
+- Repository lint: 1,346 warnings and zero errors.
+- Release-resolver smoke selected the next Beta version and exact merge SHA.
+- A live document-host consumer smoke persisted two requests and returned
+  successful responses while its stream remained open.
+
+The development app remains stopped. These checks qualify the local merged
+composition; fresh hosted CI must qualify the pushed head. Prior hosted results
+on `42cc6ac3cf` do not qualify this realignment.
